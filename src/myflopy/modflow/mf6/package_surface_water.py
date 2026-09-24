@@ -479,7 +479,10 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         fit_bounds : bool, default True
-            Fit the initial view to the grid extent rather than using ``zoom``.
+            Fit the initial view to the grid extent rather than using ``zoom``. The
+            fit is for the figure's own size, or plotly's default 700x450 when it
+            names none -- a larger display only adds margin around the grid -- and
+            ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
         hover : HoverSpec, optional
@@ -989,7 +992,10 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         fit_bounds : bool, default True
-            Fit the initial view to the grid extent rather than using ``zoom``.
+            Fit the initial view to the grid extent rather than using ``zoom``. The
+            fit is for the figure's own size, or plotly's default 700x450 when it
+            names none -- a larger display only adds margin around the grid -- and
+            ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
         hover : HoverSpec, optional
@@ -1574,7 +1580,10 @@ class LakConnectionsExplorer:
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         fit_bounds : bool, default True
-            Fit the initial view to the grid extent rather than using ``zoom``.
+            Fit the initial view to the grid extent rather than using ``zoom``. The
+            fit is for the figure's own size, or plotly's default 700x450 when it
+            names none -- a larger display only adds margin around the grid -- and
+            ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
         hover : HoverSpec, optional
@@ -2798,7 +2807,10 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         fit_bounds : bool, default True
-            Fit the initial view to the grid extent rather than using ``zoom``.
+            Fit the initial view to the grid extent rather than using ``zoom``. The
+            fit is for the figure's own size, or plotly's default 700x450 when it
+            names none -- a larger display only adds margin around the grid -- and
+            ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
         hover : HoverSpec, optional
@@ -3159,7 +3171,10 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         fit_bounds : bool, default True
-            Fit the initial view to the grid extent rather than using ``zoom``.
+            Fit the initial view to the grid extent rather than using ``zoom``. The
+            fit is for the figure's own size, or plotly's default 700x450 when it
+            names none -- a larger display only adds margin around the grid -- and
+            ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
         hover : HoverSpec, optional

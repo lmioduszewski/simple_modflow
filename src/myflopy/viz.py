@@ -170,7 +170,30 @@ class Picture:
                 "(install it, or save to .html instead, which needs nothing "
                 "extra)."
             ) from error
-        self.fig.write_image(str(path), **kwargs)
+        figure = self.fig
+        export_view = getattr(self, "export_map_view", None)
+        view = None
+        if export_view is not None:
+            # Kaleido writes at its own default size (700x500) unless told, and a
+            # view fitted for the screen cropped the top and bottom of every map
+            # saved to PNG -- 78.6% of the grid's height (ledger 307). Refit for
+            # the export's canvas, then put the screen view back.
+            import plotly.io as pio
+
+            size = (
+                kwargs.get("width") or pio.defaults.default_width,
+                kwargs.get("height") or pio.defaults.default_height,
+            )
+            view = export_view(size)
+        if not view:
+            figure.write_image(str(path), **kwargs)
+            return path
+        screen = {key: figure.layout.map[key] for key in view}
+        figure.update_layout(map=view)
+        try:
+            figure.write_image(str(path), **kwargs)
+        finally:
+            figure.update_layout(map=screen)
         return path
 
     def _repr_mimebundle_(self, *args, **kwargs):
@@ -395,7 +418,7 @@ def _build_frame_figure(frames, *, title=None):
     # A map flipped across frames still needs its view fitted to the data, or it
     # renders zoomed out to the world -- the same fix mosaic's subplots needed.
     if all(hasattr(picture, "get_choropleth") for picture in pictures):
-        shared = shared_map_view(pictures)
+        shared = shared_map_view(pictures, size=map_canvas(figure.layout))
         if shared:
             layout["map"] = shared
         _pool_frame_color_axis(figure, pictures)
@@ -818,13 +841,63 @@ def subplots(rows: int = 1, cols: int = 1, **kwargs) -> Fig:
     return fig
 
 
-def shared_map_view(panels, *, bounds=None):
+#: What plotly.js draws when nothing sets a size -- its own ``layout.width`` /
+#: ``layout.height`` defaults. A map is fitted for THIS canvas unless the figure
+#: names its own, because the real one is unknowable from Python (an inline
+#: notebook figure is as wide as its cell) and fitting a SMALLER canvas than the
+#: real one only adds margin, where fitting a larger one crops. The old fit
+#: assumed 1000x700 and cropped a single map to 88.6% of the grid's height at
+#: 1084x584, and every mosaic panel to ~10% of the grid (ledger 307).
+PLOTLY_DEFAULT_SIZE = (700, 450)
+#: plotly.js's default ``layout.margin`` -- what applies when neither the figure
+#: nor its template names one.
+PLOTLY_DEFAULT_MARGIN = {"l": 80, "r": 80, "t": 100, "b": 80}
+#: Pixel height of one row of MAP panels in :func:`mosaic`.
+MOSAIC_ROW_HEIGHT = 320
+
+
+def map_canvas(layout, subplot: str | None = None, *, size=None) -> tuple[float, float]:
+    """``(width, height)`` in pixels of the map area plotly will draw ``layout`` into.
+
+    The figure's own ``width``/``height`` when it names them, else ``size``, else
+    :data:`PLOTLY_DEFAULT_SIZE`; less the resolved margins (the figure's, else its
+    template's, else plotly's); times ``subplot``'s domain when one is named.
+    """
+
+    width, height = size if size is not None else PLOTLY_DEFAULT_SIZE
+    width = layout.width or width
+    height = layout.height or height
+
+    template = getattr(getattr(layout, "template", None), "layout", None)
+    margins = (layout.margin, getattr(template, "margin", None))
+
+    def _margin(side):
+        for margin in margins:
+            value = getattr(margin, side, None) if margin is not None else None
+            if value is not None:
+                return float(value)
+        return float(PLOTLY_DEFAULT_MARGIN[side])
+
+    plot_w = float(width) - _margin("l") - _margin("r")
+    plot_h = float(height) - _margin("t") - _margin("b")
+    if subplot is not None:
+        domain = layout[subplot].domain
+        x0, x1 = domain.x if domain.x is not None else (0.0, 1.0)
+        y0, y1 = domain.y if domain.y is not None else (0.0, 1.0)
+        plot_w *= float(x1) - float(x0)
+        plot_h *= float(y1) - float(y0)
+    return max(plot_w, 1.0), max(plot_h, 1.0)
+
+
+def shared_map_view(panels, *, bounds=None, size=None):
     """Return one ``{style, center, zoom}`` view fitting all geo panels, or ``None``.
 
     Unions the WGS84 bounds of every panel that exposes ``map_view()`` (real
     ``Choro`` maps) so a set of small multiples -- or the frames of a map
     animation -- all start framed to the same site. ``bounds`` overrides the
-    computed union. Returns ``None`` when no panel carries geometry.
+    computed union. ``size`` is the ``(width, height)`` map canvas the view is
+    fitted for (see :func:`map_canvas`). Returns ``None`` when no panel carries
+    geometry.
     """
 
     import numpy as np
@@ -846,7 +919,7 @@ def shared_map_view(panels, *, bounds=None):
                 float(arr[:, 2].max()),
                 float(arr[:, 3].max()),
             )
-    view = viewable[0].map_view(bounds=bounds)
+    view = viewable[0].map_view(bounds=bounds, size=size)
     return view or None
 
 
@@ -860,7 +933,11 @@ def _fit_map_views(fig, map_cells) -> list[str]:
     ...]``; the returned subplot ids drive optional live view-syncing.
     """
 
-    view = shared_map_view([panel for _, panel in map_cells])
+    # Every map cell of one grid has the same domain size, so the first one's
+    # canvas is every one's. The map_view used to be fitted for a 1000x700
+    # single map, which showed ~10% of the grid in each panel (ledger 307).
+    size = map_canvas(fig.layout, map_cells[0][0])
+    view = shared_map_view([panel for _, panel in map_cells], size=size)
     if not view:
         return []
     fig.update_layout(**{sid: view for sid, _ in map_cells})
@@ -1077,7 +1154,9 @@ def mosaic(
         pathlines) via ``overlay_traces()``. Unlabeled panels take their figure
         title, else ``Panel <n>``.
     ncols
-        Grid width; rows grow as needed.
+        Grid width; rows grow as needed. A grid holding maps is
+        :data:`MOSAIC_ROW_HEIGHT` pixels per row (plotly's default 450 px is the
+        whole figure), and each map subplot is framed for its own canvas.
     title
         Overall figure title.
     diff
@@ -1190,6 +1269,12 @@ def mosaic(
         specs=specs,
         subplot_titles=[label for label, _ in normalized],
     )
+    if "map" in kinds:
+        # Plotly's default 450 px is the WHOLE figure: a 2x2 map mosaic got ~115 px
+        # per row once plotly's own margins were taken, too small to read. A
+        # height per row, so framing each panel has a canvas worth fitting.
+        margin = PLOTLY_DEFAULT_MARGIN
+        fig.update_layout(height=MOSAIC_ROW_HEIGHT * nrows + margin["t"] + margin["b"])
 
     map_values = []
     map_limits = ([], [])  # caller-set trace zmin / zmax, already in trace space

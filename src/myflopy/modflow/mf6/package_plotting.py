@@ -665,7 +665,10 @@ def refuse_panel_drawing_options(kind: str, verb: str, options: dict) -> None:
 
 #: Reachable on a noun but measured NOT to act, so deliberately not offered:
 #:   `hover_fields` -- the noun sets `hover_spec`, which supersedes it.
-#:   `zoom` -- needs a basemap the noun's choropleth does not draw.
+#:   `zoom` -- inert under the default `fit_bounds=True`, which replaces it with
+#:     a fitted zoom. (This line used to say it "needs a basemap the noun's
+#:     choropleth does not draw"; measured, nouns draw `carto-voyager` and
+#:     `fit_bounds=False, zoom=10` through the tail DOES act -- ledger 307.)
 #:   `rch_scale` / `animation_kstpkpers` -- recharge- and animate-specific.
 NOUN_INERT_PARAMS = ("hover_fields", "zoom", "rch_scale", "animation_kstpkpers")
 
@@ -1743,7 +1746,10 @@ class SpatialView:
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         fit_bounds : bool, default True
-            Fit the initial view to the grid extent rather than using ``zoom``.
+            Fit the initial view to the grid extent rather than using ``zoom``. The
+            fit is for the figure's own size, or plotly's default 700x450 when it
+            names none -- a larger display only adds margin around the grid -- and
+            ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
         hover : HoverSpec, optional
@@ -2217,7 +2223,10 @@ class SpatialView:
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         fit_bounds : bool, default True
-            Fit the initial view to the grid extent rather than using ``zoom``.
+            Fit the initial view to the grid extent rather than using ``zoom``. The
+            fit is for the figure's own size, or plotly's default 700x450 when it
+            names none -- a larger display only adds margin around the grid -- and
+            ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
         hover : HoverSpec, optional

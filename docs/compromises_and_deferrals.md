@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 306 entries (307 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 307 entries (308 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 307 | A plotly map was fitted for a canvas nothing draws | 2026-09-23 |
 | 306 | The composers named `zmin`/`zmax` and pooled over them; the static ones dropped every overlay | 2026-09-23 |
 | 305 | A map of an unrun model drew node numbers, and so did any `type` it did not know | 2026-09-23 |
 | 304 | `mf.uzf` needed a grid it never used | 2026-09-23 |
@@ -12634,3 +12635,37 @@ same day, which is the useful part of the result.
       colorbar beside an axis that ``clear()``s every frame needs its own axes), and
       ``plot_mpl`` still draws no contours, so a static mosaic of contoured panels
       loses them silently -- both pre-existing.
+
+307. **A plotly map was fitted for a canvas nothing draws (2026-09-23).**
+      ``_initial_map_zoom`` assumed a 1000x700 viewport and no caller ever passed a size.
+      Measured in a browser (MapLibre ``getBounds``) on the canonical model: a single map
+      at 1084x584 showed 88.6% of the grid's height; every panel of a 4-panel
+      ``hds.mosaic`` showed ~10% of the grid, because each subplot got the SINGLE-map
+      zoom; ``.save("x.png")`` at kaleido's 700x500 kept 78.6% of the height. A
+      ``hillshade_path=`` then reset every view to zoom 12 centred on the RASTER, after the
+      fit, overriding ``fit_bounds`` and an explicit ``zoom`` alike.
+      **The rule: fit the canvas plotly will draw -- the figure's own ``width``/``height``
+      when it names them, else plotly.js's OWN defaults (700x450) -- less the resolved
+      margins, times the subplot's domain** (``viz.map_canvas``). The real inline size is
+      unknowable from Python (an inline figure is as wide as its notebook cell), and the
+      asymmetry decides it: fitting a canvas SMALLER than the real one only adds margin,
+      fitting a larger one crops. So a wide notebook shows the grid with room around it,
+      never cut off.
+      **A map mosaic now sets its height** (320 px per row plus plotly's margins): the
+      default 450 px was the WHOLE figure, ~115 px per row on a 2x2 grid once plotly's own
+      margins were taken -- a canvas too small to be worth fitting.
+      **A PNG is refitted for the export's size** (``Picture.save`` asks the picture for
+      ``export_map_view(size)``, kaleido's defaults when the caller names none) and the
+      screen view is put back after -- deep-copying a ``viz.Fig`` to avoid the swap returns
+      an EMPTY figure (measured), so the swap is the safe form.
+      **One centre**: the standalone map centred on the grid's area centroid while the
+      subplots used the bounding-box midpoint; both use the midpoint now, the only one that
+      keeps a fitted box inside the view on an irregular domain.
+      **Not done, deliberately:** a JavaScript ``map.fitBounds`` post-script, which would
+      make ``show()``/``html()`` exact. It reaches MapLibre through plotly's private
+      ``_fullLayout.map._subplot.map``, and inline notebook display -- where this user
+      works -- runs no post-scripts at all (``Fig._repr_mimebundle_`` merges only
+      ``config``), so it would fix the environments that already show the whole grid under
+      the default-size rule. ``layout.map.bounds`` is not the answer either: measured, it
+      is MapLibre's ``maxBounds`` pan lock, which COVERS the box (cropping to 56% of its
+      latitude) and clamps zoom-out.

@@ -46,7 +46,7 @@ class _FakeGeoChoro(_FakeChoro):
     def latlon_bounds(self):
         return self._bounds
 
-    def map_view(self, *, bounds=None):
+    def map_view(self, *, bounds=None, size=None):  # size: the canvas (ledger 307)
         west, south, east, north = (
             self._bounds if bounds is None else tuple(float(b) for b in bounds)
         )

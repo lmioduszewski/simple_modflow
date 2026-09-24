@@ -402,7 +402,10 @@ def map(      # noqa: A001 - the verb IS `map`
     zoom : int, default 13
         Initial map zoom. Ignored when ``fit_bounds`` is True.
     fit_bounds : bool, default True
-        Fit the initial view to the grid extent rather than using ``zoom``.
+        Fit the initial view to the grid extent rather than using ``zoom``. The
+        fit is for the figure's own size, or plotly's default 700x450 when it
+        names none -- a larger display only adds margin around the grid -- and
+        ``.save()`` to an image refits for the export's size.
     bounds_padding : float, default 0.05
         Fractional padding around the fitted bounds.
     hover : HoverSpec, optional
@@ -1610,7 +1613,10 @@ class ModelPlots:
         zoom : int, default 13
             Initial map zoom. Ignored when ``fit_bounds`` is True.
         fit_bounds : bool, default True
-            Fit the initial view to the grid extent rather than using ``zoom``.
+            Fit the initial view to the grid extent rather than using ``zoom``. The
+            fit is for the figure's own size, or plotly's default 700x450 when it
+            names none -- a larger display only adds margin around the grid -- and
+            ``.save()`` to an image refits for the export's size.
         bounds_padding : float, default 0.05
             Fractional padding around the fitted bounds.
         hover : HoverSpec, optional
@@ -2233,7 +2239,9 @@ class ModelPlots:
             pathlines) via ``overlay_traces()``. Unlabeled panels take their figure
             title, else ``Panel <n>``.
         ncols
-            Grid width; rows grow as needed.
+            Grid width; rows grow as needed. A grid holding maps is
+            :data:`MOSAIC_ROW_HEIGHT` pixels per row (plotly's default 450 px is the
+            whole figure), and each map subplot is framed for its own canvas.
         title
             Overall figure title.
         diff

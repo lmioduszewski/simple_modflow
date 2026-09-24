@@ -149,6 +149,11 @@ contrast** across the unselected cells on a real head field. `select_style="dim"
 restores the old picture, `"both"` draws each. Applied on `Choro` (not in the
 verb) so `mosaic`/`animate` keep it, and `mode="lines"` so a user's lasso cannot
 clobber it.
+**A plotly map is fitted for the canvas plotly will draw** (ledger 307): `viz.map_canvas`
+(the figure's size, else plotly's 700x450, less margins, times the subplot domain) into
+`Choro.map_view(size=)`. The old fit assumed 1000x700 and cropped single maps, mosaic
+panels (~10% of the grid) and PNGs; a hillshade reset the view after it. Pass a SIZE
+whenever you frame a map, and never set `center`/`zoom` after the fit.
 **A map of an UNRUN model reads its inputs, and `type`/`layer` are checked at the call**
 (ledger 305, 2026-09-23). `_grid_of` binds a model only when it has RESULTS, so an
 unrun model was drawn as a bare grid: `type='ks'`, a typo'd `type`, and the documented

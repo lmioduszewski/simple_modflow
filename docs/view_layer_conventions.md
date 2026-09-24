@@ -119,6 +119,17 @@ what to use instead:
 Returning an `mpl.Figure` from `.fig` would satisfy the letter and break every
 caller reaching for `.add_trace`; raising is the honest answer.
 
+### A plotly map is fitted for the canvas plotly will draw
+
+Ledger 307. `viz.map_canvas(layout, subplot)` is the one rule: the figure's own
+`width`/`height`, else plotly.js's defaults (700x450), less the resolved margins,
+times the subplot's domain. `Choro.map_view(bounds=, size=)` fits a zoom for that
+canvas and centres on the box midpoint; the standalone map, `mosaic`'s subplots and
+`animate`'s frames all go through it, and `Picture.save` refits for an image's
+pixels via `export_map_view`. Anything that frames a map passes a SIZE -- a view
+fitted for "a map" crops the moment it lands in a subplot. Draw a background (a
+hillshade) as a layer only; never set `center`/`zoom` after the fit.
+
 ### A map of an unrun model is still a map of a model
 
 Ledger 305 (2026-09-23). The free verb binds a model for its RESULTS only when it

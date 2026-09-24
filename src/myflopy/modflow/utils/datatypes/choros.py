@@ -38,9 +38,11 @@ from myflopy.viz import (
     HIGHLIGHT_DIM_OPACITY,
     HIGHLIGHT_WIDTH,
     PALETTE,
+    PLOTLY_DEFAULT_SIZE,
     Fig,
     Picture,
     log_decade_colorbar,
+    map_canvas,
     mpl_color,
     mpl_colormap_for,
     plotly_colorscale_stops,
@@ -1080,30 +1082,29 @@ class Choro(Picture):
 
         return list(self._features)
 
+    #: The margins a standalone map is drawn with.
+    _MAP_MARGIN = {"r": 0, "t": 20, "l": 0, "b": 0}
+
     def update_layout(self):
         """Apply the default map style, center, and (fitted or fixed) zoom to ``self._fig``."""
 
-        # Set up default choropleth map styles
-        if self.vor:
-            map_center = {"lat": self.vor.grid_centroid.y, "lon": self.vor.grid_centroid.x}
-        else:
-            map_center = None
-        map_layout = {
-            "style": "carto-voyager",
-            "center": map_center,
-        }
-        if self.fit_bounds and self.vor is not None:
-            map_layout["zoom"] = _initial_map_zoom(
-                self.vor.gdf_latlon.total_bounds,
-                padding=self.bounds_padding,
-            )
-        else:
-            map_layout["zoom"] = self.zoom
-        self._fig.update_layout(
-            margin={"r": 0, "t": 20, "l": 0, "b": 0},
-            map=map_layout,
-            uirevision="lock",
-        )
+        self._fig.update_layout(margin=self._MAP_MARGIN, uirevision="lock")
+        view = self.map_view(size=map_canvas(self._fig.layout))
+        if "center" not in view:
+            view["zoom"] = self.zoom
+        self._fig.update_layout(map=view)
+
+    def export_map_view(self, size):
+        """The ``map`` layout to write this picture at ``size`` (a PNG's pixels).
+
+        Read by :meth:`~myflopy.viz.Picture.save`, which swaps it in for the
+        export and puts the screen view back after.
+        """
+
+        if self.vor is None or not self.fit_bounds:
+            return None
+        view = self.map_view(size=map_canvas(self._fig.layout, size=size))
+        return {key: view[key] for key in ("center", "zoom") if key in view}
 
     @property
     def latlon_bounds(self):
@@ -1118,14 +1119,21 @@ class Choro(Picture):
         west, south, east, north = self.vor.gdf_latlon.total_bounds
         return (float(west), float(south), float(east), float(north))
 
-    def map_view(self, *, bounds=None):
+    def map_view(self, *, bounds=None, size=None):
         """Return the ``{style, center, zoom}`` layout for this map's subplot.
 
-        Mirrors :meth:`update_layout`'s framing so a choropleth composed into a
-        subplot grid zooms to the data just like the standalone map does.
-        ``bounds`` -- ``(west, south, east, north)`` in WGS84 -- overrides this
-        map's own extent so several panels can share one synchronized view; it
-        defaults to :attr:`latlon_bounds`.
+        The one framing rule, shared by the standalone map (:meth:`update_layout`),
+        the mosaic subplots and the animation frames. ``bounds`` -- ``(west,
+        south, east, north)`` in WGS84 -- overrides this map's own extent so
+        several panels can share one synchronized view; it defaults to
+        :attr:`latlon_bounds`. ``size`` is the ``(width, height)`` map canvas in
+        pixels the zoom is fitted for; it defaults to a standalone map at
+        plotly's default figure size (:func:`~myflopy.viz.map_canvas`).
+
+        Centred on the extent's MIDPOINT: the standalone map used the grid's
+        area centroid while the subplots used the midpoint, so an irregular
+        domain was framed two ways, and only the midpoint keeps a fitted box
+        inside the view.
         """
 
         view = {"style": "carto-voyager"}
@@ -1135,7 +1143,14 @@ class Choro(Picture):
         west, south, east, north = extent
         view["center"] = {"lat": (south + north) / 2.0, "lon": (west + east) / 2.0}
         if self.fit_bounds:
-            view["zoom"] = _initial_map_zoom(extent, padding=self.bounds_padding)
+            if size is None:
+                size = (
+                    PLOTLY_DEFAULT_SIZE[0] - self._MAP_MARGIN["l"] - self._MAP_MARGIN["r"],
+                    PLOTLY_DEFAULT_SIZE[1] - self._MAP_MARGIN["t"] - self._MAP_MARGIN["b"],
+                )
+            view["zoom"] = _initial_map_zoom(
+                extent, padding=self.bounds_padding, width=size[0], height=size[1]
+            )
         else:
             view["zoom"] = self.zoom
         return view
@@ -1918,15 +1933,18 @@ class ChoroplethHillshadeBackground:
             b64 = base64.b64encode(f.read()).decode("ascii")
         return f"data:{mime};base64,{b64}"
 
-    def update_fig_layout(self, fig: Fig, zoom: int = 12):
+    def update_fig_layout(self, fig: Fig):
         """
         Updates the layout of a choropleth map figure to show a png
         hillshade background.
 
+        Adds the raster as an image layer and nothing else: it used to set the
+        view too -- zoom 12, centred on the RASTER -- after the map had been
+        fitted, so a hillshade map ignored ``fit_bounds``/``zoom`` and opened on
+        the raster rather than the grid (ledger 307).
+
         :param fig: The choropleth map figure to update, which should be an instance
             of Choro.
-        :param zoom: The zoom level of the map. Defaults to 12.
-        :type zoom: int
         :return: None
         """
         left, bottom, right, top = self.bounds
@@ -1946,7 +1964,5 @@ class ChoroplethHillshadeBackground:
                         name='hillshade'
                     )
                 ],
-                center={"lat": (top + bottom) / 2, "lon": (left + right) / 2},
-                zoom=zoom
             ))
         fig.update_traces(marker=dict(opacity=0.6), selector=dict(type="choroplethmap"))
