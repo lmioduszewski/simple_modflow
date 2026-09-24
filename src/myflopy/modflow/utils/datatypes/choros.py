@@ -136,6 +136,45 @@ def _initial_map_zoom(bounds, *, padding: float = 0.05, width: int = 1000, heigh
 # mask MODFLOW's 1e30 sentinel, and label the layer-hover table by value name.
 _DEPVAR_READER_ATTR = {"hds": "hds", "conc": "conc", "temp": "temp"}
 
+#: Every ``type`` a map draws, and whether it needs the model's RESULTS. Checked at
+#: the call (ledger 305): an unknown value used to fall through to the cell-index
+#: branch, so ``type='trans'`` or a typo drew node numbers 0..ncpl-1 under a
+#: colorbar, with no error anywhere. ``'custom'`` is the package-grammar path,
+#: which always supplies its own values.
+MAP_TYPES = {
+    "hds": True,
+    "conc": True,
+    "temp": True,
+    "rch": True,
+    "output_rch": True,
+    "ks": False,
+    "custom": False,
+}
+
+
+def check_map_type(value) -> str:
+    """``value`` as a known map ``type``, lower-cased, or raise naming the set.
+
+    Lower-cased because the default-hover lookup always was and the reader
+    lookup was not, so ``type='HDS'`` drew node numbers under a Head hover.
+    """
+
+    key = str(value).lower()
+    if key == "input_rch":
+        raise ValueError(
+            "type='input_rch' is retired: it read stress period 37 (zero-based) "
+            "whatever period was asked for, and raised KeyError on a model with "
+            "fewer. Map "
+            "declared recharge with its package noun, "
+            "model.packages.rch.inputs.recharge.map(per=...)."
+        )
+    if key not in MAP_TYPES:
+        raise ValueError(
+            f"type={value!r} is not a map type; expected one of {sorted(MAP_TYPES)}. "
+            "Pass values= to draw any other per-cell array."
+        )
+    return key
+
 
 
 def _resolve_cells(select, *, vor, model=None):
@@ -218,6 +257,10 @@ class Choro(Picture):
     #: AttributeError on those is a contract that only half-holds.
     _assembled = False
 
+    #: The model a map of an UNRUN model reads its inputs and names from. A class
+    #: default for the same `object.__new__` reason as `_assembled`.
+    _input_model = None
+
 
     def __init__(
             self,
@@ -263,6 +306,7 @@ class Choro(Picture):
             select=None,
             select_style: str = "outline",
             select_color: str = None,
+            input_model=None,
             **kwargs
 
     ):
@@ -277,7 +321,8 @@ class Choro(Picture):
         ``"last"``, ``"first"``, a zero-based saved-output index, or an exact
         zero-based MODFLOW timestep number.
         :param layer: what layer to plot, a zero-index. 0 equals layer 1.
-        :param type: type of choropleth to plot - options are 'hds', 'ks', 'input_rch', 'output_rch'
+        :param type: what to draw -- one of :data:`MAP_TYPES` ('hds', 'conc', 'temp', 'rch', 'ks',
+        'custom'); anything else raises at the call.
         :param custom_hover: custom dictionary of hover labels to use for choropleth.
         Must be same length as no. of cells in model.
         :param custom_zs: custom list of z values to use for choropleth. Must be same length as no. of cells in model.
@@ -300,11 +345,33 @@ class Choro(Picture):
         ``[[position, color], ...]`` stops. Default is 'earth'.
         :param logscale: colour ``log10(value)``; the colorbar is labelled in real
         units at whole decades, and ``zmin``/``zmax``/``zmid`` are given in DATA units.
+        :param input_model: the model to read INPUTS and names from (K, idomain,
+        region names) when ``model`` is None because it has no results yet.
+        ``model`` wins when both are given.
         """
 
         self._vor = None
         self.model = model
+        # Two different questions, which one attribute used to answer: `model`
+        # is "whose RESULTS", and `_input_model` is "whose inputs and names".
+        # A model that has not been run has the second and not the first, and
+        # binding neither made `type='ks'` draw node numbers and every region
+        # name raise as a missing file (ledger 305).
+        self._input_model = input_model
         self.vor = model.vor if model is not None else vor
+        type = check_map_type(type)
+        if (
+            MAP_TYPES[type]
+            and model is None
+            and input_model is not None
+            and custom_zs is None
+        ):
+            raise ValueError(
+                f"type={type!r} maps a RESULT and this model has none yet -- it has "
+                "not been run, or its output files are unreadable. Run it first, map "
+                "an input instead (type='ks', or a package noun such as "
+                "model.packages.npf.k.map()), or pass values=."
+            )
         # Resolve which dependent-variable reader (heads/conc/temp) this map reads;
         # None for non-field types (ks/rch/...), which fall back to heads for timing.
         self._depvar_attr = _DEPVAR_READER_ATTR.get(type)
@@ -315,7 +382,7 @@ class Choro(Picture):
         self._per = None
         self.per_timestep = per_timestep
         self.per = per
-        self._layer = layer
+        self._layer = self._checked_layer(layer, show_mounding=show_mounding)
         self.type = type
         self._custom_hover = custom_hover
         self._custom_zs = custom_zs
@@ -401,7 +468,7 @@ class Choro(Picture):
         # Resolved HERE, not lazily, so a bad `select=` raises at the call rather
         # than from a notebook's display hook cells later.
         self._select_cells, self._select_label = _resolve_cells(
-            select, vor=self.vor, model=self.model
+            select, vor=self.vor, model=self._inputs
         )
 
         self._fig = Fig()
@@ -531,7 +598,7 @@ class Choro(Picture):
         """Per-layer horizontal K array from the model's NPF package (cached)."""
 
         if self._all_ks is None:
-            self._all_ks = self.model.gwf.npf.k.data
+            self._all_ks = self._inputs.gwf.npf.k.data
         return self._all_ks
 
     def _cell_vector(self, values, label: str):
@@ -542,12 +609,12 @@ class Choro(Picture):
     def _top_vector(self):
         """The model-top elevation as a one-value-per-cell array."""
 
-        return self._cell_vector(self.model.gwf.modelgrid.top, "model top")
+        return self._cell_vector(self._inputs.gwf.modelgrid.top, "model top")
 
     def _bottom_vector(self, layer: int):
         """The bottom elevation of ``layer`` (zero-based) as a per-cell array."""
 
-        return self._cell_vector(self.model.gwf.modelgrid.botm[layer], f"layer {layer + 1} bottom")
+        return self._cell_vector(self._inputs.gwf.modelgrid.botm[layer], f"layer {layer + 1} bottom")
 
     def _contour_vector(self):
         """Return values used for optional contour overlays."""
@@ -576,11 +643,12 @@ class Choro(Picture):
         """Return active cells for the selected layer, defaulting to all cells."""
 
         ncpl = int(self.vor.ncpl)
-        if self.model is None:
+        source = self._inputs
+        if source is None:
             return np.ones(ncpl, dtype=bool)
-        idomain = getattr(getattr(self.model, "gwf", None).modelgrid, "idomain", None)
+        idomain = getattr(getattr(source, "gwf", None).modelgrid, "idomain", None)
         if idomain is None:
-            dis = getattr(self.model.gwf, "disv", None) or getattr(self.model.gwf, "disu", None) or getattr(self.model.gwf, "dis", None)
+            dis = getattr(source.gwf, "disv", None) or getattr(source.gwf, "disu", None) or getattr(source.gwf, "dis", None)
             idomain_data = getattr(dis, "idomain", None)
             idomain = getattr(idomain_data, "array", None)
         if idomain is None:
@@ -676,7 +744,46 @@ class Choro(Picture):
     def nlay(self):
         """Number of layers in the bound model's grid."""
 
-        return self.model.gwf.modelgrid.nlay
+        return self._inputs.gwf.modelgrid.nlay
+
+    @property
+    def _inputs(self):
+        """The model this map reads INPUTS and names from, or None for a bare grid.
+
+        The results model when there is one, else the input-only model a map of
+        an unrun model is given. `getattr` because several test doubles build a
+        `Choro` through `object.__new__` and set `model` alone.
+        """
+
+        model = getattr(self, "_model", None)
+        return model if model is not None else self._input_model
+
+    def _checked_layer(self, layer, *, show_mounding: bool) -> int:
+        """``layer`` as a plain int, refused at the call if it cannot be drawn.
+
+        `__init__` wrote it straight past the asserting setter, so ``layer=4`` on a
+        4-layer model and ``layer=None`` both constructed a picture that died at
+        ``.fig``, and ``layer=-1`` silently drew the BOTTOM layer through numpy's
+        negative indexing (ledger 305). ``-1`` keeps its one meaning, "mound above
+        the ground surface", and only beside ``show_mounding``.
+        """
+
+        if isinstance(layer, bool) or not isinstance(layer, (int, np.integer)):
+            raise TypeError(f"layer must be a zero-based integer, not {layer!r}")
+        layer = int(layer)
+        if layer == -1 and show_mounding:
+            return layer
+        if self._inputs is None:
+            # A bare grid carries no layer count to check against; the layer is a
+            # label there, and every value was accepted before.
+            return layer
+        nlay = int(self.nlay)
+        if not 0 <= layer < nlay:
+            raise ValueError(
+                f"layer={layer} is outside this model's layers 0..{nlay - 1} "
+                "(zero-based; layer=-1 means 'above ground' only with show_mounding=True)."
+            )
+        return layer
 
     @property
     def hover_dict(self):
@@ -699,13 +806,15 @@ class Choro(Picture):
                     lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], self._value_column].to_list()
                     self._hover_dict[f'Layer {lyr + 1} {label}'] = lyr_heads
 
-            if self.type == 'ks' or self.hover_ks is True:
-                for lyr in range(self.nlay):
-                    lyr_ks = self.all_ks[lyr].tolist()
-                    self._hover_dict[f'Layer {lyr + 1} Kh'] = lyr_ks
-
             if self.type == 'rch':
                 self._hover_dict['Recharge'] = self.output_rch_zs
+
+        # K is an INPUT, so it reads from the input model -- a model that has not
+        # been run still has one to show.
+        if self._inputs is not None and (self.type == 'ks' or self.hover_ks is True):
+            for lyr in range(self.nlay):
+                lyr_ks = self.all_ks[lyr].tolist()
+                self._hover_dict[f'Layer {lyr + 1} Kh'] = lyr_ks
 
         if self.show_layer_elevs:
             # NOTE: this used to open by reading `self.vor.gdf_topbtm.columns`,
@@ -714,10 +823,10 @@ class Choro(Picture):
             # The value was assigned to `layer_nums`, immediately overwritten
             # below, and never read: the model branch takes its elevations from
             # the MODEL, which necessarily has them or it could not have run.
-            if self.model is not None:
+            if self._inputs is not None:
                 botms = [
                     self._bottom_vector(lyr)
-                    for lyr in range(self.model.gwf.modelgrid.nlay)
+                    for lyr in range(self.nlay)
                 ]
                 top = self._top_vector()
             else:
@@ -771,7 +880,7 @@ class Choro(Picture):
     def layer(self, layer):
         """Set the plotted layer, asserting it is within the model's layer range."""
 
-        assert int(layer) in list(range(self.model.gwf.modelgrid.nlay)), \
+        assert int(layer) in list(range(self.nlay)), \
             'layer must be an integer, from 0 up to 1 less than the number of model layers'
         self._layer = layer
 
@@ -840,14 +949,13 @@ class Choro(Picture):
                 zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
                 zs.loc[zs == 1e+30] = np.nan  # make modflow empty elevations NaN
 
-        elif self.type == 'ks' and self.model is not None:
+        elif self.type == 'ks' and self._inputs is not None:
             zs = self._cell_vector(self.all_ks[self.layer], f"layer {self.layer + 1} Kh").tolist()
 
-        elif self.type == 'output_rch' and self.model is not None:
+        elif self.type in ('rch', 'output_rch') and self.model is not None:
+            # `'rch'` was documented, carried a Recharge hover row, and had no
+            # branch here -- it drew node numbers (ledger 305).
             zs = self.output_rch_zs
-
-        elif self.type == 'input_rch' and self.model is not None:
-            zs = self.input_rch_zs
 
         else:
             zs = self.vor.gdf_vorPolys.index.to_list()
@@ -920,20 +1028,6 @@ class Choro(Picture):
         m = m.set_index('node')
         m = m.reindex(full_idx, fill_value=0)
         zs = m['rch_per_period'].to_list()
-        if self.rch_scale is not None:
-            zs = (np.array(zs) * self.rch_scale).tolist()
-        return zs
-
-    @property
-    def input_rch_zs(self):
-        """gets model input recharge values for the specified kstpkper"""
-        d = pd.DataFrame(self.model.gwf.rch.stress_period_data.data[37])
-        d['cell'] = d['cellid'].apply(lambda x: x[1])
-        d = d.set_index('cell')
-        d = d[~d.index.duplicated()]  # remove duplicates if they exist
-        full_idx = range(self.model.vor.ncpl)
-        d = d.reindex(full_idx, fill_value=0)  # fill in missing cell indices
-        zs = d['recharge'].to_list()
         if self.rch_scale is not None:
             zs = (np.array(zs) * self.rch_scale).tolist()
         return zs
@@ -1248,7 +1342,7 @@ class Choro(Picture):
                 # ask -- `nlay` dereferences `model.gwf`, and a bare grid that
                 # carries surfaces can still show them. Columns are
                 # `[cell, top, botm0, botm1, ...]`.
-                nlay = self.nlay if self.model is not None else topbtm.shape[1] - 2
+                nlay = self.nlay if self._inputs is not None else topbtm.shape[1] - 2
                 top = topbtm.iloc[:, 1].to_list()
                 botm = [topbtm.iloc[:, 2 + i].to_list() for i in range(nlay)]
             except _SURFACES_UNAVAILABLE:
@@ -1601,7 +1695,7 @@ class Choro(Picture):
         # before ledger 160 and is what sent `canonical_02` out of the
         # interactive map into `plot_mpl` to get cell outlines at all.
         for name in outline_regions:
-            cells, _ = _resolve_cells(name, vor=self.vor, model=self.model)
+            cells, _ = _resolve_cells(name, vor=self.vor, model=self._inputs)
             if cells:
                 gdf.iloc[cells].boundary.plot(
                     ax=ax, color=PALETTE.mpl_highlight, linewidth=0.5

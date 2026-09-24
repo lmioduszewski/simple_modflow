@@ -119,6 +119,21 @@ what to use instead:
 Returning an `mpl.Figure` from `.fig` would satisfy the letter and break every
 caller reaching for `.add_trace`; raising is the honest answer.
 
+### A map of an unrun model is still a map of a model
+
+Ledger 305 (2026-09-23). The free verb binds a model for its RESULTS only when it
+has some, and a model that has not been run was therefore drawn as a bare grid:
+`type='ks'` drew node numbers and `select="<region>"` was opened as a file.
+`Choro` now carries two handles -- `model` ("whose results") and `_inputs`
+("whose inputs and names": K, idomain, layer elevations, region names) -- and
+every INPUT read goes through `_inputs`. So an input map (`type='ks'`, every
+package noun, `values=`) draws before a run, a region name resolves before a run,
+and a RESULTS map (`hds`/`conc`/`temp`/`rch`) of an unrun model raises by name.
+`type` is checked against `choros.MAP_TYPES` at the call and `layer` against the
+model's layers; both used to fall through to drawing node numbers. **Add a new
+map type to `MAP_TYPES`**, saying whether it needs results -- an unknown one
+raises.
+
 ### Colour scales and custom geometry are options on `map`
 
 Rule 1 in practice (ledger 252–254, 2026-09-13). Three options every map

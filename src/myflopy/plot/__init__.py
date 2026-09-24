@@ -181,6 +181,24 @@ def _grid_of(source):
     return grid, _has_results(source)
 
 
+def _input_model_of(source):
+    """``source`` if it is a MODEL (with or without results), else None.
+
+    The question ``_grid_of``'s results probe does NOT answer. A model that has
+    not been run has no results, so it was drawn exactly like a bare grid: its K
+    unreadable (``type='ks'`` drew node numbers) and its region names unknown
+    (``select="all_streams"`` raised as a missing FILE). What a model has and a
+    layer stack does not is a FloPy model and a region registry, so that is what
+    is asked -- duck-typed, like the rest of this dispatch.
+    """
+
+    if getattr(source, "vor", None) is None:
+        return None
+    if getattr(source, "gwf", None) is None or not callable(getattr(source, "get_region_cells", None)):
+        return None
+    return source
+
+
 def _has_results(source) -> bool:
     """Whether ``source`` can serve a results field, without insisting it can.
 
@@ -296,8 +314,12 @@ def map(      # noqa: A001 - the verb IS `map`
         Zero-based layer. Layer 0 is the top.
     type : {'hds', 'conc', 'temp', 'rch', 'ks', 'custom'}, default 'hds'
         Which field to read when ``values`` is not given. ``'hds'`` heads,
-        ``'conc'`` GWT concentration, ``'temp'`` GWE temperature. The first
-        three also select the default sectioned hover.
+        ``'conc'`` GWT concentration, ``'temp'`` GWE temperature -- these three
+        also select the default sectioned hover -- ``'rch'`` the simulated
+        recharge rate, and ``'ks'`` the horizontal conductivity ``npf.k``.
+        ``'ks'`` is an INPUT, so it draws on a model that has not been run; the
+        others are results and raise there. Case does not matter; any other
+        value raises, naming this set, rather than drawing node numbers.
     zmin, zmax : float, optional
         Fixed color-scale limits. Set both to hold the scale steady across
         frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
@@ -474,6 +496,9 @@ def map(      # noqa: A001 - the verb IS `map`
     vor, is_model = _grid_of(source)
     if is_model:
         trace_kwargs.setdefault("model", source)
+    else:
+        # No results, but still a model: its inputs and names stay readable.
+        trace_kwargs.setdefault("input_model", _input_model_of(source))
     if values is not None:
         trace_kwargs["custom_zs"] = list(values)
     # Resolved BEFORE the picture is built, so a misspelled backend raises
@@ -1389,10 +1414,11 @@ class ModelPlots:
     already supplied: ``model.plot.map(layer=0)`` is ``plot.map(model, layer=0)``.
     Which spelling you reach for is taste; there is one implementation.
 
-    Bound rather than re-dispatched: the module verbs duck-type on ``.vor`` to
-    tell a model from a grid, and a model whose grid has not been resolved yet
-    carries ``vor = None`` -- which would silently make it look like a grid. The
-    namespace knows what it holds, so it passes the model straight through.
+    Each bound verb calls the free one with the model as its source, so both
+    go through the same duck-typed dispatch (``_grid_of``) -- there is one path,
+    not two. (This paragraph used to say the opposite; the code has always
+    re-dispatched, which is why an unrun model drew node numbers from BOTH
+    spellings until ledger 305.)
 
     A fresh instance per access, like ``model.packages``: models are rehydrated
     via ``cls.__new__`` in ``from_built_run``, so a memoized namespace could
@@ -1496,8 +1522,12 @@ class ModelPlots:
             Zero-based layer. Layer 0 is the top.
         type : {'hds', 'conc', 'temp', 'rch', 'ks', 'custom'}, default 'hds'
             Which field to read when ``values`` is not given. ``'hds'`` heads,
-            ``'conc'`` GWT concentration, ``'temp'`` GWE temperature. The first
-            three also select the default sectioned hover.
+            ``'conc'`` GWT concentration, ``'temp'`` GWE temperature -- these three
+            also select the default sectioned hover -- ``'rch'`` the simulated
+            recharge rate, and ``'ks'`` the horizontal conductivity ``npf.k``.
+            ``'ks'`` is an INPUT, so it draws on a model that has not been run; the
+            others are results and raise there. Case does not matter; any other
+            value raises, naming this set, rather than drawing node numbers.
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat

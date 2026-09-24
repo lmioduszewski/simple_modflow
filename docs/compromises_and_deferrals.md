@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 304 entries (305 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 305 entries (306 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 305 | A map of an unrun model drew node numbers, and so did any `type` it did not know | 2026-09-23 |
 | 304 | `mf.uzf` needed a grid it never used | 2026-09-23 |
 | 303 | A water mover kept pointing at a reach that no longer existed | 2026-09-23 |
 | 302 | A UZF package declared without a grid moved to another mesh in silence | 2026-09-23 |
@@ -12567,3 +12568,42 @@ same day, which is the useful part of the result.
         where a run's "outputs changed" signal lives, which is bigger than this fix, and
         because with the clock corrected a stale `_kstpkper` no longer reaches any budget
         table. `model._kstpkper = None` still clears it; so does reloading the run.
+
+305. **A map of an unrun model drew node numbers, and so did any `type` it did not know (2026-09-23).**
+      Two silent fallbacks shared one symptom -- the values 0..ncpl-1 under a colorbar:
+      ``_grid_of`` bound a model to the map only when it had RESULTS, so an unrun model was
+      drawn as a bare grid (``type='ks'`` could not read K, and ``select="all_streams"``
+      fell through to opening a FILE of that name); and ``type`` was never checked, so a
+      typo, ``'trans'``, the documented ``'rch'`` (no branch) and ``'HDS'`` (one lookup
+      lower-cased, the other not) all reached the cell-index branch. Measured on the
+      canonical model, each drew ``arange(441)``.
+      **Two questions, two attributes.** ``Choro.model`` still means "whose RESULTS";
+      ``_inputs`` means "whose inputs and names" and falls back to an input-only model the
+      free verb passes when the source is a model without results. K, idomain, layer
+      elevations and region names read from ``_inputs``. The results binding is
+      deliberately NOT faked for an unrun model -- the heads hover, the timing reader and
+      the animation clock all assume results and would each have needed a guard.
+      **A results map of an unrun model now RAISES** (``type`` in ``hds``/``conc``/``temp``/
+      ``rch`` with no ``values=``), naming the input spellings. It used to draw node
+      numbers under a head colorbar, so nothing correct depended on it -- but it is a
+      behaviour change for any script that called ``model.plot.map()`` before running.
+      ``values=`` still draws on any model.
+      **``'rch'`` now draws what it documented** (output recharge, the ``'output_rch'``
+      branch; the latter stays as an undocumented alias). **``'input_rch'`` is RETIRED by
+      name**: it read ``stress_period_data.data[37]`` whatever period was asked and raised
+      ``KeyError`` on any model with fewer periods; nothing in ``src/``, ``tests/`` or the
+      live notebooks used it, and the noun ``packages.rch.inputs.recharge`` maps declared
+      recharge for any period. Its reader was deleted rather than kept unreachable.
+      **``layer`` is checked at the call**: ``layer=4`` on 4 layers and ``layer=None``
+      built a picture that died at ``.fig``, and ``layer=-1`` drew the BOTTOM layer through
+      numpy's negative indexing. ``-1`` keeps its one meaning, "above ground", beside
+      ``show_mounding=True``. A bare grid has no layer count, so there the value is only
+      type-checked, as it was never checked before.
+      **``type`` is now swept both ways** (``tests/test_map_unrun_and_type.py``): the
+      documented set equals the accepted one minus the ``'output_rch'`` alias.
+      ``test_plot_vocabulary``'s value sweep still excludes ``type`` for its own reason
+      (``conc``/``temp`` need a GWT/GWE model), which is why the sweep lives beside the
+      check rather than there.
+      **Not done:** ``'ks'`` on a GWT/GWE model still fails at render inside FloPy (the
+      transport model has no NPF) -- pre-existing; the transmissivity types that follow
+      refuse by name there instead.

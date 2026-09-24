@@ -149,6 +149,15 @@ contrast** across the unselected cells on a real head field. `select_style="dim"
 restores the old picture, `"both"` draws each. Applied on `Choro` (not in the
 verb) so `mosaic`/`animate` keep it, and `mode="lines"` so a user's lasso cannot
 clobber it.
+**A map of an UNRUN model reads its inputs, and `type`/`layer` are checked at the call**
+(ledger 305, 2026-09-23). `_grid_of` binds a model only when it has RESULTS, so an
+unrun model was drawn as a bare grid: `type='ks'`, a typo'd `type`, and the documented
+`'rch'` all drew NODE NUMBERS 0..ncpl-1, and `select="<region>"` was opened as a file.
+`Choro.model` still means "whose results"; `Choro._inputs` means "whose inputs and
+names" and falls back to the input-only model the free verb passes. Do not fake the
+results binding for an unrun model -- the heads hover, timing reader and animation
+clock all assume results. A results `type` on an unrun model RAISES; a new map type
+goes in `choros.MAP_TYPES` with whether it needs results. `'input_rch'` is retired.
 **Log colour scales and custom geometry are OPTIONS on `map`, at EVERY scope**
 (ledger 252–254, 2026-09-13). `logscale=True` colours log10 but LABELS the
 colorbar in real units at whole decades on both backends (`viz.log_decade_colorbar`;

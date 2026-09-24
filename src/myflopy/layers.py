@@ -1516,8 +1516,12 @@ class StackPlots:
             when ``kstpkper`` names the timestep outright.
         type : {'hds', 'conc', 'temp', 'rch', 'ks', 'custom'}, default 'hds'
             Which field to read when ``values`` is not given. ``'hds'`` heads,
-            ``'conc'`` GWT concentration, ``'temp'`` GWE temperature. The first
-            three also select the default sectioned hover.
+            ``'conc'`` GWT concentration, ``'temp'`` GWE temperature -- these three
+            also select the default sectioned hover -- ``'rch'`` the simulated
+            recharge rate, and ``'ks'`` the horizontal conductivity ``npf.k``.
+            ``'ks'`` is an INPUT, so it draws on a model that has not been run; the
+            others are results and raise there. Case does not matter; any other
+            value raises, naming this set, rather than drawing node numbers.
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
