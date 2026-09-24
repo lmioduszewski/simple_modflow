@@ -386,6 +386,11 @@ class InterpolatedSurface(Picture):
         all, which reads as "plotting is broken" rather than "some cells have no
         data". Measured on a real stack: 300 valid cells of 582 gave 0 finite
         pixels of 14,400.
+
+        Every interpolator must take its samples from here. ``linearND`` and
+        ``cloughTocher2D`` were missed when this was added (ledger 152) and kept
+        reading the raw arrays: 300 points with 40% NaN left them 292 and 0
+        finite pixels of 1,600, where ``griddata`` kept 1,357.
         """
 
         xs = np.asarray(self.xs, dtype=float)
@@ -435,8 +440,8 @@ class InterpolatedSurface(Picture):
         """interpolated surface using scipy LinearNDInterpolator"""
         if self._linearND_interp is None:
             from scipy.interpolate import LinearNDInterpolator
-            coords = np.column_stack((self.xs, self.ys))
-            interpolator = LinearNDInterpolator(coords, self.zs)
+            coords, values = self._finite_samples
+            interpolator = LinearNDInterpolator(coords, values)
             grid_z = interpolator(self.xy_meshgrid).reshape(self.xy_meshgrid[0].shape)
             self._linearND_interp = grid_z
         return self._linearND_interp
@@ -446,8 +451,8 @@ class InterpolatedSurface(Picture):
         """interpolated surface using scipy CloughTocher2DInterpolator"""
         if self._cloughTocher2D_interp is None:
             from scipy.interpolate import CloughTocher2DInterpolator
-            coords = np.column_stack((self.xs, self.ys))
-            interpolator = CloughTocher2DInterpolator(coords, self.zs)
+            coords, values = self._finite_samples
+            interpolator = CloughTocher2DInterpolator(coords, values)
             grid_z = interpolator(self.xy_meshgrid).reshape(self.xy_meshgrid[0].shape)
             self._cloughTocher2D_interp = grid_z
         return self._cloughTocher2D_interp

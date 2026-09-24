@@ -3860,6 +3860,15 @@ same day, which is the useful part of the result.
        than at either call site.
      - An all-NaN surface now RAISES naming the likely causes. Returning an empty
        picture is what made the original failure so hard to place.
+     - **AMENDED 2026-09-24:** the fix at `_finite_samples` reached two
+       interpolators of four.
+       `interpolator="linearND"` and `"cloughTocher2D"` kept triangulating the
+       raw arrays: 300 scattered points with 40% NaN, at resolution 40, left them
+       292 and 0 finite pixels of 1,600, and an all-NaN input came back as an
+       empty surface instead of the error. Both now draw from `_finite_samples`.
+       `tests/test_raster_nodata.py` holds that setup and prints those two counts
+       if the fix is reverted; it runs each check over all four interpolators,
+       and fails if a fifth is added without joining them.
 
 153. **`surface(backend="vtk")` renders contacts as separate sheets (2026-08-27).**
      `grid(backend="vtk")` fuses layers into one volume, so no contact can be

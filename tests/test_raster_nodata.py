@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import geopandas as gpd
 import numpy as np
 import pytest
+import shapely
 from shapely.geometry import box
 
 import myflopy as mf
@@ -113,6 +114,18 @@ def test_nodata_defaults_to_none():
 
 # --- NaN cells must not poison an interpolated surface ---------------------- #
 
+INTERPOLATORS = ["griddata", "rbf", "linearND", "cloughTocher2D"]
+
+
+def test_the_parametrized_tests_name_every_interpolator():
+    """The first fix reached two interpolators of four, because a fix at
+    `_finite_samples` reaches only what calls it. A fifth must join the list."""
+
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+
+    assert sorted(InterpolatedSurface()._interpolators) == sorted(INTERPOLATORS)
+
+
 def test_a_surface_interpolates_around_cells_with_no_value():
     """Reported as "surfaces are not plotting". They were built and were entirely
     NaN, so plotly drew nothing.
@@ -144,6 +157,39 @@ def test_a_surface_interpolates_around_cells_with_no_value():
     assert finite.mean() > 0.5
 
 
+@pytest.mark.parametrize("interpolator", INTERPOLATORS)
+def test_every_interpolator_interpolates_around_cells_with_no_value(interpolator):
+    """The test above names no interpolator, so it only ever reached `griddata`.
+    `linearND` and `cloughTocher2D` still triangulated the raw arrays, and on
+    these samples left 292 and 0 finite pixels of 1,600: a head surface with
+    inactive cells, or a masked DEM, drawn mostly or entirely empty.
+
+    Inside the hull of the cells that DO have a value no pixel has a reason to be
+    NaN, so that part is exact.
+    """
+
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+
+    rng = np.random.default_rng(0)
+    xs = rng.uniform(0, 100, 300)
+    ys = rng.uniform(0, 100, 300)
+    zs = 50 + 0.1 * xs
+    zs[rng.uniform(size=zs.size) < 0.4] = np.nan       # 40% of cells have no value
+
+    surf = InterpolatedSurface(
+        xs=xs, ys=ys, zs=zs, surf_type="lyr", resolution=40, crs="EPSG:2927",
+        interpolator=interpolator,
+    )
+    assert surf.interpolator == interpolator, "an unknown name falls back to griddata"
+    finite = np.isfinite(np.asarray(surf.surface, float))
+
+    assert finite.mean() > 0.5, f"{finite.sum()} finite pixels of {finite.size}"
+    valued = np.isfinite(zs)
+    hull = shapely.MultiPoint(np.column_stack((xs[valued], ys[valued]))).convex_hull
+    inside = shapely.contains_xy(hull, *surf.xy_meshgrid)
+    assert finite[inside].all(), "a cell with no value left a hole among cells that have one"
+
+
 def test_an_all_nan_surface_says_so_rather_than_drawing_nothing():
     """The degenerate case still has to be an error, not an empty picture."""
 
@@ -154,6 +200,25 @@ def test_an_all_nan_surface_says_so_rather_than_drawing_nothing():
         xs=xs, ys=xs, zs=np.full(25, np.nan), surf_type="lyr",
         resolution=10, crs="EPSG:2927",
     )
+    with pytest.raises(ValueError, match="every cell in this surface is NaN"):
+        _ = surf.surface
+
+
+@pytest.mark.parametrize("interpolator", INTERPOLATORS)
+def test_every_interpolator_says_so_when_every_cell_is_nan(interpolator):
+    """`linearND` and `cloughTocher2D` returned an all-NaN surface here without a
+    word -- the empty picture the error exists to replace. The points are
+    scattered, not in a line: collinear points fail to triangulate and raise with
+    or without the fix, so they never reach the silent case."""
+
+    from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+
+    rng = np.random.default_rng(2)
+    surf = InterpolatedSurface(
+        xs=rng.uniform(0, 10, 25), ys=rng.uniform(0, 10, 25), zs=np.full(25, np.nan),
+        surf_type="lyr", resolution=10, crs="EPSG:2927", interpolator=interpolator,
+    )
+    assert surf.interpolator == interpolator, "an unknown name falls back to griddata"
     with pytest.raises(ValueError, match="every cell in this surface is NaN"):
         _ = surf.surface
 
