@@ -26,7 +26,8 @@ WHAT IT MEASURES
      on `interpolator="linearND"`.
   4. The grid's own footprint has a hole at the L's inner corner -- the cells leave
      a gap there -- and a masked surface shows it. That is the mask being faithful,
-     not a defect of it.
+     not a defect of it. The hole is FloPy's ``tri2vor`` mis-sorting the corner cell:
+     ledger 316, ``voronoi_tiling_gaps.py``.
 """
 
 from __future__ import annotations

@@ -47,7 +47,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Surface reconcile (enforce top-down ordering) | ✅ | `grid/geometry.py` `reconcile_surfaces` |
 | Pinch-out → `idomain = -1` (vertical pass-through) | ✅ | `surfaces.py` `to_disv(pinch_out=...)`, `top_botm_idomain`, `thickness_report` (added 2026-06) |
 | Raster sampling at centroids (reproject + nodata→NaN) | ✅ | `grid/surfaces.py` `get_raster_vals_at_centroids` (fixed 2026-06) |
-| idomain from boundary polygon | N/A | For Voronoi the grid *is* the domain; only interior holes + layer pinch-outs matter |
+| idomain from boundary polygon | N/A | For Voronoi the grid *is* the domain; only interior holes + layer pinch-outs matter. **Not exactly** (ledger 316): FloPy's `tri2vor` mis-sorts the cell at a reflex corner (every 270° corner in the ledger's sweep) and drops a Voronoi vertex lying on the boundary, leaving holes and lost MF6 faces; profile "balanced" meshes the boundary simplified by 2 ft. A boundary in two parts silently keeps cells in ONE, and one with an interior ring does not build (ledger 317) |
 | Area-weighted raster **resampling** (vs point-at-centroid) | ✅ | `grid/surfaces.py` `_area_weighted_sample` — per-cell mean of pixels within each Voronoi polygon; **default** (`method="area"`), centroid fallback for uncovered cells |
 | `GridSpec.resolve` wiring | 🟡 | `grid_spec_resolver.py` resolves `voronoi` + `python`; `GridSpec.structured`/`from_geopackage` **fail fast** (unwired) — use `voronoi`/`python`/`from_object` |
 | LGR parent/child structured grids | ❌ | no `Lgr`/`ModflowLgr` anywhere (niche for an unstructured-first tool) |

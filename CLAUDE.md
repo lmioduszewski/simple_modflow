@@ -1070,6 +1070,15 @@ disagrees with what the stack resolves is refused, naming both shapes.
   `model.myflopy_context` instead of resolving eagerly. **That mode now exists** for the seven
   `.gpkg` forms and for `mf.rch`/`mf.evt` — omit `context=`. Deferred GridSpec therefore composes
   with disv, the list BCs and areal recharge/ET; still not with `mf.uzf/sfr/lak`.
+- **Either way, a `GridSpec.voronoi` grid does not exactly tile its boundary** (ledger 316,
+  open, not repaired). FloPy's `tri2vor` sorts a cell's vertices about their MEAN, which
+  mis-orders the cell AT a reflex corner (every 270° corner in the sweep), and drops a
+  Voronoi vertex lying exactly on a right-hand or top boundary edge. The result: holes,
+  cell area outside the boundary, and faces MF6 never connects (flow -5.12% on the L at
+  `max_area` 10000); `get_grid_edge_cells` returns interior cells beside a hole. Worse
+  (ledger 317), `tri2vor`'s domain is `_polygons[0]` alone: a boundary of two features
+  keeps cells in ONE of them, silently, and one with an interior ring raises `IndexError`.
+  `docs/reproducers/voronoi_tiling_gaps.py` shows each piece; do not assume a grid tiles.
 
 Reference: `examples/mf6/package_first_full_stack.py` (full package-first stack on a Project).
 

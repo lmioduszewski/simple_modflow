@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 315 entries (316 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 317 entries (318 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 317 | A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring doe... | 2026-09-24 |
+| 316 | ``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``,... | 2026-09-24 |
 | 315 | A head surface kept every DRY cell as a sample at -1e30 and erased real heads above 10,000 ft; the head map... | 2026-09-24 |
 | 314 | A 3-D surface was drawn across every concavity of its domain, and the heatmap beside it was upside down | 2026-09-24 |
 | 313 | Transmissivity is written as a whole number with separators: 112,000 ft²/d | 2026-09-24 |
@@ -12966,7 +12968,8 @@ same day, which is the useful part of the result.
       shape; making it a ``Picture`` is a separate change to a ``plot_foo()`` the view layer
       would not add today.
       **A faithful mask shows the grid's own holes:** ``GridSpec.voronoi`` leaves a 77.4 ft²
-      gap in its footprint at the L's inner corner, and the surface is blank there.
+      gap in its footprint at the L's inner corner, and the surface is blank there. The gap
+      is FloPy's ``tri2vor``, and general at reflex corners: ledger 316.
       Reproducer: ``docs/reproducers/surface_domain_mask.py``; tests:
       ``tests/test_surface_domain_mask.py``, where each of fifteen single-piece mutations of
       the fix fails a named test.
@@ -12999,3 +13002,74 @@ same day, which is the useful part of the result.
       Reproducer: ``docs/reproducers/head_surface_sentinels.py``; tests:
       ``tests/test_raster_nodata.py``, where reverting the surface fix fails the five tests
       that read a real MF6 run, by name.
+
+316. **``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``, measured and NOT yet repaired (2026-09-24).**
+      Ledger 314's 77.4 ft² hole at the L's inner corner is the grid, and the grid is
+      FloPy's: ``gdf_vorPolys`` is ``tri2vor``'s ``verts``/``iverts`` verbatim, and flopy's
+      own ``Triangle`` + ``VoronoiGrid`` fails the same way with no myflopy code. flopy
+      ``develop`` has the same code, and a search of flopy's issues finds neither defect.
+      **Mode 1, a cell whose node IS a reflex corner.** ``get_sorted_vertices`` orders a
+      cell's vertices by angle about their MEAN. The corner cell is not convex, so an angular
+      sort is right only from its kernel -- the wedge of 360 - theta at the corner -- and the
+      mean lands beside the node (0.06 ft on the L), either side. On the wrong side the
+      polygon cuts across the notch and dips to the corner: a hole inside the boundary, cell
+      area outside it, and the face to the cell across the hole gone. The same six vertices
+      sorted about a point 0.01 ft inside the wedge give the right cell exactly. On the
+      default path, one corner per grid: **327 of 504 failed -- all 36 at 270 deg, all 144
+      at 300 or more, none of 108 at 210 or less**; the hole a median 14-19% of the corner's
+      own cell, 18 ft² at ``max_area`` 500 to 190 ft² at 20,000. ``min_angle`` 20-34 does not
+      remove it.
+      **Mode 2, a Voronoi vertex exactly ON the boundary** -- a right triangle's
+      circumcentre, its hypotenuse a boundary segment. ``point_in_polygon`` is a half-open
+      ray test that drops it on a right-hand or top edge, and the INTERIOR cell needing it
+      loses a triangle. Dropped in 15 of 504 default-path grids; no convex grid had a gap
+      (0 of 72), where plain flopy left one in 12-13 of 72, 7.0% of a square at worst. Large
+      when it lands: the L at ``max_area`` 10000 loses 4,043 ft² (0.63%) in three cells.
+      **What reads it, on the L.** MF6 connects cells by shared vertex pairs, so the face is
+      gone from the MODEL: at 5000 one face, flow around the L -0.14%; at 10000 seven faces,
+      **flow -5.12%** and 0.58 ft of head on a 10 ft drop, the mode-2 cells beside both CHD
+      edges. ``get_grid_edge_cells`` counts faces against neighbours, so interior cells beside
+      a hole come back as GRID EDGE, 7.7-8.9 ft inside the boundary. A point in a hole reads
+      "outside the grid"; a line or polygon across the corner keeps ~80% of its shares, which
+      ``mf.Spread``'s ``clip`` writes as is. ``cell_coverage`` between two grids of ONE
+      boundary reports 47.6 and 4,018 ft² uncovered; remapped VALUES do not move (ledger
+      300's covered-area denominator). The DISU adjacency loses the same faces.
+      **Not done, deliberately: no library change**, on the user's instruction to report
+      first. The reproducer's rebuild -- each bad cell re-ringed from vertices the grid
+      already has -- shows the defect is repairable: both L grids tile exactly and every
+      missing face returns. A design pass then went further, and its forks are the user's to
+      choose: take each cell from Triangle's OWN mesh (the circumcentres of the node's
+      triangles, walked around it) rather than from qhull's Voronoi of every node, keeping
+      ``tri2vor``'s vertex ids for each cell it got right. A sort about the node alone is not
+      enough at the sharpest corners, where the vertex a cell needs is not among
+      ``tri2vor``'s. **The cost:** ``grid_pin`` hashes each cell's ring IN ORDER, so a
+      repaired grid re-pins though no cell is renumbered, and runs built on the old grids read
+      as another mesh. An upstream report is outward-facing, the user's to send.
+      **Found on the way, not pursued.** A boundary that is not ONE simple polygon is worse
+      -- ledger 317. And not ``tri2vor``: profile "balanced" simplifies the DOMAIN by 2 ft
+      before meshing, so a curved boundary is not the footprint either -- a 904,032 ft²
+      corridor was meshed 3,899 ft² away from itself -- and nothing in ``docs/`` said so.
+      **A trap for the next reference:** ``shapely.voronoi_polygons`` returns a
+      region that is not a Voronoi cell for cocircular nodes; the reproducers build it from
+      bisector half-planes.
+      Reproducers: ``docs/reproducers/voronoi_tiling_gaps.py`` (mechanism, MF6, consumers;
+      15 s) and ``docs/reproducers/voronoi_tiling_sweep.py`` (the rates; 1,266 grids, 2 min).
+      Revisit on the user's call, repair or record, or a flopy release that changes
+      ``get_sorted_vertices`` or the domain test.
+
+317. **A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring does not build (2026-09-24).**
+      FloPy's ``tri2vor`` tests every Voronoi vertex against ``tri._polygons[0]`` ALONE and
+      reads ``_polygons[1..nholes]`` as the holes. A boundary drawn as two features,
+      1,000,000 ft² each, is meshed in both (Triangle: 353 and 372 nodes) and the grid keeps
+      **0 and 372 cells** -- the part that comes first in the unioned boundary survives, the
+      other is dropped cell by cell for having fewer than three vertices left, and nothing
+      warns or logs. With an
+      interior ring (an island, a lake cut out) the build raises ``IndexError``: flopy's
+      ``add_polygon`` hands the ring to ``add_hole``, which wants a POINT, and the ring never
+      becomes a polygon.
+      **Not done, deliberately:** found while measuring ledger 316, and a different repair,
+      designed separately and waiting on the user's call: holes handed to Triangle as ring
+      plus interior point, and cells built for every part. A hole's corners are reflex
+      corners, so ledger 316's mode 1 will apply to them once holes build.
+      Reproducer: ``docs/reproducers/voronoi_tiling_gaps.py``, section 7. Revisit before
+      anyone meshes two aquifer pieces, an island or a cut-out.
