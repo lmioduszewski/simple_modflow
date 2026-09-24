@@ -140,6 +140,15 @@ array is NaN for every layer below 0. What a WRITTEN page cannot do, measured:
 no widgets, no picker, no keyboard, and only the ACTIVE scalar is serialized.
 `tests/test_plot_vocabulary.py` pins the verb set at every scope and fails naming
 the stray verb, so adding one in one place and forgetting another is caught.
+**A `surface` is MASKED to `clip=` or the grid's footprint** (ledger 314). The
+interpolator is not a mask: `griddata` is NaN outside the convex hull of the cell
+centres, which looks like a clip and spans every concavity of a non-convex domain --
+`.show()` drew exactly that while only `plot_heatmap` masked. Draw
+`InterpolatedSurface.clipped_surface`, never `.surface`. One mask rule (pixel centre
+inside, `geometry_mask` on `transform`), and `transform` is registered to
+`xy_meshgrid`'s pixel CENTRES -- it sat half a pixel off, so a saved raster and
+`XSection(interpolate=True)` moved when that was fixed. The rim past the outermost
+centres stays empty (ledger 248).
 **Highlighting cells is `map(select=...)`, on EVERY scope** (ledger 160,
 2026-08-29) -- cell indices, a boolean mask, a registered region name, a vector
 file, or a geometry. It draws a **dissolved-boundary outline** by default, NOT
@@ -418,9 +427,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**3853 passed / 4 skipped**, 2026-09-23): serial (`-n0`) ≈ **6m24s**,
-  measured on an otherwise idle machine (3808/6m31s earlier the same day; the 8 new
-  tests are `test_budget_clocks.py`, 1.1 s, ledger 301). `pytest -n 10` ≈ **2m08s** and the
+- Full suite (**4037 passed / 4 skipped**, 2026-09-24): serial (`-n0`) ≈ **6m29s**, with
+  no other MF6 workload running (3853/6m24s on 2026-09-23; 20 of the 184 new
+  tests are `test_surface_domain_mask.py`, under 1 s, ledger 314 -- the rest landed with
+  ledgers 305-313 without a recount). `pytest -n 10` ≈ **2m08s** and the
   inner loop `pytest -m "not slow"` ≈ 32 s are from 2026-09-19 and were NOT re-measured,
   so do not read the serial/parallel ratio across those two dates.
   **A parallel run competing with another MF6 workload fails intermittently** —

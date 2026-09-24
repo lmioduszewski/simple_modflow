@@ -999,6 +999,10 @@ class LayerBuildResult:
         crs = str(getattr(self.vor, "crs", None))
         xs = np.asarray(self.vor.centroids[0])
         ys = np.asarray(self.vor.centroids[1])
+        # Every contact is masked to the grid's footprint, taken ONCE here: the
+        # interpolator alone fills the convex hull of the cell centres, which
+        # spans every concavity of a domain that is not convex (ledger 314).
+        footprint = self.vor.gdf_vorPolys.union_all()
 
         # Each surface is built by the shared InterpolatedSurface.surface_trace
         # so there is one go.Surface builder across the toolkit; we keep the
@@ -1007,9 +1011,9 @@ class LayerBuildResult:
         for name in names:
             isurf = InterpolatedSurface(
                 xs=xs, ys=ys, zs=np.asarray(self._surface_z(name)),
-                surf_type="lyr", resolution=resolution, crs=crs,
+                surf_type="lyr", resolution=resolution, crs=crs, clip=footprint,
             )
-            grids.append((name, isurf, isurf.surface))
+            grids.append((name, isurf, isurf.clipped_surface))
 
         # Overall elevation span -> colour mode, shared colour range and z-axis.
         zmin = min(float(np.nanmin(zz)) for *_, zz in grids)
@@ -1139,15 +1143,18 @@ class LayerBuildResult:
         # window outside Jupyter, and `.save("sheets.png")` fails with "Nothing
         # to screenshot" in a plain script. A notebook forces it on anyway.
         plotter = pv.Plotter(off_screen=True, window_size=(width, height))
+        # Masked to the grid's footprint like the Plotly sheets, so the two stay
+        # the same numbers (ledger 314).
+        footprint = self.vor.gdf_vorPolys.union_all()
         sheets = []
         for i, name in enumerate(names):
             interp = InterpolatedSurface(
                 xs=xs, ys=ys, zs=np.asarray(self._surface_z(name)),
                 surf_type="lyr", resolution=resolution,
-                crs=str(getattr(self.vor, "crs", None)),
+                crs=str(getattr(self.vor, "crs", None)), clip=footprint,
             )
             gx, gy = interp.xy_meshgrid
-            gz = np.asarray(interp.surface, dtype=float)
+            gz = np.asarray(interp.clipped_surface, dtype=float)
             grid = pv.StructuredGrid(
                 np.asarray(gx, float), np.asarray(gy, float), gz * scale
             )
@@ -2062,9 +2069,13 @@ class StackPlots:
             Radial-basis interpolation instead of linear.
         interpolator : str, optional
             Override the interpolation method by name.
-        clip : Path or geometry, optional
-            Restrict the surface to the cells this region covers. See also
-            ``.clipped_fig()`` on the result.
+        clip : Path, str or (Multi)Polygon, optional
+            Restrict the surface to this region: only the cells it covers are
+            interpolated, and the drawn surface is masked to it. Without one the
+            surface is masked to the grid's own footprint, because the interpolator
+            alone fills the convex hull of the cell centres -- which spans every
+            concavity of a domain that is not convex. ``.clipped_fig(clip=False)`` on
+            the result draws that unmasked interpolation.
         crs : str, optional
             Override the grid's CRS.
         xs, ys, zs : array-like, optional

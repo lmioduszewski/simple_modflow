@@ -60,6 +60,14 @@ and `"interactive"` resolve through one function, `normalize_backend`.
 that is hidden. `animate`'s `backend={"plotly", "png"}` is a different axis — a
 rasteriser over frames, not a second renderer of one subject.
 
+**A height field is masked to its domain, not to its interpolator's reach**
+(ledger 314). `griddata` is NaN outside the convex hull of the points it is given,
+which LOOKS like a clip and spans every concavity of a domain that is not convex —
+`.show()` drew exactly that while only `plot_heatmap` masked.
+`InterpolatedSurface.clipped_surface` is what `.fig`, `surface_trace()` and the
+stack's Plotly and VTK sheets draw: masked to `clip=`, else the grid's footprint.
+Anything new that draws an interpolated surface draws that, never `.surface`.
+
 **A section has two subjects, and `fill=` picks which** (ledger 177, 2026-09-02).
 Without it, `section` answers *what is the head along this line* -- a profile,
 two traces, no geometry. With it, *what does the model look like through here* --

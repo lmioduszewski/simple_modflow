@@ -20,12 +20,13 @@ import plotly.graph_objs as go
 import rasterio
 import shapely as shp
 from pandas import IndexSlice as idxx
+from rasterio.features import geometry_mask
 from rasterio.io import MemoryFile
 from rasterio.mask import mask
 from rasterio.transform import from_origin
 from scipy.interpolate import RBFInterpolator, griddata
 from scipy.spatial import QhullError
-from shapely.geometry import Polygon, mapping
+from shapely.geometry import MultiPolygon, Polygon, mapping
 
 from myflopy import viz as f
 from myflopy._logging import get_logger
@@ -81,7 +82,9 @@ class InterpolatedSurface(Picture):
         :param resolution: defaults to 1000
         :param use_rbf: defaults to False
         :param surf_type: defaults to 'hds', can be 'lyr' or 'hds'. 'lyr' returns just model surfaces
-        :param clip: optional shapely Polygon to clip interpolated surface to
+        :param clip: optional region -- a (Multi)Polygon or a vector file path -- to
+            clip the surface to. Without one, a surface that knows its grid is
+            masked to the grid's footprint (see ``region``).
         """
         self.model = model
         try:
@@ -125,28 +128,39 @@ class InterpolatedSurface(Picture):
         self.colorscale = 'Earth_r'  # reverse earth so blue is low nums
         self._clip = None
         self._clipped_cells = None
+        self._domain = None
 
         self.clip = clip
 
     @property
     def clip(self):
-        """clip is a shapely Polygon or Path to clip interpolated surface to"""
+        """clip is a shapely (Multi)Polygon to clip the interpolated surface to"""
         return self._clip
 
     @clip.setter
     def clip(self, val):
-        """Set the clip region from ``None``, a shapefile/GeoPackage ``Path``, or a Polygon."""
+        """Set the clip region from ``None``, a vector file path, or a (Multi)Polygon.
+
+        Anything else RAISES. A ``str`` path and a ``MultiPolygon`` used to fall
+        through a setter with no branch for them, so the surface came back
+        unclipped with nothing said (ledger 314).
+        """
 
         if val is None:
             self._clip = None
-        elif isinstance(val, Path):
-            clip = read_shp_gpkg(val)
+        elif isinstance(val, (str, Path)):
+            clip = read_shp_gpkg(Path(val))
             assert len(clip) == 1, 'clip must be a single polygon'
             clip = clip.union_all()
-            assert isinstance(clip, shp.geometry.Polygon), 'clip must be a shapely Polygon'
+            assert isinstance(clip, (Polygon, MultiPolygon)), 'clip must be a shapely Polygon'
             self._clip = clip
-        elif isinstance(val, Polygon):
+        elif isinstance(val, (Polygon, MultiPolygon)):
             self._clip = val
+        else:
+            raise TypeError(
+                "clip must be a Polygon, a MultiPolygon or the path of a vector "
+                f"file, not {type(val).__name__}."
+            )
 
 
     @property
@@ -181,6 +195,39 @@ class InterpolatedSurface(Picture):
                 )
             self._clipped_cells = cells
         return self._clipped_cells
+
+    @property
+    def region(self):
+        """What a drawn surface is masked to: ``clip=``, else the grid's footprint.
+
+        ``None`` for a bare point cloud, which has no footprint to mask to.
+
+        The interpolator is NOT a mask. ``griddata`` fills the convex hull of the
+        points it is given and is NaN outside it, so a surface left to it LOOKS
+        clipped while spanning every concavity of a domain that is not convex --
+        and ``.show()`` drew exactly that, while only :meth:`plot_heatmap` masked
+        (ledger 314). The footprint is the union of every cell, active or not,
+        and is computed once.
+        """
+
+        if self.clip:
+            return self.clip
+        if self.vor is None:
+            return None
+        if self._domain is None:
+            self._domain = self.vor.gdf_vorPolys.union_all()
+        return self._domain
+
+    def _required_region(self):
+        """:attr:`region`, or a ``ValueError`` saying there is nothing to clip to."""
+
+        region = self.region
+        if region is None:
+            raise ValueError(
+                "There is nothing to clip to: no clip= was given, and this surface "
+                "has no grid to take a footprint from. Pass clip=, or vor=."
+            )
+        return region
 
     @property
     def interpolator(self):
@@ -261,10 +308,14 @@ class InterpolatedSurface(Picture):
 
         Head surfaces read the selected ``kstpkper``/``layer`` (inactive-cell
         sentinels become NaN); layer surfaces read ``gdf_topbtm``. Cached.
+
+        Values the caller supplied are returned as given, without asking which
+        cells ``clip=`` covers: that question needs a grid, and ran the selector
+        -- and could refuse the clip -- for points that never came from one.
         """
 
-        cells = slice(None) if self.clipped_cells is None else self.clipped_cells
         if self._zs is None:
+            cells = slice(None) if self.clipped_cells is None else self.clipped_cells
             if self.surf_type == 'hds':
                 """zs of the self.hds HeadPlus oject for a given layer at a certain stress-and-time period"""
                 zs = self.hds.all_heads.loc[idxx[self.kstpkper, self.layer, cells], :].values
@@ -403,8 +454,14 @@ class InterpolatedSurface(Picture):
 
     @property
     def transform(self):
-        """
-        Returns an affine transformation matrix for the given surface
+        """The raster's affine transform, registered to :attr:`xy_meshgrid`.
+
+        ``xy_meshgrid`` puts its first and last pixel CENTRES on the edges of the
+        points' extent, and ``from_origin`` takes a pixel's CORNER, so the origin
+        is half a pixel up and to the left of the first point. It sat ON the first
+        point, which put every pixel half a pixel east and south of where the
+        surface draws it -- where a clip was tested, a saved raster was
+        georeferenced and a cross-section sampled (ledger 314).
         """
         xs = self.xs
         ys = self.ys
@@ -414,13 +471,17 @@ class InterpolatedSurface(Picture):
         xres = (xmax - xmin) / (self.resolution - 1)
         yres = (ymax - ymin) / (self.resolution - 1)
 
-        return from_origin(xmin, ymax, xres, yres)
+        return from_origin(xmin - xres / 2, ymax + yres / 2, xres, yres)
 
     @property
     def memfile(self):
-        """An in-memory single-band GeoTIFF (:class:`MemoryFile`) of the interpolated surface."""
+        """An in-memory single-band GeoTIFF (:class:`MemoryFile`) of the interpolated surface.
 
-        grid_z = self.surface
+        Unmasked -- NaN only outside the convex hull of the points -- and it
+        declares NaN as its no-data value, so a clip of it fills with NaN.
+        """
+
+        grid_z = np.asarray(self.surface, dtype=float)
         try:
             crs = self.vor.crs
         except AttributeError:
@@ -436,7 +497,8 @@ class InterpolatedSurface(Picture):
                 count=1,
                 dtype=grid_z.dtype,
                 crs=crs,
-                transform=self.transform) as dst:
+                transform=self.transform,
+                nodata=np.nan) as dst:
             dst.write(grid_z, 1)
 
         return memfile
@@ -495,26 +557,86 @@ class InterpolatedSurface(Picture):
         elif self.use_rbf is True:
             return self.rbf_interp
 
+    @property
+    def clipped_surface(self):
+        """:attr:`surface` with every pixel outside :attr:`region` set to NaN -- what is drawn.
+
+        The same values as :attr:`surface` when there is no region.
+        """
+
+        region = self.region
+        if region is None:
+            return np.array(self.surface, dtype=float)
+        return self._masked(self.surface, region)
+
+    def _inside(self, region) -> np.ndarray:
+        """``(resolution, resolution)`` booleans: True where a pixel's CENTRE is in ``region``.
+
+        The test ``rasterio.mask.mask`` applies to :attr:`memfile` --
+        ``geometry_mask`` on :attr:`transform`, ``all_touched=False`` -- so the
+        drawn surface, the heatmap and a saved raster keep the same pixels.
+        """
+
+        return geometry_mask(
+            [mapping(region)],
+            out_shape=(self.resolution, self.resolution),
+            transform=self.transform,
+            invert=True,
+        )
+
+    def _masked(self, surface, region):
+        """A float COPY of ``surface`` with every pixel outside ``region`` set to NaN.
+
+        A copy, because :attr:`surface` is the cached interpolation and masking it
+        in place would mask every later read of it. Masking that leaves nothing to
+        draw RAISES: the points and the region do not meet, which is a location or
+        a CRS, and an empty picture says neither.
+        """
+
+        surface = np.array(surface, dtype=float)
+        shape = (self.resolution, self.resolution)
+        if surface.shape != shape:
+            raise ValueError(
+                f"surface= must be on this surface's own pixel grid, shape {shape}; "
+                f"got {surface.shape}."
+            )
+        had_values = bool(np.isfinite(surface).any())
+        surface[~self._inside(region)] = np.nan
+        if had_values and not np.isfinite(surface).any():
+            points = (np.nanmin(self.xs), np.nanmin(self.ys), np.nanmax(self.xs), np.nanmax(self.ys))
+            span = ", ".join(f"{v:,.1f}" for v in points)
+            where = ", ".join(f"{v:,.1f}" for v in region.bounds)
+            raise ValueError(
+                "Masking this surface to its region leaves nothing to draw: no "
+                f"interpolated pixel falls inside it. The points span ({span}) and "
+                f"the region ({where}); when those do not overlap it is almost "
+                "always a location or a CRS."
+            )
+        return surface
+
     def clip_raster_with_polygon(self, polygon: Polygon = None, buffer=None):
         """
         Clips the in-memory raster with a vector polygon and returns the clipped raster data.
 
+        ``polygon`` defaults to :attr:`region` -- ``clip=``, else the grid's
+        footprint. Pixels outside it come back NaN. They came back 0, a value a
+        head or an elevation can really take, and callers then blanked every real
+        0 along with them (ledger 314).
+
         Parameters:
-        memfile (MemoryFile): In-memory GeoTIFF raster.
         polygon (shapely.geometry.Polygon): Polygon to use for clipping.
+        buffer (float): Optional distance to grow (or, negative, shrink) it by.
 
         Returns:
-        tuple: Clipped raster data array and the updated transform.
+        tuple: Clipped raster data array, its transform, and the raster's metadata.
         """
-        if self.clip and polygon is None:
-            polygon = self.clip
-        polygon = self.vor.gdf_vorPolys.union_all() if polygon is None else polygon
+        polygon = self._required_region() if polygon is None else polygon
         polygon = polygon.buffer(buffer) if buffer else polygon
         with self.memfile.open() as dataset:
             shapes = [mapping(polygon)]
 
             # Clip the raster with the polygon
-            clipped_image, clipped_transform = mask(dataset, shapes, crop=False)
+            clipped_image, clipped_transform = mask(dataset, shapes, crop=False, nodata=np.nan)
 
             return clipped_image, clipped_transform, dataset.meta
 
@@ -536,46 +658,69 @@ class InterpolatedSurface(Picture):
         meta (dict): Metadata of the original raster dataset.
         output_tif (str): Path to the output GeoTIFF file.
 
+        Pass all three of ``clipped_image``, ``clipped_transform`` and ``meta``
+        (what :meth:`clip_raster_with_polygon` returns), or none of them to clip
+        here. The written file declares NaN as no-data, and a real 0 is written
+        as 0 -- it was written as NaN, with the clipped-away pixels.
+
         Returns:
         None
         """
 
         polygon_clip = self.clip if polygon_clip is None else polygon_clip
-        if not any([clipped_image, clipped_transform, meta]):
+        pieces = (clipped_image, clipped_transform, meta)
+        if all(piece is None for piece in pieces):
             clipped_image, clipped_transform, meta = self.clip_raster_with_polygon(polygon=polygon_clip, buffer=buffer)
-            clip = pd.DataFrame(clipped_image[0]).replace(0.0, np.nan)
-            clipped_image = clip.to_numpy().reshape((1, self.resolution, self.resolution))
+        elif any(piece is None for piece in pieces):
+            raise ValueError(
+                "Pass all three of clipped_image, clipped_transform and meta, or "
+                "none of them."
+            )
 
-        # Update the metadata with the new transform and dimensions
-        meta.update({
+        # Update the metadata with the new transform and dimensions -- a copy, so
+        # the caller's own `meta` is left as it was.
+        meta = {
+            **meta,
             "driver": "GTiff",
             "height": clipped_image.shape[1],
             "width": clipped_image.shape[2],
             "transform": clipped_transform
-        })
+        }
 
         # Write the clipped raster to a GeoTIFF file
         with rasterio.open(output_tif, "w", **meta) as dst:
             dst.write(clipped_image)
 
     def plot_heatmap(self):
-        """Show the clipped interpolated surface as a Plotly heatmap."""
+        """Show the surface as a Plotly heatmap, north up, masked like :attr:`fig`.
 
-        clipped_image = self.clip_raster_with_polygon(polygon=self.clip)[0]
+        Drawn on the surface's own x/y at one unit to one unit. Row 0 of the
+        raster is its NORTH edge, and a heatmap given no ``y`` draws row 0 at the
+        BOTTOM, so this was mirrored north-south; the clipped-away pixels were
+        drawn as the value 0, which also dragged the colour scale down to 0
+        (ledger 314).
+        """
+
+        grid_x, grid_y = self.xy_meshgrid
+        z = self.clipped_surface
         fig = f.Fig()
-        fig.add_heatmap(z=clipped_image[0])
+        # The raster's rows run north to south; hand plotly ascending y, and the
+        # rows reversed to match, so north is up.
+        fig.add_heatmap(x=grid_x[0], y=grid_y[::-1, 0], z=z[::-1])
+        fig.update_yaxes(scaleanchor="x", scaleratio=1)
         fig.show()
 
 
     def surface_trace(self, *, surface=None, colorscale=None, **kwargs):
         """Return a Plotly ``go.Surface`` trace for this interpolated surface.
 
-        The single builder shared by :meth:`plot` and higher-level multi-surface
-        views (e.g. ``myflopy.layers.LayerBuildResult.surface_3d``). ``surface``
-        overrides the interpolated z-array (defaults to :attr:`surface`); any
-        extra keyword arguments pass straight through to ``go.Surface``.
+        The single builder shared by :attr:`fig` and higher-level multi-surface
+        views (e.g. ``myflopy.layers.LayerBuildResult._surface_fig``). ``surface``
+        overrides the z-array, which defaults to :attr:`clipped_surface` -- what
+        :attr:`fig` draws; any extra keyword arguments pass straight through to
+        ``go.Surface``.
         """
-        surface = self.surface if surface is None else surface
+        surface = self.clipped_surface if surface is None else surface
         xg, yg = self.xy_meshgrid
         return go.Surface(
             x=xg,
@@ -587,14 +732,19 @@ class InterpolatedSurface(Picture):
 
     @property
     def fig(self):
-        """The 3-D surface figure.
+        """The 3-D surface figure, masked to :attr:`region`.
+
+        That is ``clip=`` when given, else the grid's footprint; a bare point cloud
+        has neither and is drawn as interpolated. It was never masked at all: the
+        edge it showed was the convex hull of the points, which spans every
+        concavity of a domain that is not convex (ledger 314).
 
         Replaces a `plot()` that built a BARE `go.Figure` and immediately called
         `.show(renderer="browser")` -- so it returned None, could not be modified
         or embedded, forced a browser window, and silently dropped the house
         template, `scrollZoom` and `dragmode="pan"` that every other myflopy
-        figure carries. Use `.clipped_fig()` for the clipped variant -- that one
-        is a METHOD precisely because it takes arguments, so it rebuilds.
+        figure carries. Use `.clipped_fig()` for a variant -- that one is a METHOD
+        precisely because it takes arguments, so it rebuilds.
 
         Assembled once and cached: `Picture` requires repeated access to return
         the SAME figure, so `surface.fig.update_layout(...)` then
@@ -602,17 +752,26 @@ class InterpolatedSurface(Picture):
         """
 
         if not self._assembled:
-            self._fig = self.clipped_fig(clip=False)
+            self._fig = self.clipped_fig()
             self._assembled = True
         return self._fig
 
-    def clipped_fig(self, *, surface=None, clip: bool = False):
-        """The surface figure, optionally clipped to the configured polygon."""
+    def clipped_fig(self, *, surface=None, clip: bool | None = None):
+        """The surface figure, masked to :attr:`region` -- ``clip=`` or the grid's footprint.
 
+        ``clip=None`` masks whenever there is a region, which is what :attr:`fig`
+        draws. ``clip=False`` draws the bare interpolation, whose only edge is the
+        convex hull of the points. ``clip=True`` insists, and raises when there is
+        nothing to mask to. ``surface=`` draws another array on this surface's
+        pixel grid, masked the same way -- it used to be discarded whenever
+        ``clip=True``.
+        """
+
+        surface = self.surface if surface is None else surface
+        if clip is None:
+            clip = self.region is not None
         if clip:
-            surface = self.clip_raster_with_polygon()[0].squeeze()
-            surface = surface.astype(float)
-            surface[surface == 0] = np.nan
+            surface = self._masked(surface, self._required_region())
 
         figure = f.Fig()
         figure.add_trace(self.surface_trace(surface=surface))

@@ -1128,9 +1128,13 @@ def surface(
         Radial-basis interpolation instead of linear.
     interpolator : str, optional
         Override the interpolation method by name.
-    clip : Path or geometry, optional
-        Restrict the surface to the cells this region covers. See also
-        ``.clipped_fig()`` on the result.
+    clip : Path, str or (Multi)Polygon, optional
+        Restrict the surface to this region: only the cells it covers are
+        interpolated, and the drawn surface is masked to it. Without one the
+        surface is masked to the grid's own footprint, because the interpolator
+        alone fills the convex hull of the cell centres -- which spans every
+        concavity of a domain that is not convex. ``.clipped_fig(clip=False)`` on
+        the result draws that unmasked interpolation.
     crs : str, optional
         Override the grid's CRS.
     xs, ys, zs : array-like, optional
@@ -2049,9 +2053,13 @@ class ModelPlots:
             Radial-basis interpolation instead of linear.
         interpolator : str, optional
             Override the interpolation method by name.
-        clip : Path or geometry, optional
-            Restrict the surface to the cells this region covers. See also
-            ``.clipped_fig()`` on the result.
+        clip : Path, str or (Multi)Polygon, optional
+            Restrict the surface to this region: only the cells it covers are
+            interpolated, and the drawn surface is masked to it. Without one the
+            surface is masked to the grid's own footprint, because the interpolator
+            alone fills the convex hull of the cell centres -- which spans every
+            concavity of a domain that is not convex. ``.clipped_fig(clip=False)`` on
+            the result draws that unmasked interpolation.
         crs : str, optional
             Override the grid's CRS.
         xs, ys, zs : array-like, optional

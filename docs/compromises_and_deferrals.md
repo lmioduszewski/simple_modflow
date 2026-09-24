@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 313 entries (314 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 314 entries (315 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 314 | A 3-D surface was drawn across every concavity of its domain, and the heatmap beside it was upside down | 2026-09-24 |
 | 313 | Transmissivity is written as a whole number with separators: 112,000 ft²/d | 2026-09-24 |
 | 312 | The same review, for the areas of interest: who a model's project is | 2026-09-24 |
 | 311 | An adversarial review of 305-310: the map defects the tests certified rather than checked | 2026-09-24 |
@@ -12912,3 +12913,50 @@ same day, which is the useful part of the result.
       **Not done:** the noun tables (``get()``/``summary()``) stay numeric -- a formatted
       string there would break arithmetic -- and the static animation still draws no
       colorbar (ledger 306).
+
+314. **A 3-D surface was drawn across every concavity of its domain, and the heatmap beside it was upside down (2026-09-24).**
+      Reported as ``InterpolatedSurface(xs, ys, zs, vor).show()`` looking "clipped to a
+      convex hull but not the actual domain" while ``plot_heatmap()`` was clipped.
+      **Nothing masked ``.fig``** -- it was ``clipped_fig(clip=False)`` -- so its edge was
+      ``griddata``'s: NaN outside the convex hull of the points, which spans every
+      concavity of a domain that is not convex. On an L, 15,406 of 72,141 drawn pixels
+      (21.4%) lay outside the model.
+      **``.fig``, ``surface_trace()`` and ``stack.plot.surface`` (both backends) now draw
+      ``clipped_surface``**: masked to ``clip=``, else the grid's FOOTPRINT; a bare point
+      cloud has neither and is drawn as interpolated. ``clipped_fig(clip=)`` defaults to
+      ``None`` (mask when there is a region); ``clip=False`` is the spelling for the old
+      picture, and ``clip=True`` with no region raises. **One mask rule** -- pixel centre
+      inside, ``geometry_mask`` on ``transform``, which is what ``rasterio.mask.mask``
+      applies -- so the figure, the heatmap and a saved raster keep the same pixels, and a
+      test holds them equal.
+      **The heatmap's clip had three defects of its own.** ``transform`` put a pixel CORNER
+      on the first cell centre, where ``xy_meshgrid`` puts a pixel CENTRE, so the clip was
+      tested half a pixel east and south of what is drawn (177 pixels wrong on the L). A
+      saved GeoTIFF and ``XSection(interpolate=True)``'s samples sat there too, so BOTH
+      MOVE by half a pixel now -- a correction, but a change in their numbers. The clip
+      filled with 0 and ``clipped_fig``/``save_raster`` then turned every 0 into NaN
+      (38,004 real zeros erased on a linearND field); the fill is NaN and the in-memory
+      raster declares NaN no-data. And ``plot_heatmap`` gave plotly no ``y``, so row 0 --
+      the NORTH edge -- was drawn at the bottom. It is drawn on the model's x/y now, north
+      up, at one unit to one unit (a judgment call: a map in real coordinates that
+      stretches is still wrong), with the outside blank rather than the value 0 that
+      dragged its colour scale down.
+      **``clip=`` now reaches the drawn surface, and a ``str`` path or a ``MultiPolygon`` is
+      no longer dropped** by a setter that had no branch for them; any other type raises.
+      Supplied ``zs`` no longer resolve the clip's cells first -- that needs a grid, which
+      the stack's ``clip=`` comes without, and it refused a point cloud that never came
+      from one. **A mask that leaves nothing to draw RAISES**, naming both extents: points
+      and a region that do not meet are a location or a CRS, and an empty scene says neither.
+      **Not done, deliberately.** The RIM: up to half a cell inside the boundary, past the
+      outermost centres, there is no interpolated value (859 pixels on the L); masking
+      removes overshoot, not this, and filling it is extrapolation -- ledger 248's call. The
+      footprint is every cell, ACTIVE OR NOT, as ``plot_heatmap`` always used, so a head
+      surface still spans an inactive region inside it. ``memfile`` (what ``XSection``
+      samples) stays unmasked. ``plot_heatmap`` still shows and returns ``None``, the pre-8.1
+      shape; making it a ``Picture`` is a separate change to a ``plot_foo()`` the view layer
+      would not add today.
+      **A faithful mask shows the grid's own holes:** ``GridSpec.voronoi`` leaves a 77.4 ft²
+      gap in its footprint at the L's inner corner, and the surface is blank there.
+      Reproducer: ``docs/reproducers/surface_domain_mask.py``; tests:
+      ``tests/test_surface_domain_mask.py``, where each of fifteen single-piece mutations of
+      the fix fails a named test.
