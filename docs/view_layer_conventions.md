@@ -74,10 +74,13 @@ near either, so the test is the magnitude: `headsplus._is_sentinel`, which
 `get()`, `array()`, `to_xugrid()` and the head surface share. A cutoff on one side
 keeps the other. The surface cut at `> 10_000`, which kept a dry cell as a sample
 (a crater to -1e30 under every interpolator) and erased real heads above 10,000 ft.
-Anything new that reads the dependent-variable table masks through that helper.
-Two readers still let -1e30 through, measured and NOT fixed: the head map
-(`choros.py` blanks only `== 1e30`) and `hds.section()` without `interpolator=`,
-which masks nothing.
+Anything new that reads the dependent-variable table masks through that helper; a
+map reads it through `Choro._layer_field`. The map and the section each tested one
+sign or none. A dry cell then set the colour range of every map to -1e30, contours
+drew nothing (levels from -1e30), and a section drew points 1e30 ft away. **A
+cell with no head draws blank, with one exception, which was the user's call:** on
+a mounding map a DRY cell reads 0, because it has no water above the datum, while an
+inactive cell stays blank.
 
 **A section has two subjects, and `fill=` picks which** (ledger 177, 2026-09-02).
 Without it, `section` answers *what is the head along this line* -- a profile,

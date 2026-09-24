@@ -121,6 +121,65 @@ def _triangulate(tmp_path_factory, tag: str, *, max_area: float):
 
 
 @pytest.fixture(scope="session")
+def sentinel_run(tmp_path_factory):
+    """One real MF6 run holding every kind of cell a head view must tell apart.
+
+    One layer, non-Newton, steady, on a real ``GridSpec.voronoi`` grid (600 ft
+    square, 92 cells). CHD holds 9,990 ft on the west edge and 10,010 ft on the
+    east, so real heads sit on BOTH sides of 10,000. The north-east corner's
+    bottom is above every head, so MF6 writes its cells DRY (-1e30), and an
+    interior block at idomain 0 comes back INACTIVE (+1e30). What MF6 writes is
+    asserted by the tests themselves, not assumed here (ledger 315).
+
+    Every test that takes it runs MF6, so ``pytest_collection_modifyitems`` marks
+    it ``slow``, as it does for ``canonical_run``.
+    """
+
+    import warnings
+
+    import geopandas as gpd
+    import numpy as np
+    from shapely.geometry import box
+
+    import myflopy as mf
+
+    root = tmp_path_factory.mktemp("sentinels")
+    boundary = root / "boundary.gpkg"
+    gpd.GeoDataFrame({"n": ["d"]}, geometry=[box(0, 0, 600, 600)], crs=2927).to_file(boundary)
+    vor = mf.GridSpec.voronoi(
+        boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=12_000.0
+    ).resolve(workspace=root / "grid")
+    x = np.asarray(vor.centroids_x, dtype=float)
+    y = np.asarray(vor.centroids_y, dtype=float)
+    raised = (x > 400) & (y > 400)
+    botm = np.where(raised, 10_050.0, 9_900.0)
+    idomain = np.where((x > 225) & (x < 375) & (y > 225) & (y < 375), 0, 1)
+
+    edges = vor.gdf_vorPolys.geometry.bounds
+    chd = [[(0, int(c)), 9_990.0] for c in np.flatnonzero(edges.minx <= 1e-6)]
+    chd += [[(0, int(c)), 10_010.0] for c in np.flatnonzero(edges.maxx >= 600 - 1e-6)
+            if not raised[c]]                   # MF6 refuses a CHD below its cell's bottom
+    props = vor.get_disv_gridprops()
+    model = mf.gwf("m", grid=vor, packages=[
+        mf.disv(nlay=1, ncpl=props["ncpl"], nvert=len(props["vertices"]),
+                vertices=props["vertices"], cell2d=props["cell2d"],
+                top=10_100.0, botm=[botm], idomain=[idomain]),
+        mf.npf(k=10.0, icelltype=1), mf.ic(strt=10_000.0),
+        mf.chd(stress_period_data={0: chd}),
+        mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
+    ])
+    simulation = mf.simulation(model, name="s", packages=[
+        mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["m"])])
+    with warnings.catch_warnings():
+        # A built grid object cannot be frozen into the run's snapshot. This run
+        # is never reopened, so that is not what these tests are about.
+        warnings.filterwarnings("ignore", "Run 'r' built but its frozen snapshot", UserWarning)
+        run = mf.Project(root / "p", name="p").run("r", simulation)
+    assert run.success, "\n".join(run.report[-20:])
+    return run.model()
+
+
+@pytest.fixture(scope="session")
 def canonical_config():
     """Return the session's canonical-model profile (default: testing)."""
 
@@ -195,8 +254,9 @@ def canonical_run_fresh(tmp_path, canonical_config):
 _SLOW_MODULES: set[str] = set()
 
 # Individual heavy tests living in otherwise-fast modules. Any test using the
-# ``canonical_run`` fixture is also marked automatically (see below), so this
-# list only needs the heavy tests that build/run a model *without* that fixture.
+# ``canonical_run`` or ``sentinel_run`` fixture is also marked automatically (see
+# below), so this list only needs the heavy tests that build/run a model
+# *without* one of them.
 _SLOW_TESTS = {
     # test_parallel_model.py -- partition/split runs (the rest are <1s units)
     "test_canonical_model_prepares_contiguous_partitions_across_representative_part_counts",
@@ -233,9 +293,6 @@ _SLOW_TESTS = {
     # test_layers.py -- flopy VTK -> pyvista export (heavy)
     "test_the_3d_grid_is_a_scene_that_writes_nothing_by_itself",
     "test_the_3d_grid_shows_a_subset_of_layers",
-    # test_raster_nodata.py -- one module-scoped MF6 run that dries a cell
-    "test_a_head_surface_blanks_dry_and_inactive_cells_and_keeps_every_real_head",
-    "test_every_interpolator_keeps_a_head_surface_inside_the_real_heads",
 }
 
 
@@ -261,6 +318,7 @@ def pytest_collection_modifyitems(config, items):
             or item.originalname in _SLOW_TESTS
             or "canonical_run" in item.fixturenames
             or "canonical_run_fresh" in item.fixturenames
+            or "sentinel_run" in item.fixturenames
         ):
             item.add_marker(slow)
 

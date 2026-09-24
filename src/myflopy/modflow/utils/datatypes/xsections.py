@@ -18,6 +18,7 @@ from shapely.geometry import LineString
 from myflopy import viz as f
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.utils.animations import Animation
 from myflopy.viz import Fig, Picture
 
@@ -520,10 +521,13 @@ class XSection(Picture):
             xs = self.xs
             ys = [self.all_heads.loc[idxx[self.kstpkper, lyr, xs.index.to_list()]] for lyr in self.layer]
             ys_layers = []
-            # get head elevations for each layer for each overlapping cell
+            # get head elevations for each layer for each overlapping cell. MF6's
+            # no-value sentinels -- +1e30 inactive, -1e30 DRY -- are gaps in the
+            # profile, not points 1e30 ft away (ledger 315).
             for y_lyr in ys:
-                ylist = [y[0] for y in y_lyr.values]
-                ys_layers.append(ylist)
+                heads = np.asarray(y_lyr.to_numpy(), dtype=float)[:, 0]
+                heads[_is_sentinel(heads)] = np.nan
+                ys_layers.append(heads.tolist())
             # return distance along xsection line for each cell centroid and head of each cell
             return xs.values, ys_layers
         else:

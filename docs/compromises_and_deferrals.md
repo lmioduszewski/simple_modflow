@@ -33,12 +33,13 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 317 entries (318 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 317 entries (319 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
 | 317 | A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring doe... | 2026-09-24 |
 | 316 | ``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``,... | 2026-09-24 |
+| 315 | ~~A head surface kept every DRY cell as a sample at -1e30 and erased real heads above 10,000 ft; the head map...~~ | 2026-09-24 |
 | 315 | A head surface kept every DRY cell as a sample at -1e30 and erased real heads above 10,000 ft; the head map... | 2026-09-24 |
 | 314 | A 3-D surface was drawn across every concavity of its domain, and the heatmap beside it was upside down | 2026-09-24 |
 | 313 | Transmissivity is written as a whole number with separators: 112,000 ft²/d | 2026-09-24 |
@@ -13073,3 +13074,38 @@ same day, which is the useful part of the result.
       corners, so ledger 316's mode 1 will apply to them once holes build.
       Reproducer: ``docs/reproducers/voronoi_tiling_gaps.py``, section 7. Revisit before
       anyone meshes two aquifer pieces, an island or a cut-out.
+
+315. ~~**A head surface kept every DRY cell as a sample at -1e30 and erased real heads above 10,000 ft; the head map and the plain section still keep -1e30 (2026-09-24).**~~
+      **RESOLVED 2026-09-24 for the map and the section**, in the commit after 379d27f.
+      The rule and its one helper stand. What is undone is the deferral: every read of
+      the head table in ``choros.py`` now goes through ``Choro._layer_field``, masked by
+      ``headsplus._is_sentinel``, and ``XSection.xsect`` masks the same way.
+      **The deferral was wider than recorded.** Measured on one run with 25 dry and 4
+      inactive cells: the colour range of the map, the static map, ``mosaic`` and
+      ``animate`` all ran from -1e30. ``contours=True`` and ``contours="heads"`` drew
+      NOTHING, because levels from -1e30 in steps of 10 hit numpy's "Maximum allowed size
+      exceeded", which was swallowed at DEBUG. The mounding hover said 1e30 at an inactive
+      cell, because the map computed mounding a second time with its own mask. Depth
+      below ground drew ±1e30, and the plain section drew both kinds at ±1e30.
+      **Two calls were the user's.** On the mounding map a DRY cell reads 0: it has no
+      water above the datum, like any cell whose head sits below it. An inactive cell is
+      blank. On the depth-below-ground map a dry cell is blank, not the depth to its
+      bottom, which would be a lower bound drawn as a value. The generated docs had
+      both flags wrong: ``bgs`` "draws the basemap", which it never did (it maps head
+      minus the model top), and ``show_mounding`` is "head-above-initial", which it is
+      not (it is head above the layer bottom). They now say what each flag does, in all
+      five places they are spliced.
+      **The import layers moved.** ``choros`` now imports ``headsplus``, so it goes from
+      layer 2 to 3, and the seven modules that import it move up one
+      (``docs/import_layering.md``). The rule stays in the reader that owns it, rather
+      than moving to layer 0 to spare the map a layer.
+      **Not done.** ``cross_section_plotting._resolve_head_data`` still reads raw heads,
+      but flopy's ``plot_surface`` draws no segment at a sentinel (measured: none of the
+      drawn head segments at ±1e30), so nothing reaches the picture.
+      ``hds.section(fill=...)`` silently draws a profile: the noun forwards ``fill=`` to
+      ``XSection``, which keeps it for a surface it never builds without
+      ``interpolator=``. That is not a sentinel defect, so it is left for its own change.
+      Reproducer: section 5 of ``docs/reproducers/head_surface_sentinels.py``; tests:
+      ``tests/test_dry_and_inactive_cells.py``, on the ``sentinel_run`` fixture, which
+      moved to conftest and marks its tests slow. Reverting the fix fails all seven by
+      name. Undoing either of the user's calls fails the mounding test alone.

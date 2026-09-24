@@ -11,7 +11,6 @@ capped to it down and collapsed all three layers to `min_sep`.
 
 from __future__ import annotations
 
-import warnings
 from types import SimpleNamespace
 
 import geopandas as gpd
@@ -242,54 +241,8 @@ def test_a_surface_with_no_nans_is_unchanged():
 
 
 # --- MF6's no-value sentinels must not reach a head surface ------------------ #
-
-
-@pytest.fixture(scope="module")
-def sentinel_run(tmp_path_factory):
-    """One real MF6 run holding the three things a head surface must tell apart.
-
-    One layer, non-Newton, steady, on a real ``GridSpec.voronoi`` grid (600 ft
-    square). CHD holds 9,990 ft on the west edge and 10,010 ft on the east, so
-    real heads sit on BOTH sides of 10,000. The north-east corner's bottom is
-    above every head, so MF6 writes its cells DRY (-1e30), and an interior block
-    at idomain 0 comes back INACTIVE (+1e30). What MF6 writes is asserted by the
-    tests themselves, not assumed here.
-    """
-
-    root = tmp_path_factory.mktemp("sentinels")
-    boundary = root / "boundary.gpkg"
-    gpd.GeoDataFrame({"n": ["d"]}, geometry=[box(0, 0, 600, 600)], crs=2927).to_file(boundary)
-    vor = mf.GridSpec.voronoi(
-        boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=12_000.0
-    ).resolve(workspace=root / "grid")
-    x = np.asarray(vor.centroids_x, dtype=float)
-    y = np.asarray(vor.centroids_y, dtype=float)
-    raised = (x > 400) & (y > 400)
-    botm = np.where(raised, 10_050.0, 9_900.0)
-    idomain = np.where((x > 225) & (x < 375) & (y > 225) & (y < 375), 0, 1)
-
-    edges = vor.gdf_vorPolys.geometry.bounds
-    chd = [[(0, int(c)), 9_990.0] for c in np.flatnonzero(edges.minx <= 1e-6)]
-    chd += [[(0, int(c)), 10_010.0] for c in np.flatnonzero(edges.maxx >= 600 - 1e-6)
-            if not raised[c]]                   # MF6 refuses a CHD below its cell's bottom
-    props = vor.get_disv_gridprops()
-    model = mf.gwf("m", grid=vor, packages=[
-        mf.disv(nlay=1, ncpl=props["ncpl"], nvert=len(props["vertices"]),
-                vertices=props["vertices"], cell2d=props["cell2d"],
-                top=10_100.0, botm=[botm], idomain=[idomain]),
-        mf.npf(k=10.0, icelltype=1), mf.ic(strt=10_000.0),
-        mf.chd(stress_period_data={0: chd}),
-        mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
-    ])
-    simulation = mf.simulation(model, name="s", packages=[
-        mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["m"])])
-    with warnings.catch_warnings():
-        # A built grid object cannot be frozen into the run's snapshot. This run
-        # is never reopened, so that is not what these tests are about.
-        warnings.filterwarnings("ignore", "Run 'r' built but its frozen snapshot", UserWarning)
-        run = mf.Project(root / "p", name="p").run("r", simulation)
-    assert run.success, "\n".join(run.report[-20:])
-    return run.model()
+# `sentinel_run` (tests/conftest.py) is one real MF6 run with a DRY patch, an
+# idomain-0 block and heads on both sides of 10,000 ft.
 
 
 def test_a_head_surface_blanks_dry_and_inactive_cells_and_keeps_every_real_head(

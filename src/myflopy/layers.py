@@ -1632,7 +1632,9 @@ class StackPlots:
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         bgs : bool, default False
-            Draw the basemap beneath a semi-transparent cell layer.
+            Map depth below ground: each cell's head minus the model top, negative
+            below it. Blank where the layer has no head, dry or inactive (ledger 315).
+            ``show_mounding`` takes precedence.
         zoom : int, default 13
             Initial map zoom. Ignored when ``fit_bounds`` is True.
         fit_bounds : bool, default True
@@ -1669,7 +1671,9 @@ class StackPlots:
             whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
             because forcing it on a grid without them raises.
         show_mounding : bool, default False
-            Add head-above-initial (mounding) to the hover.
+            Map mounding instead of head: each cell's head above its layer's bottom
+            (above the model top with ``layer=-1``), clipped at 0, and add it to the
+            hover. A DRY cell reads 0 and an inactive one is blank (ledger 315).
         hover_heads : bool, default True
             Include heads in the legacy flat hover.
         hover_ks : bool, default False

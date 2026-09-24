@@ -122,7 +122,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.prt_maps` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.simulation.indexing`
 - `myflopy.modflow.usg.model` *(deferred imports: 5)*
-- `myflopy.modflow.utils.datatypes.choros` *(deferred imports: 1)*
 - `myflopy.project.bundle`
 - `myflopy.project.freeze` *(deferred imports: 2)*
 - `myflopy.surfaces` *(deferred imports: 4)*
@@ -132,7 +131,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.geopackage`
 - `myflopy.modflow.mf6.budget_plotting`
 - `myflopy.modflow.mf6.grid.interpolated_surface`
-- `myflopy.modflow.mf6.grid.plotting` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.lakes` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.mvr`
 - `myflopy.modflow.mf6.observations.drn`
@@ -147,36 +145,38 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.simulation.regions`
 - `myflopy.modflow.mf6.uzf`
 - `myflopy.modflow.usg.reader` *(deferred imports: 1)*
-- `myflopy.modflow.utils.inputs`
+- `myflopy.modflow.utils.datatypes.choros` *(deferred imports: 1)*
 
 ## Layer 4
 
 - `myflopy.modflow.mf6.budget` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.evapotranspiration`
-- `myflopy.modflow.mf6.grid.voronoi` *(deferred imports: 4)*
+- `myflopy.modflow.mf6.grid.plotting` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.mfsimbase`
 - `myflopy.modflow.mf6.observations.conc`
 - `myflopy.modflow.mf6.package_surface_water` *(deferred imports: 1)*
-- `myflopy.modflow.mf6.pest.ies`
 - `myflopy.modflow.mf6.pest.pilot_points`
 - `myflopy.modflow.usg`
 - `myflopy.modflow.utils.datatypes.xsections` *(deferred imports: 2)*
+- `myflopy.modflow.utils.inputs`
 
 ## Layer 5
 
-- `myflopy.grid_spec_resolver`
-- `myflopy.modflow.mf6.canonical` *(deferred imports: 1)*
+- `myflopy.modflow.mf6.grid.voronoi` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.observations.registry`
 - `myflopy.modflow.mf6.package_model` *(deferred imports: 1)*
-- `myflopy.modflow.mf6.voronoiplus`
+- `myflopy.modflow.mf6.pest.ies`
 - `myflopy.modflow.utils.outputs`
 - `myflopy.package_api` *(deferred imports: 3)*
 
 ## Layer 6
 
+- `myflopy.grid_spec_resolver`
 - `myflopy.layers` *(deferred imports: 1)*
+- `myflopy.modflow.mf6.canonical` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.observations`
 - `myflopy.modflow.mf6.package_explorer`
+- `myflopy.modflow.mf6.voronoiplus`
 - `myflopy.modflow.usg.convert`
 
 ## Layer 7

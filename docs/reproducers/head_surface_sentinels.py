@@ -14,6 +14,7 @@ along the west and east edges. Three MF6 runs on it:
   B. CHD 9,950 ft west and 10,050 ft east: a model in feet at altitude, whose head
      crosses 10,000 ft mid-domain. Nothing dry.
   C. As A with no raised patch, and an interior block (175 < x, y < 325) at idomain 0.
+  D. A's raised patch AND C's idomain-0 block, for the readers in section 5.
 
 The OLD rule is applied here by hand to the same raw heads, so this script still shows
 the "before" once the library is fixed. Resolution 120.
@@ -24,9 +25,13 @@ WHAT IT MEASURES
      spread it across the whole surface, not just the dry patch.
   3. The same cutoff erases every real head above 10,000 ft.
   4. The fixed surface stays inside the real head range under every interpolator.
-  5. Two more readers of the same table that are NOT fixed here (ledger 315):
-     `hds.map()` and `hds.section()` without `interpolator=` both carry -1e30. A
-     section WITH `interpolator=` samples this surface, so it is fixed with it.
+  5. Every other reader of the same table, on D, fixed in the restatement of ledger
+     315. Each "before" applies that reader's own old rule by hand: the map and its
+     hover blanked only `== 1e30`, the mounding hover and the depth-below-ground map
+     blanked nothing, and neither did `hds.section()` without `interpolator=`. The
+     contours are the old values handed to `contour_line_segments`. The user's calls
+     are in the "after": on the mounding map a DRY cell reads 0, and on the
+     depth-below-ground map it is blank.
 """
 
 from __future__ import annotations
@@ -40,7 +45,9 @@ import numpy as np
 from shapely.geometry import box
 
 import myflopy as mf
+from myflopy.modflow.mf6.contour_plotting import contour_line_segments
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
+from myflopy.modflow.utils.datatypes.xsections import XSection
 
 SIDE = 600.0
 RESOLUTION = 120
@@ -138,21 +145,61 @@ def main() -> None:
     print("\n   C, inactive block (the one case the old rule caught)")
     _compare(inactive, vor, 30.0, 50.0)
 
-    print("\n5. other readers of the A run, not fixed here")
-    mapped = np.asarray(dry.hds.map().linear_zs, dtype=float)
-    trace = dry.hds.map().fig.data[0]
-    print(f"   hds.map(): {(mapped == -1e30).sum()} cells at -1e30; trace zmin/zmax "
-          f"{trace.zmin}/{trace.zmax}, so the colour range is {np.nanmin(mapped):.4g} .. "
-          f"{np.nanmax(mapped):.4g}")
-    mounding = np.asarray(dry.hds.map(show_mounding=True).linear_zs, dtype=float)
-    print(f"   hds.map(show_mounding=True): the dry cells read {sorted(set(mounding[patch].tolist()))}")
-    line = [(10.0, 450.0), (590.0, 450.0)]
-    for kwargs in ({}, {"interpolator": "griddata"}):
-        head = np.asarray(dry.hds.section(line=line, **kwargs).data[0].y, dtype=float)
-        print(f"   hds.section({', '.join(f'{k}={v!r}' for k, v in kwargs.items())}): "
-              f"{(head == -1e30).sum()} of {head.size} head points at -1e30, "
-              f"range {np.nanmin(head):.4g} .. {np.nanmax(head):.4g}")
+    both = _run(root, vor, "both", top=100.0, botm=np.where(patch, 60.0, 0.0), west=30.0,
+                east=50.0, idomain=np.where(block, 0, 1))
+    print("\n5. every other reader, on D; before = that reader's old rule, by hand")
+    _readers(both, vor, patch, block)
 
+
+def _tally(values, dry, inactive) -> str:
+    """How ``values`` reads at the dry and the inactive cells, and its finite range."""
+
+    def at(cells):
+        seen = sorted({"blank" if np.isnan(v) else f"{v:.4g}" for v in values[cells]})
+        return "/".join(seen)
+
+    return (f"dry {at(dry)}, inactive {at(inactive)}; "
+            f"range {np.nanmin(values):.4g} .. {np.nanmax(values):.4g}")
+
+
+def _readers(model, vor, patch, block) -> None:
+    raw = _raw(model)
+    dry, inactive = raw == -1e30, raw == 1e30
+    top = np.asarray(model.gwf.modelgrid.top, dtype=float)
+    bottom = np.asarray(model.gwf.modelgrid.botm[0], dtype=float)
+    print(f"   D: {dry.sum()} dry cells (the patch: {bool(np.array_equal(dry, patch))}), "
+          f"{inactive.sum()} inactive (the block: {bool(np.array_equal(inactive, block))})")
+
+    old_map = np.where(raw == 1e30, np.nan, raw)
+    plain = model.hds.map()
+    print(f"   map + sectioned hover  before: {_tally(old_map, dry, inactive)}")
+    print(f"   {'':>22} after: {_tally(np.asarray(plain.linear_zs, float), dry, inactive)}")
+    hover = np.asarray(plain._build_hover_context().layer_fields["head"][0], dtype=float)
+    print(f"   {'':>16} after, hover: {_tally(hover, dry, inactive)}")
+
+    before = len(contour_line_segments(vor, old_map, levels=10))
+    after = len(contour_line_segments(vor, np.asarray(plain.linear_zs, float), levels=10))
+    drawn = sum(t.type == "scattermap" for t in model.hds.map(contours=True).fig.data)
+    print(f"   contours               before: {before} segments; after: {after} segments, "
+          f"drawn as {drawn} traces")
+
+    old_mound_map = np.clip(old_map - bottom, 0.0, None)
+    old_mound_hover = np.clip(raw - bottom, 0.0, None)
+    mound = model.hds.map(show_mounding=True)
+    print(f"   mounding map           before: {_tally(old_mound_map, dry, inactive)}")
+    print(f"   mounding hover         before: {_tally(old_mound_hover, dry, inactive)}")
+    print(f"   {'':>16} after, both: {_tally(np.asarray(mound.linear_zs, float), dry, inactive)}"
+          f" | {_tally(np.asarray(mound._mounding_series(), float), dry, inactive)}")
+
+    print(f"   depth below ground     before: {_tally(raw - top, dry, inactive)}")
+    bgs = np.asarray(model.hds.map(bgs=True).linear_zs, dtype=float)
+    print(f"   {'':>22} after: {_tally(bgs, dry, inactive)}")
+
+    line = [(10.0, 10.0), (590.0, 590.0)]
+    crossed = XSection(model=model, line=line, kstpkper=(0, 0)).xs.index.to_numpy()
+    drawn = np.asarray(model.hds.section(line=line).data[0].y, dtype=float)
+    print(f"   hds.section()          before: {_tally(raw[crossed], dry[crossed], inactive[crossed])}")
+    print(f"   {'':>22} after: {_tally(drawn, dry[crossed], inactive[crossed])}")
 
 if __name__ == "__main__":
     main()

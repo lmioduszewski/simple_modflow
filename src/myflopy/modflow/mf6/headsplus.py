@@ -194,8 +194,43 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
     ) -> pd.DataFrame:
         """Return period-end values as a tidy ``per``/``layer``/``cell``/``<value>`` frame.
 
-        Each stress period is reduced to its last saved timestep; flopy dry/no-data
-        sentinels (``|value| >= 1e29``) become ``NaN``. All selectors are zero-based.
+        Each stress period is reduced to its last saved timestep. MODFLOW's no-value
+        sentinels (+1e30 inactive, -1e30 dry; ``|value| >= 1e29``) become ``NaN``,
+        by the same rule as :meth:`array` and the maps (ledger 315). The three
+        selectors combine with AND; floats inside a sequence are truncated to int.
+
+        Parameters
+        ----------
+        per : int or sequence of int, optional
+            Stress period(s) to keep, zero-based. An int (a numpy integer too) or
+            any iterable of them: list, tuple, range, ndarray. ``None`` (default)
+            keeps every period. A period the file does not hold selects nothing, so
+            the frame comes back empty with no error. ``-1`` is NOT the last period
+            here, unlike :meth:`array`; it selects nothing.
+        layer : int or sequence of int, optional
+            Layer(s) to keep, zero-based (0 is the top), in the same forms. ``None``
+            (default) keeps every layer; a layer the model lacks selects nothing.
+        cells : int or sequence of int, optional
+            Cell index(es) to keep, zero-based within a layer (``0`` to
+            ``ncpl - 1``), in the same forms. ``None`` (default) keeps every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns ``per``, ``layer`` and ``cell`` (int), and :attr:`value_name`
+            (``head``, ``conc`` or ``temp``; float, ``NaN`` where the file holds no
+            value). One row per selected period, layer and cell.
+
+        Raises
+        ------
+        TypeError
+            If a selector is a bare float, or any other value that is neither an
+            integer nor iterable.
+
+        Examples
+        --------
+        >>> model.hds.get(per=0, layer=0)            # one period, the top layer
+        >>> model.hds.get(cells=[5, 7])["head"]      # two cells, every period
         """
 
         value = self.value_name
@@ -674,7 +709,9 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         hillshade_path : Path, optional
             A hillshade GeoTIFF to draw beneath the cells for topographic context.
         bgs : bool, default False
-            Draw the basemap beneath a semi-transparent cell layer.
+            Map depth below ground: each cell's head minus the model top, negative
+            below it. Blank where the layer has no head, dry or inactive (ledger 315).
+            ``show_mounding`` takes precedence.
         fit_bounds : bool, default True
             Fit the initial view to the grid extent rather than using ``zoom``. The
             fit is for the figure's own size, or plotly's default 700x450 when it
@@ -707,7 +744,9 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             whether the grid actually carries layer elevations (``vor.gdf_topbtm``),
             because forcing it on a grid without them raises.
         show_mounding : bool, default False
-            Add head-above-initial (mounding) to the hover.
+            Map mounding instead of head: each cell's head above its layer's bottom
+            (above the model top with ``layer=-1``), clipped at 0, and add it to the
+            hover. A DRY cell reads 0 and an inactive one is blank (ledger 315).
 
         Returns
         -------

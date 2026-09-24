@@ -26,6 +26,7 @@ from myflopy._deprecation import warn_deprecated
 from myflopy._logging import get_logger
 from myflopy._warnings import stacklevel_outside_package
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.hydraulics import flow_model, model_transmissivity
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.extent import Extent, resolve_extent
@@ -139,7 +140,8 @@ def _initial_map_zoom(bounds, *, padding: float = 0.05, width: int = 1000, heigh
 
 # Choro ``type`` -> the model's dependent-variable reader attribute. These three
 # types share one code path: read the reader's ``(kstpkper, layer, cell)`` table,
-# mask MODFLOW's 1e30 sentinel, and label the layer-hover table by value name.
+# mask MODFLOW's +/-1e30 sentinels (``Choro._layer_field``), and label the
+# layer-hover table by value name.
 _DEPVAR_READER_ATTR = {"hds": "hds", "conc": "conc", "temp": "temp"}
 
 #: Every ``type`` a map draws, and whether it needs the model's RESULTS. Checked at
@@ -655,6 +657,27 @@ class Choro(Picture):
             self._all_heads = reader.all_values
         return self._all_heads
 
+    def _layer_values(self, layer: int) -> pd.Series:
+        """The stored field on ``layer`` at :attr:`kstpkper`, one float per cell, sentinels kept."""
+
+        return pd.to_numeric(
+            self.all_heads.loc[idxx[self.kstpkper, layer], self._value_column],
+            errors="coerce",
+        ).reset_index(drop=True)
+
+    def _layer_field(self, layer: int) -> pd.Series:
+        """:meth:`_layer_values` with MF6's no-value sentinels as NaN: what every view draws.
+
+        +1e30 is an inactive cell and -1e30 a DRY one, and the rule is
+        ``headsplus._is_sentinel``, the one the readers use. The views here each
+        tested their own sign, or none: a dry cell mapped and hovered as -1e30,
+        set the colour range and made the contour levels impossible, so no contour
+        drew at all; an inactive one hovered as 1e30 (ledger 315).
+        """
+
+        values = self._layer_values(layer)
+        return values.mask(_is_sentinel(values))
+
     @property
     def all_ks(self):
         """Per-layer horizontal K array from the model's NPF package (cached)."""
@@ -694,8 +717,7 @@ class Choro(Picture):
             return self._bottom_vector(self.layer)
         if contour_key in {"heads", "head", "hds"}:
             return self._cell_vector(
-                self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True),
-                f"layer {self.layer + 1} {self._value_name}",
+                self._layer_field(self.layer), f"layer {self.layer + 1} {self._value_name}"
             )
         raise ValueError(
             "contours must be False, True, 'top', 'bottom', 'heads', or use contour_values."
@@ -899,8 +921,7 @@ class Choro(Picture):
             if self._depvar_attr is not None or self.hover_heads is True:
                 label = self._value_name.capitalize()
                 for lyr in range(self.nlay):
-                    lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], self._value_column].to_list()
-                    self._hover_dict[f'Layer {lyr + 1} {label}'] = lyr_heads
+                    self._hover_dict[f'Layer {lyr + 1} {label}'] = self._layer_field(lyr).to_list()
 
             if self.type == 'rch':
                 self._hover_dict['Recharge'] = self.output_rch_zs
@@ -956,8 +977,9 @@ class Choro(Picture):
                     }
                 )
         if self.bgs:
-            z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
-            zs = self._series_minus_cell_vector(z_hd, self.model.gwf.modelgrid.top, "model top")
+            zs = self._series_minus_cell_vector(
+                self._layer_field(self.layer), self.model.gwf.modelgrid.top, "model top"
+            )
             self._hover_dict.update(
                 {
                     f'Layer {self.layer + 1} Below Ground': zs
@@ -1029,21 +1051,13 @@ class Choro(Picture):
                 if self.layer == -1:
                     self._show_mounding_above_ground = True
                     self.layer = 0
-                if self._show_mounding_above_ground is True:
-                    layer_bottom = self._top_vector()
-                else:
-                    layer_bottom = self._bottom_vector(self.layer)
-                z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
-                z_hd.loc[z_hd == 1e+30] = np.nan  # make modflow empty elevations NaN
-                zs = pd.Series(pd.to_numeric(z_hd, errors="coerce").to_numpy() - layer_bottom, index=z_hd.index)
-                # remove negative mounding values
-                zs = zs.mask(zs < 0, 0)
+                zs = self._mounding_series()
             elif self.bgs is True:
-                z_hd = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
-                zs = self._series_minus_cell_vector(z_hd, self.model.gwf.modelgrid.top, "model top")
+                zs = self._series_minus_cell_vector(
+                    self._layer_field(self.layer), self.model.gwf.modelgrid.top, "model top"
+                )
             else:
-                zs = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
-                zs.loc[zs == 1e+30] = np.nan  # make modflow empty elevations NaN
+                zs = self._layer_field(self.layer)
 
         elif self.type == 'ks' and self._inputs is not None:
             zs = self._cell_vector(self.all_ks[self.layer], f"layer {self.layer + 1} Kh").tolist()
@@ -1464,17 +1478,22 @@ class Choro(Picture):
     def _mounding_series(self):
         """Head above the mounding datum, clipped at zero, one value per cell.
 
-        Shared by the legacy content-aware hover and the sectioned `hover_spec`
-        hover; they are two renderers of one number, and computing it twice is
-        how they drift.
+        Shared by the legacy content-aware hover, the sectioned `hover_spec`
+        hover and :attr:`linear_zs`: three renderers of one number, and computing
+        it twice is how they drift. The map DID compute it again, blanking only
+        +1e30, so an inactive cell drew blank and hovered as 1e30 (ledger 315).
+
+        An INACTIVE cell (+1e30) is blank: it has no head. A DRY cell (-1e30)
+        reads 0: it has no water above the datum, like every cell whose head
+        sits below it. That was the user's call (ledger 315).
         """
 
         datum = self._top_vector() if self._show_mounding_above_ground else self._bottom_vector(self.layer)
-        heads = self.all_heads.loc[idxx[self.kstpkper, self.layer], self._value_column].reset_index(drop=True)
-        values = pd.Series(
-            pd.to_numeric(heads, errors="coerce").to_numpy() - datum, index=heads.index
-        )
-        return values.mask(values < 0, 0)
+        heads = self._layer_values(self.layer)
+        no_value = _is_sentinel(heads)
+        values = pd.Series(heads.to_numpy() - datum, index=heads.index)
+        values = values.mask(values < 0, 0).mask(no_value)
+        return values.mask(no_value & (heads.to_numpy() < 0), 0.0)
 
     def _build_hover_context(self):
         """Assemble a :class:`HoverContext` from this map's data for ``hover_spec``."""
@@ -1518,11 +1537,9 @@ class Choro(Picture):
             self._depvar_attr is not None or self.hover_heads
         )
         if reads_field:
-            heads = []
-            for lyr in range(self.nlay):
-                lyr_heads = self.all_heads.loc[idxx[self.kstpkper, lyr], self._value_column].to_list()
-                heads.append([np.nan if h == 1e30 else h for h in lyr_heads])
-            layer_fields[self._value_name] = heads
+            layer_fields[self._value_name] = [
+                self._layer_field(lyr).tolist() for lyr in range(self.nlay)
+            ]
         # The layer elevations are the GRID's, not the mapped field's, so they
         # are fetched whenever the resolved spec asks for them -- not only when
         # this map happens to read heads. Gating them on the heads branch is
