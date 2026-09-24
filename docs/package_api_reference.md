@@ -789,6 +789,9 @@ run. Both answer `get` (with `k` and `thickness` columns; `per` for the saturate
 `summary` / `map` / `mosaic(by="layer")` / `animate()`, and draw THROUGH
 `model.plot.map(type="trans" | "trans_max")`, so the noun and the free map are one
 picture. They are not in `npf.fields`, which lists what the package file stores.
+Transmissivity is WRITTEN as a whole number with thousands separators -- `112,000 ft²/d`,
+never `1.12e+05` -- in the hover and on every colorbar, both backends (ledger 313); a
+value below 1 keeps its significant digits.
 
 **PRT** (a finished run's `PRTRunResults`, not `model.packages`): `results.pathlines`
 (trajectories — `map` draws polylines, not cells), `results.travel_time`,

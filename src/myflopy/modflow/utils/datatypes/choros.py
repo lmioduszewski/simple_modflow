@@ -36,6 +36,7 @@ from myflopy.modflow.utils.datatypes.features import (
     feature_traces,
     resolve_features,
 )
+from myflopy.modflow.utils.datatypes.hover import thousands_formatter
 from myflopy.viz import (
     COLORBAR_MARGIN,
     HIGHLIGHT_DIM_OPACITY,
@@ -808,6 +809,14 @@ class Choro(Picture):
         return self._inputs.gwf.modelgrid.nlay
 
     @property
+    def number_style(self) -> str:
+        """How this map writes its numbers on a colorbar: ``"thousands"`` for a
+        transmissivity map (112,000, ledger 313), else ``"sig"``. Read by the
+        composers, which pool the panels' colorbars into one."""
+
+        return "thousands" if getattr(self, "type", None) in TRANSMISSIVITY_TYPES else "sig"
+
+    @property
     def _transmissivity(self):
         """This map's :class:`~myflopy.modflow.mf6.hydraulics.Transmissivity`, cached.
 
@@ -1081,8 +1090,19 @@ class Choro(Picture):
 
         lo, hi = self._zmin, self._zmax
         trace_kwargs = dict(self.kwargs)
+        thousands = self.number_style == "thousands"
         if not self.logscale:
-            return {"zmin": lo, "zmax": hi}, trace_kwargs
+            color_kwargs = {"zmin": lo, "zmax": hi}
+            if thousands:
+                # d3's "," groups thousands and keeps a small value's decimals, so
+                # the bar reads 112,000 like the hover (ledger 313). Under any
+                # `colorbar` keys the caller gave.
+                caller = trace_kwargs.pop("colorbar", None)
+                caller = {} if caller is None else (
+                    caller if isinstance(caller, dict) else caller.to_plotly_json()
+                )
+                color_kwargs["colorbar"] = {"tickformat": ",", **caller}
+            return color_kwargs, trace_kwargs
         lo = None if lo is None else float(np.log10(lo))
         hi = None if hi is None else float(np.log10(hi))
         if trace_kwargs.get("zmid") is not None:
@@ -1094,7 +1114,7 @@ class Choro(Picture):
         high = hi if hi is not None else (float(finite.max()) if finite.size else None)
         caller = trace_kwargs.pop("colorbar", None)
         if low is not None and high is not None:
-            colorbar = log_decade_colorbar(low, high)
+            colorbar = log_decade_colorbar(low, high, thousands=thousands)
             if caller is not None:
                 caller = caller if isinstance(caller, dict) else caller.to_plotly_json()
                 colorbar = {**colorbar, **caller}
@@ -1877,6 +1897,14 @@ class Choro(Picture):
             style.update(vmin=vmin, vmax=vmax)
         gdf["_choro"] = values
         gdf.plot(column="_choro", ax=ax, **style, **plot_kwargs)
+        if colorbar and self.number_style == "thousands" and len(fig.axes) > 1:
+            # The hover's own number, on the static bar: 112,000 (ledger 313).
+            from matplotlib.ticker import NullFormatter
+
+            cbar_axis = fig.axes[-1]
+            cbar_axis.yaxis.set_major_formatter(thousands_formatter())
+            if self.logscale:
+                cbar_axis.yaxis.set_minor_formatter(NullFormatter())
         if self.logscale and colorbar and len(fig.axes) > 1:
             self._apply_caller_colorbar_ticks(fig.axes[-1])
 

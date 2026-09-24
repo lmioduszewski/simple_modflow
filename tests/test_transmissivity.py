@@ -258,3 +258,76 @@ def test_the_saturated_table_keys_on_the_period(canonical_run):
     wide = noun.wide(per=[1, 4])
     assert sorted(wide["per"].unique()) == [1, 4]
     assert noun.map(per=None, layer=0) is not None  # the default time, like every noun
+
+
+# --- how transmissivity is WRITTEN (ledger 313) ------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (112_345.6, "112,346"),
+        (1_672.68, "1,673"),
+        (10_000_000.0, "10,000,000"),
+        (-1_234.0, "−1,234"),     # the house's real minus
+        (0.2437, "0.2437"),            # below 1: significant digits, not 0
+        (0.0, "0"),
+    ],
+)
+def test_the_thousands_style_writes_whole_numbers_with_separators(value, expected):
+    """112,000 ft2/d, never 1.12e+05 (the user, 2026-09-24)."""
+
+    from myflopy.modflow.utils.datatypes.hover import format_number
+
+    assert format_number(value, style="thousands") == expected
+    assert format_number(value, style="thousands", unit="ft²/d") == f"{expected}\xa0ft²/d"
+
+
+def test_an_unknown_number_style_raises():
+    from myflopy.modflow.utils.datatypes.hover import format_number
+
+    with pytest.raises(ValueError, match="style"):
+        format_number(1.0, style="comma")
+
+
+def _hover_strings(picture):
+    return [str(value) for row in picture.fig.data[0].customdata for value in row]
+
+
+def test_the_hover_writes_transmissivity_with_separators_and_k_as_before(canonical_run):
+    picture = canonical_run.plot.map(type="trans_max", layer=0)
+    strings = _hover_strings(picture)
+    t_values = [s for s in strings if s.endswith("ft²/d")]
+    assert t_values and not any("e+" in s for s in t_values)
+    assert "1,673\xa0ft²/d" in strings                    # the canonical max, whole
+    # The layer strip is T too; K and thickness keep significant digits.
+    assert not any("e+" in s for s in strings)
+    k_values = [s for s in strings if s.endswith("ft/d")]
+    assert k_values and all("," not in s for s in k_values)
+
+
+def test_every_transmissivity_colorbar_writes_separators(canonical_run):
+    single = canonical_run.plot.map(type="trans_max", layer=0).fig.data[0].colorbar
+    assert single.tickformat == ","
+    log = canonical_run.plot.map(
+        type="trans_max", layer=0, logscale=True, zmin=10, zmax=100_000
+    ).fig.data[0].colorbar
+    assert "100,000" in log.ticktext
+    noun = canonical_run.packages.npf.transmissivity_max
+    assert noun.mosaic().layout.coloraxis.colorbar.tickformat == ","
+    assert "1,000" in noun.mosaic(logscale=True).layout.coloraxis.colorbar.ticktext
+    animation = canonical_run.packages.npf.transmissivity.animate(logscale=True)
+    assert "1,000" in animation.layout.coloraxis.colorbar.ticktext
+    # A K map is not transmissivity and keeps plotly's own ticks.
+    assert canonical_run.plot.map(type="ks", layer=0).fig.data[0].colorbar.tickformat is None
+
+
+def test_the_static_colorbars_write_separators_too(canonical_run):
+    figure = canonical_run.plot.map(type="trans_max", layer=0, backend="mpl")
+    assert "1,000" in [t.get_text() for t in figure.axes[-1].get_yticklabels()]
+    mosaic = canonical_run.packages.npf.transmissivity_max.mosaic(backend="mpl")
+    assert "1,000" in [t.get_text() for t in mosaic.axes[-1].get_yticklabels()]
+    log = canonical_run.plot.map(
+        type="trans_max", layer=0, backend="mpl", logscale=True, zmin=10, zmax=100_000
+    )
+    assert "100,000" in [t.get_text() for t in log.axes[-1].get_yticklabels()]

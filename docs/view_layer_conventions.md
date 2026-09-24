@@ -119,6 +119,16 @@ what to use instead:
 Returning an `mpl.Figure` from `.fig` would satisfy the letter and break every
 caller reaching for `.add_trace`; raising is the honest answer.
 
+### How a number is written is per FIELD: `HoverSpec.formats`
+
+Ledger 313. The house hover writes `precision` significant digits, so a
+transmissivity of 112,000 read `1.12e+05`. `HoverSpec.formats={"T": "thousands"}`
+writes that one field as a whole number with separators (below 1 it keeps its
+significant digits). The rule lives once, in `hover.format_number(style=)`; a
+colorbar follows it through `Choro.number_style` -- plotly's d3 `","`, comma decade
+labels on a log bar, `hover.thousands_formatter()` on a static one -- and the
+composers read the panels' `number_style` because they discard each panel's bar.
+
 ### A name is a place: `model.aoi`
 
 Ledger 310. `extent="site"`, `select="site"` and `features=model.aoi` read the model's

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
+from myflopy.modflow.utils.datatypes.hover import thousands_formatter
 from myflopy.viz import (
     Fig,
     _build_frame_figure,
@@ -2056,12 +2057,18 @@ class SpatialView:
             axis.set_visible(False)
         mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
         mappable.set_array([])
-        fig.colorbar(
+        colorbar = fig.colorbar(
             mappable,
             ax=list(axes.flat[: len(choros)]),
             shrink=0.85,
             label=self._spatial_value_label(),
         )
+        if getattr(choros[0], "number_style", "sig") == "thousands":
+            # The panels' own number, 112,000, on the one shared bar (ledger 313).
+            from matplotlib.ticker import NullFormatter
+
+            colorbar.ax.yaxis.set_major_formatter(thousands_formatter())
+            colorbar.ax.yaxis.set_minor_formatter(NullFormatter())
         fig.suptitle(title)
         return fig
 

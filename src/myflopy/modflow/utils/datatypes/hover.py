@@ -42,9 +42,22 @@ def _is_finite_number(value: Any) -> bool:
         return False
 
 
-def format_number(value: Any, *, precision: int = 4, unit: str | None = None) -> str:
-    """Format one value for a hover: significant digits, real minus, optional unit."""
+#: How a hover writes a field's numbers (:attr:`HoverSpec.formats`). ``"sig"``:
+#: ``precision`` significant digits, the house default. ``"thousands"``: a WHOLE
+#: number with thousands separators -- ``112,000``, never ``1.12e+05`` -- for a
+#: quantity read in the thousands (transmissivity, ledger 313); below 1 it keeps
+#: significant digits, so a 0.24 aquitard does not read as 0.
+NUMBER_STYLES = ("sig", "thousands")
 
+
+def format_number(
+    value: Any, *, precision: int = 4, unit: str | None = None, style: str = "sig"
+) -> str:
+    """Format one value for a hover: ``style`` (see :data:`NUMBER_STYLES`), real
+    minus, optional unit."""
+
+    if style not in NUMBER_STYLES:
+        raise ValueError(f"style={style!r} is not one of {NUMBER_STYLES}")
     if value is None:
         return ""
     try:
@@ -53,7 +66,10 @@ def format_number(value: Any, *, precision: int = 4, unit: str | None = None) ->
         return str(value)
     if not np.isfinite(number):
         return ""
-    text = f"{number:.{precision}g}"
+    if style == "thousands" and abs(number) >= 1.0:
+        text = f"{number:,.0f}"
+    else:
+        text = f"{number:.{precision}g}"
     if text.startswith("-"):
         text = MINUS + text[1:]
     if unit:
@@ -152,10 +168,24 @@ class HoverContext:
             return list(arrays[index])
         return ["" for _ in range(self.ncpl)]
 
-    def formatted(self, name: str, *, precision: int, unit: str | None = None) -> list[str]:
+    def formatted(
+        self, name: str, *, precision: int, unit: str | None = None, style: str = "sig"
+    ) -> list[str]:
         """Per-cell display strings for ``name`` (resolve + :func:`format_number`)."""
 
-        return [format_number(v, precision=precision, unit=unit) for v in self.resolve(name)]
+        return [
+            format_number(v, precision=precision, unit=unit, style=style)
+            for v in self.resolve(name)
+        ]
+
+
+def thousands_formatter():
+    """A Matplotlib tick formatter writing :data:`NUMBER_STYLES` ``"thousands"`` --
+    the static colorbar's twin of the hover's number, so the two cannot disagree."""
+
+    from matplotlib.ticker import FuncFormatter
+
+    return FuncFormatter(lambda value, _position: format_number(value, style="thousands"))
 
 
 class HoverBlock:
@@ -192,7 +222,10 @@ class Fields(HoverBlock):
         for name in present:
             label = spec.label(name)
             asm.text(f'<span style="color:{spec.style.muted}">{label}</span>{NBSP}{NBSP}')
-            asm.value(ctx.formatted(name, precision=spec.precision, unit=spec.unit(name)))
+            asm.value(ctx.formatted(
+                name, precision=spec.precision, unit=spec.unit(name),
+                style=spec.number_style(name),
+            ))
             asm.text("<br>")
 
 
@@ -235,8 +268,11 @@ class LayerTable(HoverBlock):
         unit = spec.unit(primary)
         botm = ctx.botm if show_bot else None
 
+        style = spec.number_style(primary)
         head_cols = [
-            _pad_right([format_number(v, precision=spec.precision) for v in arrays[layer]])
+            _pad_right([
+                format_number(v, precision=spec.precision, style=style) for v in arrays[layer]
+            ])
             for layer in range(nlay)
         ]
         bot_cols = None
@@ -345,11 +381,18 @@ class HoverSpec:
     units: Mapping[str, str] = field(default_factory=dict)
     labels: Mapping[str, str] = field(default_factory=dict)
     style: HoverStyle = field(default_factory=HoverStyle)
+    #: Per-field number style (:data:`NUMBER_STYLES`); unnamed fields are ``"sig"``.
+    formats: Mapping[str, str] = field(default_factory=dict)
 
     def unit(self, name: str) -> str | None:
         """The display unit configured for field ``name`` (or None)."""
 
         return self.units.get(name)
+
+    def number_style(self, name: str) -> str:
+        """How field ``name``'s numbers are written (:data:`NUMBER_STYLES`)."""
+
+        return self.formats.get(name, "sig")
 
     def label(self, name: str) -> str:
         """The display label for field ``name`` (falls back to the name itself)."""
@@ -421,7 +464,10 @@ class HoverSpec:
 
         if self.primary and ctx.has(self.primary):
             unit = self.unit(self.primary)
-            primary_vals = ctx.formatted(self.primary, precision=self.precision, unit=unit)
+            primary_vals = ctx.formatted(
+                self.primary, precision=self.precision, unit=unit,
+                style=self.number_style(self.primary),
+            )
             if self.primary in ctx.layer_fields:
                 left = f"Layer {ctx.active_layer + 1}"
             else:
@@ -524,7 +570,9 @@ class _HoverAssembler:
         """Return a ``label value`` fragment for one inline field (no trailing break)."""
 
         label = spec.label(name)
-        ref = self._register(ctx.formatted(name, precision=spec.precision, unit=spec.unit(name)))
+        ref = self._register(ctx.formatted(
+            name, precision=spec.precision, unit=spec.unit(name), style=spec.number_style(name)
+        ))
         return f'<span style="color:{spec.style.muted}">{label}</span>{NBSP}{ref}'
 
     def section_label(self, title: str) -> None:
@@ -546,9 +594,10 @@ class _HoverAssembler:
         for layer in range(len(arrays)):
             if layer == ctx.active_layer:
                 continue
-            ref = self._register(
-                [format_number(v, precision=spec.precision) for v in arrays[layer]]
-            )
+            ref = self._register([
+                format_number(v, precision=spec.precision, style=spec.number_style(primary))
+                for v in arrays[layer]
+            ])
             pieces.append(f"L{layer + 1}{NBSP}{ref}")
         if pieces:
             joined = f"{NBSP}{MINUS}{NBSP}".join(pieces)
@@ -659,6 +708,9 @@ def trans_hover(
         units = {"thickness": length}
     return HoverSpec(
         primary="T",
+        # A whole number with separators -- 112,000 ft²/d, not 1.12e+05 (user,
+        # ledger 313). K and thickness keep significant digits.
+        formats={"T": "thousands"},
         title="Transmissivity" if saturated else "Max transmissivity",
         layers=layers,
         blocks=(Fields(title=None, fields=("K", "thickness")),),

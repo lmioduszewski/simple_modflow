@@ -175,7 +175,10 @@ the nouns -- they draw THROUGH the free map (`StaticArrayFieldExplorer._map_type
 one picture. Saturated follows MF6's ICELLTYPE rule (confined = full thickness;
 THICKSTRT honoured) and matches `DATA-SAT` to 5e-7. One computation:
 `modflow/mf6/hydraulics.model_transmissivity` (import layer 0). Total-over-layers is
-DEFERRED (needs a non-int `layer=` at every scope).
+DEFERRED (needs a non-int `layer=` at every scope). T is WRITTEN `112,000 ft²/d`, not
+`1.12e+05` (user, ledger 313): `HoverSpec.formats={"T": "thousands"}` for the hover,
+d3 `","` / comma decade labels on plotly bars (composers read `Choro.number_style`),
+`hover.thousands_formatter()` on static bars -- ONE rule, `format_number(style=)`.
 **A plotly map is fitted for the canvas plotly will draw** (ledger 307, amended by 311):
 `viz.map_canvas` (an export size, else the figure's, else plotly's 700x450, less the
 margins plotly DRAWS -- it grows them for a colorbar and animation controls, so pass

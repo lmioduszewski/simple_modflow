@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 312 entries (313 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 313 entries (314 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 313 | Transmissivity is written as a whole number with separators: 112,000 ft²/d | 2026-09-24 |
 | 312 | The same review, for the areas of interest: who a model's project is | 2026-09-24 |
 | 311 | An adversarial review of 305-310: the map defects the tests certified rather than checked | 2026-09-24 |
 | 310 | Named areas of interest: defined on the model, kept by the project | 2026-09-24 |
@@ -12890,3 +12891,24 @@ same day, which is the useful part of the result.
       **Still true, stated:** "nearest ancestor with a ``project.json``" can name an
       UNRELATED project that happens to enclose a model's directory; a run inside a
       project's tree is the case it is built for.
+
+313. **Transmissivity is written as a whole number with separators: 112,000 ft²/d (2026-09-24).**
+      The user's request: the hover wrote the house's four significant digits, so
+      ``1.12e+05 ft²/d``. Now ``112,000`` -- the WHOLE number, not three significant
+      figures of it -- in the hover (the value, the per-layer strip and table) and on every
+      colorbar: plotly single maps (d3 ``","``), log bars (decade and fallback labels with
+      separators), the mosaic's and animation's pooled bars, and the static single and
+      mosaic bars.
+      **Transmissivity ONLY.** K and thickness keep significant digits (a K of 0.001 would
+      read 0), and every other map's ticks are unchanged -- ``HoverSpec.formats`` is per
+      FIELD and ``Choro.number_style`` is ``"thousands"`` only for the two
+      transmissivity types. **Below 1 it keeps significant digits**, so the canonical
+      aquitard's 0.24 ft²/d does not read as 0 -- a judgment call on "whole number", since
+      rounding there would erase the value.
+      **One rule, ``hover.format_number(style="thousands")``;** the static bars format
+      through it (``hover.thousands_formatter``). ``viz`` cannot import ``hover`` (both are
+      import layer 0), so the plotly side is d3's own ``","`` plus the decade labels --
+      expressions of the same rule, pinned by tests, not a second implementation of it.
+      **Not done:** the noun tables (``get()``/``summary()``) stay numeric -- a formatted
+      string there would break arithmetic -- and the static animation still draws no
+      colorbar (ledger 306).

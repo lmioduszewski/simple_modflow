@@ -471,7 +471,8 @@ def _pool_frame_color_axis(figure, pictures) -> None:
         caller = {} if caller is None else (
             caller if isinstance(caller, dict) else caller.to_plotly_json()
         )
-        colorbar = {**colorbar, **log_decade_colorbar(cmin, cmax), **caller}
+        thousands = getattr(pictures[0], "number_style", "sig") == "thousands"
+        colorbar = {**colorbar, **log_decade_colorbar(cmin, cmax, thousands=thousands), **caller}
     coloraxis = {"colorscale": first.colorscale, "colorbar": colorbar}
     if cmin is not None and cmax is not None:
         coloraxis.update(cmin=cmin, cmax=cmax, cauto=False)
@@ -1158,7 +1159,9 @@ def mpl_colormap_for(colorscale):
     )
 
 
-def log_decade_colorbar(low: float, high: float, *, unit: str = "") -> dict:
+def log_decade_colorbar(
+    low: float, high: float, *, unit: str = "", thousands: bool = False
+) -> dict:
     """Colorbar ticks for a log10-scaled trace, labelled in REAL units.
 
     Plotly has no log color axis: a ``logscale`` map colours ``log10(value)``, so
@@ -1188,11 +1191,11 @@ def log_decade_colorbar(low: float, high: float, *, unit: str = "") -> dict:
     ]
     return {
         "tickvals": ticks,
-        "ticktext": [_decade_label(tick, unit) for tick in ticks],
+        "ticktext": [_decade_label(tick, unit, thousands=thousands) for tick in ticks],
     }
 
 
-def _decade_label(tick: float, unit: str) -> str:
+def _decade_label(tick: float, unit: str, *, thousands: bool = False) -> str:
     """``10 ** tick`` written the way a reader expects: ``1000000``, not ``1e+06``.
 
     A whole decade is written out in full -- ``0.00001`` and ``1000000`` alike,
@@ -1204,13 +1207,19 @@ def _decade_label(tick: float, unit: str) -> str:
     tick = float(tick)
     value = 10.0 ** tick
     if tick.is_integer():
-        text = f"{value:.0f}" if tick >= 0 else f"{value:.{int(-tick)}f}"
+        if tick >= 0:
+            # `thousands`: 100,000 rather than 100000 (a transmissivity map, ledger 313).
+            text = f"{value:,.0f}" if thousands else f"{value:.0f}"
+        else:
+            text = f"{value:.{int(-tick)}f}"
+    elif thousands and value >= 1.0:
+        text = f"{value:,.0f}"  # the evenly spaced fallback, whole: 1,673 not 1.67e+03
     else:
         text = f"{value:.3g}"
     return f"{text}{unit}"
 
 
-def _log_colorbar_for_mosaic(low, high) -> dict:
+def _log_colorbar_for_mosaic(low, high, *, thousands: bool = False) -> dict:
     """``mosaic``'s default colorbar callback for a grid of log-scaled panels.
 
     The pooled limits are only known inside ``mosaic``, hence the callback form;
@@ -1220,7 +1229,7 @@ def _log_colorbar_for_mosaic(low, high) -> dict:
 
     if low is None or high is None:
         return {}
-    return log_decade_colorbar(low, high)
+    return log_decade_colorbar(low, high, thousands=thousands)
 
 
 def mosaic(
@@ -1354,10 +1363,22 @@ def mosaic(
             "mosaic cannot pool log-scaled and linear maps onto one color axis; "
             "give every map panel the same logscale=."
         )
+    # Panels that all write their numbers as whole thousands (transmissivity,
+    # ledger 313) keep that on the pooled bar, which discards their own colorbars.
+    thousands = {
+        getattr(panel, "number_style", "sig")
+        for (_label, panel), kind in zip(normalized, kinds, strict=False)
+        if kind == "map"
+    } == {"thousands"}
     if colorbar is None and log_flags == {True}:
         # The panels' own decade ticks are discarded with their colorbars when
         # they are pooled, so they are rebuilt here from the pooled limits.
-        colorbar = _log_colorbar_for_mosaic
+        colorbar = (
+            (lambda low, high: _log_colorbar_for_mosaic(low, high, thousands=True))
+            if thousands else _log_colorbar_for_mosaic
+        )
+    elif colorbar is None and thousands:
+        colorbar = {"tickformat": ","}
 
     ncols = min(int(ncols), len(normalized)) or 1
     nrows = -(-len(normalized) // ncols)
