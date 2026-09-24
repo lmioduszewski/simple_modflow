@@ -193,6 +193,14 @@ takes, at every scope, verb and noun alike:
 
 ### The composers name the map options too
 
+**...and honour them** (ledger 306). A panel's `zmin`/`zmax` win over the pooled
+colour range on each side (the widest across panels), on both backends -- they
+were named and forwarded and then pooled over, so `hds.mosaic(zmin=100,
+zmax=120)` drew 79..154. The static `mosaic`/`animate` draw every panel through
+that panel's own `Choro.plot_mpl(ax=, norm=)`, never by re-plotting the cells, so
+whatever one static map draws (`features=`, the `select=` outline) every panel
+draws: there is one static renderer.
+
 `mosaic` and `animate` forward every per-panel drawing option to each panel, so
 (8.8, ledger 258) they NAME them: `packages.npf.k.mosaic(logscale=True,
 features=wells, show_layer_elevs=True)` completes in an editor and carries a

@@ -183,6 +183,11 @@ completes in an editor. Only options the caller actually SET are forwarded
 rotted because `test_noun_signatures.py` discovers subjects by a body mentioning
 `plot.map(`/`_choropleth_factory`, which a composer's never does; it sweeps them
 explicitly now.
+**...and HONOUR them** (ledger 306): a panel's `zmin`/`zmax` beat the pooled range
+(widest across panels) on both backends -- they were forwarded and pooled over. The
+static composers draw each panel through `Choro.plot_mpl(ax=, norm=)`, never by
+re-plotting cells, which is what dropped `features=`/`select=` from every static
+mosaic and animation.
 **`show_layer_elevs`/`hover_surfaces` are Tier 1** (same ledger): the layer frame
 is the GRID's, so they act on a K or conductance map, not just on heads. They
 were inert everywhere but heads because `Choro._build_hover_context` fetched the

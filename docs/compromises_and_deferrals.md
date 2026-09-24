@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 305 entries (306 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 306 entries (307 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 306 | The composers named `zmin`/`zmax` and pooled over them; the static ones dropped every overlay | 2026-09-23 |
 | 305 | A map of an unrun model drew node numbers, and so did any `type` it did not know | 2026-09-23 |
 | 304 | `mf.uzf` needed a grid it never used | 2026-09-23 |
 | 303 | A water mover kept pointing at a reach that no longer existed | 2026-09-23 |
@@ -1530,7 +1531,7 @@ same day, which is the useful part of the result.
       `lak.py`). That half is **fixed** (ledger 87); the per-package `q` scales listed
       above are still open.
 
-71. **[CLOSED by entry 252 for the decade colorbar -- `viz.mosaic` relabels a log grid itself; the centering half still needs `diff=True`.] Neither the decade colorbar NOR the symmetric centering survives `viz.mosaic`.**
+71. **[CLOSED by entry 252 for the decade colorbar -- `viz.mosaic` relabels a log grid itself -- and by entry 306 for the centering: `viz.mosaic` now honours each panel's own `zmin`/`zmax`, and the widest of symmetric pairs is symmetric.] Neither the decade colorbar NOR the symmetric centering survives `viz.mosaic`.**
     - What: `_log_decade_colorbar` puts real-unit ticks (`0.1x`, `1x`, `10x`) on a log
       map, and the `change` policy centers it with symmetric `zmin`/`zmax`.
       `viz.mosaic` moves every panel onto a shared `coloraxis` and **discards both**:
@@ -12607,3 +12608,29 @@ same day, which is the useful part of the result.
       **Not done:** ``'ks'`` on a GWT/GWE model still fails at render inside FloPy (the
       transport model has no NPF) -- pre-existing; the transmissivity types that follow
       refuse by name there instead.
+
+306. **The composers named `zmin`/`zmax` and pooled over them; the static ones dropped every overlay (2026-09-23).**
+      Measured on the canonical model: ``hds.mosaic(by="layer", zmin=100, zmax=120)`` put
+      the shared axis at 79.04..153.76 on BOTH backends (``npf.k.mosaic(zmin=1, zmax=10)``
+      at 0.02..59.74), while ``animate`` honoured the same arguments -- the composers have
+      named both since ledger 258, forwarded them to every panel, and then pooled the
+      colour axis over the data regardless. And ``_mpl_mosaic``/``_mpl_animation``
+      re-plotted each panel's cells with ``gdf.plot`` instead of calling the panel's own
+      static renderer, so ``npf.k.mosaic(backend="mpl", features=..., select=...)`` drew
+      one collection per panel where ``npf.k.map(backend="mpl", ...)`` draws three.
+      **The rule: a caller-set limit beats the pooled one, each side independently, and
+      the WIDEST across panels wins.** Widest because panels a caller built separately
+      may disagree, and a bar that clips one of them misreports it; per side because
+      ``zmin`` alone must not freeze the top. That rule also CLOSES ledger 71's
+      centering half: a ``change`` panel carries symmetric limits about 1x, the widest
+      of symmetric pairs is symmetric, so a hand-built mosaic of them keeps its white
+      point at 0.5 without ``diff=True`` (pinned by a test). IES ``mean``/``std`` panels
+      set no limits, so their mosaics are unchanged.
+      **One static renderer.** Both static composers now call
+      ``Choro.plot_mpl(ax=, norm=, colorbar=False)``, which gained ``norm=`` for exactly
+      this. Anything a static map learns to draw -- ``extent=`` next -- reaches every
+      panel and frame without a third copy of the drawing code.
+      **Not done:** the static animation still draws no colorbar (it never has; a
+      colorbar beside an axis that ``clear()``s every frame needs its own axes), and
+      ``plot_mpl`` still draws no contours, so a static mosaic of contoured panels
+      loses them silently -- both pre-existing.

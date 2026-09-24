@@ -1609,6 +1609,7 @@ class Choro(Picture):
         title: str | None = None,
         outline_regions: tuple[str, ...] = (),
         edgecolor: str = "none",
+        norm=None,
         **plot_kwargs,
     ):
         """Render this choropleth with matplotlib -- the static counterpart to
@@ -1641,6 +1642,11 @@ class Choro(Picture):
             parent ``model``), e.g. ``("all_streams", "all_lakes")``.
         edgecolor
             Cell edge color (default ``"none"`` for a clean fill).
+        norm
+            A ready ``matplotlib.colors.Normalize`` shared with other panels --
+            what the static ``mosaic``/``animate`` pass so every panel draws
+            through this one renderer on one scale. Replaces ``vmin``/``vmax``
+            (and the automatic ``LogNorm``) when given.
 
         Returns
         -------
@@ -1662,7 +1668,13 @@ class Choro(Picture):
         vmin = self._zmin if vmin is None else vmin
         vmax = self._zmax if vmax is None else vmax
         style = {"cmap": cmap, "legend": colorbar, "edgecolor": edgecolor}
-        if self.logscale:
+        if norm is not None:
+            # A SHARED scale from a composer. Non-positive values still have no
+            # logarithm on a log panel, so they stay gaps.
+            if self.logscale:
+                values = np.where(values > 0, values, np.nan)
+            style["norm"] = norm
+        elif self.logscale:
             from matplotlib.colors import LogNorm
 
             for label, value in (("vmin", vmin), ("vmax", vmax)):

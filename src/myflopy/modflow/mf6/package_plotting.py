@@ -151,6 +151,11 @@ def _mpl_shared_scale(choros, *, diff: bool):
     raw log10 exponents, so a static log mosaic read ``-3 ... 2`` under a label
     naming real units (ledger 252). Mixing log and linear panels raises, as
     ``viz.mosaic`` does: one bar cannot mean both.
+
+    An explicit ``zmin``/``zmax`` on the panels WINS over the pooled range, on
+    either side independently -- the composers name both and forwarded them to
+    every panel, and this pooled over the data regardless, so
+    ``hds.mosaic(zmin=100, zmax=120)`` drew 79.04..153.76 (ledger 306).
     """
 
     from matplotlib import colors as mcolors
@@ -167,17 +172,33 @@ def _mpl_shared_scale(choros, *, diff: bool):
         arrays = [np.where(values > 0, values, np.nan) for values in arrays]
     finite_parts = [values[np.isfinite(values)] for values in arrays if np.isfinite(values).any()]
     finite = np.concatenate(finite_parts) if finite_parts else np.asarray([])
+    lo, hi = _explicit_color_limits(choros)
     if diff:
         absmax = (float(np.nanmax(np.abs(finite))) if finite.size else 1.0) or 1.0
-        return arrays, "RdBu", mcolors.Normalize(vmin=-absmax, vmax=absmax)
+        return arrays, "RdBu", mcolors.Normalize(
+            vmin=-absmax if lo is None else lo, vmax=absmax if hi is None else hi
+        )
     cmap = mpl_colormap_for(getattr(choros[0], "colorscale", "earth"))
     if logscale:
-        vmin = float(np.nanmin(finite)) if finite.size else 0.1
-        vmax = float(np.nanmax(finite)) if finite.size else 10.0
+        vmin = lo if lo is not None else (float(np.nanmin(finite)) if finite.size else 0.1)
+        vmax = hi if hi is not None else (float(np.nanmax(finite)) if finite.size else 10.0)
         return arrays, cmap, mcolors.LogNorm(vmin=vmin, vmax=vmax)
-    vmin = float(np.nanmin(finite)) if finite.size else 0.0
-    vmax = float(np.nanmax(finite)) if finite.size else 1.0
+    vmin = lo if lo is not None else (float(np.nanmin(finite)) if finite.size else 0.0)
+    vmax = hi if hi is not None else (float(np.nanmax(finite)) if finite.size else 1.0)
     return arrays, cmap, mcolors.Normalize(vmin=vmin, vmax=vmax)
+
+
+def _explicit_color_limits(choros) -> tuple[float | None, float | None]:
+    """The widest caller-set ``(zmin, zmax)`` across ``choros``, in DATA units.
+
+    Each side independently: a ``zmin`` alone leaves the top pooled. Widest,
+    because panels a caller built separately may disagree, and a shared bar that
+    clips one of them would misreport it.
+    """
+
+    lows = [float(c._zmin) for c in choros if getattr(c, "_zmin", None) is not None]
+    highs = [float(c._zmax) for c in choros if getattr(c, "_zmax", None) is not None]
+    return (min(lows) if lows else None), (max(highs) if highs else None)
 
 
 def _apply_backend(choro, backend: str = "plotly"):
@@ -1967,21 +1988,21 @@ class SpatialView:
         ncols = min(int(ncols), len(choros)) or 1
         nrows = int(np.ceil(len(choros) / ncols))
         fig, axes = mpl_axes(nrows, ncols, figsize=(5.0 * ncols, 4.5 * nrows), squeeze=False)
-        arrays, cmap, norm = _mpl_shared_scale(choros, diff=self._spatial_is_diff())
-        for axis, label, choro, values in zip(axes.flat, labels, choros, arrays, strict=False):
-            gdf = choro.vor.gdf_vorPolys.copy()
-            gdf["_spatial_value"] = values
-            gdf.plot(
-                column="_spatial_value",
+        _arrays, cmap, norm = _mpl_shared_scale(choros, diff=self._spatial_is_diff())
+        for axis, label, choro in zip(axes.flat, labels, choros, strict=False):
+            # Through the panel's OWN static renderer, so what one `map(backend=
+            # "mpl")` draws -- `features=`, the `select=` outline -- every panel
+            # draws. This loop used to re-plot the cells itself and dropped both
+            # (ledger 306).
+            choro.plot_mpl(
                 ax=axis,
                 cmap=cmap,
                 norm=norm,
+                colorbar=False,
+                title=str(label),
                 linewidth=0.2,
                 edgecolor="#666666",
             )
-            axis.set_title(str(label))
-            axis.set_axis_off()
-            axis.set_aspect("equal")
         for axis in axes.flat[len(choros):]:
             axis.set_visible(False)
         mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
@@ -2386,26 +2407,23 @@ class SpatialView:
             raise ValueError("animate requires at least one frame.")
         labels = [str(label) for label, _ in frames]
         choros = [choro for _, choro in frames]
-        arrays, cmap, norm = _mpl_shared_scale(choros, diff=self._spatial_is_diff())
+        _arrays, cmap, norm = _mpl_shared_scale(choros, diff=self._spatial_is_diff())
         fig, axis = mpl_axes(1, 1, figsize=(7.0, 6.0))
 
         def _draw(index):
             """Redraw the map for animation frame ``index`` under the shared color scale."""
 
             axis.clear()
-            gdf = choros[index].vor.gdf_vorPolys.copy()
-            gdf["_spatial_value"] = arrays[index]
-            gdf.plot(
-                column="_spatial_value",
+            # Through the frame's own static renderer, as `_mpl_mosaic` does.
+            choros[index].plot_mpl(
                 ax=axis,
                 cmap=cmap,
                 norm=norm,
+                colorbar=False,
+                title=f"{title} - {labels[index]}",
                 linewidth=0.2,
                 edgecolor="#666666",
             )
-            axis.set_title(f"{title} - {labels[index]}")
-            axis.set_axis_off()
-            axis.set_aspect("equal")
 
         _draw(0)
         return FuncAnimation(fig, _draw, frames=len(frames), interval=600, blit=False)

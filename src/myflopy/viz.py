@@ -1097,7 +1097,9 @@ def mosaic(
         Colorbar settings for the shared map color axis -- a dict of Plotly
         ``colorbar`` properties, or a **callable** ``(cmin, cmax) -> dict``.
         Panels are pooled onto one ``coloraxis``, which discards each panel's
-        own ``colorbar``. When every map panel is log-scaled and this is not
+        own ``colorbar``; the axis runs over the pooled data, except that a
+        ``zmin``/``zmax`` a panel was given wins on its side (the widest across
+        panels), so ``mosaic(zmin=100, zmax=120)`` holds the scale it names. When every map panel is log-scaled and this is not
         given, the pooled bar is relabelled in real units at whole decades
         automatically (:func:`myflopy.viz.log_decade_colorbar`); mixing
         log-scaled and linear map panels raises, since one axis cannot mean
@@ -1190,6 +1192,7 @@ def mosaic(
     )
 
     map_values = []
+    map_limits = ([], [])  # caller-set trace zmin / zmax, already in trace space
     map_colorscale = None
     map_cells = []  # (subplot_id, panel) for each map cell, in add order
     for index, (kind, traces) in enumerate(zip(kinds, cell_traces, strict=False)):
@@ -1206,6 +1209,10 @@ def mosaic(
                 values = np.asarray(trace.z, dtype=float)
                 if np.isfinite(values).any():
                     map_values.append(values[np.isfinite(values)])
+                if getattr(trace, "zmin", None) is not None:
+                    map_limits[0].append(float(trace.zmin))
+                if getattr(trace, "zmax", None) is not None:
+                    map_limits[1].append(float(trace.zmax))
             fig.add_trace(trace, row=row, col=col)
             if kind == "map":
                 subplot_id = getattr(fig.data[-1], "subplot", None)
@@ -1219,15 +1226,20 @@ def mosaic(
 
     if "map" in kinds:
         coloraxis = {"colorscale": map_colorscale or "Earth"}
-        if map_values:
-            finite = np.concatenate(map_values)
-            if diff:
+        # A panel's own zmin/zmax WIN over the pooled range, each side on its
+        # own (widest across panels). They were pooled over the data regardless,
+        # so `hds.mosaic(zmin=100, zmax=120)` drew 79.04..153.76 (ledger 306).
+        lo = min(map_limits[0]) if map_limits[0] else None
+        hi = max(map_limits[1]) if map_limits[1] else None
+        if map_values or (lo is not None and hi is not None):
+            finite = np.concatenate(map_values) if map_values else np.asarray([], dtype=float)
+            if diff and lo is None and hi is None:
                 absmax = float(np.nanmax(np.abs(finite))) or 1.0
                 coloraxis.update(cmin=-absmax, cmax=absmax, cmid=0.0, cauto=False)
             else:
                 coloraxis.update(
-                    cmin=float(np.nanmin(finite)),
-                    cmax=float(np.nanmax(finite)),
+                    cmin=lo if lo is not None else float(np.nanmin(finite)),
+                    cmax=hi if hi is not None else float(np.nanmax(finite)),
                     cauto=False,
                 )
         if colorbar is not None:

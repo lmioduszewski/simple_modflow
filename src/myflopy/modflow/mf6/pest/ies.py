@@ -1717,10 +1717,11 @@ class IesResults:
         Notes
         -----
         A mosaic pools every panel onto ONE color axis, which discards each
-        panel's own limits and colorbar (compromise ledger 71). That pooling is
-        the point -- it is what makes the panels comparable -- but it means the
-        real-unit ticks for a log-scaled ``mean`` mosaic have to be rebuilt from
-        the pooled limits, which is what the ``colorbar`` callback does.
+        panel's own colorbar (compromise ledger 71) and keeps the WIDEST of any
+        limits the panels set (ledger 306). That pooling is the point -- it is
+        what makes the panels comparable -- but it means the real-unit ticks for
+        a log-scaled ``mean`` mosaic have to be rebuilt from the pooled limits,
+        which is what the ``colorbar`` callback does.
         """
 
         if _normalize_backend(backend) != "plotly":

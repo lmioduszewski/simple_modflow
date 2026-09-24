@@ -2253,7 +2253,9 @@ class ModelPlots:
             Colorbar settings for the shared map color axis -- a dict of Plotly
             ``colorbar`` properties, or a **callable** ``(cmin, cmax) -> dict``.
             Panels are pooled onto one ``coloraxis``, which discards each panel's
-            own ``colorbar``. When every map panel is log-scaled and this is not
+            own ``colorbar``; the axis runs over the pooled data, except that a
+            ``zmin``/``zmax`` a panel was given wins on its side (the widest across
+            panels), so ``mosaic(zmin=100, zmax=120)`` holds the scale it names. When every map panel is log-scaled and this is not
             given, the pooled bar is relabelled in real units at whole decades
             automatically (:func:`myflopy.viz.log_decade_colorbar`); mixing
             log-scaled and linear map panels raises, since one axis cannot mean
