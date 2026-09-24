@@ -174,9 +174,12 @@ one picture. Saturated follows MF6's ICELLTYPE rule (confined = full thickness;
 THICKSTRT honoured) and matches `DATA-SAT` to 5e-7. One computation:
 `modflow/mf6/hydraulics.model_transmissivity` (import layer 0). Total-over-layers is
 DEFERRED (needs a non-int `layer=` at every scope).
-**A plotly map is fitted for the canvas plotly will draw** (ledger 307): `viz.map_canvas`
-(the figure's size, else plotly's 700x450, less margins, times the subplot domain) into
-`Choro.map_view(size=)`. The old fit assumed 1000x700 and cropped single maps, mosaic
+**A plotly map is fitted for the canvas plotly will draw** (ledger 307, amended by 311):
+`viz.map_canvas` (an export size, else the figure's, else plotly's 700x450, less the
+margins plotly DRAWS -- it grows them for a colorbar and animation controls, so pass
+`colorbar=`/`controls=` -- times the subplot domain) into `Choro.map_view(size=)`.
+Measure framing in a BROWSER (`docs/reproducers/map_canvas_margins.py`); a test that
+takes `map_canvas` as the truth certified the colorbar bug. The old fit assumed 1000x700 and cropped single maps, mosaic
 panels (~10% of the grid) and PNGs; a hillshade reset the view after it. Pass a SIZE
 whenever you frame a map, and never set `center`/`zoom` after the fit.
 **A map of an UNRUN model reads its inputs, and `type`/`layer` are checked at the call**

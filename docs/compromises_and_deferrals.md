@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 310 entries (311 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 311 entries (312 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 311 | An adversarial review of 305-310 found eight defects the tests certified rather than checked | 2026-09-24 |
 | 310 | Named areas of interest: defined on the model, kept by the project | 2026-09-24 |
 | 309 | `extent=` -- the window a map opens on, at every scope and backend | 2026-09-24 |
 | 308 | Transmissivity maps and nouns: saturated by default, and the choices behind it | 2026-09-23 |
@@ -12594,7 +12595,10 @@ same day, which is the useful part of the result.
       behaviour change for any script that called ``model.plot.map()`` before running.
       ``values=`` still draws on any model.
       **``'rch'`` now draws what it documented** (output recharge, the ``'output_rch'``
-      branch; the latter stays as an undocumented alias). **``'input_rch'`` is RETIRED by
+      branch; the latter stays as an undocumented alias). **CORRECTED by ledger 311:**
+      that branch shifted every rate onto the PREVIOUS cell, and the test written here
+      compared ``'rch'`` against ``'output_rch'`` -- the same function -- so it passed on
+      wrong data; it now compares against FloPy's own budget-file reader. **``'input_rch'`` is RETIRED by
       name**: it read ``stress_period_data.data[37]`` whatever period was asked and raised
       ``KeyError`` on any model with fewer periods; nothing in ``src/``, ``tests/`` or the
       live notebooks used it, and the noun ``packages.rch.inputs.recharge`` maps declared
@@ -12649,7 +12653,10 @@ same day, which is the useful part of the result.
       fit, overriding ``fit_bounds`` and an explicit ``zoom`` alike.
       **The rule: fit the canvas plotly will draw -- the figure's own ``width``/``height``
       when it names them, else plotly.js's OWN defaults (700x450) -- less the resolved
-      margins, times the subplot's domain** (``viz.map_canvas``). The real inline size is
+      margins, times the subplot's domain** (``viz.map_canvas``). **AMENDED by ledger
+      311:** "the resolved margins" must be the ones plotly DRAWS, which it grows for a
+      colorbar and an animation's controls after the fit -- the declared ones made the
+      fitted canvas the LARGER one. The real inline size is
       unknowable from Python (an inline figure is as wide as its notebook cell), and the
       asymmetry decides it: fitting a canvas SMALLER than the real one only adds margin,
       fitting a larger one crops. So a wide notebook shows the grid with room around it,
@@ -12810,3 +12817,46 @@ same day, which is the useful part of the result.
       **NOT built:** areas in ``hds.get(cells=)``, a section line from a named
       LineString, ``Surface.within``/zones, a clipped ``to_xugrid``, and a bridge turning
       an area into a model region -- each is a later wiring of the same library.
+
+311. **An adversarial review of 305-310 found eight defects the tests certified rather than checked (2026-09-24).**
+      A 3-reviewer / skeptic-per-finding review of the six commits; every confirmed finding
+      reproduced independently, none was refuted. The theme worth carrying: in each case a
+      test was written against the code's own model of the answer.
+      **``type='rch'`` drew each cell's recharge on the PREVIOUS cell (high).**
+      ``bud('rch').df`` is ZERO-based over the whole model and the reader subtracted one
+      more, so map[i] == truth[i+1] (166 of 441 cells); it also matched on the whole node,
+      dropping recharge applied below layer 1. The shift predates this work in
+      ``'output_rch'``; ledger 305 routed the DOCUMENTED ``'rch'`` onto it and tested
+      ``'rch'`` against ``'output_rch'`` -- the same function. Now ``node % ncpl``,
+      ``bincount``, and a test against FloPy's own ``CellBudgetFile``.
+      **A saturated-T map drew its FIRST time forever.** The cache had no key, so every
+      ``.ani`` frame and a reassigned ``per`` showed the first kstpkper's field under an
+      advancing footer. Keyed by ``(type, kstpkper)``.
+      **``map_canvas`` fitted the DECLARED margins; plotly draws wider ones.** Measured in
+      a browser: the colorbar grows a standalone map's right margin 0 -> 81 px, an
+      animation's controls grow both sides to 80 px -- so a wide window showed 97.3% / 91.4%
+      of itself. ``COLORBAR_MARGIN`` (100) and ``CONTROLS_MARGIN`` (80) are reserved now;
+      after the fix every picture CONTAINS its window (standalone 1.135x, animation 1.142x,
+      mosaic panels 1.113x at 5% padding). The tests had taken ``map_canvas`` itself as the
+      truth; they now assert on the literal DRAWN canvases (619x430, 540x310), with
+      ``bounds_padding=0`` and a WIDE window -- on the square canonical grid height is always
+      the tighter axis, so a width error was invisible, and 5% padding absorbed the
+      controls' 10 px. Reproducer: ``docs/reproducers/map_canvas_margins.py``.
+      **``Picture.save`` fitted the figure's size over the caller's, restored an ALIASED
+      centre, and overwrote a view the caller set.** An explicit ``save(width=)`` wins now,
+      as it does in plotly's ``to_image``; the restore holds plain copies (``layout.map
+      .center`` is a live object ``update_layout`` mutates in place -- pinned on a stub,
+      since a map's own export centre equals its screen one); and a view the caller MOVED
+      on ``.fig`` is written as it stands (``Choro._fitted_view``).
+      **Lower findings, also fixed:** a diff mosaic with one caller-set limit filled the
+      other side with the raw data max and dropped the zero centre on plotly while the
+      static backend mirrored the pooled magnitude -- both mirror now; a composer
+      ``extent=`` over panels drawn with ``fit_bounds=False`` is refused, as a single map
+      refuses it; the PRT pathline and capture mosaics, the IES field mosaic and
+      ``model.packages.mosaic`` hand ``extent=`` to ``viz.mosaic`` instead of to every panel
+      (a list had raised "only a mosaic can use" from inside a mosaic, and
+      ``packages.mosaic`` had swallowed a bad box per panel into "no package could be
+      drawn") -- their ``sync_views`` default to ``None`` like the rest; a bare grid given a
+      field ``type`` raises instead of drawing node numbers under its colorbar;
+      ``npf.transmissivity.long()/wide()`` key on the period (they repeated every
+      ``(layer, cell)`` once per period) and ``map(per=None)`` is the default time.

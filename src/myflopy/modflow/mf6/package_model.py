@@ -1291,7 +1291,7 @@ class ModelPackages:
         }
 
     def mosaic(self, *, packages=None, ncols: int = 3, title: str | None = None,
-               sync_views: bool = True, **kwargs):
+               sync_views: bool | None = None, **kwargs):
         """Every mappable package, drawn as one grid of small multiples.
 
         The combinator over :meth:`summary` -- it draws what that table says is
@@ -1307,10 +1307,13 @@ class ModelPackages:
             Grid width.
         title : str, optional
             Overall figure title.
-        sync_views : bool, default True
-            Pan and zoom the panels together.
+        sync_views : bool, optional
+            Pan and zoom the panels together -- by default whenever they share one
+            window (see :func:`myflopy.viz.mosaic`).
         **kwargs
-            Forwarded to each package's ``map()`` (e.g. ``per=``, ``layer=``).
+            Forwarded to each package's ``map()`` (e.g. ``per=``, ``layer=``), except
+            ``extent=``, which frames the composed figure: one window for every
+            panel, or a list with one per panel.
 
         Returns
         -------
@@ -1326,6 +1329,10 @@ class ModelPackages:
             else [str(p).lower() for p in table.loc[table["mappable"], "package"]]
         )
 
+        # Framing belongs to the COMPOSER: resolved there, so a bad box raises by
+        # name instead of being swallowed below as "could not be drawn" for every
+        # package, and a LIST is one per panel (ledger 311).
+        extent = kwargs.pop("extent", None)
         panels = []
         for name in wanted:
             explorer = self._explorer_or_none(name)
@@ -1350,7 +1357,7 @@ class ModelPackages:
             raise ValueError(
                 "no package could be drawn; `summary()` shows what is mappable."
             )
-        return _mosaic(panels, ncols=ncols, title=title, sync_views=sync_views)
+        return _mosaic(panels, ncols=ncols, title=title, sync_views=sync_views, extent=extent)
 
     def __getattr__(self, package_name: str) -> PackageExplorer:
         """Return a registry-backed generic package explorer."""

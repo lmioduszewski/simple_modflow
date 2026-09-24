@@ -1620,9 +1620,49 @@ class TransmissivityExplorer(TransmissivityMaxExplorer):
     _label = "Transmissivity (K x saturated thickness)"
 
     def _map_per(self, per):
-        """The map reads the period asked for -- this field has a time."""
+        """The map reads the period asked for -- this field has a time. ``None``
+        is the free map's default time, as on every other noun."""
 
-        return int(per)
+        return None if per is None else int(per)
+
+    def long(
+        self,
+        *,
+        per: int | Iterable[int] | None = None,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+    ) -> pd.Series:
+        """Transmissivity indexed by ``per/layer/cell`` -- the PERIOD is part of the
+        key, since the saturated thickness moves with the heads (the inherited
+        static form indexed by ``layer/cell`` alone repeated every key once per
+        period, ledger 311)."""
+
+        frame = self.get(per=per, layer=layer, cells=cells)
+        series = frame.set_index(["per", "layer", "cell"])[self.field_name].sort_index()
+        series.name = self.field_name
+        return series
+
+    def stack(self, **kwargs) -> pd.Series:
+        """Alias for :meth:`long`."""
+
+        return self.long(**kwargs)
+
+    def wide(
+        self,
+        *,
+        per: int | Iterable[int] | None = None,
+        layer: int | Iterable[int] | None = None,
+        cells: Iterable[int] | None = None,
+    ) -> pd.DataFrame:
+        """One row per ``(per, cell)``, one column per layer -- never one period
+        silently standing for all of them."""
+
+        frame = self.get(per=per, layer=layer, cells=cells)
+        wide = frame.pivot_table(
+            index=["per", "cell"], columns="layer", values=self.field_name, aggfunc="first"
+        )
+        wide.columns = [f"layer_{int(column)}" for column in wide.columns]
+        return wide.reset_index()
 
     def _saved_times(self) -> list[tuple[int, int]]:
         """Each saved period's LAST ``(kstp, kper)``, in order; refuses an unrun model."""

@@ -1060,12 +1060,16 @@ class PRTPathlineView(_PRTDerivedView):
         *,
         by: str = "release_group",
         ncols: int = 2,
-        sync_views: bool = True,
+        sync_views: bool | None = None,
         backend: str = "plotly",
         title: str | None = None,
         **kwargs,
     ):
         """One map panel per release group, on a shared view.
+
+        ``extent=`` frames every panel, or -- as a list -- each panel on its own, as
+        on every composer (ledger 309); ``sync_views`` defaults to linking panels
+        that share a window.
 
         Only ``by="release_group"`` is offered: layer panels would repeat the same
         trajectories over different head layers, since a plan-view track is never
@@ -1096,11 +1100,16 @@ class PRTPathlineView(_PRTDerivedView):
                 "PRTReleasePoints.from_cells(..., group=...) to name them, or call "
                 "map() for the single-panel figure."
             )
+        # The composer frames the panels -- a LIST is one per panel, which no single
+        # panel's map() can take (ledger 311).
+        extent = kwargs.pop("extent", None)
         panels = [
             (label, self.map(group=label, backend=backend, title=label, **kwargs))
             for label in labels
         ]
-        return viz.mosaic(panels, ncols=ncols, title=title, sync_views=sync_views)
+        return viz.mosaic(
+            panels, ncols=ncols, title=title, sync_views=sync_views, extent=extent
+        )
 
     def plot(self, *, backend: str = "plotly", title: str | None = None):
         """Elevation against travel time -- the vertical half of each trajectory.
@@ -1336,7 +1345,7 @@ class PRTCaptureView(_PRTDerivedView):
         layer: int | None = None,
         colorscale: str | None = None,
         ncols: int = 2,
-        sync_views: bool = True,
+        sync_views: bool | None = None,
         backend: str = "plotly",
         title: str | None = None,
         **kwargs,
@@ -1367,6 +1376,7 @@ class PRTCaptureView(_PRTDerivedView):
                 "A capture mosaic is a Plotly composition; pass group= for a single "
                 "matplotlib panel, or backend='plotly'."
             )
+        extent = kwargs.pop("extent", None)  # the composer's, see ledger 311
         panels = [
             (
                 label,
@@ -1383,6 +1393,7 @@ class PRTCaptureView(_PRTDerivedView):
             ncols=int(ncols),
             title=title or f"Capture zones by {by.replace('_', ' ')}",
             sync_views=sync_views,
+            extent=extent,
         )
 
     def _group_map(self, frame, *, group: str, layer, colorscale, backend="plotly", **kwargs):

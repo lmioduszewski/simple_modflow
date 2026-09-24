@@ -1052,3 +1052,14 @@ def test_a_static_pathline_map_honours_extent(prt_run):
     assert (*axis.get_xlim(), *axis.get_ylim()) == pytest.approx((box[0], box[2], box[1], box[3]))
     with pytest.raises(TypeError, match="but extent="):
         prt_run.pathlines.map(backend="mpl", zmin=1.0)
+
+
+def test_a_pathline_mosaic_deals_a_list_of_extents_to_its_panels(prt_run):
+    """The group mosaic handed the whole list to every panel's map(), which raised
+    'only a mosaic can use' -- from inside a mosaic (ledger 311)."""
+
+    xmin, ymin, xmax, ymax = (float(v) for v in prt_run.flow_model.vor.gdf_vorPolys.total_bounds)
+    boxes = [(xmin, ymin, (xmin + xmax) / 2, ymax), None]
+    figure = prt_run.pathlines.mosaic(extent=boxes)
+    # Framed apart: the first panel on the west half, the second on its grid.
+    assert figure.layout.map.center.lon < figure.layout.map2.center.lon

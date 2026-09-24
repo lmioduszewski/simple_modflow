@@ -177,18 +177,25 @@ class Picture:
             # Kaleido writes at its own default size (700x500) unless told, and a
             # view fitted for the screen cropped the top and bottom of every map
             # saved to PNG -- 78.6% of the grid's height (ledger 307). Refit for
-            # the export's canvas, then put the screen view back.
+            # the size kaleido WILL write -- an explicit width/height wins over the
+            # figure's, as plotly's own `to_image` does (ledger 311) -- then put the
+            # screen view back.
             import plotly.io as pio
 
             size = (
-                kwargs.get("width") or pio.defaults.default_width,
-                kwargs.get("height") or pio.defaults.default_height,
+                kwargs.get("width") or figure.layout.width or pio.defaults.default_width,
+                kwargs.get("height") or figure.layout.height or pio.defaults.default_height,
             )
             view = export_view(size)
         if not view:
             figure.write_image(str(path), **kwargs)
             return path
-        screen = {key: figure.layout.map[key] for key in view}
+        # PLAIN copies: `layout.map.center` is a live object that `update_layout`
+        # mutates in place, so holding it "restored" the export view (ledger 311).
+        screen = {}
+        for key in view:
+            value = figure.layout.map[key]
+            screen[key] = value.to_plotly_json() if hasattr(value, "to_plotly_json") else value
         figure.update_layout(map=view)
         try:
             figure.write_image(str(path), **kwargs)
@@ -418,7 +425,9 @@ def _build_frame_figure(frames, *, title=None):
     # A map flipped across frames still needs its view fitted to the data, or it
     # renders zoomed out to the world -- the same fix mosaic's subplots needed.
     if all(hasattr(picture, "get_choropleth") for picture in pictures):
-        shared = shared_map_view(pictures, size=map_canvas(figure.layout))
+        shared = shared_map_view(
+            pictures, size=map_canvas(figure.layout, colorbar=True, controls=True)
+        )
         if shared:
             layout["map"] = shared
         _pool_frame_color_axis(figure, pictures)
@@ -895,19 +904,39 @@ PLOTLY_DEFAULT_SIZE = (700, 450)
 PLOTLY_DEFAULT_MARGIN = {"l": 80, "r": 80, "t": 100, "b": 80}
 #: Pixel height of one row of MAP panels in :func:`mosaic`.
 MOSAIC_ROW_HEIGHT = 320
+#: The right margin plotly GROWS to at draw time to fit a colorbar (measured 81 px
+#: in plotly 6.9 on a standalone map declaring ``r=0``; 100 leaves room for wider
+#: tick labels). A declared margin is not the drawn one, and fitting the declared
+#: canvas cropped a wide window's edges (ledger 311).
+COLORBAR_MARGIN = 100
+#: The side margins plotly grows to for an animation's slider and play buttons
+#: (measured 80 px each, against a declared 50/0).
+CONTROLS_MARGIN = 80
 
 
-def map_canvas(layout, subplot: str | None = None, *, size=None) -> tuple[float, float]:
+def map_canvas(
+    layout,
+    subplot: str | None = None,
+    *,
+    size=None,
+    colorbar: bool = False,
+    controls: bool = False,
+) -> tuple[float, float]:
     """``(width, height)`` in pixels of the map area plotly will draw ``layout`` into.
 
-    The figure's own ``width``/``height`` when it names them, else ``size``, else
-    :data:`PLOTLY_DEFAULT_SIZE`; less the resolved margins (the figure's, else its
-    template's, else plotly's); times ``subplot``'s domain when one is named.
+    ``size`` when given -- an EXPORT size, which plotly lets win over the
+    figure's own (``to_image(width=)`` beats ``layout.width``) -- else the
+    figure's own ``width``/``height``, else :data:`PLOTLY_DEFAULT_SIZE`; less the
+    resolved margins (the figure's, else its template's, else plotly's), grown to
+    what plotly adds at draw time for a ``colorbar`` and for animation
+    ``controls``; times ``subplot``'s domain when one is named.
     """
 
-    width, height = size if size is not None else PLOTLY_DEFAULT_SIZE
-    width = layout.width or width
-    height = layout.height or height
+    if size is not None:
+        width, height = size
+    else:
+        width = layout.width or PLOTLY_DEFAULT_SIZE[0]
+        height = layout.height or PLOTLY_DEFAULT_SIZE[1]
 
     template = getattr(getattr(layout, "template", None), "layout", None)
     margins = (layout.margin, getattr(template, "margin", None))
@@ -919,7 +948,12 @@ def map_canvas(layout, subplot: str | None = None, *, size=None) -> tuple[float,
                 return float(value)
         return float(PLOTLY_DEFAULT_MARGIN[side])
 
-    plot_w = float(width) - _margin("l") - _margin("r")
+    left, right = _margin("l"), _margin("r")
+    if colorbar:
+        right = max(right, COLORBAR_MARGIN)
+    if controls:
+        left, right = max(left, CONTROLS_MARGIN), max(right, CONTROLS_MARGIN)
+    plot_w = float(width) - left - right
     plot_h = float(height) - _margin("t") - _margin("b")
     if subplot is not None:
         domain = layout[subplot].domain
@@ -980,7 +1014,7 @@ def _fit_map_views(fig, map_cells, boxes=None) -> tuple[list[str], bool]:
     # Every map cell of one grid has the same domain size, so the first one's
     # canvas is every one's. The map_view used to be fitted for a 1000x700
     # single map, which showed ~10% of the grid in each panel (ledger 307).
-    size = map_canvas(fig.layout, map_cells[0][0])
+    size = map_canvas(fig.layout, map_cells[0][0], colorbar=True)
     panels = [panel for _, panel in map_cells]
     boxes = list(boxes) if boxes is not None else [None] * len(panels)
     windows = [
@@ -1394,6 +1428,13 @@ def mosaic(
                 )
         map_panels = [panel for kind, (_, panel) in zip(kinds, normalized, strict=True) if kind == "map"]
         map_values_in = [value for kind, value in zip(kinds, per_panel, strict=True) if kind == "map"]
+        for number, (panel, value) in enumerate(zip(map_panels, map_values_in, strict=True), 1):
+            if value is not None and not getattr(panel, "fit_bounds", True):
+                raise ValueError(
+                    f"map panel {number} was drawn with fit_bounds=False, and extent= is "
+                    "a window to FIT -- the refusal a single map makes. Draw that "
+                    "panel with the default fit_bounds, or give it None in extent=."
+                )
         boxes = [
             None if value is None else panel.resolve_extent(value).wgs84
             for panel, value in zip(map_panels, map_values_in, strict=True)
@@ -1418,9 +1459,18 @@ def mosaic(
         hi = max(map_limits[1]) if map_limits[1] else None
         if map_values or (lo is not None and hi is not None):
             finite = np.concatenate(map_values) if map_values else np.asarray([], dtype=float)
-            if diff and lo is None and hi is None:
-                absmax = float(np.nanmax(np.abs(finite))) or 1.0
-                coloraxis.update(cmin=-absmax, cmax=absmax, cmid=0.0, cauto=False)
+            if diff:
+                # A missing side mirrors the pooled magnitude, as the static
+                # composer does -- filling it with the raw data max dropped the
+                # zero centre, so an all-zero diff drew in the top colour.
+                absmax = (float(np.nanmax(np.abs(finite))) if finite.size else 1.0) or 1.0
+                coloraxis.update(
+                    cmin=lo if lo is not None else -absmax,
+                    cmax=hi if hi is not None else absmax,
+                    cauto=False,
+                )
+                if lo is None and hi is None:
+                    coloraxis["cmid"] = 0.0
             else:
                 coloraxis.update(
                     cmin=lo if lo is not None else float(np.nanmin(finite)),

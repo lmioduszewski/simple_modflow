@@ -1687,7 +1687,7 @@ class IesResults:
     def plot_field_mosaic(self, target: str, *,
                           which: Sequence[str] = ("prior", "posterior"),
                           stat: str = "mean", layer: int = 0, ncols: int = 2,
-                          title: str | None = None, sync_views: bool = True,
+                          title: str | None = None, sync_views: bool | None = None,
                           backend: str = "plotly", **choropleth_kwargs):
         """Compose one field map per ensemble, side by side on a shared color scale.
 
@@ -1745,6 +1745,7 @@ class IesResults:
                 "which=('prior', 'posterior')."
             )
 
+        extent = choropleth_kwargs.pop("extent", None)  # the composer's (ledger 311)
         panels, resolved = [], {}
         for side in sides:
             choro, heading, resolved = self._field_choro(
@@ -1757,6 +1758,7 @@ class IesResults:
             ncols=ncols,
             title=title or f"{target} {stat_key} — {' vs '.join(sides)}",
             sync_views=sync_views,
+            extent=extent,
             # Keyed on the EFFECTIVE logscale, not on the stat: `mean` is mapped
             # in log space by default (without this the shared bar reads
             # "-3 ... 2" for a field running 0.001 to 100), but a caller passing

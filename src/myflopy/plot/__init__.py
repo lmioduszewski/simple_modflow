@@ -524,6 +524,18 @@ def map(      # noqa: A001 - the verb IS `map`
     else:
         # No results, but still a model: its inputs and names stay readable.
         trace_kwargs.setdefault("input_model", _input_model_of(source))
+        if (
+            trace_kwargs["input_model"] is None
+            and values is None
+            and str(type).lower() not in ("hds", "custom")
+        ):
+            # A bare grid: an explicit field type has nothing to read, and drew
+            # node numbers under its colorbar (ledger 311). The default `'hds'`
+            # stays the grid's node-number map.
+            raise ValueError(
+                f"type={type!r}: {source.__class__.__name__} is a bare grid with no model to "
+                "read that field from. Map it from the model, or pass values=."
+            )
     if values is not None:
         trace_kwargs["custom_zs"] = list(values)
     # Resolved BEFORE the picture is built, so a misspelled backend raises

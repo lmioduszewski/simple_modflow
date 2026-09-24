@@ -238,7 +238,7 @@ def test_the_free_mosaic_takes_a_list_with_none_for_a_panels_own(canonical_run):
     )
     first = canonical_run.plot.map(layer=0, extent=BOX).extent.wgs84
     second = canonical_run.plot.map(layer=1, extent=own).extent.wgs84
-    size = viz.map_canvas(figure.layout, "map")
+    size = viz.map_canvas(figure.layout, "map", colorbar=True)
     assert _fits(figure.layout.map, size, first)
     assert _fits(figure.layout.map2, size, second)
 
@@ -269,3 +269,28 @@ def test_a_png_animation_frame_keeps_its_extent(canonical_run):
     assert type(plot.animate(frames, backend="png")).__name__ == "SliderAnimation"
     for picture in frames:
         assert _limits(_mpl_figure_of(picture).axes[0]) == pytest.approx(PADDED)
+
+
+# --- review fixes (ledger 311) ---------------------------------------------------
+
+
+def test_a_composer_extent_refuses_panels_drawn_without_a_fit(canonical_run):
+    """A single map refuses `fit_bounds=False` beside an extent; a composer
+    centred the panels on the box and silently kept their fixed zoom."""
+
+    panels = [canonical_run.plot.map(layer=k, fit_bounds=False, zoom=12) for k in (0, 1)]
+    with pytest.raises(ValueError, match="fit_bounds=False"):
+        viz.mosaic(panels, extent=BOX)
+
+
+def test_the_package_mosaic_frames_its_panels_and_does_not_swallow_a_bad_box(canonical_run):
+    """`packages.mosaic` forwarded extent to every package's map and swallowed the
+    ValueError per panel, reporting 'no package could be drawn' (ledger 311)."""
+
+    figure = canonical_run.packages.mosaic(packages=["npf", "ic"], extent=BOX)
+    extent = canonical_run.plot.map(layer=0, extent=BOX).extent.wgs84
+    assert _fits(figure.layout.map, viz.map_canvas(figure.layout, "map", colorbar=True), extent)
+    with pytest.raises(ValueError, match="off the grid"):
+        canonical_run.packages.mosaic(packages=["npf", "ic"], extent=(9e6, 9e6, 9.1e6, 9.1e6))
+    listed = canonical_run.packages.mosaic(packages=["npf", "ic"], extent=[BOX, None])
+    assert listed.layout.map.zoom > listed.layout.map2.zoom

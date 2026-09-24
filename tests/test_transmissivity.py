@@ -229,3 +229,32 @@ def test_derived_fields_are_not_declared_package_arrays(canonical_run):
     """`summary()`/`ModelPackages.mosaic` enumerate what the package STORES."""
 
     assert canonical_run.packages.npf.fields["field"].tolist() == ["k", "k22", "k33"]
+
+
+# --- review fixes (ledger 311) ---------------------------------------------------
+
+
+def test_a_saturated_map_redraws_when_its_time_moves(canonical_run):
+    """The cache was unkeyed: every `.ani` frame and a reassigned `per` drew the
+    FIRST time's transmissivity while the footer advanced."""
+
+    picture = canonical_run.plot.map(type="trans", layer=0)
+    first = np.asarray(picture.linear_zs, dtype=float)
+    picture.per = 5
+    later = np.asarray(picture.linear_zs, dtype=float)
+    expected = model_transmissivity(canonical_run, heads=_heads(canonical_run, picture.kstpkper))
+    assert np.allclose(later, expected.transmissivity[0], equal_nan=True)
+    assert not np.allclose(later, first, equal_nan=True)
+
+    frames = canonical_run.plot.map(type="trans", layer=0).ani.frames
+    sums = {round(float(np.nansum(np.asarray(frame.data[0].z, dtype=float))), 3) for frame in frames}
+    assert len(sums) > 1
+
+
+def test_the_saturated_table_keys_on_the_period(canonical_run):
+    noun = canonical_run.packages.npf.transmissivity
+    series = noun.long(layer=0)
+    assert series.index.names == ["per", "layer", "cell"] and series.index.is_unique
+    wide = noun.wide(per=[1, 4])
+    assert sorted(wide["per"].unique()) == [1, 4]
+    assert noun.map(per=None, layer=0) is not None  # the default time, like every noun

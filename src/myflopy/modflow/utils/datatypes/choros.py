@@ -37,6 +37,7 @@ from myflopy.modflow.utils.datatypes.features import (
     resolve_features,
 )
 from myflopy.viz import (
+    COLORBAR_MARGIN,
     HIGHLIGHT_DIM_OPACITY,
     HIGHLIGHT_WIDTH,
     PALETTE,
@@ -815,8 +816,12 @@ class Choro(Picture):
         free map and the npf nouns, which call this map (ledger 308).
         """
 
+        # Keyed by the TIME it was read at: `ani` moves `kstpkper` frame by frame
+        # and `per` can be reassigned, and an unkeyed cache drew every frame with
+        # the first time's field (ledger 311).
+        key = (self.type, self.kstpkper if self.type == "trans" else None)
         cached = getattr(self, "_transmissivity_cache", None)
-        if cached is None:
+        if cached is None or cached[0] != key:
             heads = None
             if self.type == "trans":
                 reader = self.model.hds
@@ -824,9 +829,9 @@ class Choro(Picture):
                     reader.array(layer=layer, kstpkper=self.kstpkper, masked=False)
                     for layer in range(int(self.nlay))
                 ])
-            cached = model_transmissivity(self._inputs, heads=heads)
+            cached = (key, model_transmissivity(self._inputs, heads=heads))
             self._transmissivity_cache = cached
-        return cached
+        return cached[1]
 
     @property
     def _inputs(self):
@@ -1100,22 +1105,26 @@ class Choro(Picture):
 
     @property
     def output_rch_zs(self):
-        """gets model output recharge values for the specified kstpkper"""
-        df = self.model.bud('rch').df
-        df = df[~df.index.duplicated()].reset_index()  # remove duplicates...TODO why are there duplicates sometimes
-        areas = pd.Series(self.model.vor.area_list, name='area')
-        areas.index.name = 'node'
-        m = pd.merge(df, areas, on='node')
-        full_idx = range(self.model.vor.ncpl)
-        m['rch_per_period'] = (m['q'] / m['area'])  # calc L/T recharge
-        m = m[m.loc[:, 'kstpkper'] == self.kstpkper]
-        m.loc[:, 'node'] = m['node'] - 1  # adjust for zero-based index
-        m = m.set_index('node')
-        m = m.reindex(full_idx, fill_value=0)
-        zs = m['rch_per_period'].to_list()
+        """The simulated recharge RATE (flux / cell area) per cell at this map's time.
+
+        ``bud('rch').df`` is ZERO-based over the whole model -- ``node`` is
+        ``layer * ncpl + cell`` -- so a record maps to its column by ``node % ncpl``
+        and is summed there. This used to subtract one more, which drew every
+        cell's rate on the PREVIOUS cell (map[i] == truth[i+1], the last cell 0),
+        and matched on the whole node, which dropped recharge applied below
+        layer 1 (ledger 311).
+        """
+
+        frame = self.model.bud('rch').df.reset_index()
+        key = tuple(int(v) for v in self.kstpkper)
+        frame = frame[frame['kstpkper'].map(lambda k: tuple(int(v) for v in k) == key)]
+        ncpl = int(self.vor.ncpl)
+        cells = frame['node'].to_numpy(dtype=int) % ncpl
+        flux = np.bincount(cells, weights=frame['q'].to_numpy(dtype=float), minlength=ncpl)
+        zs = flux / np.asarray(self.vor.area_list, dtype=float)
         if self.rch_scale is not None:
-            zs = (np.array(zs) * self.rch_scale).tolist()
-        return zs
+            zs = zs * self.rch_scale
+        return zs.tolist()
 
     @property
     def colorscale(self):
@@ -1168,25 +1177,56 @@ class Choro(Picture):
     #: The margins a standalone map is drawn with.
     _MAP_MARGIN = {"r": 0, "t": 20, "l": 0, "b": 0}
 
+    #: The view :meth:`update_layout` fitted, so an export can tell it from one the
+    #: caller set on ``.fig`` (a class default for `object.__new__` doubles).
+    _fitted_view = None
+
+    def _shows_colorbar(self) -> bool:
+        """Whether plotly will draw (and so make room for) this map's colorbar."""
+
+        return self.kwargs.get("showscale", True) is not False if hasattr(self, "kwargs") else True
+
     def update_layout(self):
         """Apply the default map style, center, and (fitted or fixed) zoom to ``self._fig``."""
 
         self._fig.update_layout(margin=self._MAP_MARGIN, uirevision="lock")
-        view = self.map_view(size=map_canvas(self._fig.layout))
+        view = self.map_view(
+            size=map_canvas(self._fig.layout, colorbar=self._shows_colorbar())
+        )
         if "center" not in view:
             view["zoom"] = self.zoom
         self._fig.update_layout(map=view)
+        self._fitted_view = {key: view.get(key) for key in ("center", "zoom")}
 
     def export_map_view(self, size):
         """The ``map`` layout to write this picture at ``size`` (a PNG's pixels).
 
         Read by :meth:`~myflopy.viz.Picture.save`, which swaps it in for the
-        export and puts the screen view back after.
+        export and puts the screen view back after. None -- write the figure as
+        it stands -- when there is nothing to refit, or when the caller has MOVED
+        the view on ``.fig`` since it was fitted: that view is theirs (ledger 311).
         """
 
         if self.vor is None or not self.fit_bounds:
             return None
-        view = self.map_view(size=map_canvas(self._fig.layout, size=size))
+        current = self.fig.layout.map  # assembles (and so fits) the figure first
+        if self._fitted_view is None:
+            return None
+        fitted = self._fitted_view
+        center = current.center.to_plotly_json() if current.center is not None else None
+        moved = (
+            fitted.get("zoom") is None
+            or current.zoom is None
+            or abs(float(current.zoom) - float(fitted["zoom"])) > 1e-9
+            or center is None
+            or any(abs(float(center.get(k, 0.0)) - float(fitted["center"][k])) > 1e-12
+                   for k in ("lat", "lon"))
+        )
+        if moved:
+            return None
+        view = self.map_view(
+            size=map_canvas(self._fig.layout, size=size, colorbar=self._shows_colorbar())
+        )
         return {key: view[key] for key in ("center", "zoom") if key in view}
 
     #: The resolved ``extent=`` (a class default for `object.__new__` doubles).
@@ -1261,8 +1301,10 @@ class Choro(Picture):
         view["center"] = {"lat": (south + north) / 2.0, "lon": (west + east) / 2.0}
         if self.fit_bounds:
             if size is None:
+                # A standalone map at plotly's default size, colorbar included.
                 size = (
-                    PLOTLY_DEFAULT_SIZE[0] - self._MAP_MARGIN["l"] - self._MAP_MARGIN["r"],
+                    PLOTLY_DEFAULT_SIZE[0] - self._MAP_MARGIN["l"]
+                    - max(self._MAP_MARGIN["r"], COLORBAR_MARGIN),
                     PLOTLY_DEFAULT_SIZE[1] - self._MAP_MARGIN["t"] - self._MAP_MARGIN["b"],
                 )
             view["zoom"] = _initial_map_zoom(

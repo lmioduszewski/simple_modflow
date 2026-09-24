@@ -660,6 +660,14 @@ class GridPlots:
         >>> vor.plot.map(values=node_ids)                    # a bare grid
         """
 
+        if "type" in trace_kwargs:
+            # It rode the tail to a picture with no model to read it from, and drew
+            # node numbers under a K or recharge colorbar (ledger 311).
+            raise TypeError(
+                f"type={trace_kwargs['type']!r}: a bare grid has no model to read a "
+                "field from. Map it from the model (model.plot.map(type=...)), or "
+                "pass the numbers as values=."
+            )
         picture = _choropleth_factory(
             self.vor,
             zmin=zmin,

@@ -121,3 +121,17 @@ def test_symmetric_panel_limits_stay_centred_in_a_mosaic(canonical_run):
     axis = viz.mosaic(panels).layout.coloraxis
     assert (axis.cmin, axis.cmax) == (-1.0, 1.0)
     assert (0.0 - axis.cmin) / (axis.cmax - axis.cmin) == 0.5
+
+
+def test_a_one_sided_limit_on_a_diff_mosaic_mirrors_on_both_backends(canonical_run):
+    """Plotly filled the missing side with the raw data max and dropped the zero
+    centre; the static backend mirrored the pooled magnitude (ledger 311)."""
+
+    # |min| > max here, so "the pooled magnitude" and "the data's max" differ.
+    values = np.linspace(-4.0, 3.0, canonical_run.vor.ncpl)
+    panels = [canonical_run.plot.map(values=values, zmin=-1.0) for _ in range(2)]
+    axis = viz.mosaic(panels, diff=True).layout.coloraxis
+    assert (axis.cmin, axis.cmax) == (-1.0, 4.0)
+    panels = [canonical_run.plot.map(values=-values, zmax=1.0) for _ in range(2)]
+    axis = viz.mosaic(panels, diff=True).layout.coloraxis
+    assert (axis.cmin, axis.cmax) == (-4.0, 1.0)

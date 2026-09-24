@@ -128,16 +128,40 @@ def test_type_is_case_insensitive(canonical_run):
     )
 
 
-def test_the_documented_rch_type_draws_recharge(canonical_run):
-    """`'rch'` was documented, carried a Recharge hover row, and drew node numbers."""
+def _recharge_truth(model, kstpkper):
+    """Recharge RATE per cell straight from FloPy's reader of the budget file."""
 
-    picture = canonical_run.plot.map(type="rch", layer=0)
-    assert not _is_node_numbers(picture)
-    values = np.asarray(picture.linear_zs, dtype=float)
-    assert values.max() > 0.0
-    # It IS the recharge rate: the same numbers the older spelling draws.
-    alias = np.asarray(canonical_run.plot.map(type="output_rch", layer=0).linear_zs, dtype=float)
-    assert np.array_equal(values, alias)
+    import flopy
+
+    cbc = next(model.workspace.glob("*.cbc"))
+    record = flopy.utils.CellBudgetFile(str(cbc)).get_data(text="RCH", kstpkper=kstpkper)[0]
+    ncpl = model.vor.ncpl
+    cells = (np.asarray(record["node"], dtype=int) - 1) % ncpl  # FloPy's node is 1-based
+    flux = np.bincount(cells, weights=np.asarray(record["q"], dtype=float), minlength=ncpl)
+    return flux / np.asarray(model.vor.area_list, dtype=float)
+
+
+def test_the_documented_rch_type_draws_recharge_on_the_right_cells(canonical_run):
+    """`'rch'` was documented and drew node numbers; routed onto the old reader it
+    drew every cell's rate on the PREVIOUS cell (map[i] == truth[i+1]) -- and the
+    test that shipped with it compared against that same reader, so it passed
+    (ledger 311). The truth here is FloPy's own budget-file reader."""
+
+    for per in (0, 2):
+        picture = canonical_run.plot.map(type="rch", per=per, layer=0)
+        truth = _recharge_truth(canonical_run, picture.kstpkper)
+        assert truth.max() > 0.0
+        assert np.allclose(np.asarray(picture.linear_zs, dtype=float), truth)
+
+
+def test_a_bare_grid_refuses_a_field_type_it_cannot_read(canonical_model):
+    """A bare grid has no model: `type='ks'` drew node numbers under a K colorbar."""
+
+    with pytest.raises(TypeError, match="bare grid"):
+        canonical_model.vor.plot.map(type="ks")
+    with pytest.raises(ValueError, match="bare grid"):
+        plot.map(canonical_model.vor, type="rch")
+    assert _is_node_numbers(plot.map(canonical_model.vor))  # the grid's own map
 
 
 def test_the_documented_type_set_is_the_accepted_one():
