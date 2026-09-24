@@ -53,6 +53,16 @@ def _crs_string(crs) -> str | None:
     return str(to_string()) if callable(to_string) else str(crs)
 
 
+def _same_crs(first, second) -> bool:
+    """Whether two CRS spellings name ONE CRS (``26910`` and ``"EPSG:26910"`` do)."""
+
+    if first is None or second is None:
+        return first is None and second is None
+    from pyproj import CRS
+
+    return CRS.from_user_input(first).equals(CRS.from_user_input(second))
+
+
 @dataclass(frozen=True)
 class Area:
     """One area of interest: a geometry and the CRS it is in.
@@ -83,7 +93,7 @@ class Area:
         """
 
         if isinstance(value, Area):
-            if crs is not None and _crs_string(crs) != value.crs:
+            if crs is not None and not _same_crs(crs, value.crs):
                 raise ValueError(
                     f"this area is already in {value.crs}; crs={crs!r} would relabel it. "
                     "Reproject its geometry instead."
@@ -185,9 +195,12 @@ class Area:
 
 # -- the meeting point between a model and a live project ---------------------------
 
-#: root -> the LIVE project's area library. Weak: a project that is gone must not be
-#: kept alive by a model that once looked at it.
-_LIVE: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
+#: root -> weak references to the LIVE area libraries registered there, oldest
+#: first. Weak, so a project that is gone is not kept alive by a model that once
+#: looked at it; a LIST, because a second, short-lived ``Project`` of one root (a
+#: ``Project.load`` in a notebook cell) must not unregister the first one when it
+#: is collected -- a single weak slot did exactly that (ledger 312).
+_LIVE: dict[str, list[weakref.ref]] = {}
 
 
 def _key(root) -> str:
@@ -195,15 +208,26 @@ def _key(root) -> str:
 
 
 def register_project_areas(root, library) -> None:
-    """Record ``library`` as the live area library of the project at ``root``."""
+    """Record ``library`` as the newest live area library of the project at ``root``."""
 
-    _LIVE[_key(root)] = library
+    key = _key(root)
+    refs = [ref for ref in _LIVE.get(key, []) if ref() is not None and ref() is not library]
+    refs.append(weakref.ref(library))
+    _LIVE[key] = refs
 
 
 def live_areas(root):
-    """The live project's area library at ``root``, or None."""
+    """The NEWEST still-alive project area library at ``root``, or None."""
 
-    return None if root is None else _LIVE.get(_key(root))
+    if root is None:
+        return None
+    key = _key(root)
+    refs = [ref for ref in _LIVE.get(key, []) if ref() is not None]
+    if refs:
+        _LIVE[key] = refs
+        return refs[-1]()
+    _LIVE.pop(key, None)
+    return None
 
 
 def saved_areas(root) -> dict[str, Area] | None:

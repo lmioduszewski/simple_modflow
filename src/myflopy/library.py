@@ -450,6 +450,19 @@ class AoiLibrary(SpecLibrary[Area]):
     _kind: ClassVar[str] = "area"
     _columns: ClassVar[tuple[str, ...]] = ("key", "geometry", "crs", "bounds", "note")
 
+    def __init__(self, *args, **kwargs) -> None:
+        """Build through the coercing assignment -- ``dict.__init__`` skips it."""
+
+        super().__init__()
+        self.update(*args, **kwargs)
+
+    def __ior__(self, other):
+        """``library |= {...}`` through the coercing assignment -- ``dict.__ior__``
+        inserted raw tuples, which then broke ``save()`` and ``select=`` (ledger 312)."""
+
+        self.update(other)
+        return self
+
     def _row(self, key: str, entry: Area) -> dict[str, Any]:
         """Summarize one area without reprojecting anything."""
 

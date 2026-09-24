@@ -152,8 +152,10 @@ clobber it.
 **Named areas of interest: `model.aoi` / `project.aoi`** (ledger 310) -- `mf.Area`s by
 name, usable as `extent="site"`, `select="site"`, `features=model.aoi`. DEFINED ON THE
 MODEL, KEPT BY THE PROJECT: a model finds its live project through
-`myflopy.areas`' root-keyed WEAK registry (a live `Project` registers there; `Run.model`
-records `view._project_root`), NOT through the five Run construction paths. No live
+`myflopy.areas`' root-keyed WEAK registry (a live `Project` registers there, every live
+one per root kept, newest wins -- ledger 312), asked for the NEAREST ancestor of the
+model's workspace FIRST (a copied project's runs record the ORIGINAL root) and then the
+recorded `view._project_root` -- NOT through the five Run construction paths. No live
 project -> the SAVED areas, additions session-only (the user's call). Saved INLINE in
 `project_spec.json`. Trap that cost a round: a pytest fixture holding the `Project`
 keeps it in the weak registry, so a "no live project" test passes for the wrong

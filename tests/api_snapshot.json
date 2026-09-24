@@ -1206,6 +1206,7 @@
       "add_package",
       "add_simulation",
       "add_simulation_from_yaml",
+      "aoi",
       "discover_native_runs",
       "discover_runs",
       "grid",

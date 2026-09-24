@@ -262,6 +262,10 @@ def _read_source(spec: Feature) -> gpd.GeoDataFrame:
         return source.copy()
     if isinstance(source, gpd.GeoSeries):
         return gpd.GeoDataFrame(geometry=source.copy())
+    if hasattr(source, "to_geoseries"):
+        # An area of interest styled through `Feature(area, color=...)` -- only the
+        # bare `features=area` spelling knew about areas (ledger 312).
+        return gpd.GeoDataFrame(geometry=source.to_geoseries())
     if _is_geometry(source):
         return gpd.GeoDataFrame(geometry=[source])
     return gpd.GeoDataFrame(geometry=list(source))
@@ -273,6 +277,8 @@ def _default_name(spec: Feature) -> str:
     if isinstance(spec.source, (str, Path)):
         stem = Path(spec.source).stem
         return f"{stem}:{spec.layer}" if spec.layer is not None else stem
+    if hasattr(spec.source, "to_geoseries") and getattr(spec.source, "name", None):
+        return str(spec.source.name)  # an area: its own name (NOT a frame's "name" column)
     return "features"
 
 

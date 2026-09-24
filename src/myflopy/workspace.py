@@ -2176,11 +2176,29 @@ class Project:
         # Named areas of interest (ledger 310). Not model geometry -- places to
         # LOOK at -- and shared with every model of this project: registered under
         # the root so a model its run points here finds this live library.
-        self.aoi: AoiLibrary = AoiLibrary()
-        for library in (self.packages, self.grids, self.simulations, self.aoi):
+        for library in (self.packages, self.grids, self.simulations):
             library._project_name = self.name
-        register_project_areas(self.root, self.aoi)
+        self.aoi = AoiLibrary()
         self._runs: RunLibrary | None = None
+
+    @property
+    def aoi(self) -> AoiLibrary:
+        """Named areas of interest, shared with every model of this project (ledger 310)."""
+
+        return self._aoi
+
+    @aoi.setter
+    def aoi(self, value) -> None:
+        """Replace the library -- and re-register it, so the models follow it.
+
+        A plain attribute left the models on the OLD library after
+        ``project.aoi = project.aoi | {...}`` (ledger 312).
+        """
+
+        library = value if isinstance(value, AoiLibrary) else AoiLibrary(value)
+        library._project_name = self.name
+        self._aoi = library
+        register_project_areas(self.root, library)
 
     @property
     def runs_dir(self) -> Path:
@@ -2867,6 +2885,13 @@ class Project:
                 )
             )
 
+        written_names = [
+            name for name in self.simulations if name not in skipped_names
+        ]
+        # Built BEFORE anything is written: a document that cannot be built must not
+        # leave a manifest pointing at a spec file that was never written, which
+        # `Project.load` then refuses (ledger 312).
+        document = self._project_dict(simulations=written_names)
         self.layout.ensure()
         _write_json(
             self.manifest_path,
@@ -2877,13 +2902,7 @@ class Project:
                 }
             },
         )
-        written_names = [
-            name for name in self.simulations if name not in skipped_names
-        ]
-        _write_json(
-            self.layout.project_spec_path,
-            self._project_dict(simulations=written_names),
-        )
+        _write_json(self.layout.project_spec_path, document)
         for name in written_names:
             _write_json(
                 self.layout.simulation_spec_path(name),

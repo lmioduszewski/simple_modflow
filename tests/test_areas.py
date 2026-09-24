@@ -300,3 +300,100 @@ def test_a_map_without_a_named_extent_never_reads_the_saved_areas(tmp_path, monk
     monkeypatch.setattr(base, "saved_areas", explode)
     model.plot.map(layer=0, extent=SITE)
     model.plot.map(layer=0, select=[0])
+
+
+# --- review fixes (ledger 312) -----------------------------------------------------
+
+
+def test_every_dict_spelling_coerces(project):
+    """`|=`, a reflected `|` and the constructor inserted raw tuples, which broke
+    `save()` half-way and made `select=name` read the box as cell ids."""
+
+    project.aoi |= {"sw": SITE}
+    merged = {"n": NORTH} | project.aoi
+    built = AoiLibrary({"x": SITE})
+    for library in (project.aoi, merged, built):
+        assert all(isinstance(area, Area) for area in library.values())
+    assert bool(project.save())
+
+
+def test_a_save_that_cannot_build_its_document_writes_nothing(project, monkeypatch):
+    project.add_aoi("site", SITE)
+
+    def broken(self):
+        raise RuntimeError("cannot serialize")
+
+    monkeypatch.setattr(Area, "to_dict", broken)
+    with pytest.raises(RuntimeError):
+        project.save()
+    assert not project.manifest_path.exists()  # no manifest naming a missing spec
+
+
+def test_a_copied_projects_models_use_the_copys_areas(tmp_path):
+    """A copy's runs still record the ORIGINAL root; trusting that gave the copy's
+    models the original's areas, and add_aoi wrote into the original."""
+
+    original = tmp_path / "orig"
+    _saved_and_gone(original, site=SITE)
+    copy = tmp_path / "copy"
+    shutil.copytree(original, copy)
+    variant = mf.Project.load(copy)
+    variant.add_aoi("variant_site", NORTH)
+    variant.save()
+    del variant
+    gc.collect()
+
+    model = mf.load_run(copy / "runs" / "base").model("flow")  # no live project
+    assert sorted(model.aoi) == ["site", "variant_site"]
+
+    live_original = mf.Project.load(original)
+    live_copy = mf.Project.load(copy)
+    model = live_copy.runs["base"].model("flow")
+    assert model.aoi is live_copy.aoi
+    model.add_aoi("only_the_copy", SITE)
+    assert "only_the_copy" not in live_original.aoi
+
+
+def test_a_short_lived_second_project_does_not_unregister_the_first(project):
+    project.add_aoi("site", SITE)
+    project.save()
+    mf.Project.load(project.root).runs.summary()  # a notebook cell, then collected
+    gc.collect()
+    model = project.runs["base"].model("flow")
+    assert model.aoi is project.aoi
+
+
+def test_rebinding_the_library_keeps_the_models_on_it(project):
+    project.add_aoi("site", SITE)
+    project.aoi = project.aoi | {"north": NORTH}
+    gc.collect()
+    model = project.runs["base"].model("flow")
+    assert model.aoi is project.aoi and sorted(model.aoi) == ["north", "site"]
+
+
+def test_a_run_found_anywhere_under_the_project_shares_its_areas(project):
+    """Discovered runs record no root, and the old guess looked exactly two levels
+    up -- `runs/scenarios/x` or `imports/usg/converted` never found the project."""
+
+    project.add_aoi("site", SITE)  # never saved: only the LIVE project knows it
+    workspace = project.runs["base"].workspace
+    assert mf.load_mf6_run(workspace).aoi is project.aoi
+    nested = project.root / "runs" / "scenarios" / "copy"
+    shutil.copytree(workspace, nested)
+    assert mf.load_mf6_run(nested).aoi is project.aoi
+
+
+def test_an_area_can_be_styled_as_a_feature(project):
+    project.add_aoi("site", SITE)
+    model = project.runs["base"].model("flow")
+    styled = mf.plot.Feature(model.aoi["site"], color="red", fill=True)
+    picture = model.plot.map(layer=0, features=styled)
+    assert picture.overlay_traces()
+    assert model.plot.map(layer=0, features=styled, backend="mpl") is not None
+
+
+def test_the_same_crs_spelled_differently_is_not_a_relabel():
+    area = Area.coerce(SITE, crs="EPSG:26910")
+    assert Area.coerce(area, crs=26910).crs == "EPSG:26910"
+    with pytest.raises(ValueError, match="relabel"):
+        Area.coerce(area, crs=4326)

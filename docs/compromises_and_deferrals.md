@@ -33,11 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 311 entries (312 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 312 entries (313 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
-| 311 | An adversarial review of 305-310 found eight defects the tests certified rather than checked | 2026-09-24 |
+| 312 | The same review, for the areas of interest: who a model's project is | 2026-09-24 |
+| 311 | An adversarial review of 305-310: the map defects the tests certified rather than checked | 2026-09-24 |
 | 310 | Named areas of interest: defined on the model, kept by the project | 2026-09-24 |
 | 309 | `extent=` -- the window a map opens on, at every scope and backend | 2026-09-24 |
 | 308 | Transmissivity maps and nouns: saturated by default, and the choices behind it | 2026-09-23 |
@@ -12789,7 +12790,9 @@ same day, which is the useful part of the result.
       10), and ``Run.model`` records ``view._project_root``. Weak, so a view never keeps
       a project alive; by ROOT, so several projects in one session never collide.
       **Found when moved:** a copied project's runs still record the ORIGINAL root, so a
-      model also looks at ``<workspace>/../..`` for a ``project.json``.
+      model also looks at ``<workspace>/../..`` for a ``project.json``. **AMENDED by
+      ledger 312:** the project a run physically LIVES IN is asked FIRST (nearest
+      ancestor), and the registry holds every live library of a root, newest first.
       **Saved INLINE** in ``project_spec.json`` as WKT + CRS at FULL precision (shapely
       rounds WKT to 6 decimals by default -- ~0.1 m on a lon/lat vertex), like an eager
       package: the file an area came from is read once and kept only as provenance, so an
@@ -12818,7 +12821,7 @@ same day, which is the useful part of the result.
       LineString, ``Surface.within``/zones, a clipped ``to_xugrid``, and a bridge turning
       an area into a model region -- each is a later wiring of the same library.
 
-311. **An adversarial review of 305-310 found eight defects the tests certified rather than checked (2026-09-24).**
+311. **An adversarial review of 305-310: the map defects the tests certified rather than checked (2026-09-24).**
       A 3-reviewer / skeptic-per-finding review of the six commits; every confirmed finding
       reproduced independently, none was refuted. The theme worth carrying: in each case a
       test was written against the code's own model of the answer.
@@ -12860,3 +12863,30 @@ same day, which is the useful part of the result.
       field ``type`` raises instead of drawing node numbers under its colorbar;
       ``npf.transmissivity.long()/wide()`` key on the period (they repeated every
       ``(layer, cell)`` once per period) and ``map(per=None)`` is the default time.
+
+312. **The same review, for the areas of interest: who a model's project is (2026-09-24).**
+      Ledger 311's review, its ``areas`` findings -- three confirmed, one proven and not
+      yet verified, three low -- each now pinned by a test that fails without its fix.
+      **A copied project's models used the ORIGINAL's areas, and ``add_aoi`` wrote into
+      the original.** The recorded root was asked first, and a copy's runs record the
+      original's. Now the project a run physically LIVES IN wins: the NEAREST ancestor of
+      its workspace that is a live root or holds a ``project.json`` -- which also finds the
+      runs the old ``<workspace>/../..`` guess could not (``runs/scenarios/x``,
+      ``imports/usg/converted``, a discovered run or a ``load_mf6_run`` that records no
+      root at all, on an UNSAVED live project).
+      **A second, short-lived ``Project`` of one root unregistered the first.** A single
+      weak slot per root: the newcomer overwrote it and, when collected, removed it. The
+      registry keeps every live library of a root, NEWEST alive first.
+      **``project.aoi = project.aoi | {...}`` disconnected every model** -- the registry
+      held the old object. ``Project.aoi`` is a property whose setter re-registers.
+      **``|=``, a reflected ``|`` and the constructor bypassed the coercion**, storing raw
+      tuples that broke ``save()`` AFTER it had written ``project.json`` and before the
+      spec -- so a first save left a manifest naming a missing file, which ``load``
+      refuses. ``AoiLibrary.__init__``/``__ior__`` coerce; and ``save()`` now builds the
+      document BEFORE writing anything.
+      **Also:** ``mf.plot.Feature(area, color=...)`` crashed (only the bare
+      ``features=area`` spelling knew areas); ``Area.coerce(area, crs=26910)`` refused
+      ``"EPSG:26910"`` as a relabel (compared as strings; now ``pyproj`` equality).
+      **Still true, stated:** "nearest ancestor with a ``project.json``" can name an
+      UNRELATED project that happens to enclose a model's directory; a run inside a
+      project's tree is the case it is built for.

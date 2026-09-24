@@ -933,22 +933,29 @@ class SimulationBase:
         return get_kstpkper(self)
 
     def _project_roots(self) -> list[Path]:
-        """Where this model's project may be: the recorded root, then the run layout.
+        """Where this model's project may be: the project it physically LIVES IN,
+        then the root its run recorded.
 
-        The second is ``<workspace>/../..`` holding a ``project.json`` -- a run
-        lives at ``<root>/runs/<name>`` -- which is what finds the project when it
-        was MOVED after the run recorded its old root (measured: a copied project's
-        runs still name the original directory).
+        The first is the nearest ancestor of the workspace that is a live project
+        root or holds a ``project.json``. It comes FIRST because a copied project's
+        runs still record the ORIGINAL root, so trusting the record gave a copy's
+        models the original's areas -- and ``add_aoi`` wrote into the original
+        (ledger 312). Nearest, not ``<workspace>/../..``: a run can live deeper
+        (``runs/scenarios/x``, ``imports/usg/converted``), and a discovered run or
+        a ``load_mf6_run`` model records no root at all.
         """
 
         roots: list[Path] = []
-        if self._project_root is not None:
-            roots.append(Path(self._project_root))
         workspace = getattr(self, "workspace", None)
         if workspace is not None:
-            guess = Path(workspace).parent.parent
-            if (guess / "project.json").is_file() and guess not in roots:
-                roots.append(guess)
+            for ancestor in Path(workspace).resolve().parents:
+                if live_areas(ancestor) is not None or (ancestor / "project.json").is_file():
+                    roots.append(ancestor)
+                    break
+        if self._project_root is not None:
+            recorded = Path(self._project_root).resolve()
+            if recorded not in roots:
+                roots.append(recorded)
         return roots
 
     @property
