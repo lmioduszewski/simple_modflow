@@ -614,7 +614,11 @@ still supported, but it needs the grid at declaration and its result cannot be s
 Array when the boundary covers the model; list when it is sparse or needs
 boundnames. `irch`/`ievt` default to `"top_active"`, derived from `context.domain`
 — without one MODFLOW 6 applies the flux to layer 1 and silently skips any column
-whose layer 1 is inactive. Segmented ET has no array form and `nseg` raises.
+whose layer 1 is inactive. "Top active" is the highest cell with `idomain > 0`, so
+a vertical pass-through cell (`-1`) is skipped; it read `!= 0` and lost 42% of a
+pass-through stack's recharge until ledger 319. Every "top active" in myflopy is
+`grid.geometry.top_active_layer`. The index is zero-based. Segmented ET has no
+array form and `nseg` raises.
 
 ### Horizontal flow barriers — `mf.hfb`
 

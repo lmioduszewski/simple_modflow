@@ -11,6 +11,7 @@ import numpy as np
 
 from myflopy.advanced import uzf_spec
 from myflopy.grid_identity import CELLWISE_OPTIONS, pin_metadata
+from myflopy.modflow.mf6.grid.geometry import top_active_layer
 from myflopy.specs import ModelContext, PackageSpec
 
 CellId = tuple[int, int]
@@ -103,12 +104,12 @@ class UZFBuilder:
         domain = self.domain
         assert domain is not None
         selected: list[CellId] = []
-        for cell in range(domain.shape[1]):
-            active_layers = np.flatnonzero(domain[:, cell] > 0).tolist()
-            if not active_layers:
+        # The column's land surface is its top ACTIVE cell -- the shared rule,
+        # `idomain > 0` (ledger 319).
+        for cell, top in enumerate(top_active_layer(domain).tolist()):
+            if top < 0:
                 continue
 
-            top = active_layers[0]
             selected.append((top, cell))
             if self.cells == "surface_only":
                 continue

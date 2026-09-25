@@ -658,6 +658,78 @@ def domain_active(domain, layer: int, cell: int) -> bool:
     return bool(values[layer, cell] > 0)
 
 
+def top_active_layer(domain) -> np.ndarray:
+    """The zero-based layer of the highest ACTIVE cell in each column, ``-1`` where none.
+
+    The one statement of "the top active layer", which array-form recharge and ET
+    (``irch``/``ievt="top_active"``), the areal RCH/EVT builders, UZF, SFR's default
+    ``reach_layer`` and the MODFLOW-USG importer all ask. Active means ``idomain > 0``,
+    the rule :func:`domain_active` states: ``0`` is inactive and ``-1`` is a
+    **vertical pass-through** cell, removed from the model while flow passes through it,
+    so neither can carry a flux.
+
+    Parameters
+    ----------
+    domain : array_like of int, shape (nlay, ncpl) or (ncpl,)
+        An MF6 IDOMAIN -- a numpy array, a nested list, or anything else
+        :func:`numpy.asarray` turns into an integer array. A one-dimensional domain
+        is one layer, the reading :func:`domain_active` gives it (the same activity
+        in every layer), so its answer is ``0`` where a cell is active and ``-1``
+        where it is not. Values are compared with ``> 0``; floats are accepted and
+        read the same way.
+
+    Returns
+    -------
+    numpy.ndarray of int, shape (ncpl,)
+        Zero-based -- FloPy adds one when it writes MODFLOW's 1-based ``IRCH``/
+        ``IEVT`` -- and ``-1`` for a column with no active cell in any layer. The
+        ``-1`` is a flag, not a layer: every caller decides what an empty column
+        means (array recharge writes layer 0, whose cell is inactive either way;
+        the areal builders and UZF skip the column; SFR refuses the reach), so this
+        function does not decide it for them.
+
+    Raises
+    ------
+    ValueError
+        If ``domain`` has neither one nor two dimensions -- a structured
+        ``(nlay, nrow, ncol)`` IDOMAIN is not a DISV domain; flatten each layer to
+        ``(nlay, nrow * ncol)`` first.
+
+    Notes
+    -----
+    It replaces five copies of the rule with two predicates between them. The
+    array-form helpers used ``!= 0``, so a pass-through cell counted as active: the
+    column's recharge was written to that cell, which MF6 has removed, and MF6 skips
+    such a record without a word. Measured on a 92-column, three-layer model with 40
+    pass-through cells in layer 1, those columns received 0.0 of their 152.02 ft3/d
+    -- 42.2% of the model's recharge -- under Normal termination (ledger 319,
+    ``docs/reproducers/top_active_passthrough.py``).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from myflopy.modflow.mf6.grid.geometry import top_active_layer
+    >>> idomain = np.array([[1, -1, 0, 0],
+    ...                     [1,  1, 1, 0]])
+    >>> top_active_layer(idomain).tolist()   # the -1 column's flux goes to layer 1
+    [0, 1, 1, -1]
+    >>> top_active_layer([1, 0, 1]).tolist()
+    [0, -1, 0]
+    """
+
+    values = np.asarray(domain)
+    if values.ndim == 1:
+        values = values[np.newaxis, :]
+    if values.ndim != 2:
+        raise ValueError(
+            "top_active_layer: expected a (nlay, ncpl) or (ncpl,) IDOMAIN, got shape "
+            f"{values.shape}. A structured (nlay, nrow, ncol) domain must be reshaped "
+            "to (nlay, nrow * ncol) first."
+        )
+    active = values > 0
+    return np.where(active.any(axis=0), np.argmax(active, axis=0), -1).astype(int)
+
+
 def centroid_zones(polys, zones) -> np.ndarray:
     """Which of ``zones`` holds each cell's CENTROID, as a row position; -1 for none.
 

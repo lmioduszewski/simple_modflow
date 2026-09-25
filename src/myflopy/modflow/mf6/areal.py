@@ -24,6 +24,7 @@ import numpy as np
 
 from myflopy.specs import ModelContext, PackageSpec
 from myflopy.grid_identity import pin_metadata
+from myflopy.modflow.mf6.grid.geometry import top_active_layer
 
 CellId = tuple[int, int]
 
@@ -86,16 +87,17 @@ class _ArealBuilder:
             return tuple((self.layer, int(cell)) for cell in active)
 
         selected: list[CellId] = []
-        for cell in range(domain.shape[1]):
-            active_layers = np.flatnonzero(domain[:, cell] > 0)
-            if len(active_layers) == 0:
-                continue
-            if self.cells == "all_active":
+        if self.cells == "all_active":
+            for cell in range(domain.shape[1]):
+                active_layers = np.flatnonzero(domain[:, cell] > 0)
                 selected.extend((int(layer), int(cell)) for layer in active_layers)
-            else:
-                # 'top_active' and (the currently unhandled) 'surface_only' both
-                # take the first active layer per column. Recorded as a deferred quirk.
-                selected.append((int(active_layers[0]), int(cell)))
+            return tuple(selected)
+        # 'top_active' and (the currently unhandled) 'surface_only' both take the
+        # first active layer per column -- the shared rule, `idomain > 0`, which the
+        # array form did not follow (ledger 319). Recorded as a deferred quirk.
+        for cell, layer in enumerate(top_active_layer(domain)):
+            if layer >= 0:
+                selected.append((int(layer), int(cell)))
         return tuple(selected)
 
     def _normalize_cell(self, cell: int | CellId) -> CellId:

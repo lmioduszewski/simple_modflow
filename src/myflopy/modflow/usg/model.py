@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.grid.geometry import top_active_layer
 from myflopy.modflow.usg._io import NameFile
 from myflopy.modflow.usg.cln import ClnData
 from myflopy.modflow.usg.export import ExportManifest, export_gis
@@ -181,11 +182,17 @@ class UsgModel:
         explicit cell. IBOUND is static for the whole run, so resolving it once
         here is exact rather than approximate. A wholly inactive column returns
         layer 0 and is excluded by the converter.
+
+        The rule is the shared one, ``idomain > 0``
+        (:func:`~myflopy.modflow.mf6.grid.geometry.top_active_layer`). A NEGATIVE
+        USG IBOUND is a constant head -- an ACTIVE cell, unlike MF6's pass-through
+        -1 -- which is why :attr:`idomain` maps it to 1 before this reads it; the
+        ``!= 0`` this used before answered identically on that 0/1 array (ledger
+        319).
         """
 
-        active = self.idomain != 0
-        first = np.argmax(active, axis=0)
-        return np.where(active.any(axis=0), first, 0)
+        first = top_active_layer(self.idomain)
+        return np.where(first < 0, 0, first)
 
     @property
     def has_active_column(self) -> np.ndarray:

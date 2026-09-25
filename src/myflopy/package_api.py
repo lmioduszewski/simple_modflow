@@ -69,7 +69,7 @@ from myflopy.grid_identity import (
     source_fingerprint,
 )
 from myflopy.modflow.mf6.evapotranspiration import EVTBuilder
-from myflopy.modflow.mf6.grid.geometry import cell_shares
+from myflopy.modflow.mf6.grid.geometry import cell_shares, top_active_layer
 from myflopy.modflow.mf6.grid.surfaces import check_gaps
 from myflopy.modflow.mf6.lakes import (
     LAKBuilder,
@@ -4188,55 +4188,127 @@ class _RCHPackage:
         0.88 s end to end against 5.35 s for the equivalent list, and the FloPy
         constructor alone 413x faster.
 
+        Two modes, decided by what is left to the grid. **Eager**: pass ``context=``
+        (or give ``irch`` explicitly) and the layer index is resolved here, at the
+        call. **Lazy**: leave ``irch="top_active"`` with no ``context=``, and it is
+        resolved at BUILD against the model's own discretization -- so one
+        declaration builds on any mesh and saves with its project (ledger 285).
+
         Parameters
         ----------
-        recharge : scalar, array, or {period: scalar or array}
-            Recharge rate, L/T, over the whole grid layer. An ``ncpl``-length
-            array per period; a scalar writes MODFLOW's ``CONSTANT`` form.
-        context : ModelContext, optional
-            Carries the domain ``irch="top_active"`` is derived from. Required
-            unless ``irch`` is given explicitly or set to ``None``.
-        irch : "top_active", array, {period: array}, or None, default "top_active"
-            Layer each column's recharge is applied to, 1-based.
+        recharge : float, int, array_like, str, or dict of {int: any of those}
+            Recharge rate, length/time in the model's units (ft/d on a model in
+            feet and days), applied over each column's plan area. Required.
 
-            **The default matters.** Omitting IRCH makes MODFLOW 6 apply recharge
-            to layer 1 unconditionally, and a column whose layer 1 is inactive is
-            then outside the reduced node numbering and **silently skipped** --
-            measured, a 10-column model with 4 such holes lost 40% of its
-            recharge under "Normal termination", and ``fixed_cell`` does not
-            rescue it. ``None`` is the explicit opt-out, correct only when layer 1
-            is active everywhere.
+            A number writes MODFLOW's ``CONSTANT``. An array or list of ``ncpl``
+            values (a ``(1, ncpl)`` array works too) gives each column its own rate,
+            INCLUDING inactive columns; a wrong length is refused by FloPy at build
+            (``MFDataException``), not here. A ``str`` is not a number: FloPy writes
+            it as the name of an external array file (``OPEN/CLOSE``), which MF6
+            must be able to open from the run's workspace. A ``{period: value}``
+            dict, zero-based periods, varies it in time; a period left out repeats
+            the one before it (measured: ``{0: 1e-3, 2: 0.0}`` over three periods
+            applied 360, 360 and 0 ft3/d). A single value applies to every period.
+        context : ModelContext, optional
+            Where ``irch="top_active"`` is resolved from: only ``context.domain`` is
+            read for it, and it must be ``(nlay, ncpl)``. When the context also
+            carries a ``grid``, the resolved index is PINNED to that mesh
+            (``metadata['grid_pin']``), so moving the model to another mesh refuses
+            it rather than applying one mesh's layer per column to another's cells.
+            Omit it, with ``irch`` left at ``"top_active"``, for the LAZY mode. With
+            an explicit ``irch`` it resolves nothing and only pins.
+        irch : {"top_active"}, array_like of int, dict of {int: array_like of int}, or None, default "top_active"
+            The ZERO-based layer each column's recharge enters. FloPy adds one when
+            it writes MODFLOW's 1-based IRCH, so 1-based values shift every column
+            down a layer, and one pointing past the bottom stops MF6 with
+            ``Invalid layer number`` (measured: 2 on a two-layer model).
+
+            ``"top_active"`` is each column's highest ACTIVE cell -- ``idomain >
+            0``, the one rule every "top active" in myflopy uses
+            (:func:`~myflopy.modflow.mf6.grid.geometry.top_active_layer`). A
+            vertical pass-through cell (``idomain == -1``) is skipped: MF6 has
+            removed it, and recharge addressed to it is dropped without a word.
+            This read ``idomain != 0`` until ledger 319, and on a stack pinched with
+            ``pinch="passthrough"`` it lost 42.2% of a model's recharge under Normal
+            termination. A column with no active cell gets 0; its cell is inactive
+            either way. Resolved at the call with ``context=``, at build without.
+
+            An array or list gives the layer per column, a ``{period: array}`` dict
+            per period. ``None`` writes no IRCH, and MF6 then applies recharge to
+            layer 1 in every column and SILENTLY skips any column whose layer 1 is
+            inactive -- measured, a 10-column model with 4 such holes lost 40% of
+            its recharge under Normal termination, and ``fixed_cell`` does not
+            rescue it. Correct only where layer 1 is active everywhere.
         fixed_cell : bool, default False
-            Pin the flux to the named cell. Left off, MODFLOW 6 re-resolves to the
-            highest active cell each period -- better physics than a statically
-            resolved list.
-        auxiliary, auxmultname, observations : optional
-            Passed through to FloPy.
+            Write ``FIXED_CELL``, MF6's option to keep recharge in the IRCH cell
+            even when that cell is inactive -- a convertible cell gone DRY included
+            -- where by default MF6 passes it to the highest active cell below.
+            Measured on a model whose layer-1 cells were all dry: 207.98 ft3/d
+            applied by default, 0.0 with ``fixed_cell=True``. Neither setting
+            reaches a cell ``idomain`` removed: a pass-through column addressed by
+            IRCH received nothing either way.
+        auxiliary : str or list of str, optional
+            Names of auxiliary variables, written in OPTIONS. Their values go in
+            FloPy's ``aux=`` keyword through ``**options``:
+            ``aux={period: [array, ...]}``, one ``ncpl`` array per name, in order.
+        auxmultname : str, optional
+            The auxiliary variable, one of ``auxiliary``, that MULTIPLIES the
+            recharge rate -- measured, an aux array of 0.5 took 360 ft3/d to 180.
+        observations : dict, optional
+            FloPy's observation mapping, ``{"file.csv": [(obsname, "rch", cellid),
+            ...]}`` with a zero-based ``(layer, cell)`` cellid. MF6 writes the
+            recharge into that cell, rate times area, to the CSV (measured 4.375
+            ft3/d at 1e-3 ft/d on a 4,375 ft2 cell). An observation names a cell:
+            boundnames do not exist under ``READASARRAYS``.
         print_input : bool, default False
-            Echo the arrays to the listing file.
+            Write ``PRINT_INPUT``: MF6 echoes the arrays to the model listing file.
         save_flows : bool, default True
-            Save cell-by-cell flows.
+            Write ``SAVE_FLOWS``: MF6 stores cell-by-cell recharge in the budget file
+            ``mf.oc``'s budget record names, which the results tier reads.
         name : str, default "rch"
-            Package name.
+            The package name, which also names its file (``<model>.<name>``). Two
+            recharge packages in one model need two names.
         **options
-            Extra ``flopy.mf6.ModflowGwfrcha`` options.
+            Any other ``flopy.mf6.ModflowGwfrcha`` keyword, e.g. ``print_flows=True``
+            or ``aux=``. One that class does not have raises here, at the call.
 
         Returns
         -------
         PackageSpec
+            EAGER: ``options['irch']`` holds the resolved array and ``inputs`` is
+            empty. LAZY: ``inputs == {'irch': 'top_active'}``, which is also what
+            its digest holds.
+
+        Raises
+        ------
+        ValueError
+            ``irch="top_active"`` with a ``context=`` that carries no domain, or a
+            domain that is not ``(nlay, ncpl)``; an ``irch`` string other than
+            ``"top_active"`` -- at the call with ``context=``, at build without it;
+            ``boundnames=True``, which MF6 refuses under ``READASARRAYS``.
+        TypeError
+            A ``mf.Spread`` or ``mf.CellSurfaceOffset`` in any keyword: both describe
+            a per-FEATURE resolution and the array form has no features. Also a
+            keyword ``ModflowGwfrcha`` does not accept.
 
         Notes
         -----
         Array form needs a value for EVERY column, including inactive ones, and
         is unavailable on DISU. For a boundary covering a small part of the grid
         the list form is smaller and faster -- 40 cells of 9405 is ~1 kB as a
-        list against ~160 kB as an array. Boundnames are not available:
-        MODFLOW 6 refuses them under ``READASARRAYS``.
+        list against ~160 kB as an array.
 
         Examples
         --------
-        >>> mf.rch.array(recharge={0: rate_array}, context=ctx)
-        >>> mf.rch.array(recharge=3.5e-4, irch=None)      # uniform, layer 1
+        >>> import numpy as np
+        >>> import myflopy as mf
+        >>> idomain = np.array([[1, -1, 0],
+        ...                     [1,  1, 1]])
+        >>> spec = mf.rch.array(recharge=1e-3, context=mf.ModelContext(domain=idomain))
+        >>> spec.options["irch"].tolist()     # the -1 column's recharge enters layer 1
+        [0, 1, 1]
+        >>> mf.rch.array(recharge={0: 1e-3, 1: 0.0}).inputs    # lazy: resolved at build
+        {'irch': 'top_active'}
         """
 
         if options.pop("boundnames", None):
@@ -4596,28 +4668,99 @@ class _EVTPackage:
     ) -> PackageSpec:
         """Return an array-form (``READASARRAYS``) EVT spec -- one array per period.
 
+        The same physics as :meth:`__call__`, one value per column per period
+        instead of one record per cell, with the same two modes as
+        :meth:`_RCHPackage.array`: **eager** with ``context=`` (resolved at the
+        call), **lazy** without it, when ``ievt`` is left at ``"top_active"`` or
+        ``surface`` is omitted (resolved at BUILD from the model's discretization,
+        ledger 285).
+
         Parameters
         ----------
-        rate : scalar, array, or {period: scalar or array}
-            Maximum ET rate, L/T.
-        depth : scalar, array, or {period: scalar or array}
-            Extinction depth below ``surface``.
-        surface : scalar, array, or {period: ...}, optional
-            ET surface elevation. Omitted, it is RESOLVED to the model top from
-            ``context``, which needs one carrying a grid and surfaces -- it used to
-            be left to FloPy, whose default is the datum ``0.0``, and MODFLOW 6 then
-            draws the full rate everywhere because the head is above the ET surface
-            in every cell (ledger 283).
-        context, ievt, fixed_cell : optional
-            As ``context``/``irch``/``fixed_cell`` on :meth:`_RCHPackage.array` --
-            and the same trap: omitting IEVT applies ET to layer 1 unconditionally
-            and silently skips any column whose layer 1 is inactive.
-        auxiliary, auxmultname, observations, print_input, save_flows, name, **options
-            As for :meth:`_RCHPackage.array`.
+        rate : float, int, array_like, str, or dict of {int: any of those}
+            Maximum ET rate, length/time in the model's units (ft/d on a model in
+            feet and days), taken where the head is at or above ``surface`` and
+            falling to zero at ``surface - depth``. Required. Shapes as ``recharge``
+            on :meth:`_RCHPackage.array`: a number, ``ncpl`` values, an external
+            file name (``str``), or a zero-based ``{period: value}`` dict whose
+            missing periods repeat the one before (measured: ``{0: 1e-3, 1: 0.0}``
+            took 162.35 ft3/d, then 0).
+        depth : float, int, array_like, str, or dict of {int: any of those}
+            Extinction depth below ``surface``, length (ft on a model in feet).
+            Required. Same shapes as ``rate``.
+        surface : float, int, array_like, or dict of {int: any of those}, optional
+            The ET surface ELEVATION, length, where the maximum rate applies. Same
+            numeric shapes as ``rate``.
+
+            Omitted, it is the MODEL TOP -- resolved at the call from a
+            ``context=`` carrying ``grid`` and ``surfaces`` (a ``LayerBuildResult``
+            or a geometry-first table), or at build without one. A flat top resolves
+            to one number. It used to be left to FloPy, whose default is the datum
+            ``0.0``: MF6 then draws the full rate everywhere because every head is
+            above the ET surface, and ``depth`` does nothing (ledger 283).
+
+            Two inputs are NOT what they look like (found 2026-09-25, not changed;
+            ledger 319): a ``str`` is read as "the model top" whatever it says --
+            ``surface="dem.tif"`` wrote the same 162.35 ft3/d as omitting it -- and a
+            ``mf.Surface`` is accepted here and refused by FloPy at build
+            (``MFDataException``). Sample a raster onto the cells yourself and pass
+            the array.
+        context : ModelContext, optional
+            As on :meth:`_RCHPackage.array`: ``context.domain`` resolves
+            ``ievt="top_active"``, and a ``grid`` pins the result to that mesh. With
+            ``surface`` omitted it must ALSO carry ``grid`` and ``surfaces``, or the
+            call raises. Omit it for the LAZY mode.
+        ievt : {"top_active"}, array_like of int, dict of {int: array_like of int}, or None, default "top_active"
+            The ZERO-based layer each column's ET is taken from, with exactly the
+            rules of ``irch`` on :meth:`_RCHPackage.array`: ``"top_active"`` is the
+            highest cell with ``idomain > 0``, so a pass-through cell (``-1``) is
+            skipped (ledger 319); 1-based values shift every column down a layer;
+            ``None`` takes layer 1 everywhere and silently skips any column whose
+            layer 1 is inactive.
+        fixed_cell : bool, default False
+            Write ``FIXED_CELL``, MF6's option to keep ET in the IEVT cell instead of
+            passing it to the cell below when that cell is inactive.
+        auxiliary : str or list of str, optional
+            Names of auxiliary variables, written in OPTIONS; their arrays go in
+            FloPy's ``aux=`` through ``**options``, ``aux={period: [array, ...]}``.
+        auxmultname : str, optional
+            The auxiliary variable, one of ``auxiliary``, that MULTIPLIES the maximum
+            ET rate -- measured, an aux array of 0.5 took 162.35 ft3/d to 81.82 (the
+            heads rose, so not exactly half).
+        observations : dict, optional
+            FloPy's observation mapping, ``{"file.csv": [(obsname, "evt", cellid),
+            ...]}`` with a zero-based ``(layer, cell)`` cellid; MF6 writes that
+            cell's ET to the CSV. No boundnames under ``READASARRAYS``.
+        print_input : bool, default False
+            Write ``PRINT_INPUT``: MF6 echoes the arrays to the model listing file.
+        save_flows : bool, default True
+            Write ``SAVE_FLOWS``: MF6 stores cell-by-cell ET in the budget file
+            ``mf.oc``'s budget record names.
+        name : str, default "evt"
+            The package name, which also names its file (``<model>.<name>``).
+        **options
+            Any other ``flopy.mf6.ModflowGwfevta`` keyword, e.g. ``print_flows=True``
+            or ``aux=``; one that class does not have raises here. ``nseg=1`` is
+            accepted and dropped.
 
         Returns
         -------
         PackageSpec
+            EAGER: ``options`` holds the resolved ``ievt`` and ``surface``, and
+            ``inputs`` is empty. LAZY: ``inputs`` holds what was left to the grid --
+            ``{'ievt': 'top_active', 'surface': 'model_top'}`` with both omitted.
+
+        Raises
+        ------
+        ValueError
+            ``nseg`` other than 1 (see Notes); ``boundnames=True``; ``surface``
+            omitted with a ``context=`` lacking ``grid`` or ``surfaces``;
+            ``ievt="top_active"`` with a ``context=`` carrying no ``(nlay, ncpl)``
+            domain; an ``ievt`` string other than ``"top_active"`` -- at the call
+            with ``context=``, at build without it.
+        TypeError
+            A ``mf.Spread`` or ``mf.CellSurfaceOffset`` in any keyword, or a keyword
+            ``ModflowGwfevta`` does not accept.
 
         Notes
         -----
@@ -4629,7 +4772,15 @@ class _EVTPackage:
 
         Examples
         --------
-        >>> mf.evt.array(rate={0: rate_array}, depth=10.0, surface=top, context=ctx)
+        >>> import numpy as np
+        >>> import myflopy as mf
+        >>> ctx = mf.ModelContext(domain=np.array([[1, -1],
+        ...                                        [1,  1]]))
+        >>> spec = mf.evt.array(rate=2e-3, depth=5.0, surface=100.0, context=ctx)
+        >>> spec.options["ievt"].tolist()     # the -1 column's ET comes from layer 1
+        [0, 1]
+        >>> sorted(mf.evt.array(rate=2e-3, depth=5.0).inputs)   # lazy: both at build
+        ['ievt', 'surface']
         """
 
         if options.pop("nseg", None) not in (None, 1):
@@ -6541,18 +6692,25 @@ def _array_bc_values(
                 f"explicitly, or pass {index_name}=None to apply the flux to layer 1 "
                 "everywhere (which silently skips any column whose layer 1 is inactive)."
             )
-        active = np.asarray(domain) != 0
-        if active.ndim != 2:
+        shape = np.shape(domain)
+        if len(shape) != 2:
             raise ValueError(
                 f"{verb}: expected a (nlay, ncpl) domain to resolve {index_name}, got shape "
-                f"{active.shape}."
+                f"{shape}."
             )
-        # ZERO-based layer index of the highest active cell. FloPy converts to
+        # ZERO-based layer index of the highest ACTIVE cell. FloPy converts to
         # MODFLOW's 1-based IRCH on write by adding one -- measured: passing 1
         # here produced `2` in the file and `Invalid layer number: 3` at the
         # holes. A wholly inactive column takes layer 0; its cell is inactive
         # either way.
-        index = np.where(active.any(axis=0), np.argmax(active, axis=0), 0).astype(int)
+        #
+        # ACTIVE is `idomain > 0`, the shared rule. This read `!= 0`, so a
+        # pass-through cell (-1) counted as active and a column whose top cell was
+        # one had its flux written to a cell MF6 has removed -- and MF6 skips that
+        # record silently: 42.2% of a pass-through stack's recharge, under Normal
+        # termination (ledger 319).
+        index = top_active_layer(domain)
+        index = np.where(index < 0, 0, index)
 
     values[index_name] = index
     _refuse_per_feature_values(values, verb=verb)

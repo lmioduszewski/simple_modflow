@@ -1094,6 +1094,12 @@ an option inside its file; FloPy's two classes are a FloPy artifact.
 recharge to layer 1 unconditionally and SILENTLY skips any column whose layer 1 is
 inactive — measured 40% loss under "Normal termination". `irch` is **zero-based**
 (FloPy adds one on write; passing 1-based gives `Invalid layer number`).
+**"Top active" is `idomain > 0`, one rule: `grid/geometry.top_active_layer`** (ledger
+319) -- array RCH/EVT, the areal builders, UZF, SFR's `reach_layer` and the USG
+importer all call it. The array form read `!= 0`, so a pass-through `-1` counted as
+active and MF6 dropped that column's flux: 42.2% of a `pinch="passthrough"` stack's
+recharge, Normal termination. An EAGER array package on such a domain moves its digest
+(0 of 25 stored, 0 of 47 in the suite); a lazy one does not. Do not add a sixth copy.
 `nseg > 1` and `boundnames` RAISE rather than being silently dropped — segmented ET
 has no array form, because NSEG lives in DIMENSIONS which MF6 never reads under
 READASARRAYS. **`mf.Spread`/`mf.CellSurfaceOffset` raise here too** (ledger 274):

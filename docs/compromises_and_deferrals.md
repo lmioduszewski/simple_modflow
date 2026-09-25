@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 318 entries (320 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 319 entries (321 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 319 | "The top active layer" is ONE rule, `idomain > 0`: the array form read `!= 0` and sent recharge into pass-t... | 2026-09-25 |
 | 318 | Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewritin... | 2026-09-25 |
 | 317 | A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring doe... | 2026-09-24 |
 | 316 | ``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``,... | 2026-09-24 |
@@ -13174,3 +13175,45 @@ same day, which is the useful part of the result.
       Reproducer: `docs/reproducers/lak_docstring_claims.py` (every number above, ~10 s,
       needs `mf6`). Revisit on the user's call; the array SIGSEGV and the integer keys are
       silent or fatal, the rest refuse by name somewhere.
+
+319. **"The top active layer" is ONE rule, `idomain > 0`: the array form read `!= 0` and sent recharge into pass-through cells (2026-09-25).**
+      `grid/geometry.top_active_layer(domain)`, beside `domain_active`, is now the only
+      statement of it -- zero-based, and `-1` for a column with no active cell, which
+      each caller still reads its own way (the array form writes layer 0, the areal
+      builders and UZF skip the column, SFR's default `reach_layer` refuses the reach).
+      Five copies used two predicates: the areal RCH/EVT builders, UZF and SFR already
+      read `> 0`; `mf.rch.array`/`mf.evt.array` (`irch`/`ievt="top_active"`) and
+      `UsgModel.uppermost_active` read `!= 0`. For the array form that was the defect
+      (found as D4 in the excavation scoping): an MF6 `-1` is a removed cell, and MF6
+      drops a flux addressed to it without a word. Measured
+      (`docs/reproducers/top_active_passthrough.py`, a stack pinched with
+      `pinch="passthrough"`): 40 of 92 columns, 207.98 of 360.00 ft3/d applied (57.8%),
+      0.00 in those columns, Normal termination, discrepancy -0.01%. After: 360.00.
+      **What it moves.** An EAGER array package (`context=` given) on a domain with a
+      `-1` above a column's first active cell resolves a different `irch`, so its
+      DIGEST moves and `runs.drift()` reads it edited -- correctly, it builds
+      differently. A LAZY one digests the string `"top_active"` and does not move; what
+      it builds does. Counted: **0 of 25** array RCH packages in the 19 stored runs on
+      disk (every one Ten Trails, no `idomain < 0` anywhere), and **0 of 47** array-form
+      resolutions across the full test suite (36 tests, none on a domain holding a -1),
+      so no stored digest in reach moves. The other three callers are byte-identical by
+      construction (`> 0` already). **The USG importer is routed through it too**, and
+      that is neutral by construction rather than by luck: a negative USG IBOUND is a
+      CONSTANT HEAD -- an active cell, the opposite of MF6's -1 -- and `UsgModel.idomain`
+      maps it to 1 before `uppermost_active` reads it; a test pins that, since letting
+      a -1 through there would move every constant-head column's ETS target down a
+      layer.
+      **Found while documenting the two helpers, and NOT changed** (their docstrings
+      were rewritten because `irch` changed meaning and wrongly said "1-based", D5):
+      `mf.evt.array(surface=<any str>)` is read as "the model top" whatever the string
+      names -- `surface="dem.tif"` wrote the same 162.35 ft3/d as omitting it -- and
+      `surface=mf.Surface(...)` is accepted at the call and refused by FloPy at build
+      (`MFDataException`); a lazy `irch`/`ievt` word other than `"top_active"` is
+      accepted at the call and refused only at build. Each is stated in the parameter's
+      own entry. The first is silent and the one worth fixing: refusing any string but
+      the internal `"model_top"` sentinel is a three-line change that moves no digest.
+      `fixed_cell=True` losing the recharge of a DRY cell (207.98 -> 0.0 ft3/d on a
+      model with a dry top layer) is MF6's documented meaning of `FIXED_CELL`, now said.
+      Tests: `tests/test_top_active_layer.py`, 10, one of them an MF6 run asserting the
+      budget and the percent discrepancy. Reverting the array form to `!= 0` fails 5 by
+      name; turning the helper's `> 0` into `!= 0` fails 6.

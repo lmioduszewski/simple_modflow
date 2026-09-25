@@ -19,7 +19,7 @@ from shapely.ops import nearest_points
 
 from myflopy.advanced import sfr_spec
 from myflopy.grid_identity import pin_metadata
-from myflopy.modflow.mf6.grid.geometry import _SLIVER_WIDTH
+from myflopy.modflow.mf6.grid.geometry import _SLIVER_WIDTH, top_active_layer
 from myflopy.specs import (
     _layer_elevations,
     ModelContext,
@@ -422,10 +422,11 @@ class SFRBuilder:
         values = np.asarray(domain)
         if values.ndim == 1:
             return 0
-        active = np.flatnonzero(values[:, cell] > 0)
-        if len(active) == 0:
+        # The shared rule, `idomain > 0` (ledger 319), asked of this one column.
+        layer = int(top_active_layer(values[:, [cell]])[0])
+        if layer < 0:
             raise ValueError(f"Stream '{stream_id}' intersects inactive grid column {cell}.")
-        return int(active[0])
+        return layer
 
     @property
     def reaches(self) -> gpd.GeoDataFrame:

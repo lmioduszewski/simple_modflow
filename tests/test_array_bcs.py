@@ -69,7 +69,9 @@ def test_irch_is_zero_based(canonical_run, ctx):
     `Invalid layer number: 3` at the inactive columns.
     """
 
-    active = np.asarray(canonical_run.gwf.disv.idomain.array) != 0
+    # ACTIVE is `> 0` (ledger 319): a pass-through -1 is not a cell MF6 keeps. The
+    # canonical domain has none, so this also read `!= 0` without failing.
+    active = np.asarray(canonical_run.gwf.disv.idomain.array) > 0
     expected = np.where(active.any(axis=0), np.argmax(active, axis=0), 0)
     assert np.array_equal(np.asarray(mf.rch.array(recharge=1e-4, context=ctx).options["irch"]), expected)
 
