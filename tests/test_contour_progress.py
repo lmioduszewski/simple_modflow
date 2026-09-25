@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -138,7 +139,8 @@ def test_region_vector_is_a_named_parameter():
 
 def test_region_vector_no_longer_lands_in_grass_kwargs():
     surface = Surface.from_contours("c.gpkg", region_vector="domain.gpkg")
-    assert surface.region_vector == "domain.gpkg"
+    # A `Path`, as the field is annotated and as `from_dict` revives it (2026-09-25).
+    assert surface.region_vector == Path("domain.gpkg")
     assert surface.grass_kwargs == {}
 
 

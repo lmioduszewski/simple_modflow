@@ -369,13 +369,13 @@ class Surface:
         Parameters
         ----------
         contours : Path or str
-            Vector file of labelled elevation contour lines.
+            Vector file of labelled elevation contour lines. Stored as a ``Path``.
         z : str, default "Elev"
             The attribute holding each contour's elevation.
         region_raster : Path or str, optional
             Raster whose extent becomes the GRASS region. **Exactly one of this
             or ``region_vector`` is required** -- without a region GRASS has no
-            extent to work in.
+            extent to work in. Stored as a ``Path``.
 
             Note it uses the WHOLE raster. A DEM covering more ground than your
             model makes every interpolation proportionally slower, and the extra
@@ -384,11 +384,15 @@ class Surface:
         region_vector : Path or str, optional
             Polygon whose extent becomes the GRASS region -- usually your model
             domain, which is normally what you want interpolated and no more.
+            Stored as a ``Path``: a ``str`` was kept as given while
+            :meth:`from_dict` revives a ``Path``, so a saved-and-reloaded contour
+            surface compared ``!=`` the original with an identical payload (found
+            2026-09-25).
         resolution : float, default 4
             Output cell size, in the CRS's units.
         out : Path or str, optional
             Where the interpolated GeoTIFF lands. Defaults to the contours path
-            with a ``.interp.tif`` suffix.
+            with a ``.interp.tif`` suffix. Stored as a ``Path``.
         epsg : str, default "2927"
             EPSG code for the GRASS location.
         units : str, optional
@@ -415,17 +419,34 @@ class Surface:
             on does not re-interpolate anything.
         **grass_kwargs
             Forwarded to :class:`~myflopy.modflow.utils.contour_interp
-            .ContourSurfaceInterpolator` -- ``region_vector``, ``clip``,
-            ``grass_bin``, ``grassdata``, ``location``. These DO feed the cache
-            signature, so changing one invalidates the cached raster.
+            .ContourSurfaceInterpolator`, whose remaining keywords are
+            ``grass_bin`` (the GRASS launcher), ``grassdata`` (the GRASS database
+            directory, default ``~/grassdata``) and ``location`` (default
+            ``"myflopy_interp"``). These DO feed the cache signature, so changing
+            one invalidates the cached raster. A name it does not take is accepted
+            HERE and refused only when the surface is first resolved, with a
+            ``TypeError`` from that class (measured with ``extra=(1, 2)``; found
+            2026-09-25, not changed).
 
         Returns
         -------
         Surface
+            A ``kind="contours"`` surface. Nothing is read or interpolated yet; see
+            "When does the interpolation run?" above.
+
+        Raises
+        ------
+        ValueError
+            Neither or both of ``region_raster`` and ``region_vector``.
 
         Examples
         --------
+        >>> import myflopy as mf
         >>> ground = mf.Contours("ground.gpkg", z="Elev", region_vector="domain.gpkg")
+        >>> ground.kind, ground.region_vector.as_posix(), ground.out.as_posix()
+        ('contours', 'domain.gpkg', 'ground.interp.tif')
+        >>> ground == mf.Surface.from_dict(ground.to_dict())   # what a reload builds
+        True
         >>> watch = mf.Contours("clay.gpkg", region_vector="domain.gpkg", progress=True)
         """
 
@@ -448,8 +469,10 @@ class Surface:
             kind="contours",
             contours=contours,
             z=z,
-            region_raster=region_raster,
-            region_vector=region_vector,
+            # `Path`, as `contours` and `out` are and as `from_dict` revives them: a
+            # `str` kept as given made a round-tripped surface compare unequal.
+            region_raster=Path(region_raster) if region_raster is not None else None,
+            region_vector=Path(region_vector) if region_vector is not None else None,
             clip=clip,
             resolution=resolution,
             out=out,

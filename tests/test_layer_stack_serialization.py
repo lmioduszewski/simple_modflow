@@ -20,6 +20,7 @@ recipe that still needs them -- which is why they are forwarded in the next comm
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -268,3 +269,95 @@ def test_the_untag_leaves_the_rest_of_a_payload_alone():
     assert untagged["keys"] == {"0": "a"}
     assert untagged["nested"] == [(1, (2, 3))]
     assert type(untagged["nested"][0][1]) is tuple
+
+
+# -- the same untag, on a per-period `mf.Spread` (found on review) --------------------
+#
+# `Spread.to_dict` runs `_json_value` on its own fields, so a per-period
+# `mf.Spread(("c0", "c1"))` -- one column per stress period -- carries the tag inside
+# its `$spread` payload. Before the untag a lazy `.gpkg` boundary holding one came back
+# from a save with `field={'$tuple': [...]}` and died at BUILD with `KeyError: 0`: the
+# builder indexes the field by period. It was fixed by the same line and tested by none.
+
+
+def _per_period_drn(tmp_path):
+    import geopandas as gpd
+    from shapely.geometry import LineString
+
+    source = tmp_path / "drn.gpkg"
+    gpd.GeoDataFrame(
+        {"layer": [1], "name": ["d"], "elev": [96.0], "c0": [10.0], "c1": [20.0]},
+        geometry=[LineString([(10.0, 300.0), (590.0, 300.0)])],
+        crs=2927,
+    ).to_file(source, layer="drn")
+    return mf.drn.gpkg(
+        source, layer="drn", nper=2, elevation="elev", conductance=mf.Spread(("c0", "c1"))
+    )
+
+
+def _written_conductance(drn, grid, workspace):
+    """Per-period total conductance of the DRN package a model builds from ``drn``."""
+
+    import warnings
+
+    from myflopy.specs import ModelContext
+
+    model = mf.gwf("m", context=ModelContext(grid=grid), packages=[
+        mf.disv(mf.LayerStack(top=mf.Surface.flat(100.0)).add("a", bottom=50.0)),
+        mf.npf(k=10.0),
+        mf.ic(strt=95.0),
+        drn,
+    ])
+    simulation = mf.simulation(
+        model, name="s", packages=[mf.tdis(nper=2, perioddata=[(1.0, 1, 1.0)] * 2)]
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        built = simulation.build_flopy(workspace).simulation.get_model("m")
+    data = built.get_package("drn").stress_period_data.get_data()
+    return {period: round(float(np.sum(rows["cond"])), 6) for period, rows in data.items()}
+
+
+@pytest.mark.parametrize("fmt", ["json", "yaml"])
+def test_a_per_period_spread_comes_back_a_tuple_and_builds(tmp_path, triangulated_grid, fmt):
+    from myflopy.specs import PackageSpec, package_digest
+
+    drn = _per_period_drn(tmp_path)
+    written = _json_value(drn.inputs)["stress_period_data"]["values"]["conductance"]
+    assert written == {"$spread": {"field": {"$tuple": ["c0", "c1"]}}}, (
+        "the tag inside the payload is what makes this case worth testing"
+    )
+
+    if fmt == "json":
+        revived = PackageSpec.from_dict(json.loads(json.dumps(drn.to_dict())))
+    else:
+        simulation = mf.simulation(mf.gwf("m", packages=[drn]), name="s")
+        revived = mf.SimulationSpec.from_yaml(simulation.to_yaml()).models[0].packages[0]
+
+    spread = revived.inputs["stress_period_data"].values["conductance"]
+    assert type(spread.field) is tuple and spread.field == ("c0", "c1")
+    assert package_digest(revived) == package_digest(drn)
+    live = _written_conductance(drn, triangulated_grid, tmp_path / "live")
+    assert live[0] > 0 and live[1] == pytest.approx(2 * live[0])
+    assert _written_conductance(revived, triangulated_grid, tmp_path / "revived") == live
+
+
+def test_a_contour_surface_round_trips_equal():
+    """`region_vector`/`region_raster` were kept as the `str` given; a reload made a `Path`.
+
+    So the payload and digest matched while `==` did not -- and since a lazy `mf.disv`
+    now holds a rebuilt copy of its stack, the copy of a contour-topped stack no longer
+    equalled the caller's surface.
+    """
+
+    from myflopy.specs import stamp_source_hashes
+
+    for region in ("region_vector", "region_raster"):
+        surface = Surface.from_contours(
+            "contours.gpkg", out="ground.tif", **{region: "domain.gpkg"}
+        )
+        assert type(getattr(surface, region)) is type(Path("domain.gpkg")), region
+
+        assert Surface.from_dict(surface.to_dict()) == surface, region
+        assert _spec_value(json.loads(json.dumps(_json_value(surface)))) == surface, region
+        assert stamp_source_hashes(surface) == surface, "nothing readable, so nothing stamped"

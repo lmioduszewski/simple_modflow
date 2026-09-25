@@ -10367,6 +10367,30 @@ same day, which is the useful part of the result.
       `mf.disv` for exactly this reason -- the user settled it 2026-09-15.
       NOT closed here: this commit alone does not make a layered model saveable, because
       `mf.disv` still holds arrays. Commit 4 is what closes it.
+      **Amended 2026-09-25: a tuple inside a token's payload comes back a tuple.**
+      `_json_value` tags every tuple as `{"$tuple": [...]}`, inside a `$layer_stack`/
+      `$surface`/`$spread`/`$cell_surface_offset` payload too, and `_spec_value` handed
+      the payload to `from_dict` raw. A `split=(0.3, 0.7)` came back a dict and the saved
+      stack would not build; a per-period `mf.Spread(("c0", "c1"))` in a lazy `.gpkg`
+      boundary came back `field={'$tuple': [...]}` and the reloaded package died at
+      build with `KeyError: 0` (live: 10.0 and 20.0 per period). Every payload is now
+      `_untag_tuples`-ed first -- ONLY the tag, not the rest of `_spec_value`, whose
+      source revival and integer-key promotion must not reach an object's own format.
+      Both cases are tested through JSON and YAML (the Spread one only on review: the
+      line that fixed it was tested by nothing). Same pass: `Surface.from_contours`
+      kept `region_vector`/`region_raster` as the `str` it was given while `from_dict`
+      revives a `Path`, so a round-tripped contour surface compared `!=` with an
+      identical payload and digest; both are stored as `Path` now. That can move a
+      digest only for a path `Path()` rewrites (`"./d.gpkg"` -> `"d.gpkg"`) of a file
+      that could not be hashed, and a reload already rewrote it the same way; no
+      manifest on disk names a region file (0 under `examples/` and the model tree).
+      **Found and NOT changed** (the user's call): a ONE-SIDED `Surface.clamp(a,
+      lower=b)` -- and `a.between(lower=b)` -- cannot be written down at all:
+      `to_dict` calls `.to_dict()` on the `None` bound and raises `AttributeError`, so
+      a gridless stack holding one cannot be declared through `mf.disv` (the error is
+      raised at the call, not in silence; measured on myflopy at 90de983 too). And a
+      `grass_kwargs` name `ContourSurfaceInterpolator` does not take is accepted by
+      `from_contours` and refused only at the first resolution (`TypeError`).
 
 270. **The discretization is a recipe now, and that is what finally lets a layered model be SAVED (2026-09-15).**
       B1 commit 4. `mf.disv(stack)` on a gridless `LayerStack` raised; it emits a LAZY
