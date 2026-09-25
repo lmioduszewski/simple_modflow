@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 320 entries (322 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 322 entries (324 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 322 | `irch=None` -- one layer for every column -- stays the documented opt-out, and the build now SAYS what it l... | 2026-09-25 |
+| 321 | A package still naming a cell the built DISV REMOVED is refused at build -- a boundary, an observation, an... | 2026-09-25 |
 | 320 | `LayerStack.excavate`: a pond is a VOID cut after reconcile and pinch, absorbing rather than deepening -- t... | 2026-09-25 |
 | 319 | "The top active layer" is ONE rule, `idomain > 0`: the array form read `!= 0` and sent recharge into pass-t... | 2026-09-25 |
 | 318 | Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewritin... | 2026-09-25 |
@@ -13387,3 +13389,74 @@ same day, which is the useful part of the result.
       `LayerStack.add`'s docstring said `pinch="passthrough"` was the default; `build`'s
       is `"floor"`, and it says so now. Tests: `tests/test_excavate.py`, 50 (one MF6);
       each rule mutated in turn fails a named test (16 mutations).
+
+321. **A package still naming a cell the built DISV REMOVED is refused at build -- a boundary, an observation, an array recharge/ET index (2026-09-25).**
+      The excavation design's C5, landed right after the cut (ledger 320) so no commit
+      ships the cut without its guard. `_discretization_complaints` range-checked
+      cellids, and a cell can be in range and still REMOVED by the DISV's idomain -- which
+      is exactly what a context declared BEFORE `stack.excavate` leaves behind. It now
+      also refuses, off the BUILT DISV's own idomain (`idomain <= 0`, 0 and -1 alike):
+      a list boundary's record (chd/drn/ghb/riv/wel/rch/evt, and the GWT/GWE list
+      types), an OBS6 cellid (`id`/`id2`, model-level files and a package's own
+      `observations=` alike), and an `irch`/`ievt` given PER COLUMN -- an array, or
+      `"top_active"` resolved eagerly or at build -- naming a removed cell in a column
+      that has an active one. It names the excavation when a record reaches the model
+      (`grid_identity.excavation_cells`: `context.surfaces`' records, a table's
+      `attrs["excavations"]`, then `grid.excavations`) and, for an array, the rate MF6
+      would drop. A lazy `rch.array()` is not immune: it resolves `"top_active"` against
+      the MODEL'S context, which declared before the cut still has layer 1 there.
+      **Measured premises, one of them against the design.** The design said FloPy
+      refuses a list boundary's inactive cellid at construction; it does not -- a CHD at
+      a dug cell built clean (FloPy's `_check_valid_cellids` fires for HFB and LAK, not
+      for a list BC), so every list BC is checked here, whatever its order. A list BC
+      declared BEFORE any discretization cannot be constructed at all ("Unrecognized
+      model grid"), so that ordering never reaches the check. MF6 refuses both a list
+      record (`BoundaryPackageExt.f90`, "Cell is outside active grid domain") and a head
+      observation ("Error reading data from ID string") on a removed cell, so for those
+      two the guard refuses no model MF6 runs -- it is the earlier, NAMED form. For an
+      array index MF6 says nothing: `nlarray_to_nodelist` maps it to node 0 and
+      `rch_cf` skips it.
+      **HFB is deliberately exempt**: MF6 WARNS about a barrier touching an inactive cell
+      and drops it (`gwf-hfb.f90`), so refusing one would refuse a model MF6 runs.
+      Unreachable through FloPy 3.10, which refuses the cellid at construction, so it is
+      pinned on the rule (the same records typed as a CHD are refused).
+      **Head targets** already refused an explicit inactive cell and reported a point on
+      no active cell as a miss; both now name the excavation and say the head belongs to
+      the cell under the bed. **Found, NOT fixed:** that partial miss reaches the LOGGER
+      only (`observations/_shared._report_missed_features`) -- ledger 288's
+      `warnings.warn` rule has not reached the target families, as ledger 320 found for
+      PRT; changing it moves every target family's warnings and is its own commit.
+      **Not covered:** a DIS (structured) model -- the activity checks are DISV-only, as
+      the mesh checks beside them are; advanced packages (`packagedata`/`connectiondata`,
+      which `_cellids_in` deliberately does not walk -- LAK's are C7's); a package a
+      hook attaches after the build. **Cost:** the list walk repeats the range check's,
+      0.55-0.62 s on a 654,480-record EVT against 0.45-0.48 s for the range walk it sits
+      beside (`docs/reproducers/active_cell_guard.py`, which also shows every premise in
+      this entry: FloPy accepting the CHD and the observation, MF6's two refusals, FloPy
+      refusing the HFB, and MF6 dropping the dug columns' recharge under Normal
+      termination with the budget closed).
+      Tests: `tests/test_active_cell_guard.py` (on the hand-built grid and
+      `triangulated_grid`); reverting the call fails 14 by name, dropping the excavation
+      note 14, treating every index as the opt-out 6, the head-target naming 2, the HFB
+      exemption 1.
+
+322. **`irch=None` -- one layer for every column -- stays the documented opt-out, and the build now SAYS what it loses (2026-09-25).**
+      Ledger 163 made `"top_active"` the default and kept `irch=None` (and a single
+      integer) as the explicit opt-out; `tests/test_run_record.py` and
+      `tests/test_spec_libraries.py` declare it, and MF6 then puts the flux in that layer
+      in every column and skips, without a word, every column whose cell there is
+      removed. The design (C5) weighed refusing it with the array form (ledger 321) and
+      did not: it is legal, correct wherever the layer is active everywhere, and the one
+      spelling that means "the same layer on every mesh" (`mf.rch.array(irch=0)` is
+      grid-free by design, ledger 267). So it WARNS -- `warnings.warn` and the logger
+      (ledger 288) -- naming the columns, the excavation that dug them, and the rate:
+      the declared rate times each skipped column's DISV area, against the total over
+      columns with an active cell, in the first period that loses flux and the worst
+      when that is a later one. The number is MF6's: on a steady NEWTON model with the
+      pond dug out of layer 1, the RCH inflow in MF6's budget file is the declared total
+      less the warned loss to 1e-6, and the budget closes (`test_the_warned_loss_is_what_
+      mf6_drops`, slow). What decides refusal against warning is the DECLARED value
+      (`None`, a scalar, a per-period dict of scalars), read off the resolved spec, not
+      the FloPy data -- FloPy stores `irch=0` as a full array of zeros, so the built
+      package cannot tell the two apart. Silent where the layer is active in every column
+      with an active cell (0 warnings across the 4,163-test suite).

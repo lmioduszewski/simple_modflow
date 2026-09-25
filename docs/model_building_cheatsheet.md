@@ -916,8 +916,11 @@ lakebed the connected cell's thickness sets the infiltration rate, so read the r
 `connected_min`/`connected_max` — a larger `min_remnant` changes the geology under the
 pond, not just the solver. After the cut, "model top" inside the pond is the bed:
 `irch="top_active"` recharge lands under it (MF6 zeroes it while a lake is wet there),
-a `.gpkg` boundary on a dug cell is dropped with a warning, and a context built before
-the cut still names the removed cells. The layer stack cannot be saved lazily yet —
+a `.gpkg` boundary on a dug cell is dropped with a warning, and a package declared
+against a context built BEFORE the cut -- which still names the removed cells -- is
+refused at build, naming the excavation: a boundary or observation on a dug cell, or
+an `irch`/`ievt` array pointing at one (ledger 321; `irch=None` warns instead, with the
+rate it loses, ledger 322). The layer stack cannot be saved lazily yet —
 declare `mf.disv(pond)` (ledger 320). **`mf.lak` does not read the excavation records
 yet**: its generated connections still follow the un-excavated rule (on a cut pond,
 `bathy` writes no side walls), so the cut alone is the geometry, not yet the lake

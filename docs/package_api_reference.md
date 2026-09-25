@@ -390,7 +390,10 @@ release-group boundnames; without them it names the fix and offers
   and `absorbed`; `result.excavation_report()` says what was removed, absorbed and
   connected; `build(attach=True)` publishes the records as `vor.excavations` beside
   `gdf_topbtm`. `result.excavate(...)` cuts a BUILT result (a model with no stack).
-  `stack.to_disv(vor)` is now `stack.build(vor).to_disv()`. Not yet serializable:
+  `stack.to_disv(vor)` is now `stack.build(vor).to_disv()`. A package declared
+  against a context from BEFORE the cut is refused at build, naming the excavation:
+  a list boundary or an observation on a dug cell, an array recharge/ET index
+  pointing at one (ledger 321). Not yet serializable:
   `mf.disv(<gridless excavated stack>)` raises — declare `mf.disv(stack.build(vor))`.
   `mf.lak` does not read the records yet: its connections still follow the
   un-excavated rule (ledger 320).
@@ -651,7 +654,11 @@ whose layer 1 is inactive. "Top active" is the highest cell with `idomain > 0`, 
 a vertical pass-through cell (`-1`) is skipped; it read `!= 0` and lost 42% of a
 pass-through stack's recharge until ledger 319. Every "top active" in myflopy is
 `grid.geometry.top_active_layer`. The index is zero-based. Segmented ET has no
-array form and `nseg` raises.
+array form and `nseg` raises. The build checks the index against the DISV it is
+built beside: a per-column index naming a REMOVED cell (`idomain <= 0`) in a column
+that has an active one is refused (ledger 321 -- most often a `context=` from before
+an excavation), and `irch=None` / one layer everywhere, the documented opt-out, is
+WARNED with the rate it loses (ledger 322).
 
 ### Horizontal flow barriers — `mf.hfb`
 

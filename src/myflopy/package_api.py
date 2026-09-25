@@ -4363,6 +4363,15 @@ class _RCHPackage:
             inactive -- measured, a 10-column model with 4 such holes lost 40% of
             its recharge under Normal termination, and ``fixed_cell`` does not
             rescue it. Correct only where layer 1 is active everywhere.
+
+            **Checked at build against the DISV it is built beside** (ledgers
+            321-322). A per-column index -- an array, or ``"top_active"`` resolved
+            eagerly or at build -- that names a REMOVED cell (``idomain <= 0``) in a
+            column that has an active cell is REFUSED: it was resolved against
+            another domain, typically a ``context=`` from before the stack was
+            excavated, and MF6 would drop that column's recharge without a word.
+            ``None`` or one integer for every column stays legal, and the build
+            WARNS naming the columns and the rate lost.
         fixed_cell : bool, default False
             Write ``FIXED_CELL``, MF6's option to keep recharge in the IRCH cell
             even when that cell is inactive -- a convertible cell gone DRY included
@@ -4842,7 +4851,10 @@ class _EVTPackage:
             highest cell with ``idomain > 0``, so a pass-through cell (``-1``) is
             skipped (ledger 319); 1-based values shift every column down a layer;
             ``None`` takes layer 1 everywhere and silently skips any column whose
-            layer 1 is inactive.
+            layer 1 is inactive. Checked at build as ``irch`` is (ledgers 321-322):
+            a per-column index naming a removed cell in a column with an active cell
+            is refused, ``None`` or one layer everywhere is warned with the rate
+            lost.
         fixed_cell : bool, default False
             Write ``FIXED_CELL``, MF6's option to keep ET in the IEVT cell instead of
             passing it to the cell below when that cell is inactive.

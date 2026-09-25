@@ -1019,6 +1019,13 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   the `gdf_topbtm` SETTER clears. `stack.to_disv` is now `build().to_disv()` (0 digests
   moved, 12 stacks). INTERIM: an excavated stack REFUSES `to_dict` (so lazy `mf.disv`
   raises) and `mf.lak` does not read the records yet.
+  **A package declared against a context from BEFORE the cut is refused at build**
+  (ledger 321): `_discretization_complaints` checks every list-BC record, OBS6 cellid
+  and per-column `irch`/`ievt` against the BUILT DISV's idomain (`<= 0` = removed) and
+  names the excavation. FloPy does NOT catch a list BC on a removed cell (measured: a
+  CHD at a dug cell built clean); HFB is exempt (MF6 warns and drops it). `irch=None`
+  / one layer everywhere stays the opt-out and WARNS with the rate lost, which matches
+  MF6's own budget to 1e-6 (ledger 322).
   `.plot.map()/.plot.section()/.plot.surface()` and `.vtk_3d()`, `from_modflow`).
   **Pictures come from `stack.plot`** as of 8.5a — `preview`/`thickness_map`/
   `cross_section`/`surface_3d`/`views` are gone. `qc()` stays a method: it is a

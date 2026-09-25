@@ -15,6 +15,7 @@ import hashlib
 import inspect
 import pickle
 import sys
+import warnings
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -51,6 +52,7 @@ from myflopy.grid_identity import (
     _discretization_complaints,  # noqa: F401
     _mesh_residual,  # noqa: F401
     _mesh_scale,  # noqa: F401
+    active_cell_warnings,
     cellwise_options,
     coupled_mesh_complaints,
     disv_pin,  # noqa: F401
@@ -3914,11 +3916,21 @@ class ModelSpec:
             raise ValueError(
                 f"Model {self.name!r} does not agree with the grid it was built "
                 "against:\n  - " + "\n  - ".join(complaints) + "\nThis is refused "
-                "rather than run: cell numbers resolved on another mesh are still valid "
-                "numbers, so MF6 applies them to the new geometry and reports normal "
-                "termination. Re-declare the packages against this grid, or correct the "
-                "context value named above."
+                "rather than run: cell numbers resolved on another mesh, or against "
+                "another domain, are still valid numbers -- MF6 applies them to the new "
+                "geometry and reports normal termination, or drops what a removed cell "
+                "carries without a word. Re-declare the packages against this grid, or "
+                "correct the context value named above."
             )
+        # The documented opt-outs the guard does not refuse: an array-form flux put in
+        # one layer everywhere (`irch=None`) where that layer's cell is removed. Legal,
+        # and MF6 drops the column's flux without a word, so it is SAID (ledger 322) --
+        # through `warnings.warn` as well as the logger, which alone reaches nobody
+        # (ledger 288).
+        for message in active_cell_warnings(model, context, live):
+            message = f"Model {self.name!r}: {message}"
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=2)
         hook_results = {
             hook.name: hook.run(model, built_packages, context) for hook in self.hooks
         }

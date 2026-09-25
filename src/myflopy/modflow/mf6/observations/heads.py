@@ -11,6 +11,10 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import Point
 
+from myflopy._logging import get_logger
+from myflopy.grid_identity import excavation_cells
+from myflopy.modflow.mf6.grid.domain import model_domain
+from myflopy.modflow.mf6.grid.geometry import cell_shares, domain_active, miss_reason
 from myflopy.modflow.mf6.observations._shared import (
     _build_values_from_cells,
     _coerce_label_list,
@@ -26,12 +30,35 @@ from myflopy.modflow.mf6.observations._shared import (
     _report_missed_features,
     _simulated_field_by_period,
 )
-from myflopy._logging import get_logger
-from myflopy.modflow.mf6.grid.domain import model_domain
-from myflopy.modflow.mf6.grid.geometry import cell_shares, domain_active, miss_reason
 from myflopy.viz import mpl_axes
 
 logger = get_logger(__name__)
+
+
+def _dug_cells(model) -> dict[int, str]:
+    """``{cell: excavation name}`` for whatever records this model's context or grid carry.
+
+    Only used to NAME why a target's cell is not active (ledger 321): a cell inside an
+    excavation is lake water, and the head there belongs to the cell under the bed.
+    """
+
+    import types
+
+    found: dict[int, str] = {}
+    for context in (
+        getattr(getattr(model, "gwf", None), "myflopy_context", None),
+        getattr(model, "myflopy_context", None),
+        types.SimpleNamespace(grid=getattr(model, "vor", None)),
+    ):
+        for cell, name in excavation_cells(context).items():
+            found.setdefault(cell, name)
+    return found
+
+
+_DUG_ADVICE = (
+    " A cell inside an excavation is lake water, not aquifer -- observe the head in the "
+    "cell under its bed, the column's top active layer."
+)
 
 
 @dataclass
@@ -337,8 +364,11 @@ class HeadTargets:
                 f"These {self._FIELD_LABEL} targets name cells this grid does not "
                 f"have (it has {ncpl}, numbered from 0): {', '.join(outside)}."
             )
+        dug = _dug_cells(model)
         inactive = [
-            f"{name!r} (cell {cell}, layer {layer})"
+            f"{name!r} (cell {cell}, layer {layer}"
+            + (f", inside excavation {dug[cell]!r}" if cell in dug else "")
+            + ")"
             for name, cell, layer in zip(matches["name"], cells, layers, strict=True)
             if not domain_active(domain, layer, cell)
         ]
@@ -347,6 +377,7 @@ class HeadTargets:
                 f"These {self._FIELD_LABEL} targets name cells that are not active "
                 f"in their own layer, where MF6 writes no {self._FIELD_LABEL}: "
                 f"{', '.join(inactive)}."
+                + (_DUG_ADVICE if any("inside excavation" in entry for entry in inactive) else "")
             )
         return matches
 
@@ -359,6 +390,7 @@ class HeadTargets:
         columns = ["name", "name_key", "layer", "group", "weight", "cell", "x", "y"]
         rows: list[dict[str, Any]] = []
         missed: list[str] = []
+        dug: dict[int, str] | None = None
         for _, row in locations.iterrows():
             geometry = row.geometry
             name = str(row["name"])
@@ -381,6 +413,14 @@ class HeadTargets:
             )
             if not hits:
                 reason = miss_reason(polys, geometry, target=f"active cell in layer {layer}")
+                if dug is None:
+                    dug = _dug_cells(model)
+                inside = [cell for cell, _share in cell_shares(polys, geometry)] if dug else []
+                if inside and inside[0] in dug:
+                    reason += (
+                        f", inside excavation {dug[inside[0]]!r} -- the head there is the "
+                        "cell under its bed, in the column's top active layer"
+                    )
                 missed.append(f"{name!r} ({reason})")
                 continue
             rows.append({column: row.get(column) for column in columns} | {"cell": hits[0][0]})

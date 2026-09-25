@@ -738,6 +738,529 @@ def _cellids_in(options: dict[str, Any]):
                     break
                 yield cellid
 
+
+#: The FloPy package types whose MF6 reader REFUSES a cell the discretization removed:
+#: every list boundary built on ``BndExtType`` stores ``Cell is outside active grid
+#: domain`` for a record whose reduced node is <= 0 -- idomain 0 AND -1 alike
+#: (``BoundaryPackageExt.f90``). HFB is deliberately absent: MF6 WARNS about a barrier
+#: touching an inactive cell and drops it (``gwf-hfb.f90``), so refusing one here would
+#: refuse a model MF6 runs.
+_LIST_BC_TYPES = frozenset(
+    {"chd", "drn", "ghb", "riv", "wel", "rch", "evt", "cnc", "src", "ctp", "esl"}
+)
+
+#: The array-form packages: FloPy type -> (layer-index option, value option, what it
+#: carries). MF6 maps an index naming a removed cell to node 0 and skips it, WITHOUT a
+#: word (``Disv.f90`` ``nlarray_to_nodelist``, ``gwf-rch.f90`` ``rch_cf``).
+_ARRAY_INDEX = {
+    "rcha": ("irch", "recharge", "recharge"),
+    "evta": ("ievt", "rate", "evapotranspiration"),
+}
+
+#: Short spellings of the length and time units ``ModelContext`` carries, for a rate.
+_UNIT_ABBREVIATIONS = {
+    "feet": "ft", "foot": "ft", "ft": "ft", "meters": "m", "meter": "m", "m": "m",
+    "centimeters": "cm", "cm": "cm", "days": "d", "day": "d", "d": "d",
+    "seconds": "s", "second": "s", "s": "s", "minutes": "min", "hours": "h",
+    "years": "yr", "year": "yr",
+}
+
+
+def _built_idomain(disv, nlay: int, ncpl: int):
+    """The built DISV's idomain as ``(nlay, ncpl)`` ints -- ``None`` in FloPy is all active.
+
+    Read off the PACKAGE, never ``model.modelgrid``: flopy synthesizes an all-ones float
+    array there where the package's own field says None (ledger 279).
+    """
+
+    import numpy as np
+
+    field = getattr(disv, "idomain", None)
+    data = field.get_data() if field is not None else None
+    if data is None:
+        return np.ones((nlay, ncpl), dtype=int)
+    return np.asarray(data, dtype=int).reshape(nlay, ncpl)
+
+
+def _disv_areas(disv, ncpl: int):
+    """Each cell's plan area from the DISV's own vertices (the shoelace), or ``None``.
+
+    The DISV rather than the context grid, because it is what MF6 multiplies a rate by.
+    """
+
+    import numpy as np
+
+    try:
+        vertices = disv.vertices.get_data()
+        cells = disv.cell2d.get_data()
+        xy = {int(row[0]): (float(row[1]), float(row[2])) for row in vertices}
+        areas = np.zeros(ncpl, dtype=float)
+        for row in cells:
+            ring = [xy[int(index)] for index in list(row)[4 : 4 + int(row[3])]]
+            x = np.array([p[0] for p in ring])
+            y = np.array([p[1] for p in ring])
+            areas[int(row[0])] = 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError) as error:
+        logger.debug("could not read cell areas off the DISV; rates go unreported: %s", error)
+        return None
+    return areas
+
+
+def excavation_cells(context) -> dict[int, str]:
+    """``{cell: excavation name}`` for every cell an excavation record ``context`` reaches names.
+
+    Read from what a model can carry a record on, in ``specs._layer_elevations``'
+    order: ``context.surfaces`` -- a ``LayerBuildResult`` (its ``excavations``) or a
+    table whose ``attrs["excavations"]`` a lazy DISV published -- then the grid's
+    ``excavations`` attribute, which ``LayerBuildResult.attach_to_grid`` sets. Only used
+    to NAME the cause of a refusal, so every source is read and the first to name a
+    cell wins; a record is duck-typed (``.name``, ``.cells``) because this module is
+    import layer 0 and ``ExcavationRecord`` lives in layer 2.
+
+    Parameters
+    ----------
+    context : ModelContext or None
+        The model's context. ``None``, or one carrying no record, gives ``{}``.
+
+    Returns
+    -------
+    dict of int to str
+        Cell number (zero-based, a python ``int``) to the name of the excavation that
+        dug it.
+
+    Examples
+    --------
+    >>> import myflopy as mf
+    >>> from myflopy.grid_identity import excavation_cells
+    >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+    >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+    >>> pond = mf.Area(vor.gdf_vorPolys.geometry.loc[4])
+    >>> result = (mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0)
+    ...           .excavate(bottom=90.0, within=pond, name="pond").build(vor, attach=True))
+    >>> excavation_cells(mf.ModelContext(grid=vor))
+    {4: 'pond'}
+    """
+
+    found: dict[int, str] = {}
+    surfaces = getattr(context, "surfaces", None)
+    sources = [getattr(surfaces, "excavations", None)]
+    attrs = getattr(surfaces, "attrs", None)
+    if isinstance(attrs, dict):
+        sources.append(attrs.get("excavations"))
+    sources.append(getattr(getattr(context, "grid", None), "excavations", None))
+    for records in sources:
+        if not isinstance(records, dict):
+            continue
+        for record in records.values():
+            for cell in getattr(record, "cells", ()) or ():
+                found.setdefault(int(cell), str(getattr(record, "name", "?")))
+    return found
+
+
+def _dug_note(cells, idomain, dug: dict[int, str], *, stale: bool = True) -> str:
+    """Which of ``cells`` -- ``(layer, cell)`` pairs -- an excavation dug out, in words.
+
+    A cell counts when its column is in a record AND it lies above the column's first
+    active layer: that is the space the cut removed (or absorbed). A cell further down
+    a dug column was removed by something else (a pinch), and is not blamed on the pond.
+    ``stale`` adds the likely cause -- a context from before the cut -- which is true of
+    a resolved index or cellid and not of a single layer typed for every column.
+    """
+
+    import numpy as np
+
+    by_name: dict[str, int] = {}
+    for layer, cell in cells:
+        name = dug.get(int(cell))
+        if name is None:
+            continue
+        active = np.flatnonzero(idomain[:, cell] > 0)
+        if active.size and layer < active[0]:
+            by_name[name] = by_name.get(name, 0) + 1
+    if not by_name:
+        return ""
+    parts = [f"{count} inside excavation {name!r}" for name, count in sorted(by_name.items())]
+    note = f" -- {', '.join(parts)}, dug out of the stack by `LayerStack.excavate`"
+    if stale:
+        note += ", so this was declared against a context from BEFORE the cut"
+    return note
+
+
+def _listing(items, limit: int = 5) -> str:
+    """The first ``limit`` items, then how many more."""
+
+    items = list(items)
+    text = ", ".join(str(item) for item in items[:limit])
+    if len(items) > limit:
+        text += f", and {len(items) - limit} more"
+    return text
+
+
+def _flopy_types(model) -> dict[str, str]:
+    """``{package name: FloPy package type}`` for every package built on ``model``."""
+
+    return {
+        _flopy_name(package): str(getattr(package, "package_type", ""))
+        for package in getattr(model, "packagelist", ()) or ()
+    }
+
+
+def _inactive_cellid_complaints(model, packages, idomain, dug) -> list[str]:
+    """A list boundary or an observation naming a cell the built DISV removed.
+
+    MF6 REFUSES both at read (``Cell is outside active grid domain`` for a boundary,
+    ``Error reading data from ID string`` for a head observation -- both measured in
+    ``docs/reproducers/active_cell_guard.py``), and FloPy accepts both at construction
+    -- measured, a CHD at a dug cell built clean. So this is the
+    earlier, named form of an error MF6 would stop on anyway, and can refuse no model
+    MF6 runs. What it adds is the CAUSE: a package declared against a context from
+    before the stack was excavated (or re-pinched) names cells that no longer exist.
+    """
+
+    import numpy as np
+
+    nlay, ncpl = idomain.shape
+    complaints: list[str] = []
+    types = _flopy_types(model)
+    resolved = getattr(model, "_myflopy_resolved", None) or {}
+    for package in packages:
+        effective = resolved.get(package.name, package)
+        if types.get(package.name) not in _LIST_BC_TYPES:
+            continue
+        removed = sorted(
+            {
+                cellid
+                for cellid in _cellids_in(effective.options)
+                if len(cellid) == 2
+                and 0 <= cellid[0] < nlay
+                and 0 <= cellid[1] < ncpl
+                and idomain[cellid[0], cellid[1]] <= 0
+            }
+        )
+        if removed:
+            complaints.append(
+                f"package {package.name!r} names {len(removed)} cell(s) the built DISV "
+                f"has REMOVED (idomain <= 0), which MF6 refuses at read ('Cell is "
+                f"outside active grid domain'): {_listing(removed)}"
+                f"{_dug_note(removed, idomain, dug)}. Re-declare it against the context "
+                "of the layer stack this DISV was built from"
+            )
+
+    for package in getattr(model, "packagelist", ()) or ():
+        if getattr(package, "package_type", None) != "obs":
+            continue
+        try:
+            blocks = package.continuous.get_data() or {}
+        except AttributeError as error:
+            logger.debug("an OBS package carried no continuous block; not checked: %s", error)
+            continue
+        removed = []
+        for records in blocks.values():
+            for record in records if records is not None else ():
+                for field in ("id", "id2"):
+                    value = record[field] if field in (record.dtype.names or ()) else None
+                    if (
+                        isinstance(value, tuple)
+                        and len(value) == 2
+                        and all(
+                            isinstance(part, (int, np.integer)) and not isinstance(part, bool)
+                            for part in value
+                        )
+                        and 0 <= int(value[0]) < nlay
+                        and 0 <= int(value[1]) < ncpl
+                        and idomain[int(value[0]), int(value[1])] <= 0
+                    ):
+                        removed.append((str(record["obsname"]), (int(value[0]), int(value[1]))))
+        if removed:
+            parent = getattr(package, "parent_file", None)
+            owner = (
+                f"the observations of package {_flopy_name(parent)!r}"
+                if parent is not None and getattr(parent, "package_type", None) != "obs"
+                else f"observation file {getattr(package, 'filename', None) or _flopy_name(package)!r}"
+            )
+            complaints.append(
+                f"{owner} name {len(removed)} cell(s) the built DISV has REMOVED "
+                "(idomain <= 0), which MF6 cannot read (a head observation there stops it "
+                "with 'Error reading data from ID string'): "
+                + _listing(f"{name!r} at {cellid}" for name, cellid in removed)
+                + _dug_note([cellid for _name, cellid in removed], idomain, dug)
+                + ". Observe an active cell -- in a dug column, the one under the bed"
+            )
+    return complaints
+
+
+def _flopy_name(package) -> str:
+    """A FloPy package's own name (FloPy keeps it in a one-item list)."""
+
+    names = getattr(package, "name", None) or ["?"]
+    return str(names[0] if isinstance(names, (list, tuple)) else names)
+
+
+def _index_is_positional(value) -> bool:
+    """Whether a declared ``irch``/``ievt`` names a layer PER COLUMN (an array, or a dict of them).
+
+    ``None`` and a scalar -- also per period -- name one layer everywhere, which is the
+    documented opt-out that :func:`active_cell_warnings` reports rather than refuses.
+    """
+
+    import numpy as np
+
+    if value is None:
+        return False
+    if isinstance(value, dict):
+        return any(_index_is_positional(item) for item in value.values())
+    return np.ndim(value) >= 1
+
+
+def _period_arrays(datum, ncpl: int) -> dict:
+    """``{period: (ncpl,) array or None}`` from FloPy's per-period ``get_data()``.
+
+    ``None`` for a period is FloPy's "nothing declared here" -- MF6 then keeps the
+    value in force, which :func:`_latest` finds. A scalar is broadcast, as MF6's
+    ``CONSTANT`` is. FloPy returning ``None`` outright (an index never given) is ``{}``.
+    """
+
+    import numpy as np
+
+    if datum is None:
+        return {}
+    if not isinstance(datum, dict):
+        datum = {0: datum}
+    out: dict = {}
+    for period, value in datum.items():
+        values = None if value is None else np.asarray(value).reshape(-1)
+        if values is not None and values.size in (1, ncpl):
+            out[int(period)] = np.broadcast_to(values, (ncpl,)).copy()
+        else:
+            out[int(period)] = None
+    return out
+
+
+def _latest(by_period: dict, period: int, fill):
+    """The value in force at ``period``: the last one declared at or before it, else ``fill``."""
+
+    earlier = [p for p in sorted(by_period) if p <= period and by_period[p] is not None]
+    return by_period[earlier[-1]] if earlier else fill
+
+
+def _read_period_data(package, option: str, ncpl: int):
+    """``_period_arrays`` of one FloPy option, or ``None`` when FloPy cannot read it.
+
+    An array given as an ``OPEN/CLOSE`` file name is read from the run's workspace,
+    which need not exist yet at build time.
+    """
+
+    from flopy.mf6.mfbase import MFDataException
+
+    try:
+        return _period_arrays(getattr(package, option).get_data(), ncpl)
+    except (MFDataException, OSError, ValueError, TypeError) as error:
+        logger.debug("could not read %s off %s; its loss goes unmeasured: %s",
+                     option, _flopy_name(package), error)
+        return None
+
+
+def _flux_units(context) -> str:
+    """``ft3/d`` for a feet/days model, else the unit names spelled out."""
+
+    length = str(getattr(context, "length_units", None) or "length")
+    time = str(getattr(context, "time_units", None) or "time")
+    short_l = _UNIT_ABBREVIATIONS.get(length.lower())
+    short_t = _UNIT_ABBREVIATIONS.get(time.lower())
+    if short_l and short_t:
+        return f"{short_l}3/{short_t}"
+    return f"{length}^3/{time}"
+
+
+def _array_index_findings(model, context, packages, idomain, dug):
+    """``(complaints, warnings)`` for every array-form RCH/EVT built on the model.
+
+    A per-column index (``irch``/``ievt`` as an array -- ``"top_active"`` resolved,
+    eagerly or at build) naming a removed cell in a column that HAS an active cell is
+    a COMPLAINT: it was resolved against another domain, and MF6 drops that column's
+    flux without a word. ``None``, or one layer for every column, is the documented
+    opt-out (ledger 163), so the same loss is a WARNING, with the rate it costs
+    (ledger 322). A column with no active cell loses nothing that was not already
+    outside the model, and is not counted.
+    """
+
+    import numpy as np
+
+    nlay, ncpl = idomain.shape
+    complaints: list[str] = []
+    warned: list[str] = []
+    resolved = getattr(model, "_myflopy_resolved", None) or {}
+    declared = {package.name: resolved.get(package.name, package) for package in packages}
+    has_active = (idomain > 0).any(axis=0)
+    columns = np.arange(ncpl)
+    areas = None
+    units = _flux_units(context)
+    for flopy_package in getattr(model, "packagelist", ()) or ():
+        kind = getattr(flopy_package, "package_type", None)
+        if kind not in _ARRAY_INDEX:
+            continue
+        index_name, value_name, noun = _ARRAY_INDEX[kind]
+        name = _flopy_name(flopy_package)
+        spec = declared.get(name)
+        positional = spec is not None and (
+            index_name in (spec.inputs or {})
+            or _index_is_positional((spec.options or {}).get(index_name))
+        )
+        indices = _read_period_data(flopy_package, index_name, ncpl)
+        if indices is None:
+            continue
+        rates = _read_period_data(flopy_package, value_name, ncpl) or {}
+        top = np.zeros(ncpl, dtype=int)      # no index: MF6 uses layer 1 everywhere
+        findings = []
+        for period in sorted(set(indices) | set(rates) | {0}):
+            index = np.asarray(_latest(indices, period, top), dtype=int)
+            in_range = (index >= 0) & (index < nlay)
+            removed = has_active & in_range & (idomain[np.where(in_range, index, 0), columns] <= 0)
+            beyond = has_active & ~in_range
+            if not (removed.any() or beyond.any()):
+                continue
+            rate = _latest(rates, period, None)
+            lost = total = None
+            if rate is not None:
+                if areas is None:
+                    areas = _disv_areas(model.get_package("disv"), ncpl)
+                if areas is not None:
+                    flux = np.abs(np.asarray(rate, dtype=float)) * areas
+                    lost = float(flux[removed].sum())
+                    total = float(flux[has_active].sum())
+            findings.append((period, index, removed, beyond, lost, total))
+        if not findings:
+            continue
+
+        period, index, removed, beyond, lost, total = findings[0]
+        pairs = [(int(index[cell]), int(cell)) for cell in np.flatnonzero(removed)]
+        where = _listing(f"cell {cell} (layer {layer + 1})" for layer, cell in pairs)
+        if beyond.any():
+            where = (where + "; " if where else "") + (
+                f"{int(beyond.sum())} column(s) whose {index_name} names a layer this DISV "
+                f"does not have (nlay={nlay}), which MF6 stops on"
+            )
+        cost = ""
+        if lost is not None and total:
+            cost = (
+                f": {lost:.6g} of {total:.6g} {units} ({100.0 * lost / total:.1f}%) in "
+                f"stress period {period + 1}"
+            )
+            worst = max(findings, key=lambda item: item[4] if item[4] is not None else -1.0)
+            if worst[4] is not None and worst[4] > lost and worst[5]:
+                cost += (
+                    f", and {worst[4]:.6g} ({100.0 * worst[4] / worst[5]:.1f}%) in "
+                    f"stress period {worst[0] + 1}"
+                )
+        count = int(removed.sum() + beyond.sum())
+        note = _dug_note(pairs, idomain, dug)
+        if positional:
+            complaints.append(
+                f"package {name!r} ({noun} as arrays) addresses its {noun} in {count} "
+                f"column(s) to a cell the built DISV has REMOVED although the column has "
+                f"an active cell below: {where}{note}. MF6 drops {noun} addressed to a "
+                f"removed cell without a word{cost}. Its {index_name} was resolved "
+                "against a domain that is not this DISV's: declare the package without "
+                f"context= (so {index_name}='top_active' resolves at build against this "
+                "DISV) or against the excavated result's idomain"
+            )
+        else:
+            given = (spec.options or {}).get(index_name) if spec is not None else None
+            said = f"{index_name} left out" if given is None else f"{index_name}={given!r}"
+            note = _dug_note(pairs, idomain, dug, stale=False)
+            warned.append(
+                f"package {name!r} ({noun} as arrays): {said} puts {noun} in "
+                f"one layer in every column, and the built DISV has REMOVED that cell in "
+                f"{count} column(s) that have an active cell below: {where}{note}. MF6 "
+                f"drops {noun} addressed to a removed cell without a word{cost}. Leave "
+                f"{index_name} at its default, 'top_active', to put it on each column's "
+                "highest active cell"
+            )
+    return complaints, warned
+
+
+def _activity_inputs(model):
+    """The built DISV's ``(nlay, ncpl)`` idomain, or ``None`` when there is nothing to check.
+
+    ``None`` for a model with no DISV (the activity checks are DISV-only, as the mesh
+    checks are), and for one whose every cell is active -- nothing can name a removed
+    cell there, so the per-package walks are skipped entirely.
+    """
+
+    disv = model.get_package("disv") if hasattr(model, "get_package") else None
+    if disv is None or isinstance(disv, list):
+        return None
+    ncpl = _as_int(disv.ncpl.get_data())
+    nlay = _as_int(disv.nlay.get_data())
+    if not ncpl or not nlay:
+        return None
+    try:
+        idomain = _built_idomain(disv, nlay, ncpl)
+    except ValueError as error:
+        # An idomain that is not (nlay, ncpl) is not this check's to report.
+        logger.debug("the built idomain could not be shaped; activity not checked: %s", error)
+        return None
+    return None if (idomain > 0).all() else idomain
+
+
+def _active_cell_complaints(model, context, packages) -> list[str]:
+    """What names a cell the BUILT DISV has removed, as refusals (ledger 321).
+
+    Separate from the mesh checks because the question is different: not "is this the
+    same mesh" but "does this package still address cells that exist on it". The route
+    to a wrong answer is a context declared BEFORE the stack was excavated (or
+    re-pinched): the DISV holds the cut, while every package resolved from the old
+    domain still names the dug cells.
+    """
+
+    idomain = _activity_inputs(model)
+    if idomain is None:
+        return []
+    dug = excavation_cells(context)
+    complaints = _inactive_cellid_complaints(model, packages, idomain, dug)
+    return complaints + _array_index_findings(model, context, packages, idomain, dug)[0]
+
+
+def active_cell_warnings(model, context, packages) -> list[str]:
+    """The WARNINGS of the build-time activity check: an ``irch``/``ievt`` opt-out that loses flux.
+
+    ``irch=None`` (and ``ievt=None``, or one layer given for every column) is the
+    documented way to put an array-form flux in one layer everywhere (ledger 163). It
+    stays legal -- this does not refuse it -- but where that layer's cell is REMOVED in
+    a column that has an active cell below, MF6 drops the column's flux without a word,
+    and that is now said, with the rate it costs (ledger 322).
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        The model, after every package is built on it.
+    context : ModelContext or None
+        The model's context: its units label the rate, and any excavation record it
+        reaches names the cells an excavation dug.
+    packages : sequence of PackageSpec
+        The packages built from specs, as ``ModelSpec.build`` passes them; each
+        array-form package's declared ``irch``/``ievt`` decides warning against
+        refusal.
+
+    Returns
+    -------
+    list of str
+        One message per package that loses flux; empty when none does, when the model
+        has no DISV, or when every cell of it is active.
+
+    Examples
+    --------
+    >>> from myflopy.grid_identity import active_cell_warnings
+    >>> active_cell_warnings(object(), None, [])
+    []
+    """
+
+    idomain = _activity_inputs(model)
+    if idomain is None:
+        return []
+    return _array_index_findings(model, context, packages, idomain, excavation_cells(context))[1]
+
+
 def _mesh_scale(points) -> float:
     """A typical cell size for ``points``, for a tolerance that travels.
 
@@ -953,6 +1476,9 @@ def _discretization_complaints(model, context, packages) -> list[str]:
                     f"package {package.name!r} holds {len(stale)} cellid(s) this model's "
                     f"grid does not have (nlay={nlay}, ncpl={ncpl}): {listing}"
                 )
+    # In range is not enough: a cell can exist on this mesh and still have been REMOVED
+    # by the DISV's idomain -- what a context declared before an excavation leaves.
+    complaints += _active_cell_complaints(model, context, packages)
     return complaints
 
 def dropped_context_fields(context) -> tuple[str, ...]:
@@ -990,6 +1516,7 @@ __all__ = [
     "DROPPED_CONTEXT_FIELDS",
     "GRID_PIN",
     "_as_int",
+    "active_cell_warnings",
     "_canonical_ring",
     "_cellids_in",
     "_context_metadata",
@@ -998,6 +1525,7 @@ __all__ = [
     "_mesh_scale",
     "disv_pin",
     "dropped_context_fields",
+    "excavation_cells",
     "grid_pin",
     "pin_metadata",
 ]

@@ -3869,7 +3869,11 @@ class LayerStack:
         with the partial-miss warning, ``CellSurfaceOffset("model_top", -2)`` is the
         bed less 2, and a PRT release point in layer 0 over a dug cell lands on no
         active cell and is reported, not moved down. A package declared against a
-        context built BEFORE the cut still names the removed cells.
+        context built BEFORE the cut still names the removed cells, and the model's
+        build REFUSES it, naming this excavation: a list boundary or an observation
+        on a dug cell, an ``irch``/``ievt`` array pointing at one (ledger 321).
+        ``irch=None`` -- one layer everywhere -- is warned instead, with the rate
+        MF6 will drop (ledger 322).
 
         Parameters
         ----------
