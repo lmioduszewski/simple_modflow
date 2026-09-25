@@ -21,6 +21,7 @@ the existing, tested `LayerSurfaces` engine.
 
 from __future__ import annotations
 
+import numbers
 import tempfile
 from dataclasses import dataclass, field
 from dataclasses import replace as _dc_replace
@@ -32,6 +33,7 @@ import shapely.geometry as shp
 
 from myflopy._logging import get_logger
 from myflopy._optional import require
+from myflopy.areas import Area
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.grid.plotting import GridPlots, _as_linestring
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
@@ -41,9 +43,14 @@ from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.package_api import disv as disv_spec
 from myflopy.surfaces import (
     _MF6_LENGTH_UNITS,
+    ExcavationRecord,
     LayerSurfaces,
     Surface,
     _depends_on_previous,
+    _excavate_layers,
+    _read_excavation_file,
+    _refuse_overlapping_excavations,
+    _resolve_excavation,
 )
 from myflopy.viz import Fig, MplPicture, Picture, VtkScene, mpl_axes
 
@@ -354,6 +361,39 @@ def _unit_thickness(thickness: np.ndarray, units: dict[str, list[int]]) -> np.nd
     return totals
 
 
+def _unit_names(name: str, split, names) -> set[str]:
+    """The unit's own name and every model-layer name it builds (``<name>_i`` or ``names=``).
+
+    What an excavation's name must not collide with, whichever side comes first: the
+    excavation is declared after the unit, or the unit is added, inserted or
+    re-split after the excavation.
+    """
+
+    shares = _split_shares(split, name)
+    given = _split_names(names, shares, name)
+    if given:
+        return {str(name), *(str(n) for n in given)}
+    if len(shares) > 1:
+        return {str(name), *(f"{name}_{i}" for i in range(1, len(shares) + 1))}
+    return {str(name)}
+
+
+def _absorbed_cells(excavated, absorbed) -> np.ndarray:
+    """Which excavated cells the sliver rule ABSORBED, as opposed to cut above the bed.
+
+    An absorbed and a cut cell both end at ``botm == bed``, so only ``absorbed`` tells
+    them apart. It holds each absorbed cell's OWN thickness under the bed, and the
+    first absorbed cell of a column always has some (it lay directly under the bed,
+    ``bed > botm``). Absorption then runs contiguously down from it, so every excavated
+    cell at or below that one was absorbed -- a zero-thickness cell among them too
+    (``reconcile=False`` leaves those), whose own share is 0.0 and which a plain
+    ``absorbed > 0`` test would count as cut.
+    """
+
+    started = np.cumsum(np.asarray(absorbed) > 0, axis=0) > 0
+    return np.asarray(excavated, dtype=bool) & started
+
+
 def _split_steps(shares: list[float]) -> list[float]:
     """Turn shares of the WHOLE unit into shares of what is left at each cut.
 
@@ -427,6 +467,198 @@ class _Layer:
 
 
 @dataclass
+class _Excavation:
+    """One declared excavation of a stack: what ``LayerStack.excavate`` records.
+
+    Nothing here is resolved: the footprint is a path or an inline ``Area`` and the
+    bottom a Surface or a column name, so the declaration builds on any grid.
+    """
+
+    name: str
+    #: The floor as an absolute Surface, or None when ``column`` names it.
+    bottom: Surface | None
+    #: A column of the footprint file giving each feature a flat floor.
+    column: str | None
+    #: The footprint file, resolved at declaration (ledger 293's two-bases trap).
+    zone: Path | None
+    #: The footprint inline, when not a file.
+    area: Area | None
+    #: The vector layer of ``zone``.
+    layer: str | int | None
+    min_remnant: float
+
+
+def _looks_positional(value) -> bool:
+    """Whether ``value`` reads as cell numbers or a boolean mask rather than a place."""
+
+    if isinstance(value, (range, np.ndarray)):
+        return True
+    if isinstance(value, (list, tuple)) and value:
+        return all(isinstance(item, (numbers.Integral, bool, np.bool_)) for item in value)
+    return False
+
+
+def _propagates_inside_algebra(surface) -> bool:
+    """Whether a ``fill="propagate"`` source sits INSIDE a composite, at any depth.
+
+    ``fill="propagate"`` makes a source read the surface above wherever it has no data.
+    A bare one is idempotent as an excavation bed -- the stack reads the ground there,
+    so the cell is a rim and is not cut, and ``mf.lak`` reads the same unchanged top --
+    but algebra over it is not: ``raster(p, fill="propagate") - 2`` gives the stack
+    ``ground - 2`` there, which IS cut, and then gives the lake ``(ground - 2) - 2``
+    off the excavated top (measured: 14 of 27 cells 2.0 ft apart).
+    """
+
+    def carries(node) -> bool:
+        return node.fill == "propagate" or any(
+            carries(op) for op in node.operands if op is not None
+        )
+
+    return any(carries(op) for op in surface.operands if op is not None)
+
+
+def _declare_excavation(
+    bottom, within, *, name, layer, min_remnant, taken, reserved, index
+) -> _Excavation:
+    """Validate one ``excavate(...)`` call and record it, resolving nothing on a grid.
+
+    Every declaration-time refusal of ``LayerStack.excavate`` lives here, so the
+    stack verb and ``LayerBuildResult.excavate`` refuse the same things the same way.
+    """
+
+    import geopandas as gpd
+
+    if isinstance(min_remnant, (bool, np.bool_)) or not isinstance(min_remnant, numbers.Real):
+        raise TypeError(f"min_remnant must be a number (length units), not {min_remnant!r}.")
+    min_remnant = float(min_remnant)
+    if not np.isfinite(min_remnant) or min_remnant < 0:
+        raise ValueError(f"min_remnant must be a finite number >= 0, not {min_remnant!r}.")
+
+    zone = area = frame = None
+    if isinstance(within, (str, Path)):
+        path = Path(within)
+        if not path.exists():
+            raise FileNotFoundError(f"excavate(within=) names a file that does not exist: {path}")
+        zone = path.resolve()
+        # Read NOW, so a line, a zero-area feature or a missing layer refuses at the
+        # call rather than at build; the read is repeated at build, which is what a
+        # file edited in between gets.
+        frame = _read_excavation_file(zone, layer=layer)
+    else:
+        if layer is not None:
+            raise ValueError(
+                f"layer={layer!r} selects a layer of a FILE; within= is not one. Drop "
+                "layer=, or pass the path."
+            )
+        if isinstance(within, Area):
+            area = within
+        elif isinstance(within, (gpd.GeoDataFrame, gpd.GeoSeries)) or hasattr(within, "geom_type"):
+            area = Area.coerce(within)
+        elif _looks_positional(within):
+            raise TypeError(
+                "excavate(within=) takes the footprint's POLYGONS -- a vector path, an "
+                "mf.Area, a GeoDataFrame/GeoSeries or a shapely polygon -- not cell "
+                "numbers or a boolean mask: those name cells by position on one mesh and "
+                "would dig different cells after `with_grid`."
+            )
+        else:
+            raise TypeError(
+                f"excavate(within=) got a {type(within).__name__}; pass a vector path, "
+                "an mf.Area, a GeoDataFrame/GeoSeries or a shapely polygon."
+            )
+        geometry = area.geometry
+        if geometry.geom_type not in ("Polygon", "MultiPolygon") or not geometry.area > 0:
+            raise ValueError(
+                f"excavate(within=) must be polygonal with area; got a "
+                f"{geometry.geom_type} of area {geometry.area:g}. A pond covers cells by "
+                "AREA -- a line or point would dig the cells along it by length, which "
+                "mf.lak refuses."
+            )
+
+    column = surface = None
+    if isinstance(bottom, Surface):
+        surface = bottom
+    elif isinstance(bottom, (bool, np.bool_)):
+        raise TypeError("excavate(bottom=) is an elevation, not a bool.")
+    elif isinstance(bottom, numbers.Real):
+        surface = Surface.flat(float(bottom))
+    elif isinstance(bottom, str):
+        bottom = str(bottom)
+        if frame is not None and bottom in frame.columns and bottom != "geometry":
+            column = bottom
+        elif Path(bottom).is_file():
+            surface = Surface.raster(Path(bottom))
+        elif frame is None:
+            raise ValueError(
+                f"bottom={bottom!r} is not an existing raster file, and a column floor "
+                "needs within= to be a FILE with an attribute table -- an mf.Area or a "
+                "geometry has none."
+            )
+        else:
+            names = ", ".join(str(c) for c in frame.columns if c not in ("geometry", "_source_name"))
+            raise ValueError(
+                f"bottom={bottom!r} is neither a column of {zone.name} ({names}) nor an "
+                "existing raster file."
+            )
+    elif isinstance(bottom, Path):
+        if not bottom.is_file():
+            raise FileNotFoundError(f"excavate(bottom=) names a raster that does not exist: {bottom}")
+        surface = Surface.raster(bottom)
+    else:
+        raise TypeError(
+            f"excavate(bottom=) got a {type(bottom).__name__}; pass a Surface "
+            "(mf.Raster, mf.Contours, mf.Flat, ...), a number, a raster path, or the "
+            "name of a column of the footprint file."
+        )
+    if surface is not None and _depends_on_previous(surface):
+        raise ValueError(
+            f"excavate(bottom=) got a {surface.kind!r} surface, which is measured from "
+            "the surface ABOVE it. The stack would measure it from the ground and "
+            "mf.lak from the excavated top -- a different bed (measured +5.0 ft in 70 "
+            "of 70 cells). Give the floor as an absolute elevation, e.g. "
+            "`ground - 9` for 9 ft below the ground surface `ground`."
+        )
+    if surface is not None and _propagates_inside_algebra(surface):
+        raise ValueError(
+            f"excavate(bottom=) got a {surface.kind!r} surface built on a "
+            "fill='propagate' source. Where that source has no data it reads the "
+            "surface ABOVE, so the stack would take it from the ground and mf.lak from "
+            "the excavated top -- a different bed (measured: 14 of 27 cells 2.0 ft "
+            "apart for `raster(p, fill='propagate') - 2`). Fill the raster's gaps, or "
+            "pass the propagate source BARE: a bare one reads the ground where it has "
+            "no data, so those cells are simply not cut."
+        )
+    if column is not None:
+        for label, value in zip(frame.index, frame[column], strict=True):
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                number = float("nan")
+            if not np.isfinite(number):
+                raise ValueError(
+                    f"excavate(bottom={column!r}): feature {label!r} of {zone.name} has "
+                    f"{column}={value!r}, not a number -- a NULL floor is not a floor."
+                )
+
+    if name is None:
+        if zone is not None:
+            name = zone.stem
+        elif area is not None and area.name:
+            name = area.name
+        else:
+            name = f"excavation_{index}"
+    name = str(name)
+    if name in taken:
+        raise ValueError(f"an excavation named {name!r} already exists; pass another name=.")
+    if name in reserved or name == "top":
+        raise ValueError(
+            f"{name!r} names a unit or layer of the stack; an excavation is not a unit, "
+            "so give it a name of its own (name=)."
+        )
+    return _Excavation(name, surface, column, zone, area, layer, min_remnant)
+
+
+@dataclass
 class LayerQCReport:
     """Diagnostics for a built layer stack -- the problems to fix before MF6 runs.
 
@@ -440,8 +672,67 @@ class LayerQCReport:
     moved each surface. Check :attr:`ok` for a fatal/clean verdict, or ``str(report)``
     for a human-readable per-layer breakdown.
 
-    The integer/list fields hold counts (per layer where noted); see the inline
-    field comments. ``isolated_active`` lists ``(layer, cell)`` pairs.
+    Cells an excavation removed (:meth:`LayerStack.excavate`) are counted on their
+    own line, never as pinched or thin: MF6's idomain cannot tell an excavated 0 from
+    a pinched 0, and reading a dug pond as "139 pinched cells" would send you looking
+    for a geology problem that is not there.
+
+    Parameters
+    ----------
+    nlay : int
+        Model layers.
+    ncpl : int
+        Cells per layer.
+    names : list of str
+        The layer names, top to bottom.
+    nan_top : int
+        Cells with no top elevation (no source coverage).
+    nan_botm : list of int
+        Per layer: cells with no bottom elevation.
+    nan_active_cells : int
+        Active cells bounded by a NaN surface -- fatal.
+    nonpositive_active : list of int
+        Per layer: ACTIVE cells whose thickness is <= 0 -- fatal (MF6 refuses them).
+    thin : list of int
+        Per layer: cells whose UNIT is thinner than its ``min_thickness`` (a split
+        unit is judged whole), excavated cells excluded.
+    pinched : list of int
+        Per layer: cells removed by the pinch policy (idomain != 1), excavated cells
+        excluded.
+    isolated_active : list of tuple of int
+        ``(layer, cell)`` active cells with no active neighbour -- fatal;
+        :meth:`LayerBuildResult.prune_isolated` deactivates them.
+    n_active_components : int
+        Connected components of active cells (pass-through bridges vertically).
+    component_sizes : list of int
+        Their sizes, largest first.
+    reconcile_adjusted : list of int, optional
+        Per layer: cells reconcile moved. Filled only by :meth:`LayerStack.qc`,
+        which compares against the PRE-cut surfaces so an excavation does not read
+        as reconcile moving the ground.
+    reconcile_max_shift : list of float, optional
+        Per layer: reconcile's largest move (length units), likewise.
+    excavated : list of int, optional
+        Per layer: cells an excavation removed (cut above its bed, or absorbed under
+        it). ``None`` when the stack has no excavation.
+    absorbed : int, optional
+        How many of those were ABSORBED -- a sliver or an inactive cell directly
+        under a bed, folded into the cell below (:meth:`LayerStack.excavate`,
+        ``min_remnant``). ``None`` when the stack has no excavation.
+
+    See Also
+    --------
+    LayerBuildResult.qc : Produces one.
+    LayerBuildResult.excavation_report : Per-excavation detail.
+
+    Examples
+    --------
+    >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+    >>> import myflopy as mf
+    >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+    >>> report = mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0).build(vor).qc()
+    >>> report.ok, report.pinched, report.excavated
+    (True, [0], None)
     """
 
     nlay: int
@@ -459,6 +750,9 @@ class LayerQCReport:
     # reconcile diagnostics -- only filled by LayerStack.qc (needs the surfaces)
     reconcile_adjusted: list[int] | None = None    # per layer: cells reconcile moved
     reconcile_max_shift: list[float] | None = None  # per layer: largest move
+    # excavation diagnostics -- only when the stack was excavated
+    excavated: list[int] | None = None  # per layer: cells an excavation removed
+    absorbed: int | None = None          # of those, cells absorbed under a bed
 
     @property
     def ok(self) -> bool:
@@ -486,6 +780,9 @@ class LayerQCReport:
                          "connection -- prune_isolated() deactivates them")
         if sum(self.nonpositive_active):
             lines.append(f"  ** {sum(self.nonpositive_active)} active cell(s) with thickness <= 0")
+        if self.excavated is not None:
+            lines.append(f"  excavated: {sum(self.excavated)} cell(s) removed by excavation, "
+                         f"{self.absorbed} of them absorbed under a bed (not pinched, not thin)")
         if self.n_active_components > 1:
             shown = ", ".join(str(s) for s in self.component_sizes[:5])
             lines.append(f"  note: active cells split into {self.n_active_components} components "
@@ -495,9 +792,10 @@ class LayerQCReport:
             if self.reconcile_adjusted is not None:
                 extra = (f"  reconcile_moved={self.reconcile_adjusted[i]} "
                          f"(max {self.reconcile_max_shift[i]:.2f})")
+            dug = "" if self.excavated is None else f" excavated={self.excavated[i]}"
             lines.append(
                 f"  [{i}] {name:<14} nan_bottom={self.nan_botm[i]} "
-                f"thin={self.thin[i]} pinched={self.pinched[i]} "
+                f"thin={self.thin[i]} pinched={self.pinched[i]}{dug} "
                 f"thickness<=0(active)={self.nonpositive_active[i]}{extra}"
             )
         return "\n".join(lines)
@@ -511,13 +809,86 @@ class LayerBuildResult:
     ``(ncpl,)``, ``botm`` ``(nlay, ncpl)``, ``idomain`` ``(nlay, ncpl)`` (1 active,
     -1 pass-through, 0 inactive), and the derived ``thickness`` -- alongside the
     per-layer metadata (``names``, ``min_thickness``, ``pinch`` policy, units) and a
-    back-reference to the ``vor`` grid. Feed ``.top``/``.botm``/``.idomain`` straight
-    into ``mf.disv(...)``. Inspect quality with :meth:`report` (a per-layer
-    thickness/pinch summary) or ``.qc()`` (a :class:`LayerQCReport`), and publish the
-    surfaces onto the grid for the GIS-aware builders with :meth:`attach_to_grid`
-    (or ``LayerStack.build(attach=True)``).
+    back-reference to the ``vor`` grid. Feed it straight to ``mf.disv(result)`` (or
+    ``.top``/``.botm``/``.idomain`` to a hand-written one). Inspect quality with
+    :meth:`report` (a per-layer thickness/pinch summary) or ``.qc()`` (a
+    :class:`LayerQCReport`), and publish the surfaces onto the grid for the GIS-aware
+    builders with :meth:`attach_to_grid` (or ``LayerStack.build(attach=True)``).
 
-    The array shapes and idomain encoding are noted in the inline field comments.
+    An EXCAVATED result (:meth:`LayerStack.excavate`, :meth:`excavate`) carries the
+    cut in its arrays -- ``top`` is the excavated top, the cells above each bed have
+    zero thickness and idomain 0 -- plus the four fields that say what was dug:
+    ``excavations``, ``ground``, ``excavated`` and ``absorbed``. An excavation is not
+    a unit: ``nlay``, ``names``, ``units`` and :meth:`per_layer` are unchanged by it,
+    and the thinner cell under a pond keeps its unit's K.
+
+    Parameters
+    ----------
+    top : numpy.ndarray of float, shape (ncpl,)
+        The model top -- AFTER any excavation (see ``ground``).
+    botm : numpy.ndarray of float, shape (nlay, ncpl)
+        Layer bottoms.
+    idomain : numpy.ndarray of int, shape (nlay, ncpl)
+        1 active, -1 vertical pass-through, 0 inactive (a pinch-out, a pruned cell,
+        or an excavated one -- ``excavated`` tells them apart).
+    thickness : numpy.ndarray of float, shape (nlay, ncpl)
+        ``top``-of-layer minus bottom, per cell; 0.0 in an excavated cell.
+    names : list of str
+        The MODEL layer names, top to bottom (a split unit's slices named
+        ``<unit>_1..`` unless ``names=`` gave them).
+    min_thickness : list of float
+        Per model layer: its unit's minimum thickness.
+    pinch : list of str
+        Per model layer: its unit's pinch policy (``"floor"``, ``"inactive"``,
+        ``"passthrough"``).
+    length_units : str
+        The stack's length unit, written to DISV (``"feet"`` -> ``FEET``).
+    time_units : str
+        The stack's time unit.
+    vor : VoronoiGridPlus, optional
+        The grid the result was built on, for the views and :meth:`to_disv`.
+    units : dict of str to list of int, optional
+        Declared unit name -> the model layers it became, e.g.
+        ``{"fill": [0], "sand": [1, 2, 3], "clay": [4]}``. Every unit appears,
+        split or not, so it is also the map from what you DECLARED to what MODFLOW
+        got. See :meth:`per_layer`.
+    excavations : dict of str to ExcavationRecord, optional
+        Every excavation cut into this result, by name: its cells and the SAMPLED
+        bed at each (:class:`~myflopy.surfaces.ExcavationRecord`). What ``mf.lak``
+        reads to tell an excavated lake from one nobody dug; :meth:`attach_to_grid`
+        publishes it on the grid as ``grid.excavations``. Empty when nothing was dug.
+    ground : numpy.ndarray of float, shape (ncpl,), optional
+        The model top BEFORE the cut -- unrecoverable from the arrays after it, and
+        what a depth-below-ground map, a section's ground line and a lake table's
+        rim want. ``None`` when nothing was dug (``top`` is the ground then).
+    excavated : numpy.ndarray of bool, shape (nlay, ncpl), optional
+        True where an excavation removed the cell -- cut above a bed, or absorbed
+        under one. A fact of the build: :meth:`prune_isolated` only deactivates
+        active cells, so it never changes this. ``None`` when nothing was dug.
+    absorbed : numpy.ndarray of float, shape (nlay, ncpl), optional
+        The thickness of its OWN material each ABSORBED cell had under the bed when
+        the sliver rule folded it into the cell below (``min_remnant``); 0.0
+        elsewhere. Its own: in a chain -- a sliver, then a pass-through cell under
+        it -- each cell counts only what lay between its own top and bottom, so a
+        column's sum is the material between the bed and the connected cell's
+        ORIGINAL top. The absorbed cells are the excavated ones from a column's
+        first positive entry down (a zero-thickness cell absorbed below it holds
+        0.0). ``None`` when nothing was dug.
+
+    See Also
+    --------
+    LayerStack.build : Produces one.
+    excavate : Cut a pond, pit or trench into this result.
+    excavation_report : What each excavation removed and connected.
+
+    Examples
+    --------
+    >>> import myflopy as mf
+    >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+    >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+    >>> result = mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0).build(vor)
+    >>> result.nlay, result.top[:2].tolist(), result.excavations, result.ground
+    (1, [100.0, 100.0], {}, None)
     """
 
     top: np.ndarray          # (ncpl,)
@@ -535,6 +906,14 @@ class LayerBuildResult:
     #: split or not, so it is also the map from what you DECLARED to what MODFLOW
     #: got. See :meth:`per_layer`.
     units: dict[str, list[int]] = field(default_factory=dict)
+    #: name -> ExcavationRecord for every excavation cut into this result.
+    excavations: dict[str, ExcavationRecord] = field(default_factory=dict)
+    #: The model top before the cut (None when nothing was dug).
+    ground: np.ndarray | None = None
+    #: (nlay, ncpl) True where an excavation removed the cell (None when nothing was dug).
+    excavated: np.ndarray | None = None
+    #: (nlay, ncpl) each absorbed cell's OWN thickness under the bed (None when nothing was dug).
+    absorbed: np.ndarray | None = None
 
     def per_layer(self, mapping, *, default=_UNSET) -> list:
         """Expand a ``{unit: value}`` mapping to one value per MODEL layer.
@@ -593,29 +972,85 @@ class LayerBuildResult:
 
     @property
     def n_pinched(self) -> int:
-        """Cells removed from the solution (idomain != 1)."""
-        return int((self.idomain != 1).sum())
+        """Cells the pinch policy (or a prune) removed: ``idomain != 1``, excavated cells excluded.
+
+        An excavated cell is idomain 0 too, and MF6 cannot tell the two apart, so
+        :attr:`excavated` is what separates them: a dug pond is not a pinch-out.
+
+        Returns
+        -------
+        int
+            The count over every layer.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> stack = mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0).add("clay", thickness=20.0)
+        >>> stack.excavate(75.0, mf.Area(vor.gdf_vorPolys.geometry.loc[4])).build(vor).n_pinched
+        0
+        """
+
+        removed = self.idomain != 1
+        if self.excavated is not None:
+            removed = removed & ~self.excavated
+        return int(removed.sum())
+
+    def _dug(self, k: int) -> np.ndarray:
+        """Layer ``k``'s excavated mask (all False when nothing was dug)."""
+
+        if self.excavated is None:
+            return np.zeros(self.idomain.shape[1], dtype=bool)
+        return self.excavated[k]
 
     def report(self) -> str:
-        """Per-layer thickness + thin/pinched-cell summary."""
+        """Per-layer thickness, thin, pinched and excavated counts, as text.
+
+        Thickness statistics and the ``thin`` count leave excavated cells out -- they
+        are zero thick because they are lake, not because the layer thins there --
+        and ``pinched`` counts only what the pinch policy removed. An excavated
+        result adds an ``excavated=`` count per layer and one header clause.
+
+        Returns
+        -------
+        str
+            One header line, then one line per model layer.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> print(mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0).build(vor).report())
+        LayerStack: 1 layers, 9 cells [feet/days], 0 pinched cells
+          [0] sand           thk min=20.00 mean=20.00 max=20.00  thin(<1.0)=0 pinched=0 (floor)
+        """
         n_units = len(self.units) or self.nlay
         split = "" if n_units == self.nlay else f" from {n_units} units"
+        dug = ""
+        if self.excavated is not None:
+            dug = (f", {int(self.excavated.sum())} excavated in "
+                   f"{len(self.excavations)} excavation(s)")
         lines = [
             f"LayerStack: {self.nlay} layers{split}, {self.top.size} cells "
-            f"[{self.length_units}/{self.time_units}], {self.n_pinched} pinched cells"
+            f"[{self.length_units}/{self.time_units}], {self.n_pinched} pinched cells{dug}"
         ]
         # `thin` counts against the UNIT total, matching the pinch verdict: a
         # slice of a split unit is thinner than its unit by construction, and
         # reporting each slice as thin would flag every split stack.
         unit_thk = _unit_thickness(self.thickness, self.units)
         for i, name in enumerate(self.names):
-            t = self.thickness[i]
-            thin = int((unit_thk[i] < float(self.min_thickness[i])).sum())
-            pinched = int((self.idomain[i] != 1).sum())
+            kept = ~self._dug(i)
+            t = self.thickness[i][kept]
+            thin = int(((unit_thk[i] < float(self.min_thickness[i])) & kept).sum())
+            pinched = int(((self.idomain[i] != 1) & kept).sum())
+            stats = (f"thk min={t.min():.2f} mean={t.mean():.2f} max={t.max():.2f}"
+                     if t.size else "thk (every cell excavated)")
+            extra = "" if self.excavated is None else f" excavated={int((~kept).sum())}"
             lines.append(
-                f"  [{i}] {name:<14} thk min={t.min():.2f} mean={t.mean():.2f} "
-                f"max={t.max():.2f}  thin(<{self.min_thickness[i]})={thin} "
-                f"pinched={pinched} ({self.pinch[i]})"
+                f"  [{i}] {name:<14} {stats}  thin(<{self.min_thickness[i]})={thin} "
+                f"pinched={pinched} ({self.pinch[i]}){extra}"
             )
         return "\n".join(lines)
 
@@ -719,14 +1154,52 @@ class LayerBuildResult:
         )
 
     def attach_to_grid(self, vor=None):
-        """Publish ``top``/``botm`` onto ``vor.gdf_topbtm`` for grid-aware builders.
+        """Publish ``top``/``botm`` onto ``vor.gdf_topbtm``, and the excavations beside it.
 
-        Writes a centroid GeoDataFrame with integer columns (``0`` = model top,
-        ``1..nlay`` = layer bottoms) -- the format the surface-aware builders read
-        (SFR reach tops, LAK lake-cell layering). Returns the grid.
+        Writes a GeoDataFrame with integer columns (``0`` = model top, ``1..nlay`` =
+        layer bottoms), geometry first -- the format the surface-aware builders read
+        (SFR reach tops, LAK lake-cell layering, ``mf.CellSurfaceOffset``). On an
+        excavated result ``0`` is the EXCAVATED top, so ``CellSurfaceOffset("model_top",
+        -2)`` inside a pond is the bed less 2.
+
+        It also sets ``grid.excavations`` to this result's
+        :attr:`excavations` (``{}`` when nothing was dug) -- an attribute, not a
+        column, because consumers read ``gdf_topbtm`` positionally (ledger 196). The
+        ``gdf_topbtm`` setter CLEARS ``grid.excavations`` and this method sets it
+        after, so any other writer of the table (a direct assignment, another
+        stack's attach) leaves no stale record behind: the records and the
+        elevations always come from one result.
 
         Usually you do not call this directly: pass ``attach=True`` to
         :meth:`LayerStack.build`.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus, optional
+            The grid to publish on; omitted, the grid this result was built on.
+
+        Returns
+        -------
+        VoronoiGridPlus
+            The grid, with ``gdf_topbtm`` and ``excavations`` set.
+
+        Raises
+        ------
+        ValueError
+            No grid: ``vor`` omitted and the result carries none.
+
+        Examples
+        --------
+        >>> import myflopy as mf, shapely
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> pond = mf.Area(vor.gdf_vorPolys.geometry.loc[4])
+        >>> result = (mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0)
+        ...           .add("clay", thickness=20.0)
+        ...           .excavate(bottom=90.0, within=pond, name="pond").build(vor))
+        >>> grid = result.attach_to_grid()
+        >>> float(grid.gdf_topbtm[0].loc[4]), list(grid.excavations)
+        (90.0, ['pond'])
         """
         import geopandas as gpd
 
@@ -740,6 +1213,9 @@ class LayerBuildResult:
             {"geometry": grid.gdf_vorPolys.geometry, **columns},
             geometry="geometry", crs=grid.crs,
         )
+        # AFTER the table: its setter clears the records, so they are always the
+        # ones that came with these elevations.
+        grid.excavations = dict(self.excavations)
         return grid
 
     # -- QC / validation -------------------------------------------------- #
@@ -808,11 +1284,31 @@ class LayerBuildResult:
         Catches **NaN-bounded active cells** (a surface had no source coverage),
         **non-positive active thickness**, and **isolated active cells** (no
         connection to any neighbour) -- plus thin/pinched counts and the number
-        of connected active components. Returns a :class:`LayerQCReport` whose
-        ``.ok`` is False if anything fatal was found. ``LayerStack.qc`` adds
-        reconcile diagnostics on top of this."""
+        of connected active components. ``LayerStack.qc`` adds reconcile
+        diagnostics on top of this. Excavated cells are counted on their own
+        (``excavated`` per layer, ``absorbed``), never as pinched or thin.
+
+        Returns
+        -------
+        LayerQCReport
+            Its ``ok`` is False if anything fatal was found.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> pond = mf.Area(vor.gdf_vorPolys.geometry.loc[4])
+        >>> report = (mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0)
+        ...           .add("clay", thickness=20.0)
+        ...           .excavate(bottom=75.0, within=pond).build(vor).qc())
+        >>> report.ok, report.pinched, report.excavated, report.absorbed
+        (True, [0, 0], [1, 0], 0)
+        """
         nlay, ncpl = self.idomain.shape
         active = self.idomain == 1
+        dug = (np.zeros((nlay, ncpl), dtype=bool) if self.excavated is None
+               else np.asarray(self.excavated, dtype=bool))
         surf_top = np.vstack([self.top[None, :], self.botm[:-1]])  # top of each layer
         nan_bounded = np.isnan(surf_top) | np.isnan(self.botm)
         labels, sizes = self._active_components()
@@ -822,6 +1318,12 @@ class LayerBuildResult:
             for i in range(ncpl)
             if active[k, i] and sizes[labels[k, i]] == 1
         ]
+        unit_thk = _unit_thickness(self.thickness, self.units)
+        excavated = absorbed = None
+        if self.excavated is not None:
+            excavated = [int(dug[k].sum()) for k in range(nlay)]
+            taken = np.zeros(dug.shape) if self.absorbed is None else self.absorbed
+            absorbed = int(_absorbed_cells(dug, taken).sum())
         return LayerQCReport(
             nlay=nlay,
             ncpl=ncpl,
@@ -834,13 +1336,14 @@ class LayerBuildResult:
             # Against the UNIT total, matching the pinch verdict: a slice of a
             # split unit is thinner than its unit by construction, so counting
             # per slice would flag every split stack as thin.
-            thin=[int((_unit_thickness(self.thickness, self.units)[k]
-                       < float(self.min_thickness[k])).sum())
+            thin=[int(((unit_thk[k] < float(self.min_thickness[k])) & ~dug[k]).sum())
                   for k in range(nlay)],
-            pinched=[int((self.idomain[k] != 1).sum()) for k in range(nlay)],
+            pinched=[int(((self.idomain[k] != 1) & ~dug[k]).sum()) for k in range(nlay)],
             isolated_active=isolated,
             n_active_components=len(sizes),
             component_sizes=sorted(sizes.values(), reverse=True),
+            excavated=excavated,
+            absorbed=absorbed,
         )
 
     def validate(self) -> LayerBuildResult:
@@ -853,15 +1356,327 @@ class LayerBuildResult:
     def prune_isolated(self) -> LayerBuildResult:
         """Deactivate (``idomain -> 0``) active cells that have no connection.
 
-        Returns a new result. Isolated cells have no edges, so removing them
-        never disconnects anything else -- a single pass is enough."""
+        Isolated cells have no edges, so removing them never disconnects anything
+        else -- a single pass is enough. On an excavated result it then checks
+        again that every excavated column still has an active cell under its bed:
+        a pruned connected cell would leave a lake there connecting to nothing.
+
+        Returns
+        -------
+        LayerBuildResult
+            A new result (``self`` when nothing is isolated). ``excavated`` and
+            ``absorbed`` are carried over unchanged: pruning only deactivates
+            ACTIVE cells, so they stay facts of the build.
+
+        Raises
+        ------
+        ValueError
+            Pruning left an excavated column with no active cell under its bed,
+            naming the excavation and the cells.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> result = mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0).build(vor)
+        >>> result.prune_isolated() is result      # nothing isolated
+        True
+        """
         isolated = self.qc().isolated_active
         if not isolated:
             return self
         idomain = self.idomain.copy()
         for k, i in isolated:
             idomain[k, i] = 0
-        return _dc_replace(self, idomain=idomain)
+        pruned = _dc_replace(self, idomain=idomain)
+        pruned._refuse_stranded_excavations("prune_isolated()")
+        return pruned
+
+    def _refuse_stranded_excavations(self, verb: str) -> None:
+        """Raise if an excavated column has no active cell left under its bed."""
+
+        stranded = {}
+        ground = self.top if self.ground is None else self.ground
+        for record in self.excavations.values():
+            cut = [
+                cell for cell, bed in zip(record.cells, record.bed, strict=True)
+                if np.isfinite(bed) and bed < ground[cell]
+            ]
+            lost = [cell for cell in cut if not (self.idomain[:, cell] > 0).any()]
+            if lost:
+                stranded[record.name] = lost
+        if stranded:
+            detail = "; ".join(f"{name!r}: {cells[:10]}" for name, cells in stranded.items())
+            raise ValueError(
+                f"{verb} left an excavated column with no active cell under its bed "
+                f"({detail}); a lake there would connect to nothing."
+            )
+
+    # -- excavation --------------------------------------------------------- #
+    def excavate(self, bottom, within, *, name=None, layer=None, min_remnant=0.1) -> LayerBuildResult:
+        """Cut a pond, basin, pit or trench into this BUILT result -- a new result.
+
+        The same cut as :meth:`LayerStack.excavate`, through the same engine, for a
+        model with no stack to declare it on: arrays loaded from a run and handed to
+        ``LayerBuildResult``, or ``LayerStack.from_modflow`` (which cannot recover an
+        earlier excavation). Inside ``within`` every surface above ``bottom`` is
+        lowered to it, the cells above the bed go idomain 0, and a sliver or inactive
+        cell directly under the bed is absorbed into the cell below -- see
+        :meth:`LayerStack.excavate` for every rule. An already-excavated result can be
+        cut again; the new footprint must not share a cell with an earlier one.
+
+        Parameters
+        ----------
+        bottom : Surface, float, str or pathlib.Path
+            The floor, an ABSOLUTE elevation in this result's ``length_units``: a
+            :class:`~myflopy.surfaces.Surface` (``mf.Raster``, ``mf.Contours``,
+            ``mf.Flat``, algebra on an absolute one), any real number (numpy scalars
+            included), a raster path, or -- with a file ``within`` -- the name of a
+            column of its attribute table giving each feature a flat floor. Sampled
+            area-weighted onto the cells, with this result's ``ground`` (or ``top``)
+            as the surface above. A surface measured from the one above it is refused,
+            and so is algebra over a ``fill="propagate"`` source (a bare one is
+            accepted: it takes the ground where it has no data, which is not cut).
+        within : str, pathlib.Path, Area, geopandas.GeoDataFrame, geopandas.GeoSeries or shapely geometry
+            The footprint: the polygons you pass to ``mf.lak(lakes=)``. A vector
+            path (read with ``layer``), an ``mf.Area``, or a frame/series/geometry
+            (coerced to an inline ``Area``; one with no CRS is in the grid's frame).
+            Polygons only; cell numbers and boolean masks are refused.
+        name : str, optional
+            The record's key; defaults to the file stem, then ``Area.name``, then
+            ``"excavation_<n>"``. Must differ from every excavation already cut and
+            from every unit and layer name.
+        layer : str or int, optional
+            The vector layer of a ``within`` FILE; refused with any other ``within``.
+        min_remnant : float, default 0.1
+            The thinnest cell allowed directly under the bed (length units); a
+            thinner one is absorbed. ``0`` turns sliver absorption off.
+
+        Returns
+        -------
+        LayerBuildResult
+            A new result: excavated arrays, ``excavations`` gaining the new record,
+            ``ground`` (kept from the first cut), ``excavated`` and ``absorbed``.
+            ``self`` is unchanged.
+
+        Raises
+        ------
+        ValueError
+            No grid on the result; any declaration refusal of
+            :meth:`LayerStack.excavate`; a footprint covering no cell; overlap with
+            an existing excavation; a bed with no data anywhere in the footprint; a
+            column left with no active cell under the bed.
+        TypeError
+            A ``bottom`` or ``within`` of an unsupported type.
+
+        See Also
+        --------
+        LayerStack.excavate : The declaration on a stack (and every rule, in full).
+        excavation_report : What the cut removed and connected.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> result = (mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0)
+        ...           .add("clay", thickness=20.0).build(vor))
+        >>> dug = result.excavate(90.0, mf.Area(vor.gdf_vorPolys.geometry.loc[4]), name="pond")
+        >>> float(dug.top[4]), dug.idomain[:, 4].tolist(), float(result.top[4])
+        (90.0, [1, 1], 100.0)
+        """
+
+        declaration = _declare_excavation(
+            bottom, within, name=name, layer=layer, min_remnant=min_remnant,
+            taken=set(self.excavations),
+            reserved=set(self.units) | set(self.names),
+            index=len(self.excavations),
+        )
+        return self._excavated_by([declaration])
+
+    def _excavated_by(self, declarations, *, refresh: bool = False) -> LayerBuildResult:
+        """Resolve ``declarations`` on this result's grid and cut them in: the one engine.
+
+        ``LayerStack.build`` hands it the stack's excavations on the PRE-cut result;
+        :meth:`excavate` hands it one more on an already-cut one. Every declaration is
+        resolved against the same arrays and cut together, so the answer does not
+        depend on declaration order (design section 3.6).
+        """
+
+        if not declarations:
+            return self
+        if self.vor is None:
+            raise ValueError(
+                "Excavating a layer result needs its grid; build it with one "
+                "(`stack.build(vor)`) or pass the arrays through a result that carries it."
+            )
+        ground = np.array(self.top if self.ground is None else self.ground, dtype=float)
+        records = [
+            _resolve_excavation(
+                name=declaration.name,
+                bottom=declaration.bottom,
+                column=declaration.column,
+                within=declaration.zone if declaration.zone is not None else declaration.area,
+                layer=declaration.layer,
+                min_remnant=declaration.min_remnant,
+                grid=self.vor,
+                ground=ground,
+                length_units=self.length_units,
+                refresh=refresh,
+            )
+            for declaration in declarations
+        ]
+        _refuse_overlapping_excavations([*self.excavations.values(), *records])
+        cut = _excavate_layers(self.top, self.botm, self.idomain, records)
+        thickness = np.vstack([cut.top[None, :], cut.botm[:-1]]) - cut.botm
+        excavated = cut.excavated if self.excavated is None else (self.excavated | cut.excavated)
+        absorbed = cut.absorbed if self.absorbed is None else (self.absorbed + cut.absorbed)
+        return _dc_replace(
+            self,
+            top=cut.top,
+            botm=cut.botm,
+            idomain=cut.idomain,
+            thickness=thickness,
+            excavations={**self.excavations, **{record.name: record for record in records}},
+            ground=ground,
+            excavated=excavated,
+            absorbed=absorbed,
+        )
+
+    def excavation_report(self, *, thinner_than: float | None = None):
+        """What each excavation removed, absorbed and connected -- computed now, from the arrays.
+
+        Nothing here is stored on the :class:`~myflopy.surfaces.ExcavationRecord`
+        (which holds only the declaration resolved on the grid), so it cannot go stale
+        through :meth:`prune_isolated` or a copy of the result.
+
+        **Why the connected cell matters.** MF6's vertical lake conductance is
+        ``area / (1/bedleak + 0.5 * thickness / K33)``, so with a transparent bed (a
+        large ``bed_leakance``) the connected cell's thickness sets the infiltration
+        rate: measured on a real pond at ``bed_leakance=3000``, the half-cell term was
+        98.6% of the resistance at the median connection, over cells 0.10-48.99 ft
+        thick. Read ``connected_min``/``connected_max`` and ``connected_layers``
+        before trusting a transparent bed; ``min_remnant`` and the layering under the
+        pond are hydraulic choices there.
+
+        Parameters
+        ----------
+        thinner_than : float, optional
+            The threshold ``connected_thin`` counts against, in length units: a
+            connected CELL thinner than it counts -- pass your build's ``min_sep`` to
+            ask how many are thinner than the separation you built with. Omitted, a
+            connected cell counts when its UNIT -- what is left of the unit in that
+            column, a split unit judged whole -- is thinner than the unit's
+            ``min_thickness``: the rule :meth:`qc` and :meth:`report` count ``thin``
+            by, so the three agree. (Judged per slice, every connected slice of a
+            split unit would count, being thinner than its unit by construction.)
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per excavation, indexed by name, columns:
+
+            * ``cells`` -- footprint cells; ``cut`` -- of those, where the bed is
+              below the ground; ``rim`` -- bed at or above the ground (not cut);
+              ``no_data`` -- no bed there (not cut);
+            * ``removed`` -- cells made inactive (cut above the bed, or absorbed);
+              ``absorbed`` -- of those, cells absorbed under the bed;
+              ``absorbed_units`` -- ``{unit: count}``; ``absorbed_volume`` -- the
+              material absorbed (thickness x cell area, length units cubed);
+            * ``removed_volume`` -- the void: ``(ground - top) x area`` over the
+              footprint;
+            * ``connected_layers`` -- ``{layer name: count}`` of the cell directly
+              under each cut column; ``connected_min``/``connected_median``/
+              ``connected_max`` -- its thickness; ``connected_thin`` -- how many are
+              thin, by ``thinner_than``'s rule; ``kept_slivers`` -- how many are
+              thinner than the excavation's ``min_remnant`` and were kept because
+              nothing active lies below them.
+
+            Empty (with those columns) when nothing was dug.
+
+        Raises
+        ------
+        ValueError
+            No grid on the result, when it has excavations (the volumes need cell
+            areas).
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> result = (mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0)
+        ...           .add("clay", thickness=20.0)
+        ...           .excavate(bottom=80.05, within=mf.Area(vor.gdf_vorPolys.geometry.loc[4]),
+        ...                     name="pond").build(vor))
+        >>> row = result.excavation_report().loc["pond"]
+        >>> int(row["cut"]), int(row["absorbed"]), row["connected_layers"]
+        (1, 1, {'clay': 1})
+        """
+
+        import pandas as pd
+
+        columns = [
+            "cells", "cut", "rim", "no_data", "removed", "absorbed", "absorbed_units",
+            "absorbed_volume", "removed_volume", "connected_layers", "connected_min",
+            "connected_median", "connected_max", "connected_thin", "kept_slivers",
+        ]
+        if not self.excavations:
+            return pd.DataFrame(columns=columns)
+        if self.vor is None:
+            raise ValueError("excavation_report() needs the result's grid for cell areas.")
+        area = np.asarray(self.vor.gdf_vorPolys.geometry.area, dtype=float)
+        ground = self.top if self.ground is None else self.ground
+        dug = np.zeros(self.idomain.shape, bool) if self.excavated is None else self.excavated
+        absorbed = np.zeros(self.idomain.shape) if self.absorbed is None else self.absorbed
+        unit_of = {k: unit for unit, indices in self.units.items() for k in indices}
+        unit_thk = _unit_thickness(self.thickness, self.units)
+        rows = {}
+        for record in self.excavations.values():
+            cells = np.asarray(record.cells, dtype=int)
+            bed = record.bed
+            finite = np.isfinite(bed)
+            cut_mask = finite & (bed < ground[cells])
+            cut_cells = cells[cut_mask]
+            taken = _absorbed_cells(dug[:, cells], absorbed[:, cells])
+            absorbed_units: dict[str, int] = {}
+            for k in np.flatnonzero(taken.any(axis=1)):
+                unit = unit_of.get(int(k), self.names[int(k)])
+                absorbed_units[unit] = absorbed_units.get(unit, 0) + int(taken[k].sum())
+            connected, thickness, thin = {}, [], 0
+            kept = 0
+            for cell in cut_cells:
+                active = np.flatnonzero(self.idomain[:, cell] > 0)
+                if not active.size:
+                    continue
+                k = int(active[0])
+                connected[self.names[k]] = connected.get(self.names[k], 0) + 1
+                t = float(self.thickness[k, cell])
+                thickness.append(t)
+                if thinner_than is None:   # the unit left in the column, as qc() judges it
+                    thin += int(float(unit_thk[k, cell]) < float(self.min_thickness[k]))
+                else:
+                    thin += int(t < float(thinner_than))
+                kept += int(t < record.min_remnant)
+            rows[record.name] = {
+                "cells": len(cells),
+                "cut": int(cut_mask.sum()),
+                "rim": int((finite & ~cut_mask).sum()),
+                "no_data": int((~finite).sum()),
+                "removed": int(dug[:, cells].sum()),
+                "absorbed": int(taken.sum()),
+                "absorbed_units": absorbed_units,
+                "absorbed_volume": float((absorbed[:, cells] * area[cells]).sum()),
+                "removed_volume": float(((ground[cells] - self.top[cells]) * area[cells]).sum()),
+                "connected_layers": connected,
+                "connected_min": float(np.min(thickness)) if thickness else float("nan"),
+                "connected_median": float(np.median(thickness)) if thickness else float("nan"),
+                "connected_max": float(np.max(thickness)) if thickness else float("nan"),
+                "connected_thin": thin,
+                "kept_slivers": kept,
+            }
+        return pd.DataFrame.from_dict(rows, orient="index")[columns]
 
     # -- views (thin wrappers over flopy / the surface API) --------------- #
     def _resolve_line(self, line, x, y) -> dict:
@@ -2426,6 +3241,8 @@ class LayerStack:
         self.vor = vor
         self._top = _coerce_surface(top)
         self._layers: list[_Layer] = []
+        #: Declared excavations (:meth:`excavate`), cut in after reconcile and pinch.
+        self._excavations: list[_Excavation] = []
         #: Cached draft grid for `.plot` on a gridless stack; see `draft_grid`.
         self._draft = None
         self.length_units = length_units
@@ -2448,8 +3265,24 @@ class LayerStack:
         live on the ``build()``/``to_disv()`` call and move the answer -- same stack,
         same grid, a different ``reconcile`` measured a different ``botm``. Whoever
         rebuilds from this payload has to supply them again (ledger 269).
+
+        **An excavated stack cannot be written down yet** (ledger 320): its
+        excavations are not part of this payload, and dropping them silently would
+        hand ``mf.disv(stack)``, a saved project and a digest a stack with no pond.
+        So it RAISES ``NotImplementedError``, which nothing on the way catches:
+        ``mf.disv(stack)`` on a gridless excavated stack refuses at the call. Declare
+        the discretization from the built arrays instead --
+        ``mf.disv(stack.build(vor))`` or ``stack.to_disv(vor)``.
         """
 
+        if self._excavations:
+            raise NotImplementedError(
+                "An excavated LayerStack cannot be written down yet: its excavations "
+                f"({', '.join(e.name for e in self._excavations)}) are not part of the "
+                "saved payload, and dropping them would build a stack with no pond. "
+                "Declare the discretization from the built arrays instead -- "
+                "mf.disv(stack.build(vor)) or stack.to_disv(vor)."
+            )
         return {
             "top": self._top.to_dict(),
             "layers": [
@@ -2638,6 +3471,10 @@ class LayerStack:
             time_units=self.time_units,
         )
         bound._layers = list(self._layers)
+        # The excavations ride along: a bound copy that dropped them would build the
+        # stack with no pond, silently -- and `mf.disv` copies an array-holding stack
+        # through here.
+        bound._excavations = list(self._excavations)
         return bound
 
     @classmethod
@@ -2693,29 +3530,37 @@ class LayerStack:
 
         Parameters
         ----------
-        name
-            Layer name (used in QC, plots, and as the surface label).
-        bottom
-            The layer's bottom as a :class:`Surface` / alias (e.g.
-            ``Contours("base.shp")``, ``Array(values)``, ``Flat(90.0)``). Mutually
-            exclusive with ``thickness``.
-        thickness
+        name : str
+            Unit name (used in QC, plots, and as the surface label). ``"top"`` is
+            reserved, a name already used by a unit raises, and so does one naming an
+            excavation of this stack (:meth:`excavate`) -- as does any layer name the
+            unit builds, a generated ``<name>_i`` of ``split`` or one of ``names``.
+        bottom : Surface, str, pathlib.Path or float, optional
+            The unit's bottom as a :class:`Surface` / alias (e.g.
+            ``Contours("base.shp")``, ``Array(values)``, ``Flat(90.0)``), a raster
+            path (read as ``Raster``) or a number (``Flat``). Mutually exclusive with
+            ``thickness``.
+        thickness : float or Surface, optional
             Constant thickness below the surface above. Mutually exclusive with
             ``bottom``. For a per-cell thickness MAP write ``bottom=Isopach(map)``
-            -- a bare Surface here is an elevation, not a thickness, and is
-            refused for that reason.
-        min_thickness
+            -- a bare elevation Surface here is refused, because it would set the
+            bottom rather than cut a thickness (the relative kinds ``Isopach``,
+            ``constant_thickness`` and ``offset_below`` are accepted).
+        min_thickness : float, optional
             Minimum thickness for the UNIT; thinner cells are handled per
             ``pinch``. Defaults to the stack-wide value passed to :meth:`build`.
             Not divided among a split unit's layers -- see ``split``.
-        pinch
+        pinch : str, optional
             What to do where the unit is thinner than ``min_thickness``:
-            ``"passthrough"`` (keep the cell active, default), ``"inactive"``
-            (idomain 0 -- a true pinch-out), or ``"floor"`` (clamp to the minimum).
-        fill
+            ``"floor"`` (hold the cell open at the minimum; :meth:`build`'s
+            ``default_pinch``, used when this is omitted), ``"passthrough"``
+            (idomain -1: removed, flow passes vertically through), or
+            ``"inactive"`` (idomain 0 -- a true pinch-out). This entry used to say
+            ``"passthrough"`` was the default; :meth:`build`'s is ``"floor"``.
+        fill : str, optional
             For raster/derived bottoms, how to fill cells with no source data
-            (e.g. ``"propagate"`` to inherit the surface above -> pinch).
-        split
+            (``"propagate"`` inherits the surface above -> the unit pinches there).
+        split : int or sequence of float, optional
             Discretize this unit into several model layers. ``split=3`` gives
             three equal shares; ``split=[0.3, 0.7]`` gives those shares, which
             must sum to 1. The layers are named ``<name>_1 .. <name>_N``, and
@@ -2730,7 +3575,7 @@ class LayerStack:
             A unit whose bottom is measured from the layer above (an
             ``Isopach``) cannot be split; give it an absolute bottom, or declare
             it with ``thickness=`` and split that.
-        names
+        names : sequence of str, optional
             Names for the split layers, top to bottom, replacing the generated
             ``<name>_1 .. <name>_N``. Requires ``split`` of 2 or more, and must
             give one name per layer -- naming only some of them would leave
@@ -2739,20 +3584,39 @@ class LayerStack:
             :attr:`LayerBuildResult.units` and
             :meth:`LayerBuildResult.per_layer` are unaffected by the choice.
 
+        Returns
+        -------
+        LayerStack
+            ``self``.
+
+        Raises
+        ------
+        ValueError
+            ``name`` reserved or taken by a unit; ``name`` or a layer name it builds
+            (``<name>_i``, ``names``) taken by an excavation; both or neither of
+            ``bottom``/``thickness``; a bad ``split`` or ``names``.
+        TypeError
+            An elevation Surface given as ``thickness``; a ``bottom`` of an
+            unsupported type; ``names`` that is not a sequence of names.
+
         Examples
         --------
-        >>> stack.add("sand", thickness=20)                       # 20-ft layer
-        >>> stack.add("clay", thickness=5, pinch="inactive")      # pinches out where thin
-        >>> stack.add("bedrock", bottom=Contours("bedrock.shp"))  # bottom from contours
-        >>> stack.add("sand", bottom=Raster("base.tif"), split=3) # -> sand_1..sand_3
-        >>> stack.add("till", thickness=60, split=[0.25, 0.75])   # -> 15 ft, then 45 ft
-        >>> stack.add("sand", bottom=Raster("base.tif"), split=3,  # -> your names,
-        ...           names=["upper sand", "mid sand", "lower sand"])  # unit stays "sand"
+        >>> import myflopy as mf
+        >>> stack = mf.LayerStack(top=mf.Flat(100.0))
+        >>> stack.add("sand", thickness=20).names                   # 20-ft unit
+        ['sand']
+        >>> _ = stack.add("clay", thickness=5, pinch="inactive")    # pinches out where thin
+        >>> _ = stack.add("till", thickness=60, split=[0.25, 0.75]) # -> 15 ft, then 45 ft
+        >>> _ = stack.add("rock", bottom=mf.Flat(0.0), split=3,
+        ...               names=["upper rock", "mid rock", "lower rock"])  # unit stays "rock"
+        >>> stack.names
+        ['sand', 'clay', 'till', 'rock']
         """
         _check_layer_name(name, self._layers)
         surface = _make_surface(bottom, thickness, fill)
         shares = _split_shares(split, name)  # reject a bad split here, not at build
         _split_names(names, shares, name)    # ...and a bad names= list with it
+        self._refuse_excavation_name(name, split, names)
         self._layers.append(_Layer(name, surface, min_thickness, pinch, split, names))
         return self
 
@@ -2761,10 +3625,57 @@ class LayerStack:
         min_thickness: float | None = None, pinch: str | None = None,
         fill: str | None = None, split=None, names=None,
     ) -> LayerStack:
-        """Insert a new unit directly below the existing unit ``name``."""
+        """Insert a new unit directly below the existing unit ``name``. Returns ``self``.
+
+        Parameters
+        ----------
+        name : str
+            The existing unit to insert below; an unknown name raises ``KeyError``.
+        new_name : str
+            The new unit's name -- the rules of :meth:`add`'s ``name``.
+        bottom : Surface, str, pathlib.Path or float, optional
+            As on :meth:`add`.
+        thickness : float or Surface, optional
+            As on :meth:`add`.
+        min_thickness : float, optional
+            As on :meth:`add`.
+        pinch : str, optional
+            As on :meth:`add` (``"floor"``, ``"passthrough"`` or ``"inactive"``;
+            omitted, :meth:`build`'s ``default_pinch``).
+        fill : str, optional
+            As on :meth:`add`.
+        split : int or sequence of float, optional
+            As on :meth:`add`.
+        names : sequence of str, optional
+            As on :meth:`add`.
+
+        Returns
+        -------
+        LayerStack
+            ``self``.
+
+        Raises
+        ------
+        KeyError
+            ``name`` names no unit.
+        ValueError
+            Any refusal of :meth:`add` (``new_name`` taken by a unit, it or a layer
+            name it builds taken by an excavation, a bad ``split``/``names``, both or
+            neither of ``bottom``/``thickness``).
+        TypeError
+            As on :meth:`add`.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> stack = mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20).add("rock", thickness=50)
+        >>> stack.insert_below("sand", "clay", thickness=5).names
+        ['sand', 'clay', 'rock']
+        """
         _check_layer_name(new_name, self._layers)
         surface = _make_surface(bottom, thickness, fill)
         _split_names(names, _split_shares(split, new_name), new_name)
+        self._refuse_excavation_name(new_name, split, names)
         self._layers.insert(
             self._index(name) + 1,
             _Layer(new_name, surface, min_thickness, pinch, split, names),
@@ -2788,6 +3699,64 @@ class LayerStack:
         ``replace(name, split=None, names=None)`` -- the alternative, silently
         discarding names the caller wrote, is the kind of quiet renaming this
         module exists to prevent.
+
+        Parameters
+        ----------
+        name : str
+            The unit to change; an unknown name raises ``KeyError``. The unit keeps
+            it (a rename is ``remove`` + :meth:`insert_below`).
+        bottom : Surface, str, pathlib.Path or float, optional
+            A new bottom, as on :meth:`add`. Mutually exclusive with ``thickness``;
+            omitted with ``thickness`` too, the unit keeps its current bottom.
+        thickness : float or Surface, optional
+            A new constant thickness, as on :meth:`add`. Mutually exclusive with
+            ``bottom``.
+        min_thickness : float or None, optional
+            As on :meth:`add`; ``None`` falls back to :meth:`build`'s
+            ``default_min_thickness``. Omitted, the unit keeps its current value.
+        pinch : str or None, optional
+            As on :meth:`add` (``"floor"``, ``"passthrough"`` or ``"inactive"``);
+            ``None`` falls back to :meth:`build`'s ``default_pinch``. Omitted, kept.
+        fill : str, optional
+            As on :meth:`add`. With a new ``bottom``/``thickness`` it applies to
+            that; given alone it changes the fill of the unit's CURRENT bottom.
+            Omitted (``None``), the current bottom's fill is kept.
+        split : int, sequence of float or None, optional
+            As on :meth:`add`; ``None`` makes the unit one layer again. Omitted,
+            kept. Validated with ``names`` as a pair.
+        names : sequence of str or None, optional
+            As on :meth:`add`; ``None`` restores the generated
+            ``<name>_1 .. <name>_N``. Omitted, kept. Validated with ``split`` as a
+            pair.
+
+        Returns
+        -------
+        LayerStack
+            ``self``.
+
+        Raises
+        ------
+        KeyError
+            ``name`` names no unit.
+        ValueError
+            Both ``bottom`` and ``thickness``; a ``split``/``names`` pair that
+            does not match (checked only when either is given); a layer the new
+            ``split``/``names`` would build -- a generated ``<name>_i`` or one of
+            ``names`` -- already naming an excavation of this stack
+            (:meth:`excavate`).
+        TypeError
+            As on :meth:`add`.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=2, ncol=2, cell_size=100.0)
+        >>> stack = mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20).add("clay", thickness=5)
+        >>> stack.replace("sand", split=3).build(vor).names
+        ['sand_1', 'sand_2', 'sand_3', 'clay']
+        >>> stack.replace("sand", thickness=10.0, split=None).build(vor).botm[:, 0].tolist()
+        [90.0, 85.0]
         """
         idx = self._index(name)
         layer = self._layers[idx]
@@ -2801,6 +3770,7 @@ class LayerStack:
             _split_names(
                 resolved_names, _split_shares(resolved_split, name), name
             )
+            self._refuse_excavation_name(name, resolved_split, resolved_names)
         self._layers[idx] = _Layer(
             name,
             surface,
@@ -2815,6 +3785,227 @@ class LayerStack:
         """Remove a layer by name."""
         del self._layers[self._index(name)]
         return self
+
+    def _refuse_excavation_name(self, name, split=None, names=None) -> None:
+        """A unit or layer may not take an excavation's name (they share reports and keys).
+
+        Checks every name the unit BUILDS -- the generated ``<name>_1..N`` of a split
+        as well as ``names=`` -- because those are what ``LayerBuildResult.names``
+        holds beside ``excavations``.
+        """
+
+        dug = {excavation.name for excavation in self._excavations}
+        clash = sorted(dug & _unit_names(name, split, names))
+        if clash:
+            raise ValueError(
+                f"{clash} already names an excavation of this stack; a unit and its "
+                "layers need names of their own."
+            )
+
+    def excavate(self, bottom, within, *, name=None, layer=None, min_remnant=0.1) -> LayerStack:
+        """Declare a void cut into the stack -- a pond, basin, pit, trench, or a lake. Returns ``self``.
+
+        Inside ``within`` every layer surface above ``bottom`` is lowered to it: the
+        first active cell under the bed then has its top EXACTLY at the bed, the
+        cells above it go idomain 0 (never -1 -- the space is lake water, not a
+        pass-through layer), and the ground outside is untouched. For a natural lake
+        whose DEM top is its water surface, and for a dug basin alike. Nothing is
+        sampled until :meth:`build`, and ``build`` cuts AFTER reconcile and after the
+        pinch policy -- cutting before them was measured wrong under every pinch
+        policy and reconcile mode (a dug layer came back active at its minimum
+        thickness under ``"floor"``, the connected top sat ``min_sep`` below the bed
+        under ``"inactive"``, a split unit was squeezed rather than removed).
+
+        It mutates and returns ``self``, like :meth:`add`, :meth:`insert_below`,
+        :meth:`replace` and :meth:`remove`. So build the un-excavated baseline FIRST
+        if you want one: after ``pond = stack.excavate(...)``, ``pond is stack``, and
+        a baseline built from ``stack`` later is excavated too. A package already
+        declared from the stack holds its own copy and is not affected.
+
+        **The footprint is the lake's.** Cells are chosen by the rule
+        ``mf.lak(lakes=)`` uses -- a polygon covers a cell by AREA, a sliver of a
+        cell is noise (ledger 241) -- through the same reader and the same function,
+        so pass the SAME polygons you pass to ``mf.lak(lakes=)``. (A centroid rule,
+        ``Surface.where``'s, missed 50 of a real pond's 612 lake cells.) The bed is
+        sampled the lake's way too -- area-weighted, whatever ``build(method=)``
+        says -- so a lake declared on the excavated stack reads the same float at
+        every cell.
+
+        **The sliver rule: absorb, not deepen.** Where the cell left directly under
+        the bed is thinner than ``min_remnant`` and an active cell lies below it, it
+        is ABSORBED: its bottom rises to the bed (zero thickness, idomain 0) and the
+        cell below becomes the connected one, its top still exactly at the bed -- the
+        column's thickness is conserved and the bed is never moved. An inactive or
+        pass-through cell directly under the bed is absorbed the same way whatever
+        ``min_remnant`` says, because a lake's vertical connection cannot reach
+        through it. A thin cell with nothing active below it is kept (and reported).
+
+        **With a transparent bed the connected cell sets the infiltration rate**
+        (MF6's vertical lake conductance is ``area / (1/bedleak + 0.5 * thk / K33)``):
+        a larger ``min_remnant`` is then a GEOLOGY change, not a solver setting --
+        on a real pond ``1.0`` moved 172 of the lake's vertical connections from a
+        1-ft K33 = 11.7 unit onto a K33 = 0.41 one and lowered the mound under the
+        pond 17%. Read :meth:`LayerBuildResult.excavation_report` before choosing it.
+
+        **Several excavations** are cut together from the same pre-cut arrays, so
+        declaration order does not matter; two footprints sharing a cell are
+        REFUSED at build (a berm narrower than a cell does that -- measured, ponds 2
+        or 10 ft apart on 17-ft cells shared 2 cells).
+
+        **What "model top" means afterwards.** The built ``top`` is the excavated
+        top and ``LayerBuildResult.ground`` keeps the ground. With ``attach=True``
+        the grid's ``gdf_topbtm`` carries the excavated top and ``grid.excavations``
+        the records ``mf.lak`` reads. So ``mf.rch.array(irch="top_active")`` lands on
+        the cell under the bed (which MF6 then zeroes while a lake is wet there --
+        give the lake ``rainfall=``), a ``.gpkg`` boundary on a dug cell is dropped
+        with the partial-miss warning, ``CellSurfaceOffset("model_top", -2)`` is the
+        bed less 2, and a PRT release point in layer 0 over a dug cell lands on no
+        active cell and is reported, not moved down. A package declared against a
+        context built BEFORE the cut still names the removed cells.
+
+        Parameters
+        ----------
+        bottom : Surface, float, str or pathlib.Path
+            The floor, an ABSOLUTE elevation in the stack's ``length_units``.
+
+            * A :class:`~myflopy.surfaces.Surface` or alias -- ``mf.Contours``,
+              ``mf.Raster``, ``mf.Flat``, algebra on an absolute surface
+              (``ground - 9``). ``units=`` on it is converted to the stack's
+              ``length_units``, as a unit bottom is. A BARE ``fill="propagate"``
+              source takes the ground where it has no data, so those cells are
+              not cut (algebra over one is refused, below).
+            * Any real number (``int``, ``float``, numpy scalars), a flat floor.
+            * A ``str`` naming a COLUMN of ``within``'s attribute table -- one flat
+              floor per feature (``"flat_bottom_elev"`` over several ponds) -- when
+              ``within`` is a file that has it; otherwise a ``str`` or ``Path`` naming
+              an existing raster file.
+
+            Always sampled area-weighted over each cell (the lake's sampler,
+            :func:`myflopy.surfaces.sample_bed`), with the built ground as the
+            surface above. REFUSED: a surface measured from the one above it
+            (``offset_below``, ``constant_thickness``, ``Isopach``, ``toward``, and
+            anything built on them) -- the stack would measure it from the ground and
+            ``mf.lak`` from the excavated top (+5.0 ft in 70 of 70 cells, measured);
+            write ``ground - 9`` instead. REFUSED too: algebra over a
+            ``fill="propagate"`` source (``Surface.raster(p, fill="propagate") - 2``),
+            which reads the surface above wherever the source has no data -- the
+            stack would cut those cells to ``ground - 2`` and ``mf.lak`` would read
+            ``ground - 4`` there (14 of 27 cells 2.0 ft apart, measured). Fill the
+            raster's gaps, or pass the propagate source bare.
+        within : str, pathlib.Path, Area, geopandas.GeoDataFrame, geopandas.GeoSeries or shapely geometry
+            The footprint -- the polygons you pass to ``mf.lak(lakes=)``.
+
+            * A vector path (``str`` or ``Path``; a bare string is always a path),
+              read at ``layer`` by the reader ``mf.lak`` uses. Resolved to an
+              absolute path at the call and read then, so a missing file, a missing
+              layer, a line or a zero-area feature refuses here; read again at
+              build.
+            * An ``mf.Area`` -- kept inline; ``crs=None`` means the grid's frame.
+            * A GeoDataFrame, GeoSeries or shapely geometry, coerced to an inline
+              ``Area`` (its features unioned, so a multi-part footprint selects per
+              PART; a bare geometry with no CRS is in the grid's frame).
+
+            Polygons only: a line or point would dig the cells along it by length.
+            REFUSED: cell numbers and boolean masks -- they name cells by position
+            on one mesh and would dig different cells after ``with_grid``.
+        name : str, optional
+            The excavation's key in ``LayerBuildResult.excavations`` and its label
+            in reports and refusals (converted with ``str``). Defaults to the file
+            stem, then ``Area.name``, then ``"excavation_<n>"``. Must be unique
+            among the stack's excavations and must not name a unit or layer -- nor
+            may a unit added, inserted or re-split later build a layer of that name
+            (a generated ``<unit>_i`` included; :meth:`add`, :meth:`insert_below` and
+            :meth:`replace` refuse it).
+        layer : str or int, optional
+            The vector layer of a ``within`` FILE, by name or zero-based index;
+            omitted, the first. Refused with any other ``within`` -- it could not
+            act. Pass ``mf.lak`` the same ``layer=``.
+        min_remnant : float, default 0.1
+            The thinnest cell allowed directly under the bed, in length units,
+            converted with ``float``. A thinner one is a sliver and is absorbed
+            (above). ``0`` turns sliver absorption off; inactive cells under the bed
+            are still absorbed. Deliberately not the build's ``min_sep`` nor a
+            unit's ``min_thickness``: both would change the geology the stack
+            declares (see the note on transparent beds).
+
+        Returns
+        -------
+        LayerStack
+            ``self``.
+
+        Raises
+        ------
+        ValueError
+            At the call: a ``bottom`` measured from the surface above, or algebra
+            over a ``fill="propagate"`` source; a ``str``
+            bottom that is neither a column of ``within`` nor a raster file (a
+            column needs a FILE ``within``); a NULL or non-numeric column value;
+            ``layer`` without a file; a line, point or zero-area footprint; a
+            duplicate ``name`` or one naming a unit or layer; ``min_remnant``
+            negative or not finite. At :meth:`build`: a footprint covering no cell
+            (both extents and both CRSs, ledger 211); two excavations sharing a
+            cell, or two features of one file giving one cell different column
+            floors; a bed with no data at every footprint cell; a column left with
+            no active cell under the bed (a bed below the stack's bottom included).
+        TypeError
+            ``bottom`` or ``within`` of an unsupported type (cell numbers and
+            masks named as such), or a non-numeric ``min_remnant``.
+        FileNotFoundError
+            A ``within`` or ``bottom`` path that does not exist.
+        NotImplementedError
+            Later, from :meth:`to_dict`: an excavated stack cannot be written down
+            yet (ledger 320) -- declare ``mf.disv(stack.build(vor))``.
+
+        Warns
+        -----
+        UserWarning
+            At build: some (not all) features cover no cell, named -- by the file's
+            stem when it holds one feature, else by zero-based row (``'row 1'``), or
+            ``'<name> part <i>'`` for a part of an ``Area``; footprint cells where
+            the bed has no data, which are not cut.
+
+        See Also
+        --------
+        LayerBuildResult.excavate : The same cut on a built result.
+        LayerBuildResult.excavation_report : What each excavation removed and connected.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=4, ncol=4, cell_size=50.0)
+        >>> pond = mf.Area(vor.gdf_vorPolys.geometry.loc[[5, 6]].union_all())
+        >>> stack = (mf.LayerStack(top=mf.Flat(100.0))
+        ...          .add("fill", thickness=5.0)
+        ...          .add("sand", thickness=30.0)
+        ...          .add("clay", thickness=20.0))
+        >>> baseline = stack.build(vor)                      # BEFORE excavating
+        >>> dug = stack.excavate(bottom=93.0, within=pond, name="pond").build(vor, attach=True)
+        >>> float(dug.top[5]), dug.idomain[:, 5].tolist(), float(dug.ground[5])
+        (93.0, [0, 1, 1], 100.0)
+        >>> dug.excavations["pond"].cells
+        (5, 6)
+        >>> vor.excavations["pond"] is dug.excavations["pond"]
+        True
+        """
+
+        self._excavations.append(
+            _declare_excavation(
+                bottom, within, name=name, layer=layer, min_remnant=min_remnant,
+                taken={excavation.name for excavation in self._excavations},
+                reserved=self._reserved_names(),
+                index=len(self._excavations),
+            )
+        )
+        return self
+
+    def _reserved_names(self) -> set[str]:
+        """Every unit name and every model-layer name the stack would build."""
+
+        names: set[str] = set()
+        for layer in self._layers:
+            names |= _unit_names(layer.name, layer.split, layer.names)
+        return names
 
     @property
     def names(self) -> list[str]:
@@ -2969,19 +4160,61 @@ class LayerStack:
             return float(trigger_sep)
         return 1.0 / self._max_split()
 
+    def _named_surfaces(self) -> list[tuple[str, Surface]]:
+        """``(key, surface)`` for the top, each unit's bottom and each excavation's bed.
+
+        An excavation's key is ``"excavation:<name>"``, so it cannot collide with a
+        unit's.
+        """
+
+        named = [("top", self._top)] + [(layer.name, layer.surface) for layer in self._layers]
+        named += [
+            (f"excavation:{excavation.name}", excavation.bottom)
+            for excavation in self._excavations
+            if excavation.bottom is not None
+        ]
+        return named
+
     def refresh(self) -> LayerStack:
-        """Rebuild the cached raster of every derived (contour) surface now."""
-        for surface in [self._top] + [layer.surface for layer in self._layers]:
+        """Rebuild the cached raster of every derived (contour) surface now.
+
+        Excavation beds included: a pond's bed is usually a ``Contours``.
+
+        Returns
+        -------
+        LayerStack
+            ``self``.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0).refresh().names
+        ['sand']
+        """
+        for _name, surface in self._named_surfaces():
             if getattr(surface, "is_derived", False):
                 surface.resolve_source(refresh=True, warn=False)
         return self
 
     def cache_status(self) -> dict[str, str]:
-        """Map ``name -> "missing"/"fresh"/"stale"`` for each derived surface."""
-        named = [("top", self._top)] + [(layer.name, layer.surface) for layer in self._layers]
+        """Map ``name -> "missing"/"fresh"/"stale"`` for each derived surface.
+
+        Returns
+        -------
+        dict of str to str
+            Keyed by ``"top"``, a unit name, or ``"excavation:<name>"`` for an
+            excavation's bed -- prefixed, so a unit and an excavation can never
+            share a key. Only derived (contour) surfaces appear.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0).cache_status()
+        {}
+        """
         return {
             name: surface.cache_status()
-            for name, surface in named
+            for name, surface in self._named_surfaces()
             if getattr(surface, "is_derived", False)
         }
 
@@ -3070,31 +4303,65 @@ class LayerStack:
             Also publish the result onto ``vor.gdf_topbtm`` (see
             :meth:`LayerBuildResult.attach_to_grid`) so surface-aware builders --
             ``mf.sfr`` reach tops, ``mf.lak`` lake-cell layering -- can read the
-            elevations. Use it when your model has SFR/LAK on this grid.
+            elevations, and the excavation records onto ``vor.excavations``. Use it
+            when your model has SFR/LAK on this grid.
 
         Returns
         -------
         LayerBuildResult
             Bundles ``top`` ``(ncpl,)``, ``botm`` / ``idomain`` ``(nlay, ncpl)``,
-            derived ``thickness``, and per-layer metadata.
+            derived ``thickness``, and per-layer metadata -- with every declared
+            :meth:`excavate` cut in, AFTER reconcile and the pinch policy, and
+            ``excavations``/``ground``/``excavated``/``absorbed`` saying what was dug.
+            ``refresh=True`` rebuilds an excavation bed's contour cache too.
 
         Raises
         ------
         ValueError
-            If no layers have been added with :meth:`add`.
+            If no layers have been added with :meth:`add`; any build-time refusal
+            of :meth:`excavate` (a footprint on no cell, overlapping excavations,
+            a bed with no data, a column with no active cell under its bed).
 
         Examples
         --------
-        >>> layers = (mf.LayerStack(vor, top=mf.Raster("ground.tif"))
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> layers = (mf.LayerStack(top=mf.Flat(100.0))
         ...           .add("sand", thickness=20)
-        ...           .add("clay", bottom=mf.Contours("base.shp"), pinch="inactive")
-        ...           .build(attach=True))
-        >>> mf.disv(nlay=layers.nlay, ..., top=layers.top, botm=layers.botm,
-        ...         idomain=layers.idomain)
+        ...           .add("clay", bottom=mf.Flat(79.5), pinch="inactive")
+        ...           .build(vor, attach=True))
+        >>> layers.nlay, layers.idomain[:, 0].tolist()    # clay is 0.5 ft < 1.0: pinched
+        (2, [1, 0])
+        >>> spec = mf.disv(layers)                         # the DISV from these arrays
+
+        With a GIS top it reads ``mf.LayerStack(top=mf.Raster("ground.tif"))`` and a
+        ``bottom=mf.Contours("base.gpkg", z="elev")``; nothing else changes.
+        """
+        vor = self._require_grid(vor, "build")
+        result = self._build(
+            vor,
+            default_min_thickness=default_min_thickness, default_pinch=default_pinch,
+            reconcile=reconcile, min_sep=min_sep, trigger_sep=trigger_sep,
+            method=method, refresh=refresh,
+        )
+        if attach:
+            result.attach_to_grid(vor)
+        return result
+
+    def _build(
+        self, vor, *, default_min_thickness, default_pinch, reconcile, min_sep,
+        trigger_sep, method, refresh, excavate: bool = True,
+    ) -> LayerBuildResult:
+        """:meth:`build` without the attach; ``excavate=False`` stops before the cut.
+
+        The cut is the LAST step (design section 3.1): sampling, reconcile, the pinch
+        invariant and the idomain all run on the un-excavated stack, then
+        :meth:`LayerBuildResult._excavated_by` cuts every declared excavation in.
+        ``qc`` asks for the pre-cut result to measure reconcile against.
         """
         if not self._layers:
             raise ValueError("Add at least one layer with .add(...) before build().")
-        vor = self._require_grid(vor, "build")
         layers, units = self._expanded_layers()
         ls = self._layer_surfaces()
         rec_on, which = _reconcile_args(reconcile)
@@ -3126,8 +4393,8 @@ class LayerStack:
             length_units=self.length_units, time_units=self.time_units,
             vor=vor, units=units,
         )
-        if attach:
-            result.attach_to_grid(vor)
+        if excavate and self._excavations:
+            result = result._excavated_by(self._excavations, refresh=refresh)
         return result
 
     def qc(
@@ -3153,27 +4420,62 @@ class LayerStack:
         means the geometry you got is substantially not the geometry you
         described, which is worth knowing before it becomes an idomain.
 
+        Every build option is passed straight through to :meth:`build`, so QC
+        reports on the geometry you are actually going to build -- including every
+        declared :meth:`excavate`.
+
         Parameters
         ----------
         vor : VoronoiGridPlus, optional
             Required only if the stack was declared without a grid.
-        default_min_thickness, default_pinch, reconcile, min_sep, trigger_sep, method, refresh
-            Passed straight through to :meth:`build`, so QC reports on the
-            geometry you are actually going to build. Documented there -- in
-            particular the ``reconcile`` options, which are what this report is
-            diagnosing.
+        default_min_thickness : float, default 1.0
+            As on :meth:`build`.
+        default_pinch : str, default "floor"
+            As on :meth:`build`.
+        reconcile : {'bottom', 'top', True, False, None}, default 'bottom'
+            As on :meth:`build`, where each option is spelled out -- they are what
+            this report is diagnosing.
+        min_sep : float, default 0.1
+            As on :meth:`build`.
+        trigger_sep : float, optional
+            As on :meth:`build`.
+        method : str, default "area"
+            As on :meth:`build`.
+        refresh : bool, default False
+            As on :meth:`build` (excavation beds included).
 
         Returns
         -------
         LayerQCReport
+            The excavated result's report (excavated cells counted on their own
+            line), with ``reconcile_adjusted``/``reconcile_max_shift`` measured
+            against the PRE-cut surfaces.
+
+        Raises
+        ------
+        ValueError
+            No grid; any refusal of :meth:`build`.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> stack = mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0).add("clay", thickness=20.0)
+        >>> report = stack.excavate(75.0, mf.Area(vor.gdf_vorPolys.geometry.loc[4])).qc(vor)
+        >>> report.reconcile_adjusted, report.excavated
+        ([0, 0], [1, 0])
         """
         vor = self._require_grid(vor, "qc")
-        result = self.build(
+        precut = self._build(
             vor,
             default_min_thickness=default_min_thickness, default_pinch=default_pinch,
             reconcile=reconcile, min_sep=min_sep, trigger_sep=trigger_sep,
-            method=method, refresh=refresh,
+            method=method, refresh=refresh, excavate=False,
         )
+        # Reconcile is measured against the PRE-cut surfaces; the dug result would
+        # read the excavation as "reconcile moved the contact" in every pond cell.
+        result = precut._excavated_by(self._excavations, refresh=refresh)
         report = result.qc()
         ls = self._layer_surfaces()
         raw = ls.sample(
@@ -3182,8 +4484,8 @@ class LayerStack:
         )
         _, raw_botm = ls._split_top_botm(raw)
         adjusted, max_shift = [], []
-        for k in range(result.nlay):
-            shift = np.abs(np.asarray(raw_botm[k], float) - np.asarray(result.botm[k], float))
+        for k in range(precut.nlay):
+            shift = np.abs(np.asarray(raw_botm[k], float) - np.asarray(precut.botm[k], float))
             finite = shift[np.isfinite(shift)]
             adjusted.append(int((finite > 1e-6).sum()))
             max_shift.append(float(finite.max()) if finite.size else 0.0)
@@ -3241,86 +4543,90 @@ class LayerStack:
         method: str = "area",
         refresh: bool = False,
     ):
-        """Build a ready-to-use ``mf.disv`` spec (with pinch-out idomain).
+        """Build a ready-to-use ``mf.disv`` spec (with pinch-out idomain) -- ``build(...).to_disv()``.
 
-        The one-call alternative to ``build()`` + hand-written ``mf.disv(...)``,
-        and the form worth preferring: it returns a
-        :class:`~myflopy.specs.PackageSpec`, so the stack can be registered on a
-        project (``project.add_package("disv/base", spec)``) and referenced with
-        ``mf.ref``, which is what keeps an array-heavy model persistable.
+        The one-call alternative to ``build()`` + ``mf.disv(result)``. It is exactly
+        that: the stack is resolved ONCE, by :meth:`build`, and the spec is
+        :meth:`LayerBuildResult.to_disv` of that result, so every declared
+        :meth:`excavate` is in it. It used to sample the stack a second time, which
+        matched ``build()`` only by passing each per-layer separation along and which
+        would have written the un-excavated top beside the excavated idomain;
+        rerouting it moved no digest and no option (12 raster stacks, both sampling
+        methods, three pinch policies, compared before and after).
 
         Parameters
         ----------
         vor : VoronoiGridPlus, optional
-            Required only if the stack was declared without a grid.
+            The grid; required only if the stack was declared without one.
         name : str, default "disv"
-            Package name on the built model.
+            The spec's name -- the key ``with_packages(slot=)`` and a run's frozen
+            snapshot use. It does not reach FloPy: the built package is always
+            ``disv``, written to ``<model>.disv`` (as on ``mf.disv``).
         attach : bool, default True
-            Publish the sampled elevations onto ``vor.gdf_topbtm`` -- note this
-            defaults to True here and to False on :meth:`build`. Surface-aware
-            builders (``mf.sfr`` reach tops, ``mf.lak`` lake-cell layering) and
-            the layer-elevation hover rows read it.
-        default_min_thickness, default_pinch, reconcile, min_sep, method, refresh
-            Passed straight through to the sampling pass; documented on
-            :meth:`build`, including the ``reconcile`` options.
+            Publish the built elevations onto ``vor.gdf_topbtm`` and the excavation
+            records onto ``vor.excavations`` (:meth:`LayerBuildResult.attach_to_grid`)
+            -- note this defaults to True here and to False on :meth:`build`.
+            Surface-aware builders (``mf.sfr`` reach tops, ``mf.lak``) and the
+            layer-elevation hover rows read them.
+        default_min_thickness : float, default 1.0
+            As on :meth:`build`: the minimum thickness of a unit that declares none.
+        default_pinch : str, default "floor"
+            As on :meth:`build`: the pinch policy of a unit that declares none.
+        reconcile : {'bottom', 'top', True, False, None}, default 'bottom'
+            As on :meth:`build`, where each option is spelled out.
+        min_sep : float, default 0.1
+            As on :meth:`build`: the fallback separation for pinching layers.
+        trigger_sep : float, optional
+            As on :meth:`build`: the separation below which reconcile acts.
+        method : str, default "area"
+            As on :meth:`build`: raster sampling of the unit surfaces. An
+            excavation's bed is always area-weighted.
+        refresh : bool, default False
+            As on :meth:`build`: rebuild stale contour caches, excavation beds
+            included.
 
         Returns
         -------
         PackageSpec
-            A DISV spec with pinch-out idomain applied.
+            An EAGER DISV spec holding copies of the result's ``top``/``botm``/
+            ``idomain``.
+
+        Raises
+        ------
+        ValueError
+            No layers added; no grid; any refusal of :meth:`build` (the excavation
+            ones included).
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> stack = mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0)
+        >>> spec = stack.excavate(90.0, mf.Area(vor.gdf_vorPolys.geometry.loc[4])).to_disv(vor)
+        >>> float(spec.options["top"][4]), list(vor.excavations)
+        (90.0, ['excavation_0'])
         """
         if not self._layers:
             raise ValueError("Add at least one layer before to_disv().")
         vor = self._require_grid(vor, "to_disv")
-        ls = self._layer_surfaces()
-        rec_on, which = _reconcile_args(reconcile)
-        min_thk, pinch = self._per_layer_config(default_min_thickness, default_pinch)
-        # `idomain=` explicitly, rather than `pinch_out=True`: the engine would
-        # judge each layer on its own thickness, and a split unit has to be
-        # judged whole (see `_unit_thickness`). Letting it decide would give a
-        # DIFFERENT idomain here than `build()` produces from the same stack.
+        # ONE resolution, the result's own (design section 3.1). This used to sample
+        # the stack a second time through `LayerSurfaces.to_disv` -- which could only
+        # match `build()` by passing every per-layer separation along, and which, once
+        # the stack is excavated, would write the UN-excavated top beside the
+        # excavated idomain. Measured neutral for a stack with no excavation: the
+        # spec's options and digest are unchanged on raster stacks under both
+        # sampling methods.
         result = self.build(
             vor,
             default_min_thickness=default_min_thickness, default_pinch=default_pinch,
             reconcile=reconcile, min_sep=min_sep, trigger_sep=trigger_sep,
             method=method, refresh=refresh,
         )
-        # ...and the GEOMETRY has to be resolved the same way for the same reason.
-        # `ls.to_disv` samples the stack a second time, so handing it the scalar
-        # `min_sep` while `build()` used per-layer separations writes a DISV whose
-        # bottoms disagree with `result.botm` -- measured at 8.5 ft on a real stack.
-        # That is silent and dangerous: `attach_to_grid()` publishes `result`'s
-        # surfaces, so `mf.CellSurfaceOffset("cell_bottom", ...)` places boundaries
-        # against bottoms MF6 never sees, and drains land below their cell.
-        _, units = self._expanded_layers()
-        seps, triggers = self._reconcile_separations(min_thk, pinch, min_sep, units)
-        stack_trigger = self._trigger_sep(trigger_sep)
-        if trigger_sep is not None:
-            triggers = [stack_trigger] * len(triggers)
-        else:
-            triggers = [stack_trigger if v is None else v for v in triggers]
-        spec = ls.to_disv(
-            vor,
-            idomain=result.idomain,
-            minimum_thickness=min_thk,
-            pinch=pinch,
-            length_units=self.length_units,
-            name=name,
-            attach=False,
-            reconcile=rec_on,
-            which=which,
-            min_sep=seps,
-            trigger_sep=triggers,
-            method=method,
-            refresh=refresh,
-        )
+        spec = result.to_disv(vor, name=name)
         if attach:
-            # Publish `result`'s surfaces, not the second sampling's. They are the
-            # arrays this spec was built from -- the reason `attach=False` above --
-            # and they carry the INTEGER columns the surface-aware builders read.
-            # `ls.to_disv(attach=True)` publishes the stack's string labels
-            # ('top', 'sand', ...), which made `mf.sfr` and `vor.plot.section`
-            # raise `KeyError: 0` on the path the cheatsheet teaches.
+            # The arrays this spec was built from, with the INTEGER columns the
+            # surface-aware builders read -- and the excavation records beside them.
             result.attach_to_grid(vor)
         return spec
 

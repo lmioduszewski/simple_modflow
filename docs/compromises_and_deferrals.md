@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 319 entries (321 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 320 entries (322 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 320 | `LayerStack.excavate`: a pond is a VOID cut after reconcile and pinch, absorbing rather than deepening -- t... | 2026-09-25 |
 | 319 | "The top active layer" is ONE rule, `idomain > 0`: the array form read `!= 0` and sent recharge into pass-t... | 2026-09-25 |
 | 318 | Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewritin... | 2026-09-25 |
 | 317 | A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring doe... | 2026-09-24 |
@@ -13298,3 +13299,81 @@ same day, which is the useful part of the result.
       Tests: `tests/test_top_active_layer.py`, 10, one of them an MF6 run asserting the
       budget and the percent discrepancy. Reverting the array form to `!= 0` fails 5 by
       name; turning the helper's `> 0` into `!= 0` fails 6.
+
+320. **`LayerStack.excavate`: a pond is a VOID cut after reconcile and pinch, absorbing rather than deepening -- the calls made, the deviations from the design, and what is interim (2026-09-25).**
+      `stack.excavate(bottom, within, *, name, layer, min_remnant=0.1)` and
+      `LayerBuildResult.excavate` (the excavation design's C4, F1-F4 and F14 as the user
+      approved them): inside the footprint every surface above the bed is lowered to it,
+      so the first active cell under the bed starts EXACTLY at the bed; the cells above go
+      idomain 0, never -1; the ground outside is untouched. The cut is the LAST step of
+      `build()` because cutting before reconcile and pinch was measured wrong under every
+      policy (the design's section 3.1). The footprint, its cells and the bed come from
+      the helpers `mf.lak` uses (C3, ledger 318's amendment), so record cells == lake
+      cells and the record's bed is the lake's float -- pinned on a hand-built grid and on
+      two `GridSpec.voronoi` grids (ledger 265's `int64`). `stack.to_disv` is now
+      `build().to_disv()`: 12 of 12 raster stacks kept their digest, every option and the
+      published table (`docs/reproducers/excavation_build_checks.py`, part 1).
+      **Judgment calls that differ from the design, each deliberate:**
+      - **`min_remnant=0` stops SLIVER absorption only.** An inactive or pass-through cell
+        directly under the bed is absorbed whatever `min_remnant` says. The design says
+        both "`0` turns absorbing off" and "a LAK vertical connection cannot reach through
+        [an inactive cell]"; the second is the one geometry depends on (C7's build check
+        wants the vertical cell's top at the bed).
+      - **A FOURTH result field, `absorbed`** (each absorbed cell's OWN thickness under
+        the bed), beside the design's three. An absorbed cell and a cut cell both end with
+        `botm == bed`, so the count, volume and unit the report must give are otherwise
+        unrecoverable -- and like `excavated` it is a fact of the build. OWN, not
+        `bed - botm`: in a chain (a 0.05 ft silt remnant, then a 0.01 ft pass-through
+        cell) the cumulative figure counted the silt twice, 0.11 ft where 0.06 lay
+        between the bed and the connected top. The absorbed cells are the excavated ones
+        from a column's first positive entry down, because a zero-thickness cell absorbed
+        below one (`reconcile=False` leaves those) holds 0.0.
+      - **A bare `fill="propagate"` bed is accepted; algebra over one is REFUSED at the
+        call**, alongside the relative surfaces. Where the source has no data it reads the
+        surface above: bare, that is the ground, so the cell is a rim and is not cut, and
+        `mf.lak` reads the same unchanged top -- idempotent. `raster(p, fill="propagate")
+        - 2` gave the stack `ground - 2` there, which IS cut, and the lake `ground - 4`
+        off the excavated top: 14 of 27 cells 2.0 ft apart. Some composites happen to be
+        idempotent (`Min(propagate, 90)`, a `max`); all are refused, one rule -- a false
+        refusal costs filling the raster's gaps, a false pass a lake bed that disagrees
+        with its own cut. Not taken: recording the ground each bed was sampled against so
+        `mf.lak` could sample against it too, which ties the lake to a surface the model
+        no longer has.
+      - **`ExcavationRecord.min_remnant`**: a declaration value, not derived, so the
+        record still holds "the declaration resolved on this grid"; the report's
+        `kept_slivers` needs it.
+      - **`sample_bed(refresh=)`, `refresh()` and `cache_status()`** reach an excavation's
+        bed now (keys `"excavation:<name>"`), and **`for_grid` copies the excavations** --
+        both listed for the lifecycle commit (C6), done here because leaving them meant a
+        stale contour bed under `build(refresh=True)` and a pond dropped SILENTLY by
+        `for_grid`, which `mf.disv` uses to copy an array-holding stack.
+      - `excavation_report(thinner_than=)`, omitted, judges each connected cell's UNIT --
+        what is left of it in the column, a split unit judged whole -- against the unit's
+        `min_thickness`: the rule `qc()` and `report()` count `thin` by. Per slice, a
+        connected FULL 10 ft slice of a 30 ft unit with a 20 ft minimum read thin while
+        `qc()` read nothing. Given, it compares the CELL; the result does not store the
+        build's `min_sep`, so pass it there.
+      **Interim, closed by later commits of the design:** an excavated stack REFUSES
+      `to_dict` (`NotImplementedError`, which `stamp_source_hashes` does not catch) rather
+      than dropping the pond, so `mf.disv(<gridless excavated stack>)` raises at the call
+      and such a stack cannot be saved or digested -- `mf.disv(stack.build(vor))` can
+      (C6). **`mf.lak` reads no record yet**: on a cut pond `bathy` still writes the old
+      rule -- zero side walls and a false "flat bed" warning (design section 4.3) -- so the
+      cut alone is the geometry, not yet a better lake model (C7). Nothing refuses a
+      package declared against a context from BEFORE the cut (C5).
+      **Measured, and what the tests assert because of it.** A steady NEWTON toy on the
+      excavated stack read -0.41% under IMS's DEFAULT closure and its un-excavated twin
+      -0.21% (+0.59% each with the water table below the fill), all under Normal
+      termination; closed tight both read 0.00%. So the MF6 test tightens the solver and
+      asserts BOTH discrepancies (reproducer part 2). MF6's own `.disv.grb` holds the cut
+      exactly (top, bottoms, idomain).
+      **Found, NOT fixed:** a PRT release point's partial miss (`PRTReleasePoints.
+      from_points`) is reported through the LOGGER only -- ledger 288's `warnings.warn`
+      rule never reached it, so in a notebook the "left out" line reaches nobody. The
+      excavation test reads it from the logger. **NOT built** (the design's section 10):
+      recovering an excavation in `from_modflow` (it re-imports a smeared top over thin
+      layers); an `edges_only` marker; a dashed ground line in `stack.plot.section`;
+      excavating by centroid.
+      `LayerStack.add`'s docstring said `pinch="passthrough"` was the default; `build`'s
+      is `"floor"`, and it says so now. Tests: `tests/test_excavate.py`, 50 (one MF6);
+      each rule mutated in turn fails a named test (16 mutations).

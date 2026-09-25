@@ -251,7 +251,7 @@ if TYPE_CHECKING:
         grid_ref,
         ref,
     )
-    from myflopy.surfaces import LayerSurfaces, Surface
+    from myflopy.surfaces import ExcavationRecord, LayerSurfaces, Surface
     from myflopy.workspace import (
         ModelView,
         Project,
@@ -317,6 +317,8 @@ _EXPORTS = {
     "LayerStack": ("myflopy.layers", "LayerStack"),
     "LayerBuildResult": ("myflopy.layers", "LayerBuildResult"),
     "LayerQCReport": ("myflopy.layers", "LayerQCReport"),
+    # What `LayerStack.excavate` leaves on a built result and on the grid.
+    "ExcavationRecord": ("myflopy.surfaces", "ExcavationRecord"),
     # The surface constructors `LayerStack` takes as arguments. Exporting the
     # class without them meant the documented one-liner --
     # `mf.LayerStack(vor, top=mf.Raster("ground.tif"))` -- did not work from

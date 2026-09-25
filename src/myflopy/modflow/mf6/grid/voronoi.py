@@ -258,6 +258,7 @@ class VoronoiGridPlus(VoronoiGrid):
         self._idomain_path = None
         self._idomain = None
         self._gdf_topbtm = None
+        self._excavations = {}
         self._area_list = None
         self._adjacent_cells_idx = None
         self._ja, self._cl12, self._hwva = None, None, None
@@ -383,6 +384,31 @@ class VoronoiGridPlus(VoronoiGrid):
         """
         self._gdf_topbtm = geometry_first(value)
         self._nlay = None
+        # The excavation records ride WITH these elevations: whoever writes a new
+        # table drops the old records, and `LayerBuildResult.attach_to_grid` sets its
+        # own after the table (the excavation design, section 2.2).
+        self._excavations = {}
+
+    @property
+    def excavations(self) -> dict:
+        """The excavation records published with :attr:`gdf_topbtm`, by name.
+
+        Set by ``LayerBuildResult.attach_to_grid`` (``LayerStack.build(attach=True)``)
+        to the result's ``excavations`` -- :class:`~myflopy.surfaces.ExcavationRecord`
+        objects saying which cells were dug and the bed at each -- and CLEARED by any
+        other write of ``gdf_topbtm``, so it never describes elevations it did not
+        come with. What ``mf.lak`` reads to tell an excavated lake from one nobody
+        dug. ``{}`` when nothing was published (and on a grid pickled before it
+        existed).
+        """
+
+        return self.__dict__.get("_excavations") or {}
+
+    @excavations.setter
+    def excavations(self, value) -> None:
+        """Publish records (a mapping of name -> ExcavationRecord); ``None`` clears them."""
+
+        self._excavations = dict(value or {})
 
     def get_disu_connectivity(self, *, use_representative_point: bool = False, tol: float = 0.0, validate: bool = True):
         """Compute DISU-style connectivity arrays for the current Voronoi grid."""

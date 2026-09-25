@@ -829,10 +829,12 @@ shares actually equal.
 #### Erosion — a surface that cuts down through the layers below
 
 An incised channel, a buried valley, a scoured contact: the overlying surface
-drops *below* one or more contacts underneath it. **There is no separate "cut"
+drops *below* one or more contacts underneath it. **Erosion needs no separate "cut"
 operation** — `reconcile="bottom"` already does it. It pushes every contact the
 cut passes through down to `cut - min_sep`, cascading, and the layers that end up
-thinner than `min_thickness` are handled by their `pinch`.
+thinner than `min_thickness` are handled by their `pinch`. (A VOID — a pond, pit or
+basin that will hold a lake — is different, and is `stack.excavate(bottom, within)`:
+see "Excavating a pond" below.)
 
 Measured on a 441-cell grid, ground at 200 with a channel incised to 115, through
 `sand` (base 150) and `clay` (base 120) into `till`:
@@ -887,6 +889,39 @@ Use reconcile when the unit is genuinely truncated and gone; use `capped_at` whe
 a remnant survives, or when you want the cell to stay active. The `reconcile_moved=0`
 in the second row is the tell that you described the geometry rather than
 discovering it.
+
+#### Excavating a pond — `stack.excavate(bottom, within)`
+
+A lake's cells are WATER, not aquifer: without the cut, a `bathy` lake on a stack whose
+top is the ground connects its floor into the layer CONTAINING the bed, and MF6 moves
+that vertical connection up to the cell's top — on a real pond 411 of 612 vertical
+connections exchanged nothing all run. The cut makes the first active cell under the
+bed start exactly at the bed:
+
+```python
+bed = mf.Contours("pond_contours.gpkg", z="elevation", region_vector="pond.gpkg")
+stack = (mf.LayerStack(top=ground)
+         .add("sand", bottom=lyr1, min_thickness=3)
+         .add("clay", bottom=lyr2, split=[0.5, 0.5]))
+baseline = stack.build(vor)                                   # before: it mutates the stack
+pond = stack.excavate(bottom=bed, within="pond.gpkg").build(vor, attach=True)
+ctx = mf.ModelContext(grid=vor, domain=pond.idomain)
+print(pond.excavation_report())      # cut / rim / absorbed / connected layer and thickness
+```
+
+Pass `within` the same polygons you give `mf.lak(lakes=)`. The cut runs after
+reconcile and the pinch policy; a cell left under the bed thinner than `min_remnant`
+(0.1 ft) is absorbed into the one below rather than moving the bed. With a transparent
+lakebed the connected cell's thickness sets the infiltration rate, so read the report's
+`connected_min`/`connected_max` — a larger `min_remnant` changes the geology under the
+pond, not just the solver. After the cut, "model top" inside the pond is the bed:
+`irch="top_active"` recharge lands under it (MF6 zeroes it while a lake is wet there),
+a `.gpkg` boundary on a dug cell is dropped with a warning, and a context built before
+the cut still names the removed cells. The layer stack cannot be saved lazily yet —
+declare `mf.disv(pond)` (ledger 320). **`mf.lak` does not read the excavation records
+yet**: its generated connections still follow the un-excavated rule (on a cut pond,
+`bathy` writes no side walls), so the cut alone is the geometry, not yet the lake
+model (ledger 320).
 
 #### Look at it before you trust it
 

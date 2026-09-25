@@ -14,21 +14,30 @@ layer-elevation lookups, ``mf.disv``) keep working unchanged.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import geopandas as gpd
 import numpy as np
+import shapely as shp
 
 from myflopy._defaults import DEFAULT_EPSG
+from myflopy._logging import get_logger
+from myflopy.areas import Area
 from myflopy.modflow.mf6.grid.geometry import (
     centroid_zones,
+    footprint_cells,
     geometry_first,
+    read_footprints,
     reconcile_surfaces,
+    refuse_footprint_misses,
 )
 from myflopy.modflow.mf6.grid.surfaces import get_raster_vals_at_centroids
+
+_logger = get_logger(__name__)
 
 # Surfaces defined relative to the surface immediately above them.
 _RELATIVE_KINDS = ("offset_below", "constant_thickness")
@@ -917,7 +926,9 @@ class Surface:
         return vals
 
 
-def sample_bed(surface, grid, ground, *, length_units: str | None = None) -> np.ndarray:
+def sample_bed(
+    surface, grid, ground, *, length_units: str | None = None, refresh: bool = False
+) -> np.ndarray:
     """Sample a lakebed or excavation floor onto every cell of ``grid``.
 
     The one bed sampler behind ``mf.lak(lake_bottom=)`` and
@@ -943,6 +954,10 @@ def sample_bed(surface, grid, ground, *, length_units: str | None = None) -> np.
         The model's length unit. A surface declaring ``units=`` is converted to it
         (``"meters"`` -> ``"feet"`` multiplies by 3.2808...). ``None`` leaves the
         values as sampled.
+    refresh : bool, default False
+        Rebuild a derived (contour) surface's cached raster before sampling, as
+        ``LayerStack.build(refresh=True)`` does for every other surface of the stack.
+        A stale cache is otherwise reused with a warning.
 
     Returns
     -------
@@ -972,7 +987,7 @@ def sample_bed(surface, grid, ground, *, length_units: str | None = None) -> np.
     if isinstance(surface, (str, Path)):
         surface = Surface.raster(surface)
     previous = np.asarray(ground, dtype=float)
-    values = np.asarray(surface.values(grid, previous=previous), dtype=float)
+    values = np.asarray(surface.values(grid, previous=previous, refresh=refresh), dtype=float)
     if surface.units and length_units:
         if surface.is_relative:
             raise ValueError(
@@ -981,6 +996,396 @@ def sample_bed(surface, grid, ground, *, length_units: str | None = None) -> np.
             )
         values = values * _length_factor(surface.units, length_units)
     return values
+
+
+@dataclass(frozen=True, eq=False)
+class ExcavationRecord:
+    """One excavation of a layer stack, resolved on one grid: which cells, and the bed at each.
+
+    What ``LayerStack.excavate`` / ``LayerBuildResult.excavate`` leave behind on the
+    built result (``result.excavations[name]``) and publish on the grid beside
+    ``gdf_topbtm`` (``grid.excavations``) when the result is attached. It is the
+    DECLARATION resolved on this grid and nothing derived from the cut: the connected
+    layer, the absorbed slivers, the connected cell's thickness and the removed volume
+    are computed on demand by ``LayerBuildResult.excavation_report()``, so nothing here
+    can go stale through ``prune_isolated`` or a copy of the result.
+
+    Parameters
+    ----------
+    name : str
+        The excavation's key (converted with ``str``): the label in reports and
+        refusals, and the key of ``result.excavations``.
+    cells : sequence of int
+        The footprint's cells, by the lake's area rule
+        (:func:`~myflopy.modflow.mf6.grid.geometry.footprint_cells`) -- the same
+        cells ``mf.lak`` resolves from the same polygons. Stored sorted, as a tuple
+        of python ``int`` (a ``numpy.int64`` is converted), duplicates refused.
+    bed : array_like of float, shape (len(cells),)
+        The floor at each cell, in the stack's length units, as SAMPLED --
+        area-weighted, before any capping at the ground. ``NaN`` where the source has
+        no data (that cell was not cut). A cell whose bed is at or above the ground
+        (a rim cell) keeps its sampled value here; it was not cut either. Stored as
+        a read-only ``float64`` array, in ``cells`` order.
+    min_remnant : float, default 0.1
+        The declaration's thinnest cell allowed directly under the bed (length
+        units), kept so the report can say which connected cells were left thinner
+        than it because nothing active lay below them.
+
+    Raises
+    ------
+    ValueError
+        ``bed`` of another length than ``cells``, a repeated cell, a negative cell,
+        or a negative or non-finite ``min_remnant``.
+
+    See Also
+    --------
+    myflopy.layers.LayerStack.excavate : Declares one.
+    myflopy.layers.LayerBuildResult.excavation_report : What the cut did, per excavation.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from myflopy.surfaces import ExcavationRecord
+    >>> record = ExcavationRecord("pond", [5, 4], [95.0, 96.5])
+    >>> record.cells, record.bed.tolist()
+    ((4, 5), [96.5, 95.0])
+    >>> record.bed_at(5)
+    95.0
+    """
+
+    name: str
+    cells: tuple[int, ...]
+    bed: np.ndarray
+    min_remnant: float = 0.1
+
+    def __post_init__(self) -> None:
+        """Normalize to plain types: a sorted tuple of ``int`` and a read-only float bed."""
+
+        cells = [int(cell) for cell in self.cells]
+        bed = np.asarray(self.bed, dtype=np.float64).ravel()
+        if bed.size != len(cells):
+            raise ValueError(
+                f"excavation {self.name!r}: {bed.size} bed values for {len(cells)} cells."
+            )
+        if len(set(cells)) != len(cells):
+            raise ValueError(f"excavation {self.name!r}: a cell is listed twice.")
+        if any(cell < 0 for cell in cells):
+            raise ValueError(f"excavation {self.name!r}: a cell number is negative.")
+        order = np.argsort(cells, kind="stable")
+        bed = bed[order].copy()
+        bed.setflags(write=False)
+        min_remnant = float(self.min_remnant)
+        if not np.isfinite(min_remnant) or min_remnant < 0:
+            raise ValueError(
+                f"excavation {self.name!r}: min_remnant must be a finite number >= 0, "
+                f"not {self.min_remnant!r}."
+            )
+        object.__setattr__(self, "name", str(self.name))
+        object.__setattr__(self, "cells", tuple(cells[i] for i in order))
+        object.__setattr__(self, "bed", bed)
+        object.__setattr__(self, "min_remnant", min_remnant)
+
+    def __eq__(self, other) -> bool:
+        """Equal when the name, cells, ``min_remnant`` and every bed value agree (NaN == NaN)."""
+
+        if not isinstance(other, ExcavationRecord):
+            return NotImplemented
+        return (
+            self.name == other.name
+            and self.cells == other.cells
+            and self.min_remnant == other.min_remnant
+            and np.array_equal(self.bed, other.bed, equal_nan=True)
+        )
+
+    __hash__ = None  # a record holds an array; equality is by value, so it is unhashable
+
+    def bed_at(self, cell: int) -> float:
+        """The sampled bed at one of the record's cells.
+
+        Parameters
+        ----------
+        cell : int
+            A cell of :attr:`cells` (any integer type).
+
+        Returns
+        -------
+        float
+            The bed there, ``nan`` where the source had no data.
+
+        Raises
+        ------
+        KeyError
+            A cell the excavation does not cover.
+
+        Examples
+        --------
+        >>> ExcavationRecord("pond", [3], [90.0]).bed_at(3)
+        90.0
+        """
+
+        try:
+            return float(self.bed[self.cells.index(int(cell))])
+        except ValueError:
+            raise KeyError(f"cell {cell} is not in excavation {self.name!r}.") from None
+
+    def __repr__(self) -> str:
+        finite = self.bed[np.isfinite(self.bed)]
+        span = f"{finite.min():.6g}..{finite.max():.6g}" if finite.size else "no data"
+        return (
+            f"ExcavationRecord({self.name!r}, {len(self.cells)} cells, bed {span}, "
+            f"min_remnant={self.min_remnant:g})"
+        )
+
+
+def _feature_floor(value, *, name: str, label: str, column: str) -> float:
+    """A column floor as a finite float, or a refusal naming the feature (ledger 247)."""
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"excavation {name!r}: feature {label!r} has {column}={value!r}, which is "
+            "not a number."
+        ) from None
+    if not np.isfinite(number):
+        raise ValueError(
+            f"excavation {name!r}: feature {label!r} has no {column} ({value!r}) -- a "
+            "NULL floor is not a floor; fill it or drop the feature."
+        )
+    return number
+
+
+def _read_excavation_file(path, *, layer=None, crs=None):
+    """Read an excavation's footprint FILE through the lake's reader, labelled for messages.
+
+    One feature is labelled with the file's stem, as ``mf.lak`` labels it. Several are
+    labelled ``"row <i>"`` -- the zero-based row of the layer read -- because the
+    reader's own fallback, ``"excavation_<i>"``, is the shape of a default excavation
+    NAME, so "'excavation_1' (outside the grid)" read as another excavation missing.
+    """
+
+    frame = read_footprints(path, layer=layer, crs=crs, noun="excavation")
+    if len(frame) > 1:
+        frame.index = [f"row {i}" for i in range(len(frame))]
+    return frame
+
+
+def _resolve_excavation(
+    *,
+    name: str,
+    bottom,
+    column: str | None,
+    within,
+    layer,
+    min_remnant: float,
+    grid,
+    ground,
+    length_units: str | None,
+    refresh: bool = False,
+) -> ExcavationRecord:
+    """Resolve one declared excavation onto ``grid``: its cells and the bed at each.
+
+    ``within`` is a vector path (read at ``layer``) or an :class:`~myflopy.areas.Area`
+    (one feature per PART). Cells come from the shared footprint rule and the bed from
+    the shared sampler, so a lake declared on the same polygons and floor resolves the
+    same cells and the same float (design sections 3.4-3.5). A feature missing the grid
+    warns by name and a total miss raises (ledger 211); a column floor is read per
+    feature, and two features giving one cell different floors raise. Cells where the
+    bed has no data are kept (NaN) and warned about; all of them raises.
+    """
+
+    polys = grid.gdf_vorPolys
+    grid_crs = getattr(grid, "crs", None)
+    if isinstance(within, Area):
+        parts = [part for part in shp.get_parts(within.geometry) if not part.is_empty]
+        labels = [name] if len(parts) == 1 else [f"{name} part {i}" for i in range(len(parts))]
+        frame = gpd.GeoDataFrame({"_part": labels}, geometry=parts, crs=within.crs)
+        footprints = read_footprints(frame, crs=grid_crs, id_field="_part", noun="excavation")
+    else:
+        footprints = _read_excavation_file(within, layer=layer, crs=grid_crs)
+    per_feature = footprint_cells(polys, footprints.geometry)
+    refuse_footprint_misses(
+        polys,
+        footprints,
+        per_feature,
+        noun=f"features of excavation '{name}'",
+        consequence=", so nothing is dug for them",
+        partial="warn",
+        source_crs=footprints.attrs.get("source_crs"),
+        grid_crs=grid_crs,
+    )
+    cells = sorted({cell for found in per_feature for cell in found})
+    if column is not None:
+        if column not in footprints:
+            raise ValueError(
+                f"excavation {name!r}: bottom={column!r} is no longer a column of its "
+                "footprint file."
+            )
+        floors: dict[int, float] = {}
+        conflicts = []
+        for label, found, value in zip(footprints.index, per_feature, footprints[column], strict=True):
+            floor = _feature_floor(value, name=name, label=str(label), column=column)
+            for cell in found:
+                if cell in floors and floors[cell] != floor:
+                    conflicts.append((cell, floors[cell], floor))
+                floors[cell] = floor
+        if conflicts:
+            shown = ", ".join(f"cell {c} ({a:g} vs {b:g})" for c, a, b in conflicts[:10])
+            raise ValueError(
+                f"excavation {name!r}: two features of its footprint give one cell "
+                f"different {column} floors: {shown}. A cell has one floor; move the "
+                "features apart or give them one value."
+            )
+        bed = np.array([floors[cell] for cell in cells], dtype=float)
+    else:
+        sampled = sample_bed(bottom, grid, ground, length_units=length_units, refresh=refresh)
+        bed = np.asarray(sampled, dtype=float)[cells]
+    missing = [cell for cell, value in zip(cells, bed, strict=True) if not np.isfinite(value)]
+    if cells and len(missing) == len(cells):
+        raise ValueError(
+            f"excavation {name!r}: its bottom has no data at any of its {len(cells)} "
+            "footprint cells -- does the bed raster cover the footprint?"
+        )
+    if missing:
+        message = (
+            f"excavation {name!r}: the bottom has no data at {len(missing)} of its "
+            f"{len(cells)} cells {missing[:10]}; they are NOT cut (mf.lak falls back to "
+            "the same model top there). Usually cells the footprint only clips at its edge."
+        )
+        _logger.warning(message)
+        warnings.warn(message, UserWarning, stacklevel=4)
+    return ExcavationRecord(name, tuple(cells), bed, min_remnant)
+
+
+def _refuse_overlapping_excavations(records) -> None:
+    """Refuse two excavations sharing a cell, naming the cells and both names (F2).
+
+    A shared cell would carry two floors and, once lakes are declared on them,
+    connections from two lakes. Measured with 17 ft cells: ponds 2 or 10 ft apart
+    shared 2 cells, 20 ft or more shared none (the design's ``q5_overlap.py``).
+    """
+
+    owner: dict[int, str] = {}
+    shared: dict[tuple[str, str], list[int]] = {}
+    for record in records:
+        for cell in record.cells:
+            first = owner.setdefault(cell, record.name)
+            if first != record.name:
+                shared.setdefault((first, record.name), []).append(cell)
+    if shared:
+        detail = "; ".join(
+            f"{a!r} and {b!r} share {len(found)} cell(s) {sorted(found)[:10]}"
+            for (a, b), found in shared.items()
+        )
+        raise ValueError(
+            f"Excavations may not overlap: {detail}. A cell has one floor and, with a "
+            "lake on each, would take connections from two lakes. Move the footprints "
+            "apart (with the grid's cells ~a cell width between them), or merge them "
+            "into one excavation."
+        )
+
+
+class _Cut(NamedTuple):
+    """What :func:`_excavate_layers` returns: the cut arrays and the facts of the cut."""
+
+    top: np.ndarray
+    botm: np.ndarray
+    idomain: np.ndarray
+    excavated: np.ndarray
+    absorbed: np.ndarray
+
+
+def _excavate_layers(top, botm, idomain, records) -> _Cut:
+    """Cut ``records`` into built layer arrays: the post-reconcile, post-pinch step.
+
+    Runs AFTER reconcile and the pinch policy (design section 3.1): cutting before
+    them was wrong under every pinch policy and reconcile mode measured. For each
+    record cell with a finite bed ``b`` below its top: ``top = b``, every
+    ``botm[k] = min(botm[k], b)``, so the layers above the bed have zero thickness and
+    go idomain 0 -- never -1: the space is lake water, not a pass-through layer. Pinch
+    verdicts are the pre-cut ones and are not re-run.
+
+    Then the sliver rule (section 3.3), per column: while the first cell under the bed
+    is inactive (idomain <= 0, a pass-through -1 included) -- a LAK vertical
+    connection cannot reach through it -- or is thinner than the record's
+    ``min_remnant`` with an active cell somewhere below it, it is ABSORBED: its bottom
+    rises to the bed (zero thickness, idomain 0) and the cell below becomes the
+    connected one, its top still exactly at the bed. Column thickness is conserved.
+    A thin cell with nothing active below it is kept. A column left with no active
+    cell under the bed -- a bed below ``botm[-1]`` included -- raises, naming the
+    cells. A bed at or above the top (a rim cell) is not cut.
+
+    Records must not overlap (:func:`_refuse_overlapping_excavations`).
+    """
+
+    top = np.array(top, dtype=float)
+    botm = np.array(botm, dtype=float)
+    idomain = np.array(idomain)
+    nlay, ncpl = botm.shape
+    excavated = np.zeros((nlay, ncpl), dtype=bool)
+    absorbed = np.zeros((nlay, ncpl), dtype=float)
+    stranded: dict[str, list[int]] = {}
+    for record in records:
+        rim, kept = [], []
+        for cell, bed in zip(record.cells, record.bed, strict=True):
+            if not np.isfinite(bed):
+                continue
+            if bed >= top[cell]:
+                rim.append(cell)
+                continue
+            top[cell] = bed
+            np.minimum(botm[:, cell], bed, out=botm[:, cell])
+            below = np.flatnonzero(botm[:, cell] < bed)
+            first = int(below[0]) if below.size else nlay
+            excavated[:first, cell] = True
+            idomain[:first, cell] = 0
+            k = first
+            # The top cell ``k`` had BEFORE any absorption above it: the bed for the
+            # first cell under it, then the previous cell's own (unraised) bottom.
+            own_top = bed
+            while k < nlay:
+                active_below = bool((idomain[k + 1:, cell] > 0).any())
+                # What the cell would be if it connected: everything absorbed above it
+                # is now part of it, so the min_remnant test is on this, from the bed.
+                thickness = bed - botm[k, cell]
+                if idomain[k, cell] > 0 and (thickness >= record.min_remnant or not active_below):
+                    if thickness < record.min_remnant:
+                        kept.append(cell)
+                    break
+                if not active_below:
+                    k = nlay  # an inactive cell with nothing active below it
+                    break
+                # ...but what it CONTRIBUTES is only its own material: in a chain of
+                # absorptions the cumulative figure counts every earlier remnant again.
+                absorbed[k, cell] = own_top - botm[k, cell]
+                own_top = botm[k, cell]
+                botm[k, cell] = bed
+                idomain[k, cell] = 0
+                excavated[k, cell] = True
+                k += 1
+            if k >= nlay:
+                stranded.setdefault(record.name, []).append(int(cell))
+        if rim:
+            _logger.info(
+                "excavation %r: %d footprint cell(s) have a bed at or above the ground "
+                "and are not cut (a rim; mf.lak caps its bed at the top there): %s",
+                record.name, len(rim), rim[:10],
+            )
+        if kept:
+            _logger.info(
+                "excavation %r: %d connected cell(s) are thinner than min_remnant=%g and "
+                "kept, because no active cell lies below them: %s",
+                record.name, len(kept), record.min_remnant, kept[:10],
+            )
+    if stranded:
+        detail = "; ".join(f"{name!r}: {cells[:10]}" for name, cells in stranded.items())
+        raise ValueError(
+            "An excavation leaves a column with no active cell under its bed (the bed "
+            f"is below the stack's bottom, or everything below it is inactive): {detail}. "
+            "A lake there would connect to nothing. Raise the bottom there, deepen the "
+            "stack, or shrink the footprint."
+        )
+    return _Cut(top, botm, idomain, excavated, absorbed)
 
 
 class LayerSurfaces:
@@ -1292,4 +1697,4 @@ class LayerSurfaces:
         )
 
 
-__all__ = ["Surface", "LayerSurfaces"]
+__all__ = ["ExcavationRecord", "Surface", "LayerSurfaces", "sample_bed"]

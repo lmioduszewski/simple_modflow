@@ -1486,6 +1486,7 @@
       "DataSourceSpec",
       "DrnFlowObservationSpec",
       "DrnFlowTargets",
+      "ExcavationRecord",
       "ExchangeSpec",
       "ExpGeoStruct",
       "Flat",

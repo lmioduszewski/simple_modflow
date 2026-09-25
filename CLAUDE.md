@@ -1008,6 +1008,17 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   recipe that still needs them.
   Also fixed there: `thickness=<Surface>` was silently an ELEVATION, and
   `build`/`to_disv` disagreed on a split stack's idomain.
+  **A pond is `stack.excavate(bottom, within)`** (ledger 320) -- a VOID, cut in
+  `build()` AFTER reconcile and pinch (cutting before them was measured wrong under
+  every policy). The connected cell's top is EXACTLY the bed; cells above go idomain
+  0, never -1; a sliver under the bed is ABSORBED into the cell below (`min_remnant`,
+  0.1), never deepened. `within` is read, covered and sampled through the SAME helpers
+  as `mf.lak` (`geometry.read_footprints`/`footprint_cells`, `surfaces.sample_bed`), so
+  record cells == lake cells. The result carries `excavations` (`mf.ExcavationRecord`),
+  `ground`, `excavated`, `absorbed`; `attach=True` publishes `grid.excavations`, which
+  the `gdf_topbtm` SETTER clears. `stack.to_disv` is now `build().to_disv()` (0 digests
+  moved, 12 stacks). INTERIM: an excavated stack REFUSES `to_dict` (so lazy `mf.disv`
+  raises) and `mf.lak` does not read the records yet.
   `.plot.map()/.plot.section()/.plot.surface()` and `.vtk_3d()`, `from_modflow`).
   **Pictures come from `stack.plot`** as of 8.5a — `preview`/`thickness_map`/
   `cross_section`/`surface_3d`/`views` are gone. `qc()` stays a method: it is a

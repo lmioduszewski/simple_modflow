@@ -1433,8 +1433,8 @@ def refuse_footprint_misses(
             )
         )
     message = (
-        f"{len(missing)} of {len(footprints)} {noun} cover no grid cell{consequence} "
-        f"and are left out: {reasons}."
+        f"{len(missing)} of {len(footprints)} {noun} cover no grid cell and are left "
+        f"out{consequence}: {reasons}."
     )
     logger.warning(message)
     warnings.warn(message, UserWarning, stacklevel=3)

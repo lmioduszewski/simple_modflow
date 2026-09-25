@@ -160,7 +160,8 @@ layer (by name or zero-based index); omitted, the first, which was all `mf.lak` 
 read before. A name the file does not hold raises, listing the layers present. The
 lakes are read by `grid.geometry.read_footprints`, their cells chosen by
 `footprint_cells` and a Surface/raster bed sampled by `surfaces.sample_bed` -- the
-shared reader, cell rule and bed sampler an excavation of the layer stack is built on.
+shared reader, cell rule and bed sampler an excavation of the layer stack
+(`stack.excavate`) is built on.
 
 **What the bed does in MF6.** MF6 ignores the elevations written on a VERTICAL
 lake connection and uses the connected cell's TOP instead, so a bed lying inside a
@@ -368,6 +369,29 @@ release-group boundnames; without them it names the fix and offers
   its base; the result carries
   `units` (unit → layer indices) and `per_layer({unit: value})` for the positional
   per-layer lists `mf.npf`/`sto`/`ic` take.
+- `stack.excavate(bottom, within, *, name=, layer=, min_remnant=0.1)` — a void cut
+  into the stack: a pond, basin, pit or trench (ledger 320). Inside `within` — the
+  SAME polygons you pass to `mf.lak(lakes=)`, read by the same reader and covering
+  the same cells — every surface above `bottom` is lowered to it, so the first active
+  cell under the bed has its top exactly at the bed and the cells above go idomain 0.
+  It runs in `build()` AFTER reconcile and the pinch policy, and absorbs rather than
+  deepens: a cell under the bed thinner than `min_remnant` (or inactive) is folded
+  into the cell below, and the bed never moves. `bottom` is an absolute elevation (a
+  Surface, a number, a raster path, or a column of the footprint file); a surface
+  measured from the one above is refused (write `ground - 9`), and so is algebra over
+  a `fill="propagate"` source (pass it bare: it takes the ground where it has no data,
+  and those cells are not cut). An excavation's name may not be a unit's, nor a layer
+  a unit builds later (`<unit>_i` of a `split`). Footprints of two
+  excavations may not share a cell. Mutates and returns the stack, like `add` — build
+  the un-excavated baseline first. The result gains `excavations` (name →
+  `mf.ExcavationRecord`: cells + sampled bed), `ground` (the pre-cut top), `excavated`
+  and `absorbed`; `result.excavation_report()` says what was removed, absorbed and
+  connected; `build(attach=True)` publishes the records as `vor.excavations` beside
+  `gdf_topbtm`. `result.excavate(...)` cuts a BUILT result (a model with no stack).
+  `stack.to_disv(vor)` is now `stack.build(vor).to_disv()`. Not yet serializable:
+  `mf.disv(<gridless excavated stack>)` raises — declare `mf.disv(stack.build(vor))`.
+  `mf.lak` does not read the records yet: its connections still follow the
+  un-excavated rule (ledger 320).
 - `mf.Toward(target, fraction)` — the contact a share of the way from the surface
   above down to `target`; the primitive `split=` is built on.
 - `mf.CellSurfaceOffset("model_top"|"cell_top"|"cell_bottom", offset=, minimum=)`.
