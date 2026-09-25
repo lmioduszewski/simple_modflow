@@ -323,6 +323,9 @@ def test_the_guard_reports_a_lake_mf6_counts_from_its_cell_tops(recwarn):
     assert "4 of its 4 VERTICAL connections sit in a cell whose TOP is above the bed, by up to 3" in text
     assert "(median 3); 4 of those tops are above its starting stage 10" in text
     assert "stack.excavate(bottom=<the same lake_bottom>" in text
+    # ...and the route for a model with no stack (the design's F14).
+    assert "dug = result.excavate(bottom=<the same lake_bottom>" in text
+    assert "mf.disv(dug)" in text and "ModelContext(surfaces=dug, domain=dug.idomain)" in text
     with pytest.raises(ValueError, match=GUARD):
         mf.lak(context=context, nper=1, lakes=_pond(grid), lake_id_field="name",
                unexcavated="raise", **kw)
@@ -355,9 +358,12 @@ def test_a_lake_that_looks_excavated_but_carries_no_record_is_reported(flat):
     table = gpd.GeoDataFrame({0: absorbed.top, 1: absorbed.botm[0], 2: absorbed.botm[1]},
                              geometry=grid.gdf_vorPolys.geometry, crs=grid.crs)
     context = ModelContext(grid=grid, domain=absorbed.idomain, surfaces=table)
-    with pytest.raises(ValueError, match="LOOKS excavated -- 4 of its 4 cells"):
+    with pytest.raises(ValueError, match="LOOKS excavated -- 4 of its 4 cells") as caught:
         mf.lak(context=context, nper=1, lakes=_pond(grid), lake_id_field="name",
                starting_stage=9.0, lake_bottom=8.05, unexcavated="raise")
+    # Hand-built elevations are exactly the case with no stack to follow the advice on:
+    # it names the BUILT result's own excavate too (the design's F14).
+    assert "result.excavate(bottom=<the same lake_bottom>" in str(caught.value)
 
 
 # -- the metadata --------------------------------------------------------------------------

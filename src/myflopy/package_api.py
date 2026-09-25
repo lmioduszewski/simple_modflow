@@ -5913,11 +5913,18 @@ class _LAKPackage:
             highest stage (on a real pond, 577 of 612, worst 12.58). And a lake
             that LOOKS excavated -- more than half its cells have a zero-thickness
             layer above an active cell whose top is the bed -- but carries no
-            record, so it was written without walls into its neighbours. A lake
-            whose bed IS its cells' tops (a USG export's) triggers neither.
-            Checked when the lakes are validated: at the ``mf.lak`` call, or at
-            ``LAKBuilder.build``/``validate``. It never softens a partial match
-            with an excavation, which always raises.
+            record, so it was written without walls into its neighbours. A lake whose
+            bed IS its cells' tops (a USG export's) triggers neither. Checked when the
+            lakes are validated: at the ``mf.lak`` call, or at
+            ``LAKBuilder.build``/``validate``. It never softens a partial match with an
+            excavation, which always raises. The remedy both findings name: cut the pond
+            into the layering and re-declare ``mf.lak`` -- ``stack.excavate(bottom=,
+            within=)`` on a ``LayerStack``, rebuilt with ``attach=True`` or its
+            ``LayerBuildResult`` passed as ``ModelContext(surfaces=...)``; or, with no
+            stack (a DISV built from a loaded run's arrays), ``dug =
+            result.excavate(bottom=, within=)`` on the ``LayerBuildResult`` the DISV was
+            built from -- a NEW result, to build the DISV and the context from
+            (``mf.disv(dug)``, ``ModelContext(surfaces=dug, domain=dug.idomain)``).
         tables : dict of str to (LakeTable or LakeTableBuilder), optional
             Default ``None``, the same as ``{}``: no tables. Stage / volume /
             surface-area tables, at most one per lake. A value is a

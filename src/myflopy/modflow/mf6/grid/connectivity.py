@@ -175,6 +175,11 @@ class DisvFaces:
         ``get_disv_gridprops()``'s result: ``"vertices"`` rows ``[iv, x, y]`` and
         ``"cell2d"`` rows ``[icell, xc, yc, ncvert, iv1, iv2, ...]``.
 
+    Raises
+    ------
+    KeyError
+        ``gridprops`` has no ``"vertices"`` or no ``"cell2d"``.
+
     Examples
     --------
     >>> import numpy as np
@@ -211,10 +216,10 @@ class DisvFaces:
 
         Parameters
         ----------
-        a : int
+        a : int or numpy.integer
             One cell (a zero-based ``cell2d`` number); its ring order decides which
             of several shared edges is taken, as in MF6.
-        b : int
+        b : int or numpy.integer
             The other cell.
 
         Returns
@@ -222,6 +227,13 @@ class DisvFaces:
         tuple of (int, int), or None
             The two vertex numbers, in ``a``'s ring order; ``None`` when the cells
             share no edge (a corner or nothing).
+
+        Raises
+        ------
+        KeyError
+            ``a`` or ``b`` is not a cell of ``cell2d`` (the message is the number).
+        ValueError
+            ``a`` or ``b`` cannot be read by ``int()``.
 
         Examples
         --------
@@ -247,13 +259,14 @@ class DisvFaces:
 
         Parameters
         ----------
-        a : int
+        a : int or numpy.integer
             One of the two cells sharing the face (a zero-based ``cell2d`` number).
-        b : int
+        b : int or numpy.integer
             The other one.
-        toward : int
+        toward : int or numpy.integer
             Whose DISV centre the length is measured from -- for a LAK wall, the
-            aquifer cell the connection is written into.
+            aquifer cell the connection is written into. Normally ``a`` or ``b``;
+            any cell is accepted and not checked against the pair.
 
         Returns
         -------
@@ -261,6 +274,15 @@ class DisvFaces:
             The perpendicular distance from ``toward``'s centre to the line of the
             shared edge, and the edge's length; ``None`` when the cells share no edge
             (only a corner) or the edge has no length.
+
+        Raises
+        ------
+        KeyError
+            ``a``, ``b`` or ``toward`` is not a cell of ``cell2d``, or the shared
+            edge names a vertex ``vertices`` does not hold (the message is the
+            number).
+        ValueError
+            A cell number ``int()`` cannot read.
 
         Examples
         --------

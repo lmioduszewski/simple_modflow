@@ -1195,11 +1195,18 @@ class LAKBuilder:
         highest stage (on a real pond, 577 of 612, worst 12.58). And a lake
         that LOOKS excavated -- more than half its cells have a zero-thickness
         layer above an active cell whose top is the bed -- but carries no
-        record, so it was written without walls into its neighbours. A lake
-        whose bed IS its cells' tops (a USG export's) triggers neither.
-        Checked when the lakes are validated: at the ``mf.lak`` call, or at
-        ``LAKBuilder.build``/``validate``. It never softens a partial match
-        with an excavation, which always raises.
+        record, so it was written without walls into its neighbours. A lake whose bed IS
+        its cells' tops (a USG export's) triggers neither. Checked when the lakes are
+        validated: at the ``mf.lak`` call, or at ``LAKBuilder.build``/``validate``. It
+        never softens a partial match with an excavation, which always raises. The
+        remedy both findings name: cut the pond into the layering and re-declare
+        ``mf.lak`` -- ``stack.excavate(bottom=, within=)`` on a ``LayerStack``, rebuilt
+        with ``attach=True`` or its ``LayerBuildResult`` passed as
+        ``ModelContext(surfaces=...)``; or, with no stack (a DISV built from a loaded
+        run's arrays), ``dug = result.excavate(bottom=, within=)`` on the
+        ``LayerBuildResult`` the DISV was built from -- a NEW result, to build the DISV
+        and the context from (``mf.disv(dug)``, ``ModelContext(surfaces=dug,
+        domain=dug.idomain)``).
     tables : dict of str to (LakeTable or LakeTableBuilder), default {}
         Default ``{}``: no tables (``None`` raises ``TypeError`` here; ``mf.lak``
         reads it as ``{}``). Stage / volume /
@@ -2519,8 +2526,12 @@ class LAKBuilder:
             + "\nCut the pond into the stack -- stack.excavate(bottom=<the same "
             "lake_bottom>, within=<the lakes= polygons>) -- rebuild it with attach=True (or "
             "pass the LayerBuildResult as ModelContext(surfaces=...)), and re-declare "
-            "mf.lak: those two spellings are what carry an excavation's record to it. "
-            "unexcavated='ignore' silences this; 'raise' refuses it."
+            "mf.lak: those two spellings are what carry an excavation's record to it. With "
+            "no stack (a DISV built from a loaded run's arrays), cut the LayerBuildResult "
+            "the DISV was built from instead: dug = result.excavate(bottom=<the same "
+            "lake_bottom>, within=<the lakes= polygons>) returns a NEW result -- build the "
+            "DISV from it (mf.disv(dug)) and pass ModelContext(surfaces=dug, "
+            "domain=dug.idomain). unexcavated='ignore' silences this; 'raise' refuses it."
         )
 
     def _apply_unexcavated_guard(self) -> None:
