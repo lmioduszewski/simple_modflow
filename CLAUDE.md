@@ -157,6 +157,17 @@ erased. The map and the section tested their own sign or none, until every read 
 colour range to -1e30 and made `contours=True` draw NOTHING. **The user's calls:**
 on a mounding map a DRY cell reads 0 and an inactive one is blank; on a
 depth-below-ground (`bgs`) map both are blank.
+**A lake with no stage is the same two numbers** (ledger 329): LAK writes -1e30 DRY and
++1e30 INACTIVE, and every stage view drew them. Masked ONCE where the file is read,
+`model.outputs.lak.stage.get()` (`masked=False` for the raw file), so the table, maps,
+series, exchange hover, group and diff inherit it. A table keeps the ROW with a `NaN`
+(dropping on it deleted the transitions INTO a dry period, and `LakeStageTargets`' rows);
+nothing may SUM an all-NaN group, which pandas makes 0.0 -- `_aggregate_leaving_gaps`
+serves the series and both map payloads (`agg="sum"` painted a dry lake 0 ft); a diff
+COUNTS a one-sided dry lake (`n_one_sided`). What PEST reads is 1e30, every row kept:
+PEST++ fails a run on an empty field, on `nan` and on a missing row, and reads an extra
+column as the wrong one (`docs/reproducers/pest_no_value_fields.py`). SFR's stage is NOT
+masked yet.
 **Highlighting cells is `map(select=...)`, on EVERY scope** (ledger 160,
 2026-08-29) -- cell indices, a boolean mask, a registered region name, a vector
 file, or a geometry. It draws a **dissolved-boundary outline** by default, NOT
@@ -435,8 +446,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4271 passed / 6 skipped**, 2026-09-25, with ledger 328 and its review):
-  `pytest -n 10` **2m21s** at load average ~4. Its serial clock was not taken; 4266 on
+- Full suite (**4297 passed / 6 skipped**, 2026-09-25, with ledger 329 and its review):
+  `pytest -n 10` **1m54s** at load average ~3 (4286 took 2m50s at ~4, and 4271 with
+  ledger 328 2m21s). Its
+  serial clock was not taken; 4266 on
   the same tree took serial (`-n0`) **8m49s** and `-n 10` **1m37s**, both with other work
   on the machine (load average 1.5-4.8 through the serial run, ~10 at the parallel one's
   start), so neither is a quiet clock -- nor were 4261's 7m58s / 1m43s the same day (ledgers 318-327, MF6
@@ -1085,8 +1098,8 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   the contour table, 530-533 ft). **End to end through the API on that pond** (ledger 327)
   the default formulation reproduced the prototype's run to every digit the ledger shows
   at +80% outer iterations and a 2.16% worst LAK step; `implicit=True` took +14% with the
-  lake budget closed, which is why the teaching passes it. Its stage view still draws
-  MF6's -1e30 on every dry recovery day (D10, open). **A model with NO stack** cuts a `LayerBuildResult`
+  lake budget closed, which is why the teaching passes it. MF6 writes the pond's stage as
+  -1e30 on every dry recovery day (D10); its stage view leaves a gap there (ledger 329). **A model with NO stack** cuts a `LayerBuildResult`
   built from its loaded arrays (`result.excavate` returns a NEW one --
   `mounding_L3K_to_lak.ipynb`), and its loaded IRCH must become `"top_active"` or the
   build refuses the dug cells it names (ledger 321).

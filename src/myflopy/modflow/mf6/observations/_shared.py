@@ -109,14 +109,18 @@ def _workspace_csv_frames(model) -> list[tuple[Path, pd.DataFrame]]:
     return frames
 
 
-def _clean_observation_output_values(values: pd.Series) -> pd.Series:
-    """Normalize MF6 observation CSV values into ordinary numeric series."""
+def _clean_observation_output_values(values: pd.Series, *, no_value: float = 0.0) -> pd.Series:
+    """Normalize MF6 observation CSV values into ordinary numeric series.
+
+    MF6 writes an observation it cannot take as a huge number -- ``DNODATA``,
+    3e30, for an inactive lake or reach. For a FLOW that means no contribution,
+    so the default ``no_value=0.0`` stands; an ELEVATION such as a stage has no
+    such reading, and a stage caller passes ``NaN`` (ledger 329: an inactive lake
+    read as a stage of 0.0 ft).
+    """
 
     numeric = pd.to_numeric(values, errors="coerce")
-    # MF6 observation outputs often use huge sentinels such as 3e30 for
-    # inactive/dry values. For review and calibration aggregation, treat those
-    # as zero-flow / missing contributions rather than literal magnitudes.
-    numeric = numeric.mask(numeric.abs() > 1.0e20, 0.0)
+    numeric = numeric.mask(numeric.abs() > 1.0e20, no_value)
     return numeric.astype(float)
 
 
@@ -124,6 +128,7 @@ def _find_named_observation_output(
     model,
     *,
     expected_columns: dict[str, str],
+    no_value: float = 0.0,
 ) -> pd.DataFrame | None:
     """Find one workspace CSV containing all requested observation columns.
 
@@ -132,6 +137,9 @@ def _find_named_observation_output(
     expected_columns
         Mapping from public target names to the raw MF6 observation column names
         expected in one CSV.
+    no_value
+        What MF6's no-data value (3e30) becomes: ``0.0`` for a flow, ``NaN`` for
+        a stage (see :func:`_clean_observation_output_values`).
     """
 
     if not expected_columns:
@@ -146,7 +154,9 @@ def _find_named_observation_output(
         result = pd.DataFrame({"time": pd.to_numeric(frame[time_column], errors="coerce")})
         for name, raw_column in expected_columns.items():
             actual = lower_map[str(raw_column).strip().lower()]
-            result[str(name)] = _clean_observation_output_values(frame[actual])
+            result[str(name)] = _clean_observation_output_values(
+                frame[actual], no_value=no_value
+            )
         return result
     return None
 
@@ -665,17 +675,27 @@ def _aggregate_named_series(
     id_column: str,
     value_column: str,
 ) -> pd.DataFrame:
-    """Aggregate model result rows to one value per period and integer id."""
+    """Aggregate model result rows to one value per period and integer id.
+
+    A row whose VALUE is missing is kept, and an id with no value in a period comes
+    back ``NaN`` rather than absent or 0.0: a lake with no stage (ledger 329) is a
+    row in the stage table, and dropping it deleted that period from the wide
+    series -- which ``write_named_series_targets`` hands PEST, whose instruction
+    file advances one line per row of the BASE run, so a forward run one row short
+    fails at end of file (``docs/reproducers/pest_no_value_fields.py``).
+    ``sum(min_count=1)`` keeps an all-``NaN`` group ``NaN``; a plain ``sum``
+    makes it 0.0.
+    """
 
     data = frame.copy()
     data["per"] = _numeric_periods(data, caller="_aggregate_named_series(...)")
     data[id_column] = pd.to_numeric(data[id_column], errors="coerce")
     data[value_column] = pd.to_numeric(data[value_column], errors="coerce")
-    data = data.dropna(subset=[id_column, value_column]).copy()
+    data = data.dropna(subset=[id_column]).copy()
     data[id_column] = data[id_column].astype(int)
     return (
         data.groupby(["per", id_column], dropna=False, as_index=False)[value_column]
-        .sum()
+        .sum(min_count=1)
         .sort_values(["per", id_column])
         .reset_index(drop=True)
     )

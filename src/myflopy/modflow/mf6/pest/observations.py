@@ -364,7 +364,10 @@ def prepare_lake_stage_observations(project, spec: LakeStageObservationSpec):
             "as the canonical workflow."
         )
 
-    pivot = targets.simulated_series(project.model)
+    # A lake with no stage is NaN in the series and 1e30 in the base run, exactly
+    # as the forward run writes it: PEST++ reads neither an empty field nor "nan"
+    # (ledger 329), and the two files must agree row for row.
+    pivot = targets.simulated_series(project.model).fillna(targets._PEST_NO_STAGE)
     locations_snapshot = targets.get().loc[:, ["name", "lake"]].drop_duplicates()
     prepared = _prepare_named_series_observations(
         project,

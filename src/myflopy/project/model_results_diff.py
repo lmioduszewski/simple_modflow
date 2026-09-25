@@ -575,33 +575,92 @@ class StageResultDiff(_ResultDiffBase):
         rtol: float = _DEFAULT_RTOL,
         per=None,
     ) -> pd.DataFrame:
-        """One row per model: max/mean/RMSE Δstage, the worst feature/period, within tolerance."""
+        """One row per model: max/mean/RMSE Δstage, the worst feature/period, within tolerance.
+
+        A lake with no stage -- dry or inactive, ``NaN`` in the stage table
+        (ledger 329) -- has no Δstage to average. The statistics run over the rows
+        where BOTH models have a stage, and ``n`` counts those. ``n_one_sided``
+        counts the rows where exactly one of them does: one model's lake is dry
+        where the other's holds water, a difference no number measures, so any
+        such row makes ``within_tolerance`` False. Rows where neither has a stage
+        agree and count in neither column.
+
+        Parameters
+        ----------
+        model_name : str, optional
+            One compared model, by its name in the group; ``None`` (default)
+            summarizes every non-reference member.
+        atol : float, default 1e-3
+            Absolute tolerance, in the model's length unit: a row is within
+            tolerance when ``|Δstage| <= atol + rtol * |reference stage|``. Only
+            rows where both models have a stage are tested.
+        rtol : float, default 1e-3
+            Relative tolerance, dimensionless, multiplying ``|reference stage|``
+            in the same test as ``atol``.
+        per : int, optional
+            Restrict to one zero-based stress period (the stage table's ``per``,
+            the index of the saved stage record). ``None`` (default) uses every
+            record.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per compared model: ``model``, ``n``, ``n_one_sided``,
+            ``max_abs_diff``, ``mean_abs_diff``, ``rmse``, ``argmax_<entity>``
+            (``lake`` or ``reach``), ``argmax_per`` and ``within_tolerance``. With
+            no row where both have a stage, the three statistics are ``NaN`` and
+            the two argmax columns ``-1``. Empty when there is nothing to compare.
+
+        Raises
+        ------
+        KeyError
+            If ``model_name`` names no model in the group. Only when the group
+            has stage rows to compare; with none, the result is the empty table
+            whatever ``model_name`` says.
+        ValueError
+            If ``model_name`` is the group's reference model, which cannot be
+            diffed against itself. Only when there are stage rows, as above.
+
+        Examples
+        --------
+        >>> group = mf.ModelGroup({"base": base, "pumped": pumped}, reference="base")
+        >>> stage = group.diff().packages.lak.results.stage
+        >>> stage.summary()                           # one row: "pumped" vs "base"
+        >>> stage.summary(model_name="pumped", atol=0.01, per=3)
+        """
 
         data = self.get(model_name=model_name, per=per)
         argmax_column = f"argmax_{self._entity}"
         columns = [
-            "model", "n", "max_abs_diff", "mean_abs_diff", "rmse",
+            "model", "n", "n_one_sided", "max_abs_diff", "mean_abs_diff", "rmse",
             argmax_column, "argmax_per", "within_tolerance",
         ]
         if data.empty or "stage_diff" not in data.columns:
             return pd.DataFrame(columns=columns)
         rows = []
         for name, sub in data.groupby("model"):
-            diff = sub["stage_diff"].to_numpy(dtype=float)
-            reference = sub["reference_stage"].to_numpy(dtype=float)
+            has_stage = np.isfinite(sub["stage"].to_numpy(dtype=float))
+            has_reference = np.isfinite(sub["reference_stage"].to_numpy(dtype=float))
+            both = has_stage & has_reference
+            one_sided = int((has_stage ^ has_reference).sum())
+            compared = sub.loc[both]
+            diff = compared["stage_diff"].to_numpy(dtype=float)
+            reference = compared["reference_stage"].to_numpy(dtype=float)
             abs_diff = np.abs(diff)
             imax = int(np.argmax(abs_diff)) if abs_diff.size else 0
             rows.append(
                 {
                     "model": name,
                     "n": int(abs_diff.size),
-                    "max_abs_diff": float(abs_diff.max()) if abs_diff.size else 0.0,
-                    "mean_abs_diff": float(abs_diff.mean()) if abs_diff.size else 0.0,
-                    "rmse": float(np.sqrt(np.mean(diff**2))) if diff.size else 0.0,
-                    argmax_column: int(sub[self._entity].iloc[imax]) if abs_diff.size else -1,
-                    "argmax_per": int(sub["per"].iloc[imax]) if abs_diff.size else -1,
+                    "n_one_sided": one_sided,
+                    "max_abs_diff": float(abs_diff.max()) if abs_diff.size else float("nan"),
+                    "mean_abs_diff": float(abs_diff.mean()) if abs_diff.size else float("nan"),
+                    "rmse": float(np.sqrt(np.mean(diff**2))) if diff.size else float("nan"),
+                    argmax_column: int(compared[self._entity].iloc[imax]) if abs_diff.size else -1,
+                    "argmax_per": int(compared["per"].iloc[imax]) if abs_diff.size else -1,
                     "within_tolerance": bool(
-                        np.all(_within_tolerance(diff, reference, atol, rtol))
+                        one_sided == 0
+                        and np.all(_within_tolerance(diff, reference, atol, rtol))
                     ),
                 }
             )

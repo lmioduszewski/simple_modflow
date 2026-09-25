@@ -887,7 +887,11 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
 - `results.q` — lake↔aquifer exchange (spatial; column **`q_lake`**, feature-referenced,
   negative = the lake loses).
 - `results.q.budget` — exchange summarized by connection type (`get`/`summary`/`plot`).
-- `results.stage`, `results.stage_change`, `results.connections`.
+- `results.stage`, `results.stage_change`, `results.connections`. A lake with no
+  stage -- DRY (MF6 writes -1e30) or INACTIVE (+1e30) -- is `NaN` in `results.stage`,
+  a gap in its series, blank on its maps and an undefined `stage_change`, never a
+  number 1e30 ft away; `model.outputs.lak.stage.get(masked=False)` is the raw file
+  and the one place dry and inactive differ (ledger 329).
 - `budget.<term>` — `gwf`, `flow_ja_face`, `ext_inflow`, `ext_outflow`, `rainfall`,
   `runoff`, `evaporation`, `storage`, `from_mvr`, `to_mvr`, `mvr`, `withdrawal`,
   `constant`, `lake_fluxes`, `auxiliary`, `types`.

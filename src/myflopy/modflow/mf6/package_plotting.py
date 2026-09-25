@@ -706,6 +706,35 @@ def refuse_noun_parameters(noun: str, field: str, kwargs: dict) -> None:
         )
 
 
+#: Aggregations whose 0 is a real answer for a group holding no value.
+_COUNTING_AGGREGATIONS = ("count", "size", "nunique")
+
+
+def _aggregate_leaving_gaps(by, aggregation):
+    """``by.agg(aggregation)``, with a group that holds no value at all left ``NaN``.
+
+    pandas sums an all-``NaN`` group to 0.0, so a lake with no stage (``NaN`` in
+    the stage table, ledger 329) was drawn at 0 ft by any ``sum`` -- in a series
+    and on a map, where it also stretched the colour range down to 0.
+    ``mean``/``first``/``min``/``max`` already give ``NaN``; a counting
+    aggregation's 0 is a real answer and is left alone. A tuple, not a set, so an
+    unhashable aggregation (a list) still compares.
+
+    ``by`` is a ``SeriesGroupBy``, grouped with or without ``as_index``.
+    """
+
+    result = by.agg(aggregation)
+    if aggregation in _COUNTING_AGGREGATIONS:
+        return result
+    counts = by.count()
+    if isinstance(counts, pd.DataFrame):
+        counts = counts[by.obj.name]
+    has_value = counts.to_numpy() > 0
+    if isinstance(result, pd.DataFrame):
+        result[by.obj.name] = result[by.obj.name].where(has_value)
+        return result
+    return result.where(has_value)
+
 
 def build_cell_input_map_payload(
     frame: pd.DataFrame,
@@ -735,7 +764,9 @@ def build_cell_input_map_payload(
         Optional scalar multiplier applied to the mapped values.
     fill_value
         Value used for cells not present in the input data for the selected
-        period/layer.
+        period/layer. A cell that IS present but whose rows hold no value is
+        ``NaN`` -- blank -- under every aggregation but a counting one, never
+        ``fill_value`` and never 0.0 (ledger 329).
     agg
         Aggregation name passed to ``groupby().agg(...)`` for duplicate cells.
     """
@@ -769,7 +800,7 @@ def build_cell_input_map_payload(
 
     selected = frame.copy()
     grouped = selected.groupby("cell", dropna=False)
-    values = grouped[value_column].agg(agg).reindex(
+    values = _aggregate_leaving_gaps(grouped[value_column], agg).reindex(
         full_index, fill_value=fill_value
     ).astype(float) * float(multiplier)
 
@@ -843,7 +874,9 @@ def build_group_input_compare_map_payload(
     multiplier
         Optional multiplier applied to the mapped difference values.
     fill_value
-        Value used where a cell has no comparison row.
+        Value used where a cell has no comparison row. A cell with rows but no
+        difference in any of them is ``NaN``, not 0.0: an undefined difference
+        is not "no difference" (ledger 329).
     agg
         Aggregation used when more than one row maps to the same cell.
 
@@ -884,7 +917,7 @@ def build_group_input_compare_map_payload(
             )
 
     grouped = frame.groupby("cell", dropna=False)
-    diff_values = grouped[diff_column].agg(agg).reindex(
+    diff_values = _aggregate_leaving_gaps(grouped[diff_column], agg).reindex(
         full_index, fill_value=fill_value
     ).astype(float) * float(multiplier)
     current_values = (
@@ -1435,9 +1468,10 @@ class SpatialView:
     def _series_lines(self, frame, keys, value_column, aggregation):
         """Aggregate a filtered series frame into ``[(label, x, y)]`` lines."""
 
-        grouped = frame.groupby([*keys, "per"], dropna=False, as_index=False)[
-            value_column
-        ].agg(aggregation)
+        # A point with no value at all stays a gap: pandas sums an all-NaN group
+        # to 0.0, so a dry lake's masked stage (ledger 329) was drawn at 0 ft.
+        by = frame.groupby([*keys, "per"], dropna=False, as_index=False)[value_column]
+        grouped = _aggregate_leaving_gaps(by, aggregation)
         lines = []
         if keys:
             for key, sub in grouped.groupby(keys, dropna=False):

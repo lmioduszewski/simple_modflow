@@ -459,7 +459,15 @@ def build_sfr_budget_result_table(
 
 
 def build_lak_stage_result_table(model: SimulationBase) -> pd.DataFrame:
-    """Return a normalized table of LAK stage results mapped to connected cells."""
+    """Return a normalized table of LAK stage results mapped to connected cells.
+
+    ``stage`` is ``NaN`` wherever MF6 wrote no stage -- a DRY lake (-1e30 in the
+    stage file) or an INACTIVE one (+1e30) -- because it is read through
+    ``model.outputs.lak.stage.get()``, which masks both by the head file's rule
+    (ledger 329). The row stays, so a dry period is a gap in every view built on
+    this table, never a missing record. ``model.outputs.lak.stage.get(masked=False)``
+    tells the two apart.
+    """
 
     stage_array = np.asarray(model.outputs.lak.stage.get(), dtype=float)
     nlakes = int(model.lak.nlakes.data)
@@ -1056,7 +1064,11 @@ def build_lak_stage_change_table(model: SimulationBase) -> pd.DataFrame:
     """Return per-transition lake-stage changes for one model.
 
     The resulting table carries one row per lake and stress-period transition,
-    with ``stage_change = stage_1 - stage_0``.
+    with ``stage_change = stage_1 - stage_0``. A transition into or out of a
+    period with no stage (a dry or inactive lake, ``NaN`` in the stage table) is
+    KEPT, with ``stage_change`` ``NaN``: the change is undefined, not zero, and
+    dropping the row would make a lake that went dry look as if it had no
+    transition at all (ledger 329).
     """
 
     stage_table = build_lak_stage_result_table(model)
@@ -1085,7 +1097,10 @@ def build_lak_stage_change_table(model: SimulationBase) -> pd.DataFrame:
     shifted["stage0"] = shifted["stage"]
     shifted["per1"] = shifted.groupby("lake")["per0"].shift(-1)
     shifted["stage1"] = shifted.groupby("lake")["stage0"].shift(-1)
-    shifted = shifted.dropna(subset=["per1", "stage1"]).copy()
+    # Only a lake's LAST period has no successor. ``stage1`` is NaN also for a
+    # transition INTO a dry period, and dropping on it deleted exactly those rows
+    # while keeping the way back out (ledger 329).
+    shifted = shifted.dropna(subset=["per1"]).copy()
     shifted["per0"] = shifted["per0"].astype(int)
     shifted["per1"] = shifted["per1"].astype(int)
     shifted["stage_change"] = shifted["stage1"].astype(float) - shifted[

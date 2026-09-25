@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 328 entries (330 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 329 entries (331 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 329 | A lake with no stage is a gap in every LAK stage view: MF6's -1e30 (dry) and +1e30 (inactive) are masked on... | 2026-09-25 |
 | 328 | `grid.cl12` is MF6's PER-SIDE connection length again: from 2025-07-02 every DISU myflopy wrote carried abo... | 2026-09-25 |
 | 327 | The excavation's docs pass (C8): what the teaching material says now, which notebooks were left teaching th... | 2026-09-25 |
 | 326 | `mf.lak(implicit=True)` writes MF6's LAK `IMPLICIT`, which FloPy 3.10 cannot: a SECOND WRITER for the LAK f... | 2026-09-25 |
@@ -13682,7 +13683,7 @@ same day, which is the useful part of the result.
       **NOT built:** LAK `IMPLICIT` (ledger 326); excavating the canonical lake (F8, a
       follow-up that moves every canonical baseline); masking MF6's -1e30 dry lake stage
       in the stage views (the design's D10 -- an excavated pond reads dry every recovery
-      day); a geometric rule choice (section 4.1: measured wrong three ways). Tests:
+      day; **RESOLVED by ledger 329**); a geometric rule choice (section 4.1: measured wrong three ways). Tests:
       `tests/test_excavated_lake.py` (22, one MF6); reverting each piece -- the record
       rule, the neighbour walls, `DisvFaces`' CONNLEN, the thickness test, the bed check,
       both refusals, the guard, both DISV-check call sites, the warnings, the metadata
@@ -13873,6 +13874,7 @@ same day, which is the useful part of the result.
       LAK stage view keeps MF6's -1e30 for a DRY lake (the design's D10) -- 7 and 8 of the
       38 saved stages here, every recovery day from t=51 on -- so
       `packages.lak.results.stage.plot(...)` over those periods draws the sentinel.
+      **RESOLVED by ledger 329**: those days are a gap in every stage view now.
 
 328. **`grid.cl12` is MF6's PER-SIDE connection length again: from 2025-07-02 every DISU myflopy wrote carried about half its DISV's horizontal conductance, and a legacy lake wall's `CONNLEN` was about twice MF6's (2026-09-25).**
       MF6's DISU `CL12` is "the center of cell n [to] the shared face with each adjacent m
@@ -13978,3 +13980,109 @@ same day, which is the useful part of the result.
       **NOT done:** `examples/mf6/notebooks/split_profile/viz_prt_master_5.lak`, a committed
       profiling snapshot of an old canonical run that was already stale, still holds the
       old `CONNLEN`; regenerating it means re-running that script.
+
+329. **A lake with no stage is a gap in every LAK stage view: MF6's -1e30 (dry) and +1e30 (inactive) are masked once, where the stage file is read, by the head file's rule (2026-09-25).**
+      Ledger 327's open item (the design's D10), reported on the user's excavated pond: 7 of
+      its 38 saved stages are -1e30, and `packages.lak.results.stage.plot()` drew them. MF6's
+      `lak_ot_dv` writes -1e30 when the stage is at or below the lake bottom and +1e30 for
+      `STATUS INACTIVE`; nothing in the stage views masked either.
+      **The precedent is ledger 315's, followed exactly.** `LakStageOutput.get()` masks
+      through `headsplus._is_sentinel` by default and takes `masked=False` for the raw file,
+      as `hds.array()` does; everything else (`packages.lak.results.stage` and its
+      maps/series/mosaic/animate, `stage_change`, the exchange hover's stage join, the group
+      tier, the diff, `LakeStageTargets`' stage-file route) reads through it. **The call
+      made:** the tidy table blanks a dry and an inactive lake alike, as `hds.get()` blanks a
+      dry and an inactive cell, and `masked=False` is the one place they differ. No
+      status column was added: the precedent has none, and it would change the shape of
+      every stage table at once (single, group, diff, targets). A dry day is a GAP in the
+      series, not a point at the lake bottom: the stage file says there is no stage, and the
+      bottom is a number MF6 reports only through its observation.
+      **Measured before, on the toy in `docs/reproducers/lak_stage_sentinels.py`:** the
+      series drew -1e30; a map's colour range ran -1e30..108, and -1e30..1e30 with the
+      inactive lake; mosaic and animate pooled the same; a stage change read -1e30, +1e30,
+      and 0.0 between two dry periods; the exchange hover printed "-1e+30 ft"; the group
+      diff summary gave max |Δstage| 1e30 and mean 2.22e29 over 18 rows. On the user's run
+      the series now has 7 gaps of 38 and spans 526.00-529.85 ft.
+      **Defects the mask itself would have introduced, fixed with it.**
+      `build_lak_stage_change_table` dropped rows on `stage1`, which is `NaN` for a
+      transition INTO a dry period: masked, it kept 2 of lake 0's 5 transitions, deleting
+      the way in and keeping the way out. It drops on `per1` alone now; a transition
+      touching a dry period is kept with `stage_change` `NaN`. **pandas sums an all-NaN
+      group to 0.0**, and two engines sum: the group series (its default), so a dry lake
+      would have been drawn at 0 ft, and the map payload under `stage.map(agg="sum")`, which
+      painted the dry lake's cell 0.0 and ran the colour range 0..108 where `agg="first"`
+      ran 103.3..108. ONE rule, `package_plotting._aggregate_leaving_gaps`, serves the
+      series, `build_cell_input_map_payload` and `build_group_input_compare_map_payload`:
+      a group holding no value is `NaN` under any aggregation except a counting one, whose
+      0 is a real answer. The compare payload is not reachable from a stage view; it takes
+      the rule because an undefined difference drawn as 0.0 reads as "no difference" (a
+      cell whose rows all hold a `NaN` diff: 0.0 before, `NaN` now, on a synthetic table --
+      no real map was measured to move). **And `LakeStageTargets`' stage-file route
+      DROPPED a record with no stage** -- `_aggregate_named_series` ran
+      `dropna(subset=[value])`, which had kept -1e30 and now dropped the masked `NaN`, and
+      the pivot's default dropped a record with every target dry: 3 rows of 6 for the
+      drying lake, 5 of 6 for two lakes. It keeps the rows now (`dropna` on the id alone,
+      `sum(min_count=1)`, `pivot_table(dropna=False)`), including a column for a target dry
+      in EVERY record, which the default drops.
+      **A diff counts what it cannot measure.** `StageResultDiff.summary` computes its
+      statistics over rows where BOTH models have a stage and adds `n_one_sided`, the rows
+      where exactly one does; any such row fails `within_tolerance`, and two dry lakes
+      agree. With nothing comparable the statistics are `NaN` and the argmax `-1` (the old
+      0.0 branch was unreachable). This reaches the SFR stage diff too, where nothing is
+      `NaN` yet, so SFR's numbers do not move.
+      **The observation route read an inactive lake as a stage of 0.0 ft.**
+      `_clean_observation_output_values` turned MF6's 3e30 into 0.0 for every observation,
+      right for a flow and wrong for an elevation. It takes `no_value=` now (default 0.0,
+      so SFR/DRN flows are unchanged) and `LakeStageTargets` passes `NaN`. Its own `> 1e20`
+      threshold stays: it predates this, catches 3e30 like `_is_sentinel`, and moving it
+      would move the flow targets. **The two routes still differ at a DRY lake, because
+      MF6's two outputs do**: the observation reports the stage it solved -- the bottom, 100
+      ft, measured -- where the stage file writes -1e30. Not harmonized: masking the
+      observation at the bottom needs MF6's `lakebot`, which neither output records.
+      **NOT done:**
+      - **SFR's stage is not masked.** A dry reach is -1e30 too (MF6's `sfr_ot_dv`, read,
+        not measured here), through `SFRStageOutput`, `build_sfr_stage_result_table` and
+        the SFR stage explorer, and `SfrStageTargets`' observation route still reads 3e30
+        as 0.0. The same change; kept to LAK because that is what was asked.
+      - `budget_tables.lake_stage_array`, ledger 301's dead duplicate, still returns the raw
+        file; nothing calls it.
+      - The stage-clock family (ledger 301) is untouched: `per` is still the record index.
+        `LakStageOutput.get`'s docstring now says its rows are RECORDS, not periods.
+      - **Found alongside, not fixed:** `LakeStageTargets`' stage-file route SUMS a lake's
+        stage over its connected cells (`_aggregate_named_series`): a lake at 108.0 with two
+        connections read 216.0 (measured). The observation route is unaffected, and its
+        `time` is MF6's total time where the stage-file route's is the period index.
+      - A lake connected in several layers draws one identical line per layer (three on the
+        user's pond). Unchanged.
+      - **What PEST reads for a lake with no stage is 1e30, on both routes** -- a call
+        made, not inherited. Measured with `pestpp-glm`
+        (`docs/reproducers/pest_no_value_fields.py`): an empty field (what `to_csv` writes
+        for `NaN`) and `nan` each FAIL the run; 1e30 reads, a phi of 1e60 for one weighted
+        observation; a forward run one row short of its base fails at end of file; one
+        with an extra column reads the wrong column with no error. pyEMU builds the
+        instruction file from the BASE run -- one line advance per row, each value found
+        by counting commas past a skipped `time` -- so the forward run must match it in
+        shape and every field must parse. `NaN` would fail every realization in which a
+        lake is dry, weighted or not. `simulated_series` keeps `NaN` (it is also the review
+        table); the two PEST writers -- the base run in `prepare_lake_stage_observations`
+        and `write_named_series_targets` -- fill it with `LakeStageTargets._PEST_NO_STAGE`,
+        so the two files agree row for row (a test compares them byte for byte on both
+        routes). 1e30 is MF6's own magnitude, the stage file's inactive lake and the head
+        file's inactive cell; the sign is not kept, since the mask has merged dry and
+        inactive and a squared residual has none. Before this entry the stage-file route
+        wrote the raw -1e30/+1e30 and the observation route 0.0 for an inactive lake; the
+        observation route still writes the bottom for a DRY lake, MF6's number. Only
+        `lake_stage` is filled: the flow kinds' observation route still turns 3e30 into
+        0.0, and nothing was measured for them. NOT built: failing a realization on
+        purpose where a WEIGHTED target is dry. 1e30 keeps it in the ensemble with a phi
+        of order 1e60; what PESTPP-IES then does with it (`ies_bad_phi`) was not measured.
+      - **Found alongside, not fixed:** `prepare_lake_stage_observations` on a TEMPLATE --
+        `LakeStageTargets` with no `values`, which the class documents -- dies with
+        `KeyError: 'time'` in `_prepare_named_series_observations`, because
+        `to_long()` then returns the definitions with no `time` column (measured).
+      Tests: `tests/test_lak_stage_sentinels.py`, 26 (21 on two real MF6 runs, marked slow
+      through the `lak_stage_runs` fixture). Reverting the mask fails 11 by name; the
+      stage-change drop, the diff's `both` mask, its tolerance rule, the observation
+      `no_value`, the series guard and its counting exemption each fail their own, and so
+      do the review's: the stage-file route's `dropna`/`min_count`, the pivot's
+      `dropna=False`, each PEST writer's fill, and each map payload's gap rule.

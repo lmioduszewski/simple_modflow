@@ -141,6 +141,13 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws="."):
     Self-contained: pyEMU copies only this function's source into the generated
     forward run, so it loads the model and reads the saved locations inline rather
     than calling other module-level helpers.
+
+    A lake with no stage is ``NaN`` in ``LakeStageTargets.simulated_series`` and is
+    WRITTEN here as 1e30, the value the base run was built with (ledger 329).
+    Measured with PEST++ (``docs/reproducers/pest_no_value_fields.py``): an empty
+    field and ``nan`` each fail the run, and so does a file one row short of the
+    base run, at end of file. A dry lake is otherwise legitimate -- zero-weighted,
+    1e30 changes nothing; weighted, it makes that realization's phi ~1e60.
     """
 
     # Deliberately duplicated: pyEMU extracts this function's SOURCE into the
@@ -175,5 +182,8 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws="."):
     if kind_key not in builders:
         raise ValueError(f"Unsupported named-series observation kind {kind!r}.")
     targets = builders[kind_key](locations=locations, values=None)
-    targets.simulated_series(model).to_csv(output_csv, index=False)
+    simulated = targets.simulated_series(model)
+    if kind_key == "lake_stage":
+        simulated = simulated.fillna(targets._PEST_NO_STAGE)
+    simulated.to_csv(output_csv, index=False)
 

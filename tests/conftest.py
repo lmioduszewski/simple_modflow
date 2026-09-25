@@ -270,9 +270,9 @@ def canonical_run_fresh(tmp_path, canonical_config):
 _SLOW_MODULES: set[str] = set()
 
 # Individual heavy tests living in otherwise-fast modules. Any test using the
-# ``canonical_run`` or ``sentinel_run`` fixture is also marked automatically (see
-# below), so this list only needs the heavy tests that build/run a model
-# *without* one of them.
+# ``canonical_run``, ``sentinel_run`` or ``lak_stage_runs`` fixture is also marked
+# automatically (see below), so this list only needs the heavy tests that
+# build/run a model *without* one of them.
 _SLOW_TESTS = {
     # test_parallel_model.py -- partition/split runs (the rest are <1s units)
     "test_canonical_model_prepares_contiguous_partitions_across_representative_part_counts",
@@ -335,6 +335,7 @@ def pytest_collection_modifyitems(config, items):
             or "canonical_run" in item.fixturenames
             or "canonical_run_fresh" in item.fixturenames
             or "sentinel_run" in item.fixturenames
+            or "lak_stage_runs" in item.fixturenames
         ):
             item.add_marker(slow)
 

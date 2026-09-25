@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -64,6 +65,17 @@ class LakeStageTargets:
     time_column: str = "time"
     value_column: str = "stage"
     times: list | tuple | pd.Index | pd.Series | None = None
+
+    #: What a lake with no stage is WRITTEN as in the CSV PEST reads (ledger 329),
+    #: by both writers -- the base run and ``write_named_series_targets``, which
+    #: reads it off the instance because pyEMU copies that function's source and
+    #: not its module. The series itself says ``NaN``; PEST++ fails the run on an
+    #: empty field and on ``nan`` (``docs/reproducers/pest_no_value_fields.py``),
+    #: so a lake dry in a period nobody even weights would fail every realization
+    #: in which it is dry. MF6's own no-value magnitude (the stage file's inactive
+    #: lake, the head file's inactive cell); the sign is not kept because the mask
+    #: has already merged dry and inactive, and a squared residual has none.
+    _PEST_NO_STAGE: ClassVar[float] = 1.0e30
 
     def __post_init__(self):
         """Normalize the ``name -> lake`` locations and observed values into internal tables."""
@@ -197,9 +209,70 @@ class LakeStageTargets:
         }
 
     def simulated_series(self, model) -> pd.DataFrame:
-        """Return one wide simulated-stage table indexed by stress period."""
+        """Return one wide simulated-stage table: a ``time`` column and one column per target.
 
-        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        Read from the model's LAK stage observations when one workspace CSV holds
+        every target's column (MF6's observation labels, as :meth:`to_flopy_obs`
+        writes them), else from ``packages.lak.results.stage``. The two routes
+        label ``time`` differently: the observation route carries MF6's simulated
+        time, the stage-file route the zero-based index of the saved stage record.
+
+        **A period with no stage is a row holding ``NaN``, never a missing row**
+        (ledger 329). An INACTIVE lake is ``NaN`` on both routes: the observation
+        file's 3e30 had been read as a stage of 0.0 ft, and the stage file's +1e30
+        as itself. The routes differ at a DRY lake because MF6's two outputs do: its
+        observation reports the stage it solved, which sits at the lake bottom
+        (100 ft on the reproducer's lake, measured), while the stage file writes
+        -1e30. So a dry period is the bottom on the observation route and ``NaN`` on
+        the stage-file route.
+
+        The stage-file route keeps one row per saved record and one column per
+        target, even a target dry in every record, so the shape does not depend on
+        which lakes are dry. That is what PEST needs: pyEMU builds the instruction
+        file from the BASE run's copy of this table, one line advance per row and
+        each value found by counting commas past a skipped ``time``, so a
+        realization one row short fails at end of file and one with an extra
+        column reads the wrong column without error (both measured,
+        ``docs/reproducers/pest_no_value_fields.py``). The file PEST reads carries
+        1e30 in place of ``NaN``, because PEST++ refuses an empty field and ``nan``
+        alike (see ``write_named_series_targets``).
+
+        On the stage-file route a lake's value is SUMMED over its connected
+        cells, so a lake with two connections reads twice its stage (ledger 329,
+        found and not fixed); the observation route reads the lake itself.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with a LAK package, as ``mf.load_mf6_run(ws)`` or
+            ``run.model()`` returns. The observation route needs its workspace;
+            the stage-file route needs a LAK ``stage_filerecord``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` plus one float column per target name, ``NaN`` where the
+            lake has no stage. On the stage-file route a target naming a lake the
+            model does not have gets no column. Empty (those columns, no rows)
+            when the stage file holds no record.
+
+        Raises
+        ------
+        AttributeError
+            When no workspace CSV holds the targets and there is no stage file
+            to fall back on: the model has no LAK package ("Package 'lak' is not
+            attached to model ...") or its LAK declares no ``stage_filerecord``.
+
+        Examples
+        --------
+        >>> targets = mf.LakeStageTargets(locations={"pond": 0})
+        >>> series = targets.simulated_series(model)   # one row per saved record
+        >>> series["pond"].isna()                       # True where the pond is dry
+        """
+
+        observed = _find_named_observation_output(
+            model, expected_columns=self._obs_column_map(), no_value=np.nan
+        )
         if observed is not None:
             return observed
         frame = model.packages.lak.results.stage.get().copy()
@@ -207,16 +280,31 @@ class LakeStageTargets:
             return pd.DataFrame(columns=["time", *self._series.keys()])
         frame = _aggregate_named_series(frame, id_column="lake", value_column="stage")
         definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
-        merged = definitions.merge(frame, on="lake", how="left")
-        wide = merged.pivot_table(index="per", columns="name", values="stage", aggfunc="first").reset_index()
+        # A target naming a lake the model does not have matches no row; drop it
+        # here, as the pivot always did, rather than as a NaN ``time`` row.
+        merged = definitions.merge(frame, on="lake", how="left").dropna(subset=["per"])
+        merged["per"] = merged["per"].astype(int)
+        # ``dropna=False`` keeps a record in which every target is dry, and a
+        # target dry in EVERY record -- the default drops both, and the second
+        # would give a later realization one column more than PEST's base run.
+        wide = merged.pivot_table(
+            index="per", columns="name", values="stage", aggfunc="first", dropna=False
+        ).reset_index()
         wide.columns.name = None
         return wide.rename(columns={"per": "time"})
 
     def compare(self, model) -> pd.DataFrame:
-        """Compare target lake stages against simulated lake stages."""
+        """Compare target lake stages against simulated lake stages.
+
+        ``sim_stage`` is ``NaN`` where MF6 reports no stage, and so are
+        ``residual`` and ``abs_residual``; which lakes that covers depends on the
+        route (see :meth:`simulated_series`, ledger 329).
+        """
 
         definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
-        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        observed = _find_named_observation_output(
+            model, expected_columns=self._obs_column_map(), no_value=np.nan
+        )
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_stage")
             simulated["per"] = simulated["time"]

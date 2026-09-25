@@ -82,6 +82,23 @@ cell with no head draws blank, with one exception, which was the user's call:** 
 a mounding map a DRY cell reads 0, because it has no water above the datum, while an
 inactive cell stays blank.
 
+**A lake with no stage is a gap, by the same rule** (ledger 329). LAK's stage file
+carries the same two numbers -- -1e30 for a DRY lake (stage at or below its bottom),
++1e30 for an INACTIVE one -- and nothing masked them, so the stage series drew a dry
+pond 1e30 ft down and every stage map, mosaic and animation coloured from -1e30 to
++1e30. The mask is applied ONCE, where the file is read:
+`model.outputs.lak.stage.get()` masks through `headsplus._is_sentinel` as
+`hds.array()` does, with `masked=False` for the raw file, so the tidy table, its maps
+and series, the exchange hover, the group tier and the diff all inherit it. Two
+consequences to keep: a table keeps the ROW and blanks the value (a stage change
+touching a dry period is `NaN`, not dropped; so is a target's row), and nothing may SUM
+an all-NaN group, which pandas makes 0.0 -- `package_plotting._aggregate_leaving_gaps`
+keeps it a gap in the series engine and in both map payloads, where `agg="sum"` had
+painted a dry lake's cell 0 ft and stretched the colour range down to it.
+A difference a number cannot measure is COUNTED: the stage diff's `n_one_sided`.
+**SFR's stage file is NOT masked** (a dry reach is -1e30 too, by MF6's source); it is
+the same change, not made here.
+
 **A section has two subjects, and `fill=` picks which** (ledger 177, 2026-09-02).
 Without it, `section` answers *what is the head along this line* -- a profile,
 two traces, no geometry. With it, *what does the model look like through here* --

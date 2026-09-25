@@ -320,7 +320,8 @@ class LakStage:
         self.nlakes = self.model.lak.nlakes.data
 
     def get(self):
-        """Return lake stage output reshaped to ``(nper, nlakes)``."""
+        """Return ``model.outputs.lak.stage.get()``: one row per saved record, one
+        column per lake, ``NaN`` where a lake is dry or inactive (ledger 329)."""
         return self.model.outputs.lak.stage.get()
 
 

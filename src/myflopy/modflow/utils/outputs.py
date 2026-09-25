@@ -5,9 +5,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
+import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.budget import LakBudget, SFRBudget
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 
 
 class LakStageOutput:
@@ -18,12 +20,55 @@ class LakStageOutput:
 
         self.model = model
 
-    def get(self):
-        """Return lake stage output reshaped to ``(nper, nlakes)``."""
+    def get(self, *, masked: bool = True) -> np.ndarray:
+        """Return the LAK stage file as one row per saved record and one column per lake.
+
+        MF6 writes a lake with no water surface as a number, not NaN: -1e30 for a
+        DRY lake (its stage at or below the lake bottom) and +1e30 for an INACTIVE
+        one (``STATUS INACTIVE``). By default both become ``NaN``, by the same rule
+        as the head file (``headsplus._is_sentinel``, ``|value| >= 1e29``), so
+        every stage view built on this -- ``packages.lak.results.stage``, its
+        maps, series and stage changes, the group and diff tiers -- leaves a gap
+        where there is no stage rather than drawing one 1e30 ft away (ledger 329).
+
+        Parameters
+        ----------
+        masked : bool, default True
+            Replace MF6's two no-stage sentinels (-1e30 dry, +1e30 inactive) with
+            ``NaN``. ``False`` returns the file exactly as MF6 wrote it, which is
+            the only way to tell a dry lake from an inactive one: the tidy tables
+            and every picture show both as a gap, as a head view does for a dry
+            and an inactive cell.
+
+        Returns
+        -------
+        numpy.ndarray
+            A float array of shape ``(n_records, nlakes)``, lakes in LAK order
+            (zero-based column ``i`` is lake ``i + 1`` in the MF6 file). One row
+            per SAVED stage record, which is one per stress period only when the
+            ``OC`` saves heads once per period: LAK writes its stage whenever MF6
+            saves HEAD. Nothing here labels the rows with a time (ledger 301's
+            stage-clock family).
+
+        Raises
+        ------
+        AttributeError
+            If the model has no LAK package, or the package declares no
+            ``stage_filerecord`` (FloPy's ``output.stage()`` is then ``None``).
+
+        Examples
+        --------
+        >>> stage = model.outputs.lak.stage.get()          # NaN where a lake is dry
+        >>> raw = model.outputs.lak.stage.get(masked=False)
+        >>> dry = raw == -1e30                              # dry, not inactive
+        """
 
         nlakes = self.model.lak.nlakes.data
         stages = self.model.lak.output.stage()
-        return stages.get_alldata().reshape(-1, nlakes)
+        values = np.asarray(stages.get_alldata(), dtype=float).reshape(-1, nlakes)
+        if masked:
+            values[_is_sentinel(values)] = np.nan
+        return values
 
 
 class SFRStageOutput:
