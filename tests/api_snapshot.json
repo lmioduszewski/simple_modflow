@@ -1059,6 +1059,12 @@
       "source_sha",
       "values"
     ],
+    "ExcavationRecord.fields": [
+      "bed",
+      "cells",
+      "min_remnant",
+      "name"
+    ],
     "GridLibrary.members": [],
     "GridSpec.fields": [
       "boundary",
@@ -1106,6 +1112,59 @@
       "surface_water",
       "uzf",
       "wel"
+    ],
+    "LayerBuildResult.fields": [
+      "absorbed",
+      "botm",
+      "excavated",
+      "excavations",
+      "ground",
+      "idomain",
+      "length_units",
+      "min_thickness",
+      "names",
+      "pinch",
+      "thickness",
+      "time_units",
+      "top",
+      "units",
+      "vor"
+    ],
+    "LayerBuildResult.members": [
+      "attach_to_grid",
+      "excavate",
+      "excavation_report",
+      "n_pinched",
+      "nlay",
+      "per_layer",
+      "plot",
+      "prune_isolated",
+      "qc",
+      "report",
+      "surface_names",
+      "to_disv",
+      "validate",
+      "vertex_grid"
+    ],
+    "LayerStack.members": [
+      "add",
+      "build",
+      "cache_status",
+      "digest_payload",
+      "draft_grid",
+      "excavate",
+      "for_grid",
+      "from_dict",
+      "from_modflow",
+      "insert_below",
+      "names",
+      "plot",
+      "qc",
+      "refresh",
+      "remove",
+      "replace",
+      "to_dict",
+      "to_disv"
     ],
     "ModelContext.fields": [
       "dates",

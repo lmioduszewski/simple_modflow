@@ -59,6 +59,16 @@ def test_a_disagreement_with_the_live_table_is_announced(caplog):
     assert "disagree" in caplog.text
 
 
+def test_the_disagreement_reaches_warnings_too():
+    """The logger alone reached nobody: `import myflopy` installs a NullHandler and root has
+    none, so 0 bytes reached stderr (ledger 288; the excavation design's D11, ledger 323)."""
+
+    grid = _grid()
+    context = ModelContext(grid=grid, surfaces=_shifted_table(grid, 100.0))
+    with pytest.warns(UserWarning, match="disagree"):
+        _layer_elevations(context)
+
+
 def test_the_same_numbers_in_a_different_object_are_not_a_disagreement(caplog):
     """A copy is not a stale snapshot; warning on identity would cry wolf."""
 

@@ -409,7 +409,8 @@ declaration and holds records, so it builds fine with its GeoPackage deleted —
 `missing` there means the file you built from has moved, not that anything is
 broken. Only a lazy package is re-hashed at build, because only a lazy package reads
 a file there. A package naming several files (a layer stack names one per surface
-plus the top) gets one cell, reporting the WORST with a count: `edited (1 of 3)`.
+plus the top, and an excavation its footprint file and bed) gets one cell, reporting
+the WORST with a count: `edited (1 of 3)`.
 
 The fingerprint covers the option and input VALUES a spec holds, its name, its
 builder REFERENCE, `enabled` and `requires`. It does not see the body of an

@@ -361,3 +361,32 @@ def test_a_contour_surface_round_trips_equal():
         assert Surface.from_dict(surface.to_dict()) == surface, region
         assert _spec_value(json.loads(json.dumps(_json_value(surface)))) == surface, region
         assert stamp_source_hashes(surface) == surface, "nothing readable, so nothing stamped"
+
+
+def test_an_excavation_entry_carries_exactly_these_keys(tmp_path):
+    """Pinned like the stack's own key set above (ledger 323). ``zone`` is the footprint
+    FILE under the key ``Surface.where`` uses, which is what lets every walker find it;
+    ``area`` an inline footprint; ``source_shas`` appears once a lazy package stamps the
+    file. Nothing resolved on a grid -- no cells, no sampled bed -- is written."""
+
+    import geopandas as gpd
+    import shapely
+
+    site = tmp_path / "site.gpkg"
+    gpd.GeoDataFrame({"name": ["pond"], "floor": [93.0]},
+                     geometry=[shapely.Point(300, 300).buffer(150)], crs=2927).to_file(site)
+    base = mf.LayerStack(top=mf.Surface.flat(100.0)).add("sand", thickness=20.0)
+
+    by_path = LayerStack.from_dict(base.to_dict()).excavate(94.0, site, layer="site")
+    by_area = LayerStack.from_dict(base.to_dict()).excavate(
+        94.0, mf.Area(shapely.box(0, 0, 50, 50)), name="basin")
+    by_column = LayerStack.from_dict(base.to_dict()).excavate("floor", site)
+
+    payload = by_path.to_dict()
+    assert set(payload) == {"top", "layers", "length_units", "time_units", "excavations"}
+    assert set(payload["excavations"][0]) == {"name", "bottom", "zone", "layer", "min_remnant"}
+    assert set(by_area.to_dict()["excavations"][0]) == {"name", "bottom", "area", "min_remnant"}
+    assert by_column.to_dict()["excavations"][0]["bottom"] == {"column": "floor"}
+    stamped = mf.disv(by_path).inputs["layer_stack"].to_dict()["excavations"][0]
+    assert set(stamped) == {"name", "bottom", "zone", "layer", "min_remnant", "source_shas"}
+    assert set(stamped["source_shas"]) == {"zone"}

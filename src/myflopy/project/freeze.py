@@ -10,7 +10,8 @@ arrays live in the library; everything inline does not.
 This module is the snapshot that closes that. At the end of ``Run.build`` the
 resolved simulation is written to ``<run>/.myflopy/frozen.npz``: the structure as
 JSON, every array beside it, and the grid's own vertices, cells, CRS and layer
-elevations. A reopened run thaws that instead of re-resolving, and reads no source.
+elevations, with the excavation records that name what a cut removed (ledger 323).
+A reopened run thaws that instead of re-resolving, and reads no source.
 
 **One file, not a directory.** ``os.replace`` of a single file is atomic, so an
 interrupted or concurrent freeze can never leave a half-written snapshot, nor delete
@@ -44,6 +45,7 @@ import numpy as np
 
 from myflopy._logging import get_logger
 from myflopy.specs import PackageSpec, SimulationSpec, _json_value
+from myflopy.surfaces import ExcavationRecord
 
 logger = get_logger(__name__)
 
@@ -284,6 +286,73 @@ def _surfaces_block(surfaces, store: dict[str, np.ndarray], tag: str) -> dict | 
     return {"values": f"{tag}.surfaces", "columns": columns}
 
 
+def _excavation_records(context) -> dict:
+    """The excavation records a model's context carries, in ``excavation_cells``' order.
+
+    ``context.surfaces`` first -- a ``LayerBuildResult``'s ``excavations``, or the
+    ``attrs["excavations"]`` of the table a lazy DISV published (ledger 323) -- then the
+    grid's own ``excavations``. The first source holding any wins: they are one result's
+    records, published in more than one place.
+    """
+
+    surfaces = getattr(context, "surfaces", None)
+    attrs = getattr(surfaces, "attrs", None)
+    for records in (
+        getattr(surfaces, "excavations", None),
+        attrs.get("excavations") if isinstance(attrs, dict) else None,
+        getattr(getattr(context, "grid", None), "excavations", None),
+    ):
+        if isinstance(records, dict) and records:
+            return records
+    return {}
+
+
+def _excavations_block(context, store: dict[str, np.ndarray], tag: str) -> list | None:
+    """The context's excavation records, as plain JSON and two arrays each.
+
+    The snapshot kept the elevations the cut made and dropped the RECORDS that name it,
+    so a reopened run's refusals could not name the excavation, and ``mf.lak`` declared
+    against a thawed context would find no record for a pond whose cells are gone
+    (ledger 323). A record is a name, its cells, the sampled bed and ``min_remnant`` --
+    nothing derived -- so it round-trips exactly (``ExcavationRecord.__eq__``).
+    """
+
+    records = _excavation_records(context)
+    if not records:
+        return None
+    block = []
+    for index, record in enumerate(records.values()):
+        cells_key, bed_key = f"{tag}.{index}.cells", f"{tag}.{index}.bed"
+        store[cells_key] = np.asarray(record.cells, dtype=np.int64)
+        store[bed_key] = np.asarray(record.bed, dtype=np.float64)
+        block.append({
+            "name": str(record.name),
+            "cells": cells_key,
+            "bed": bed_key,
+            "min_remnant": float(record.min_remnant),
+        })
+    return block
+
+
+def _thaw_excavations(block: list | None, arrays: dict[str, np.ndarray]) -> dict:
+    """Rebuild :func:`_excavations_block`'s records, keyed by name."""
+
+    records = {}
+    for entry in block or ():
+        missing = [key for key in (entry["cells"], entry["bed"]) if key not in arrays]
+        if missing:
+            raise FrozenSnapshotError(
+                f"The frozen snapshot references excavation array(s) {missing}, which it "
+                "does not contain. The snapshot is incomplete and cannot be thawed."
+            )
+        record = ExcavationRecord(
+            entry["name"], arrays[entry["cells"]].tolist(), arrays[entry["bed"]],
+            entry["min_remnant"],
+        )
+        records[record.name] = record
+    return records
+
+
 def _thaw_grid(block: dict | None, arrays: dict[str, np.ndarray]):
     """Rebuild a grid from :func:`_grid_block`, or ``None`` if it was not kept."""
 
@@ -393,7 +462,7 @@ def freeze_simulation(
             for model in spec.models
         ),
     )
-    grids, domains, surfaces = {}, {}, {}
+    grids, domains, surfaces, excavations = {}, {}, {}, {}
     resolved = contexts or {}
     for model in spec.models:
         context = resolved.get(model.name, model.context)
@@ -418,6 +487,7 @@ def freeze_simulation(
         surfaces[model.name] = _surfaces_block(
             getattr(context, "surfaces", None), store, f"surf.{model.name}"
         )
+        excavations[model.name] = _excavations_block(context, store, f"dig.{model.name}")
 
     payload = {
         "format": FORMAT,
@@ -428,6 +498,9 @@ def freeze_simulation(
         "grids": grids,
         "domains": domains,
         "surfaces": surfaces,
+        # Additive: a snapshot written before it has no key and thaws with no records,
+        # and a reader that predates it ignores the key -- so FORMAT does not move.
+        "excavations": excavations,
     }
 
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -519,10 +592,20 @@ def thaw_simulation(
     grids = payload.get("grids", {})
     domains = payload.get("domains", {})
     surfaces = payload.get("surfaces", {})
+    excavations = payload.get("excavations", {})
     models = []
     for model in spec.models:
         grid = _thaw_grid(grids.get(model.name), arrays)
         table = _thaw_surfaces(surfaces.get(model.name), arrays, grid)
+        records = _thaw_excavations(excavations.get(model.name), arrays)
+        if records:
+            # Where `excavation_cells` and `mf.lak` look: the table's attrs, as a lazy
+            # DISV publishes them, and the grid -- after `_thaw_surfaces` set its
+            # `gdf_topbtm`, whose setter clears `grid.excavations`.
+            if table is not None:
+                table.attrs["excavations"] = dict(records)
+            if grid is not None:
+                grid.excavations = records
         domain_key = domains.get(model.name)
         context = replace(
             model.context,

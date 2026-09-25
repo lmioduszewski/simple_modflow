@@ -1017,8 +1017,19 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   record cells == lake cells. The result carries `excavations` (`mf.ExcavationRecord`),
   `ground`, `excavated`, `absorbed`; `attach=True` publishes `grid.excavations`, which
   the `gdf_topbtm` SETTER clears. `stack.to_disv` is now `build().to_disv()` (0 digests
-  moved, 12 stacks). INTERIM: an excavated stack REFUSES `to_dict` (so lazy `mf.disv`
-  raises) and `mf.lak` does not read the records yet.
+  moved, 12 stacks). **An excavated stack SAVES** (ledger 323): excavations ride in the
+  `$layer_stack` payload only when there are any (16 of 16 un-excavated lazy-DISV
+  digests unmoved), the footprint FILE under the `"zone"` key `Surface.where` uses -- so
+  the bundler, the build anchor, `built_from` and the hash stamping find it with no
+  wiring -- and an `mf.Area`/geometry inline as WKT. `from_dict` builds entries
+  DIRECTLY (reading the file there checks a bundled relative path against the cwd) and
+  REFUSES unknown keys -- but runs every OTHER refusal `excavate()` makes, through the
+  same helpers (unchecked, a repeated name dropped one pond's RECORD while its cut
+  stayed). The lazy `mf.disv` publishes a table built from the RESULT, not
+  `grid.gdf_topbtm`, with the records in `attrs["excavations"]`, marked as the DISV's
+  own so `_layer_elevations` does not blame the context when `attach=False` leaves the
+  grid's table behind. The frozen snapshot carries the records too, onto the thawed
+  table and grid. INTERIM: `mf.lak` does not read the records yet.
   **A package declared against a context from BEFORE the cut is refused at build**
   (ledger 321): `_discretization_complaints` checks every list-BC record, OBS6 cellid
   and per-column `irch`/`ievt` against the BUILT DISV's idomain (`<= 0` = removed) and

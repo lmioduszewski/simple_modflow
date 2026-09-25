@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 322 entries (324 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 323 entries (325 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 323 | An excavated layer stack is written down, archived, hashed and moved like the rest of the stack -- the life... | 2026-09-25 |
 | 322 | `irch=None` -- one layer for every column -- stays the documented opt-out, and the build now SAYS what it l... | 2026-09-25 |
 | 321 | A package still naming a cell the built DISV REMOVED is refused at build -- a boundary, an observation, an... | 2026-09-25 |
 | 320 | `LayerStack.excavate`: a pond is a VOID cut after reconcile and pinch, absorbing rather than deepening -- t... | 2026-09-25 |
@@ -10472,7 +10473,8 @@ same day, which is the useful part of the result.
       eight build keywords and does nothing with them (the result form refuses them),
       and on the lazy form `attach=False` hands the model context whatever table the
       grid already held (top 500.0 against the DISV's 100.0) -- the excavation design's
-      D9, due in its lifecycle commit.
+      D9, due in its lifecycle commit, and ~~not changed~~ closed there (ledger 323): the
+      context gets a table built from the result.
 
 271. **Move it, and read the report (2026-09-15).**
       B1 commit 5, the last. `SimulationSpec.with_grid(grid, *, on=, name=, grid_free=())`
@@ -13365,14 +13367,16 @@ same day, which is the useful part of the result.
         connected FULL 10 ft slice of a 30 ft unit with a 20 ft minimum read thin while
         `qc()` read nothing. Given, it compares the CELL; the result does not store the
         build's `min_sep`, so pass it there.
-      **Interim, closed by later commits of the design:** an excavated stack REFUSES
+      **Interim, closed by later commits of the design:** ~~an excavated stack REFUSES
       `to_dict` (`NotImplementedError`, which `stamp_source_hashes` does not catch) rather
       than dropping the pond, so `mf.disv(<gridless excavated stack>)` raises at the call
       and such a stack cannot be saved or digested -- `mf.disv(stack.build(vor))` can
-      (C6). **`mf.lak` reads no record yet**: on a cut pond `bathy` still writes the old
+      (C6)~~ -- closed by ledger 323, the excavations are written down. **`mf.lak` reads
+      no record yet**: on a cut pond `bathy` still writes the old
       rule -- zero side walls and a false "flat bed" warning (design section 4.3) -- so the
-      cut alone is the geometry, not yet a better lake model (C7). Nothing refuses a
-      package declared against a context from BEFORE the cut (C5).
+      cut alone is the geometry, not yet a better lake model (C7). ~~Nothing refuses a
+      package declared against a context from BEFORE the cut (C5)~~ -- closed by ledgers
+      321 and 322.
       **Measured, and what the tests assert because of it.** A steady NEWTON toy on the
       excavated stack read -0.41% under IMS's DEFAULT closure and its un-excavated twin
       -0.21% (+0.59% each with the water table below the fill), all under Normal
@@ -13460,3 +13464,96 @@ same day, which is the useful part of the result.
       the FloPy data -- FloPy stores `irch=0` as a full array of zeros, so the built
       package cannot tell the two apart. Silent where the layer is active in every column
       with an active cell (0 warnings across the 4,163-test suite).
+
+323. **An excavated layer stack is written down, archived, hashed and moved like the rest of the stack -- the lifecycle calls (2026-09-25).**
+      The excavation design's C6 (section 6), closing ledger 320's interim `to_dict`
+      refusal. Excavations ride in the `$layer_stack` payload ONLY when there are any, so
+      an un-excavated stack's payload and digest are what they were: 16 of 16 lazy-DISV
+      digests identical between the trees before and after (eight stacks naming a raster,
+      contours, a `where` zone, a split, per-unit names, units and algebra, each under two
+      build-kwarg sets), and no stored manifest on disk holds a stack at all (0 under
+      `examples/` and the model tree). An entry is `{name, bottom, zone | area, layer?,
+      min_remnant, source_shas?}`, pinned by `test_layer_stack_serialization.py`.
+      **Judgment calls, each deliberate:**
+      - **The footprint file rides under `"zone"`**, the key `Surface.where` already
+        uses and `specs.SURFACE_INPUT_KEYS` already lists, so the four machines that find
+        a stack's files by walking its payload -- the bundler, the build-time anchor,
+        `drift()`'s `built_from`, the hash stamping -- find it with NO specs.py edit and
+        no spec token. A new key would have needed all four taught, and a missed one is
+        the silent kind (ledger 293's archive that cannot open).
+      - **`source_shas` is a STORED field of the excavation**, carried both ways. The
+        stamping rebuilds the stack through `from_dict`; a `from_dict` refusing the field
+        raises now (C2), and dropping it would leave the footprint digested by PATH --
+        bundling a byte-identical archive would then read as an edit. "The hash replaces
+        the path" is ONE helper, `surfaces._content_keyed`, which `Surface.digest_payload`
+        now uses too.
+      - **An inline `mf.Area`'s `source` and `note` are not digested**: provenance and a
+        comment. Its WKT and CRS are.
+      - **`from_dict` builds entries DIRECTLY**, never through `excavate()`, whose
+        declaration reads the file: a bundled payload names a project-RELATIVE path that
+        only the build anchors, and reading it at load would check it against the working
+        directory (measured: with an existence check at load, the bundled archive failed
+        to load). A missing file is found at build, where it is read. **Only the file read
+        is skipped**: every other refusal `excavate()` makes runs at load through the same
+        two helpers (`layers._checked_scalars`, `_refuse_declaration`). Building entries
+        unchecked -- the first version -- let a hand-written payload
+        (`SimulationSpec.from_yaml`) repeat a name, and one excavation's RECORD vanished
+        while its cut stayed in the arrays (records `{'pond': cell 0 at 85.0}` beside a
+        top of 93.0 at cell 4), past the overlap refusal too, which is keyed by name; dig
+        an `offset_below(9)` bed from the ground (the +5 ft stack-vs-lake mismatch the
+        verb refuses); and take `layer=` or a column floor beside an inline `area`. An
+        empty name is refused by both now (the verb accepted `name=""`).
+      - **`from_dict` REFUSES unknown keys, the stack's own as well as an entry's.** An
+        excavation is exactly the kind of addition an older reader drops in silence -- a
+        stack without its pond builds clean -- so from here on a payload from a later
+        version refuses rather than degrades. It cannot reach back: C4's reader ignores
+        `"excavations"`.
+      - **The lazy `mf.disv` publishes a table built from the RESULT** (design D9), not
+        `grid.gdf_topbtm` -- with `attach=False` that is whatever was published before
+        (a top of 500.0 against the DISV's 100.0, ledger 270's amendment) -- and it
+        carries the records in the table's `attrs["excavations"]`, so a model's elevations
+        and records come from ONE result. `grid_identity.excavation_cells` reads them
+        there (the C5 guard names the excavation on a lazy `attach=False` model through
+        it) and C7's resolver is to. Not publishing the `LayerBuildResult` itself: the
+        frozen snapshot drops one silently (design D8, still open), and a lazy run would
+        then freeze with no elevations. **The table is marked as the DISV's own**
+        (`attrs["published_by"] = "disv"`), and `specs._layer_elevations` does not warn
+        that a marked table disagrees with the grid's: with `attach=False` that is the
+        GRID's table left alone on purpose, and the warning said the CONTEXT was stale and
+        to rebuild it -- which would put the old elevations back (measured: a lazy drain
+        at `model_top - 2` correct at 98.0, beside 11 such warnings). The limit: a marked
+        table carried by hand into ANOTHER model's context is trusted too. **An `ExcavationRecord` copies as ITSELF**
+        (`__copy__`/`__deepcopy__`): pandas deep-copies a frame's `attrs` into every frame
+        derived from it, which cost ~35 us per derived frame for a 612-cell record (329
+        against 225 us for three column reads on a 9,405-cell table; 233 us shared), and
+        the record is immutable -- frozen, a tuple of cells, a read-only bed.
+      - **`_layer_elevations`' context-vs-grid warning goes through `warnings.warn`** too
+        (design D11; ledger 288's rule): logged alone it reached nobody.
+      **Measured, pinned by tests** (`tests/test_excavation_lifecycle.py`, 28): every
+      footprint form (path + layer, a column floor, an `mf.Area`, a GeoDataFrame, a bare
+      geometry) round-trips through JSON and YAML in plain types with numpy scalars fed
+      in, and rebuilds the identical arrays and records on `triangulated_grid`; moving the
+      footprint and the bed keeps the digest, editing either moves it; a bundled project
+      rebuilds with every source deleted (boundary, footprint, bed), and so does a run
+      from its frozen snapshot; `drift()` reads `ok` and then `edited` after the
+      footprint moves; one declaration covers 28 and 92 cells -- `mf.lak`'s own cells on
+      each mesh -- and `with_grid` 28 -> 92 reads `rebuilt`. Each rule reverted fails a
+      named test (10 mutations; and after the adversarial review, the load-time refusal
+      9, the scalar checks 3, the frozen records 2, the published-table mark 1).
+      **The frozen snapshot carries the RECORDS** (`freeze._excavations_block`): name,
+      cells, bed, `min_remnant` -- two arrays and two scalars each, nothing derived -- read
+      in `excavation_cells`' order (the context's surfaces, their `attrs`, then the grid)
+      and restored onto the thawed table's `attrs` AND the thawed grid. Section 6 said
+      freeze needed no change, and for the ARRAYS it did not; but the snapshot kept only
+      the table's numeric columns, so a reopened run held the pond's elevations with no
+      record naming it (8 cells live, 0 thawed): the C5 guard could not name the
+      excavation there, and C7's `mf.lak`, declared against a thawed context, would have
+      found no record and fallen back to the legacy rule on an excavated geometry.
+      Additive to the payload, so `freeze.FORMAT` does not move: an older snapshot thaws
+      with no records, as before.
+      **NOT changed, by design (section 6):** the specs.py walkers, bundling and
+      `package_move` (no edit needed, given `"zone"`); the remap (`remap.py`: a pit's
+      cells come out unreached and the lazy DISV makes them inactive). `refresh()`,
+      `cache_status()` and `for_grid` already carried the excavations (ledger 320).
+      Design D8 -- a `LayerBuildResult` given as `ModelContext(surfaces=)` freezes with no
+      elevations -- is still open; its records now survive, on the thawed grid.

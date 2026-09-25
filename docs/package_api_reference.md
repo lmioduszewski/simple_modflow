@@ -393,8 +393,15 @@ release-group boundnames; without them it names the fix and offers
   `stack.to_disv(vor)` is now `stack.build(vor).to_disv()`. A package declared
   against a context from BEFORE the cut is refused at build, naming the excavation:
   a list boundary or an observation on a dug cell, an array recharge/ET index
-  pointing at one (ledger 321). Not yet serializable:
-  `mf.disv(<gridless excavated stack>)` raises — declare `mf.disv(stack.build(vor))`.
+  pointing at one (ledger 321). An excavated stack SAVES (ledger 323): its excavations
+  ride in the `$layer_stack` payload — the footprint file by path (under `"zone"`, so
+  `save(bundle_sources=True)` carries it, a lazy `mf.disv` digests its content and
+  `runs.drift()` reports it edited), an `mf.Area` or geometry inline as WKT + CRS —
+  so `mf.disv(<gridless excavated stack>)` is lazy and re-covers the cells on whatever
+  mesh it is built on, `with_grid` included. A payload is refused at load wherever
+  `excavate()` would refuse the call (a repeated or empty name, a relative bed, `layer=`
+  beside an inline area); only the footprint file is left unread until build. A run's
+  frozen snapshot keeps the records, so a reopened run still names its excavation.
   `mf.lak` does not read the records yet: its connections still follow the
   un-excavated rule (ledger 320).
 - `mf.Toward(target, fraction)` — the contact a share of the way from the surface

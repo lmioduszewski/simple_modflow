@@ -702,18 +702,20 @@ def test_cache_status_prefixes_an_excavation_bed(gis, tmp_path):
     assert stack.cache_status() == {"excavation:pond": "missing"}
 
 
-def test_a_stack_with_an_excavation_is_not_written_down_yet(rect_grid, gis):
-    """Interim, until the lifecycle commit (ledger 320): refused loudly at the call, never
-    dropped -- and ``for_grid`` keeps the pond."""
+def test_a_stack_with_an_excavation_is_written_down_and_for_grid_keeps_it(rect_grid, gis):
+    """The interim refusal of ledger 320 is gone (ledger 323): the pond rides in the
+    payload, and the stack rebuilt from it cuts the same arrays -- as does a bound copy."""
+
+    from myflopy.layers import LayerStack
 
     stack = _pond(gis)
-    with pytest.raises(NotImplementedError, match="cannot be written down yet"):
-        stack.to_dict()
-    with pytest.raises(NotImplementedError, match=r"mf\.disv\(stack\.build\(vor\)\)"):
-        mf.disv(stack)
-    bound = stack.for_grid(rect_grid)
-    np.testing.assert_array_equal(bound.build().top, stack.build(rect_grid).top)
-    assert _stack().to_dict()  # an un-excavated stack still serializes
+    revived = LayerStack.from_dict(stack.to_dict())
+    expected = stack.build(rect_grid)
+    for built in (revived.build(rect_grid), stack.for_grid(rect_grid).build()):
+        np.testing.assert_array_equal(built.top, expected.top)
+        np.testing.assert_array_equal(built.idomain, expected.idomain)
+        assert built.excavations["pond"].cells == expected.excavations["pond"].cells
+    assert "excavations" not in _stack().to_dict()  # absent, not empty, when none
 
 
 def test_top_active_recharge_lands_under_the_bed(rect_grid, gis):

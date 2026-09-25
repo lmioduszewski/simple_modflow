@@ -128,6 +128,23 @@ def _cells_in_zone(vor, zone) -> np.ndarray:
     return centroid_zones(vor.gdf_vorPolys, [geom]) >= 0
 
 
+def _content_keyed(payload: dict[str, Any], source_shas: dict) -> dict[str, Any]:
+    """``payload`` with every path ``source_shas`` holds a hash for REMOVED, in place.
+
+    The one statement of "the hash replaces the path" (ledger 293) that both carriers
+    of a file inside a layer stack use -- a surface's raster or contours, and an
+    excavation's footprint file. The hash itself rides beside the path under
+    ``source_shas``, which the payload keeps, so the digest sees the file's CONTENT
+    and not where it sits: moving a file keeps the digest, editing it moves the
+    digest. A path the stamping could not read has no hash and stays, so two
+    unreadable files never digest alike.
+    """
+
+    for name in source_shas:
+        payload.pop(name, None)
+    return payload
+
+
 #: Surface kinds whose content is per-cell arrays, so they cannot ride in a spec
 #: (ledger 193 refused inlining arrays; ledger 269 names them here).
 _UNSERIALIZABLE_SURFACES = frozenset({"array", "points"})
@@ -210,9 +227,7 @@ class Surface:
 
         payload = self.to_dict()
         payload.pop("out", None)
-        for name in self.source_shas:
-            payload.pop(name, None)
-        return payload
+        return _content_keyed(payload, self.source_shas)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Surface:
@@ -1098,6 +1113,20 @@ class ExcavationRecord:
         )
 
     __hash__ = None  # a record holds an array; equality is by value, so it is unhashable
+
+    def __copy__(self) -> ExcavationRecord:
+        """The record itself: it is immutable (frozen, a tuple of cells, a read-only bed)."""
+
+        return self
+
+    def __deepcopy__(self, memo) -> ExcavationRecord:
+        """The record itself, for the same reason -- and pandas deep-copies a frame's
+        ``attrs`` into EVERY frame derived from it. A lazy DISV publishes the records in
+        its elevation table's ``attrs`` (ledger 323), where copying a 612-cell record
+        cost ~35 us per derived frame (329 against 225 us for three column reads on a
+        9,405-cell table); sharing it costs ~3 us."""
+
+        return self
 
     def bed_at(self, cell: int) -> float:
         """The sampled bed at one of the record's cells.

@@ -46,6 +46,7 @@ from myflopy.surfaces import (
     ExcavationRecord,
     LayerSurfaces,
     Surface,
+    _content_keyed,
     _depends_on_previous,
     _excavate_layers,
     _read_excavation_file,
@@ -486,6 +487,166 @@ class _Excavation:
     #: The vector layer of ``zone``, by name (a plain ``str``).
     layer: str | None
     min_remnant: float
+    #: ``{"zone": <16-char content hash>}`` once the stack becomes part of a LAZY package
+    #: (``stamp_source_hashes``, ledger 293) -- the digest's stand-in for the footprint
+    #: file's path. A STORED field, carried by ``to_dict``/``from_dict``: a ``from_dict``
+    #: refusing it would make the stamping raise rather than hand back a copy.
+    source_shas: dict = field(default_factory=dict)
+
+
+#: The keys ``LayerStack.to_dict`` writes at the top level; ``from_dict`` refuses others,
+#: so a payload from a later version is never read as a stack without its pond.
+_STACK_KEYS = frozenset({"top", "layers", "length_units", "time_units", "excavations"})
+
+#: The keys an excavation entry may carry. ``zone`` is the footprint FILE -- under the
+#: same key ``Surface.where`` uses, so the bundler, the build-time anchor, ``drift()``'s
+#: ``built_from`` and the hash stamping find it with no per-type wiring
+#: (``specs.SURFACE_INPUT_KEYS``) -- and ``area`` is an inline footprint.
+_EXCAVATION_KEYS = frozenset(
+    {"name", "bottom", "zone", "area", "layer", "min_remnant", "source_shas"}
+)
+
+
+def _excavation_payload(excavation: _Excavation) -> dict[str, Any]:
+    """One excavation as plain JSON types: the DECLARATION, resolved on no grid."""
+
+    entry: dict[str, Any] = {"name": excavation.name}
+    entry["bottom"] = (
+        excavation.bottom.to_dict() if excavation.bottom is not None
+        else {"column": excavation.column}
+    )
+    if excavation.zone is not None:
+        entry["zone"] = excavation.zone.as_posix()
+    else:
+        entry["area"] = excavation.area.to_dict()
+    if excavation.layer is not None:
+        entry["layer"] = excavation.layer
+    entry["min_remnant"] = excavation.min_remnant
+    if excavation.source_shas:
+        entry["source_shas"] = dict(excavation.source_shas)
+    return entry
+
+
+def _excavation_from_payload(entry: dict[str, Any], *, taken, reserved) -> _Excavation:
+    """The inverse of :func:`_excavation_payload`, built DIRECTLY -- and refused as ``excavate`` refuses.
+
+    Never through :meth:`LayerStack.excavate`, whose declaration reads the footprint
+    file: a bundled payload names a project-RELATIVE path that the build anchors to the
+    project root, and checking it here would check it against the working directory --
+    ledger 293's two-bases trap. Every refusal that reads no file still runs, through
+    the same :func:`_checked_scalars` / :func:`_refuse_declaration` pair the verb uses:
+    a hand-written payload (``SimulationSpec.from_yaml``) reaches this path, and
+    building it unchecked let a repeated name drop one excavation's RECORD while its cut
+    stayed in the arrays, and a relative bed be dug from the ground.
+    """
+
+    unknown = sorted(set(entry) - _EXCAVATION_KEYS)
+    if unknown:
+        raise ValueError(
+            f"an excavation entry carries keys this version does not know: {unknown}. "
+            f"Known: {sorted(_EXCAVATION_KEYS)}."
+        )
+    if ("zone" in entry) == ("area" in entry):
+        raise ValueError(
+            f"excavation {entry.get('name')!r} must name its footprint once -- a file "
+            "under 'zone' or an inline 'area' -- not both, and not neither."
+        )
+    min_remnant, layer = _checked_scalars(entry["min_remnant"], entry.get("layer"))
+    bottom = entry["bottom"]
+    column = surface = None
+    if isinstance(bottom, dict) and set(bottom) == {"column"}:
+        column = str(bottom["column"])
+    else:
+        surface = Surface.from_dict(bottom)
+    excavation = _Excavation(
+        name=str(entry["name"]),
+        bottom=surface,
+        column=column,
+        zone=Path(entry["zone"]) if "zone" in entry else None,
+        area=Area.from_dict(entry["area"]) if "area" in entry else None,
+        layer=layer,
+        min_remnant=min_remnant,
+        source_shas=dict(entry.get("source_shas") or {}),
+    )
+    _refuse_declaration(excavation, taken=taken, reserved=reserved)
+    return excavation
+
+
+def _checked_scalars(min_remnant, layer) -> tuple[float, str | None]:
+    """``min_remnant`` and ``layer`` as the declaration stores them, or the refusal.
+
+    The half of :func:`_refuse_declaration` that must run BEFORE the footprint is read:
+    the reader takes ``layer``, and an integer handed to it would read the file's first
+    layer rather than be refused. Shared by ``excavate`` and ``from_dict``.
+    """
+
+    if isinstance(min_remnant, (bool, np.bool_)) or not isinstance(min_remnant, numbers.Real):
+        raise TypeError(f"min_remnant must be a number (length units), not {min_remnant!r}.")
+    min_remnant = float(min_remnant)
+    if not np.isfinite(min_remnant) or min_remnant < 0:
+        raise ValueError(f"min_remnant must be a finite number >= 0, not {min_remnant!r}.")
+    if layer is not None:
+        # By NAME only: in a layer stack an integer reads as a MODEL layer.
+        layer = _vector_layer_name(
+            layer, of="within", model_layer="not chosen by an excavation, which cuts every "
+            "layer above its bed"
+        )
+    return min_remnant, layer
+
+
+def _refuse_declaration(excavation: _Excavation, *, taken, reserved) -> None:
+    """Every refusal of one excavation that needs no file read, in one place.
+
+    Called by ``LayerStack.excavate`` / ``LayerBuildResult.excavate`` (through
+    :func:`_declare_excavation`) and by ``LayerStack.from_dict`` (through
+    :func:`_excavation_from_payload`), so a payload cannot build what the verb refuses.
+    ``taken`` is the names already declared, ``reserved`` every unit and layer name.
+    """
+
+    from_file = excavation.zone is not None
+    if excavation.layer is not None and not from_file:
+        raise ValueError(
+            f"layer={excavation.layer!r} selects a layer of a FILE; within= is not one. "
+            "Drop layer=, or pass the path."
+        )
+    if excavation.column is not None and not from_file:
+        raise ValueError(
+            f"bottom={excavation.column!r} names a column of the footprint's attribute "
+            "table, and a column floor needs within= to be a FILE -- an mf.Area or a "
+            "geometry has none."
+        )
+    surface = excavation.bottom
+    if surface is not None and _depends_on_previous(surface):
+        raise ValueError(
+            f"excavate(bottom=) got a {surface.kind!r} surface, which is measured from "
+            "the surface ABOVE it. The stack would measure it from the ground and "
+            "mf.lak from the excavated top -- a different bed (measured +5.0 ft in 70 "
+            "of 70 cells). Give the floor as an absolute elevation, e.g. "
+            "`ground - 9` for 9 ft below the ground surface `ground`."
+        )
+    if surface is not None and _propagates_inside_algebra(surface):
+        raise ValueError(
+            f"excavate(bottom=) got a {surface.kind!r} surface built on a "
+            "fill='propagate' source. Where that source has no data it reads the "
+            "surface ABOVE, so the stack would take it from the ground and mf.lak from "
+            "the excavated top -- a different bed (measured: 14 of 27 cells 2.0 ft "
+            "apart for `raster(p, fill='propagate') - 2`). Fill the raster's gaps, or "
+            "pass the propagate source BARE: a bare one reads the ground where it has "
+            "no data, so those cells are simply not cut."
+        )
+    name = excavation.name
+    if not name.strip():
+        raise ValueError(
+            "an excavation's name may not be empty: it keys `result.excavations` and "
+            "labels every report and refusal. Pass name=, or leave it out for the default."
+        )
+    if name in taken:
+        raise ValueError(f"an excavation named {name!r} already exists; pass another name=.")
+    if name in reserved or name == "top":
+        raise ValueError(
+            f"{name!r} names a unit or layer of the stack; an excavation is not a unit, "
+            "so give it a name of its own (name=)."
+        )
 
 
 def _looks_positional(value) -> bool:
@@ -524,21 +685,13 @@ def _declare_excavation(
 
     Every declaration-time refusal of ``LayerStack.excavate`` lives here, so the
     stack verb and ``LayerBuildResult.excavate`` refuse the same things the same way.
+    The ones that read no file are :func:`_checked_scalars` and
+    :func:`_refuse_declaration`, which ``LayerStack.from_dict`` runs too.
     """
 
     import geopandas as gpd
 
-    if isinstance(min_remnant, (bool, np.bool_)) or not isinstance(min_remnant, numbers.Real):
-        raise TypeError(f"min_remnant must be a number (length units), not {min_remnant!r}.")
-    if layer is not None:
-        # By NAME only: in a layer stack an integer reads as a MODEL layer.
-        layer = _vector_layer_name(
-            layer, of="within", model_layer="not chosen by an excavation, which cuts every "
-            "layer above its bed"
-        )
-    min_remnant = float(min_remnant)
-    if not np.isfinite(min_remnant) or min_remnant < 0:
-        raise ValueError(f"min_remnant must be a finite number >= 0, not {min_remnant!r}.")
+    min_remnant, layer = _checked_scalars(min_remnant, layer)
 
     zone = area = frame = None
     if isinstance(within, (str, Path)):
@@ -551,11 +704,6 @@ def _declare_excavation(
         # file edited in between gets.
         frame = _read_excavation_file(zone, layer=layer)
     else:
-        if layer is not None:
-            raise ValueError(
-                f"layer={layer!r} selects a layer of a FILE; within= is not one. Drop "
-                "layer=, or pass the path."
-            )
         if isinstance(within, Area):
             area = within
         elif isinstance(within, (gpd.GeoDataFrame, gpd.GeoSeries)) or hasattr(within, "geom_type"):
@@ -616,24 +764,6 @@ def _declare_excavation(
             "(mf.Raster, mf.Contours, mf.Flat, ...), a number, a raster path, or the "
             "name of a column of the footprint file."
         )
-    if surface is not None and _depends_on_previous(surface):
-        raise ValueError(
-            f"excavate(bottom=) got a {surface.kind!r} surface, which is measured from "
-            "the surface ABOVE it. The stack would measure it from the ground and "
-            "mf.lak from the excavated top -- a different bed (measured +5.0 ft in 70 "
-            "of 70 cells). Give the floor as an absolute elevation, e.g. "
-            "`ground - 9` for 9 ft below the ground surface `ground`."
-        )
-    if surface is not None and _propagates_inside_algebra(surface):
-        raise ValueError(
-            f"excavate(bottom=) got a {surface.kind!r} surface built on a "
-            "fill='propagate' source. Where that source has no data it reads the "
-            "surface ABOVE, so the stack would take it from the ground and mf.lak from "
-            "the excavated top -- a different bed (measured: 14 of 27 cells 2.0 ft "
-            "apart for `raster(p, fill='propagate') - 2`). Fill the raster's gaps, or "
-            "pass the propagate source BARE: a bare one reads the ground where it has "
-            "no data, so those cells are simply not cut."
-        )
     if column is not None:
         for label, value in zip(frame.index, frame[column], strict=True):
             try:
@@ -653,15 +783,9 @@ def _declare_excavation(
             name = area.name
         else:
             name = f"excavation_{index}"
-    name = str(name)
-    if name in taken:
-        raise ValueError(f"an excavation named {name!r} already exists; pass another name=.")
-    if name in reserved or name == "top":
-        raise ValueError(
-            f"{name!r} names a unit or layer of the stack; an excavation is not a unit, "
-            "so give it a name of its own (name=)."
-        )
-    return _Excavation(name, surface, column, zone, area, layer, min_remnant)
+    excavation = _Excavation(str(name), surface, column, zone, area, layer, min_remnant)
+    _refuse_declaration(excavation, taken=taken, reserved=reserved)
+    return excavation
 
 
 @dataclass
@@ -1207,22 +1331,33 @@ class LayerBuildResult:
         >>> float(grid.gdf_topbtm[0].loc[4]), list(grid.excavations)
         (90.0, ['pond'])
         """
-        import geopandas as gpd
-
         grid = self.vor if vor is None else vor
         if grid is None:
             raise ValueError("No grid to attach to; pass vor= or build the stack with a grid.")
-        columns = {0: np.asarray(self.top, dtype=float)}
-        for i in range(self.nlay):
-            columns[i + 1] = np.asarray(self.botm[i], dtype=float)
-        grid.gdf_topbtm = gpd.GeoDataFrame(
-            {"geometry": grid.gdf_vorPolys.geometry, **columns},
-            geometry="geometry", crs=grid.crs,
-        )
+        grid.gdf_topbtm = self._elevation_table(grid)
         # AFTER the table: its setter clears the records, so they are always the
         # ones that came with these elevations.
         grid.excavations = dict(self.excavations)
         return grid
+
+    def _elevation_table(self, grid):
+        """This result's elevations as ``gdf_topbtm``'s geometry-first table, on ``grid``.
+
+        What :meth:`attach_to_grid` publishes on the grid, and what a lazy ``mf.disv``
+        publishes on the MODEL CONTEXT -- which must be built from the result it just
+        cut, not read back off the grid: with ``attach=False`` the grid still held
+        whatever was there before (measured, a top of 500.0 beside a DISV top of 100.0).
+        """
+
+        import geopandas as gpd
+
+        columns = {0: np.asarray(self.top, dtype=float)}
+        for i in range(self.nlay):
+            columns[i + 1] = np.asarray(self.botm[i], dtype=float)
+        return gpd.GeoDataFrame(
+            {"geometry": grid.gdf_vorPolys.geometry, **columns},
+            geometry="geometry", crs=grid.crs,
+        )
 
     # -- QC / validation -------------------------------------------------- #
     def _active_components(self):
@@ -1451,8 +1586,8 @@ class LayerBuildResult:
             Polygons only; cell numbers and boolean masks are refused.
         name : str, optional
             The record's key; defaults to the file stem, then ``Area.name``, then
-            ``"excavation_<n>"``. Must differ from every excavation already cut and
-            from every unit and layer name.
+            ``"excavation_<n>"``. Must be non-empty, and differ from every excavation
+            already cut and from every unit and layer name.
         layer : str, optional
             The vector layer of a ``within`` FILE, by name; refused with any other
             ``within``, and an integer (a MODEL layer, in a layer result) is refused.
@@ -3264,9 +3399,21 @@ class LayerStack:
         """Return a JSON-ready payload: the DECLARATION, not the built arrays.
 
         What rides: the top surface, each unit's bottom/thickness surface and its
-        ``min_thickness``/``pinch``/``split``/``names``, and the units. What does NOT:
-        ``vor`` (a stack is declarable without one, and a grid cannot be inlined --
-        ledger 193) and ``_draft`` (a cached preview grid).
+        ``min_thickness``/``pinch``/``split``/``names``, the units, and -- only when
+        there are any -- the excavations (ledger 323). What does NOT: ``vor`` (a stack is
+        declarable without one, and a grid cannot be inlined -- ledger 193) and
+        ``_draft`` (a cached preview grid).
+
+        **An excavation entry** is ``{"name", "bottom", "zone" | "area", "layer"?,
+        "min_remnant", "source_shas"?}``: ``bottom`` is the floor's Surface payload, or
+        ``{"column": <name>}`` for a per-feature floor read from the footprint file;
+        ``zone`` is the footprint FILE as a posix path (resolved to an absolute one at
+        declaration) and ``area`` an inline ``mf.Area`` document (WKT + CRS). The file
+        rides under ``"zone"`` -- the key ``Surface.where`` already uses -- so the
+        bundler, the build-time anchor, ``runs.drift()``'s ``built_from`` and the hash
+        stamping all find it with no wiring of their own. Nothing resolved on a grid is
+        written (no cells, no sampled bed): the stack re-reads the file and re-covers
+        the cells on whatever mesh it is built on.
 
         **A stack does not determine its own arrays**, which is why this is a recipe
         and not a result: ``reconcile``, ``min_sep``, ``trigger_sep`` and ``method``
@@ -3274,24 +3421,34 @@ class LayerStack:
         same grid, a different ``reconcile`` measured a different ``botm``. Whoever
         rebuilds from this payload has to supply them again (ledger 269).
 
-        **An excavated stack cannot be written down yet** (ledger 320): its
-        excavations are not part of this payload, and dropping them silently would
-        hand ``mf.disv(stack)``, a saved project and a digest a stack with no pond.
-        So it RAISES ``NotImplementedError``, which nothing on the way catches:
-        ``mf.disv(stack)`` on a gridless excavated stack refuses at the call. Declare
-        the discretization from the built arrays instead --
-        ``mf.disv(stack.build(vor))`` or ``stack.to_disv(vor)``.
+        Returns
+        -------
+        dict
+            Plain Python types only (``str``, ``float``, ``int``, ``bool``, ``None``,
+            lists, dicts) -- tuples inside a surface payload are tagged by the spec
+            serializer, not here.
+
+        Raises
+        ------
+        ValueError
+            A surface holding per-cell arrays (``Surface.from_array``/``from_points``)
+            cannot be written down (ledger 269).
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> import shapely
+        >>> pond = mf.Area(shapely.box(0.0, 0.0, 50.0, 50.0), crs="EPSG:2927")
+        >>> stack = (mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0)
+        ...          .excavate(bottom=93.0, within=pond, name="pond"))
+        >>> entry = stack.to_dict()["excavations"][0]
+        >>> sorted(entry), entry["bottom"], entry["min_remnant"]
+        (['area', 'bottom', 'min_remnant', 'name'], {'kind': 'flat', 'value': 93.0}, 0.1)
+        >>> mf.LayerStack.from_dict(stack.to_dict()).to_dict() == stack.to_dict()
+        True
         """
 
-        if self._excavations:
-            raise NotImplementedError(
-                "An excavated LayerStack cannot be written down yet: its excavations "
-                f"({', '.join(e.name for e in self._excavations)}) are not part of the "
-                "saved payload, and dropping them would build a stack with no pond. "
-                "Declare the discretization from the built arrays instead -- "
-                "mf.disv(stack.build(vor)) or stack.to_disv(vor)."
-            )
-        return {
+        payload: dict[str, Any] = {
             "top": self._top.to_dict(),
             "layers": [
                 {
@@ -3308,25 +3465,139 @@ class LayerStack:
             "length_units": self.length_units,
             "time_units": self.time_units,
         }
+        # Only when there are any: an un-excavated stack's payload -- and so its digest
+        # -- is byte-identical to what it was before excavations existed.
+        if self._excavations:
+            payload["excavations"] = [
+                _excavation_payload(excavation) for excavation in self._excavations
+            ]
+        return payload
 
     def digest_payload(self) -> dict[str, Any]:
-        """:meth:`to_dict`, with each surface fingerprinted by CONTENT where it can be.
+        """:meth:`to_dict`, with each file fingerprinted by CONTENT where it can be.
 
         ``to_dict`` nests each surface as a plain dict, so ``specs._canonical`` never
         meets the ``Surface`` objects themselves and their own ``digest_payload`` would
-        never be consulted. This is what reaches them (ledger 293's second pass).
+        never be consulted. This is what reaches them (ledger 293's second pass) -- and
+        an excavation's footprint file, whose hash replaces its path through the same
+        helper (``surfaces._content_keyed``). An inline ``mf.Area``'s ``source`` and
+        ``note`` are dropped: provenance and a comment, not content.
+
+        Returns
+        -------
+        dict
+            The payload a package's digest fingerprints: moving a stamped file keeps
+            it, editing the file moves it.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`to_dict`.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> import shapely
+        >>> pond = mf.Area(shapely.box(0.0, 0.0, 50.0, 50.0), note="drawn by hand")
+        >>> stack = (mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0)
+        ...          .excavate(bottom=93.0, within=pond, name="pond"))
+        >>> "note" in stack.to_dict()["excavations"][0]["area"]
+        True
+        >>> "note" in stack.digest_payload()["excavations"][0]["area"]
+        False
         """
 
         payload = self.to_dict()
         payload["top"] = self._top.digest_payload()
         for entry, layer in zip(payload["layers"], self._layers, strict=True):
             entry["surface"] = layer.surface.digest_payload()
+        for entry, excavation in zip(
+            payload.get("excavations", ()), self._excavations, strict=True
+        ):
+            if excavation.bottom is not None:
+                entry["bottom"] = excavation.bottom.digest_payload()
+            if "area" in entry:
+                entry["area"] = {
+                    key: value for key, value in entry["area"].items()
+                    if key not in ("source", "note")
+                }
+            _content_keyed(entry, excavation.source_shas)
         return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], *, vor=None) -> LayerStack:
-        """Rebuild a stack from :meth:`to_dict`'s payload, optionally bound to ``vor``."""
+        """Rebuild a stack from :meth:`to_dict`'s payload, optionally bound to ``vor``.
 
+        The excavations are rebuilt DIRECTLY from their entries, never through
+        :meth:`excavate`: that verb reads the footprint file, and a bundled payload
+        names a project-RELATIVE path that only the build anchors to the project root
+        -- checking it here would check it against the working directory (ledger 293's
+        two-bases trap). A missing file is found at build, where it is read. Every
+        OTHER refusal of :meth:`excavate` runs here, through the same code: a
+        hand-written payload (``SimulationSpec.from_yaml``) reaches this path, and
+        without them a repeated name dropped one excavation's record while its cut
+        stayed in the arrays (ledger 323).
+
+        Parameters
+        ----------
+        data : dict
+            A payload :meth:`to_dict` wrote, after a JSON or YAML round trip if you
+            like (tuples tagged by the spec serializer must already be untagged, as
+            ``specs._spec_value`` does). Keys it does not know -- at the top level or
+            in an excavation entry -- are REFUSED, so a payload written by a later
+            version is never read as a stack missing whatever it carried.
+        vor : VoronoiGridPlus, optional
+            The grid to bind the rebuilt stack to; omitted, it is gridless (the
+            payload never carries one).
+
+        Returns
+        -------
+        LayerStack
+            A new stack; its surfaces, excavations and units are new objects.
+
+        Raises
+        ------
+        ValueError
+            An unknown key; an excavation entry naming both or neither of ``zone`` and
+            ``area``; an unknown ``Surface`` field in any surface payload. And each
+            refusal :meth:`excavate` makes without reading a file: an excavation name
+            that is empty, repeated, or names a unit or layer; a ``bottom`` measured
+            from the surface above (``offset_below`` and the like) or algebra over a
+            ``fill="propagate"`` source; ``layer`` or a column floor
+            (``{"column": ...}``) with an inline ``area`` rather than a ``zone`` file;
+            ``min_remnant`` negative or not finite.
+        TypeError
+            A ``min_remnant`` that is not a number, or a ``layer`` that is not a
+            ``str`` (an integer reads as a MODEL layer, as in :meth:`excavate`).
+        KeyError
+            A payload missing ``top``, or an excavation entry missing ``name``,
+            ``bottom`` or ``min_remnant``.
+
+        Examples
+        --------
+        >>> import myflopy as mf
+        >>> stack = mf.LayerStack(top=mf.Flat(100.0)).add("sand", thickness=20.0)
+        >>> mf.LayerStack.from_dict(stack.to_dict()).names
+        ['sand']
+        >>> mf.LayerStack.from_dict({**stack.to_dict(), "ponds": []})
+        Traceback (most recent call last):
+        ...
+        ValueError: A LayerStack payload carries keys this version does not know: ['ponds']. Known: ['excavations', 'layers', 'length_units', 'time_units', 'top'].
+        >>> import shapely
+        >>> pond = {"name": "pond", "bottom": {"kind": "flat", "value": 93.0},
+        ...         "area": mf.Area(shapely.box(0, 0, 10, 10)).to_dict(), "min_remnant": 0.1}
+        >>> mf.LayerStack.from_dict({**stack.to_dict(), "excavations": [pond, pond]})
+        Traceback (most recent call last):
+        ...
+        ValueError: an excavation named 'pond' already exists; pass another name=.
+        """
+
+        unknown = sorted(set(data) - _STACK_KEYS)
+        if unknown:
+            raise ValueError(
+                f"A LayerStack payload carries keys this version does not know: {unknown}. "
+                f"Known: {sorted(_STACK_KEYS)}."
+            )
         stack = cls(
             vor,
             top=Surface.from_dict(data["top"]),
@@ -3342,6 +3613,15 @@ class LayerStack:
                     pinch=entry.get("pinch"),
                     split=entry.get("split"),
                     names=entry.get("names"),
+                )
+            )
+        reserved = stack._reserved_names()
+        for entry in data.get("excavations", ()):
+            stack._excavations.append(
+                _excavation_from_payload(
+                    entry,
+                    taken={excavation.name for excavation in stack._excavations},
+                    reserved=reserved,
                 )
             )
         return stack
@@ -3911,8 +4191,11 @@ class LayerStack:
               read at ``layer`` by the reader ``mf.lak`` uses. Resolved to an
               absolute path at the call and read then, so a missing file, a missing
               layer, a line or a zero-area feature refuses here; read again at
-              build.
-            * An ``mf.Area`` -- kept inline; ``crs=None`` means the grid's frame.
+              build. Saved as that PATH (ledger 323): ``save(bundle_sources=True)``
+              carries the file, a lazy ``mf.disv`` digests its content, and
+              ``runs.drift()`` reports it edited.
+            * An ``mf.Area`` -- kept inline, and saved inline as WKT + CRS;
+              ``crs=None`` means the grid's frame.
             * A GeoDataFrame, GeoSeries or shapely geometry, coerced to an inline
               ``Area`` (its features unioned, so a multi-part footprint selects per
               PART; a bare geometry with no CRS is in the grid's frame).
@@ -3923,8 +4206,8 @@ class LayerStack:
         name : str, optional
             The excavation's key in ``LayerBuildResult.excavations`` and its label
             in reports and refusals (converted with ``str``). Defaults to the file
-            stem, then ``Area.name``, then ``"excavation_<n>"``. Must be unique
-            among the stack's excavations and must not name a unit or layer -- nor
+            stem, then ``Area.name``, then ``"excavation_<n>"``. Must be non-empty,
+            unique among the stack's excavations, and must not name a unit or layer -- nor
             may a unit added, inserted or re-split later build a layer of that name
             (a generated ``<unit>_i`` included; :meth:`add`, :meth:`insert_below` and
             :meth:`replace` refuse it).
@@ -3955,8 +4238,8 @@ class LayerStack:
             over a ``fill="propagate"`` source; a ``str``
             bottom that is neither a column of ``within`` nor a raster file (a
             column needs a FILE ``within``); a NULL or non-numeric column value;
-            ``layer`` without a file; a line, point or zero-area footprint; a
-            duplicate ``name`` or one naming a unit or layer; ``min_remnant``
+            ``layer`` without a file; a line, point or zero-area footprint; an
+            empty or duplicate ``name``, or one naming a unit or layer; ``min_remnant``
             negative or not finite. At :meth:`build`: a footprint covering no cell
             (both extents and both CRSs, ledger 211); two excavations sharing a
             cell, or two features of one file giving one cell different column
@@ -3968,9 +4251,6 @@ class LayerStack:
             that is not a ``str``.
         FileNotFoundError
             A ``within`` or ``bottom`` path that does not exist.
-        NotImplementedError
-            Later, from :meth:`to_dict`: an excavated stack cannot be written down
-            yet (ledger 320) -- declare ``mf.disv(stack.build(vor))``.
 
         Warns
         -----

@@ -3188,6 +3188,13 @@ class ModelContext:
     time_units: str = "days"
     metadata: dict[str, Any] = field(default_factory=dict)
 
+#: The ``attrs`` key and value a lazy ``mf.disv`` stamps on the elevation table it
+#: publishes onto the model's context: that table IS the built discretization's, so a
+#: grid table disagreeing with it is the one out of date (``attach=False`` leaves the
+#: grid's table alone on purpose), and ``_layer_elevations`` does not warn about it.
+_PUBLISHED_BY_KEY, _PUBLISHED_BY_DISV = "published_by", "disv"
+
+
 def _layer_elevations(context: Any) -> Any:
     """The ONE per-cell layer-elevation table every surface-aware builder reads.
 
@@ -3203,7 +3210,11 @@ def _layer_elevations(context: Any) -> Any:
     ``context.surfaces`` wins when given, because it is what the caller said and
     there is no way to tell a deliberate pin from a stale snapshot. What changes
     is that every builder now agrees on it, and a DISAGREEMENT with the grid's
-    live table is announced rather than written into the model.
+    live table is announced rather than written into the model -- except for a table
+    a lazy ``mf.disv`` published (``attrs[_PUBLISHED_BY_KEY]``): that one is the built
+    discretization's own, so with ``attach=False`` it is the GRID's table that is out of
+    date, and the warning's advice -- rebuild the context -- would put the old
+    elevations back (ledger 323).
 
     A ``LayerBuildResult`` is accepted and turned into the table -- it is a
     documented ``surfaces`` value, and LAK used to die on it with
@@ -3216,14 +3227,27 @@ def _layer_elevations(context: Any) -> Any:
         return live
     if not hasattr(surfaces, "columns") and hasattr(surfaces, "botm"):
         surfaces = _elevation_table_from_layers(surfaces)
-    if live is not None and live is not surfaces and _elevations_disagree(surfaces, live):
-        logger.warning(
+    published = getattr(surfaces, "attrs", None)
+    published = isinstance(published, dict) and published.get(_PUBLISHED_BY_KEY) == _PUBLISHED_BY_DISV
+    if published:
+        if live is not None and live is not surfaces and _elevations_disagree(surfaces, live):
+            logger.debug(
+                "the grid's gdf_topbtm disagrees with the table a lazy DISV published "
+                "(attach=False keeps the grid's); the DISV's is used, and is the model's"
+            )
+    elif live is not None and live is not surfaces and _elevations_disagree(surfaces, live):
+        # Through `warnings.warn` as well as the logger: `import myflopy` installs a
+        # NullHandler and root has none, so the log line alone reached NOBODY -- 0 bytes
+        # on stderr (ledger 288; the excavation design's D11, ledger 323).
+        message = (
             "ModelContext.surfaces and the grid's gdf_topbtm disagree -- the context "
             "was most likely built before the layers were re-published (a notebook "
-            "cell re-run). Every surface-aware package in this model uses "
-            "context.surfaces; rebuild the ModelContext if the grid's table is the "
-            "one you meant."
+            "cell re-run, or a stack excavated after the context was made). Every "
+            "surface-aware package in this model uses context.surfaces; rebuild the "
+            "ModelContext if the grid's table is the one you meant."
         )
+        logger.warning(message)
+        warnings.warn(message, UserWarning, stacklevel=3)
     return surfaces
 
 

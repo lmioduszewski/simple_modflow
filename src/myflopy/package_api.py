@@ -85,6 +85,8 @@ from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection, StreamDiversio
 from myflopy.modflow.mf6.uzf import UZFBuilder
 from myflopy.sources import BoundarySource, Polygons
 from myflopy.specs import (
+    _PUBLISHED_BY_DISV,
+    _PUBLISHED_BY_KEY,
     ExchangeSpec,
     ModelContext,
     ModelSpec,
@@ -1952,14 +1954,20 @@ def _build_lazy_disv(model, *, layer_stack, build_kwargs, disv_name="disv", **op
     needed no new machinery, only this function in place of a raise.
 
     It PUBLISHES what it resolved: the stack's ``idomain`` becomes the context's
-    domain and the sampled elevations become its surfaces, so the surface-aware
-    builders (``mf.sfr`` reach tops, ``mf.lak`` layering) and the build-time guard all
-    see the mesh this DISV actually describes. Published by REBINDING, because
-    ``ModelContext`` is frozen with slots and an in-place write would raise.
+    domain and the elevations it built -- a geometry-first table made from the RESULT,
+    carrying its excavation records in ``attrs["excavations"]`` -- become its surfaces,
+    so the surface-aware builders (``mf.sfr`` reach tops, ``mf.lak`` layering) and the
+    build-time guard all see the mesh this DISV actually describes. Not
+    ``grid.gdf_topbtm``: with ``attach=False`` that is whatever was published before.
+    Published by REBINDING, because ``ModelContext`` is frozen with slots and an
+    in-place write would raise.
 
-    A DECLARED domain or surfaces that disagrees with what the stack resolved is
-    refused rather than overwritten: the caller described two different models and
-    only one of them can be built (ledger 270).
+    A DECLARED domain that disagrees with what the stack resolved is refused rather
+    than overwritten: the caller described two different models and only one of them
+    can be built (ledger 270). Declared SURFACES are not compared -- they are replaced
+    by what was built. The published table is marked as the DISV's own
+    (``attrs[specs._PUBLISHED_BY_KEY]``), so ``specs._layer_elevations`` does not warn that
+    it disagrees with a grid table ``attach=False`` left alone.
     """
 
     context = getattr(model, "myflopy_context", None)
@@ -1990,9 +1998,18 @@ def _build_lazy_disv(model, *, layer_stack, build_kwargs, disv_name="disv", **op
                 "`domain=` and let the stack own it, or build the stack yourself and pass "
                 "`mf.disv(result)`."
             )
-    model.myflopy_context = _replace(
-        context, domain=result.idomain, surfaces=grid.gdf_topbtm
-    )
+    # The elevations of THIS result, not `grid.gdf_topbtm`: with `attach=False` the
+    # grid still holds whatever was published before, and the context published a top of
+    # 500.0 beside a DISV top of 100.0. The excavation records ride on the table itself
+    # (`attrs`), so the elevations and the records a model reads come from one result
+    # (`grid_identity.excavation_cells`; ledger 323).
+    table = result._elevation_table(grid)
+    table.attrs["excavations"] = dict(getattr(result, "excavations", None) or {})
+    # Marked as the DISV's own: with attach=False the grid keeps an older table, and
+    # `_layer_elevations` would otherwise warn on every read that the CONTEXT is stale
+    # and advise rebuilding it -- which would put the old elevations back.
+    table.attrs[_PUBLISHED_BY_KEY] = _PUBLISHED_BY_DISV
+    model.myflopy_context = _replace(context, domain=result.idomain, surfaces=table)
     # Record what was actually built, so the run freezes ARRAYS rather than this
     # recipe. Freezing the declared spec stores the `LayerStack`, and a reopened run
     # then goes back to `gis/ground.tif` -- the dependence ledger 251's snapshot
@@ -2160,10 +2177,11 @@ def disv(
         ``gdf_topbtm`` (measured: set with ``True``, left unset with ``False``), which
         ``mf.sfr`` reach tops, ``mf.lak`` lake-cell layering and the layer-elevation
         hover rows read. Note ``LayerStack.build`` defaults it to ``False``. On the
-        LAZY form ``attach=False`` is not safe yet: the model's context is still
-        handed whatever table the grid already held -- measured, a top of 500.0
-        against the DISV's 100.0 -- which the excavation work's lifecycle commit
-        is due to fix (found 2026-09-25, not changed).
+        LAZY form the MODEL's context gets the elevations the stack just built
+        either way, with its excavation records (``attrs["excavations"]``); this
+        decides only whether the GRID is published to as well. Until ledger 323
+        ``attach=False`` handed the context whatever table the grid already held --
+        measured, a top of 500.0 against the DISV's 100.0.
     default_min_thickness : float, default 1.0
         Layer-stack forms: minimum thickness, length units, for units that declare
         none with ``.add(..., min_thickness=)``.

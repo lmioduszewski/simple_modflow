@@ -194,6 +194,7 @@ def collect_surfaces() -> dict[str, list[str]]:
         return sorted(field.name for field in dataclasses.fields(cls))
 
     from myflopy.areas import Area
+    from myflopy.layers import LayerBuildResult, LayerStack
     from myflopy.library import (
         AoiLibrary,
         GridLibrary,
@@ -209,7 +210,7 @@ def collect_surfaces() -> dict[str, list[str]]:
         PackageSpec,
         SimulationSpec,
     )
-    from myflopy.surfaces import Surface
+    from myflopy.surfaces import ExcavationRecord, Surface
     from myflopy.workspace import Project, Run, RunLibrary, SaveReport
 
     return {
@@ -273,6 +274,14 @@ def collect_surfaces() -> dict[str, list[str]]:
         # was added for.
         "BoundarySource.fields": spec_fields(BoundarySource),
         "Surface.fields": spec_fields(Surface),
+        # The layer stack and what it builds, covered by nothing before the excavation
+        # lifecycle commit (ledger 323): `excavate` joined `LayerStack` and three result
+        # fields plus `ExcavationRecord` appeared with no snapshot row noticing. The
+        # excavation ENTRY's key set is pinned in test_layer_stack_serialization.py.
+        "LayerStack.members": members(LayerStack),
+        "LayerBuildResult.members": members(LayerBuildResult),
+        "LayerBuildResult.fields": spec_fields(LayerBuildResult),
+        "ExcavationRecord.fields": spec_fields(ExcavationRecord),
     }
 
 

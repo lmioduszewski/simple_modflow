@@ -920,8 +920,11 @@ a `.gpkg` boundary on a dug cell is dropped with a warning, and a package declar
 against a context built BEFORE the cut -- which still names the removed cells -- is
 refused at build, naming the excavation: a boundary or observation on a dug cell, or
 an `irch`/`ievt` array pointing at one (ledger 321; `irch=None` warns instead, with the
-rate it loses, ledger 322). The layer stack cannot be saved lazily yet —
-declare `mf.disv(pond)` (ledger 320). **`mf.lak` does not read the excavation records
+rate it loses, ledger 322). The excavated stack saves like any other (ledger 323):
+`mf.disv(stack)` on the gridless stack is lazy and re-covers the pond's cells on
+whatever mesh the model is built on, the footprint file and bed are carried by
+`project.save(bundle_sources=True)` and hashed, so `runs.drift()` reports an edited
+footprint, and a reopened run's frozen snapshot keeps the records. **`mf.lak` does not read the excavation records
 yet**: its generated connections still follow the un-excavated rule (on a cut pond,
 `bathy` writes no side walls), so the cut alone is the geometry, not yet the lake
 model (ledger 320).
