@@ -13273,8 +13273,12 @@ same day, which is the useful part of the result.
       accepted at the call and refused only at build. Each is stated in the parameter's
       own entry. The first is silent and the one worth fixing: refusing any string but
       the internal `"model_top"` sentinel is a three-line change that moves no digest.
-      `fixed_cell=True` losing the recharge of a DRY cell (207.98 -> 0.0 ft3/d on a
-      model with a dry top layer) is MF6's documented meaning of `FIXED_CELL`, now said.
+      `fixed_cell=True` losing the recharge of a DRY cell is MF6's documented meaning of
+      `FIXED_CELL`, now said: on the reproducer's model, where 207.98 of 360.00 ft3/d
+      falls on 52 dry fill cells, the default applied 360.00 and `fixed_cell=True`
+      152.02 (the reproducer runs it). First written "207.98 -> 0.0", which is what the
+      OLD `irch` gives -- it also dropped the pass-through columns' 152.02 -- and a
+      review caught the pre-fix number in the docstring, here and in the commit.
       Tests: `tests/test_top_active_layer.py`, 10, one of them an MF6 run asserting the
       budget and the percent discrepancy. Reverting the array form to `!= 0` fails 5 by
       name; turning the helper's `> 0` into `!= 0` fails 6.

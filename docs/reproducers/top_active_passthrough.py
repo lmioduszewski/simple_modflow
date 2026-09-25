@@ -18,7 +18,7 @@ is 40 pass-through cells in layer 1 (MF6's numbering), every one the top of its
 column. Steady state, CHD at 90 ft on the east edge, NPF k = 10 ft/d, `icelltype` 1,
 array recharge 0.001 ft/d everywhere.
 
-Three runs on it:
+Four runs on it:
 
   OLD    `irch` resolved by the old rule, applied here by hand to the stack's own
          idomain -- so this script still shows the "before" once the library is fixed.
@@ -26,10 +26,20 @@ Three runs on it:
          at build against the built discretization (ledger 285).
   EAGER  the same with `context=ModelContext(grid=, domain=)`, resolved at
          declaration. Its DIGEST is what moves; the lazy recipe holds the string.
+  FIXED  LAZY with `fixed_cell=True`: MF6 keeps recharge in the IRCH cell even when
+         that cell is DRY. The steady head sits below the fill's 95 ft bottom, so
+         every ACTIVE fill cell -- the top of each of the other 52 columns -- is dry.
 
 WHAT IT MEASURES, per run: the recharge MF6 applied in total and in the pass-through
-columns, against the rate times the area, and MF6's own percent discrepancy. Then the
-eager declaration's digest under the old rule and the new one.
+columns, against the rate times the area, and MF6's own percent discrepancy. Then how
+many active fill cells are dry and what falls on them, the eager declaration's digest
+under the old rule and the new one.
+
+What `fixed_cell=True` loses is the DRY cells' share, 207.98 of 360.00 ft3/d; it
+applies 152.02, all of it in the pass-through columns, whose IRCH cell is the wet sand
+below. (Measured first against the OLD `irch`, it read 207.98 -> 0.0: that pair is the
+old rule, which also dropped those 152.02, and it reached the docstring and ledger 319
+before a review caught it -- which is why the case is run here.)
 """
 
 from __future__ import annotations
@@ -100,7 +110,8 @@ def _run(root, vor, tag, recharge):
     budget = flopy.utils.CellBudgetFile(str(pathlib.Path(run.workspace) / "m.cbc"),
                                         precision="double")
     record = budget.get_data(text="RCH")[-1]
-    return run.success, record, float(discrepancy.split()[-1])
+    head = flopy.utils.HeadFile(str(pathlib.Path(run.workspace) / "m.hds")).get_data()
+    return run.success, record, float(discrepancy.split()[-1]), np.asarray(head)
 
 
 def main() -> None:
@@ -121,15 +132,24 @@ def main() -> None:
         "OLD": mf.rch.array(recharge=RATE, irch=old),
         "LAZY": mf.rch.array(recharge=RATE),
         "EAGER": mf.rch.array(recharge=RATE, context=context),
+        "FIXED": mf.rch.array(recharge=RATE, fixed_cell=True),
     }
+    heads = {}
     for tag, spec in cases.items():
-        success, record, discrepancy = _run(root, vor, tag, spec)
+        success, record, discrepancy, heads[tag] = _run(root, vor, tag, spec)
         column = (np.asarray(record["node"]) - 1) % ncpl
         applied = np.asarray(record["q"], dtype=float)
         into = applied[np.isin(column, passthrough)].sum()
         print(f"{tag:6s} normal termination={success}  applied {applied.sum():8.2f} "
               f"({100 * applied.sum() / (RATE * area.sum()):5.1f}%)  in the pass-through "
               f"columns {into:7.2f}  percent discrepancy {discrepancy:+.2f}")
+
+    # MF6 writes HDRY (-1e30) for a dry convertible cell; `idomain > 0` is active.
+    fill = idomain[0] > 0
+    dry = fill & (heads["LAZY"].reshape(idomain.shape)[0] <= -1e29)
+    print(f"\nfill layer: {int(fill.sum())} active cells, {int(dry.sum())} dry "
+          f"(LAZY run); recharge falling on the dry ones {RATE * area[dry].sum():.2f} ft3/d "
+          "-- passed to the cell below by default, lost with fixed_cell=True")
 
     eager_old = mf.rch.array(recharge=RATE, irch=old, context=context)
     print(f"\neager irch in the pass-through columns: old rule layer "

@@ -4367,10 +4367,12 @@ class _RCHPackage:
             Write ``FIXED_CELL``, MF6's option to keep recharge in the IRCH cell
             even when that cell is inactive -- a convertible cell gone DRY included
             -- where by default MF6 passes it to the highest active cell below.
-            Measured on a model whose layer-1 cells were all dry: 207.98 ft3/d
-            applied by default, 0.0 with ``fixed_cell=True``. Neither setting
-            reaches a cell ``idomain`` removed: a pass-through column addressed by
-            IRCH received nothing either way.
+            What it loses is the dry cells' share. Measured
+            (``docs/reproducers/top_active_passthrough.py``) on a model where 207.98
+            of 360.00 ft3/d falls on 52 dry layer-1 cells: the default applied all
+            360.00, ``fixed_cell=True`` 152.02 -- only the columns whose IRCH cell
+            was wet. Neither setting reaches a cell ``idomain`` removed: that is why
+            ``"top_active"`` skips a pass-through cell rather than addressing it.
         auxiliary : str or list of str, optional
             Names of auxiliary variables, written in OPTIONS. Their values go in
             FloPy's ``aux=`` keyword through ``**options``:

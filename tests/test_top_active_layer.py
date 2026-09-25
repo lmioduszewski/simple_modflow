@@ -203,11 +203,17 @@ def test_a_usg_constant_head_is_the_top_active_cell():
 
 
 @pytest.mark.slow
-def test_a_passthrough_column_gets_its_recharge(tmp_path, triangulated_grid_finer):
+@pytest.mark.parametrize("fixed_cell", [False, True])
+def test_a_passthrough_column_gets_its_recharge(tmp_path, triangulated_grid_finer, fixed_cell):
     """Run MF6: the recharge the pass-through columns were declared is the recharge applied.
 
     Asserted on the budget, and on MF6's percent discrepancy -- never on Normal
     termination alone, which the defect also reached.
+
+    With `fixed_cell=True` the pass-through columns still get theirs (their IRCH cell is
+    the wet sand below), and what is lost is exactly the DRY fill cells' share: the
+    steady head sits below the fill's 95 ft bottom, so every active fill cell is dry.
+    The `rch.array` docstring states that; it first stated the OLD `irch`'s number.
     """
 
     import flopy
@@ -220,7 +226,7 @@ def test_a_passthrough_column_gets_its_recharge(tmp_path, triangulated_grid_fine
         mf.npf(k=10.0, icelltype=1),
         mf.ic(strt=95.0),
         mf.chd(stress_period_data={0: [[(2, c), 90.0] for c in east]}),
-        mf.rch.array(recharge=rate),
+        mf.rch.array(recharge=rate, fixed_cell=fixed_cell),
         mf.oc(head_filerecord="m.hds", budget_filerecord="m.cbc",
               saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")]),
     ])
@@ -249,4 +255,11 @@ def test_a_passthrough_column_gets_its_recharge(tmp_path, triangulated_grid_fine
     assert applied[np.isin(column, passthrough)].sum() == pytest.approx(
         rate * area[passthrough].sum(), rel=1e-6
     )
-    assert applied.sum() == pytest.approx(rate * area.sum(), rel=1e-6)
+    if not fixed_cell:
+        assert applied.sum() == pytest.approx(rate * area.sum(), rel=1e-6)
+        return
+    head = np.asarray(flopy.utils.HeadFile(str(workspace / "m.hds")).get_data())
+    fill = idomain[0] > 0
+    dry = fill & (head.reshape(idomain.shape)[0] <= -1e29)
+    assert fill.sum() >= 10 and np.array_equal(dry, fill), "the premise: every fill cell dry"
+    assert applied.sum() == pytest.approx(rate * (area.sum() - area[dry].sum()), rel=1e-6)
