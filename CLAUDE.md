@@ -447,9 +447,11 @@ validation — that bug was found twice, in `read_gpkg` and `contour_line_segmen
 
 ## Test suite (fast by design)
 - Full suite (**4336 passed / 6 skipped**, 2026-09-25, with ledger 318's fix and its
-  review): `pytest -n 10` **1m32s** at load average ~7 (4332 took 1m38s at ~1.6, 4297
-  with ledger 329 1m54s at ~3, 4286 2m50s at ~4, and 4271 with ledger 328 2m21s). Its
-  serial clock was not taken; 4266 on
+  review): serial (`-n0`) **7m03s** and `pytest -n 10` **1m35s**, the branch's final
+  check with no other MF6 workload on the machine (load average ~3.5 at the serial
+  run's start), a ratio of 4.4x; an earlier `-n 10` of the same 4336 took 1m32s at ~7
+  (4332 took 1m38s at ~1.6, 4297 with ledger 329 1m54s at ~3, 4286 2m50s at ~4, and
+  4271 with ledger 328 2m21s). 4266 on
   the same tree took serial (`-n0`) **8m49s** and `-n 10` **1m37s**, both with other work
   on the machine (load average 1.5-4.8 through the serial run, ~10 at the parallel one's
   start), so neither is a quiet clock -- nor were 4261's 7m58s / 1m43s the same day (ledgers 318-327, MF6
