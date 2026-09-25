@@ -457,6 +457,7 @@
         "context:KEYWORD_ONLY=<required>",
         "nper:KEYWORD_ONLY=<required>",
         "lakes:KEYWORD_ONLY=<required>",
+        "layer:KEYWORD_ONLY=None",
         "lake_id_field:KEYWORD_ONLY=None",
         "starting_stage:KEYWORD_ONLY=None",
         "lake_bottom:KEYWORD_ONLY=None",

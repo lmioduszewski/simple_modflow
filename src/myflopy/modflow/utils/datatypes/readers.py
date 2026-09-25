@@ -17,6 +17,112 @@ from myflopy._logging import get_logger
 logger = get_logger(__name__)
 
 
+def vector_layer_names(path: str | Path) -> list[str] | None:
+    """The layer names in a vector file, or ``None`` when they cannot be listed.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        A vector file GDAL can open (a GeoPackage, a shapefile, a GeoJSON...).
+
+    Returns
+    -------
+    list of str or None
+        The layers in file order. ``None`` on a geopandas older than 1.0, which
+        has no ``list_layers``: the declared floor is 0.14, so a caller skips its
+        own validation there and GDAL reports the failure instead -- less
+        helpful, never wrong.
+
+    Raises
+    ------
+    pyogrio.errors.DataSourceError
+        ``path`` is not a vector file GDAL can open, or does not exist.
+
+    Examples
+    --------
+    >>> import geopandas as gpd, shapely, tempfile, pathlib
+    >>> path = pathlib.Path(tempfile.mkdtemp()) / "two.gpkg"
+    >>> gpd.GeoDataFrame(geometry=[shapely.box(0, 0, 1, 1)]).to_file(path, layer="a")
+    >>> gpd.GeoDataFrame(geometry=[shapely.box(1, 0, 2, 1)]).to_file(path, layer="b")
+    >>> vector_layer_names(path)
+    ['a', 'b']
+    """
+
+    lister = getattr(gpd, "list_layers", None)
+    if lister is None:
+        return None
+    return lister(path)["name"].tolist()
+
+
+def read_vector_layer(path: str | Path, layer: str | int | None = None) -> gpd.GeoDataFrame:
+    """Read one vector file, optionally naming which layer inside it to use.
+
+    The one copy of "read this layer of this file" behind every ``layer=`` in the
+    package: the grid's feature selectors, ``features=`` on a map, and the lake and
+    excavation footprints (:func:`myflopy.modflow.mf6.grid.geometry.read_footprints`).
+    It lives here, in import layer 0, because the selectors (layer 2) and the map
+    features (layer 1) each held their own copy, one import away from a cycle.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        The vector file.
+    layer : str or int, optional
+        The layer's name, or its zero-based position in the file. ``None`` (the
+        default) is GDAL's own default, the FIRST layer -- which is what every
+        caller did before the parameter existed, and why it is needed: a
+        GeoPackage holding several layers reads its first and pyogrio only emits a
+        ``UserWarning``, so reading the wrong table is silent wherever warnings are
+        not surfaced.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        The layer's features, in the file's own CRS.
+
+    Raises
+    ------
+    ValueError
+        ``layer`` names no layer of the file, or its index is out of range -- the
+        message lists the layers actually present, because GDAL's own (``Layer 'x'
+        could not be opened``) does not say what IS in the file.
+    pyogrio.errors.DataSourceError
+        ``path`` does not exist or is not a vector file.
+
+    Examples
+    --------
+    >>> import geopandas as gpd, shapely, tempfile, pathlib
+    >>> path = pathlib.Path(tempfile.mkdtemp()) / "two.gpkg"
+    >>> gpd.GeoDataFrame({"n": [1]}, geometry=[shapely.box(0, 0, 1, 1)]).to_file(path, layer="a")
+    >>> gpd.GeoDataFrame({"n": [2]}, geometry=[shapely.box(1, 0, 2, 1)]).to_file(path, layer="b")
+    >>> read_vector_layer(path, "b")["n"].tolist()
+    [2]
+    >>> read_vector_layer(path, "c")
+    Traceback (most recent call last):
+    ...
+    ValueError: two.gpkg has no layer 'c'. Layers: 'a', 'b'.
+    """
+
+    path = Path(path)
+    if layer is None:
+        return gpd.read_file(path)
+
+    available = vector_layer_names(path)
+    if available is not None:
+        if isinstance(layer, int):
+            if not 0 <= layer < len(available):
+                raise ValueError(
+                    f"{path.name} has {len(available)} layer(s), so index {layer} is out "
+                    f"of range. Layers: {', '.join(map(repr, available))}."
+                )
+        elif layer not in available:
+            raise ValueError(
+                f"{path.name} has no layer {layer!r}. "
+                f"Layers: {', '.join(map(repr, available))}."
+            )
+    return gpd.read_file(path, layer=layer)
+
+
 def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
     """
     Reads a GPKG file, iterates through all features, and returns a geopandas.GeoDataFrame with all found geometries

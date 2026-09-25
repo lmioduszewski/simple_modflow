@@ -917,6 +917,72 @@ class Surface:
         return vals
 
 
+def sample_bed(surface, grid, ground, *, length_units: str | None = None) -> np.ndarray:
+    """Sample a lakebed or excavation floor onto every cell of ``grid``.
+
+    The one bed sampler behind ``mf.lak(lake_bottom=)`` and
+    ``LayerStack.excavate(bottom=)``, so a stack cut to a bed and a lake declared on
+    it read the SAME float at every cell (the excavation design, section 3.5) --
+    which is what lets ``mf.lak`` compare its bed with an excavation's record
+    exactly. It is always AREA-weighted, whatever a stack's ``build(method=)`` says:
+    that is how the lake samples, and a centroid sample of the same raster was
+    measured up to 1.027 ft away from it.
+
+    Parameters
+    ----------
+    surface : Surface, str or pathlib.Path
+        The bed: any :class:`Surface` (``mf.Raster``, ``mf.Contours``, ``mf.Flat``,
+        algebra), or a raster file path, read as ``Surface.raster(path)``.
+    grid : VoronoiGridPlus
+        The grid to sample onto.
+    ground : array_like of float, shape (ncpl,)
+        The model top -- the surface ABOVE the bed. A surface that consults the one
+        above it (``offset_below``, ``fill="propagate"``) is resolved against it; an
+        absolute one ignores it.
+    length_units : str, optional
+        The model's length unit. A surface declaring ``units=`` is converted to it
+        (``"meters"`` -> ``"feet"`` multiplies by 3.2808...). ``None`` leaves the
+        values as sampled.
+
+    Returns
+    -------
+    numpy.ndarray of float, shape (ncpl,)
+        One elevation per cell; ``NaN`` where the source has no data.
+
+    Raises
+    ------
+    ValueError
+        ``units=`` on a relative surface (``offset_below`` / ``constant_thickness``),
+        which a unit factor cannot convert; an unknown length unit; any refusal
+        :meth:`Surface.values` makes (a ``from_array`` of the wrong length, ...).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+    >>> from myflopy.surfaces import Surface, sample_bed
+    >>> vor = irregular_voronoi_grid(nrow=2, ncol=2, cell_size=100.0)
+    >>> sample_bed(Surface.flat(30.0, units="meters"), vor, np.full(vor.ncpl, 200.0),
+    ...            length_units="feet").round(2).tolist()
+    [98.43, 98.43, 98.43, 98.43]
+    >>> sample_bed(Surface.offset_below(5.0), vor, np.full(vor.ncpl, 200.0)).tolist()
+    [195.0, 195.0, 195.0, 195.0]
+    """
+
+    if isinstance(surface, (str, Path)):
+        surface = Surface.raster(surface)
+    previous = np.asarray(ground, dtype=float)
+    values = np.asarray(surface.values(grid, previous=previous), dtype=float)
+    if surface.units and length_units:
+        if surface.is_relative:
+            raise ValueError(
+                "units= is only supported on absolute surfaces, not relative "
+                "(offset_below / constant_thickness)."
+            )
+        values = values * _length_factor(surface.units, length_units)
+    return values
+
+
 class LayerSurfaces:
     """An ordered stack of layer surfaces sampled onto a grid's cells.
 

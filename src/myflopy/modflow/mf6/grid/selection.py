@@ -16,7 +16,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     to_grid_crs,
     where_they_are,
 )
-from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg, read_vector_layer
 
 logger = get_logger(__name__)
 
@@ -64,53 +64,6 @@ def _measured_cells(gdf_vor_polys, geometries, names) -> pd.Series:
     return pd.Series(cells, name="cells", dtype=object)
 
 
-def _layer_names(path: Path) -> list[str] | None:
-    """The layer names in a vector file, or ``None`` when they cannot be listed.
-
-    ``geopandas.list_layers`` is 1.0+, and the declared floor is 0.14, so on an
-    older geopandas the caller skips validation and GDAL reports the failure
-    instead -- less helpful, never wrong.
-    """
-
-    lister = getattr(gpd, "list_layers", None)
-    if lister is None:
-        return None
-    return lister(path)["name"].tolist()
-
-
-def _read_locs(path: str | Path, layer: str | int | None = None) -> gpd.GeoDataFrame:
-    """Read one vector file, optionally naming which layer inside it to use.
-
-    ``layer=None`` is GDAL's own default -- the FIRST layer in the file -- which
-    is what this module did before the parameter existed, so existing calls are
-    unaffected. That default is the reason the parameter is needed: a GeoPackage
-    holding several layers reads its first and only emits a ``UserWarning``, so
-    reading the wrong table is silent in any code that does not surface warnings.
-
-    Raises ``ValueError`` naming the layers actually present, because GDAL's own
-    message (``Layer 'x' could not be opened``) does not say what IS in the file.
-    """
-
-    path = Path(path)
-    if layer is None:
-        return gpd.read_file(path)
-
-    available = _layer_names(path)
-    if available is not None:
-        if isinstance(layer, int):
-            if not 0 <= layer < len(available):
-                raise ValueError(
-                    f"{path.name} has {len(available)} layer(s), so index {layer} is out "
-                    f"of range. Layers: {', '.join(map(repr, available))}."
-                )
-        elif layer not in available:
-            raise ValueError(
-                f"{path.name} has no layer {layer!r}. "
-                f"Layers: {', '.join(map(repr, available))}."
-            )
-    return gpd.read_file(path, layer=layer)
-
-
 def get_vor_cells_as_series(
     gdf_vor_polys,
     overlapping_geometry: shp.Polygon | shp.Point | gpd.GeoSeries | Path = None,
@@ -156,7 +109,7 @@ def get_vor_cells_as_series(
         # shared branch raised AttributeError on every bare series.
         geometries = overlapping_geometry
     elif isinstance(overlapping_geometry, (str, Path)):
-        geoms = _read_locs(overlapping_geometry, layer)
+        geoms = read_vector_layer(overlapping_geometry, layer)
         geometries = geoms.geometry
         if name_field in geoms.columns:
             names = geoms[name_field]
@@ -210,7 +163,7 @@ def get_vor_cells_as_dict(
     the parameter existed.
     """
     crs = vor.crs if crs is None else crs
-    gdf_locs = _read_locs(locs, layer).to_crs(crs)
+    gdf_locs = read_vector_layer(locs, layer).to_crs(crs)
 
     # One call for the whole frame. Per feature, each miss was reported twice and
     # the join's overhead was paid once each; the selector now names the misses.

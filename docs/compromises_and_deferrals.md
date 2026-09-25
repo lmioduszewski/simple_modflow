@@ -13236,6 +13236,22 @@ same day, which is the useful part of the result.
       Reproducer: `docs/reproducers/lak_docstring_claims.py` (every number above, ~10 s,
       needs `mf6`). Revisit on the user's call; the array SIGSEGV and the integer keys are
       silent or fatal, the rest refuse by name somewhere.
+      **Amended (2026-09-25, the excavation design's C3).** `mf.lak`/`LAKBuilder` now take
+      `layer=`, the vector layer of each `lakes` file (a multi-layer GeoPackage read its
+      first layer only), and read, cover and sample through three shared helpers --
+      `grid.geometry.read_footprints`, `footprint_cells`, `refuse_footprint_misses` and
+      `surfaces.sample_bed` -- that `LayerStack.excavate` uses too. LAK output is
+      byte-identical: the canonical model's written `.lak` and six toy lakes (a bathy
+      raster bed, two disjoint lakes, a detached part, a rectangular basin, an EPSG:4326
+      file, two files named by stem) compared equal, warnings included, before and after.
+      **Not routed through the shared reader, deliberately:** `LakeTableBuilder(footprint=)`
+      -- the bullet above still stands (first layer, no reprojection, no `str`); it takes
+      a raster's frame rather than the grid's, and changing what it accepts is the
+      separate decision this entry defers. Files in different CRSs still raise
+      (`Cannot determine common CRS`) rather than being reprojected to the first. The
+      grid selectors' and `features=`' layer readers became the same function
+      (`readers.read_vector_layer`); `features=`' refusal now reads
+      `Layers: 'a', 'b'.` where it read `layers: ['a', 'b']`.
 
 319. **"The top active layer" is ONE rule, `idomain > 0`: the array form read `!= 0` and sent recharge into pass-through cells (2026-09-25).**
       `grid/geometry.top_active_layer(domain)`, beside `domain_active`, is now the only

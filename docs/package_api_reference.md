@@ -155,6 +155,13 @@ lak = mf.lak(context=ctx, nper=nper, lakes="pond.gpkg", lake_id_field="name",
 A flat-bottomed basin is `connection_modes="rectangular"`, with one `lake_bottom`
 and a `lake_top` per lake.
 
+**Which layer of a GeoPackage.** `mf.lak(lakes="site.gpkg", layer="ponds")` reads that
+layer (by name or zero-based index); omitted, the first, which was all `mf.lak` could
+read before. A name the file does not hold raises, listing the layers present. The
+lakes are read by `grid.geometry.read_footprints`, their cells chosen by
+`footprint_cells` and a Surface/raster bed sampled by `surfaces.sample_bed` -- the
+shared reader, cell rule and bed sampler an excavation of the layer stack is built on.
+
 **What the bed does in MF6.** MF6 ignores the elevations written on a VERTICAL
 lake connection and uses the connected cell's TOP instead, so a bed lying inside a
 cell, below its top, does not lower that connection: it picks the layer each

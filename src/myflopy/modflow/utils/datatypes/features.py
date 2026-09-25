@@ -25,6 +25,7 @@ import shapely as shp
 
 from myflopy._logging import get_logger
 from myflopy.modflow.utils.datatypes.hover import HoverStyle, format_number
+from myflopy.modflow.utils.datatypes.readers import read_vector_layer
 from myflopy.viz import category_colors, mpl_color
 
 logger = get_logger(__name__)
@@ -224,40 +225,13 @@ def combine_features(features, extra):
     return [features, extra]
 
 
-def _read_vector(path: Path, layer) -> gpd.GeoDataFrame:
-    """Read one vector file, naming which layer of a multi-layer file to use.
-
-    ``layer=None`` is GDAL's default -- the first layer. A wrong name or index
-    raises listing the layers actually present, because GDAL's own error names
-    none of them. Written here rather than imported from
-    ``mf6.grid.selection``: that package's ``__init__`` imports the choropleth,
-    which imports this module, so the shared reader is one import away from a
-    cycle that only shows in a fresh interpreter.
-    """
-
-    if layer is None:
-        return gpd.read_file(path)
-    lister = getattr(gpd, "list_layers", None)
-    available = list(lister(path)["name"]) if lister is not None else None
-    if available is not None:
-        if isinstance(layer, int):
-            if not 0 <= layer < len(available):
-                raise ValueError(
-                    f"{path.name} has {len(available)} layer(s), so index {layer} is out "
-                    f"of range; layers: {available}"
-                )
-        elif layer not in available:
-            raise ValueError(f"{path.name} has no layer {layer!r}; layers: {available}")
-    return gpd.read_file(path, layer=layer)
-
-
 def _read_source(spec: Feature) -> gpd.GeoDataFrame:
     source = spec.source
     if isinstance(source, (str, Path)):
         path = Path(source)
         if not path.exists():
             raise FileNotFoundError(f"features= names a vector file that does not exist: {path}")
-        return _read_vector(path, spec.layer)
+        return read_vector_layer(path, spec.layer)
     if isinstance(source, gpd.GeoDataFrame):
         return source.copy()
     if isinstance(source, gpd.GeoSeries):

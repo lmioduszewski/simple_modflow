@@ -252,21 +252,22 @@ def test_lake_cells_is_cached_not_recomputed_per_cell():
     # Cached: repeated access returns the same object (no recompute).
     assert builder.lake_cells is builder.lake_cells
 
-    # Counted on the shared coverage rule, which is where the intersections are
-    # done now -- per candidate cell, and on shapely geometries rather than a
-    # GeoSeries, so counting GeoSeries.intersection reads zero either way.
-    original = lakes_module.cell_shares
+    # Counted on the shared footprint rule, which is where the intersections are
+    # done now (``footprint_cells``, the one ``LayerStack.excavate`` uses too) --
+    # per candidate cell, and on shapely geometries rather than a GeoSeries, so
+    # counting GeoSeries.intersection reads zero either way.
+    original = lakes_module.footprint_cells
     calls = {"n": 0}
 
-    def counting_cell_shares(*args, **kwargs):
+    def counting_footprint_cells(*args, **kwargs):
         calls["n"] += 1
         return original(*args, **kwargs)
 
     object.__setattr__(builder, "_lake_cells", None)  # force one recompute
-    with mock.patch.object(lakes_module, "cell_shares", counting_cell_shares):
+    with mock.patch.object(lakes_module, "footprint_cells", counting_footprint_cells):
         _ = builder.connections  # calls _sidewall_connections for every lake cell
 
-    # One resolve for the single lake -- NOT one per lake cell.
+    # One resolve for every lake at once -- NOT one per lake cell.
     assert calls["n"] == 1
 
 

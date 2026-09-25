@@ -404,15 +404,24 @@ def test_a_bathy_lake_still_steps_down_toward_its_deeper_neighbour():
 
 
 def test_lakes_uses_the_shared_rules_rather_than_a_copy():
-    assert lakes_module.cell_shares is grid_geometry.cell_shares
+    """The lake reads, covers, refuses and samples through the rules an excavation
+    uses (``LayerStack.excavate``), so the two cannot disagree about a footprint."""
+
+    from myflopy import surfaces
+
+    assert lakes_module.footprint_cells is grid_geometry.footprint_cells
+    assert lakes_module.read_footprints is grid_geometry.read_footprints
+    assert lakes_module.refuse_footprint_misses is grid_geometry.refuse_footprint_misses
+    assert lakes_module.sample_bed is surfaces.sample_bed
     assert lakes_module.domain_active is grid_geometry.domain_active
-    assert lakes_module.miss_reason is grid_geometry.miss_reason
-    assert lakes_module.where_they_are is grid_geometry.where_they_are
 
 
 def test_lake_cells_goes_through_the_shared_helper(monkeypatch):
-    """Patching the shared name must move the answer -- no second implementation."""
+    """Patching the shared rule must move the answer -- no second implementation,
+    in the lake OR in the footprint rule it delegates to."""
 
-    monkeypatch.setattr(lakes_module, "cell_shares", lambda polys, geometry, **kw: [(11, 1.0)])
-
+    monkeypatch.setattr(lakes_module, "footprint_cells", lambda polys, geometries: [[11]])
     assert _builder(_cell_5()).lake_cells == {"pond": [11]}
+    monkeypatch.undo()
+    monkeypatch.setattr(grid_geometry, "cell_shares", lambda polys, geometry, **kw: [(12, 1.0)])
+    assert _builder(_cell_5()).lake_cells == {"pond": [12]}

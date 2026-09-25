@@ -23,10 +23,10 @@ from shapely.geometry.base import BaseGeometry
 from myflopy.advanced import lak_spec
 from myflopy.grid_identity import pin_metadata
 from myflopy.modflow.mf6.grid.geometry import (
-    cell_shares,
     domain_active,
-    miss_reason,
-    where_they_are,
+    footprint_cells,
+    read_footprints,
+    refuse_footprint_misses,
 )
 from myflopy.specs import (
     ModelContext,
@@ -35,7 +35,7 @@ from myflopy.specs import (
     mf6_length_conversion,
     mf6_time_conversion,
 )
-from myflopy.surfaces import Surface, _length_factor
+from myflopy.surfaces import Surface, sample_bed
 
 
 @dataclass(frozen=True, slots=True)
@@ -914,11 +914,22 @@ class LAKBuilder:
     lakes : str, pathlib.Path, sequence of str or Path, or geopandas.GeoDataFrame
         Required. The lake polygons, ``Polygon`` or ``MultiPolygon`` only
         (``ValueError`` otherwise, and for a polygon with no area). A path or
-        a list of paths is read with ``geopandas.read_file``, so only each
-        file's default (first) layer is read, and the files are stacked in
-        order; files in different CRSs raise ``ValueError: Cannot determine
-        common CRS``. The lakes are reprojected to the grid's CRS when both
-        declare one. Lake order (MF6's lake numbers, from zero) is row order.
+        a list of paths is read at ``layer`` (each file's first layer by
+        default), and the files are stacked in order; files in different
+        CRSs raise ``ValueError: Cannot determine common CRS``. The lakes are
+        reprojected to the grid's CRS when both declare one; lakes carrying
+        no CRS are read as the grid's. Lake order (MF6's lake numbers, from
+        zero) is row order.
+    layer : str or int, optional
+        Default ``None``. Which layer of each ``lakes`` FILE to read, by name
+        or zero-based index; ``None`` reads the first, which is all ``mf.lak``
+        could read before this parameter existed (a multi-layer GeoPackage
+        reads its first layer behind pyogrio's generic warning). A name the
+        file does not hold, or an index past its end, raises ``ValueError``
+        listing the layers present; so does a ``layer`` with a GeoDataFrame,
+        which has none to choose. Read by the shared footprint reader
+        (``myflopy.modflow.mf6.grid.geometry.read_footprints``). This is the
+        vector layer, not a model layer -- that is ``only_layer``.
     lake_id_field : str, optional
         Default ``None``. The attribute naming each lake; its values are
         converted with ``str()`` to become the lake ids (``101`` becomes
@@ -1219,6 +1230,7 @@ class LAKBuilder:
     context: ModelContext
     nper: int
     lakes: Path | str | Sequence[Path | str] | gpd.GeoDataFrame
+    layer: str | int | None = None
     lake_id_field: str | None = None
     starting_stage: Any = None
     lake_bottom: Any = None
@@ -1322,58 +1334,25 @@ class LAKBuilder:
 
     @property
     def lake_table(self) -> gpd.GeoDataFrame:
-        """Return normalized lake records with stable lake IDs."""
+        """Return normalized lake records with stable lake IDs.
+
+        Read by :func:`~myflopy.modflow.mf6.grid.geometry.read_footprints`, the one
+        reader ``LayerStack.excavate(within=)`` uses too, so a lake and the pit cut
+        for it can never read different features, layers or frames of one file.
+        """
 
         if self._lakes is not None:
             return self._lakes
-        if isinstance(self.lakes, gpd.GeoDataFrame):
-            records = self.lakes.copy()
-        else:
-            paths = [self.lakes] if isinstance(self.lakes, (str, Path)) else list(self.lakes)
-            frames = []
-            for path_value in paths:
-                path = Path(path_value)
-                frame = gpd.read_file(path)
-                frame["_source_name"] = path.stem
-                frames.append(frame)
-            if not frames:
-                raise ValueError("At least one lake geometry is required.")
-            records = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs=frames[0].crs)
-
-        object.__setattr__(self, "_source_crs", records.crs)
-        grid_crs = getattr(self.grid, "crs", None)
-        if grid_crs is not None and records.crs is not None and records.crs != grid_crs:
-            records = records.to_crs(grid_crs)
-        if self.lake_id_field is not None:
-            if self.lake_id_field not in records:
-                raise ValueError(f"Lake ID field is missing: {self.lake_id_field}")
-            ids = records[self.lake_id_field].astype(str)
-        elif "_source_name" in records and not records["_source_name"].duplicated().any():
-            ids = records["_source_name"].astype(str)
-        else:
-            ids = pd.Series([f"lake_{index}" for index in range(len(records))], index=records.index)
-        if ids.duplicated().any():
-            duplicates = sorted(ids[ids.duplicated(keep=False)].unique())
-            raise ValueError(f"Lake IDs must be unique: {', '.join(duplicates)}")
-        if any(geometry.geom_type not in {"Polygon", "MultiPolygon"} for geometry in records.geometry):
-            raise ValueError("Lake geometries must be Polygon or MultiPolygon.")
-        # A lake reaches its cells by AREA, and the shared rule falls back to
-        # LENGTH for a geometry with none -- so a collapsed outline (a digitizing
-        # error, a polygon clipped to nothing) would come back as the two cells
-        # along it rather than as the miss it is.
-        flat = [
-            str(lake_id)
-            for lake_id, geometry in zip(ids, records.geometry, strict=True)
-            if geometry.area <= 0.0
-        ]
-        if flat:
-            raise ValueError(
-                f"Lake geometry has no area: {', '.join(flat)}. A lake covers cells "
-                "by area, so a collapsed or zero-width outline connects to nothing."
-            )
-
+        records = read_footprints(
+            self.lakes,
+            layer=self.layer,
+            crs=getattr(self.grid, "crs", None),
+            id_field=self.lake_id_field,
+            noun="lake",
+        )
+        object.__setattr__(self, "_source_crs", records.attrs.get("source_crs"))
         records = records.copy()
-        records["lake_id"] = ids
+        records["lake_id"] = records.index.to_numpy(dtype=object)
         records["lake_number"] = range(len(records))
         records = records.set_index("lake_id", drop=False)
         object.__setattr__(self, "_lakes", records)
@@ -1497,10 +1476,9 @@ class LAKBuilder:
         # made an automatic build over a large lake O(cells x lakes x grid) and hang.
         if self._lake_cells is not None:
             return self._lake_cells
-        polys = self.grid.gdf_vorPolys
-        result = {}
-        for lake_id, row in self.lake_table.iterrows():
-            result[lake_id] = [cell for cell, _share in cell_shares(polys, row.geometry)]
+        table = self.lake_table
+        cells = footprint_cells(self.grid.gdf_vorPolys, table.geometry)
+        result = dict(zip(table.index, cells, strict=True))
         object.__setattr__(self, "_lake_cells", result)
         return result
 
@@ -1800,19 +1778,14 @@ class LAKBuilder:
 
         key = str(source) if isinstance(source, Path) else id(source)
         if key not in self._sampled:
-            surface = Surface.raster(source) if isinstance(source, Path) else source
             model_top = self._surfaces().select_dtypes("number").iloc[:, 0]
             previous = model_top.reindex(range(self.grid.ncpl)).to_numpy(dtype=float)
-            values = np.asarray(surface.values(self.grid, previous=previous), dtype=float)
-            length_units = getattr(self.context, "length_units", None)
-            if surface.units and length_units:
-                if surface.is_relative:
-                    raise ValueError(
-                        "units= is only supported on absolute surfaces, not relative "
-                        "(offset_below / constant_thickness)."
-                    )
-                values = values * _length_factor(surface.units, length_units)
-            self._sampled[key] = values
+            self._sampled[key] = sample_bed(
+                source,
+                self.grid,
+                previous,
+                length_units=getattr(self.context, "length_units", None),
+            )
         return self._sampled[key]
 
     def _leakance(self, lake_id: str, connection_type: str, explicit: float | None = None) -> float:
@@ -2159,24 +2132,15 @@ class LAKBuilder:
         """
 
         table = self.lake_table
-        missing = [lake_id for lake_id, cells in self.lake_cells.items() if not cells]
-        if not missing:
-            return
-        polys = self.grid.gdf_vorPolys
-        reasons = ", ".join(
-            f"'{lake_id}' ({miss_reason(polys, table.loc[lake_id, 'geometry'])})"
-            for lake_id in missing
-        )
-        raise ValueError(
-            f"{len(missing)} of {len(table)} lakes cover no grid cell, so they would "
-            f"carry no LAK connection: {reasons}. "
-            + where_they_are(
-                table.geometry,
-                polys,
-                noun="lakes",
-                source_crs=self._source_crs,
-                grid_crs=getattr(self.grid, "crs", None),
-            )
+        refuse_footprint_misses(
+            self.grid.gdf_vorPolys,
+            table,
+            [self.lake_cells[lake_id] for lake_id in table.index],
+            noun="lakes",
+            consequence=", so they would carry no LAK connection",
+            partial="raise",
+            source_crs=self._source_crs,
+            grid_crs=getattr(self.grid, "crs", None),
         )
 
     def validate(self) -> None:

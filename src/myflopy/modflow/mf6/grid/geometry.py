@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ import shapely as shp
 from shapely.geometry import LineString, Polygon
 
 from myflopy._logging import get_logger
-from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg, read_vector_layer
 
 logger = get_logger(__name__)
 
@@ -1127,6 +1128,317 @@ def where_they_are(
     span = ", ".join(f"{v:,.1f}" for v in _bounding_box(features))
     grid = ", ".join(f"{v:,.1f}" for v in _bounding_box(polys))
     return f"The {noun} span ({span}) and the grid ({grid}); {crs}."
+
+
+def _capitalized(noun: str) -> str:
+    """``noun`` with its first letter upper-cased and the rest left as written."""
+
+    return noun[:1].upper() + noun[1:]
+
+
+def read_footprints(
+    source,
+    *,
+    layer: str | int | None = None,
+    crs=None,
+    id_field: str | None = None,
+    noun: str = "footprint",
+) -> gpd.GeoDataFrame:
+    """Read polygon footprints -- lakes, excavations -- into one frame in the grid's CRS.
+
+    The one reader behind ``mf.lak(lakes=)`` and ``LayerStack.excavate(within=)``, so
+    the two can never read different features, a different layer or a different frame
+    out of one file (the excavation design, section 3.4). It reads, reprojects, labels
+    each feature, and refuses what a footprint cannot be: a feature that is not a
+    polygon, and one with no area -- a footprint covers cells by AREA, and the shared
+    cell rule falls back to LENGTH for a geometry with none, so a collapsed outline
+    would come back as the cells along it rather than as the miss it is.
+
+    Parameters
+    ----------
+    source : str, pathlib.Path, sequence of str or pathlib.Path, or geopandas.GeoDataFrame
+        A vector file, several files (concatenated in order; files in different
+        CRSs raise ``ValueError: Cannot determine common CRS``), or a frame already
+        in memory, which is copied, never modified. Each file's features are labelled
+        from its STEM when every file holds one feature (so ``["west.gpkg",
+        "east.gpkg"]`` gives ``"west"`` and ``"east"``); a frame has no stem.
+    layer : str or int, optional
+        The layer to read from each FILE, by name or zero-based index (see
+        :func:`~myflopy.modflow.utils.datatypes.readers.read_vector_layer`). ``None``
+        reads the first. With a GeoDataFrame it cannot act -- a frame has no layers
+        -- and RAISES rather than being ignored.
+    crs : pyproj.CRS, str, int or None, optional
+        The grid's CRS. Features in another CRS are reprojected to it; features
+        carrying NO CRS are taken to be in it already (a model built at the origin
+        on purpose). ``None`` leaves the features in their own frame. The frame the
+        features arrived in is kept as ``frame.attrs["source_crs"]``, because a miss
+        is diagnosed from the two frames and after reprojection only the grid's is
+        on hand.
+    id_field : str, optional
+        A column whose values label the features (converted with ``str``). Without
+        it: the file stems when they are unique, else ``"<noun>_<i>"`` by row.
+    noun : str, default "footprint"
+        What a feature is, singular -- ``"lake"`` for ``mf.lak`` -- used in the
+        fallback labels and the refusals.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        One row per feature, indexed by its string label, carrying the source's own
+        columns plus ``_source_name`` (the file stem) for features read from a file.
+        Its CRS is ``crs`` when given and the features carry one.
+
+    Raises
+    ------
+    ValueError
+        ``layer`` given with a GeoDataFrame; an empty sequence of files; ``id_field``
+        not a column; two features with one label; a feature that is not a Polygon
+        or MultiPolygon; a feature with no area -- each naming the labels at fault.
+        A ``layer`` naming no layer of a file raises through
+        :func:`~myflopy.modflow.utils.datatypes.readers.read_vector_layer`, listing
+        the layers present.
+    pyogrio.errors.DataSourceError
+        A file that does not exist or is not a vector file.
+
+    See Also
+    --------
+    footprint_cells : The cells each footprint covers.
+    refuse_footprint_misses : The refusal for footprints that land on no cell.
+
+    Examples
+    --------
+    >>> import geopandas as gpd, shapely
+    >>> from myflopy.modflow.mf6.grid.geometry import read_footprints
+    >>> frame = gpd.GeoDataFrame({"name": ["pond"]},
+    ...                          geometry=[shapely.Point(0, 0).buffer(10)], crs=2927)
+    >>> read_footprints(frame, id_field="name", noun="lake").index.tolist()
+    ['pond']
+    >>> read_footprints(frame, crs=4326).crs.to_epsg()
+    4326
+    >>> read_footprints(gpd.GeoDataFrame(geometry=[shapely.LineString([(0, 0), (1, 1)])]),
+    ...                 noun="lake")
+    Traceback (most recent call last):
+    ...
+    ValueError: Lake geometries must be Polygon or MultiPolygon.
+    """
+
+    title = _capitalized(noun)
+    if isinstance(source, gpd.GeoDataFrame):
+        if layer is not None:
+            raise ValueError(
+                f"layer={layer!r} selects a layer of a FILE, and the {noun}s were "
+                "given as a GeoDataFrame, which has none -- drop layer=, or pass the path."
+            )
+        records = source.copy()
+    else:
+        paths = [source] if isinstance(source, (str, Path)) else list(source)
+        frames = []
+        for path_value in paths:
+            path = Path(path_value)
+            frame = read_vector_layer(path, layer)
+            frame["_source_name"] = path.stem
+            frames.append(frame)
+        if not frames:
+            raise ValueError(f"At least one {noun} geometry is required.")
+        records = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs=frames[0].crs)
+
+    source_crs = records.crs
+    if crs is not None and records.crs is not None and records.crs != crs:
+        records = records.to_crs(crs)
+    if id_field is not None:
+        if id_field not in records:
+            raise ValueError(f"{title} ID field is missing: {id_field}")
+        ids = records[id_field].astype(str)
+    elif "_source_name" in records and not records["_source_name"].duplicated().any():
+        ids = records["_source_name"].astype(str)
+    else:
+        ids = pd.Series([f"{noun}_{index}" for index in range(len(records))], index=records.index)
+    if ids.duplicated().any():
+        duplicates = sorted(ids[ids.duplicated(keep=False)].unique())
+        raise ValueError(f"{title} IDs must be unique: {', '.join(duplicates)}")
+    if any(geometry.geom_type not in {"Polygon", "MultiPolygon"} for geometry in records.geometry):
+        raise ValueError(f"{title} geometries must be Polygon or MultiPolygon.")
+    flat = [
+        str(label)
+        for label, geometry in zip(ids, records.geometry, strict=True)
+        if geometry.area <= 0.0
+    ]
+    if flat:
+        raise ValueError(
+            f"{title} geometry has no area: {', '.join(flat)}. A {noun} covers cells "
+            "by area, so a collapsed or zero-width outline connects to nothing."
+        )
+    records = records.copy()
+    records.index = pd.Index(ids.to_numpy(dtype=object))
+    records.attrs["source_crs"] = source_crs
+    return records
+
+
+def footprint_cells(polys, geometries) -> list[list[int]]:
+    """The cells each footprint COVERS, by area -- one sorted list per feature.
+
+    The one cell rule for a footprint: a lake's cells (``LAKBuilder.lake_cells``) and
+    an excavation's (``LayerStack.excavate``) are this, so the two agree cell for
+    cell by construction. It is :func:`cell_shares` per feature with the shares
+    dropped -- a footprint covers a cell or it does not -- which makes a polygon
+    drawn along cell faces reach only the cells inside it, and drops a piece that is
+    a sliver of its cell (a CRS round trip leaves these) unless every piece of the
+    feature is one (ledgers 210, 241). The rule is PER FEATURE because of that last
+    clause: taken over the union of several features, one feature made wholly of
+    slivers would lose them to its neighbours.
+
+    Parameters
+    ----------
+    polys : geopandas.GeoDataFrame
+        The grid's cell polygons (``vor.gdf_vorPolys``), indexed by cell.
+    geometries : iterable of shapely geometry
+        The footprints -- a GeoSeries, a GeoDataFrame's ``.geometry``, or a list --
+        already in the grid's frame (:func:`read_footprints` puts them there).
+
+    Returns
+    -------
+    list of list of int
+        One sorted list of python ``int`` cell numbers per footprint, in the order
+        given; an empty list for a footprint covering no cell (this function does
+        not refuse it -- :func:`refuse_footprint_misses` does).
+
+    Raises
+    ------
+    AttributeError
+        An item that is not a geometry.
+
+    See Also
+    --------
+    cell_shares : The shared rule, with the shares.
+    refuse_footprint_misses : Refuse or report footprints on no cell.
+
+    Examples
+    --------
+    >>> import shapely
+    >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+    >>> from myflopy.modflow.mf6.grid.geometry import footprint_cells
+    >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+    >>> polys = vor.gdf_vorPolys
+    >>> footprint_cells(polys, [polys.geometry.loc[4], shapely.box(-900, -900, -800, -800)])
+    [[4], []]
+    """
+
+    return [[int(cell) for cell, _share in cell_shares(polys, geometry)] for geometry in geometries]
+
+
+def refuse_footprint_misses(
+    polys,
+    footprints,
+    cells,
+    *,
+    noun: str = "footprints",
+    consequence: str = "",
+    partial: str = "raise",
+    source_crs=None,
+    grid_crs=None,
+) -> list[str]:
+    """Refuse footprints covering no grid cell, saying why and where (ledger 211).
+
+    The miss report :func:`footprint_cells` leaves to its callers, worded once. Each
+    missing footprint is named with :func:`miss_reason`, and a refusal carries both
+    extents and both CRSs (:func:`where_they_are`), because a location mismatch is two
+    boxes. Only two of ``miss_reason``'s answers can come back for an areal footprint
+    -- "outside the grid" and "only borders cells" -- because nothing filters the
+    cells: any overlap by area is kept.
+
+    Parameters
+    ----------
+    polys : geopandas.GeoDataFrame
+        The grid's cell polygons, indexed by cell.
+    footprints : geopandas.GeoDataFrame
+        The footprints, indexed by label (what :func:`read_footprints` returns).
+    cells : sequence of list of int
+        :func:`footprint_cells` for ``footprints``, in the same order.
+    noun : str, default "footprints"
+        What the features are, PLURAL, as the message reads: ``"lakes"``.
+    consequence : str, default ""
+        Appended to "cover no grid cell", to say what a miss costs -- ``mf.lak``
+        passes ``", so they would carry no LAK connection"``.
+    partial : {"raise", "warn"}, default "raise"
+        ``"raise"``: ANY footprint missing raises -- a lake with no cells carries no
+        LAK connection, which MF6 refuses. ``"warn"``: only ALL missing raises, and
+        a partial miss WARNS by name (``warnings.warn`` and the logger, ledger 288),
+        which is an excavation's rule -- one file can draw ponds over several grids.
+    source_crs : pyproj.CRS, str or None, optional
+        The CRS the footprints arrived in, before any reprojection
+        (``frame.attrs["source_crs"]``); ``None`` says they carried none.
+    grid_crs : pyproj.CRS, str or None, optional
+        The grid's CRS; ``None`` reads it off ``polys``.
+
+    Returns
+    -------
+    list of str
+        The labels of the footprints that were left out (empty when none were).
+
+    Raises
+    ------
+    ValueError
+        Under ``partial="raise"`` any footprint on no cell; under ``"warn"`` every
+        footprint on no cell. Also an unknown ``partial``, or ``cells`` of another
+        length than ``footprints``.
+
+    Warns
+    -----
+    UserWarning
+        Under ``partial="warn"``, some but not all footprints on no cell.
+
+    Examples
+    --------
+    >>> import geopandas as gpd, shapely
+    >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+    >>> from myflopy.modflow.mf6.grid.geometry import (
+    ...     footprint_cells, read_footprints, refuse_footprint_misses)
+    >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+    >>> ponds = read_footprints(gpd.GeoDataFrame(
+    ...     {"name": ["in", "out"]},
+    ...     geometry=[vor.gdf_vorPolys.geometry.loc[4], shapely.box(-900, -900, -800, -800)]),
+    ...     id_field="name")
+    >>> cells = footprint_cells(vor.gdf_vorPolys, ponds.geometry)
+    >>> refuse_footprint_misses(vor.gdf_vorPolys, ponds, cells, noun="ponds")
+    Traceback (most recent call last):
+    ...
+    ValueError: 1 of 2 ponds cover no grid cell: 'out' (outside the grid). ...
+    """
+
+    if partial not in ("raise", "warn"):
+        raise ValueError(f"partial must be 'raise' or 'warn', not {partial!r}.")
+    if len(cells) != len(footprints):
+        raise ValueError(
+            f"{len(cells)} cell lists for {len(footprints)} {noun}; pass footprint_cells "
+            "of the same frame."
+        )
+    missing = [
+        (str(label), geometry)
+        for label, geometry, found in zip(footprints.index, footprints.geometry, cells, strict=True)
+        if not found
+    ]
+    if not missing:
+        return []
+    reasons = ", ".join(f"'{label}' ({miss_reason(polys, geometry)})" for label, geometry in missing)
+    if partial == "raise" or len(missing) == len(footprints):
+        raise ValueError(
+            f"{len(missing)} of {len(footprints)} {noun} cover no grid cell{consequence}: "
+            f"{reasons}. "
+            + where_they_are(
+                footprints.geometry,
+                polys,
+                noun=noun,
+                source_crs=source_crs,
+                grid_crs=grid_crs,
+            )
+        )
+    message = (
+        f"{len(missing)} of {len(footprints)} {noun} cover no grid cell{consequence} "
+        f"and are left out: {reasons}."
+    )
+    logger.warning(message)
+    warnings.warn(message, UserWarning, stacklevel=3)
+    return [label for label, _geometry in missing]
 
 
 def reconcile_surfaces(vor, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):

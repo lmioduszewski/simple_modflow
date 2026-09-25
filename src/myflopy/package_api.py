@@ -5530,6 +5530,7 @@ class _LAKPackage:
         context: ModelContext,
         nper: int,
         lakes: PathLike | Sequence[PathLike] | gpd.GeoDataFrame,
+        layer: str | int | None = None,
         lake_id_field: str | None = None,
         starting_stage: Any = None,
         lake_bottom: Any = None,
@@ -5629,11 +5630,22 @@ class _LAKPackage:
         lakes : str, pathlib.Path, sequence of str or Path, or geopandas.GeoDataFrame
             Required. The lake polygons, ``Polygon`` or ``MultiPolygon`` only
             (``ValueError`` otherwise, and for a polygon with no area). A path or
-            a list of paths is read with ``geopandas.read_file``, so only each
-            file's default (first) layer is read, and the files are stacked in
-            order; files in different CRSs raise ``ValueError: Cannot determine
-            common CRS``. The lakes are reprojected to the grid's CRS when both
-            declare one. Lake order (MF6's lake numbers, from zero) is row order.
+            a list of paths is read at ``layer`` (each file's first layer by
+            default), and the files are stacked in order; files in different
+            CRSs raise ``ValueError: Cannot determine common CRS``. The lakes are
+            reprojected to the grid's CRS when both declare one; lakes carrying
+            no CRS are read as the grid's. Lake order (MF6's lake numbers, from
+            zero) is row order.
+        layer : str or int, optional
+            Default ``None``. Which layer of each ``lakes`` FILE to read, by name
+            or zero-based index; ``None`` reads the first, which is all ``mf.lak``
+            could read before this parameter existed (a multi-layer GeoPackage
+            reads its first layer behind pyogrio's generic warning). A name the
+            file does not hold, or an index past its end, raises ``ValueError``
+            listing the layers present; so does a ``layer`` with a GeoDataFrame,
+            which has none to choose. Read by the shared footprint reader
+            (``myflopy.modflow.mf6.grid.geometry.read_footprints``). This is the
+            vector layer, not a model layer -- that is ``only_layer``.
         lake_id_field : str, optional
             Default ``None``. The attribute naming each lake; its values are
             converted with ``str()`` to become the lake ids (``101`` becomes
@@ -5966,6 +5978,7 @@ class _LAKPackage:
             context=context,
             nper=nper,
             lakes=lakes,
+            layer=layer,
             lake_id_field=lake_id_field,
             starting_stage=starting_stage,
             lake_bottom=lake_bottom,
