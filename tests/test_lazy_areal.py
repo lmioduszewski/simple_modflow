@@ -546,6 +546,64 @@ def test_an_omitted_et_surface_resolves_lazily_rather_than_raising(tmp_path, tri
 
 
 @pytest.mark.parametrize(
+    "ievt, written",
+    [
+        (1, 1),
+        (np.int64(1), 1),
+        ("ones", 1),
+        ({0: "ones"}, 1),
+        (0, 0),
+    ],
+    ids=["int", "numpy int", "array", "per period", "zero"],
+)
+def test_a_typed_ievt_beside_an_omitted_surface_is_written(tmp_path, triangulated_grid, ievt, written):
+    """With ``surface`` left to the build, a TYPED ``ievt`` rode in neither the deferred
+    inputs nor the options, and was DROPPED: ``ievt=1`` wrote no IEVT at all and MF6 took
+    the ET from layer 1 (ledger 324). It is carried now, and written as given -- a numpy
+    integer too, which FloPy itself refused (it subclasses no ``int``)."""
+
+    n = int(triangulated_grid.ncpl)
+    ones = np.ones(n, dtype=int)
+    value = {0: ones} if isinstance(ievt, dict) else ones if isinstance(ievt, str) else ievt
+    spec = mf.evt.array(rate=1e-3, depth=2.0, ievt=value)
+    assert sorted(spec.inputs) == ["surface"], "the surface is still left to the build"
+
+    built = _build(tmp_path, triangulated_grid, spec, tag="typed")
+    ievt_written = built.get_package("evt").ievt.get_data()
+    assert ievt_written is not None, "the typed index was dropped"
+    assert (np.asarray(ievt_written[0]).reshape(-1) == written).all()
+
+
+@pytest.mark.parametrize("make", [
+    lambda: mf.rch.array(recharge=6e-4, irch=np.int64(1)),
+    lambda: mf.rch.array(recharge=6e-4, irch={0: np.int64(1)}),
+    lambda: mf.evt.array(rate=1e-3, depth=2.0, surface=100.0, ievt=np.int64(1)),
+], ids=["rch", "rch per period", "evt"])
+def test_a_numpy_integer_index_reaches_flopy_as_an_int(tmp_path, triangulated_grid, make):
+    """FloPy refused ``np.int64(1)`` as an index ("has no len()") on the EAGER form too:
+    numpy's integer scalars subclass no ``int`` (ledger 265's class). Checked with
+    ``type(x) is``, never isinstance."""
+
+    spec = make()
+    index = next(value for key, value in spec.options.items() if key in ("irch", "ievt"))
+    for value in index.values() if isinstance(index, dict) else [index]:
+        assert type(value) is int
+    built = _build(tmp_path, triangulated_grid, spec, tag="numpy")
+    kind = "rch" if "irch" in spec.options else "evt"
+    written = getattr(built.get_package(kind), "irch" if kind == "rch" else "ievt").get_data()
+    assert (np.asarray(written[0]).reshape(-1) == 1).all()
+
+
+def test_an_omitted_ievt_beside_an_omitted_surface_is_left_as_it_was():
+    """The digest of what was ALREADY right does not move: ``ievt=None`` and the
+    ``"top_active"`` default carry nothing new."""
+
+    assert "ievt" not in mf.evt.array(rate=1e-3, depth=2.0, ievt=None).options
+    default = mf.evt.array(rate=1e-3, depth=2.0)
+    assert "ievt" not in default.options and default.inputs["ievt"] == "top_active"
+
+
+@pytest.mark.parametrize(
     "declare",
     [
         lambda n: mf.rch.array(recharge=6e-4, irch=0),

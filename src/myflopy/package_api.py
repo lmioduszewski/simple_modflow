@@ -4875,7 +4875,10 @@ class _EVTPackage:
             is refused, ``None`` or one layer everywhere is warned with the rate
             lost -- for ET an UPPER bound, "up to" ``rate`` times the lost area at
             the maximum ET rate, because MF6 scales ET by the head's depth below
-            ``surface`` and so drops anything from zero to that.
+            ``surface`` and so drops anything from zero to that. A TYPED value is
+            written as given in both modes -- with ``surface`` left to the build it
+            was dropped, and MF6 took the ET from layer 1 (ledger 324) -- and a numpy
+            integer is converted to ``int`` for FloPy.
         fixed_cell : bool, default False
             Write ``FIXED_CELL``, MF6's option to keep ET in the IEVT cell instead of
             passing it to the cell below when that cell is inactive.
@@ -6678,6 +6681,11 @@ def _array_bc_result(
             for key, value in {**fields, **rest}.items()
             if key not in deferred and value is not None
         }
+        if index is not None and index_name not in deferred:
+            # A TYPED index rides beside a deferred EVT surface. It was in neither
+            # `fields` nor `rest`, so it was dropped: `ievt=1` wrote no IEVT at all and MF6
+            # took the ET from layer 1 (ledger 324). `_build_lazy_array` pops it back out.
+            options[index_name] = index
         # The lazy branch returns before `_array_bc_values` runs, so the declaration-time
         # checks that do not need a grid have to be repeated here -- the rule
         # `_lazy_bc_spec` already follows for a missing file and `nper=0`. Without it
@@ -6889,6 +6897,17 @@ def _array_bc_values(
         index = top_active_layer(domain)
         index = np.where(index < 0, 0, index)
 
+    # A numpy INTEGER scalar -- one layer for every column, typed as `np.int64(1)` --
+    # died inside FloPy ("object of type 'numpy.int64' has no len()", an
+    # MFDataException naming neither argument), eager and lazy alike: numpy's integer
+    # scalars subclass no `int` (ledger 265's class; ledger 324).
+    if isinstance(index, np.integer):
+        index = int(index)
+    elif isinstance(index, dict):
+        index = {
+            period: int(value) if isinstance(value, np.integer) else value
+            for period, value in index.items()
+        }
     values[index_name] = index
     _refuse_per_feature_values(values, verb=verb)
     return values

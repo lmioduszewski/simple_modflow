@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 323 entries (325 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 324 entries (326 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 324 | A typed `ievt` beside an omitted ET `surface` was DROPPED, and a numpy-integer `irch`/`ievt` died inside FloPy | 2026-09-25 |
 | 323 | An excavated layer stack is written down, archived, hashed and moved like the rest of the stack -- the life... | 2026-09-25 |
 | 322 | `irch=None` -- one layer for every column -- stays the documented opt-out, and the build now SAYS what it l... | 2026-09-25 |
 | 321 | A package still naming a cell the built DISV REMOVED is refused at build -- a boundary, an observation, an... | 2026-09-25 |
@@ -13575,3 +13576,33 @@ same day, which is the useful part of the result.
       `cache_status()` and `for_grid` already carried the excavations (ledger 320).
       Design D8 -- a `LayerBuildResult` given as `ModelContext(surfaces=)` freezes with no
       elevations -- is still open; its records now survive, on the thawed grid.
+
+324. **A typed `ievt` beside an omitted ET `surface` was DROPPED, and a numpy-integer `irch`/`ievt` died inside FloPy (2026-09-25).**
+      Predates the excavation work (present at myflopy `90de983`), found by the C5
+      review. `mf.evt.array` goes LAZY when `surface` is omitted with no `context=`
+      (ledger 285), and the lazy branch of `_array_bc_result` built its options from the
+      VALUE fields and the other keywords -- a non-string `ievt` is in neither, so it was
+      thrown away: `ievt=1` wrote no IEVT at all and MF6 took the ET from layer 1,
+      silently; an `ievt` array or per-period dict likewise, and `ievt=0` happened to mean
+      what was written. It rides in `options` now, and `_build_lazy_array` pops it back
+      out, as it already did for the index name. **It moves the digest of every such
+      declaration** -- deliberately: they were writing a different layer from the one
+      declared. Counted: 0 stored manifests hold a lazy array spec at all (no
+      `_build_lazy_array` in any JSON under the repo or the model tree), and no
+      declaration in the repo types an `ievt` with the surface omitted. `ievt=None` and
+      the `"top_active"` default carry nothing new, so their digests do not move.
+      Consequences, both right: the C5 guard (ledger 321) now REFUSES a stale typed
+      `ievt` array there, where the dropped one read as "ievt left out" and was only
+      warned; and `with_grid` reads such a package `unverifiable` (it names cells by
+      position) where it read `rebuilt` while writing no index.
+      **Same pass, ledger 265's class:** a numpy INTEGER scalar index -- `irch=np.int64(1)`,
+      or one per period -- died inside FloPy with "object of type 'numpy.int64' has no
+      len()", an `MFDataException` naming neither argument, on the EAGER form of both
+      helpers. `_array_bc_values` converts it to `int` (digest-neutral: `package_digest`
+      already canonicalized it). Tests: `tests/test_lazy_areal.py` (the typed index
+      written as given, five shapes; the numpy index on rch, rch per period and evt;
+      `ievt=None`/default unchanged) and `tests/test_active_cell_guard.py` (the stale
+      typed array refused). Reverting the carry fails 7 by name, the conversion 4.
+      `docs/reproducers/lazy_typed_ievt.py` shows each premise: the EVT file written with
+      no IEVT block before and `IEVT CONSTANT 2` after, the numpy index an
+      `MFDataException` before and a build after, and the manifest count.

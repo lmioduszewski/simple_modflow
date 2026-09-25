@@ -660,7 +660,9 @@ boundnames. `irch`/`ievt` default to `"top_active"`, derived from `context.domai
 whose layer 1 is inactive. "Top active" is the highest cell with `idomain > 0`, so
 a vertical pass-through cell (`-1`) is skipped; it read `!= 0` and lost 42% of a
 pass-through stack's recharge until ledger 319. Every "top active" in myflopy is
-`grid.geometry.top_active_layer`. The index is zero-based. Segmented ET has no
+`grid.geometry.top_active_layer`. The index is zero-based, and a typed one is written
+as given in either mode (an `ievt` beside an omitted ET `surface` was dropped until
+ledger 324). Segmented ET has no
 array form and `nseg` raises. The build checks the index against the DISV it is
 built beside: a per-column index naming a REMOVED cell (`idomain <= 0`) in a column
 that has an active one is refused (ledger 321 -- most often a `context=` from before

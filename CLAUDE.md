@@ -1156,7 +1156,9 @@ narrower than the list form's on purpose**: `irch=0 | None | <array>` with no co
 legal and digestible today, so keying on `context is None` would move those digests and
 make `runs.drift()` call every reloaded package edited. Measured 0 of 10 moved.
 **`mf.evt.array` with `surface` omitted resolves the MODEL TOP**, and refuses when a
-`context=` cannot answer (ledger 283). It used to leave the argument out entirely, so FloPy's own
+`context=` cannot answer (ledger 283). A typed `ievt` beside it was DROPPED until ledger
+324 (`ievt=1` wrote no IEVT; MF6 used layer 1) -- the lazy branch builds its options from
+the value fields and keywords, so anything else must be carried by hand. It used to leave the argument out entirely, so FloPy's own
 `surface=0.0` default wrote `CONSTANT 0.00000000` — the datum — and MF6 then draws the
 full rate everywhere, because every head is above the ET surface, making `depth=` inert:
 measured EVT total **-151.13 against a correct 0.0**, Normal termination, no warning.

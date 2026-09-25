@@ -182,6 +182,20 @@ def test_a_stale_array_evt_is_refused(tmp_path, grid):
         _build(tmp_path, _simulation(s.fresh, s.after, evt))
 
 
+def test_a_stale_typed_ievt_beside_an_omitted_surface_is_refused(tmp_path, grid):
+    """A typed ``ievt`` array with the surface left to the build was DROPPED, so a stale
+    one was warned as "ievt left out" -- downgraded from the refusal the DECLARED value
+    calls for (ledger 324). It is carried now, and refused like any per-column index."""
+
+    from myflopy.modflow.mf6.grid.geometry import top_active_layer
+
+    s = _setup(grid)
+    evt = mf.evt.array(rate=RATE, depth=5.0, ievt=top_active_layer(s.before.idomain))
+    assert sorted(evt.inputs) == ["surface"]
+    with pytest.raises(ValueError, match=r"package 'evt' \(evapotranspiration as arrays\) addresses"):
+        _build(tmp_path, _simulation(s.fresh, s.after, evt))
+
+
 def test_an_array_resolved_against_the_excavated_domain_builds_silently(tmp_path, grid):
     s = _setup(grid)
     for tag, rch in (("eager", mf.rch.array(context=s.fresh, recharge=RATE)),
