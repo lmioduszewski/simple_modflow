@@ -116,6 +116,7 @@ Throughout, two example models recur so the code stays concrete:
 - 7.3 Sampling onto the grid (area-weighted vs. point-at-centroid)
 - 7.4 Top-down reconciliation and pinch-out → `idomain` (active / pass-through / inactive)
 - 7.5 `build()` → `LayerBuildResult` (top/botm/idomain/thickness); `build(attach=True)` and `vor.gdf_topbtm`
+- 7.5a Excavating a pond or pit: `stack.excavate(bottom, within)` / `result.excavate(...)`, the sliver rule (`min_remnant`), `excavation_report()`
 - 7.6 Quality control: `.qc()` → `LayerQCReport`, `.report()`
 - 7.7 Visual checks: cross-sections, 3-D surfaces, VTK export
 - 7.8 The engine beneath: `LayerSurfaces` (when and why to drop down)
@@ -141,7 +142,7 @@ Throughout, two example models recur so the code stays concrete:
 **10. Advanced Packages (the surface-water network)** — *[10_advanced_packages.md](10_advanced_packages.md)*
 - 10.1 `mf.uzf` — unsaturated zone + ET; cells, hydraulic properties, infiltration/PET
 - 10.2 `mf.sfr` — streams from a centerline: reaches, automatic connectivity, `StreamConnection`/`StreamDiversion`, inflow, unit conversions
-- 10.3 `mf.lak` — lakes from polygons: stage/bottom/leakance, `LakeOutlet`, `LakeTable`/`LakeTableBuilder` bathymetry, connection modes
+- 10.3 `mf.lak` — lakes from polygons: stage/bottom/leakance, `LakeOutlet`, `LakeTable`/`LakeTableBuilder` bathymetry, connection modes; an excavated lake's rule, the `unexcavated=` guard, `implicit=` (LAK `IMPLICIT`)
 - 10.4 `mf.mvr` — the water mover: `mf.Move` + `MoverConnection`
 - 10.5 **Semantic movers** — `mf.sfr_connection(sfr, "main_stem")` / `mf.lak_connection(lak, "valley_lake")` instead of raw indices; coordinate-based endpoints resolve through the cell holding the point
 - 10.6 MVR rules: moved packages must be declared and ordered before the mover (validation)

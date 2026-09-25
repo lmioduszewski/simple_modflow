@@ -145,6 +145,9 @@ or algebra on one), a raster path (`Path` or `str`), or a cell-indexed
 raster is sampled onto the grid once. Only the lake's cells need a value: the
 neighbours its sidewall steps are measured against sit at the model top where the
 source has none, and a bed above its cell's top is capped there, with a warning.
+**A pond cut into the layer stack takes its bed from the cut** — `lake_bottom` is
+then optional and, given, must equal it (below); on a stack whose top is the ground,
+excavate first.
 
 ```python
 bed = mf.Contours("pond_contours.gpkg", z="Elev", epsg="2927", region_vector="pond.gpkg")
@@ -187,7 +190,11 @@ MF6's own geometry. `lake_bottom` defaults from the record; a partial match rais
 pit lake in uniform flow carries 1.005 of the through-flow of the same pit as a
 K = 1e4 inclusion, against 0.39 for `"bathy"` on the un-excavated stack. Every other lake
 keeps its rule and, by default, is warned about (`unexcavated="warn"`/`"raise"`/
-`"ignore"`); `metadata["lake_rules"]` says which rule each lake got.
+`"ignore"`); `metadata["lake_rules"]` says which rule each lake got. A stage-volume
+table is optional on an excavated lake: MF6's own curve, from cell tops that now ARE the
+bed, came within 1% of a contour table from 530 to 533 ft on a real pond (ledger 327).
+`docs/reproducers/lak_vertical_floor.py` runs MF6 on the premise (a VERTICAL connection
+counts from its cell's top, whatever bed is written) and on the same bench excavated.
 
 **Solving the stage in the matrix: `mf.lak(implicit=True)`** (ledger 326). MF6's LAK
 `IMPLICIT` makes each lake stage one more unknown of the flow matrix, solved WITH the

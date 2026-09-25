@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 326 entries (328 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 327 entries (329 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 327 | The excavation's docs pass (C8): what the teaching material says now, which notebooks were left teaching th... | 2026-09-25 |
 | 326 | `mf.lak(implicit=True)` writes MF6's LAK `IMPLICIT`, which FloPy 3.10 cannot: a SECOND WRITER for the LAK f... | 2026-09-25 |
 | 325 | `mf.lak` reads the excavation RECORD: an excavated lake connects at its bed and into its neighbours' cells;... | 2026-09-25 |
 | 324 | A typed `ievt` beside an omitted ET `surface` was DROPPED, and a numpy-integer `irch`/`ievt` died inside FloPy | 2026-09-25 |
@@ -13785,3 +13786,49 @@ same day, which is the useful part of the result.
       capture, class, boundnames and convergence record, the config row, and the
       generated-solver marker, its build-time call and both its guards -- fails a named
       test.
+
+327. **The excavation's docs pass (C8): what the teaching material says now, which notebooks were left teaching the old rule on purpose, and the real-pond numbers the docs cite (2026-09-25).**
+      The excavation design's C8. **The numbers the docs cite, and where they come from.**
+      Measured by the design on the user's real pond from COPIES of its MF6 files (the
+      `_QpogK15_tab` run; NOT reproducible from the repository): under the old rule 411 of
+      the pond's 612 VERTICAL connections carried exactly 0 all run -- their cell tops sat
+      5.86 ft above the bed on average, above the highest stage -- table or no table; and
+      on the excavated cells MF6's own no-table storage curve came within 1% of the
+      user's contour table from 530 to 533 ft (-3.1% at 527, +1.3% at 536), where the
+      un-excavated geometry held about half of it (85,114 against 179,607 ft3 at 530).
+      So the docs call a stage-volume table OPTIONAL on an excavated lake, not wrong: it
+      still refines sub-cell bathymetry and a rim above the stages reached.
+      **The premise is reproducible**: `docs/reproducers/lak_vertical_floor.py` (the
+      session's MF6 bench, adapted) runs 26 raw-FloPy cases against MF6's own exchange
+      formula -- a VERTICAL connection counts from its cell's TOP whatever BELEV is
+      written, with a table, NEWTON, icelltype 1 or `IMPLICIT` alike -- and then the same
+      nine cells through the API: the old rule's floor carries 0.000 at stage 8 where the
+      excavated floor carries -90.909, MF6's formula from the bed exactly.
+      **Notebooks, the calls made:**
+      - `layer_management_workflow.ipynb` gains section 14 (cells inserted after section
+        13, nothing else touched, not executed or stripped): a toy pond cut through the
+        alluvium, its `excavation_report()`, a section, and `mf.lak` reading the record
+        under `unexcavated="raise"`. Its cells were run end to end outside the notebook.
+      - `mounding_L3K_to_lak.ipynb` (placeholder paths, never executed) is the design's
+        F14 case -- a DISV rebuilt from a LOADED run's arrays, no stack -- so its arrays go
+        into a `LayerBuildResult` and that is excavated, the DISV and the context take the
+        cut arrays (`surfaces=` carries the record), and `mf.lak` drops `lake_bottom` and
+        gains `layer=`, `unexcavated="raise"` and `implicit=True`. **The loaded IRCH had to
+        become `irch="top_active"`**: the run's own IRCH names layer 1 in the pond's dug
+        cells, which ledger 321 refuses at build. The pattern was run on a toy through MF6
+        (IMPLICIT written, discrepancy 0.00).
+      - **Left teaching the OLD rule, deliberately:** the four imperative-builder
+        notebooks (`feature_rich_model_workflow`, `refined_feature_rich_model_workflow`,
+        `code_geometry_refined_model_workflow`, `refined_end_to_end_preferred_api_workflow`)
+        declare a flat-bedded `"automatic"` `LAKBuilder` lake on a model with no stack --
+        they will now print the `unexcavated=` guard, and the guard IS the lesson;
+        `canonical_00_model_and_build`/`canonical_model_template` keep the canonical lake
+        unexcavated (F8); `usg_export_to_new_model`'s CLN lakes are `"rectangular"` with
+        a floor 10 ft below the old top and will print the guard too -- excavating them
+        re-teaches that workflow, a separate change. The user's own pond notebook is not
+        edited (F12); the changes it needs were handed to the user as a list.
+      - The manual chapters (`03_getting_started.md`, the `README.md` outline), the
+        cheatsheet (the layers and lake sections and gotcha 11), the API reference,
+        `core_specs.md`, `myflopy_context.md` and `project_workflow.md` say it; the
+        cheatsheet and manual examples that still declare an un-excavated lake say that
+        `mf.lak` will warn about it and point at the cut, rather than being rewritten.

@@ -328,7 +328,14 @@ goes to the top active cell under the bed, whose top IS the bed, and its walls g
 the neighbouring cells with MF6's own DISV connection length and width.
 `LAKBuilder.lake_rules` says which rule each lake got (`"excavated"`, `"legacy"`,
 `"explicit"`), and `unexcavated=` says what to do about a lake whose bed MF6 will not
-see. A sequence of `LakeConnection` objects supplies
+see. The excavation itself is declared on the layer stack --
+`LayerStack.excavate(bottom, within)`, or `LayerBuildResult.excavate` for arrays with no
+stack behind them -- and its record rides with the elevations (`build(attach=True)` or
+`ModelContext(surfaces=<the result>)`); `lake_bottom` then defaults from it.
+`implicit=True` writes MF6's LAK `IMPLICIT` (develop / 6.8 builds only; FloPy 3.10 has no
+keyword for it, so myflopy writes it), solving each stage in the flow matrix: on a real
+excavated pond the default formulation took 81% more outer iterations than the legacy
+geometry and `IMPLICIT` 11% (ledger 326). A sequence of `LakeConnection` objects supplies
 explicit connections for one lake. Every generated connection resolves one MF6
 `bedleak` value; mappings may provide different values by lake or by
 `(lake_id, connection_type)`.
@@ -344,7 +351,10 @@ HORIZONTAL faces from the bed up, so through those MF6 exchanges water from the
 bed, below the cell top, even while the lake holds no volume there. In a transient
 period MF6 caps what leaves a lake at its storage plus what arrives, so such a lake
 takes water in through those faces freely but lets out only what arrives (measured
-in `docs/reproducers/lak_docstring_claims.py`, section 1).
+in `docs/reproducers/lak_docstring_claims.py`, section 1). `docs/reproducers/
+lak_vertical_floor.py` measures the VERTICAL half case by case against MF6's formula --
+bed above, inside and below the cell, with a table, NEWTON, SURFDEP and `IMPLICIT` --
+and then the same bench excavated, where the floor exchanges from the bed.
 
 Lake tables remain separate, reusable values:
 

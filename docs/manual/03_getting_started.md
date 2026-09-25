@@ -186,6 +186,12 @@ print(layers.qc())                    # problems to fix before MF6 runs
 the grid-aware builders (SFR reach tops, LAK lake-cell layering) can read them.
 See [Chapter 7, *Layers & Surfaces*](07_layers.md).
 
+A pond, basin or pit that will hold a lake is cut into the stack BEFORE `build()`:
+`stack.excavate(bottom=<the bed>, within="gis/pond.gpkg")` lowers every layer above the
+bed inside the polygons, so the first active cell under the pond starts exactly at the
+bed. `mf.lak` reads that excavation from the result `attach=True` published (Step 6).
+It mutates the stack, so build any un-excavated baseline first.
+
 ### Step 4 — the model context
 
 ```python
@@ -243,6 +249,14 @@ uzf = mf.uzf(context=ctx, nper=1, cells=floor_cells,
              finf={0: [3.0e-5] * len(floor_cells)},
              pet={0: [1.0e-4] * len(floor_cells)}, extdp=7.0)
 ```
+
+`valley_lake` is not cut into the stack here, so `mf.lak` warns that MF6 will count its
+floor from each cell's TOP rather than the 96.0 bed (`unexcavated="warn"`). For a pond,
+excavate it in Step 3 and leave `lake_bottom` out -- the lake then takes the excavation's
+bed, its floor exchanges from the bed and its walls go into the neighbouring cells; pass
+`unexcavated="raise"` so a lake the record never reached is an error. `implicit=True`
+solves the stage in MF6's flow matrix (a develop / 6.8 MF6, and a BICGSTAB solver).
+
 
 See [Chapter 10, *Advanced Packages*](10_advanced_packages.md).
 
@@ -426,6 +440,7 @@ unless noted.
 | `mf.GridSpec.voronoi(boundary=, refinement=)` | Declarative grid recipe from GIS. |
 | `grid_spec.resolve(workspace=)` → `VoronoiGridPlus` | Build the grid eagerly. |
 | `mf.LayerStack(vor, top=).add(...).build(attach=True)` | Layered surfaces → top/botm/idomain. |
+| `stack.excavate(bottom=, within=)` | Cut a pond / pit into the layers; `mf.lak` reads it. |
 | `mf.ModelContext(grid=, domain=, surfaces=, dates=)` | The geometry bundle (rides on the model). |
 | `mf.Raster / mf.Contours / mf.Array` (from `myflopy.layers`) | Surface atoms for `LayerStack`. |
 

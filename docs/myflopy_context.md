@@ -46,6 +46,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Relative surfaces (`offset_below`, `constant_thickness`) | ✅ | `surfaces.py` (added 2026-06) |
 | Surface reconcile (enforce top-down ordering) | ✅ | `grid/geometry.py` `reconcile_surfaces` |
 | Pinch-out → `idomain = -1` (vertical pass-through) | ✅ | `surfaces.py` `to_disv(pinch_out=...)`, `top_botm_idomain`, `thickness_report` (added 2026-06) |
+| Excavating a pond / pit into the layers (a void cut after reconcile + pinch) | ✅ | `layers.py` `LayerStack.excavate` / `LayerBuildResult.excavate`, engine `surfaces.py` (`ExcavationRecord`, `sample_bed`), footprint `grid/geometry.py` `read_footprints`/`footprint_cells` — shared with `mf.lak`, so record cells == lake cells; saves, bundles and moves with the stack (ledgers 320, 323) |
 | Raster sampling at centroids (reproject + nodata→NaN) | ✅ | `grid/surfaces.py` `get_raster_vals_at_centroids` (fixed 2026-06) |
 | idomain from boundary polygon | N/A | For Voronoi the grid *is* the domain; only interior holes + layer pinch-outs matter. **Not exactly** (ledger 316): FloPy's `tri2vor` mis-sorts the cell at a reflex corner (every 270° corner in the ledger's sweep) and drops a Voronoi vertex lying on the boundary, leaving holes and lost MF6 faces; profile "balanced" meshes the boundary simplified by 2 ft. A boundary in two parts silently keeps cells in ONE, and one with an interior ring does not build (ledger 317) |
 | Area-weighted raster **resampling** (vs point-at-centroid) | ✅ | `grid/surfaces.py` `_area_weighted_sample` — per-cell mean of pixels within each Voronoi polygon; **default** (`method="area"`), centroid fallback for uncovered cells |
@@ -75,7 +76,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 ### Advanced packages
 | Capability | Status | Where |
 |---|---|---|
-| LAK (lakes, connections, outlets, lake tables) | ✅ | `lakes.py` (`LAKBuilder`, `LakeTableBuilder`), `advanced.py` `lak_spec` |
+| LAK (lakes, connections, outlets, lake tables) | ✅ | `lakes.py` (`LAKBuilder`, `LakeTableBuilder`), `advanced.py` `lak_spec`; an excavated lake connects its floor AT the bed and walls INTO its neighbours (rule from the excavation record, ledger 325), every other lake keeps the old rule and is warned about (`unexcavated=`); `implicit=True` writes MF6's LAK `IMPLICIT`, which FloPy 3.10 cannot (`lak_implicit.py`, ledger 326) |
 | **SFR from stream centerline** (LineString → reaches by cell intersection) | ✅ | `sfr.py` `SFRBuilder`/`StreamNetwork`; `rlen` from geometry; reach-top from grid surfaces |
 | SFR connectivity inference | ✅ | `connection_mode` = `automatic` (geometric) / `nodes` / `explicit` |
 | SFR direct from **NHDPlus** national dataset (sfrmaker-style) | ❌ | only custom centerline tables; no NHDPlus reader |

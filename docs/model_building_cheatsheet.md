@@ -741,7 +741,11 @@ layer-elevation hover rows.
 
 `LayerBuildResult` — fields `top`, `botm`, `idomain`, `thickness`, `names`,
 `units`, `nlay`, `vor`; methods `per_layer()`, `qc()`, `report()`, `validate()`,
-`prune_isolated()`, `attach_to_grid()`, and the `plot` namespace.
+`prune_isolated()`, `attach_to_grid()`, and the `plot` namespace. A stack with an
+excavation (§5, "Excavating a pond") also fills `excavations` (name →
+`mf.ExcavationRecord`: its cells and sampled bed), `ground` (the top before the cut),
+`excavated` and `absorbed`, read by `excavation_report()`; `excavate()` cuts a result
+that has no stack behind it.
 
 #### `split=` — one geologic unit, several model layers
 
@@ -895,7 +899,7 @@ discovering it.
 A lake's cells are WATER, not aquifer: without the cut, a `bathy` lake on a stack whose
 top is the ground connects its floor into the layer CONTAINING the bed, and MF6 moves
 that vertical connection up to the cell's top — on a real pond 411 of 612 vertical
-connections exchanged nothing all run. The cut makes the first active cell under the
+connections exchanged nothing all run (ledger 327). The cut makes the first active cell under the
 bed start exactly at the bed:
 
 ```python
@@ -953,6 +957,23 @@ develop / 6.8 build, `mf.lak(..., implicit=True)` solves the stage in the flow m
 instead (+11%, none failed there) -- give the IMS `linear_acceleration="BICGSTAB"`
 (CG is refused at build) and keep NEWTON on. An MF6 without the option is warned about
 when the run starts (ledger 326).
+
+**A stage-volume table is optional on an excavated lake.** Without one MF6 builds the
+lake's volume from its cells' tops, and after the cut those tops ARE the bed: on the real
+pond MF6's own curve came within 1% of the contour table from 530 to 533 ft (-3.1% at
+527, +1.3% at 536), where the un-excavated geometry held half the storage (ledger 327).
+Keep `LakeTableBuilder` for sub-cell bathymetry or a rim above the stages you reach.
+
+**No stack?** A DISV built from a loaded run's arrays has no `LayerStack` to call
+`.excavate` on. Put the arrays in a `LayerBuildResult` and cut that --
+`dug = result.excavate(bottom=bed, within="pond.gpkg")` returns a NEW result -- then
+build the DISV from `dug` and pass `ModelContext(grid=vor, domain=dug.idomain,
+surfaces=dug)`, which is what carries the record to `mf.lak`.
+
+`docs/reproducers/lak_vertical_floor.py` runs MF6 on the premise -- a VERTICAL connection
+counts from its cell's TOP whatever bed is written for it -- and then the same nine-cell
+bench through `stack.excavate` + `mf.lak`, where the floor carries MF6's formula from the
+bed exactly.
 
 #### Look at it before you trust it
 
@@ -1177,12 +1198,21 @@ Pull `sfr`/`lak` out as handles so the mover references them **semantically**
 rather than by raw reach index. MVR is validated: moved packages must be declared
 in the model *and* ordered before the mover.
 
+This lake is declared on a stack whose top is the ground, so `mf.lak` warns that MF6
+will count its floor from each cell's top. For a pond, cut it into the stack first
+(§5, "Excavating a pond") and leave `lake_bottom` out.
+
 #### A lakebed from bathymetry
 
 `connection_modes="bathy"` (the default; `"automatic"` is its old name) connects
 each lake cell through its bed *and* through every step in it, so `lake_bottom`
 has to vary **per cell**. It is required — leave it out and `mf.lak` raises
-`lake_bottom is required`. Any of these works:
+`lake_bottom is required` — **unless the layer stack was excavated for the lake**
+(§5, "Excavating a pond"): then the bed is the excavation's, declared once, and a
+`lake_bottom` you do give must equal it. On a stack whose top is the ground, cut the
+pond in first: MF6 counts each VERTICAL connection from its cell's TOP, so a bed
+inside a cell does not lower it, and `mf.lak` warns about such a lake
+(`unexcavated="warn"`; `"raise"` refuses it). Any of these works:
 
 ```python
 lake_bottom=lake_bed                                # any Surface: mf.Contours, mf.Raster, algebra
@@ -1214,7 +1244,8 @@ lake cell.
 
 A **flat**-bottomed basin is the other mode: `connection_modes="rectangular"`
 with one `lake_bottom` and a `lake_top` per lake. A flat bed under `"bathy"` has
-no steps, so it builds no sidewall connections and warns.
+no steps, so on a lake that was NOT excavated it builds no sidewall connections and
+warns; an excavated lake's walls go into its neighbours' cells whatever its bed.
 
 ---
 
@@ -1433,3 +1464,11 @@ never a trailing `.plot()`.
     puts a 25-ft DEM and a coarse contoured contact on the same footing. A
     mismatched **CRS**, though, samples in the wrong place and surfaces as a
     nonsense `qc()` thickness rather than an error — check that yourself.
+11. **A lake on a stack whose top is the ground exchanges nothing through most of
+    its floor.** MF6 counts a VERTICAL lake connection from its cell's TOP, not
+    from the bed written for it, so a bed inside a cell leaks nothing until the
+    stage passes that top — 411 of 612 on a real pond carried exactly 0 all run
+    (ledger 327).
+    Cut the pond in with `stack.excavate(bottom=, within=)` before `mf.lak`, leave
+    `lake_bottom` out, and pass `unexcavated="raise"` so a record that never
+    reached the lake is an error.

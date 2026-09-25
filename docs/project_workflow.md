@@ -426,7 +426,10 @@ knowing: what `to_dict` omits is invisible, so previewing a stack with `.plot` n
 longer marks its package edited, and two stacks bound to different grids
 fingerprint alike; and a stack whose top is a per-cell `Surface.from_array` cannot
 be written down at all, so it reads `unfingerprinted` rather than carrying a
-digest that would drift on its own.
+digest that would drift on its own. An excavation (`stack.excavate`) is part of that
+declaration (ledger 323): cutting a pond into a stack moves the digest of a lazy
+`mf.disv(stack)`, and the footprint file is hashed by content like the stack's other
+sources, so a redrawn pond reads `edited` under `source`.
 
 **PEST calibrations are reported, not listed.** A calibration builds into
 `<model workspace>.pest/` — inside the project — holding the PstFrom template,

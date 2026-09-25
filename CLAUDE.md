@@ -1060,6 +1060,16 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   build turns BICGSTAB once an `mf.ref` lake resolves (`GENERATED_SOLVER`) -- and the
   executable is probed once per file at run time.
   `docs/reproducers/lak_implicit_requirements.py` runs MF6 on each claim.
+  **Why a CUT and not a better connection record** (ledger 327): MF6 overwrites a
+  VERTICAL connection's BELEV/TELEV with its cell's TOP, so a bed inside a cell exchanges
+  nothing through the floor until the stage passes that top -- with a table, NEWTON or
+  `IMPLICIT` alike (`docs/reproducers/lak_vertical_floor.py`, 26 cases against MF6's own
+  formula, then the same bench excavated). On the real pond 411 of 612 carried exactly 0
+  all run; after the cut a stage-volume table is OPTIONAL (MF6's own curve within 1% of
+  the contour table, 530-533 ft). **A model with NO stack** cuts a `LayerBuildResult`
+  built from its loaded arrays (`result.excavate` returns a NEW one --
+  `mounding_L3K_to_lak.ipynb`), and its loaded IRCH must become `"top_active"` or the
+  build refuses the dug cells it names (ledger 321).
   **A package declared against a context from BEFORE the cut is refused at build**
   (ledger 321): `_discretization_complaints` checks every list-BC record, OBS6 cellid
   and per-column `irch`/`ievt` against the BUILT DISV's idomain (`<= 0` = removed) and
