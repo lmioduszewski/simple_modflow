@@ -11,15 +11,19 @@ The excavation design's C7 (sections 4.1-4.8). What these tests pin:
 - ``lake_bottom`` defaults from the record (F13); a declared one must BE the record's
   bed; a partial match, two excavations, ``rectangular_interior`` and a wrong
   ``only_layer`` are refused whatever ``unexcavated=`` says;
-- the legacy rule writes EXACTLY what it wrote before, on five fixtures and the
-  canonical lake (``tests/data/lak_legacy_golden.json``, written by the code BEFORE this
-  change), except faces thinner than 1e-6 ft, which are dropped (F9);
+- the legacy rule writes what it wrote before, on five fixtures and the canonical lake
+  (``tests/data/lak_legacy_golden.json``, written by the code BEFORE this change), except
+  faces thinner than 1e-6 ft, which are dropped (F9), and CONNLEN, which is the lake
+  cell's own side of the face since ledger 328 (it was the centre-to-centre spacing) --
+  worked out by hand on squares whose DISV centres sit off their middles, the one fixture
+  where the lake cell's side and the neighbour's differ;
 - the ``unexcavated=`` guard: its numbers, its three words, the "looks excavated" case;
 - the build-time check against the built DISV, from BOTH call sites (LAK built before
   and after its DISV), and the four build warnings;
 - and MF6 (slow): a pit lake below the water table in uniform flow carries the
   through-flow of the same pit as a K = 1e4 inclusion, to 1%, with the GWF and LAK
-  budgets closed -- the design measured 1.005 for this rule and 0.39 for the old one.
+  budgets closed -- the design measured 1.005 for this rule and 0.39 for the old one (0.52
+  since ledger 328 gave the old rule's walls MF6's per-side CONNLEN).
 """
 
 from __future__ import annotations
@@ -44,6 +48,7 @@ from myflopy import LAKBuilder, ModelContext
 from myflopy.grid_identity import LAKE_CONNECTIONS, LAKE_RULES, lak_geometry_complaints
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig
+from myflopy.modflow.mf6.grid.connectivity import DisvFaces
 from myflopy.modflow.mf6.grid.geometry import footprint_cells
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.mf6.lakes import FACE_TOL
@@ -52,8 +57,11 @@ GOLDEN = pathlib.Path(__file__).parent / "data" / "lak_legacy_golden.json"
 GUARD = r"mf\.lak: lake\(s\) NOT excavated"
 
 
-def _square_grid(n=4, top=None, tops=(12.0, 8.0, 0.0)) -> VoronoiGridPlus:
-    """``n`` x ``n`` unit cells (cell ``r * n + c`` centred at ``(c + .5, r + .5)``)."""
+def _square_grid(n=4, top=None, tops=(12.0, 8.0, 0.0), offset=None) -> VoronoiGridPlus:
+    """``n`` x ``n`` unit cells (cell ``r * n + c`` centred at ``(c + .5, r + .5)``).
+
+    ``offset`` (``(n * n, 2)``) moves each cell's DISV centre off the middle of its square.
+    """
 
     verts = np.array([[x, y] for y in range(n + 1) for x in range(n + 1)], float)
     iverts, centres = [], []
@@ -62,7 +70,8 @@ def _square_grid(n=4, top=None, tops=(12.0, 8.0, 0.0)) -> VoronoiGridPlus:
             v0 = r * (n + 1) + c
             iverts.append([v0, v0 + 1, v0 + n + 2, v0 + n + 1])
             centres.append([c + 0.5, r + 0.5])
-    grid = VoronoiGridPlus(verts=verts, iverts=iverts, xcyc=np.array(centres))
+    centres = np.array(centres) + (0.0 if offset is None else np.asarray(offset, float))
+    grid = VoronoiGridPlus(verts=verts, iverts=iverts, xcyc=centres)
     columns = {0: np.full(n * n, tops[0]) if top is None else np.asarray(top, float)}
     for k, bottom in enumerate(tops[1:]):
         columns[k + 1] = np.full(n * n, bottom)
@@ -132,7 +141,8 @@ def test_an_excavated_lake_connects_at_its_bed_and_into_its_neighbours(flat):
     assert {r[2][1] for r in walls}.isdisjoint(POND), "walls live in the neighbours' cells"
     assert {(r[2][0], r[5], r[6]) for r in walls} == {(0, 9.0, 12.0)}
     # MF6's own DISV geometry: the neighbour's centre is 0.5 from the shared face, which is
-    # 1.0 long -- NOT grid.cl12's centre-to-centre 1.0.
+    # 1.0 long -- what grid.cl12 holds in the neighbour's row since ledger 328 (it held the
+    # centre-to-centre 1.0 before).
     assert {(r[7], r[8]) for r in walls} == {(0.5, 1.0)}
     roles = lake.connection_roles["pond"]
     assert [role for _, _, role in roles].count("wall") == 8
@@ -247,12 +257,41 @@ def test_an_absorbed_sliver_puts_the_floor_on_the_cell_below(tmp_path):
 # -- the legacy rule and its guard -------------------------------------------------------
 
 
+def _assert_legacy_rows(rows, golden, grid):
+    """``rows`` are ``golden`` (the rule BEFORE ledger 325) in every column but CONNLEN, and
+    each HORIZONTAL row's CONNLEN is its lake cell's OWN side of the face it names.
+
+    The golden rows were written when ``grid.cl12`` held the centre-to-centre spacing, so
+    their CONNLEN is the one column ledger 328 moved on purpose. The face a row names is
+    found by its CONNWIDTH (unchanged, and bit-identical to ``DisvFaces``' width); where
+    several faces of one cell share a width, every one of them must give the same length.
+    """
+
+    faces = DisvFaces(grid.get_disv_gridprops())
+    assert len(rows) == len(golden)
+    for row, old in zip(rows, golden, strict=True):
+        assert row[:7] == old[:7] and row[8] == old[8], (row, old)
+        if row[3] == "VERTICAL":
+            assert row[7] == old[7] == 0.0
+            continue
+        cell = row[2][1]
+        lengths = set()
+        for other in grid.find_adjacent_cells(cell):
+            length, width = faces.length_and_width(cell, other, toward=cell)
+            if width == row[8]:
+                lengths.add(length)
+        assert lengths == {row[7]}, (row, lengths)
+        assert row[7] < old[7], "the lake cell's side is shorter than the old centre spacing"
+
+
 def test_the_legacy_rule_writes_what_it_wrote_before():
-    """Byte-identical to the rule BEFORE ledger 325 (``tests/data/lak_legacy_golden.json``,
-    written by that code), on a bowl, a rectangular basin with and without interior faces,
-    a bed equal to its model top (a USG export's lake) and a flat floor over sloping
-    ground. The canonical lake and a 612-cell copy of a real pond were compared the same
-    way when this landed (``docs/reproducers/excavated_lake_rule.py``)."""
+    """The rule BEFORE ledger 325 (``tests/data/lak_legacy_golden.json``, written by that
+    code) in every column but CONNLEN, on a bowl, a rectangular basin with and without
+    interior faces, a bed equal to its model top (a USG export's lake) and a flat floor
+    over sloping ground. CONNLEN is the lake cell's own side of the face since ledger 328:
+    on these unit squares exactly half the golden's centre-to-centre 1.0. The canonical
+    lake and a 612-cell copy of a real pond were compared row for row when ledger 325
+    landed (``docs/reproducers/excavated_lake_rule.py``)."""
 
     golden = json.loads(GOLDEN.read_text())
     grid = _square_grid()
@@ -276,25 +315,65 @@ def test_the_legacy_rule_writes_what_it_wrote_before():
                                     connection_modes="rectangular", lake_bottom=25.5, lake_top=28.0,
                                     **{**base, "starting_stage": 26.0}),
     }
+    walls = []
     for name, builder in built.items():
         assert builder.lake_rules == {"pond": "legacy"}, name
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             rows = [[r[0], r[1], list(r[2]), r[3], r[4], r[5], r[6], r[7], r[8]]
                     for r in builder.connectiondata]
-        assert rows == golden[name], name
+        _assert_legacy_rows(rows, golden[name], builder.grid)
+        walls += [(row[7], old[7]) for row, old in zip(rows, golden[name], strict=True)
+                  if row[3] == "HORIZONTAL"]
+    # (new CONNLEN, golden CONNLEN) over every wall of the five fixtures: half the old.
+    assert len(walls) == 44 and set(walls) == {(0.5, 1.0)}
+
+
+def test_a_legacy_wall_is_the_lake_cells_own_side_worked_out_by_hand():
+    """CONNLEN is the LAKE cell's side of the face, never the neighbour's (ledger 328).
+
+    Every other fixture here has each DISV centre in the middle of its square, and the
+    canonical grid's faces are Voronoi bisectors, so the two sides of a face are equal (on
+    the canonical grid to 5.1e-7 ft, ``docs/reproducers/disu_cl12_matches_disv.py``) and
+    nothing could tell which one a wall read: reading the NEIGHBOUR's row failed only the
+    canonical golden, by 1e-8 ft.
+    Here the pond cells' centres sit (+0.25, +0.125) off the middle and every other
+    cell's (+0.2, +0.1), so on each wall the two sides differ, and the lengths are worked
+    out from the unit squares by hand: the lake cell's centre to its WEST face is
+    0.5 + 0.25, to its EAST 0.5 - 0.25, SOUTH 0.5 + 0.125, NORTH 0.5 - 0.125. The
+    neighbour's sides of those faces are 0.3, 0.7, 0.4 and 0.6.
+    """
+
+    offset = np.tile([0.2, 0.1], (16, 1))
+    offset[POND] = [0.25, 0.125]
+    grid = _square_grid(offset=offset)
+    context = ModelContext(grid=grid, domain=np.ones((2, 16), int))
+    builder = _lake(context, _pond(grid), connection_modes="rectangular", lake_bottom=9.0,
+                    lake_top=11.0, starting_stage=10.0, unexcavated="ignore")
+    walls = {}
+    for row in builder.connectiondata:
+        if row[3] == "HORIZONTAL":
+            assert row[8] == 1.0
+            walls.setdefault(row[2][1], []).append(row[7])
+    west, east, south, north = 0.75, 0.25, 0.625, 0.375
+    # The pond is cells 5, 6 (row 1) and 9, 10 (row 2); each has two faces outside it.
+    expected = {5: [west, south], 6: [east, south], 9: [west, north], 10: [east, north]}
+    assert {cell: sorted(lengths) for cell, lengths in walls.items()} == {
+        cell: sorted(lengths) for cell, lengths in expected.items()
+    }
 
 
 @pytest.mark.canonical
 def test_the_canonical_lake_writes_what_it_wrote_before(canonical_model, canonical_config):
-    """The canonical rectangular lake (unexcavated, F8) -- 72 connections, identical."""
+    """The canonical rectangular lake (unexcavated, F8) -- 72 connections, identical but for
+    CONNLEN, which is each lake cell's own side of its face since ledger 328."""
 
     if canonical_config != CanonicalModelConfig.testing():
         pytest.skip("the golden rows are the TESTING profile's")
     rows = [[int(r[0]), int(r[1]), [int(r[2][0]), int(r[2][1])], str(r[3]), float(r[4]),
              float(r[5]), float(r[6]), float(r[7]), float(r[8])]
             for r in canonical_model.gwf.get_package("lak").connectiondata.get_data().tolist()]
-    assert rows == json.loads(GOLDEN.read_text())["canonical_testing"]
+    _assert_legacy_rows(rows, json.loads(GOLDEN.read_text())["canonical_testing"], canonical_model.vor)
 
 
 def test_a_face_thinner_than_the_tolerance_is_not_written():
@@ -529,7 +608,8 @@ def test_mf6_a_pit_lake_carries_the_through_flow_of_a_conductive_inclusion(tmp_p
     """A pit below the water table in uniform flow is, hydraulically, an (almost) infinitely
     conductive inclusion. Reference: no lake, K = 1e4 in the pit's layer-1 cells. The
     excavated rule carries 1.005 of the reference's through-flow (the design measured
-    1.005-1.006 on two grids; the old rule on the un-excavated stack, 0.39-0.42), and the
+    1.005-1.006 on two grids; the old rule on the un-excavated stack, 0.39-0.42, and 0.52
+    since ledger 328), and the
     percent discrepancy is asserted for BOTH budgets -- Normal termination alone proves
     nothing (the design's section 5.5)."""
 

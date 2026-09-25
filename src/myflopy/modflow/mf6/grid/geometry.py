@@ -98,8 +98,63 @@ def find_adjacent_cells(vor, cell_id: int) -> list[int]:
 
 
 def calculate_distance(gdf: gpd.GeoDataFrame, poly_idx1: int, poly_idx2: int) -> float:
-    """
-    Calculate centroid-to-shared-face distance for two adjacent polygons.
+    """Distance from one polygon's CENTROID to the nearest point it shares with another.
+
+    Plain planar geometry on the polygons -- NOT MODFLOW 6's connection length. MF6
+    measures a connection (a DISU's ``CL12``, a LAK wall's ``CONNLEN``) from the cell's
+    DISV centre -- ``cell2d``'s ``xc``/``yc``, which for a Voronoi cell is its generator
+    point, not its centroid -- perpendicular to the LINE through the two vertices the
+    cells share. This measures from the centroid to the nearest point of the shared
+    boundary, so the two part wherever the centre is not the centroid, or the foot of the
+    perpendicular falls off the shared segment. For MF6's number read ``grid.cl12``
+    (after ``grid.get_disu_connectivity()``), or
+    :meth:`~myflopy.modflow.mf6.grid.connectivity.DisvFaces.length_and_width` for one
+    face (ledger 328). Nothing in myflopy calls this.
+
+    Parameters
+    ----------
+    gdf : geopandas.GeoDataFrame
+        The polygons, e.g. ``grid.gdf_vorPolys``. Rows are read by POSITION
+        (``iloc``), never by index label.
+    poly_idx1 : int
+        Position of the polygon measured FROM: the distance starts at its centroid.
+    poly_idx2 : int
+        Position of the other polygon.
+
+    Returns
+    -------
+    float
+        In the polygons' length units. Swapping the two positions measures from the
+        other centroid, so the answer is per side. ``nan`` when the polygons share no
+        point; the distance to the corner when they touch only there.
+
+    Raises
+    ------
+    IndexError
+        A position outside ``gdf``.
+
+    See Also
+    --------
+    myflopy.modflow.mf6.grid.connectivity.DisvFaces.length_and_width : MF6's length for one face.
+    myflopy.modflow.mf6.grid.voronoi.VoronoiGridPlus.cl12 : MF6's length for every face.
+
+    Examples
+    --------
+    >>> import geopandas as gpd
+    >>> from shapely.geometry import box
+    >>> from myflopy.modflow.mf6.grid.geometry import calculate_distance
+    >>> cells = gpd.GeoDataFrame(geometry=[box(0, 0, 1, 1), box(1, 0, 3, 1)])
+    >>> calculate_distance(cells, 0, 1), calculate_distance(cells, 1, 0)
+    (0.5, 1.0)
+
+    MF6 measures the same face from the DISV centre instead -- here ``(0.25, 0.5)``:
+
+    >>> from myflopy.modflow.mf6.grid.connectivity import DisvFaces
+    >>> props = {"vertices": [[0, 0.0, 0.0], [1, 1.0, 0.0], [2, 0.0, 1.0], [3, 1.0, 1.0],
+    ...                       [4, 3.0, 0.0], [5, 3.0, 1.0]],
+    ...          "cell2d": [[0, 0.25, 0.5, 4, 0, 2, 3, 1], [1, 2.0, 0.5, 4, 1, 3, 5, 4]]}
+    >>> DisvFaces(props).length_and_width(0, 1, toward=0)
+    (0.75, 1.0)
     """
     poly1 = gdf.iloc[poly_idx1].geometry
     poly2 = gdf.iloc[poly_idx2].geometry

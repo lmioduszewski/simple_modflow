@@ -435,10 +435,12 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4261 passed / 6 skipped**, 2026-09-25, with the excavation, ledgers
-  318-327): serial (`-n0`) **7m58s** and `pytest -n 10` **1m43s**, BOTH measured while
-  MF6 runs of a 20,323-cell model shared the machine (two during the serial run, one
-  during the parallel one), so neither is a quiet clock. The last quiet serial
+- Full suite (**4271 passed / 6 skipped**, 2026-09-25, with ledger 328 and its review):
+  `pytest -n 10` **2m21s** at load average ~4. Its serial clock was not taken; 4266 on
+  the same tree took serial (`-n0`) **8m49s** and `-n 10` **1m37s**, both with other work
+  on the machine (load average 1.5-4.8 through the serial run, ~10 at the parallel one's
+  start), so neither is a quiet clock -- nor were 4261's 7m58s / 1m43s the same day (ledgers 318-327, MF6
+  runs of a 20,323-cell model sharing the machine). The last quiet serial
   measurement is **4037 in ≈ 6m29s** (2026-09-24; 3853/6m24s on 2026-09-23). The
   inner loop `pytest -m "not slow"` ≈ 32 s is from 2026-09-19 and was NOT re-measured
   (serially, under the same load, it took 2m02s for 3773 tests).
@@ -1035,12 +1037,27 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   vertical goes to the top cell with idomain > 0 AND thickness (activity alone picks a
   zero-thickness layer when the context has no `domain`), its walls go INTO the
   neighbours' columns with MF6's own DISV `CONNLEN`/`CONNWIDTH`
-  (`grid/connectivity.DisvFaces`, NOT `grid.cl12` -- that measured 0.93 of a pit's
-  through-flow, this 1.005, the old rule 0.39), and `lake_bottom` defaults from the
-  record. A partial match RAISES whatever `unexcavated=` says. Every other lake keeps
-  the old rule byte for byte (`tests/data/lak_legacy_golden.json`, written by the old
-  code) except faces under 1e-6, and is WARNED about (`unexcavated="warn"`; the
-  canonical fixtures filter it, F8). `grid_identity.lak_geometry_complaints` checks the
+  (`grid/connectivity.DisvFaces` -- the centre-to-centre spacing measured 0.93 of a pit's
+  through-flow, this 1.005, the old rule 0.39, 0.52 since ledger 328), and `lake_bottom`
+  defaults from the record. A partial match RAISES whatever `unexcavated=` says. Every
+  other lake keeps the old rule (`tests/data/lak_legacy_golden.json`, written by the old
+  code) except faces under 1e-6 and CONNLEN (below), and is WARNED about
+  (`unexcavated="warn"`; the canonical fixtures filter it, F8).
+  **`grid.cl12` is MF6's PER-SIDE length** (ledger 328, the user's call reversing 325's
+  byte-identical legacy): each cell's DISV centre to the LINE of the shared face, from
+  the ONE rule `DisvFaces` (`DisvGeom.f90`'s `shared_edge`/`distance_normal`, the pairs
+  and the edge from the LOWER cell's ring, as MF6 builds them). From 2025-07-02 it held
+  the full centre spacing: every DISU myflopy wrote carried ~half the DISV's horizontal
+  conductance (a DISU now matches its DISV to 2e-10 ft, `docs/reproducers/
+  disu_cl12_matches_disv.py`), and a legacy lake wall's CONNLEN was ~2x MF6's (1.74-2.35
+  on real ponds). DISV models were never affected -- MF6 computes its own. Built from the
+  vertex rings, not polygons: 0.08 s against ~8 s at 18,107 cells, same pairs on every
+  mesh measured. **A Voronoi mesh cannot test WHICH side a length is on**: its face is the
+  generators' perpendicular bisector, so cl1 == cl2 to rounding (the canonical grid to
+  5.1e-7 ft) and a table with the sides SWAPPED passes -- test per-side lengths on quads
+  whose DISV centres sit off their centroids, as `tests/test_disu_matches_disv.py` does.
+  `calculate_distance` is NOT this number (polygon centroid to the shared boundary,
+  0.48-15.9x `cl12`). `grid_identity.lak_geometry_complaints` checks the
   connections against the BUILT DISV from the LAK builder AND
   `_discretization_complaints`; `lak_build_warnings` says no-NEWTON, `icelltype` 0
   walls, RCH/EVT under a wet lake, and a transparent bed -- for excavated lakes only.

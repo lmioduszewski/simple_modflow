@@ -56,8 +56,8 @@ logger = get_logger(__name__)
 #: a face with ``belev == telev`` as the WHOLE cell (``gwf-lak.f90``), and FloPy writes
 #: connection elevations to 8 fixed decimals, so a face of 1e-9 written as ``99.90000000
 #: 99.90000000`` became a whole-cell face (measured). 1e-6 is 100x that precision; the
-#: thinnest face on a real pond's legacy connections is 1.3e-4, so the legacy rule
-#: writes exactly what it did (the excavation design's F9, ledger 325).
+#: thinnest face on a real pond's legacy connections is 1.3e-4, so the tolerance drops
+#: none of them (the excavation design's F9, ledger 325).
 FACE_TOL = 1.0e-6
 
 #: What ``unexcavated=`` accepts: the three words of the raster sampler's ``gaps=``
@@ -1108,9 +1108,11 @@ class LAKBuilder:
           connection per active layer the step spans, written on the LAKE
           CELL ITSELF (the connection's cell id is the lake cell, not the
           neighbour), with ``belev = max(bed, layer bottom)``, ``telev =
-          min(neighbour's bed, layer top)``, ``CONNLEN`` the grid's
-          centre-to-centre spacing (``grid.cl12``) and ``CONNWIDTH`` the
-          shared face's length. A flat bed has no steps, so a lake of more
+          min(neighbour's bed, layer top)``, ``CONNLEN`` the distance from
+          the LAKE cell's DISV centre to the line of the shared face
+          (``grid.cl12``, MF6's own DISV geometry; until ledger 328 it was the
+          full centre-to-centre spacing, about twice that) and ``CONNWIDTH``
+          the shared face's length. A flat bed has no steps, so a lake of more
           than one cell gets NO horizontal connection, with a warning.
         * ``"rectangular"`` -- a box: trench, vault, lined basin. Needs a flat
           ``lake_bottom`` and a ``lake_top``. Per lake cell, ONE VERTICAL
@@ -1143,11 +1145,12 @@ class LAKBuilder:
         = max(bed, layer bottom)``, ``telev = min(wall top, layer top)``,
         ``CONNLEN`` the distance from the NEIGHBOUR's DISV centre to the line
         of the shared face and ``CONNWIDTH`` the face's length -- MF6's own
-        DISV geometry, not ``grid.cl12``. A cell whose declared bed did not
-        reach below the ground (a rim cell) connects at the ground. Measured,
-        a pit lake below the water table in uniform flow against the same pit
-        as a K = 1e4 inclusion: through-flow 1.005 of the reference, where
-        ``"bathy"`` on the un-excavated stack gave 0.39. A lake covering only
+        DISV geometry, the number ``grid.cl12`` holds in the neighbour's row. A
+        cell whose declared bed did not reach below the ground (a rim cell)
+        connects at the ground. Measured, a pit lake below the water table in
+        uniform flow against the same pit as a K = 1e4 inclusion: through-flow
+        1.005 of the reference, where ``"bathy"`` on the un-excavated stack
+        gives 0.52 (0.39 before ledger 328). A lake covering only
         part of an excavation, or cells of two, raises ``ValueError``
         whatever ``unexcavated`` says. Declare the model with NEWTON: without
         it MF6 carries nothing through a wall whose cell is dry (the build
@@ -2067,7 +2070,11 @@ class LAKBuilder:
         """Neighbors of ``cell`` as ``(other, connection_length, connection_width)`` triples.
 
         Reads the grid's CRS/connection arrays (``ia``/``cl12``/``hwva``) via O(1)
-        row pointers so building a large lake stays linear.
+        row pointers so building a large lake stays linear. Row ``cell``, so the length
+        is ``cell``'s OWN side: its DISV centre to the line of the shared face -- MF6's
+        geometry, the rule :class:`~myflopy.modflow.mf6.grid.connectivity.DisvFaces`
+        states once (ledger 328; until then ``cl12`` held the full centre-to-centre
+        spacing and a legacy wall's ``CONNLEN`` was about twice MF6's).
         """
 
         adjacent = list(self.grid.find_adjacent_cells(cell))
@@ -2147,7 +2154,8 @@ class LAKBuilder:
                 telev = min(cell_top, face_top)
                 # A face thinner than FACE_TOL is dropped: MF6 reads belev == telev as
                 # the WHOLE cell, and 8-decimal output makes a 1e-9 face exactly that
-                # (the design's F9). Otherwise byte-identical to the rule before it.
+                # (the design's F9). The rows are otherwise the rule before ledger 325's,
+                # with CONNLEN the lake cell's own side of the face since ledger 328.
                 if telev - belev < FACE_TOL:
                     continue
                 result.append(

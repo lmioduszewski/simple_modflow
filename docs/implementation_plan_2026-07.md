@@ -995,7 +995,9 @@ fixtures rather than example retrofits). Registry `FieldSpec` entries for `cnc`/
   line. RESEARCH RESOLVED (rev. 4): no public shared-edge-with-geometry API exists —
   `shared_face_length` returns only a float and `find_adjacent_*` return ids — **but
   `build_disu_connectivity` (grid/connectivity.py) already computes the per-pair
-  shared-face LineStrings internally and discards them.** Lift that segment logic into
+  shared-face LineStrings internally and discards them.** (No longer: since ledger 328
+  it reads the faces off the DISV vertex rings, as MF6 does, and builds no LineStrings;
+  the HFB work took `barriers.shared_face_segment` instead.) Lift that segment logic into
   a public edge-lookup API (keyed by cell pair, intersectable with a barrier
   LineString; handle lines clipping cell corners or running coincident with faces),
   with unit tests, then `mf.hfb.gpkg(path, hydchr=...)`. Grid modules live at

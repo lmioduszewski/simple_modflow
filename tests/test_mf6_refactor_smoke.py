@@ -736,18 +736,30 @@ def test_grid_helper_functions_smoke():
 
 
 def test_build_disu_connectivity_for_two_adjacent_cells():
-    gdf = _two_cell_grid()
-    iac, ja, cl12, hwva, nja = build_disu_connectivity(
-        gdf,
-        [[1], [0]],
-        validate=True,
-    )
+    # Two unit squares; cell 1's DISV centre sits 0.25 from the shared face at x = 1, so
+    # the two sides differ: CL12 is per SIDE, each cell's centre to the face (ledger 328),
+    # not the 0.75 between the centres (which is what it held before, on both sides).
+    props = {
+        "vertices": [[0, 0.0, 0.0], [1, 1.0, 0.0], [2, 2.0, 0.0], [3, 0.0, 1.0], [4, 1.0, 1.0], [5, 2.0, 1.0]],
+        "cell2d": [[0, 0.5, 0.5, 4, 0, 3, 4, 1], [1, 1.25, 0.5, 4, 1, 4, 5, 2]],
+    }
+    iac, ja, cl12, hwva, nja = build_disu_connectivity(props, validate=True)
 
     assert iac.tolist() == [2, 2]
     assert ja.tolist() == [0, 1, 1, 0]
     assert nja == 4
-    assert np.allclose(hwva[[1, 3]], [1.0, 1.0])
-    assert np.allclose(cl12[[1, 3]], [1.0, 1.0])
+    assert hwva.tolist() == [0.0, 1.0, 0.0, 1.0]
+    assert cl12.tolist() == [0.0, 0.5, 0.0, 0.25]
+    # The pre-328 call was (polygons, adjacency). Its second argument has no parameter to
+    # land in now, so Python refuses it before the body runs -- with its own arity message,
+    # which names neither get_disv_gridprops nor ledger 328 (ledger 328 says so).
+    with pytest.raises(TypeError, match="takes 1 positional argument but 2"):
+        build_disu_connectivity(_two_cell_grid(), [[1], [0]])
+    with pytest.raises(TypeError, match="takes 1 positional argument but 2"):
+        build_disu_connectivity(_two_cell_grid(), [[1], [0]], validate=True)
+    # Polygons alone reach the body, which refuses them by name: they carry no DISV centres.
+    with pytest.raises(TypeError, match=r"get_disv_gridprops\(\)'s dict \(ledger 328\): got GeoDataFrame"):
+        build_disu_connectivity(_two_cell_grid())
 
 
 def test_selection_helpers_find_cells_and_edges():
@@ -825,7 +837,8 @@ def test_direct_voronoi_grid_smoke():
     assert iac.tolist() == [2, 2]
     assert ja.tolist() == [0, 1, 1, 0]
     assert nja == 4
-    assert np.allclose(cl12[[1, 3]], [1.0, 1.0])
+    # Each centre is half a cell from the face: MF6's per-side CL12 (ledger 328).
+    assert np.allclose(cl12[[1, 3]], [0.5, 0.5])
     assert np.allclose(hwva[[1, 3]], [1.0, 1.0])
 
 

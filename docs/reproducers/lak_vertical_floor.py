@@ -57,10 +57,14 @@ bottom=mf.Flat(0))``), the lake the centre cell, bed 7, bedleak 1, CONSTANT stag
 
 Measured (ft3/d, + into the lake; GWF discrepancy 0.00 in all four):
 
-  stage 8   L  vertical    0.000 (its cell top is 10)   walls  -60.000 on the lake cell
+  stage 8   L  vertical    0.000 (its cell top is 10)   walls  -80.000 on the lake cell
             E  vertical  -90.909 (predicted -90.909)    walls  -80.000 into cells 1/3/5/7
-  stage 12  L  vertical -160.000 (from 10)              walls -300.000
+  stage 12  L  vertical -160.000 (from 10)              walls -400.000
             E  vertical -454.545 (from 7, predicted)    walls -400.000
+
+L's walls carried -60.000 and -300.000 until ledger 328: their CONNLEN was the 10 ft
+between cell centres, where it is now the lake cell's own 5 ft side of the face -- the
+same length E's walls take from the neighbour's side, which is why the two now agree.
 
 E's vertical is MF6's formula from the BED exactly, ``C = 100 / (1/1 + 0.5 * 2 / 10)``
 through the 2 ft cell the cut leaves; L's counts from the cell top, so at stage 8 the

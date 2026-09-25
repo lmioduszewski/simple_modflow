@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 327 entries (329 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 328 entries (330 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 328 | `grid.cl12` is MF6's PER-SIDE connection length again: from 2025-07-02 every DISU myflopy wrote carried abo... | 2026-09-25 |
 | 327 | The excavation's docs pass (C8): what the teaching material says now, which notebooks were left teaching th... | 2026-09-25 |
 | 326 | `mf.lak(implicit=True)` writes MF6's LAK `IMPLICIT`, which FloPy 3.10 cannot: a SECOND WRITER for the LAK f... | 2026-09-25 |
 | 325 | `mf.lak` reads the excavation RECORD: an excavated lake connects at its bed and into its neighbours' cells;... | 2026-09-25 |
@@ -13624,18 +13625,23 @@ same day, which is the useful part of the result.
       neighbour's model top is above the bed, `CONNLEN` the neighbour's DISV centre to
       the face line and `CONNWIDTH` the shared edge, both from `get_disv_gridprops`
       (`grid/connectivity.DisvFaces`, MF6's `shared_edge`/`distance_normal`, not
-      `grid.cl12`). `lake_bottom=None` takes the record's bed (F13); a declared one must
+      `grid.cl12` -- which since ledger 328 is that same rule, read from the neighbour's
+      row). `lake_bottom=None` takes the record's bed (F13); a declared one must
       equal it within `max(1e-6*|b|, 1e-6)`, before capping. A partial match, a lake on
       two records, `rectangular_interior=True` and an `only_layer` other than the top
       active layer are REFUSED whatever `unexcavated=` says. **Legacy** (no record
       touches it): the old rule, plus the `unexcavated=` guard ("warn" default, F7).
-      Faces thinner than 1e-6 are dropped in every mode (F9); nothing else in the legacy
-      rule moved.
+      Faces thinner than 1e-6 are dropped in every mode (F9); ~~nothing else in the legacy
+      rule moved~~ -- **REVERSED 2026-09-25 by the user, see 328**: a legacy wall's
+      `CONNLEN` is now its lake cell's own side of the face (`grid.cl12` per side), about
+      half the centre-to-centre spacing this entry kept "byte for byte". Every other
+      column still is the old rule.
       **Measured** (`docs/reproducers/excavated_lake_rule.py`): a pit lake below the water
       table in uniform flow carries 1.0054 / 1.0053 of the same pit's through-flow as a
       K = 1e4 inclusion (two grids), where the legacy rule on the un-excavated stack gives
-      0.392 / 0.398; GWF and LAK discrepancy 0.00 -- the `slow` test asserts ratio 1.00 ±
-      0.01 AND both discrepancies. The legacy rule writes the SAME rows as before on five
+      0.392 / 0.398 (0.523 / 0.525 since ledger 328); GWF and LAK discrepancy 0.00 -- the
+      `slow` test asserts ratio 1.00 ± 0.01 AND both discrepancies. The legacy rule writes
+      the SAME rows as before (every column but `CONNLEN` since 328) on five
       synthetic fixtures and the canonical lake (`tests/data/lak_legacy_golden.json`,
       written by the pre-change tree `8b3ce9d`), and on a 612-cell reconstruction of a real
       pond from COPIES of its MF6 files (1,753 connections, 1,141 walls, thinnest face
@@ -13867,3 +13873,108 @@ same day, which is the useful part of the result.
       LAK stage view keeps MF6's -1e30 for a DRY lake (the design's D10) -- 7 and 8 of the
       38 saved stages here, every recovery day from t=51 on -- so
       `packages.lak.results.stage.plot(...)` over those periods draws the sentinel.
+
+328. **`grid.cl12` is MF6's PER-SIDE connection length again: from 2025-07-02 every DISU myflopy wrote carried about half its DISV's horizontal conductance, and a legacy lake wall's `CONNLEN` was about twice MF6's (2026-09-25).**
+      MF6's DISU `CL12` is "the center of cell n [to] the shared face with each adjacent m
+      cell" -- one number per SIDE -- and a DISV file carries none: MF6 computes it from
+      `cell2d`'s `xc`/`yc` perpendicular to the LINE through the two shared vertices
+      (`DisvGeom.f90`: `shared_edge`, `distance_normal`). `VoronoiGridPlus.cl12` was that
+      (centroid to shared edge) from the first commit, 2023-11-10, until `3e6ad0f`
+      (2025-07-02) rewrote it as the centroid-to-centroid spacing, since
+      `build_disu_connectivity`'s projection on the face normal -- the FULL spacing, in both
+      rows -- while the property's docstring still said "half-cell". **Fixed at the source,
+      the user's call.** `grid/connectivity.DisvFaces` is now the ONE rule: the pairs from
+      the vertex RINGS (two consecutive vertex NUMBERS shared -- MF6's `vertexconnect`), the
+      edge the first shared one in the LOWER cell's ring (MF6 builds each connection once,
+      from the lower node, and takes both lengths and the width off that edge), each side
+      from its own DISV centre, the width MF6's `sqrt` formula; `build_disu_connectivity`
+      and `get_disu_connectivity` read it, and so do the LAK walls, legacy and excavated.
+      **Who it touched, measured:**
+      - **Both DISU writers** -- `simple_model_spec(SimpleModelConfig(grid_type="disu"))`
+        and the legacy `DisuGrid`. Against the same grid as a DISV, with a per-cell K so
+        MF6's harmonic weighting reads cl1 and cl2 apart: the pre-328 table carried 0.511 /
+        0.501 of the through-flow and 0.515 / 0.525 of the per-connection conductance at
+        the median (0.41-0.64 / 0.19-0.74); now heads agree to 2e-10 ft and FLOW-JA-FACE to
+        1.2e-10 of its largest value, IA/JA identical, both writers, a `GridSpec.voronoi`
+        triangulation, an `irregular_voronoi_grid` and 8 x 8 perturbed quads whose DISV
+        centres sit off their centroids (`docs/reproducers/disu_cl12_matches_disv.py`,
+        `tests/test_disu_matches_disv.py`). **The quads are the only mesh that tells the
+        two sides of a face APART**: a Voronoi face is the perpendicular bisector of its
+        generators, so cl1 == cl2 to rounding there (median `|cl1 - cl2| / (cl1 + cl2)`
+        1.8e-16 and 3.5e-11, against 0.17 on the quads), and a table with the sides
+        SWAPPED, or half the centre spacing on both, IS the right table -- both passed the
+        Voronoi cases. On the quads they miss the DISV by 0.41 and 0.24 ft (FLOW-JA-FACE
+        0.16 and 0.10 of its largest). **No DISU model exists under the user's models**:
+        25 DISV files, 0 DISU.
+      - **Legacy (un-excavated) LAK walls**, whose `CONNLEN` is `grid.cl12` read from the
+        LAKE cell's row: now that cell's own side of the face. The written values were
+        1.74-2.35x (median 2.0) that side over 1,894 walls of two real runs (read from
+        their `.lak` and `.disv`, nothing written); 1.52-3.16x on the pit bench, 1.08-3.96x
+        on the canonical lake's 39 walls, exactly 2x on unit squares. MF6 wall flow on the
+        3 x 3 bench of `lak_vertical_floor.py`: -60.000 -> -80.000 at stage 8, -300.000 ->
+        -400.000 at stage 12 (4/3, not 2: the bed leakance is in series), now equal to the
+        excavated rule's walls there; the pit bench's L / R 0.392 -> 0.523 and 0.398 ->
+        0.525. The canonical run: lake stage 0.055 ft lower (max 0.056), LAK-GWF exchange
+        within 2.4e-4 of what it was, heads within 0.026 ft -- no test pins those numbers.
+        **The goldens cannot say WHICH side a wall read** -- unit squares centred in their
+        cells, and a canonical grid whose two sides agree to 5.1e-7 ft -- so reading the
+        neighbour's row failed only the canonical golden, by 1e-8 ft. One fixture moves the
+        DISV centres off the squares' middles and checks each wall against lengths worked
+        out by hand (`test_a_legacy_wall_is_the_lake_cells_own_side_worked_out_by_hand`:
+        0.75 / 0.25 / 0.625 / 0.375, where the neighbour's side would be 0.3 / 0.7 / 0.4 /
+        0.6).
+      - **DISV models are NOT affected**: MF6 never reads `cl12` for one. The excavated
+        rule already used `DisvFaces`.
+      **Judgment calls, each deliberate:**
+      - **Ledger 325's "legacy byte for byte" (F9) is reversed for `CONNLEN` only** -- the
+        user's call. `tests/data/lak_legacy_golden.json` stays as the OLD code wrote it; the
+        test compares every other column to it and each wall's `CONNLEN` to the face its
+        `CONNWIDTH` names (unchanged, bit for bit).
+      - **The pairs come from the vertex rings, not from polygons intersecting**, because
+        MF6's do. On every mesh measured the two sets are identical -- the two real models
+        (18,107 and 30,444 cells), `irregular_voronoi_grid` 4x4 and 21x21, both
+        `triangulated_grid` fixtures, ledger 316's L at `max_area` 5000 and 10000 and
+        rotated 17 and 45 degrees -- and `hwva` is bit-identical to the old polygon
+        lengths on both real models. They would part only at two vertices sharing a point
+        under different numbers, or a T-junction, where MF6's DISV connects nothing either.
+        `adjacent_cells_idx` is still polygons; nothing here reads it now. Cost: 0.08 s
+        against ~8 s (18,107 cells) and 0.18 s against ~12 s (30,444).
+      - **A pair sharing two edges takes MF6's FIRST, for width and lengths** -- the old
+        code summed the segments into `hwva`. Reproducing the DISV is the point, and none
+        of the meshes above has such a pair.
+      - **Rings wound inconsistently still connect** (`DisvFaces`' existing call): MF6
+        would not, and a mesh like that is broken either way.
+      - **`get_disu_connectivity(use_representative_point=)` is removed**: it chose which
+        centroid to measure from, and the rule reads the DISV centre -- a parameter that
+        cannot act. **The old `build_disu_connectivity(polygons, adjacency)` call fails with
+        Python's own arity `TypeError`** ("takes 1 positional argument but 2 were given"),
+        which names neither this entry nor `get_disv_gridprops()`: its second argument has
+        no parameter to land in, so the body never runs. Only polygons ALONE reach the body
+        and are refused by name. Not caught on purpose: a `*legacy` catch-all would put a
+        parameter that can only raise into the signature every editor shows -- the rule
+        `surface` follows for `backend=` -- for a call nothing in the repository or under
+        the user's models makes.
+      - **`calculate_distance` (free in `grid/geometry.py`, bound on `VoronoiGridPlus`) is
+        kept, and is NOT MF6's connection length**: it is the pre-2025 rule, a polygon
+        CENTROID to the nearest point of the shared boundary -- 0.48-15.89x (median 0.99)
+        of `grid.cl12` over the canonical testing grid, 0.39-4.31x over the reproducer's
+        meshes. Neither rerouted nor deprecated: its `gdf` argument carries no DISV
+        centres, so routing it through `DisvFaces` would leave a parameter that cannot act,
+        and a deprecation names a replacement that means the same thing, which none does.
+        Its docstrings now say what it measures and point at `grid.cl12` /
+        `DisvFaces.length_and_width`, their examples run under
+        `test_calculate_distance_is_not_the_connection_length_and_says_so`; nothing in
+        `src/` calls it.
+      **Digests** (the declaration's float bits): an EAGERLY declared lake moves when
+      re-declared -- legacy `bathy` and `rectangular` on squares and on Voronoi, and the
+      excavated rule too, by <= 1 ulp (15 of 126 / 21 of 127 rows on the pit bench: the
+      edge is now measured in the lower cell's orientation and the width by MF6's formula
+      rather than `hypot`), whose WRITTEN file is identical at FloPy's 8 decimals. An
+      `only_vertical` lake does not move. So `runs.drift()` reads a stored run's `lak/*`
+      key as `edited` once the library lake is re-declared -- right for a legacy lake, whose
+      records did change, and the safe direction for an excavated one. 12 stored runs
+      under the user's Ten Trails model carry a `lak/*` digest; each keeps its own copy
+      and rebuilds as it ran (ledger 230).
+      **NOT done:** `examples/mf6/notebooks/split_profile/viz_prt_master_5.lak`, a committed
+      profiling snapshot of an old canonical run that was already stale, still holds the
+      old `CONNLEN`; regenerating it means re-running that script.

@@ -5826,9 +5826,11 @@ class _LAKPackage:
               connection per active layer the step spans, written on the LAKE
               CELL ITSELF (the connection's cell id is the lake cell, not the
               neighbour), with ``belev = max(bed, layer bottom)``, ``telev =
-              min(neighbour's bed, layer top)``, ``CONNLEN`` the grid's
-              centre-to-centre spacing (``grid.cl12``) and ``CONNWIDTH`` the
-              shared face's length. A flat bed has no steps, so a lake of more
+              min(neighbour's bed, layer top)``, ``CONNLEN`` the distance from
+              the LAKE cell's DISV centre to the line of the shared face
+              (``grid.cl12``, MF6's own DISV geometry; until ledger 328 it was the
+              full centre-to-centre spacing, about twice that) and ``CONNWIDTH``
+              the shared face's length. A flat bed has no steps, so a lake of more
               than one cell gets NO horizontal connection, with a warning.
             * ``"rectangular"`` -- a box: trench, vault, lined basin. Needs a flat
               ``lake_bottom`` and a ``lake_top``. Per lake cell, ONE VERTICAL
@@ -5861,11 +5863,12 @@ class _LAKPackage:
             = max(bed, layer bottom)``, ``telev = min(wall top, layer top)``,
             ``CONNLEN`` the distance from the NEIGHBOUR's DISV centre to the line
             of the shared face and ``CONNWIDTH`` the face's length -- MF6's own
-            DISV geometry, not ``grid.cl12``. A cell whose declared bed did not
-            reach below the ground (a rim cell) connects at the ground. Measured,
-            a pit lake below the water table in uniform flow against the same pit
-            as a K = 1e4 inclusion: through-flow 1.005 of the reference, where
-            ``"bathy"`` on the un-excavated stack gave 0.39. A lake covering only
+            DISV geometry, the number ``grid.cl12`` holds in the neighbour's row. A
+            cell whose declared bed did not reach below the ground (a rim cell)
+            connects at the ground. Measured, a pit lake below the water table in
+            uniform flow against the same pit as a K = 1e4 inclusion: through-flow
+            1.005 of the reference, where ``"bathy"`` on the un-excavated stack
+            gives 0.52 (0.39 before ledger 328). A lake covering only
             part of an excavation, or cells of two, raises ``ValueError``
             whatever ``unexcavated`` says. Declare the model with NEWTON: without
             it MF6 carries nothing through a wall whose cell is dry (the build

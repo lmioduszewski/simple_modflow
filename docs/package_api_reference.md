@@ -86,7 +86,9 @@ not found*. The four `build_*_exchange` functions underneath stay engine-tier.
 - `mf.disu(nodes=, nja=, top=, bot=, area=, iac=, ja=, idomain=)` — fully
   unstructured grid with connectivity you supply yourself (`ihc`/`cl12`/`hwva`,
   `nvert`/`vertices`/`cell2d` via `**options`); prefer `mf.disv` unless ingesting an
-  existing DISU mesh.
+  existing DISU mesh. A `VoronoiGridPlus`'s `iac`/`ja`/`cl12`/`hwva` are MF6's own DISV
+  geometry -- `cl12` PER SIDE, each cell's DISV centre to the face -- so a DISU written
+  from them reproduces the DISV (ledger 328).
 
 `mf.dis`/`mf.disu` build and run, but the choropleth-map / cross-section / animation
 viz targets **DISV/Voronoi** meshes and is not wired for structured or raw-DISU
@@ -188,7 +190,8 @@ cell, whose top IS the bed, and HORIZONTAL walls INTO each neighbour whose top i
 `CONNLEN` from the neighbour's DISV centre to the shared face and `CONNWIDTH` the face --
 MF6's own geometry. `lake_bottom` defaults from the record; a partial match raises. A
 pit lake in uniform flow carries 1.005 of the through-flow of the same pit as a
-K = 1e4 inclusion, against 0.39 for `"bathy"` on the un-excavated stack. Every other lake
+K = 1e4 inclusion, against 0.52 for `"bathy"` on the un-excavated stack (0.39 while its
+`CONNLEN` was the centre-to-centre spacing, before ledger 328). Every other lake
 keeps its rule and, by default, is warned about (`unexcavated="warn"`/`"raise"`/
 `"ignore"`); `metadata["lake_rules"]` says which rule each lake got. A stage-volume
 table is optional on an excavated lake: MF6's own curve, from cell tops that now ARE the

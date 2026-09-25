@@ -1915,5 +1915,5 @@
 44.01374837445104
 ]
 ],
-"_note": "LAK connectiondata written by LAKBuilder BEFORE ledger 325 (tree 8b3ce9d); tests/test_excavated_lake.py rebuilds each fixture and asserts the legacy rule still writes exactly these rows. Regenerate only by running the OLD code."
+"_note": "LAK connectiondata written by LAKBuilder BEFORE ledger 325 (tree 8b3ce9d); tests/test_excavated_lake.py rebuilds each fixture and asserts the legacy rule still writes these rows in every column but CONNLEN, which ledger 328 made the lake cell's own side of the face (these rows hold the centre-to-centre spacing grid.cl12 had then). Regenerate only by running the OLD code."
 }

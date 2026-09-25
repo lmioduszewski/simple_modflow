@@ -410,14 +410,56 @@ class VoronoiGridPlus(VoronoiGrid):
 
         self._excavations = dict(value or {})
 
-    def get_disu_connectivity(self, *, use_representative_point: bool = False, tol: float = 0.0, validate: bool = True):
-        """Compute DISU-style connectivity arrays for the current Voronoi grid."""
+    def get_disu_connectivity(self, *, tol: float = 0.0, validate: bool = True):
+        """Compute and cache the DISU connection table MF6 would build from this grid's DISV.
+
+        ``iac``/``ja``/``cl12``/``hwva``/``nja``, from :meth:`get_disv_gridprops`
+        through :func:`~myflopy.modflow.mf6.grid.connectivity.build_disu_connectivity`
+        -- MF6's own DISV geometry (``DisvGeom.f90``), so a DISU written from them
+        reproduces the DISV to rounding. ``cl12`` is per SIDE: at ``(n, m)`` the
+        distance from cell ``n``'s DISV centre to the shared face. It held the full
+        centre-to-centre spacing from 2025-07-02 until ledger 328, which made a
+        DISU's horizontal conductance about half the DISV's and a legacy lake
+        wall's ``CONNLEN`` about twice MF6's.
+
+        Parameters
+        ----------
+        tol : float, default 0.0
+            A face whose width is ``<= tol`` (model length units) is not connected;
+            ``0.0`` drops only zero-width faces.
+        validate : bool, default True
+            Check the table before caching it (rows headed by their own cell, every
+            connection in both rows, ``hwva`` symmetric, ``cl12`` finite and
+            non-negative); ``False`` skips the checks.
+
+        Returns
+        -------
+        tuple
+            ``iac`` (int64), ``ja`` (int64, zero-based), ``cl12`` (float64),
+            ``hwva`` (float64), ``nja`` (int), also cached on the grid and read back
+            by the :attr:`iac`/:attr:`ja`/:attr:`cl12`/:attr:`hwva`/:attr:`nja`
+            properties; the :attr:`ia` row pointer is dropped and recomputed.
+
+        Raises
+        ------
+        TypeError
+            ``tol`` is not a number.
+        ValueError
+            ``validate`` found a defect in the table (the message names the cells).
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+        >>> verts = np.array([[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]], float)
+        >>> grid = VoronoiGridPlus(verts=verts, iverts=[[0, 3, 4, 1], [1, 4, 5, 2]],
+        ...                        xcyc=np.array([[0.5, 0.5], [1.5, 0.5]]))
+        >>> iac, ja, cl12, hwva, nja = grid.get_disu_connectivity()
+        >>> ja.tolist(), cl12.tolist(), hwva.tolist()
+        ([0, 1, 1, 0], [0.0, 0.5, 0.0, 0.5], [0.0, 1.0, 0.0, 1.0])
+        """
         iac, ja, cl12, hwva, nja = build_disu_connectivity(
-            self.gdf_vorPolys,
-            self.adjacent_cells_idx,
-            use_representative_point=use_representative_point,
-            tol=tol,
-            validate=validate,
+            self.get_disv_gridprops(), tol=tol, validate=validate
         )
         self._iac = iac
         self._ia = None  # invalidate the row-pointer cache; recomputed from iac on demand
@@ -459,14 +501,49 @@ class VoronoiGridPlus(VoronoiGrid):
 
     @property
     def cl12(self):
-        """Return the cached half-cell connection lengths."""
+        """Per-side connection lengths: at ``(n, m)``, cell ``n``'s DISV centre to the shared face.
+
+        MF6's DISU ``CL12`` -- "the center of cell n [to] the shared face with each
+        adjacent m cell" -- computed as MF6 computes a DISV face (the perpendicular
+        from ``cell2d``'s ``xc``/``yc`` to the line through the two shared vertices),
+        indexed like :attr:`ja`, zero on each row's own entry. NOT symmetric: the two
+        rows of one connection hold the two sides. Until ledger 328 this held the full
+        centre-to-centre spacing on both -- 1.74-2.35x (median 2.0) the lake cell's own
+        side over the legacy lake walls of two real runs. Computed by
+        :meth:`get_disu_connectivity` on first read.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+        >>> verts = np.array([[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]], float)
+        >>> grid = VoronoiGridPlus(verts=verts, iverts=[[0, 3, 4, 1], [1, 4, 5, 2]],
+        ...                        xcyc=np.array([[0.5, 0.5], [1.25, 0.5]]))
+        >>> grid.cl12.tolist()   # row 0: cell 0's side (0.5); row 1: cell 1's (0.25)
+        [0.0, 0.5, 0.0, 0.25]
+        """
         if self._cl12 is None:
             self.get_disu_connectivity()
         return self._cl12
 
     @property
     def hwva(self):
-        """Return the cached shared-face widths/areas."""
+        """Shared-face widths, indexed like :attr:`ja`: the distance between the two shared vertices.
+
+        MF6's DISV face width (``DisvGeom.f90``'s ``distance``), the same in both rows
+        of a connection and zero on each row's own entry. Computed by
+        :meth:`get_disu_connectivity` on first read.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+        >>> verts = np.array([[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]], float)
+        >>> grid = VoronoiGridPlus(verts=verts, iverts=[[0, 3, 4, 1], [1, 4, 5, 2]],
+        ...                        xcyc=np.array([[0.5, 0.5], [1.5, 0.5]]))
+        >>> grid.hwva.tolist()
+        [0.0, 1.0, 0.0, 1.0]
+        """
         if self._hwva is None:
             self.get_disu_connectivity()
         return self._hwva
@@ -620,7 +697,51 @@ class VoronoiGridPlus(VoronoiGrid):
         return geometry_find_adjacent_cells(self, cell_id)
 
     def calculate_distance(self, gdf, poly_idx1, poly_idx2):
-        """Calculate the distance between two polygons in a GeoDataFrame."""
+        """Distance from one polygon's CENTROID to the nearest point it shares with another.
+
+        :func:`~myflopy.modflow.mf6.grid.geometry.calculate_distance` on ``gdf``; the
+        grid itself is not read. NOT MODFLOW 6's connection length, which is measured
+        from the DISV centre perpendicular to the line of the shared face: that is
+        :attr:`cl12` (ledger 328), and the two part wherever the centre is not the
+        centroid.
+
+        Parameters
+        ----------
+        gdf : geopandas.GeoDataFrame
+            The polygons, e.g. :attr:`gdf_vorPolys`. Rows are read by POSITION
+            (``iloc``), never by index label.
+        poly_idx1 : int
+            Position of the polygon measured FROM: the distance starts at its centroid.
+        poly_idx2 : int
+            Position of the other polygon.
+
+        Returns
+        -------
+        float
+            In the polygons' length units, per side; ``nan`` when the polygons share
+            no point.
+
+        Raises
+        ------
+        IndexError
+            A position outside ``gdf``.
+
+        See Also
+        --------
+        cl12 : MF6's connection length, per side, for every face.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+        >>> verts = np.array([[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]], float)
+        >>> grid = VoronoiGridPlus(verts=verts, iverts=[[0, 3, 4, 1], [1, 4, 5, 2]],
+        ...                        xcyc=np.array([[0.25, 0.5], [1.5, 0.5]]))
+        >>> grid.calculate_distance(grid.gdf_vorPolys, 0, 1)   # from the centroid
+        0.5
+        >>> float(grid.get_disu_connectivity()[2][1])          # MF6's: from (0.25, 0.5)
+        0.75
+        """
         return geometry_calculate_distance(gdf, poly_idx1, poly_idx2)
 
     def shared_face_length(self, poly1, poly2):

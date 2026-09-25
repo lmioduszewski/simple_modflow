@@ -256,7 +256,9 @@ def test_bathy_writes_what_connection_modes_says(toy):
     ]
     # Cell 10, the highest bed (11), has no lower neighbour inside the lake.
     assert sum(1 for row in rows if row[2] == (0, 10) and row[3] == "HORIZONTAL") == 2
-    assert {(row[7], row[8]) for row in rows if row[3] == "HORIZONTAL"} == {(1.0, 1.0)}
+    # CONNLEN the lake cell's OWN side of the face (0.5 on a unit square), not the 1.0
+    # between the centres that grid.cl12 held until ledger 328; CONNWIDTH the face.
+    assert {(row[7], row[8]) for row in rows if row[3] == "HORIZONTAL"} == {(0.5, 1.0)}
 
 
 def test_rectangular_writes_what_connection_modes_says(toy):

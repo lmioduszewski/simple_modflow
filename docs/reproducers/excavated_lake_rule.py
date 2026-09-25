@@ -17,22 +17,26 @@ k = k33 = 10, icelltype 1; NEWTON; steady; IMS COMPLEX, BICGSTAB, outer_dvclose 
      3000/d): the lake takes the excavated rule. Through-flow = GWF->lake inflow.
   L  the un-excavated stack and `mf.lak` with the same bed as a cell-indexed Series
      (`"bathy"`, the rule before ledger 325; its rim walls sit on the lake's own column).
-Measured: E / R = 1.0054 (40 x 40) and 1.0053 (60 x 60); L / R = 0.3920 and 0.3978.
+Measured: E / R = 1.0054 (40 x 40) and 1.0053 (60 x 60); L / R = 0.5230 and 0.5250 --
+0.3920 and 0.3978 until ledger 328, while L's CONNLEN was the full centre-to-centre
+spacing (`grid.cl12` then; 1.52-3.16x, median 1.97, the lake cell's own side it is now).
 GWF and LAK percent discrepancy 0.00 in every run -- asserted, never Normal
 termination alone (the design measured a steady toy at Normal termination with a 53.89%
 error). The design's own prototype measured 1.005-1.006 for this rule, 0.924-0.945 with
-CONNLEN taken as the full centre-to-centre spacing (`grid.cl12`), 0.39-0.42 for L.
+CONNLEN taken as the full centre-to-centre spacing (what `grid.cl12` held before ledger
+328), 0.39-0.42 for L (with that spacing too).
 
 PART 2 -- the canonical lake, which is NOT excavated (the design's F8), under the new
 `unexcavated=` guard: 33 of its 33 VERTICAL connections sit in a cell whose top is above
 the 96.0 ft floor, by up to 13.45 ft (median 9.669), all 33 tops above its starting
-stage of 101. Its connection data is byte-identical to the rule before this change
-(pinned in `tests/data/lak_legacy_golden.json`, written by that code).
+stage of 101. Its connection data is the rule before this change in every column but
+CONNLEN (pinned in `tests/data/lak_legacy_golden.json`, written by that code); CONNLEN is
+each lake cell's own side of its face since ledger 328.
 
 NOT reproducible from the repository, and recorded in the ledger instead: the legacy rule
 was also compared, row for row, on a 612-cell reconstruction of a real pond (1,753
 connections, 1,141 horizontal, thinnest face 1.32e-4 ft) built from COPIES of that run's
-MF6 files -- identical.
+MF6 files -- identical, before ledger 328 moved CONNLEN.
 """
 
 from __future__ import annotations
