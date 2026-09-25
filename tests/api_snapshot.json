@@ -484,6 +484,7 @@
         "time_conversion:KEYWORD_ONLY=None",
         "maximum_iterations:KEYWORD_ONLY=100",
         "maximum_stage_change:KEYWORD_ONLY=1e-05",
+        "implicit:KEYWORD_ONLY=False",
         "options:VAR_KEYWORD=<required>"
       ],
       "flopy": [

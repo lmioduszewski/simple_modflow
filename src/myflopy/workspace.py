@@ -29,6 +29,7 @@ from myflopy.run_record import ListingOutcome, pest_tree_root, read_listing_outc
 
 if TYPE_CHECKING:
     import pandas as pd
+from myflopy.modflow.mf6.lak_implicit import keep_implicit, warn_if_implicit_unsupported
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.project.bundle import bundle_grid_sources, bundle_package_sources
 from myflopy.project.freeze import (
@@ -1749,6 +1750,10 @@ class Run:
             self.write()
         assert self.simulation is not None  # write()/build() populate it
         self.simulation.exe_name = self.executable
+        # A lake written with LAK IMPLICIT needs an MF6 that reads it: the executable is
+        # probed once (cached per file) and one that does not is WARNED about -- the run
+        # still goes ahead, and MF6 stops with its own message (ledger 326).
+        warn_if_implicit_unsupported(self.simulation, self.executable)
         success, report = self.simulation.run_simulation(silent=silent, report=True)
         self.success = bool(success)
         self.report = list(report)
@@ -1768,6 +1773,9 @@ class Run:
             exe_name=self.executable,
             verbosity_level=verbosity_level,
         )
+        # FloPy reads a LAK file's IMPLICIT without a word and drops it; writing this
+        # simulation again would lose it (ledger 326).
+        keep_implicit(self.simulation)
         # Writing this simulation writes what was on disk, not a library rebuild.
         self._from_library = {}
         patch_simulation_plot(self.simulation)

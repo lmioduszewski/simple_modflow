@@ -12,6 +12,7 @@ from typing import Any
 import flopy
 import numpy as np
 
+from myflopy.modflow.mf6.lak_implicit import ModflowGwflakImplicit
 from myflopy.modflow.mf6.package_registry import (
     _PACKAGE_EXPLORER_SPECS,
     advanced_output_filerecords,
@@ -381,6 +382,18 @@ def build_package_artifact(
             "outlets": _extract_mf6_value(package, "outlets"),
             "perioddata": _normalize_record_item(package.perioddata.get_data()),
         }
+        # MF6's LAK IMPLICIT is not a FloPy dataset -- the package's CLASS writes it
+        # (ledger 326) -- so no `_extract_mf6_value` can see it, and a restore built a
+        # plain ModflowGwflak that solved the lake by the default formulation. Stored
+        # only when set, so no artifact captured without it changes.
+        if getattr(package, "writes_lak_implicit", False):
+            package_data["implicit"] = True
+        # BOUNDNAMES adds a trailing field to every packagedata row, so a restore without
+        # it fails in FloPy's recarray -- every `mf.lak` lake carries one (its id). Stored
+        # only when set, as for the list BCs above.
+        boundnames = _extract_mf6_value(package, "boundnames")
+        if boundnames:
+            package_data["boundnames"] = True
     elif package_type == "sfr":
         package_data = {
             "mover": _extract_mf6_value(package, "mover", False),
@@ -700,13 +713,20 @@ def apply_package_artifact(model, artifact: PackageArtifact, *, validate: bool =
             filename=f"{model.name}.uzf",
         )
     elif artifact.package_type == "lak":
-        package = flopy.mf6.ModflowGwflak(
+        implicit = bool(artifact.package_data.get("implicit", False))
+        filerecords = advanced_output_filerecords("lak", "lak", model.name)
+        if implicit:
+            # MF6 writes no package-convergence CSV under IMPLICIT (it warns instead),
+            # so the record is not asked for -- what `mf.lak(implicit=True)` does.
+            filerecords.pop("package_convergence_filerecord", None)
+        package_class = ModflowGwflakImplicit if implicit else flopy.mf6.ModflowGwflak
+        package = package_class(
             model.gwf,
             save_flows=True,
             print_input=False,
             print_flows=False,
             print_stage=True,
-            **advanced_output_filerecords("lak", "lak", model.name),
+            **filerecords,
             mover=artifact.package_data.get("mover", False),
             surfdep=artifact.package_data.get("surfdep"),
             time_conversion=artifact.package_data.get("time_conversion"),
@@ -723,6 +743,7 @@ def apply_package_artifact(model, artifact: PackageArtifact, *, validate: bool =
             pname="lak",
             maximum_iterations=artifact.package_data.get("maximum_iterations"),
             maximum_stage_change=artifact.package_data.get("maximum_stage_change"),
+            boundnames=artifact.package_data.get("boundnames"),
         )
     elif artifact.package_type == "sfr":
         package = flopy.mf6.ModflowGwfsfr(

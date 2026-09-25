@@ -1045,6 +1045,21 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   connections against the BUILT DISV from the LAK builder AND
   `_discretization_complaints`; `lak_build_warnings` says no-NEWTON, `icelltype` 0
   walls, RCH/EVT under a wet lake, and a transparent bed -- for excavated lakes only.
+  **`mf.lak(implicit=True)` writes MF6's LAK `IMPLICIT`, which FloPy 3.10 cannot** (ledger
+  326): `lak_implicit.ModflowGwflakImplicit`'s own `write` inserts it after FloPy writes,
+  so every write of THAT OBJECT gets it once. **The flag is the CLASS, so anything that
+  REBUILDS a LAK package loses it** unless it carries the class: FloPy's splitter
+  (`package_factory`), an artifact restore, FloPy's loader, and `model.config` (no FloPy
+  dataset to read) each did, silently -- `split_model`, `apply_package_artifact`,
+  `keep_implicit` and the config's `implicit` row carry it now; a bare FloPy load still
+  cannot. Two traps: FloPy's `MFPackage.__init_subclass__`
+  registers ANY subclass as its LOADER's class for that type -- defining one made every
+  LAK loaded afterwards the subclass, IMPLICIT or not; the registry is restored right
+  after the class. A CG solution is refused at build (MF6 stops; `complexity="SIMPLE"`
+  or none defaults to CG, measured) -- except the IMS `mf.simulation` generated, which the
+  build turns BICGSTAB once an `mf.ref` lake resolves (`GENERATED_SOLVER`) -- and the
+  executable is probed once per file at run time.
+  `docs/reproducers/lak_implicit_requirements.py` runs MF6 on each claim.
   **A package declared against a context from BEFORE the cut is refused at build**
   (ledger 321): `_discretization_complaints` checks every list-BC record, OBS6 cellid
   and per-column `irch`/`ievt` against the BUILT DISV's idomain (`<= 0` = removed) and

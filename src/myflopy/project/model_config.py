@@ -12,7 +12,8 @@ What is captured:
 * **ims** -- the full solver block set (``options`` + ``nonlinear`` + ``linear``:
   dvclose/maximum, under-relaxation, backtracking, linear acceleration, etc.).
 * **oc** -- ``options`` + ``period`` save/print records.
-* every other package -- its ``options`` block.
+* every other package -- its ``options`` block, plus a LAK's ``implicit`` (MF6's
+  ``IMPLICIT``, which the package's class writes and no FloPy dataset holds; ledger 326).
 
 Output-file records (``*_filerecord``) are skipped: they hold model-specific
 paths that would always differ and mean nothing for a configuration comparison.
@@ -228,6 +229,14 @@ def _extract_settings(model) -> pd.DataFrame:
             section = str(getattr(pkg, "package_name", ptype) or ptype).lower()
             blocks = ["options", "period"] if ptype == "oc" else ["options"]
             rows += _options_rows(section, pkg, blocks)
+            # MF6's LAK IMPLICIT is no FloPy dataset: the package's CLASS writes it
+            # (ledger 326), so the block walk above cannot see it and two runs differing
+            # only in `mf.lak(implicit=True)` compared EQUAL -- ledger 286's NEWTON trap,
+            # reopened. Read through the class marker (a LOADED package whose file holds
+            # it is re-classed by `keep_implicit`), and like a FloPy keyword option, only
+            # when set.
+            if getattr(pkg, "writes_lak_implicit", False):
+                rows.append((section, "implicit", True))
 
     return pd.DataFrame(rows, columns=_SETTINGS_COLUMNS)
 

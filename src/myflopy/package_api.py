@@ -60,6 +60,7 @@ from myflopy.geopackage import (
 )
 from myflopy.grid_identity import (
     CELLWISE_OPTIONS,
+    GENERATED_SOLVER,
     GRID_PIN,
     GRID_PIN_OPTIONS,
     PIN_VOIDED,
@@ -1604,11 +1605,26 @@ def _asymmetric_matrix(model: ModelSpec) -> bool:
     transport)`` did, and a rule written against ``model_type`` alone would have
     fixed one and left the other. Both measured: under ``complexity="SIMPLE"``,
     GWT and GWF-with-Newton both fail and both pass with ``BICGSTAB``.
+
+    A GWF model holding a lake declared ``mf.lak(..., implicit=True)`` is asymmetric
+    too: MF6's LAK ``IMPLICIT`` adds each stage to the matrix, and MF6 stops on CG with
+    it (measured; ledger 326). Only a lake declared inline is seen here -- an
+    ``mf.ref`` to a library lake is not resolved yet. The solver this module generates
+    is therefore marked ``GENERATED_SOLVER``, and ``SimulationSpec.build_flopy`` gives it
+    BICGSTAB once the refs resolve to an implicit lake.
     """
 
     if model.model_type in ("gwt", "gwe"):
         return True
-    return model.model_type == "gwf" and bool(model.options.get("newtonoptions"))
+    if model.model_type != "gwf":
+        return False
+    # MF6's LAK IMPLICIT makes the matrix asymmetric too, and MF6 stops on CG with it
+    # (measured; ledger 326) -- so a model holding an implicit lake gets BICGSTAB.
+    implicit_lake = any(
+        isinstance(package, PackageSpec) and (package.options or {}).get("implicit") is True
+        for package in model.packages
+    )
+    return implicit_lake or bool(model.options.get("newtonoptions"))
 
 
 def _partition_simulation_packages(
@@ -1691,8 +1707,11 @@ def _claim_models(
         solver_options: dict[str, Any] = {"complexity": "SIMPLE"}
         if _asymmetric_matrix(model):
             solver_options["linear_acceleration"] = "BICGSTAB"
+        # Marked as myflopy's own choice, so the build may finish it once an `mf.ref`
+        # resolves to an implicit lake this function cannot see (ledger 326).
         resolved.append(
             ims(models=[model.name], name=f"{model.name}_ims", **solver_options)
+            .with_metadata(**{GENERATED_SOLVER: True})
         )
     return resolved
 
@@ -5597,6 +5616,7 @@ class _LAKPackage:
         time_conversion: float | None = None,
         maximum_iterations: int = 100,
         maximum_stage_change: float = 1.0e-5,
+        implicit: bool = False,
         **options: Any,
     ) -> PackageSpec:
         """Build a LAK package from lake polygons (delegates to ``LAKBuilder``).
@@ -6000,6 +6020,39 @@ class _LAKPackage:
         maximum_stage_change : float, default 1e-05
             MF6's ``MAXIMUM_STAGE_CHANGE``: the lake-stage closure tolerance
             (length).
+        implicit : bool or numpy.bool_, default False
+            Writes MF6's LAK ``IMPLICIT`` option: each lake's stage is solved as one
+            more unknown of the groundwater-flow matrix, WITH the heads, instead of by
+            MF6's default substitution iteration, which solves the stage and the heads
+            by turns. That can take many outer iterations, or fail to converge, when a
+            lake and the aquifer are strongly coupled -- a bed that leaks freely, an
+            excavated pond exchanging through its floor and walls: on a real one the
+            default formulation took 81% more outer iterations and 16 failed time steps,
+            and ``IMPLICIT`` 11% and none (the excavation design's runs). The converged
+            answer is the same: a transient pit filled at 2,000 ft3/d reached the
+            default formulation's stages to 1e-8 ft (measured). MF6's requirements, each
+            checked here: the solution's linear acceleration must be BICGSTAB -- MF6
+            stops on CG, so an IMS resolving to CG (``linear_acceleration="CG"``, or
+            ``complexity="SIMPLE"`` or no complexity with no ``linear_acceleration``) is
+            refused when the simulation is built, and the IMS ``mf.simulation`` makes
+            for you picks BICGSTAB -- for a lake reached through ``mf.ref`` too, once
+            the build resolves it; every lake must have a connection (``ValueError``);
+            NEWTON is recommended for a lake that may become perched, and the build
+            warns without it. ``maximum_iterations`` and ``maximum_stage_change`` then
+            do nothing (MF6 checks the stage in IMS), and the package-convergence file
+            is not asked for, since MF6 writes none. **Availability:** MF6's develop
+            branch (commit ``e2dfc84c``) and the 6.8 line, in no release before; the
+            executable is probed once when the run executes, and one without the option
+            is WARNED about, naming it and its version -- the run goes ahead, and MF6
+            stops with its own message. FloPy 3.10 has no keyword for it, so myflopy
+            writes it into the LAK file after FloPy does (``ModflowGwflakImplicit``). It
+            survives a run loaded by ``Run.open`` or ``mf.load_mf6_run`` and written
+            again, ``ParallelModelWorkflow.split_model`` and a package artifact; a bare
+            ``flopy.mf6.MFSimulation.load`` drops it silently, and ``model.config``
+            shows it as the lake's ``implicit`` setting. ``True`` rides in the spec's
+            options (it is saved and moves the digest); ``False`` writes and stores
+            nothing. A ``numpy.bool_`` is accepted and stored as ``True``/``False``;
+            anything else raises ``TypeError``.
         **options : Any
             Any other ``flopy.mf6.ModflowGwflak`` keyword, e.g. ``surfdep``,
             ``print_stage``, ``print_flows``, ``observations`` or
@@ -6057,11 +6110,14 @@ class _LAKPackage:
             ``only_layer`` that is not the top active layer. An
             ``unexcavated`` that is not ``"warn"``, ``"raise"`` or
             ``"ignore"``, and -- with ``unexcavated="raise"`` -- a lake no
-            excavation reached whose bed MF6 will not see.
+            excavation reached whose bed MF6 will not see. With
+            ``implicit=True``, a lake with no connection; and when the simulation is
+            BUILT, a solution whose linear acceleration resolves to CG.
         TypeError
             A ``layer`` that is not a ``str`` (an integer reads as a model layer;
-            that is ``only_layer``); an ``**options`` name ``ModflowGwflak`` does
-            not accept, or one ``mf.lak`` already sets.
+            that is ``only_layer``); an ``implicit`` that is not a bool; an
+            ``**options`` name ``ModflowGwflak`` does not accept, or one ``mf.lak``
+            already sets (``implicit`` is not one: it is a named parameter).
         pyogrio.errors.DataSourceError
             A ``lakes`` path that does not exist or is not a vector file.
 
@@ -6133,6 +6189,7 @@ class _LAKPackage:
             time_conversion=time_conversion,
             maximum_iterations=maximum_iterations,
             maximum_stage_change=maximum_stage_change,
+            implicit=implicit,
             options=options,
         )
         # Stash lake numbers so movers can target a lake by name (mf.lak_connection).

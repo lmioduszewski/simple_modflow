@@ -1657,7 +1657,11 @@ def lak_build_warnings(model, packages) -> list[str]:
           The bed then does not set the infiltration rate -- the mesh does (62x across
           one floor, measured).
 
-        Empty when the model has no excavated lake or no DISV.
+        Empty when the model has no excavated lake or no DISV. And for ANY lake
+        declared ``implicit=True`` (ledger 326), in a model without NEWTON: MF6's
+        documentation recommends the Newton formulation for a lake that may become
+        perched, whatever its rule -- said once, in place of the excavated lake's own
+        NEWTON warning when both apply.
 
     Examples
     --------
@@ -1668,6 +1672,22 @@ def lak_build_warnings(model, packages) -> list[str]:
 
     import numpy as np
 
+    implicit = [
+        package.name
+        for package in packages
+        if (package.options or {}).get("implicit") is True
+        and (package.metadata or {}).get(LAKE_RULES) is not None
+    ]
+    early: list[str] = []
+    if implicit and not _has_newton(model):
+        early.append(
+            f"package(s) {', '.join(repr(name) for name in implicit)} solve their lake "
+            "stages IMPLICITLY without NEWTON: MF6's LAK documentation recommends the "
+            "Newton formulation for a lake that may become perched (disconnected from the "
+            "aquifer), because standard rewetting can then give a different answer from "
+            "the default formulation. Declare the model with mf.gwf(..., "
+            "newtonoptions='NEWTON')"
+        )
     lakes = [
         package
         for package in packages
@@ -1675,11 +1695,11 @@ def lak_build_warnings(model, packages) -> list[str]:
         and "connectiondata" in (package.options or {})
     ]
     if not lakes:
-        return []
+        return early
     disv = model.get_package("disv") if hasattr(model, "get_package") else None
     arrays = _disv_arrays(disv) if disv is not None and not isinstance(disv, list) else None
     if arrays is None:
-        return []
+        return early
     idomain, top, botm = arrays
     nlay, ncpl = botm.shape
     elevations = np.vstack([top.reshape(1, -1), botm])
@@ -1689,7 +1709,7 @@ def lak_build_warnings(model, packages) -> list[str]:
     k33 = _npf_array(npf, "k33", nlay, ncpl)
     if k33 is None:
         k33 = _npf_array(npf, "k", nlay, ncpl)
-    newton = _has_newton(model)
+    newton = _has_newton(model) or bool(early)   # said once, above, for an implicit lake
     fluxes = [
         package
         for package in getattr(model, "packagelist", ()) or ()
@@ -1802,7 +1822,153 @@ def lak_build_warnings(model, packages) -> list[str]:
                         "or choose the layering under the pond for it (min_remnant= on the "
                         "excavation)"
                     )
-    return messages
+    return early + messages
+
+
+#: Stamped by ``mf.simulation`` on a solver it SYNTHESIZED for a model no supplied solver
+#: claimed (ledger 326). The choice of that solver's linear acceleration was myflopy's
+#: to begin with, so ``SimulationSpec.build_flopy`` may finish it once the models are
+#: built: a model holding an implicit lake only an ``mf.ref`` revealed -- which
+#: ``mf.simulation`` cannot resolve -- gets BICGSTAB there. A solver the caller declared
+#: never carries it and is never changed. Metadata, so excluded from ``package_digest``.
+GENERATED_SOLVER = "myflopy_generated_solver"
+
+
+def implicit_lake_models(simulation) -> list[str]:
+    """The models of a built simulation holding a LAK package that writes ``IMPLICIT``.
+
+    Read through the ``writes_lak_implicit`` marker ``lak_implicit.ModflowGwflakImplicit``
+    sets, so this layer-0 module does not import that one (ledger 326).
+
+    Parameters
+    ----------
+    simulation : flopy.mf6.MFSimulation
+        A built or loaded simulation.
+
+    Returns
+    -------
+    list of str
+        Model names, in the simulation's order; empty when no lake asks.
+
+    Examples
+    --------
+    >>> import flopy
+    >>> from myflopy.grid_identity import implicit_lake_models
+    >>> implicit_lake_models(flopy.mf6.MFSimulation())
+    []
+    """
+
+    return [
+        str(name)
+        for name in getattr(simulation, "model_names", None) or ()
+        if any(
+            getattr(package, "writes_lak_implicit", False)
+            for package in getattr(simulation.get_model(name), "packagelist", ()) or ()
+        )
+    ]
+
+
+def _solutions(simulation) -> dict[str, str]:
+    """``{model name: its solution's file name}`` from the simulation name file."""
+
+    try:
+        groups = simulation.name_file.solutiongroup.get_data() or {}
+    except (AttributeError, TypeError, ValueError) as error:
+        logger.debug("no solution groups to read; the IMPLICIT solver check is skipped: %s", error)
+        return {}
+    solved: dict[str, str] = {}
+    for records in groups.values():
+        for record in records if records is not None else ():
+            fields = list(record)
+            if len(fields) < 3:
+                continue
+            for names in fields[2:]:
+                for name in str(names or "").split():
+                    solved[name] = str(fields[1])
+    return solved
+
+
+def _acceleration(ims) -> tuple[str, bool]:
+    """``(linear acceleration, whether it was a DEFAULT)`` of an IMS package, upper case.
+
+    MF6's default depends on ``COMPLEXITY``: CG for ``SIMPLE`` -- which is also what an
+    IMS naming neither option gets -- and BICGSTAB for ``MODERATE`` and ``COMPLEX``
+    (all three measured with MF6 6.8.0.dev0).
+    """
+
+    declared = ims.linear_acceleration.get_data()
+    if declared:
+        return str(declared).upper(), False
+    complexity = str(ims.complexity.get_data() or "SIMPLE").upper()
+    return ("CG" if complexity == "SIMPLE" else "BICGSTAB"), True
+
+
+def implicit_solver_complaints(simulation) -> list[str]:
+    """Every solution that would stop MF6 because it solves an implicit lake with CG.
+
+    ``IMPLICIT`` makes the coefficient matrix asymmetric, and MF6 refuses CG on one:
+    measured, ``... PRODUCES AN ASYMMETRIC COEFFICIENT MATRIX, BUT THE CONJUGATE
+    GRADIENT METHOD WAS SELECTED. USE BICGSTAB INSTEAD.`` -- for ``linear_acceleration=
+    "CG"``, ``complexity="SIMPLE"`` with none, and an IMS declaring neither.
+    ``SimulationSpec.build_flopy`` raises with these, so the refusal arrives at build
+    instead of from MF6 after the files are written (ledger 326). A package asks for
+    ``IMPLICIT`` when it carries ``writes_lak_implicit`` -- the marker
+    ``lak_implicit.ModflowGwflakImplicit`` sets -- read by attribute so that this
+    layer-0 module does not import that one.
+
+    Parameters
+    ----------
+    simulation : flopy.mf6.MFSimulation
+        A built simulation, its solutions registered.
+
+    Returns
+    -------
+    list of str
+        One sentence per model whose solution resolves to CG and which holds a LAK
+        package writing ``IMPLICIT``; empty otherwise.
+
+    Examples
+    --------
+    >>> import flopy
+    >>> from myflopy.grid_identity import implicit_solver_complaints
+    >>> implicit_solver_complaints(flopy.mf6.MFSimulation())
+    []
+    """
+
+    solved = None
+    complaints = []
+    for name in getattr(simulation, "model_names", None) or ():
+        model = simulation.get_model(name)
+        lakes = [
+            str(package.filename)
+            for package in getattr(model, "packagelist", ()) or ()
+            if getattr(package, "writes_lak_implicit", False)
+        ]
+        if not lakes:
+            continue
+        if solved is None:
+            solved = _solutions(simulation)
+        filename = solved.get(str(name))
+        ims = simulation.get_solution_package(filename) if filename else None
+        if ims is None or str(getattr(ims, "package_type", "")) != "ims":
+            continue
+        acceleration, defaulted = _acceleration(ims)
+        if acceleration != "CG":
+            continue
+        how = (
+            "by default (COMPLEXITY SIMPLE, or none, with no LINEAR_ACCELERATION)"
+            if defaulted
+            else "as declared"
+        )
+        complaints.append(
+            f"model {name!r} holds LAK package(s) {', '.join(repr(f) for f in lakes)} with "
+            f"IMPLICIT, and its solution {filename!r} uses the CONJUGATE GRADIENT linear "
+            f"acceleration {how}. MF6 stops on that: '... PRODUCES AN ASYMMETRIC "
+            "COEFFICIENT MATRIX, BUT THE CONJUGATE GRADIENT METHOD WAS SELECTED. USE "
+            "BICGSTAB INSTEAD.' Pass linear_acceleration='BICGSTAB' to mf.ims (or "
+            "complexity='MODERATE' / 'COMPLEX', which default to it)"
+        )
+    return complaints
 
 
 def active_cell_warnings(model, context, packages, *, built_packages=None) -> list[str]:
@@ -2116,6 +2282,7 @@ def _context_metadata(context) -> dict[str, Any]:
 
 __all__ = [
     "DROPPED_CONTEXT_FIELDS",
+    "GENERATED_SOLVER",
     "GRID_PIN",
     "_as_int",
     "active_cell_warnings",
@@ -2132,6 +2299,8 @@ __all__ = [
     "bed_tolerance",
     "excavation_cells",
     "grid_pin",
+    "implicit_lake_models",
+    "implicit_solver_complaints",
     "lak_build_warnings",
     "lak_geometry_complaints",
     "pin_metadata",

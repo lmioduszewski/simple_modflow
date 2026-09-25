@@ -80,6 +80,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.grid.geometry`
 - `myflopy.modflow.mf6.grid.geometry_cleanup`
 - `myflopy.modflow.mf6.heads_observations`
+- `myflopy.modflow.mf6.lak_implicit`
 - `myflopy.modflow.mf6.mf2Dplots`
 - `myflopy.modflow.mf6.package_plotting` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.package_tables`
@@ -95,7 +96,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.utils.datatypes.features`
 - `myflopy.modflow.utils.prism_ppt`
 - `myflopy.modflow.utils.surfaces`
-- `myflopy.project.components`
 - `myflopy.specs` *(deferred imports: 10)*
 
 ## Layer 2
@@ -123,7 +123,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.simulation.indexing`
 - `myflopy.modflow.usg.model` *(deferred imports: 5)*
 - `myflopy.project.bundle`
-- `myflopy.project.freeze` *(deferred imports: 2)*
+- `myflopy.project.components`
 - `myflopy.surfaces` *(deferred imports: 4)*
 
 ## Layer 3
@@ -146,6 +146,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.uzf`
 - `myflopy.modflow.usg.reader` *(deferred imports: 1)*
 - `myflopy.modflow.utils.datatypes.choros` *(deferred imports: 1)*
+- `myflopy.project.freeze` *(deferred imports: 2)*
 
 ## Layer 4
 

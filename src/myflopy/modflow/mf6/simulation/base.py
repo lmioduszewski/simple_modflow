@@ -15,6 +15,7 @@ from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
 from myflopy.areas import Area, live_areas, saved_areas
 from myflopy.library import AoiLibrary
+from myflopy.modflow.mf6.lak_implicit import warn_if_implicit_unsupported
 from myflopy.modflow.mf6.package_registry import _package_type_name
 from myflopy.modflow.mf6.simulation.accessors import (
     field_reader,
@@ -1427,6 +1428,12 @@ class SimulationBase:
         )
 
     def run_simulation(self):
-        """Write and run the current simulation."""
+        """Write and run the current simulation.
 
+        A lake written with LAK IMPLICIT is checked against the executable first: one
+        that does not read the option is WARNED about, and the run goes ahead (ledger
+        326).
+        """
+
+        warn_if_implicit_unsupported(self.sim)
         return run_model_simulation(self)

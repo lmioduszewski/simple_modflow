@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 325 entries (327 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 326 entries (328 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 326 | `mf.lak(implicit=True)` writes MF6's LAK `IMPLICIT`, which FloPy 3.10 cannot: a SECOND WRITER for the LAK f... | 2026-09-25 |
 | 325 | `mf.lak` reads the excavation RECORD: an excavated lake connects at its bed and into its neighbours' cells;... | 2026-09-25 |
 | 324 | A typed `ievt` beside an omitted ET `surface` was DROPPED, and a numpy-integer `irch`/`ievt` died inside FloPy | 2026-09-25 |
 | 323 | An excavated layer stack is written down, archived, hashed and moved like the rest of the stack -- the life... | 2026-09-25 |
@@ -13671,7 +13672,7 @@ same day, which is the useful part of the result.
         when an edit replaces `connectiondata`, pinned or not.
       - The canonical lake stays unexcavated (F8): `tests/conftest.py` filters the guard in
         its two canonical fixtures, and `canonical_example.py` is untouched.
-      **NOT built:** LAK `IMPLICIT` (its own entry, next); excavating the canonical lake (F8, a
+      **NOT built:** LAK `IMPLICIT` (ledger 326); excavating the canonical lake (F8, a
       follow-up that moves every canonical baseline); masking MF6's -1e30 dry lake stage
       in the stage views (the design's D10 -- an excavated pond reads dry every recovery
       day); a geometric rule choice (section 4.1: measured wrong three ways). Tests:
@@ -13679,3 +13680,108 @@ same day, which is the useful part of the result.
       rule, the neighbour walls, `DisvFaces`' CONNLEN, the thickness test, the bed check,
       both refusals, the guard, both DISV-check call sites, the warnings, the metadata
       void, the rim bed, the face tolerance -- fails a named test (14 mutations).
+
+326. **`mf.lak(implicit=True)` writes MF6's LAK `IMPLICIT`, which FloPy 3.10 cannot: a SECOND WRITER for the LAK file, in one place, and what a FloPy round trip loses (2026-09-25).**
+      The user asked for it ("I will want to try using it"), reversing the excavation
+      design's F15, which had recommended waiting for FloPy. `IMPLICIT` makes each lake
+      stage one more unknown of the flow matrix, solved WITH the heads; on the user's
+      excavated pond the design measured +81% outer iterations and 16 ATS failures by
+      the default formulation against +11% and 0 with it. It is in MF6's develop branch
+      (commit `e2dfc84c`, PR #2860) and the 6.8 line only, and FloPy 3.10's
+      `ModflowGwflak` -- generated from an older DFN -- has no keyword for it.
+      **The flag** rides in the spec's `options` (`True` only: `False` adds no key, so no
+      existing digest moves), so it is serialized, frozen and digested; the builder
+      `_build_lak_with_tables` consumes it, so FloPy never sees it. `np.bool_` is
+      converted with `bool()`; anything else is a `TypeError`.
+      **The writer is the PACKAGE**: `lak_implicit.ModflowGwflakImplicit`, a
+      `ModflowGwflak` whose own `write` lets FloPy write the file and then inserts
+      `IMPLICIT` above `END OPTIONS` (`insert_implicit`, idempotent -- a block already
+      holding it, any case, is left alone). Every path that WRITES the package reaches
+      its `write` -- `Run.write`/`execute`, `build_flopy` + `write_simulation`, a run
+      reopened from its frozen snapshot (rebuilt through the builder) -- each tested.
+      **The flag IS the class, so a path that REBUILDS a LAK package loses it unless it
+      carries the class** -- and four did, silently, found by the adversarial review:
+      FloPy's model splitter builds each split package through `package_factory`, which
+      answers FloPy's own class (measured: a source `m.lak` holding `IMPLICIT` split into
+      an `m_0.lak` without it), so `split_model` gives each split LAK its source
+      package's class, matched by package name in the `<source>_<n>` models; a package
+      ARTIFACT captured options through FloPy's datasets and restored a plain
+      `ModflowGwflak`, so it records `implicit` (only when set -- no stored artifact
+      changes); `model.config` read the same datasets, so `diff().config` compared two
+      runs differing only in `implicit=True` as EQUAL -- ledger 286's NEWTON trap
+      reopened -- and it now reads the class as the lake's `implicit` row (only when
+      set, like a FloPy keyword); and FloPy's loader, below. The artifact path also
+      carried no `BOUNDNAMES`, so restoring ANY `mf.lak` lake (its id is a boundname) died
+      in FloPy's recarray -- never exercised for LAK before; it is carried now.
+      **Trap, measured:** FloPy's `MFPackage.__init_subclass__` registers
+      EVERY subclass as the class its LOADER builds for that package type
+      (`PackageContainer.packages_by_abbr`), so merely defining the subclass made every
+      LAK file loaded afterwards -- IMPLICIT or not -- a `ModflowGwflakImplicit`, and a
+      rewrite inserted the keyword into files that never had it. The registry entry is
+      put back to FloPy's own class right after the class statement, and a test loads a
+      file without the keyword through FloPy and through `Run.open`.
+      Not chosen: patching the file after `write_simulation` at each call
+      site (four sites, and a fifth written tomorrow would silently drop it) or FloPy
+      class regeneration from MF6's DFNs (outside myflopy, per environment).
+      **Loading, measured:** `flopy.mf6.MFSimulation.load` reads a LAK file holding
+      `IMPLICIT` WITHOUT A WORD and keeps no trace of it -- a rewrite of the loaded
+      simulation wrote no `IMPLICIT`. myflopy's two load paths (`Run.open`,
+      `mf.load_mf6_run`) now call `keep_implicit`, which re-classes such a loaded package
+      as `ModflowGwflakImplicit` so writing it again keeps the option. **A bare FloPy load
+      and write still loses it**, silently, and that is pinned by a test as the limit.
+      **MF6's requirements, measured and enforced:** a CG linear acceleration STOPS MF6
+      ("... ASYMMETRIC COEFFICIENT MATRIX, BUT THE CONJUGATE GRADIENT METHOD WAS
+      SELECTED"), and CG is what `complexity="SIMPLE"` and an IMS declaring neither
+      option default to (both measured), so a CG solution is REFUSED when the simulation
+      is built, and the IMS `mf.simulation` makes for you picks BICGSTAB
+      (`_asymmetric_matrix`); MODERATE and COMPLEX default to BICGSTAB (measured).
+      **A library lake through `mf.ref` is invisible to `mf.simulation`** -- the library
+      is not reachable there -- so it generated SIMPLE (CG) and the build refused a solver
+      the caller never declared (measured). The generated solver is marked
+      `GENERATED_SOLVER` (metadata: no digest moves, and it survives the frozen snapshot)
+      and `SimulationSpec.build_flopy` gives it BICGSTAB once the refs resolve to an
+      implicit lake -- only when it still names no `linear_acceleration`, and only for
+      the models it solves. Chosen over documenting the caveat because the choice was
+      myflopy's to begin with; a DECLARED solver is never changed, so a CG one is still
+      refused by name. The written IMS then says BICGSTAB where the declared spec says
+      SIMPLE -- the build finishing a choice it made, not an edit. A lake
+      with NO connection STOPS MF6 under `IMPLICIT` ("lake 2 has no connections; the
+      IMPLICIT option requires ...", measured; the default formulation runs it) -- refused
+      at declaration. MF6's DFN recommends NEWTON for lakes that may perch -- a WARNING at
+      build. `maximum_iterations`/`maximum_stage_change` are then inert (MF6's DFN), and
+      the package-convergence CSV record is left out because MF6 does not write it
+      (it would print a warning instead).
+      **The executable is probed** once per executable FILE (real path, mtime, size): a
+      two-cell model with `IMPLICIT`, written as plain MF6 text so the probe needs nothing
+      but the binary, run in a temporary directory -- under a second. `Run.execute`,
+      `SimulationBase.run_simulation` and `LoadedMf6Run.run_simulation` ask before running; a
+      build that refuses the option, or no executable found, is WARNED about, naming the
+      path and `--version`, and the run GOES AHEAD (MF6 stops in seconds with its own
+      message, which lands in the run's report). No older MF6 exists on this machine, so
+      the refusing case is tested with a fake executable that answers like one; the text
+      an old MF6 really prints for an unknown LAK option was read from source
+      (`BoundaryPackage.f90`), not run. A bare `sim.run_simulation()` is not probed.
+      **Measured** (the `slow` test): a transient pit filled at 2,000 ft3/d runs to Normal
+      termination with and without `IMPLICIT`, the listing saying the stage is solved in
+      the matrix, stages equal to 1.0e-8 ft, GWF and LAK discrepancy 0.00 (asserted
+      < 0.1%, every period).
+      **Reproducer:** `docs/reproducers/lak_implicit_requirements.py` runs MF6 on each
+      claim above -- the five IMS variants and a CG control without `IMPLICIT`, a lake
+      with no connection both ways, FloPy's silent drop and `keep_implicit`, and the pit's
+      stages (1.0e-8 ft apart, discrepancies 0.00) -- printing MF6's own ERROR REPORT, so
+      the premise of every refusal can be checked against the executable in hand.
+      **NOT built:** `mf.lak.flopy(implicit=)` (the escape hatch builds a plain
+      `ModflowGwflak`; FloPy refuses the keyword there); the probe for a direct
+      `flopy` `run_simulation` (a split run's `run_serial`/`run` included); carrying
+      `IMPLICIT` through a bare FloPy load (a split of a model loaded that way has
+      nothing to carry). **The config reads what is LOADED**: a run opened with
+      `mf.load_mf6_run` and never `load_all()`ed has not loaded its LAK at all, so its
+      config has no `lak` section -- true of every package option outside the core set,
+      not of `implicit` alone, and left as it was.
+      Tests: `tests/test_lak_implicit.py` (14, one MF6); reverting each piece -- the
+      write hook, the loader-registry restore, `keep_implicit` on each load path, the
+      CG refusal, the automatic BICGSTAB, the NEWTON warning, the zero-connection
+      refusal, the probe's cache and its warning, the split re-class, the artifact's
+      capture, class, boundnames and convergence record, the config row, and the
+      generated-solver marker, its build-time call and both its guards -- fails a named
+      test.

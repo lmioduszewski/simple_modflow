@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import warnings
@@ -176,6 +177,47 @@ def _repair_split_lak_packages(simulation) -> None:
 
         package.connectiondata.set_data(repaired_connections)
         package.packagedata.set_data(repaired_packagedata)
+
+
+def _carry_lak_implicit(source, split) -> list[str]:
+    """Give every split LAK package its source package's class when that one writes IMPLICIT.
+
+    MF6's LAK ``IMPLICIT`` is written by ``lak_implicit.ModflowGwflakImplicit``'s own
+    ``write`` (ledger 326), because FloPy 3.10 has no keyword for it. FloPy's splitter
+    rebuilds each package through ``PackageContainer.package_factory``, which answers
+    FloPy's own ``ModflowGwflak`` -- so every split lake was solved by the default
+    formulation, silently (measured: a source ``m.lak`` holding ``IMPLICIT`` split into an
+    ``m_0.lak`` without it). The split package is FloPy's object with FloPy's data; only
+    its class changes, to the SOURCE package's, found by name in the split model's
+    source (the splitter names a part ``<source>_<n>`` and keeps each package's name).
+    Read through the ``writes_lak_implicit`` marker, as ``grid_identity`` does, so this
+    module does not import that one. A source loaded by a bare FloPy load has already
+    lost the option (ledger 326) and carries nothing here.
+
+    Returns the split packages' file names that were re-classed.
+    """
+
+    carried: list[str] = []
+    for source_name in getattr(source, "model_names", None) or ():
+        source_model = source.get_model(source_name)
+        implicit = {
+            str(package.name[0]).lower(): type(package)
+            for package in getattr(source_model, "packagelist", ()) or ()
+            if getattr(package, "writes_lak_implicit", False)
+        }
+        if not implicit:
+            continue
+        for split_name in split.model_names:
+            if not re.fullmatch(rf"{re.escape(str(source_name))}_\d+", str(split_name)):
+                continue
+            for package in getattr(split.get_model(split_name), "packagelist", ()) or ():
+                cls = implicit.get(str(package.name[0]).lower())
+                if cls is None or str(getattr(package, "package_type", "")) != "lak":
+                    continue
+                if not isinstance(package, cls):
+                    package.__class__ = cls
+                    carried.append(str(package.filename))
+    return carried
 
 
 def _lake_column_groups(model) -> tuple[np.ndarray, ...]:
@@ -866,6 +908,7 @@ class ParallelModelWorkflow:
         with observation_context:
             split_simulation = operation(mask)
         _repair_split_lak_packages(split_simulation)
+        _carry_lak_implicit(self.model.sim, split_simulation)
         run = ParallelSplitRun(self.model, splitter, split_simulation, mask, workspace)
         run.validate()
         if write:

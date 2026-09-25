@@ -14,6 +14,7 @@ import numpy as np
 from myflopy._defaults import DEFAULT_CRS
 from myflopy.modflow.mf6.grid.domain import idomain_from_flopy
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.modflow.mf6.lak_implicit import keep_implicit, warn_if_implicit_unsupported
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, _package_type_name
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.modflow.mf6.simulation.regions import RegionRegistry
@@ -737,6 +738,9 @@ class LoadedMf6Run(SimulationBase):
             lazy_io=True,
             verbosity_level=display_verbosity,
         )
+        # FloPy reads a LAK file's IMPLICIT without a word and drops it, so a rewrite
+        # (run_simulation below writes first) would lose it (ledger 326).
+        keep_implicit(sim)
         patch_simulation_plot(sim)
         _progress(display_verbosity, f"Locating GWF model '{self._model_name}'")
         gwf = sim.get_model(self._model_name)
@@ -887,5 +891,6 @@ class LoadedMf6Run(SimulationBase):
 
         self.load_all()
         self._sim.write_simulation()
+        warn_if_implicit_unsupported(self._sim)
         success, buff = self._sim.run_simulation(silent=False, report=True)
         return success, buff

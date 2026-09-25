@@ -38,6 +38,7 @@ from myflopy._logging import get_logger
 from myflopy.grid_identity import (
     CELLWISE_OPTIONS,
     DROPPED_CONTEXT_FIELDS,  # noqa: F401
+    GENERATED_SOLVER,
     GRID_PIN,  # noqa: F401
     GRID_PIN_OPTIONS,  # noqa: F401
     MOVE_RECIPE,  # noqa: F401
@@ -58,6 +59,8 @@ from myflopy.grid_identity import (
     disv_pin,  # noqa: F401
     dropped_context_fields,  # noqa: F401
     grid_pin,  # noqa: F401
+    implicit_lake_models,
+    implicit_solver_complaints,
     lak_build_warnings,
     move_report,
     moved_package_complaints,
@@ -3269,8 +3272,16 @@ def _layer_elevation_source(context: Any) -> tuple[Any, dict[str, Any]]:
       ``LayerBuildResult.attach_to_grid`` sets beside it (and the ``gdf_topbtm``
       setter clears, so another writer leaves no stale record).
 
-    Returns ``(table, {name: record})``; the table is exactly what
-    :func:`_layer_elevations` returns (its warnings included), the dict is a copy.
+    Parameters
+    ----------
+    context : ModelContext
+        The model's context (anything with ``surfaces`` and ``grid``).
+
+    Returns
+    -------
+    tuple of (pandas.DataFrame or None, dict of str to ExcavationRecord)
+        The table exactly as :func:`_layer_elevations` returns it (its warnings
+        included), and a copy of the records riding with it -- ``{}`` when none do.
     """
 
     table = _layer_elevations(context)
@@ -4311,6 +4322,41 @@ def _size_ats(simulation, records) -> None:
     _set_maxats(simulation, len(records))
 
 
+def _bicgstab_for_implicit_lakes(solvers, simulation) -> list:
+    """BICGSTAB for a solver ``mf.simulation`` generated, once its model shows an implicit lake.
+
+    ``mf.simulation`` picks BICGSTAB for a model whose lake is declared ``implicit=True``
+    inline, but it cannot see through an ``mf.ref`` -- the library is not reachable
+    there -- so a library lake got the SIMPLE solver, CG by default, and the build then
+    refused a solver the caller never declared (ledger 326; measured with
+    ``project.add_package('lak/pit', ...)`` + ``mf.ref('lak/pit')``). Here the models
+    are built and the refs resolved, so a solver carrying ``GENERATED_SOLVER`` that
+    names no ``linear_acceleration`` is given BICGSTAB when a model it solves holds a
+    lake writing ``IMPLICIT``. A solver the caller declared is left alone, so a CG one
+    is still refused by name.
+    """
+
+    implicit = set(implicit_lake_models(simulation))
+    if not implicit:
+        return list(solvers)
+    chosen = []
+    for package in solvers:
+        options = package.options or {}
+        solved = implicit & {str(name) for name in options.get("models") or ()}
+        if (
+            (package.metadata or {}).get(GENERATED_SOLVER)
+            and "linear_acceleration" not in options
+            and solved
+        ):
+            logger.info(
+                "solver %r: BICGSTAB, because model(s) %s hold an implicit lake (ledger 326)",
+                package.name, ", ".join(sorted(solved)),
+            )
+            package = replace(package, options={**options, "linear_acceleration": "BICGSTAB"})
+        chosen.append(package)
+    return chosen
+
+
 @dataclass(frozen=True, slots=True)
 class SimulationSpec:
     """One complete MF6 simulation: timing, solver(s), and the model(s).
@@ -4754,9 +4800,18 @@ class SimulationSpec:
             exchange.name: exchange.build(simulation, built_models)
             for exchange in self.exchanges
         }
+        solvers = _bicgstab_for_implicit_lakes(solvers, simulation)
         for package in solvers:
             if (built := package.build(simulation)) is not None:
                 simulation_packages[package.name] = built
+        # A lake solved IMPLICITLY makes the matrix asymmetric and MF6 stops on CG --
+        # refused here, where the solver is known, rather than by MF6 after the files
+        # are written (ledger 326).
+        if refused := implicit_solver_complaints(simulation):
+            raise ValueError(
+                f"Simulation {self.name!r} cannot solve its implicit lakes:\n"
+                + "\n".join(f"  - {complaint}" for complaint in refused)
+            )
         return BuiltSimulation(
             simulation=simulation,
             models=built_models,

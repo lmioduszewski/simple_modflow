@@ -188,6 +188,21 @@ pit lake in uniform flow carries 1.005 of the through-flow of the same pit as a
 K = 1e4 inclusion, against 0.39 for `"bathy"` on the un-excavated stack. Every other lake
 keeps its rule and, by default, is warned about (`unexcavated="warn"`/`"raise"`/
 `"ignore"`); `metadata["lake_rules"]` says which rule each lake got.
+
+**Solving the stage in the matrix: `mf.lak(implicit=True)`** (ledger 326). MF6's LAK
+`IMPLICIT` makes each lake stage one more unknown of the flow matrix, solved WITH the
+heads instead of by turns -- far fewer outer iterations for a strongly coupled lake, the
+same converged answer (a transient pit matched the default formulation's stages to
+1e-8 ft). It needs a BICGSTAB solution (a CG one is refused at build; the IMS
+`mf.simulation` makes picks BICGSTAB -- for a library lake reached through `mf.ref` too,
+once the build resolves it), every lake connected, and ideally NEWTON (warned).
+It exists in MF6's develop branch / 6.8 only and FloPy 3.10 cannot write it, so
+myflopy writes it into the LAK file itself (`lak_implicit.ModflowGwflakImplicit`); the
+executable is probed once at run time and one without the option is warned about. A
+run reopened with `Run.open` or `mf.load_mf6_run` keeps it, and so do
+`ParallelModelWorkflow.split_model` and a package artifact; a bare
+`flopy.mf6.MFSimulation.load` drops it silently. `model.config` shows it as the lake's
+`implicit` setting, so `diff().config` tells two runs apart by it.
 The `mf.lak` docstring (`help(mf.lak)`) spells out what each mode writes, and every
 parameter; a `LakeOutlet`'s `rate` is negative to remove water and positive to add
 it, and per-period values are zero-based (ledger 318 lists what `mf.lak` accepts

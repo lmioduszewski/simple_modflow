@@ -39,6 +39,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     read_footprints,
     refuse_footprint_misses,
 )
+from myflopy.modflow.mf6.lak_implicit import ModflowGwflakImplicit
 from myflopy.modflow.utils.datatypes.readers import _vector_layer_name
 from myflopy.specs import (
     ModelContext,
@@ -839,7 +840,7 @@ class LakeTableBuilder:
         return LakeTable(rows, filename=self.filename)
 
 
-def _build_lak_with_tables(model, *, _spec=None, lake_tables=(), **options):
+def _build_lak_with_tables(model, *, _spec=None, lake_tables=(), implicit=False, **options):
     """Build LAK and its child table packages, after checking the lake against the DISV.
 
     When the model already carries its DISV, the lake's connections are compared with
@@ -849,6 +850,12 @@ def _build_lak_with_tables(model, *, _spec=None, lake_tables=(), **options):
     ``MFDataException`` naming only the cellid. ``_spec`` -- the ``PackageSpec`` this
     builds, passed by ``PackageSpec.build`` -- is where the lake rules are read from.
     A DISV built AFTER the lake is covered by ``ModelSpec.build``'s own check.
+
+    ``implicit`` (``mf.lak(implicit=True)``, carried in the spec's options) builds a
+    :class:`~myflopy.modflow.mf6.lak_implicit.ModflowGwflakImplicit` instead of FloPy's
+    ``ModflowGwflak``: FloPy 3.10 has no keyword for MF6's LAK ``IMPLICIT``, so that
+    class's ``write`` inserts it into the file after FloPy writes it (ledger 326). The
+    flag is consumed here, so FloPy never sees it.
     """
 
     options = {
@@ -870,7 +877,8 @@ def _build_lak_with_tables(model, *, _spec=None, lake_tables=(), **options):
                 f"Lake package {name!r} does not fit the DISV it is being built with:\n  - "
                 + "\n  - ".join(complaints)
             )
-    package = flopy.mf6.ModflowGwflak(model, **options)
+    package_class = ModflowGwflakImplicit if implicit else flopy.mf6.ModflowGwflak
+    package = package_class(model, **options)
     for table in lake_tables:
         flopy.mf6.ModflowUtllaktab(
             model=model,
@@ -902,7 +910,7 @@ class LAKBuilder:
     ``mf.lak_connection`` reads, so every parameter below means what it means
     there, with the same entry (a test holds the two texts equal). The one
     difference is TIMING: construction checks only ``context``, ``nper``,
-    ``layer`` and ``unexcavated``, and that ``tables`` reads as a dict and
+    ``layer``, ``unexcavated`` and ``implicit``, and that ``tables`` reads as a dict and
     ``outlets`` as a tuple; every other
     refusal an entry names is raised when :meth:`build` -- or the property that
     first reads the value (:attr:`lake_table`, :attr:`lake_cells`,
@@ -1297,6 +1305,38 @@ class LAKBuilder:
     maximum_stage_change : float, default 1e-05
         MF6's ``MAXIMUM_STAGE_CHANGE``: the lake-stage closure tolerance
         (length).
+    implicit : bool or numpy.bool_, default False
+        Writes MF6's LAK ``IMPLICIT`` option: each lake's stage is solved as one more
+        unknown of the groundwater-flow matrix, WITH the heads, instead of by MF6's
+        default substitution iteration, which solves the stage and the heads by turns.
+        That can take many outer iterations, or fail to converge, when a lake and the
+        aquifer are strongly coupled -- a bed that leaks freely, an excavated pond
+        exchanging through its floor and walls: on a real one the default formulation
+        took 81% more outer iterations and 16 failed time steps, and ``IMPLICIT`` 11%
+        and none (the excavation design's runs). The converged answer is the same: a
+        transient pit filled at 2,000 ft3/d reached the default formulation's stages to
+        1e-8 ft (measured). MF6's requirements, each checked here: the solution's linear
+        acceleration must be BICGSTAB -- MF6 stops on CG, so an IMS resolving to CG
+        (``linear_acceleration="CG"``, or ``complexity="SIMPLE"`` or no complexity with
+        no ``linear_acceleration``) is refused when the simulation is built, and the IMS
+        ``mf.simulation`` makes for you picks BICGSTAB -- for a lake reached through
+        ``mf.ref`` too, once the build resolves it; every lake must have a connection
+        (``ValueError``); NEWTON is recommended for a lake that may become perched, and
+        the build warns without it. ``maximum_iterations`` and ``maximum_stage_change``
+        then do nothing (MF6 checks the stage in IMS), and the package-convergence file
+        is not asked for, since MF6 writes none. **Availability:** MF6's develop branch
+        (commit ``e2dfc84c``) and the 6.8 line, in no release before; the executable is
+        probed once when the run executes, and one without the option is WARNED about,
+        naming it and its version -- the run goes ahead, and MF6 stops with its own
+        message. FloPy 3.10 has no keyword for it, so myflopy writes it into the LAK
+        file after FloPy does (``ModflowGwflakImplicit``). It survives a run loaded by
+        ``Run.open`` or ``mf.load_mf6_run`` and written again,
+        ``ParallelModelWorkflow.split_model`` and a package artifact; a bare
+        ``flopy.mf6.MFSimulation.load`` drops it silently, and ``model.config`` shows it
+        as the lake's ``implicit`` setting. ``True`` rides in the spec's options (it is
+        saved and moves the digest); ``False`` writes and stores nothing. A
+        ``numpy.bool_`` is accepted and stored as ``True``/``False``; anything else
+        raises ``TypeError``.
     options : dict of str to Any, default {}
         ``mf.lak``'s ``**options`` collected into one mapping: any other
         ``flopy.mf6.ModflowGwflak`` keyword, e.g. ``surfdep``,
@@ -1326,8 +1366,9 @@ class LAKBuilder:
     AttributeError
         ``context=None``.
     TypeError
-        At construction, a ``layer`` that is not a ``str`` (an integer reads as a
-        model layer; that is ``only_layer``), a ``tables`` that ``dict()`` or an
+        At construction, an ``implicit`` that is not a bool, a ``layer`` that is
+        not a ``str`` (an integer reads as a model layer; that is
+        ``only_layer``), a ``tables`` that ``dict()`` or an
         ``outlets`` that ``tuple()`` cannot read (``None`` included). At :meth:`build`, an
         ``options`` name ``ModflowGwflak`` does not accept, or one the builder
         sets itself.
@@ -1381,6 +1422,7 @@ class LAKBuilder:
     time_conversion: float | None = None      # None -> derive from context.time_units
     maximum_iterations: int = 100
     maximum_stage_change: float = 1.0e-5
+    implicit: bool = False
     options: Mapping[str, Any] = field(default_factory=dict)
     _lakes: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False, compare=False)
     _connections: tuple[tuple[str, LakeConnection], ...] | None = field(
@@ -1429,6 +1471,11 @@ class LAKBuilder:
                 f"unexcavated must be one of {', '.join(repr(w) for w in _UNEXCAVATED_WORDS)}, "
                 f"not {self.unexcavated!r}."
             )
+        # `np.bool_` is what a numpy predicate returns and is NOT a `bool`; stored as
+        # one so the spec's options serialize and digest as a plain `True` (ledger 265).
+        if not isinstance(self.implicit, (bool, np.bool_)):
+            raise TypeError(f"implicit must be True or False, not {self.implicit!r}.")
+        object.__setattr__(self, "implicit", bool(self.implicit))
         if self.layer is not None:
             object.__setattr__(
                 self, "layer", _vector_layer_name(self.layer, of="lakes", model_layer="only_layer=")
@@ -2825,6 +2872,18 @@ class LAKBuilder:
                 raise ValueError(f"starting_stage is outside the lake table range for lake '{lake_id}'.")
         self.connectiondata
         self.prepared_tables
+        if self.implicit:
+            connected = {lake_id for lake_id, _connection in self.connections}
+            bare = [lake_id for lake_id in self.lake_ids if lake_id not in connected]
+            if bare:
+                raise ValueError(
+                    f"implicit=True, and lake {bare[0]!r} has no connection"
+                    + (f" (nor do {', '.join(repr(i) for i in bare[1:])})" if bare[1:] else "")
+                    + ": MF6's IMPLICIT formulation solves each stage through its lakebed "
+                    "seepage and stops on a lake with none ('lake N has no connections; the "
+                    "IMPLICIT option requires each lake to have at least one GWF "
+                    "connection', measured). Give it a connection, or leave implicit off."
+                )
         self._apply_unexcavated_guard()
 
     def build(self) -> PackageSpec:
@@ -2897,10 +2956,17 @@ class LAKBuilder:
             maximum_stage_change=self.maximum_stage_change,
             **dict(self.options),
         )
+        options = {**base.options, "lake_tables": tuple(child_tables)}
+        if self.implicit:
+            # Only when True: `False` adds no key, so no existing digest moves. MF6 writes
+            # no package-convergence CSV under IMPLICIT (it warns instead), so the record
+            # for it is not asked for (ledger 326).
+            options["implicit"] = True
+            options.pop("package_convergence_filerecord", None)
         return replace(
             base,
             builder=_build_lak_with_tables,
-            options={**base.options, "lake_tables": tuple(child_tables)},
+            options=options,
             metadata={
                 **base.metadata,
                 # LAK is invisible to the range check: `_cellids_in` deliberately
