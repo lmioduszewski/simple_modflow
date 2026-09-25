@@ -506,3 +506,259 @@ def test_asking_for_a_spec_is_not_an_incomplete_recipe():
 
     with pytest.raises(TypeError, match=r"no longer supplies 'layer_stack'"):
         PackageSpec("x", asks, inputs={})
+
+
+# --- the package owns its stack (ledger 270, amended 2026-09-25) ------------ #
+#
+# A lazy `mf.disv(stack)` held the CALLER'S `LayerStack` whenever nothing in it named a
+# file -- an all-inline stack -- so a later `stack.add(...)` (or the planned
+# `stack.excavate(...)`) rewrote a package already declared, a library copy of it, and
+# the digest `packages.digests()` had cached. A stack naming a file was rebuilt while
+# being hash-stamped and did not follow; the two kinds of stack behaved differently.
+
+
+def _dem(tmp_path):
+    rasterio = pytest.importorskip("rasterio")
+    from rasterio.transform import from_origin
+
+    path = tmp_path / "ground.tif"
+    with rasterio.open(
+        path, "w", driver="GTiff", height=12, width=12, count=1, dtype="float32",
+        crs="EPSG:2927", transform=from_origin(0, 600, 50, 50),
+    ) as handle:
+        handle.write(np.full((12, 12), 100.0, dtype="float32"), 1)
+    return path
+
+
+def _held(spec):
+    return spec.inputs["layer_stack"]
+
+
+def test_a_lazy_disv_does_not_follow_an_edit_to_an_inline_stack():
+    from myflopy.specs import package_digest
+
+    stack = _stack()
+    spec = mf.disv(stack)
+    before = package_digest(spec)
+
+    stack.add("base", thickness=5.0)
+    stack.replace("upper", thickness=1.0)
+
+    assert _held(spec) is not stack
+    assert [layer.name for layer in _held(spec)._layers] == ["upper", "lower"]
+    assert _held(spec)._layers[0].surface == _stack()._layers[0].surface
+    assert package_digest(spec) == before
+
+
+def test_the_copy_is_rebuilt_from_the_payload_and_shares_no_record():
+    """Rebuilt the way a reload rebuilds it, so it shares no mutable part with the caller.
+
+    `_Layer` is a mutable dataclass. A structural copy (`for_grid`) would hold the same
+    records -- isolated from every public edit, which replaces a record rather than
+    changing one, but not from a write to one -- and it would drop anything a later
+    field adds unless `for_grid` is taught it too, where `to_dict`/`from_dict` must be
+    taught it anyway to be saved.
+    """
+
+    stack = _stack()
+
+    held = _held(mf.disv(stack))
+
+    assert not any(mine is theirs for mine, theirs in zip(held._layers, stack._layers, strict=True))
+    assert held.to_dict() == stack.to_dict()
+
+
+def test_a_lazy_disv_does_not_follow_an_edit_to_a_stack_naming_a_file(tmp_path):
+    """The kind that was already copied, because stamping its hash rebuilt it."""
+
+    stack = _stack(mf.Surface.raster(_dem(tmp_path)))
+    spec = mf.disv(stack)
+
+    stack.add("base", thickness=5.0)
+
+    assert _held(spec) is not stack
+    assert _held(spec)._top.source_shas, "the stamped branch is what this case is for"
+    assert [layer.name for layer in _held(spec)._layers] == ["upper", "lower"]
+
+
+def test_a_stack_holding_per_cell_arrays_is_copied_too():
+    """It cannot be written down, so it is copied structurally rather than rebuilt.
+
+    `for_grid(None)`: a new stack and a new record list, sharing the records -- which
+    every public edit replaces rather than changes, so none of them reaches the copy.
+    """
+
+    stack = mf.LayerStack(top=mf.Surface.from_array(np.full(28, 100.0)))
+    stack.add("upper", thickness=20.0)
+    with pytest.raises(ValueError, match="per-cell arrays"):
+        stack.to_dict()
+
+    spec = mf.disv(stack)
+    stack.add("lower", thickness=30.0)
+
+    assert _held(spec) is not stack
+    assert [layer.name for layer in _held(spec)._layers] == ["upper"]
+
+
+def _as_it_was(stack, name="disv"):
+    """The spec the old code built: the caller's own object in `inputs`."""
+
+    from myflopy.package_api import _DISV_BUILD_DEFAULTS, _build_lazy_disv
+    from myflopy.specs import PackageSpec
+
+    return PackageSpec(name, _build_lazy_disv, {}, requires=(), inputs={
+        "layer_stack": stack, "build_kwargs": dict(_DISV_BUILD_DEFAULTS), "disv_name": name,
+    })
+
+
+@pytest.mark.parametrize("make", [
+    lambda: _stack(),
+    lambda: mf.LayerStack(top=mf.Surface.flat(100.0) - 2.5).add("a", bottom=60.0),
+    lambda: mf.LayerStack(top=mf.Surface.flat(100.0), length_units="meters")
+    .add("sand", thickness=30.0, split=(0.3, 0.7), names=("sand_upper", "sand_lower"))
+    .add("clay", thickness=10.0, pinch="inactive", min_thickness=2.0)
+    .add("till", thickness=6.0, split=3),
+    lambda: mf.LayerStack(top=mf.Surface.flat(100.0)).add(
+        "fill", bottom=mf.Surface.where(box(0, 0, 250, 600), 100.0, 95.0), pinch="passthrough"
+    ),
+], ids=["two_units", "algebra", "split_pinch_units", "where_zone"])
+def test_holding_a_copy_moves_no_digest(make):
+    """The copy is rebuilt from the stack's own payload, so it digests as the original.
+
+    Measured over the whole suite too: 124 declarations where the old code held the
+    caller's object (121 stacks, 3 offsets), every copy canonically equal.
+    """
+
+    from myflopy.specs import package_digest
+
+    stack = make()
+
+    assert package_digest(mf.disv(stack)) == package_digest(_as_it_was(stack))
+
+
+def test_a_library_package_does_not_follow_the_callers_stack(tmp_path):
+    """`packages.digests()` caches; the cached value stayed while a fresh one moved."""
+
+    from myflopy.specs import package_digest
+
+    stack = _stack()
+    project = Project(tmp_path / "p", name="p")
+    project.add_package("disv/base", mf.disv(stack))
+    cached = dict(project.packages.digests())
+
+    stack.add("base", thickness=5.0)
+
+    assert package_digest(project.packages["disv/base"]) == cached["disv/base"]
+    assert dict(project.packages.digests()) == cached
+    assert [layer.name for layer in _held(project.packages["disv/base"])._layers] == [
+        "upper", "lower",
+    ]
+
+
+def test_a_payload_its_own_class_refuses_is_raised_not_swallowed():
+    """It used to return the caller's object, unstamped and uncopied, in silence."""
+
+    from myflopy.specs import stamp_source_hashes
+
+    class _Refuses:
+        _SPEC_TOKEN = "$refuses"
+
+        def to_dict(self):
+            return {"path": "nowhere.tif"}
+
+        @classmethod
+        def from_dict(cls, data):
+            raise ValueError("cannot rebuild")
+
+    with pytest.raises(ValueError, match="cannot rebuild"):
+        stamp_source_hashes(_Refuses())
+
+
+# --- ...and so does the EAGER form, and every payload funnel ------------------ #
+#
+# Review of the change above. `mf.disv(result)` (and `result.to_disv()`) held the
+# RESULT'S OWN arrays -- `np.asarray` does not copy -- so an in-place edit of the result
+# after the declaration (the shape an excavation of a built result takes) reached the
+# declared package and moved its digest. And `_walk_surfaces` rebuilt a token object
+# from its payload without taking off the `{"$tuple": ...}` tag the payload carries,
+# which `_spec_value` does: `Spread(("a", "b"))` came back with a DICT for a field.
+
+
+def test_an_eager_disv_does_not_follow_an_in_place_edit_of_its_result(triangulated_grid):
+    from myflopy.specs import package_digest
+
+    result = _stack().build(triangulated_grid, attach=False)
+    spec = mf.disv(result)
+    before = package_digest(spec)
+
+    for key in ("top", "botm", "idomain"):
+        assert not np.shares_memory(np.asarray(spec.options[key]), getattr(result, key)), key
+    result.idomain[0, :5] = 0
+    result.botm[1, :5] -= 3.0
+    result.top[:5] += 1.0
+
+    assert int(np.asarray(spec.options["idomain"])[0, :5].min()) == 1
+    assert package_digest(spec) == before
+
+
+def test_a_result_on_a_grid_of_another_size_is_refused_at_the_call(
+    triangulated_grid, triangulated_grid_finer
+):
+    """It wrote the new `ncpl` over the old `top`; FloPy refused it only at build."""
+
+    assert triangulated_grid.ncpl != triangulated_grid_finer.ncpl
+    result = _stack().build(triangulated_grid, attach=False)
+
+    with pytest.raises(ValueError, match=rf"{triangulated_grid.ncpl} cells per layer"):
+        mf.disv(result, grid=triangulated_grid_finer)
+    with pytest.raises(ValueError, match=rf"the grid given has {triangulated_grid_finer.ncpl}"):
+        result.to_disv(triangulated_grid_finer)
+
+
+def test_a_stamped_spread_keeps_its_tuple_and_equals_the_original():
+    from myflopy.specs import package_digest, stamp_source_hashes
+
+    spread = mf.Spread(("c0", "c1"))
+    assert spread.to_dict()["field"] == {"$tuple": ["c0", "c1"]}, (
+        "the payload carrying the tag is what makes this case worth testing"
+    )
+
+    held = stamp_source_hashes(spread)
+    held_in_inputs = stamp_source_hashes({"conductance": spread})["conductance"]
+
+    for copy in (held, held_in_inputs):
+        assert type(copy.field) is tuple and copy.field == ("c0", "c1")
+        assert copy == spread
+    lazy = mf.PackageSpec("x", lambda target, **_: target, inputs={"conductance": spread})
+    assert package_digest(lazy) == package_digest(
+        mf.PackageSpec("x", lambda target, **_: target, inputs={"conductance": held})
+    )
+
+
+def test_a_repointed_payload_is_untagged_before_it_is_rebuilt():
+    """The third payload-to-object funnel, pinned on a token class of its own.
+
+    No shipped class writes a path AND a tagged tuple into one payload today, so this
+    is the rule rather than a live case: a class that does must not get the tag back.
+    """
+
+    from myflopy.specs import repoint_source_paths
+
+    received = []
+
+    class _Carrier:
+        _SPEC_TOKEN = "$carrier"
+
+        def to_dict(self):
+            return {"path": "gis/a.tif", "pair": {"$tuple": [1, 2]}}
+
+        @classmethod
+        def from_dict(cls, data):
+            received.append(data)
+            return cls()
+
+    moved = repoint_source_paths(_Carrier(), lambda path, *, role, notes: "inputs/a.tif")
+
+    assert isinstance(moved, _Carrier)
+    assert received == [{"path": "inputs/a.tif", "pair": (1, 2)}]
+    assert type(received[0]["pair"]) is tuple

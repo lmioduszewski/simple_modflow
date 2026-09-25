@@ -781,18 +781,70 @@ def repoint_source_paths(
     model carrying both dies on the raster before the boundary condition is reached,
     so bundling only the recipe ships an archive whose headline is false.
 
-    ``transform(path, *, role, notes)`` returns the value to store, or ``None`` to
-    leave the path alone. ``role`` is ``"source"``, ``"surface"`` or
-    ``"write_target"``; see :data:`SURFACE_WRITE_KEYS` for why the last is apart.
+    Parameters
+    ----------
+    value : DataSourceSpec, Surface, LayerStack, Spread, CellSurfaceOffset, dict, list, tuple, or any other object
+        What to walk. A :class:`~myflopy.sources.DataSourceSpec` has its ``path``
+        transformed. A token-bearing object (one with a ``_SPEC_TOKEN``) is written
+        down with its own ``to_dict()``, every ``path``/``contours``/
+        ``region_raster``/``region_vector``/``zone`` string and every ``out`` string
+        in that payload is transformed, and the object is rebuilt from the result
+        with its class's ``from_dict`` -- the ``{"$tuple": [...]}`` tag
+        ``_json_value`` leaves in a payload taken off first, as a reload does. A
+        ``dict``, ``list`` or ``tuple`` is walked and rebuilt as the same type.
+        Anything else is returned as it is.
+    transform : callable
+        ``transform(path, *, role, notes)`` returns the path to store (a ``str`` or
+        ``Path``), or ``None`` to leave the path alone. ``path`` is the source's own
+        ``Path`` for a ``DataSourceSpec`` and a ``PurePath`` inside a token payload.
+        ``role`` is ``"source"`` (a ``DataSourceSpec``), ``"surface"`` (a file a
+        surface READS) or ``"write_target"`` (``Surface.out``, the GRASS cache it
+        WRITES); see :data:`SURFACE_WRITE_KEYS` for why the last is apart. ``notes``
+        is the list below, for the transform to append its own.
+    honor_external : bool, default False
+        ``True`` leaves a ``DataSourceSpec`` flagged ``external`` untouched -- that
+        flag means "never anchor me to the project root", which is exactly the
+        anchor's job and exactly what bundling makes false, so the two callers pass
+        opposite values (the anchor ``True``, the bundler ``False``). A source the
+        bundler does move has the flag CLEARED, since a copy inside the project is
+        no longer external. It does not reach a token payload, which has no such
+        flag.
+    notes : list of (str, str), optional
+        Appended to IN PLACE with ``(type name, message)`` for each token-bearing
+        object left unchanged because it could not be written down or rebuilt. A
+        ``Surface`` holding per-cell arrays cannot be serialized at all (ledger 193),
+        so a stack containing one is returned UNCHANGED with a note rather than
+        raised over: such a model is skipped by the save anyway, and a bundler that
+        raised would cost the caller every other simulation in the project. Omitted,
+        a private list is used and the notes are discarded.
 
-    ``honor_external=True`` leaves a source flagged ``external`` untouched -- that flag
-    means "never anchor me to the project root", which is exactly the anchor's job and
-    exactly what bundling makes false, so the two callers pass opposite values.
+    Returns
+    -------
+    object
+        ``value`` with the paths transformed. Nothing is changed in place: a moved
+        source or rebuilt token object is a NEW object, and when ``transform``
+        changed nothing the SAME object comes back (for a ``DataSourceSpec`` and a
+        token-bearing object; a container is always rebuilt).
 
-    A ``Surface`` holding per-cell arrays cannot be serialized at all (ledger 193), so
-    a stack containing one is returned UNCHANGED with a note rather than raised over:
-    such a model is skipped by the save anyway, and a bundler that raised would cost
-    the caller every other simulation in the project.
+    Raises
+    ------
+    Exception
+        Whatever ``transform`` raises, unchanged. A ``from_dict`` refusing the
+        repointed payload does NOT raise: it becomes a note and ``value`` comes back
+        unmoved.
+
+    Examples
+    --------
+    >>> import myflopy as mf
+    >>> from myflopy.specs import repoint_source_paths
+    >>> stack = mf.LayerStack(top=mf.Surface.raster("gis/ground.tif")).add(
+    ...     "sand", thickness=10.0)
+    >>> moved = repoint_source_paths(
+    ...     stack, lambda path, *, role, notes: "inputs/" + path.name)
+    >>> moved._top.path.as_posix(), stack._top.path.as_posix()
+    ('inputs/ground.tif', 'gis/ground.tif')
+    >>> repoint_source_paths(stack, lambda path, *, role, notes: None) is stack
+    True
     """
 
     notes = [] if notes is None else notes
@@ -816,7 +868,9 @@ def repoint_source_paths(
         if repointed == payload:
             return value
         try:
-            rebuilt = type(value).from_dict(repointed)
+            # Untagged for the reason `_walk_surfaces` gives: this is another funnel from
+            # a payload back to an object, and the tag is `_json_value`'s, not the class's.
+            rebuilt = type(value).from_dict(_untag_tuples(repointed))
         except (ValueError, TypeError, KeyError) as error:
             notes.append((type(value).__name__, f"could not be rebuilt: {error}"))
             return value
@@ -865,18 +919,61 @@ def source_paths(value: Any) -> list[str]:
 
 
 def stamp_source_hashes(value: Any) -> Any:
-    """Return ``value`` with each readable file path it names carrying a content hash.
+    """Return a COPY of ``value`` in which each readable file it names carries a content hash.
 
     Called where a surface becomes part of a LAZY package -- ``mf.disv`` on a gridless
-    stack, a lazy areal ``mf.evt``. That placement is the whole point: it mirrors
+    stack, a lazy array-form ``mf.evt``. That placement is the whole point: it mirrors
     ``_lazy_bc_spec``, which hashes its GeoPackage at declaration, while leaving a bare
     ``Surface.raster(path)`` doing no I/O at all. Hashing in ``Surface`` itself would
     put a full read of a multi-hundred-megabyte DEM behind the cheapest call in the
     layer API, for a fingerprint most surfaces never need.
 
-    A path that cannot be read is left unhashed and keeps digesting by path -- the same
-    fallback :meth:`~myflopy.sources.BoundarySource.digest_payload` makes, for the same
-    reason: two unreadable sources must not digest alike.
+    Parameters
+    ----------
+    value : Surface, LayerStack, Spread, CellSurfaceOffset, dict, list, tuple, or any other object
+        What to stamp. A token-bearing object (one with a ``_SPEC_TOKEN``: the four
+        types named) is rebuilt from its own ``to_dict()`` payload with a
+        ``source_shas`` entry added to every surface that names a readable file, and
+        that path RESOLVED to an absolute one (the build anchors a relative path to
+        the project root, the declaration read it against the working directory --
+        ledger 293). A ``dict``, ``list`` or ``tuple`` is walked and rebuilt as the
+        same type. Anything else is returned as it is.
+
+    Returns
+    -------
+    object
+        A token-bearing object comes back as a NEW object whether or not anything was
+        stamped, so the lazy package holding it owns it: a later edit to the caller's
+        ``LayerStack`` cannot reach an already-declared ``mf.disv`` (ledger 270,
+        amended 2026-09-25). With nothing stamped the copy EQUALS the original and
+        digests as it does -- a tuple inside the payload (``mf.Spread(("c0", "c1"))``,
+        a stack's ``split=(0.3, 0.7)``) comes back a tuple, not the ``{"$tuple": ...}``
+        tag the payload carries. Two exceptions come back
+        as the SAME object: one whose ``to_dict`` refuses (a surface holding per-cell
+        arrays, ``Surface.from_array``/``from_points``), which has no payload to
+        rebuild from, and anything that is not token-bearing. A path that cannot be read
+        is left unhashed and keeps digesting by path -- the same fallback
+        :meth:`~myflopy.sources.BoundarySource.digest_payload` makes, for the same
+        reason: two unreadable sources must not digest alike.
+
+    Raises
+    ------
+    ValueError, TypeError or KeyError
+        From the object's own ``from_dict``, if it refuses the payload its ``to_dict``
+        wrote -- a round-trip defect in that class, which used to be swallowed into an
+        uncopied, unstamped return.
+
+    Examples
+    --------
+    >>> import myflopy as mf
+    >>> from myflopy.specs import stamp_source_hashes
+    >>> stack = mf.LayerStack(top=mf.Surface.flat(100.0)).add("sand", thickness=10.0)
+    >>> held = stamp_source_hashes(stack)
+    >>> held is stack, held.to_dict() == stack.to_dict()
+    (False, True)
+    >>> _ = stack.add("clay", thickness=5.0)         # the caller edits its stack...
+    >>> [layer.name for layer in held._layers]        # ...and the copy is untouched
+    ['sand']
     """
 
     return _walk_surfaces(value)
@@ -918,15 +1015,32 @@ def _walk_surfaces(value: Any) -> Any:
     if getattr(type(value), "_SPEC_TOKEN", None) is not None:
         try:
             payload = value.to_dict()
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as error:
+            # A surface holding per-cell arrays (`Surface.from_array`/`from_points`)
+            # refuses `to_dict`, so there is no payload to hash or to rebuild from. It
+            # is handed back as it is; a caller that must own a copy makes one itself,
+            # as `mf.disv` does.
+            logger.debug(
+                "%s cannot be written down (%s), so its file paths are not hashed and "
+                "it is returned uncopied",
+                type(value).__name__,
+                error,
+            )
             return value
-        stamped = _stamp_payload(payload)
-        if stamped == payload:
-            return value
-        try:
-            rebuilt = type(value).from_dict(stamped)
-        except (ValueError, TypeError, KeyError):
-            return value
+        # ALWAYS rebuilt, stamped or not: the lazy package receiving the result has to
+        # own it. This returned the CALLER'S object whenever nothing was stamped -- an
+        # all-inline stack -- so a later `stack.add(...)` reached an already-declared
+        # `mf.disv`, a library copy of it and its cached digest, while a stack naming a
+        # file was rebuilt and did not (ledger 270, amended). A `from_dict` refusing the
+        # payload its own `to_dict` wrote is a defect in that class, so it now RAISES
+        # instead of silently handing back the caller's unstamped object.
+        #
+        # `_untag_tuples` first, as `_spec_value` does: a payload can carry the
+        # `{"$tuple": [...]}` tag (`Spread.to_dict` runs `_json_value` on itself), and
+        # without it this second payload-to-object funnel handed back
+        # `Spread(field={'$tuple': ['a', 'b']})` -- unequal to the original while
+        # digesting identically.
+        rebuilt = type(value).from_dict(_untag_tuples(_stamp_payload(payload)))
         return _carry_grid(value, rebuilt)
     if isinstance(value, dict):
         return {key: _walk_surfaces(item) for key, item in value.items()}

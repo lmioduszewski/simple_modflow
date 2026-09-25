@@ -2096,38 +2096,153 @@ def disv(
         layers = stack.build(vor, attach=True)
         mf.disv(layers)                      # the mesh comes with it
 
-    The result carries the grid it was built on, so nothing else is needed --
-    ``grid=`` is only for a stack declared without one. ``result.to_disv()``
-    still works and is the same call; this is the spelling that matches the rest
-    of the package-first API.
+    Three forms, told apart by ``layers``:
 
-    DISV defines the model geometry from a vertex/cell2d mesh plus per-layer ``top``
-    and ``botm`` (and optional ``idomain``). With a myflopy grid you rarely type the
-    mesh by hand -- pull it from the grid and the layer arrays from a ``LayerStack``::
-
-        gp = vor.get_disv_gridprops()        # ncpl, vertices, cell2d
-        layers = stack.build()               # top, botm, idomain, nlay
-        mf.disv(nlay=layers.nlay, ncpl=gp["ncpl"], nvert=len(gp["vertices"]),
-                vertices=gp["vertices"], cell2d=gp["cell2d"],
-                top=layers.top, botm=layers.botm, idomain=layers.idomain)
+    - **A built ``LayerBuildResult``** -- EAGER, and exactly ``result.to_disv()``:
+      the arrays you inspected with ``qc()`` are the arrays written.
+    - **A ``LayerStack``** -- EAGER when it is bound to a grid (``LayerStack(vor,
+      ...)``, ``stack.for_grid(vor)``) or ``grid=`` is given, resolved here with
+      the build keywords below. LAZY when neither is: the spec holds the stack and
+      resolves it at BUILD against whatever grid the model supplies, so one
+      declaration builds on any mesh and a layered model can be saved (ledger 270).
+    - **``None``** -- hand-written: ``nlay`` through ``botm`` (and optionally
+      ``idomain``), typically from ``vor.get_disv_gridprops()``.
 
     Parameters
     ----------
-    nlay, ncpl, nvert
-        Number of layers, cells-per-layer, and vertices.
-    vertices, cell2d
-        FloPy vertex and cell2d definition lists (``vor.get_disv_gridprops()``).
-    top, botm, idomain
-        Model-top (ncpl,), layer bottoms (nlay, ncpl), and active-domain array
-        (idomain 0 = inactive / pinched out).
+    layers : LayerStack or LayerBuildResult, optional
+        The layering to discretize; see the three forms above. Anything else with no
+        ``to_disv`` raises ``AttributeError``. A LAZY spec holds its OWN copy of the
+        stack, rebuilt from the stack's payload the way a reload rebuilds it (ledger
+        270, amended 2026-09-25): a later ``stack.add(...)``/``replace(...)`` does
+        not reach a package already declared, a library copy of it, or its digest --
+        declare it again to take an edit. The copy digests as the original. A stack
+        holding per-cell arrays (``Surface.from_array``) cannot be written down, so it
+        is copied with ``for_grid(None)`` instead. An EAGER spec from a
+        ``LayerBuildResult`` holds COPIES of its ``top``/``botm``/``idomain``, so an
+        in-place edit of the result after the call (``result.idomain[0, :5] = 0``)
+        does not reach it either -- it did, measured, because ``np.asarray`` shares
+        memory.
+    grid : VoronoiGridPlus, optional
+        The mesh to discretize a gridless stack or result on, which makes the form
+        EAGER. Wins over the grid the stack or result carries. A STACK resolves on it
+        whatever its size; a RESULT's arrays are already per-cell, so a grid with a
+        different cell count RAISES ``ValueError`` -- it used to write the new
+        ``ncpl`` (92) over a 28-cell ``top``, which FloPy refused only at build.
+        Ignored by the hand-written form.
+    nlay : int, optional
+        Hand-written form: number of layers.
+    ncpl : int, optional
+        Hand-written form: number of cells per layer.
+    nvert : int, optional
+        Hand-written form: number of vertices.
+    vertices : list of [int, float, float] or ndarray, optional
+        Hand-written form: FloPy's vertex list ``[[iv, x, y], ...]``, zero-based,
+        coordinates in model length units.
+    cell2d : list of [int, float, float, int, int, ...], optional
+        Hand-written form: FloPy's cell list ``[[icell2d, xc, yc, ncvert, iv1, ...],
+        ...]`` -- ``vor.get_disv_gridprops()["cell2d"]``.
+    top : float or array_like of shape (ncpl,), optional
+        Hand-written form: model-top elevation, length units.
+    botm : array_like of shape (nlay, ncpl), optional
+        Hand-written form: layer bottom elevations, length units, top layer first.
+    idomain : array_like of int, shape (nlay, ncpl), optional
+        Hand-written form: ``1`` active, ``0`` inactive, ``-1`` vertical
+        pass-through. Omitted, nothing is written and MF6 treats every cell as
+        active. The layered forms derive it from the pinch policy instead.
     name : str, default "disv"
-        Package name.
+        The SPEC's name -- the key ``with_packages(slot=)``, ``without_packages`` and
+        a run's frozen snapshot use. It does not reach FloPy: the built package is
+        always named ``disv`` and written to ``<model>.disv`` (measured with
+        ``name="dis2"``).
+    attach : bool, default True
+        Layer-stack forms: publish the sampled elevations onto the grid's
+        ``gdf_topbtm`` (measured: set with ``True``, left unset with ``False``), which
+        ``mf.sfr`` reach tops, ``mf.lak`` lake-cell layering and the layer-elevation
+        hover rows read. Note ``LayerStack.build`` defaults it to ``False``. On the
+        LAZY form ``attach=False`` is not safe yet: the model's context is still
+        handed whatever table the grid already held -- measured, a top of 500.0
+        against the DISV's 100.0 -- which the excavation work's lifecycle commit
+        is due to fix (found 2026-09-25, not changed).
+    default_min_thickness : float, default 1.0
+        Layer-stack forms: minimum thickness, length units, for units that declare
+        none with ``.add(..., min_thickness=)``.
+    default_pinch : {"floor", "inactive", "passthrough"}, default "floor"
+        Layer-stack forms: thin-layer policy for units that declare none --
+        ``"floor"`` holds the cell open at its minimum thickness, ``"inactive"``
+        writes idomain 0, ``"passthrough"`` idomain -1 (flow passes vertically and
+        the cell can carry no boundary).
+    reconcile : {"bottom", "top", True, False, None}, default "bottom"
+        Layer-stack forms: what to do where two surfaces cross or come closer than
+        ``trigger_sep`` -- ``"bottom"``/``True`` push the lower one down (the model
+        top stays where you put it), ``"top"`` raises the upper one (and can move the
+        model top), ``False``/``None`` leave them crossed. Full text on
+        :meth:`LayerStack.build`.
+    min_sep : float, default 0.1
+        Layer-stack forms: the separation, length units, reconcile leaves between a
+        PINCHING unit's surfaces; a ``"floor"`` unit uses its own minimum thickness.
+    trigger_sep : float, optional
+        Layer-stack forms: the separation below which reconcile acts at all, length
+        units. Omitted, ``1.0 / <largest split>``.
+    method : {"area", "centroid"}, default "area"
+        Layer-stack forms: how a raster is sampled onto a cell -- area-weighted, or
+        the value at its centroid.
+    refresh : bool, default False
+        Layer-stack forms: rebuild a stale contour surface's GRASS cache before
+        sampling; left ``False``, a stale cache is reused with a warning.
     **options
-        Extra ``flopy.mf6.ModflowGwfdisv`` options (e.g. ``xorigin``/``angrot``).
+        Any other ``ModflowGwfdisv`` keyword (``length_units``, ``xorigin``,
+        ``yorigin``, ``angrot``, ...), applied on every form; one it does not have
+        raises here, at the call, lazy form included.
 
     Returns
     -------
     PackageSpec
+        EAGER: ``options`` hold the mesh and the ``top``/``botm``/``idomain``
+        arrays, ``inputs`` is empty. LAZY: ``inputs`` holds ``layer_stack`` (the
+        package's own copy), ``build_kwargs`` and ``disv_name``, and the arrays
+        exist only once a model builds it.
+
+    Raises
+    ------
+    TypeError
+        ``layers`` together with any of ``nlay``/``ncpl``/``nvert``/``vertices``/
+        ``cell2d``/``top``/``botm`` (two meshes); the hand-written form missing any
+        of those seven; a non-default build keyword on a ``LayerBuildResult``; an
+        ``**options`` keyword ``ModflowGwfdisv`` does not accept.
+    AttributeError
+        ``layers`` that is neither a stack nor a result (it has no ``to_disv``).
+    ValueError
+        A ``LayerBuildResult`` with a ``grid=`` whose cell count differs from its
+        own. At BUILD, for the lazy form: a model whose
+        context carries no grid, or a declared ``domain`` that disagrees with the one
+        the stack resolves.
+
+    Notes
+    -----
+    The eight build keywords ``attach`` through ``refresh`` change the arrays a stack
+    resolves to -- a stack does not determine its own arrays. On a
+    ``LayerBuildResult`` they cannot act, so a non-default one RAISES; the
+    hand-written form does NOT look at them (found 2026-09-25, not changed: a
+    ``reconcile=False`` there is accepted and does nothing).
+
+    Examples
+    --------
+    >>> import myflopy as mf
+    >>> stack = mf.LayerStack(top=mf.Surface.flat(100.0)).add("sand", thickness=20.0)
+    >>> spec = mf.disv(stack)                 # gridless -> LAZY
+    >>> sorted(spec.inputs)
+    ['build_kwargs', 'disv_name', 'layer_stack']
+    >>> _ = stack.add("clay", thickness=30.0)  # the declared package keeps its copy
+    >>> [layer.name for layer in spec.inputs["layer_stack"]._layers]
+    ['sand']
+    >>> one_cell = mf.disv(nlay=1, ncpl=1, nvert=4,
+    ...                    vertices=[[0, 0.0, 0.0], [1, 0.0, 10.0],
+    ...                              [2, 10.0, 10.0], [3, 10.0, 0.0]],
+    ...                    cell2d=[[0, 5.0, 5.0, 4, 0, 1, 2, 3]],
+    ...                    top=10.0, botm=[0.0])
+    >>> one_cell.options["ncpl"]
+    1
     """
 
     if layers is not None:
@@ -2182,13 +2297,22 @@ def disv(
             # no new `recipe` field is needed (ledger 270). `package_digest` did NOT
             # handle it: a two-layer stack digested one way live and another after a
             # reload, so every such package read as EDITED forever. Fixed in 273.
+            #
+            # The package holds its OWN copy of the stack (ledger 270, amended): it
+            # held the caller's object whenever nothing was stamped, so a later
+            # `stack.add(...)` rewrote a package already declared. `stamp_source_hashes`
+            # rebuilds every stack it can write down; one holding per-cell arrays
+            # (`Surface.from_array`) cannot be written down, so it is copied here.
+            held = stamp_source_hashes(layers)
+            if held is layers and hasattr(layers, "for_grid"):
+                held = layers.for_grid(None)
             return PackageSpec(
                 name,
                 _build_lazy_disv,
                 dict(options),
                 requires=(),
                 inputs={
-                    "layer_stack": stamp_source_hashes(layers),
+                    "layer_stack": held,
                     "build_kwargs": build_kwargs,
                     "disv_name": name,
                 },

@@ -10409,6 +10409,43 @@ same day, which is the useful part of the result.
       NOT done: `mf.disv(result)` stays EAGER. Making it lazy costs 24 option-read
       assertions across 5 test modules plus 21 `attach=True` sites; the additive form
       costs zero, and the plan's own API sketch writes `mf.disv(stack)`.
+      **Amended 2026-09-25: the lazy spec holds its OWN copy of the stack.** It held the
+      CALLER'S object whenever nothing in the stack named a file (the hash stamp is what
+      rebuilt one), so on an all-inline stack a later `stack.add(...)` rewrote the
+      declared package, a library `disv/base`, and its digest -- `packages.digests()`
+      kept the cached value while a fresh one differed. The copy is rebuilt from the
+      stack's own payload (`stamp_source_hashes` now always rebuilds a token-bearing
+      object, stamped or not), NOT made with `for_grid`, which shares the mutable
+      `_Layer` records and would drop any field a later change adds unless taught it
+      too -- where `to_dict`/`from_dict` must be taught it anyway to be saved. Only a
+      stack holding per-cell arrays, which cannot be written down, falls back to
+      `for_grid(None)`. **No digest moves**: across the full suite, 124 declarations
+      where the old code held the caller's object (121 stacks, 3 `CellSurfaceOffset`s)
+      each digest the same as their copy. A `from_dict` refusing the payload its own
+      `to_dict` wrote now RAISES rather than silently returning the caller's unstamped
+      object. The semantics are a SNAPSHOT: to take an edit, declare the package again.
+      **The EAGER form too** (same day, on review): `mf.disv(result)` /
+      `result.to_disv()` held the RESULT'S OWN `top`/`botm`/`idomain` -- `np.asarray`
+      does not copy -- so `result.idomain[0, :5] = 0` after the call reached the
+      declared package and moved its digest. It copies now (`np.array`), which is what
+      makes "a declaration owns its copy" true of every `mf.disv` form, the premise the
+      excavation design's F4 (an edit verb that mutates) rests on; it moves no digest,
+      the values are the same. A result handed a `grid=` of ANOTHER cell count is
+      refused at the call: it wrote the new `ncpl` over the old `top`, and FloPy
+      refused that only at build with an `MFDataException` naming neither count. And
+      `stamp_source_hashes` takes the `{"$tuple": ...}` tag off before it rebuilds, as
+      `_spec_value` has since the same day's fix for a saved tuple `split=`:
+      `Spread.to_dict` runs `_json_value` on itself, so
+      `stamp_source_hashes(mf.Spread(("a", "b")))` came back holding a DICT field --
+      unequal to the original though it digested the same. `repoint_source_paths`,
+      the third payload-to-object funnel, untags too; no shipped class writes a path
+      and a tagged tuple into one payload, so there it is the rule, pinned on a
+      synthetic class, rather than a live case.
+      Found while documenting `mf.disv`, NOT changed: its hand-written form accepts the
+      eight build keywords and does nothing with them (the result form refuses them),
+      and on the lazy form `attach=False` hands the model context whatever table the
+      grid already held (top 500.0 against the DISV's 100.0) -- the excavation design's
+      D9, due in its lifecycle commit.
 
 271. **Move it, and read the report (2026-09-15).**
       B1 commit 5, the last. `SimulationSpec.with_grid(grid, *, on=, name=, grid_free=())`

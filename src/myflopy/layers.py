@@ -631,45 +631,89 @@ class LayerBuildResult:
 
         Building the spec from the arrays already on this result removes the
         possibility by construction: there is one geometry, and it is the one you
-        checked with :meth:`qc`.
+        checked with :meth:`qc`. ``mf.disv(result)`` is this call.
 
         Parameters
         ----------
         vor : VoronoiGridPlus, optional
-            The grid to take cell geometry from; defaults to the one built against.
+            The grid to take the MESH from -- ``ncpl``, the vertices and ``cell2d``,
+            through its ``get_disv_gridprops()``. Omitted, the grid this result was
+            built on (:attr:`vor`). The elevations and ``idomain`` always come from
+            this result, so the grid must have the result's cell count: one that does
+            not RAISES (it wrote a DISV whose ``top`` FloPy then refused at build
+            with an ``MFDataException`` naming neither count). A different mesh with
+            the SAME count cannot be told apart and is accepted.
         name : str, default "disv"
-            Package name.
+            The spec's name -- the key ``with_packages(slot=)``, ``without_packages``
+            and a run's frozen snapshot use. As on ``mf.disv``, it does not reach
+            FloPy: the built package is always ``disv``, written to
+            ``<model>.disv``.
 
         Returns
         -------
         PackageSpec
+            An EAGER DISV spec: ``options`` hold ``nlay``, ``ncpl``, ``nvert``,
+            ``vertices``, ``cell2d``, ``top``, ``botm``, ``idomain`` and, when the
+            result declares them, ``length_units`` (``"feet"`` -> ``"FEET"``). The
+            ``top``/``botm``/``idomain`` arrays are COPIES of this result's: an
+            in-place edit of the result after the call -- ``result.idomain[0, :5] =
+            0`` -- does not reach a package already declared, a library copy of it,
+            or its digest (ledger 270, amended 2026-09-25; it did, measured, because
+            ``np.asarray`` does not copy). Declare it again to take the edit.
+
+        Raises
+        ------
+        ValueError
+            No grid: ``vor`` omitted and the result carries none (``result.vor`` is
+            ``None``). Or ``vor``'s cell count differs from the result's.
 
         Examples
         --------
-        >>> res = layer_stack.build(vor)
-        >>> res.attach_to_grid()
-        >>> disv = res.to_disv(vor)
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6 import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=3, ncol=3, cell_size=100.0)
+        >>> result = mf.LayerStack(top=mf.Surface.flat(100.0)).add(
+        ...     "sand", thickness=20.0).build(vor)
+        >>> spec = result.to_disv()
+        >>> spec.options["ncpl"], spec.options["length_units"]
+        (9, 'FEET')
+        >>> result.idomain[0, :3] = 0                 # an edit AFTER the declaration...
+        >>> int(spec.options["idomain"].min())        # ...does not reach the package
+        1
         """
-
 
         grid = self.vor if vor is None else vor
         if grid is None:
             raise ValueError("No grid; pass vor= or build the stack with a grid.")
         props = grid.get_disv_gridprops()
+        ncpl = int(props["ncpl"])
+        if ncpl != int(np.asarray(self.top).size):
+            # FloPy took the mismatch and refused it only at BUILD, as "Unable to set
+            # data 'top' layer 0. Data is not in a valid format" -- naming neither count.
+            raise ValueError(
+                f"This layer result has {int(np.asarray(self.top).size)} cells per layer "
+                f"and the grid given has {ncpl}: its elevations and idomain belong to "
+                "another mesh. Build the stack on this grid (`stack.build(vor)`), or "
+                "hand `mf.disv` the STACK so it resolves on whichever grid it is given."
+            )
         options = {}
         if self.length_units is not None:
             options["length_units"] = _MF6_LENGTH_UNITS.get(
                 self.length_units.lower(), self.length_units.upper()
             )
+        # COPIES (`np.array` copies; `np.asarray` did not). The spec is a declaration,
+        # and it held this result's own arrays, so an in-place edit of the result --
+        # the shape an excavation of a built result takes -- reached a package already
+        # declared, a library copy and its digest (ledger 270, amended).
         return disv_spec(
             nlay=self.nlay,
             ncpl=props["ncpl"],
             nvert=len(props["vertices"]),
             vertices=props["vertices"],
             cell2d=props["cell2d"],
-            top=np.asarray(self.top, dtype=float),
-            botm=np.asarray(self.botm, dtype=float),
-            idomain=np.asarray(self.idomain),
+            top=np.array(self.top, dtype=float),
+            botm=np.array(self.botm, dtype=float),
+            idomain=np.array(self.idomain),
             name=name,
             **options,
         )

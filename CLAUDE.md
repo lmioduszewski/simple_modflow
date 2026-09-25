@@ -1048,6 +1048,15 @@ project. `mf.disv(result)` stays EAGER on purpose (24 option-read assertions).
 `botm.sum` by 26.6. On an already-built `LayerBuildResult` none of them can act, so a
 non-default one **raises** rather than being ignored. A declared `domain` that
 disagrees with what the stack resolves is refused, naming both shapes.
+**The lazy spec holds its OWN copy of the stack** (ledger 270, amended 2026-09-25) --
+a SNAPSHOT: `stack.add(...)` after `mf.disv(stack)` does not reach the declared
+package, a library copy or its digest; declare again to take an edit. It held the
+caller's object whenever nothing was hash-stamped (an all-inline stack). The copy is
+`from_dict(to_dict())` -- what a reload builds -- so it digests the same (124 of 124
+across the suite); `stamp_source_hashes` always rebuilds now, `$tuple` tag removed first.
+**So does the EAGER `mf.disv(result)`**: it held the result's own arrays (`np.asarray`
+shares memory), so `result.idomain[...] = 0` after the call edited the package; it
+copies now, and a result given a `grid=` of another cell count is refused at the call.
 
 ### Grid: eager (works now) vs deferred (a known seam)
 - **Eager** (use for the full GIS stack): build the grid object first (`VoronoiGridPlus`, or
