@@ -148,3 +148,123 @@ def test_a_round_tripped_stack_builds_the_same_arrays(triangulated_grid):
     assert np.array_equal(original.top, rebuilt.top)
     assert np.array_equal(original.botm, rebuilt.botm)
     assert np.array_equal(original.idomain, rebuilt.idomain)
+
+
+# -- a tuple INSIDE a token's payload (D1 of the excavate scoping) ---------------------
+#
+# `_json_value` tags every tuple it meets as `{"$tuple": [...]}` -- inside a token's
+# payload too -- but `_spec_value` handed the payload to `from_dict` raw, so the tag
+# was never taken off. `LayerStack.add` takes "a sequence of shares" for `split=` and
+# one name per share for `names=`, and a tuple is a sequence -- but it came back as a
+# DICT: the saved stack died building with `could not convert string to float:
+# '$tuple'`, and its digest no longer matched the live declaration's, so
+# `runs.drift()` would have called it edited.
+
+
+def _tuple_split_stack():
+    """A stack whose only tuple is the unequal split -- nothing else could be tagged."""
+
+    stack = mf.LayerStack(top=mf.Surface.flat(100.0))
+    stack.add("sand", thickness=30.0, split=(0.3, 0.7), names=("sand_top", "sand_base"))
+    stack.add("clay", thickness=10.0)
+    return stack
+
+
+def test_a_tuple_split_comes_back_a_tuple(triangulated_grid):
+    """Through the funnel a package input takes: `_json_value` -> JSON -> `_spec_value`."""
+
+    stack = _tuple_split_stack()
+    written = _json_value(stack)
+    assert written["$layer_stack"]["layers"][0]["split"] == {"$tuple": [0.3, 0.7]}, (
+        "the tag is what makes this case worth testing; if the writer stops "
+        "tagging, this test proves nothing"
+    )
+
+    revived = _spec_value(json.loads(json.dumps(written)))
+
+    split, names = revived._layers[0].split, revived._layers[0].names
+    assert type(split) is tuple and split == (0.3, 0.7)
+    assert type(names) is tuple and names == ("sand_top", "sand_base")
+    original = stack.build(triangulated_grid, attach=False)
+    rebuilt = revived.build(triangulated_grid, attach=False)
+    assert rebuilt.nlay == original.nlay == 3
+    assert rebuilt.names == original.names
+    assert np.array_equal(original.botm, rebuilt.botm)
+    assert np.array_equal(original.idomain, rebuilt.idomain)
+
+
+def test_a_saved_tuple_split_rebuilds_and_digests_the_same(tmp_path):
+    """Through `Project.save`/`load`, where a lazy `mf.disv` carries the stack.
+
+    The digest is the half a build test cannot see: the reloaded package digested a
+    DICT where the live one digested a tuple, so the same declaration read as edited.
+    """
+
+    from myflopy.specs import package_digest
+    from myflopy.workspace import Project
+
+    project = Project(tmp_path / "p", name="p")
+    project.add_package("disv/split", mf.disv(_tuple_split_stack()))
+    live = package_digest(project.package("disv/split"))
+    project.save()
+
+    reloaded = Project.load(tmp_path / "p").package("disv/split")
+
+    split = reloaded.inputs["layer_stack"]._layers[0].split
+    assert type(split) is tuple and split == (0.3, 0.7)
+    assert package_digest(reloaded) == live
+
+
+def test_a_tuple_split_survives_yaml():
+    """YAML renders the tag in flow style, then reads it back through the same funnel."""
+
+    simulation = mf.simulation(mf.gwf("m", packages=[mf.disv(_tuple_split_stack())]), name="s")
+
+    revived = mf.SimulationSpec.from_yaml(simulation.to_yaml())
+
+    disv = next(p for p in revived.models[0].packages if p.name == "disv")
+    split = disv.inputs["layer_stack"]._layers[0].split
+    assert type(split) is tuple and split == (0.3, 0.7)
+
+
+def test_a_tuple_grass_kwarg_comes_back_a_tuple():
+    """The `$surface` token had the same gap: `grass_kwargs` is free-form.
+
+    Asserted on the GRASS cache signature, which is where it shows: it is built from
+    `str(v)`, so a revived `{'$tuple': [1, 2]}` read `stale` against a cache written
+    for `(1, 2)` and would have re-run the interpolation.
+    """
+
+    surface = Surface.from_contours(
+        "contours.gpkg", region_vector="domain.gpkg", out="ground.tif", extra=(1, 2)
+    )
+
+    revived = _spec_value(json.loads(json.dumps(_json_value(surface))))
+
+    assert type(revived.grass_kwargs["extra"]) is tuple
+    assert revived.to_dict() == surface.to_dict()
+    assert revived._derived_raster().params == surface._derived_raster().params
+
+
+def test_the_untag_leaves_the_rest_of_a_payload_alone():
+    """Only the tag comes off: a nested surface stays the plain dict `from_dict` wants.
+
+    Running the whole of `_spec_value` on a payload would be wrong -- it revives any
+    dict whose `kind` names a source and promotes digit-string keys to ints -- so the
+    untag is deliberately narrower than that.
+    """
+
+    from myflopy.specs import _untag_tuples
+
+    payload = {
+        "top": {"kind": "flat", "value": 1.0},
+        "keys": {"0": "a"},
+        "nested": [{"$tuple": [1, {"$tuple": [2, 3]}]}],
+    }
+
+    untagged = _untag_tuples(payload)
+
+    assert untagged["top"] == {"kind": "flat", "value": 1.0}
+    assert untagged["keys"] == {"0": "a"}
+    assert untagged["nested"] == [(1, (2, 3))]
+    assert type(untagged["nested"][0][1]) is tuple

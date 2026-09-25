@@ -490,22 +490,29 @@ def _spec_value(value: Any, *, int_keys: bool = False) -> Any:
     if isinstance(value, dict) and len(value) == 1:
         # Imported lazily: `myflopy.surfaces` is import layer 2 and `myflopy.layers`
         # is layer 6, so a module-level import here would be an upward edge.
+        #
+        # Every payload is `_untag_tuples`-ed first. `_json_value` tags a tuple
+        # wherever it meets one, INSIDE a token's payload included, but this branch
+        # handed the payload to `from_dict` raw -- so the tag was never removed. A
+        # `split=(0.3, 0.7)` came back as `{"$tuple": [0.3, 0.7]}`, and the saved
+        # stack died building with `could not convert string to float: '$tuple'`
+        # while its digest no longer matched the live declaration's.
         if "$surface" in value:
             from myflopy.surfaces import Surface
 
-            return Surface.from_dict(value["$surface"])
+            return Surface.from_dict(_untag_tuples(value["$surface"]))
         if "$layer_stack" in value:
             from myflopy.layers import LayerStack
 
-            return LayerStack.from_dict(value["$layer_stack"])
+            return LayerStack.from_dict(_untag_tuples(value["$layer_stack"]))
         if "$spread" in value:
             from myflopy.geopackage import Spread
 
-            return Spread.from_dict(value["$spread"])
+            return Spread.from_dict(_untag_tuples(value["$spread"]))
         if "$cell_surface_offset" in value:
             from myflopy.geopackage import CellSurfaceOffset
 
-            return CellSurfaceOffset.from_dict(value["$cell_surface_offset"])
+            return CellSurfaceOffset.from_dict(_untag_tuples(value["$cell_surface_offset"]))
     if isinstance(value, dict) and "kind" in value:
         # The registry decides, not a name heuristic: ``DataSourceSpec``'s kind
         # ends in "Spec", so an ``endswith("Source")`` test handed the public
@@ -532,6 +539,27 @@ def _spec_value(value: Any, *, int_keys: bool = False) -> Any:
             return {int(key): item for key, item in restored.items()}
         return restored
     return value
+
+
+def _untag_tuples(payload: Any) -> Any:
+    """Turn every ``{"$tuple": [...]}`` inside a token's payload back into a tuple.
+
+    ONLY that. A token's payload is the object's OWN format -- ``LayerStack.to_dict``
+    nests each surface as a plain ``{"kind": "flat", ...}`` dict and its ``from_dict``
+    expects exactly that back -- so the rest of :func:`_spec_value` must not run on
+    it: no source revival keyed on ``kind``, and no integer-key promotion, which is
+    for period-keyed builder options and would rewrite a ``grass_kwargs`` key the
+    user typed. Removing the one tag :func:`_json_value` adds is the exact inverse
+    of what that function did to the payload.
+    """
+
+    if isinstance(payload, dict):
+        if set(payload) == {"$tuple"}:
+            return tuple(_untag_tuples(item) for item in payload["$tuple"])
+        return {key: _untag_tuples(item) for key, item in payload.items()}
+    if isinstance(payload, list):
+        return [_untag_tuples(item) for item in payload]
+    return payload
 
 
 def _spec_options(data: Any) -> dict[str, Any]:
