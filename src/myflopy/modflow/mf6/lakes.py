@@ -28,6 +28,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     read_footprints,
     refuse_footprint_misses,
 )
+from myflopy.modflow.utils.datatypes.readers import _vector_layer_name
 from myflopy.specs import (
     ModelContext,
     PackageSpec,
@@ -920,16 +921,20 @@ class LAKBuilder:
         reprojected to the grid's CRS when both declare one; lakes carrying
         no CRS are read as the grid's. Lake order (MF6's lake numbers, from
         zero) is row order.
-    layer : str or int, optional
-        Default ``None``. Which layer of each ``lakes`` FILE to read, by name
-        or zero-based index; ``None`` reads the first, which is all ``mf.lak``
-        could read before this parameter existed (a multi-layer GeoPackage
-        reads its first layer behind pyogrio's generic warning). A name the
-        file does not hold, or an index past its end, raises ``ValueError``
-        listing the layers present; so does a ``layer`` with a GeoDataFrame,
-        which has none to choose. Read by the shared footprint reader
+    layer : str, optional
+        Default ``None``. Which layer of each ``lakes`` FILE to read, by NAME
+        (a numpy string is converted with ``str``); ``None`` reads the first,
+        which is all ``mf.lak`` could read before this parameter existed (a
+        multi-layer GeoPackage reads its first layer behind pyogrio's generic
+        warning). A name the file does not hold raises ``ValueError`` listing
+        the layers present; so does a ``layer`` with a GeoDataFrame, which has
+        none to choose. Read by the shared footprint reader
         (``myflopy.modflow.mf6.grid.geometry.read_footprints``). This is the
-        vector layer, not a model layer -- that is ``only_layer``.
+        VECTOR layer, not a model layer -- that is ``only_layer`` -- and so an
+        integer is refused (``TypeError``) rather than read as a position in
+        the file: ``layer=0`` reads as a model layer, and as the file's first
+        layer it would have been the default, changing nothing.
+        ``geopandas.list_layers(path)`` gives the names.
     lake_id_field : str, optional
         Default ``None``. The attribute naming each lake; its values are
         converted with ``str()`` to become the lake ids (``101`` becomes
@@ -1203,8 +1208,9 @@ class LAKBuilder:
     AttributeError
         ``context=None``.
     TypeError
-        At construction, a ``tables`` that ``dict()`` or an ``outlets`` that
-        ``tuple()`` cannot read (``None`` included). At :meth:`build`, an
+        At construction, a ``layer`` that is not a ``str`` (an integer reads as a
+        model layer; that is ``only_layer``), a ``tables`` that ``dict()`` or an
+        ``outlets`` that ``tuple()`` cannot read (``None`` included). At :meth:`build`, an
         ``options`` name ``ModflowGwflak`` does not accept, or one the builder
         sets itself.
 
@@ -1230,7 +1236,7 @@ class LAKBuilder:
     context: ModelContext
     nper: int
     lakes: Path | str | Sequence[Path | str] | gpd.GeoDataFrame
-    layer: str | int | None = None
+    layer: str | None = None
     lake_id_field: str | None = None
     starting_stage: Any = None
     lake_bottom: Any = None
@@ -1284,6 +1290,10 @@ class LAKBuilder:
             raise ValueError("ModelContext.grid is required for LAKBuilder.")
         if self.nper < 1:
             raise ValueError("nper must be at least 1.")
+        if self.layer is not None:
+            object.__setattr__(
+                self, "layer", _vector_layer_name(self.layer, of="lakes", model_layer="only_layer=")
+            )
         object.__setattr__(self, "tables", dict(self.tables))
         object.__setattr__(self, "outlets", tuple(self.outlets))
 

@@ -450,6 +450,14 @@ def test_declaration_refusals(rect_grid, gis, tmp_path):
         _stack().excavate(90.0, cell, layer="ponds")
     with pytest.raises(ValueError, match="has no layer 'lakes'"):
         _stack().excavate(90.0, gis.site, layer="lakes")
+    # a vector layer by NAME: in a layer stack an integer reads as a MODEL layer
+    for index in (0, np.int64(1), True):
+        with pytest.raises(TypeError, match="VECTOR layer of the within file, by name"):
+            _stack().excavate(90.0, gis.site, layer=index)
+    named = _stack().excavate(90.0, gis.site, layer=np.str_("ponds"))
+    assert type(named._excavations[0].layer) is str
+    with pytest.raises(TypeError, match="VECTOR layer"):
+        _stack().build(rect_grid).excavate(90.0, gis.site, layer=0)
     with pytest.raises(FileNotFoundError):
         _stack().excavate(90.0, tmp_path / "missing.gpkg")
     with pytest.raises(FileNotFoundError):

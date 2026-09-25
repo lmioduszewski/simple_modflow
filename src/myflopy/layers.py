@@ -39,7 +39,7 @@ from myflopy.modflow.mf6.grid.plotting import GridPlots, _as_linestring
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.modflow.utils.datatypes.extent import resolve_extent
-from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+from myflopy.modflow.utils.datatypes.readers import _vector_layer_name, read_shp_gpkg
 from myflopy.package_api import disv as disv_spec
 from myflopy.surfaces import (
     _MF6_LENGTH_UNITS,
@@ -483,8 +483,8 @@ class _Excavation:
     zone: Path | None
     #: The footprint inline, when not a file.
     area: Area | None
-    #: The vector layer of ``zone``.
-    layer: str | int | None
+    #: The vector layer of ``zone``, by name (a plain ``str``).
+    layer: str | None
     min_remnant: float
 
 
@@ -530,6 +530,12 @@ def _declare_excavation(
 
     if isinstance(min_remnant, (bool, np.bool_)) or not isinstance(min_remnant, numbers.Real):
         raise TypeError(f"min_remnant must be a number (length units), not {min_remnant!r}.")
+    if layer is not None:
+        # By NAME only: in a layer stack an integer reads as a MODEL layer.
+        layer = _vector_layer_name(
+            layer, of="within", model_layer="not chosen by an excavation, which cuts every "
+            "layer above its bed"
+        )
     min_remnant = float(min_remnant)
     if not np.isfinite(min_remnant) or min_remnant < 0:
         raise ValueError(f"min_remnant must be a finite number >= 0, not {min_remnant!r}.")
@@ -1447,8 +1453,9 @@ class LayerBuildResult:
             The record's key; defaults to the file stem, then ``Area.name``, then
             ``"excavation_<n>"``. Must differ from every excavation already cut and
             from every unit and layer name.
-        layer : str or int, optional
-            The vector layer of a ``within`` FILE; refused with any other ``within``.
+        layer : str, optional
+            The vector layer of a ``within`` FILE, by name; refused with any other
+            ``within``, and an integer (a MODEL layer, in a layer result) is refused.
         min_remnant : float, default 0.1
             The thinnest cell allowed directly under the bed (length units); a
             thinner one is absorbed. ``0`` turns sliver absorption off.
@@ -1468,7 +1475,8 @@ class LayerBuildResult:
             an existing excavation; a bed with no data anywhere in the footprint; a
             column left with no active cell under the bed.
         TypeError
-            A ``bottom`` or ``within`` of an unsupported type.
+            A ``bottom`` or ``within`` of an unsupported type, or a ``layer`` that
+            is not a ``str``.
 
         See Also
         --------
@@ -3916,10 +3924,13 @@ class LayerStack:
             may a unit added, inserted or re-split later build a layer of that name
             (a generated ``<unit>_i`` included; :meth:`add`, :meth:`insert_below` and
             :meth:`replace` refuse it).
-        layer : str or int, optional
-            The vector layer of a ``within`` FILE, by name or zero-based index;
-            omitted, the first. Refused with any other ``within`` -- it could not
-            act. Pass ``mf.lak`` the same ``layer=``.
+        layer : str, optional
+            The vector layer of a ``within`` FILE, by NAME (a numpy string is
+            converted with ``str``); omitted, the first. Refused with any other
+            ``within`` -- it could not act -- and an integer is refused
+            (``TypeError``): in a layer stack it reads as a MODEL layer, and an
+            excavation cuts every layer above its bed. Pass ``mf.lak`` the same
+            ``layer=``.
         min_remnant : float, default 0.1
             The thinnest cell allowed directly under the bed, in length units,
             converted with ``float``. A thinner one is a sliver and is absorbed
@@ -3949,7 +3960,8 @@ class LayerStack:
             no active cell under the bed (a bed below the stack's bottom included).
         TypeError
             ``bottom`` or ``within`` of an unsupported type (cell numbers and
-            masks named as such), or a non-numeric ``min_remnant``.
+            masks named as such), a non-numeric ``min_remnant``, or a ``layer``
+            that is not a ``str``.
         FileNotFoundError
             A ``within`` or ``bottom`` path that does not exist.
         NotImplementedError

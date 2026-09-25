@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numbers
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -54,6 +55,30 @@ def vector_layer_names(path: str | Path) -> list[str] | None:
     return lister(path)["name"].tolist()
 
 
+def _vector_layer_name(layer, *, of: str, model_layer: str) -> str:
+    """A ``layer=`` that must NAME a vector layer, returned as a plain ``str``.
+
+    For the entry points whose ``layer=`` sits beside MODEL layers: ``mf.lak`` /
+    ``LAKBuilder`` (the model layer is ``only_layer``) and ``LayerStack.excavate`` /
+    ``LayerBuildResult.excavate`` (a stack's layers ARE model layers). There
+    ``layer=0`` reads as a model layer, and read as the file's first layer it is the
+    default -- accepted, changing nothing. So an integer (``bool`` and numpy's
+    included) is refused here, although :func:`read_vector_layer` itself takes one; a
+    numpy string is converted, so nothing numpy-typed is stored (ledger 265).
+
+    ``of`` names the file (``"lakes"``) and ``model_layer`` where a model layer IS
+    chosen, both for the message.
+    """
+
+    if isinstance(layer, str):
+        return str(layer)
+    raise TypeError(
+        f"layer={layer!r} names a VECTOR layer of the {of} file, by name (a str) -- "
+        f"a model layer is {model_layer}. An integer is refused rather than read as a "
+        "position in the file; geopandas.list_layers(path) gives the names."
+    )
+
+
 def read_vector_layer(path: str | Path, layer: str | int | None = None) -> gpd.GeoDataFrame:
     """Read one vector file, optionally naming which layer inside it to use.
 
@@ -68,7 +93,8 @@ def read_vector_layer(path: str | Path, layer: str | int | None = None) -> gpd.G
     path : str or pathlib.Path
         The vector file.
     layer : str or int, optional
-        The layer's name, or its zero-based position in the file. ``None`` (the
+        The layer's name, or its zero-based position in the file (any integer type,
+        numpy's included; a ``bool`` is refused). ``None`` (the
         default) is GDAL's own default, the FIRST layer -- which is what every
         caller did before the parameter existed, and why it is needed: a
         GeoPackage holding several layers reads its first and pyogrio only emits a
@@ -88,6 +114,8 @@ def read_vector_layer(path: str | Path, layer: str | int | None = None) -> gpd.G
         could not be opened``) does not say what IS in the file.
     pyogrio.errors.DataSourceError
         ``path`` does not exist or is not a vector file.
+    TypeError
+        ``layer`` is a ``bool``.
 
     Examples
     --------
@@ -106,6 +134,12 @@ def read_vector_layer(path: str | Path, layer: str | int | None = None) -> gpd.G
     path = Path(path)
     if layer is None:
         return gpd.read_file(path)
+    if isinstance(layer, (bool, np.bool_)):
+        raise TypeError(f"layer={layer!r}: a vector layer is named by a str or an integer index, not a bool.")
+    if isinstance(layer, numbers.Integral):
+        # `np.int64` subclasses nothing, so `isinstance(layer, int)` sent it down the
+        # NAME branch: "has no layer np.int64(0)" (ledger 265's class).
+        layer = int(layer)
 
     available = vector_layer_names(path)
     if available is not None:

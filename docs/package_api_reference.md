@@ -156,8 +156,10 @@ A flat-bottomed basin is `connection_modes="rectangular"`, with one `lake_bottom
 and a `lake_top` per lake.
 
 **Which layer of a GeoPackage.** `mf.lak(lakes="site.gpkg", layer="ponds")` reads that
-layer (by name or zero-based index); omitted, the first, which was all `mf.lak` could
-read before. A name the file does not hold raises, listing the layers present. The
+layer, by NAME; omitted, the first, which was all `mf.lak` could read before. A name
+the file does not hold raises, listing the layers present, and an integer is refused
+-- beside `only_layer` it reads as a model layer (`geopandas.list_layers(path)` gives
+the names). `stack.excavate(within=, layer=)` takes the same name. The
 lakes are read by `grid.geometry.read_footprints`, their cells chosen by
 `footprint_cells` and a Surface/raster bed sampled by `surfaces.sample_bed` -- the
 shared reader, cell rule and bed sampler an excavation of the layer stack

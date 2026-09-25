@@ -13253,6 +13253,16 @@ same day, which is the useful part of the result.
       grid selectors' and `features=`' layer readers became the same function
       (`readers.read_vector_layer`); `features=`' refusal now reads
       `Layers: 'a', 'b'.` where it read `layers: ['a', 'b']`.
+      **`layer=` on `mf.lak`/`LAKBuilder` (and `excavate`) is a NAME, as the design typed
+      it -- an integer is REFUSED** (review of C3-C4). It shipped taking `str | int`,
+      and beside `only_layer` an int reads as a MODEL layer, the meaning `layer=` has on
+      `mf.rch.array`/`evt.array` and PRT's `from_points`; `mf.lak(layer=0)`, which raised
+      before C3, was then accepted as the file's first layer -- the default -- and
+      changed nothing. In a layer stack an int reads as a model layer too. The generic
+      reader and the grid selectors/`features=` still take an index; those have no
+      model layer beside them. Same pass: `read_vector_layer` sent a `numpy.int64` index
+      down the NAME branch (`has no layer np.int64(0)`, ledger 265's class) -- any
+      `numbers.Integral` is an index now, and a `bool` is refused.
 
 319. **"The top active layer" is ONE rule, `idomain > 0`: the array form read `!= 0` and sent recharge into pass-through cells (2026-09-25).**
       `grid/geometry.top_active_layer(domain)`, beside `domain_active`, is now the only

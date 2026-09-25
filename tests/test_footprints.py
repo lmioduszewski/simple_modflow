@@ -163,6 +163,39 @@ def test_mf_lak_reads_the_named_layer(rect_grid, two_layers):
     assert min(xc[list(east_cells)]) > np.mean(xc)
 
 
+def test_the_reader_takes_any_integer_index_and_refuses_a_bool(two_layers):
+    """``numpy.int64`` subclasses nothing, so an ``isinstance(layer, int)`` test sent it
+    down the NAME branch: "has no layer np.int64(1)" (ledger 265's class)."""
+
+    assert read_footprints(two_layers, layer=np.int64(1), id_field="name").index.tolist() == ["east"]
+    with pytest.raises(ValueError, match="index 2 is out of range"):
+        read_footprints(two_layers, layer=np.int32(2))
+    with pytest.raises(TypeError, match="not a bool"):
+        read_footprints(two_layers, layer=True)
+
+
+def test_mf_lak_names_its_vector_layer_and_refuses_an_integer(rect_grid, two_layers):
+    """Beside ``only_layer`` an integer reads as a MODEL layer, and read as the file's
+    first layer ``layer=0`` was the default -- accepted, changing nothing. Refused,
+    pointing at ``only_layer``; a numpy string is stored as a plain ``str``."""
+
+    layers = mf.LayerStack(top=mf.Flat(10.0)).add("a", thickness=10.0).build(rect_grid)
+    ctx = mf.ModelContext(grid=rect_grid, domain=layers.idomain, surfaces=layers)
+    kwargs = dict(context=ctx, nper=1, lakes=two_layers, lake_id_field="name",
+                  starting_stage=9.0, lake_bottom=5.0, connection_modes="rectangular",
+                  lake_top=10.0)
+    assert mf.lak(**kwargs).metadata["lake_ids"] == ["west"]   # the premise: it builds
+    for bad in (0, 1, np.int64(0), True):
+        with pytest.raises(TypeError, match=r"VECTOR layer .* a model layer is only_layer="):
+            mf.lak(**kwargs, layer=bad)
+        with pytest.raises(TypeError, match="only_layer="):
+            LAKBuilder(**kwargs, layer=bad)
+    builder = LAKBuilder(**kwargs, layer=np.str_("basins"))
+    assert type(builder.layer) is str and list(builder.lake_ids) == ["east"]
+    with pytest.raises(TypeError, match="only_layer="):
+        builder.with_updates(layer=0)
+
+
 def test_a_layer_with_a_frame_raises_rather_than_being_ignored(rect_grid):
     frame = gpd.GeoDataFrame(geometry=[shp.box(0, 0, 10, 10)], crs=rect_grid.crs)
     with pytest.raises(ValueError, match="has none -- drop layer="):
