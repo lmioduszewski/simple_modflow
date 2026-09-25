@@ -5,7 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from numbers import Real
+from numbers import Integral, Real
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,12 +17,15 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rasterio
+from pyproj import CRS
 from rasterio.features import geometry_mask
+from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 
 from myflopy._logging import get_logger
 from myflopy._warnings import stacklevel_outside_package
 from myflopy.advanced import lak_spec
+from myflopy.areas import Area
 from myflopy.grid_identity import (
     LAKE_CONNECTIONS,
     LAKE_RULES,
@@ -64,6 +67,130 @@ FACE_TOL = 1.0e-6
 #: that make sense here -- there is no "nearest" way to excavate a lake.
 _UNEXCAVATED_WORDS = ("warn", "raise", "ignore")
 
+#: MF6's lake STATUS words (``gwf-lak.f90``). MF6 reads them in any case, and refuses
+#: anything else by name, one run late (ledger 318, measured with ``BOGUS``).
+_LAKE_STATUSES = ("ACTIVE", "INACTIVE", "CONSTANT")
+
+#: The period settings MF6 refuses below zero, each by name (ledger 318, measured all
+#: five). ``STAGE`` and an outlet's ``RATE`` take either sign.
+_NONNEGATIVE_SETTINGS = ("RAINFALL", "EVAPORATION", "RUNOFF", "INFLOW", "WITHDRAWAL")
+
+#: The ``mf.lak`` parameter each period keyword comes from, for the refusals.
+_SETTING_NAMES = {
+    "STAGE": "stage",
+    "RAINFALL": "rainfall",
+    "EVAPORATION": "evaporation",
+    "RUNOFF": "runoff",
+    "WITHDRAWAL": "withdrawals",
+    "INFLOW": "inflow",
+    "STATUS": "status",
+}
+
+
+def _plain_scalar(value: Any) -> Any:
+    """A numpy scalar as its python value (ledger 265); anything else unchanged."""
+
+    return value.item() if isinstance(value, np.generic) else value
+
+
+def _per_period_form(value: Any, *, name: str) -> Any:
+    """``value`` with every numpy/pandas container replaced by the python form it MEANS.
+
+    A per-period value (a lake forcing, a ``LakeOutlet.rate``) is a scalar, a list by
+    period, or a mapping. A ``numpy`` array or ``pandas`` Series is neither a python
+    ``Sequence`` nor a ``Mapping``, so it was taken for a scalar and written WHOLE into
+    every period -- ``1  RATE  [-1. -2.]`` -- and MF6 died reading it (a segmentation
+    fault, ledger 318). A one-dimensional array is the list it holds; a Series is the
+    mapping of its index, so an integer index is periods, exactly as a list's positions
+    are, and a lake-id index is lakes; a 0-d array or numpy scalar is its python value.
+    Applied through lists, tuples and mapping values, so ``{"pond": np.array(...)}``
+    is read the same way. An array of two or more dimensions is refused: which axis is
+    the period is a guess.
+    """
+
+    if isinstance(value, pd.Series):
+        return {_plain_scalar(key): _per_period_form(item, name=name) for key, item in value.items()}
+    if isinstance(value, np.ndarray):
+        if value.ndim == 0:
+            return _plain_scalar(value[()])
+        if value.ndim > 1:
+            raise ValueError(
+                f"{name} is a {value.ndim}-D array of shape {value.shape}; a per-period "
+                "value is ONE number per period -- a 1-D array or list (position 0 is "
+                "the first stress period) or a mapping. Which axis is the period would "
+                "be a guess, so it is refused."
+            )
+        return [_per_period_form(item, name=name) for item in value.tolist()]
+    if isinstance(value, Mapping):
+        return {_plain_scalar(key): _per_period_form(item, name=name) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        items = [_per_period_form(item, name=name) for item in value]
+        return tuple(items) if isinstance(value, tuple) else items
+    return _plain_scalar(value)
+
+
+def _is_period_key(key: Any) -> bool:
+    """Whether a mapping key reads as a stress period: any integer, numpy's included, never a bool."""
+
+    return isinstance(key, Integral) and not isinstance(key, (bool, np.bool_))
+
+
+def _lake_keyed(mapping: Mapping, lake_id: str, *, name: str) -> tuple[bool, Any]:
+    """``(found, value)`` for ``lake_id`` in a ``{lake_id: ...}`` mapping whose keys may be ints.
+
+    Lake ids are STRINGS -- the ``lake_id_field`` value through ``str()`` -- so an
+    integer key ``101`` names lake ``"101"``, the way :meth:`LAKBuilder.lake_number`
+    reads one. It used to be looked up as the int and missed: ``only_vertical={101:
+    True}`` was ignored silently, and ``tables={101: ...}`` raised "unknown lake
+    '101'", printing the int exactly as the id it missed (ledger 318). A tuple key
+    (``bed_leakance``'s ``(lake_id, "vertical")``) is not a lake id and is skipped
+    here. Two keys naming one lake (``101`` and ``"101"``) raise ``ValueError``.
+    """
+
+    hits = [
+        key
+        for key in mapping
+        if not isinstance(key, tuple) and str(_plain_scalar(key)) == lake_id
+    ]
+    if len(hits) > 1:
+        raise ValueError(
+            f"{name} names lake {lake_id!r} twice ({', '.join(repr(key) for key in hits)}); "
+            "lake ids are strings, so an integer key names the lake of that string."
+        )
+    if not hits:
+        return False, None
+    return True, mapping[hits[0]]
+
+
+def _series_lake_labels(series: pd.Series, lake_ids: Sequence[str], *, name: str) -> dict[str, Any] | None:
+    """``{lake_id: label}`` when ``series``' index names every lake, else ``None``.
+
+    A label names a lake as a mapping key does (:func:`_lake_keyed`): through
+    ``str()``, so ``101`` names lake ``"101"``. The Series branch of
+    :meth:`LAKBuilder._lake_value` used to test ``lake in series.index`` with the
+    STRING id, so a Series keyed by the integer ids failed it and fell through to the
+    positional reading: ``starting_stage=pd.Series({102: 12.0, 101: 11.5})`` gave lake
+    ``"101"`` 12.0 and ``"102"`` 11.5, where the same dict gives each its own (ledger
+    318, review). Two labels naming one lake (``101`` and ``"101"``, or a repeated
+    label) raise ``ValueError``.
+    """
+
+    wanted = set(lake_ids)
+    found: dict[str, list[Any]] = {}
+    for label in series.index:
+        lake = str(_plain_scalar(label))
+        if lake in wanted:
+            found.setdefault(lake, []).append(label)
+    for lake, labels in found.items():
+        if len(labels) > 1:
+            raise ValueError(
+                f"{name} names lake {lake!r} twice ({', '.join(repr(label) for label in labels)}); "
+                "lake ids are strings, so an integer label names the lake of that string."
+            )
+    if len(found) < len(wanted):
+        return None
+    return {lake: labels[0] for lake, labels in found.items()}
+
 
 @dataclass(frozen=True, slots=True)
 class LakeConnection:
@@ -81,7 +208,10 @@ class LakeConnection:
     Nothing here is checked against the grid: not the cell id, not the elevations,
     not whether the cell is active. FloPy checks the cell id against the idomain when
     the package is constructed. MF6 checks the rest when it reads the file, as each
-    entry below says. All lengths are in the model's length unit.
+    entry below says -- except the two a HORIZONTAL connection cannot do without,
+    its ``connection_length`` and ``connection_width``, which are refused here when
+    they are not greater than zero (ledger 318). All lengths are in the model's
+    length unit.
 
     Parameters
     ----------
@@ -127,19 +257,25 @@ class LakeConnection:
         top``). Ignored for VERTICAL.
     connection_length : float, default 0.0
         MF6's ``CONNLEN`` (length): the distance from the cell's node to the lake
-        face, used in a HORIZONTAL connection's conductance. It must be greater
-        than zero for HORIZONTAL: MF6 refuses the ``0.0`` default (measured:
-        ``connection length (connlen) ... MUST BE > 0``). Ignored for VERTICAL.
+        face, used in a HORIZONTAL connection's conductance. For HORIZONTAL it
+        must be a finite number greater than zero, so the ``0.0`` default is
+        refused here (``ValueError``) -- MF6 refuses it by name when it reads the
+        file (measured: ``connection length (connlen) ... MUST BE > 0``), one run
+        later. Ignored, and not checked, for VERTICAL.
     connection_width : float, default 0.0
-        MF6's ``CONNWIDTH`` (length): the width of a HORIZONTAL face. MF6 accepts
-        the ``0.0`` default, but the connection then carries no water (measured:
-        flow 0.0). Ignored for VERTICAL.
+        MF6's ``CONNWIDTH`` (length): the width of a HORIZONTAL face. For
+        HORIZONTAL it must be a finite number greater than zero, so the ``0.0``
+        default is refused here (``ValueError``): MF6 accepts a zero width, and
+        the connection then carries no water at all (measured: flow 0.0), which
+        is never what a wall written by hand is for. Ignored, and not checked,
+        for VERTICAL.
 
     Raises
     ------
     ValueError
         If ``connection_type`` is not ``"VERTICAL"`` or ``"HORIZONTAL"``, in any
-        letter case.
+        letter case; or, for a HORIZONTAL connection, if ``connection_length``
+        or ``connection_width`` is not a finite number greater than zero.
 
     See Also
     --------
@@ -155,7 +291,13 @@ class LakeConnection:
     >>> wall.connection_type
     'HORIZONTAL'
 
-    Then ``mf.lak(..., connection_modes={"vault": [floor, wall]})``.
+    Then ``mf.lak(..., connection_modes={"vault": [floor, wall]})``. A wall
+    missing its length is refused here rather than by MF6:
+
+    >>> mf.LakeConnection((1, 43), "horizontal", connection_width=25.0)
+    Traceback (most recent call last):
+    ...
+    ValueError: A HORIZONTAL LakeConnection at (1, 43) needs connection_length > 0 ...
     """
 
     cellid: tuple[int, int]
@@ -167,12 +309,29 @@ class LakeConnection:
     connection_width: float = 0.0
 
     def __post_init__(self) -> None:
-        """Uppercase and validate ``connection_type`` (VERTICAL or HORIZONTAL)."""
+        """Uppercase and validate ``connection_type``; a HORIZONTAL one needs a length and a width."""
 
         connection_type = self.connection_type.upper()
         if connection_type not in {"VERTICAL", "HORIZONTAL"}:
             raise ValueError("connection_type must be 'VERTICAL' or 'HORIZONTAL'.")
         object.__setattr__(self, "connection_type", connection_type)
+        if connection_type == "HORIZONTAL":
+            # MF6 refuses a zero CONNLEN by name, one run late, and runs a zero
+            # CONNWIDTH carrying nothing (ledger 318, measured). Both defaults are 0.0,
+            # so a wall written without them is refused here.
+            for field_name, consequence in (
+                ("connection_length", "MF6 refuses a HORIZONTAL connection without one"),
+                ("connection_width", "MF6 runs one of zero width carrying no water at all"),
+            ):
+                value = getattr(self, field_name)
+                if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real) or not (
+                    np.isfinite(float(value)) and float(value) > 0.0
+                ):
+                    raise ValueError(
+                        f"A HORIZONTAL LakeConnection at {self.cellid} needs {field_name} > 0 "
+                        f"(got {value!r}): {consequence}. The default 0.0 is for a VERTICAL "
+                        "connection, which reads neither."
+                    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +344,8 @@ class LakeOutlet:
     ``lake_id_field`` values) -- never MF6's lake numbers. ``mf.lak`` resolves them
     when it builds and numbers the outlets by their position in ``outlets=``, from
     zero. Nothing here is checked until then: the ids, and every number, are stored
-    as given.
+    as given, except that a ``rate`` held in a ``numpy`` array or ``pandas`` Series
+    is stored as the list or mapping it means (see ``rate``).
 
     Parameters
     ----------
@@ -224,7 +384,7 @@ class LakeOutlet:
     slope : float, default 0.0
         MANNING only: the outlet channel's bed slope (dimensionless). The ``0.0``
         default gives no flow.
-    rate : float, list or tuple of float, or dict of int to float, optional
+    rate : float, str, list, tuple, dict of int to float, numpy.ndarray or pandas.Series, optional
         Default ``None``. The SPECIFIED flow rate (length cubed per time), written
         as a ``RATE`` period setting. **A NEGATIVE rate removes water from the
         lake and a POSITIVE rate ADDS water** (MF6's input guide: "A positive value
@@ -233,24 +393,31 @@ class LakeOutlet:
         it 0.05. MF6 caps a negative rate at the water available to the lake in
         the time step. The forms:
 
-        * a number: every stress period;
-        * a list or tuple: position 0 is the first stress period;
+        * a number: every stress period (a ``str`` is written as given, which is
+          how MF6 names a time series);
+        * a list or tuple, or a one-dimensional ``numpy`` array: position 0 is the
+          first stress period, and ``None`` in a list skips that period;
         * ``{period: value}``: keyed by ZERO-based stress period, so
-          ``{1: -2.0}`` is MF6's ``PERIOD 2``.
+          ``{1: -2.0}`` is MF6's ``PERIOD 2``;
+        * a ``pandas.Series``: its index is the period, as a dict's keys are.
 
-        A period the value does not reach -- past the end of the list, or with no
-        key -- is written with no RATE, and MF6 keeps the previous period's rate
-        (measured); before the first one, the rate is MF6's default, 0. ``None``
-        writes no RATE at all. A ``numpy`` array or ``pandas`` Series is NOT split by period:
-        each period's record carries the whole array as its text, and MF6 died
-        reading it (measured, a segmentation fault; ledger 318). ``mf.lak``
-        writes the RATE for a WEIR or MANNING outlet too, and MF6 ignores it.
+        An array is stored here as the list it holds and a Series as the dict of
+        its index; each used to be written WHOLE into every period, and MF6 died
+        reading that (measured, a segmentation fault; ledger 318). An array of
+        two or more dimensions raises ``ValueError`` here. A period the value
+        does not reach -- past the end of the list, or with no key -- is written
+        with no RATE, and MF6 keeps the previous period's rate (measured); before
+        the first one, the rate is MF6's default, 0. ``None`` writes no RATE at
+        all. ``mf.lak`` refuses (``ValueError``) a list with more values than
+        stress periods, a period key outside ``range(nper)`` -- neither would
+        ever be written -- and a number that is not finite. It writes the RATE
+        for a WEIR or MANNING outlet too, and MF6 ignores it.
 
     Raises
     ------
     ValueError
         If ``outlet_type`` is not ``"SPECIFIED"``, ``"WEIR"`` or ``"MANNING"``, in
-        any letter case.
+        any letter case, or ``rate`` is an array of two or more dimensions.
 
     See Also
     --------
@@ -280,12 +447,57 @@ class LakeOutlet:
     rate: Any = None
 
     def __post_init__(self) -> None:
-        """Uppercase and validate ``outlet_type`` (SPECIFIED, MANNING, or WEIR)."""
+        """Uppercase and validate ``outlet_type``; store an array or Series ``rate`` as what it means."""
 
         outlet_type = self.outlet_type.upper()
         if outlet_type not in {"SPECIFIED", "MANNING", "WEIR"}:
             raise ValueError("outlet_type must be 'SPECIFIED', 'MANNING', or 'WEIR'.")
         object.__setattr__(self, "outlet_type", outlet_type)
+        object.__setattr__(self, "rate", _per_period_form(self.rate, name="LakeOutlet.rate"))
+
+
+#: The column names a ``DataFrame`` of lake-table rows is read by, in the file's order.
+_TABLE_COLUMNS = ("stage", "volume", "area")
+
+
+def _table_rows(rows: Any) -> tuple[tuple[float, ...], ...]:
+    """A lake table's rows as tuples of python ``float``; a DataFrame read by name or position.
+
+    Iterating a bare ``pandas.DataFrame`` yields its column LABELS, so a frame used to
+    fail ``float()`` on ``'s'`` (string labels) or on ``0`` (``'int' object is not
+    iterable``) -- a message about neither the frame nor the table (ledger 318). It is
+    read by its ``stage``/``volume``/``area`` columns when it names all three, by
+    position when it has exactly three, and refused otherwise: which column is which
+    would be a guess.
+    """
+
+    if isinstance(rows, (str, bytes, Mapping)):
+        raise TypeError(
+            "A lake table's rows are a sequence of (stage, volume, area) rows, a 2-D array "
+            f"or a DataFrame, not a {type(rows).__name__}."
+        )
+    if isinstance(rows, pd.DataFrame):
+        by_name = {str(column).strip().lower(): column for column in rows.columns}
+        named = [word for word in _TABLE_COLUMNS if word in by_name]
+        if len(named) == len(_TABLE_COLUMNS):
+            rows = rows[[by_name[word] for word in _TABLE_COLUMNS]]
+        elif named:
+            missing = [word for word in _TABLE_COLUMNS if word not in by_name]
+            raise ValueError(
+                f"The lake table's DataFrame has a {' and a '.join(named)} column but no "
+                f"{' or '.join(missing)}: name all three (stage, volume, area), or give "
+                "exactly three columns, read in that order. Which column is which would be "
+                "a guess."
+            )
+        elif rows.shape[1] != len(_TABLE_COLUMNS):
+            raise ValueError(
+                f"The lake table's DataFrame has {rows.shape[1]} columns "
+                f"({', '.join(repr(column) for column in rows.columns)}), none named stage, "
+                "volume or area: name those three, or give exactly three columns, read in "
+                "that order."
+            )
+        rows = rows.to_numpy()
+    return tuple(tuple(float(value) for value in row) for row in rows)
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,31 +513,46 @@ class LakeTable:
 
     Parameters
     ----------
-    rows : sequence of (stage, volume, area) sequences
+    rows : sequence of (stage, volume, area) sequences, numpy.ndarray or pandas.DataFrame
         Required. One row per stage, each exactly three numbers: the stage (model
         length units), the lake's stored volume at that stage (length cubed) and
         its surface area (length squared). Every value goes through ``float()``,
-        so a list of tuples, a 2-D ``numpy`` array, ``df.to_numpy()`` and numeric
-        strings all work, and the rows are stored as a tuple of 3-tuples of
-        ``float``. A bare ``pandas.DataFrame`` does NOT work: iterating one yields
-        its column LABELS, which fail ``float()`` (``ValueError`` for string
-        labels, ``TypeError`` for the default 0, 1, 2). No unit conversion is
-        done. Checked here, each failure a ``ValueError``:
+        so a list of tuples, a 2-D ``numpy`` array and numeric strings all work,
+        and the rows are stored as a tuple of 3-tuples of ``float``. A
+        ``pandas.DataFrame`` is read by its column NAMES when it has columns
+        named ``stage``, ``volume`` and ``area`` (in any letter case; other
+        columns are ignored), and otherwise by POSITION when it has exactly three
+        columns; its index is ignored. A frame naming only some of the three, or
+        naming none with other than three columns, raises ``ValueError`` -- which
+        column is which would be a guess. No unit conversion is done. Checked
+        here, each failure a ``ValueError``; the first three are MF6's own table
+        checks (``gwf-lak.f90``, ``lak_read_table``), so a table that passes here
+        is one MF6 reads:
 
-        * at least one row;
-        * exactly three values in every row;
-        * stages STRICTLY increasing (no repeated stage);
-        * volumes nondecreasing (a repeated volume passes);
-        * no negative surface area.
+        * stages STRICTLY increasing -- MF6: ``TABLE STAGE ENTRY ... MUST BE
+          GREATER THAN THE PREVIOUS STAGE ENTRY``;
+        * volumes STRICTLY increasing, so two rows of equal volume (two
+          zero-volume rows below a lake's bed, say) are refused -- MF6: ``TABLE
+          VOLUME ENTRY ... MUST BE GREATER THAN THE PREVIOUS VOLUME ENTRY``;
+        * surface areas NONDECREASING (an equal area passes) -- MF6: ``TABLE
+          SURFACE AREA ENTRY ... MUST BE GREATER THAN OR EQUAL TO THE PREVIOUS
+          SURFACE AREA ENTRY``;
+        * at least one row (MF6: ``NROW MUST BE > 0``) and exactly three values in
+          every row;
+        * every value finite, and no NEGATIVE volume or area. MF6's own checks
+          compare neighbouring rows only (measured, ledger 318): it runs a
+          negative volume or area as given, which no lake holds (a first volume
+          of -5.0 read ``VOLUME`` -2.0 at a stage inside the table, and a first
+          area of -4.0 ``SURFACE-AREA`` -3.0), and a ``NaN``
+          reaches it only as a row FloPy wrote cut short at the ``NaN``, which it
+          stops on without naming the value, the column or the lake (``Could not
+          read variable of type DOUBLE PRECISION from the following line:
+          '9.00000000'``).
 
-        **MF6 is STRICTER than this check when it reads the file, so what passes
-        here can still stop the run** (ledger 318). Measured with ``mf6``: it
-        refuses a volume EQUAL to the previous row's (``TABLE VOLUME ENTRY 2 ...
-        MUST BE GREATER THAN THE PREVIOUS VOLUME ENTRY``) and a surface area
-        SMALLER than the previous row's (``TABLE SURFACE AREA ENTRY 2 ... MUST BE
-        GREATER THAN OR EQUAL TO THE PREVIOUS SURFACE AREA ENTRY``). A ``NaN``
-        passes every check above (any comparison with ``NaN`` is false), and so
-        does a negative volume.
+        These are the rules :class:`LakeTableBuilder` and ``mf.lak`` rely on; it
+        used to accept an equal volume, a falling area, a ``NaN`` and a negative
+        volume, and MF6 refused the first three one run later and ran the last
+        (ledger 318).
     filename : str, optional
         Default ``None``. Name of the ``laktab`` file ``mf.lak`` writes for this
         table, beside the model's other input files. ``None`` or ``""`` lets
@@ -342,12 +569,12 @@ class LakeTable:
     Raises
     ------
     ValueError
-        On construction, if ``rows`` breaks any rule listed under ``rows``, or a
-        value is a string ``float()`` cannot convert.
+        On construction, if ``rows`` breaks any rule listed under ``rows``, a
+        value is a string ``float()`` cannot convert, or a ``DataFrame``'s
+        columns cannot be told apart.
     TypeError
         On construction, if a row or a value is not something ``float()`` or
-        iteration accepts, e.g. the integer column labels of a bare
-        ``pandas.DataFrame``.
+        iteration accepts, or ``rows`` is a mapping or a string.
 
     See Also
     --------
@@ -360,32 +587,72 @@ class LakeTable:
     >>> table = mf.LakeTable([(96.0, 0.0, 0.0), (98.0, 1.5e4, 1.2e4)], filename="pond.tab")
     >>> table.minimum_stage, table.maximum_stage
     (96.0, 98.0)
+
+    A survey held in a DataFrame, read by its column names:
+
+    >>> import pandas as pd
+    >>> survey = pd.DataFrame({"Area": [0.0, 1.2e4], "Stage": [96.0, 98.0],
+    ...                        "Volume": [0.0, 1.5e4]})
+    >>> mf.LakeTable(survey).rows
+    ((96.0, 0.0, 0.0), (98.0, 15000.0, 12000.0))
+
+    Two rows of equal volume are refused here, as MF6 refuses them:
+
+    >>> mf.LakeTable([(95.0, 0.0, 0.0), (96.0, 0.0, 0.0), (98.0, 1.5e4, 1.2e4)])
+    Traceback (most recent call last):
+    ...
+    ValueError: Lake table volumes must STRICTLY increase, as MF6 requires: ...
     """
 
     rows: tuple[tuple[float, float, float], ...]
     filename: str | None = None
 
     def __post_init__(self) -> None:
-        """Coerce, validate, and freeze the ``(stage, volume, area)`` rows.
+        """Coerce, validate, and freeze the ``(stage, volume, area)`` rows by MF6's table rules."""
 
-        Requires at least one 3-tuple row with strictly increasing stages,
-        nondecreasing volumes, and non-negative areas.
-        """
-
-        rows = tuple(tuple(float(value) for value in row) for row in self.rows)
+        rows = _table_rows(self.rows)
         if not rows:
             raise ValueError("A lake table must contain at least one row.")
         if any(len(row) != 3 for row in rows):
             raise ValueError("Lake table rows must contain stage, volume, and surface area.")
-        stages = [row[0] for row in rows]
-        volumes = [row[1] for row in rows]
-        areas = [row[2] for row in rows]
-        if any(current <= previous for previous, current in zip(stages, stages[1:], strict=False)):
-            raise ValueError("Lake table stages must be strictly increasing.")
-        if any(current < previous for previous, current in zip(volumes, volumes[1:], strict=False)):
-            raise ValueError("Lake table volumes must be nondecreasing.")
-        if any(value < 0.0 for value in areas):
-            raise ValueError("Lake table surface areas cannot be negative.")
+        for row in rows:
+            for label, value in zip(("stage", "volume", "surface area"), row, strict=True):
+                if not np.isfinite(value):
+                    raise ValueError(
+                        f"Lake table row {row} has a {label} of {value!r}: every value must be "
+                        "finite. FloPy writes the row cut short at a NaN, and MF6 stops unable "
+                        "to read it, naming neither the value nor the lake."
+                    )
+            if row[1] < 0.0 or row[2] < 0.0:
+                raise ValueError(
+                    f"Lake table row {row} has a negative "
+                    f"{'volume' if row[1] < 0.0 else 'surface area'}: no lake holds one. MF6 "
+                    "does not check the sign, and would run it as given."
+                )
+        for previous, current in zip(rows, rows[1:], strict=False):
+            if not current[0] > previous[0]:
+                raise ValueError(
+                    "Lake table stages must be strictly increasing, as MF6 requires: stage "
+                    f"{current[0]!r} follows {previous[0]!r}."
+                )
+            if not current[1] > previous[1]:
+                hint = (
+                    " Two zero-volume rows are stages at or below the lake's lowest bed: "
+                    "keep only the last of them."
+                    if current[1] == 0.0
+                    else ""
+                )
+                raise ValueError(
+                    "Lake table volumes must STRICTLY increase, as MF6 requires: the row at "
+                    f"stage {current[0]!r} holds {current[1]!r}, not more than the "
+                    f"{previous[1]!r} at stage {previous[0]!r}.{hint}"
+                )
+            if current[2] < previous[2]:
+                raise ValueError(
+                    "Lake table surface areas must not fall as the stage rises, as MF6 "
+                    f"requires: {current[2]!r} at stage {current[0]!r} is below the "
+                    f"{previous[2]!r} at stage {previous[0]!r}."
+                )
         object.__setattr__(self, "rows", rows)
 
     @property
@@ -449,8 +716,9 @@ class LakeTableBuilder:
     way.
 
     This object only holds the inputs. :meth:`build` turns them into a validated
-    :class:`LakeTable`. Hand either one to ``mf.lak(..., tables={lake_id: ...})``,
-    which calls :meth:`build` for you (Notes, *Handing it to mf.lak*).
+    :class:`LakeTable` -- validated by MF6's own table checks, so a table it
+    returns is one MF6 reads. Hand either one to ``mf.lak(..., tables={lake_id:
+    ...})``, which calls :meth:`build` for you (Notes, *Handing it to mf.lak*).
 
     **Three modes. The fields you set choose the mode.** :meth:`build` checks
     them in this order and uses the FIRST that applies. It does not read or
@@ -459,7 +727,8 @@ class LakeTableBuilder:
 
     1. **Explicit rows** -- ``rows`` is set. Taken as given.
     2. **DEM** -- ``rows`` is ``None`` and ``dem`` is set. Needs ``footprint``
-       and ``stages``. Optional: ``footprint_buffer``, ``storage_coefficient``.
+       and ``stages``. Optional: ``footprint_layer``, ``footprint_buffer``,
+       ``storage_coefficient``.
     3. **Prism** -- neither of the above. Needs ``area``, ``top`` and
        ``bottom``. Optional: ``stage_step``, ``storage_coefficient``. The surface
        area is constant: a trench, vault or lined basin.
@@ -469,25 +738,27 @@ class LakeTableBuilder:
     **No unit conversion happens anywhere in this class.** Every length (stages,
     ``top``/``bottom``, the DEM's elevations AND its pixel size,
     ``footprint_buffer``) must already be in the MODEL's length unit. Areas come
-    out in that unit squared and volumes in that unit cubed. A DEM in a metre CRS
-    under a model in feet gives square metres and cubic metres, and nothing
-    notices.
+    out in that unit squared and volumes in that unit cubed. The footprint IS
+    reprojected to the raster's CRS, but that moves it, it does not convert
+    units: a DEM in a metre CRS under a model in feet gives square metres and
+    cubic metres, and nothing notices. A DEM in a GEOGRAPHIC CRS, whose pixels
+    measure degrees, is refused.
 
     Parameters
     ----------
-    rows : sequence of (stage, volume, area) sequences, optional
+    rows : sequence of (stage, volume, area) sequences, numpy.ndarray or pandas.DataFrame, optional
         Default ``None``. **Rows mode.** When set, it wins: every field except
         ``filename`` is ignored. Each row is three numbers: stage (length),
         stored volume (length cubed) and surface area (length squared), in
-        increasing stage. Any value ``float()`` accepts: a list of tuples, a
-        2-D ``numpy`` array, ``df.to_numpy()``, or
-        ``list(df.itertuples(index=False))``. A bare ``pandas.DataFrame`` does
-        NOT work: iterating one yields its column LABELS, so :meth:`build`
-        raises ``ValueError: could not convert string to float`` for string
-        labels, or ``TypeError: 'int' object is not iterable`` for the default
-        0, 1, 2. The rows go to :class:`LakeTable` as they are, so
-        ``storage_coefficient`` is NOT applied and :class:`LakeTable`'s
-        validation rules are the whole check.
+        increasing stage -- a list of tuples, a 2-D ``numpy`` array, or a
+        ``pandas.DataFrame``, which is read by its columns named ``stage``,
+        ``volume`` and ``area`` (any letter case) when it has all three, else
+        by position when it has exactly three columns, and refused
+        (``ValueError``) otherwise. A bare DataFrame used to fail on its column
+        LABELS (ledger 318). The rows go to :class:`LakeTable` as they are, so
+        ``storage_coefficient`` is NOT applied, and :class:`LakeTable`'s
+        validation -- MF6's own table checks, plus finite and non-negative
+        values -- is the whole check.
     area : float, optional
         Default ``None``. **Prism mode.** The lake's constant surface area
         (length squared). Must be > 0. Every row gets this area, including the
@@ -509,14 +780,15 @@ class LakeTableBuilder:
     storage_coefficient : float, default 1.0
         **Prism and DEM modes. The rows mode ignores it.** Multiplies every
         VOLUME, never the area. It is the fraction of the geometric volume that
-        holds water, e.g. the porosity of a gravel-filled infiltration gallery.
-        MF6 knows nothing of it beyond the table: above the last row it grows the
-        volume at the FULL last-row area (Notes, *Beyond the table*). It is not
-        validated here (ledger 318): ``0`` builds all-zero volumes, which MF6
-        refuses whenever the table has more than one row; a negative value makes
-        the volumes fall, and :class:`LakeTable` then raises ``Lake table volumes
-        must be nondecreasing``, which does not name this field; a value above 1
-        is accepted.
+        holds water, e.g. the porosity of a gravel-filled infiltration gallery,
+        so :meth:`build` refuses anything but a number greater than 0 and at
+        most 1 (``ValueError``, ``NaN`` included; ``TypeError`` for a ``bool``
+        or a non-number). Each of those used to build (ledger 318): ``0`` a
+        table of zero volumes, which MF6 refuses; a negative value falling
+        volumes, refused by a message that did not name this field; and a value
+        above 1 a basin holding more water than its own volume, which no fill
+        does. MF6 knows nothing of it beyond the table: above the last row it
+        grows the volume at the FULL last-row area (Notes, *Beyond the table*).
     dem : str or pathlib.Path, optional
         Default ``None``. **DEM mode.** Setting it selects the mode, unless
         ``rows`` is also set. It is a raster of the lake-BED elevation, anything
@@ -543,57 +815,87 @@ class LakeTableBuilder:
 
         Which pixels count: a pixel belongs to the lake when its CENTRE falls
         inside ``footprint`` (rasterio ``geometry_mask`` with
-        ``all_touched=False``), and pixels holding the raster's DECLARED
-        no-data value are skipped. A raster that declares no no-data value is
-        read as it is. A ``0`` or ``-9999`` fill then counts as a real bed and
-        inflates every volume. A ``NaN`` pixel inside the footprint makes every
-        volume ``NaN``, and :class:`LakeTable` does not catch it. Each pixel's
-        area is ``|a * e|`` from the raster's affine transform, in the raster
-        CRS's units squared (rotation terms are ignored).
-    footprint : pathlib.Path or shapely geometry, optional
+        ``all_touched=False``). A pixel holding the raster's DECLARED no-data
+        value, or ``NaN``, has no bed and is left out; a ``NaN`` used to make
+        every volume ``NaN`` (ledger 318). When SOME pixels inside the footprint
+        are left out that way, :meth:`build` WARNS with their count and area,
+        since the table is short by that area; when all of them are, it raises.
+        A raster that declares no no-data value is read as it is: a ``0`` or
+        ``-9999`` fill then counts as a real bed and inflates every volume.
+        Each pixel's area is ``|a * e|`` from the raster's affine transform, in
+        the raster CRS's units squared (rotation terms are ignored). A raster in
+        a geographic CRS, whose pixels measure degrees, raises ``ValueError``.
+    footprint : str, pathlib.Path, geopandas.GeoDataFrame, geopandas.GeoSeries, Area or shapely geometry, optional
         Default ``None``. **DEM mode, required** (``ValueError`` when missing).
-        It is the lake outline that limits which DEM pixels count. Pass a
-        shapely geometry (``Polygon``, ``MultiPolygon``, ...) or a
-        ``pathlib.Path`` to a vector file. Only the file's default (first) layer
-        is read: ``geopandas.read_file`` is called without ``layer=``, and a
-        GeoPackage holding several layers only triggers pyogrio's "More than one
-        layer found" warning. For another layer pass
-        ``gpd.read_file(path, layer=...).union_all()``. Every feature of the
-        layer read is UNIONED into one outline, so a file holding several lakes
-        gives one table for all of them together. A ``str`` path, a
-        ``GeoDataFrame`` and a ``GeoSeries`` are all refused with ``ValueError:
-        DEM-derived lake tables require a footprint geometry or path`` (ledger
-        318). Wrap a string in ``Path(...)``, and pass ``gdf.union_all()`` or
-        ``gdf.geometry.iloc[i]`` from a frame. **It is NOT reprojected** (ledger
-        318). Its coordinates are used as they are, in the raster's CRS, and a
-        file's own CRS is ignored. A footprint in another CRS, one lying off the
-        raster, or one too thin for any pixel centre to fall inside raises
-        nothing and builds a table of zeros, which MF6 refuses when it has more
-        than one row (Notes, *What MF6 checks*).
+        The lake outline that limits which DEM pixels count, read by the one
+        footprint reader behind ``mf.lak``'s ``lakes`` and
+        ``LayerStack.excavate``'s ``within``
+        (``myflopy.modflow.mf6.grid.geometry.read_footprints``): a vector file
+        as a ``str`` or ``pathlib.Path`` (or a list of them, stacked in order),
+        read at ``footprint_layer``; a ``GeoDataFrame`` or ``GeoSeries``; an
+        ``mf.Area``; or a shapely geometry. Anything else raises ``TypeError``.
+        Every feature must be a ``Polygon`` or ``MultiPolygon`` with area
+        (``ValueError``), and all of them are UNIONED into one outline, so a
+        file holding several lakes gives one table for all of them together --
+        pass the one lake's row, or put it in its own layer. It is REPROJECTED
+        to the raster's CRS when both declare one; a footprint carrying no CRS
+        (a bare shapely geometry, an ``mf.Area`` with ``crs=None``) is taken to
+        be in the raster's frame already. A footprint that reaches NO pixel with
+        a bed raises ``ValueError`` saying which of three things happened -- it
+        lies off the raster, no pixel CENTRE falls inside it (it is narrower
+        than a pixel), or every pixel inside is no-data -- with the extents and
+        CRSs of both. More than one pixel's area of it lying off the raster
+        WARNS, with that area. Until ledger 318 a ``str``, a frame and a series
+        were refused, the footprint was never reprojected (a file's own CRS was
+        ignored), only a file's first layer was read, and each of those misses
+        built a table of zeros, which MF6 refuses.
+    footprint_layer : str or int, optional
+        Default ``None``. **DEM mode.** Which layer of a ``footprint`` FILE to
+        read: its name, or its zero-based position in the file (any integer
+        type, numpy's included; a ``bool`` raises ``TypeError``). ``None`` reads
+        the first layer, GDAL's default -- for a GeoPackage holding several,
+        behind pyogrio's generic "More than one layer found" warning. A name or
+        position the file does not hold raises ``ValueError`` listing the
+        layers present, and a ``footprint_layer`` given with a footprint that
+        is not a file raises ``ValueError``, since it could not act. A position
+        is accepted here, where ``mf.lak``'s ``layer=`` takes only a name,
+        because that one sits beside a MODEL layer (``only_layer``) and this
+        one beside nothing an integer could be mistaken for.
+        ``geopandas.list_layers(path)`` gives the names.
     stages : sequence of float, optional
         Default ``None``. **DEM mode, required** (``ValueError`` when missing),
         and ignored by the other modes. These are the stages to tabulate
         (length), strictly increasing, one row each, e.g.
-        ``np.arange(526.0, 536.25, 0.25)``. Unsorted or repeated stages raise
-        ``ValueError``, and so does an empty sequence. At each stage, the
-        volume is the sum over lake pixels of ``max(stage - bed, 0) * pixel area
-        * storage_coefficient``. The area is the pixel area times the number of
-        lake pixels whose bed is strictly below the stage (a pixel exactly AT
-        the stage is dry). So every stage at or below the lowest bed gives
-        ``(stage, 0.0, 0.0)``. Every stage above the highest bed gets the area
-        of ALL lake pixels (their count x the pixel area, not the footprint
-        polygon's own area), and the volume grows by that area x
-        ``storage_coefficient`` per unit of stage. Start AT the lowest bed, so
-        the first row is ``(lowest bed, 0.0, 0.0)``. A first stage above it
-        makes MF6 give every lower stage the first row's volume (Notes). Two
-        stages at or below it make two zero-volume rows, which this class
-        accepts and MF6 refuses. The lowest bed is the minimum of the DEM inside
-        the footprint, which need not be a contour label.
+        ``np.arange(526.0, 536.25, 0.25)``. An empty sequence, a stage that is
+        not finite, and unsorted or repeated stages raise ``ValueError``. At
+        each stage, the volume is the sum over lake pixels of ``max(stage -
+        bed, 0) * pixel area * storage_coefficient``. The area is the pixel area
+        times the number of lake pixels whose bed is strictly below the stage
+        (a pixel exactly AT the stage is dry). So every stage at or below the
+        lowest bed gives ``(stage, 0.0, 0.0)``, and MF6 refuses two such rows
+        (its volumes must strictly increase). **Only the LAST of them is
+        kept** -- the highest stage at or below the lowest bed -- and the rest
+        are dropped, with an INFO log line. That is not a guess: MF6 reads a
+        stage below a table's first row as that row, and between two zero rows
+        it reads zero, so the kept table gives MF6 the same volume and area at
+        every stage as the full list would (measured with ``mf6``, ledger 318).
+        The table's ``minimum_stage`` is then the kept stage, which is what
+        ``mf.lak`` checks a ``starting_stage`` against. When EVERY stage is at
+        or below the lowest bed the table would hold no water at any stage it
+        lists, and ``ValueError`` names the lowest bed. Every stage above the
+        highest bed gets the area of ALL lake pixels (their count x the pixel
+        area, not the footprint polygon's own area), and the volume grows by
+        that area x ``storage_coefficient`` per unit of stage. A first stage
+        ABOVE the lowest bed makes MF6 give every lower stage the first row's
+        volume (Notes), so start at or below it; the lowest bed is the minimum
+        of the DEM inside the footprint, which need not be a contour label.
     footprint_buffer : float, default 0.0
         **DEM mode.** Buffers the footprint by this distance before masking, in
-        the raster CRS's units (shapely ``buffer``). A positive value grows it,
-        e.g. to pick up pixel centres along a tightly drawn shoreline. A
-        negative value shrinks it. ``0`` leaves it untouched.
+        the RASTER CRS's units -- after the footprint is reprojected there
+        (shapely ``buffer``). A positive value grows it, e.g. to pick up pixel
+        centres along a tightly drawn shoreline. A negative value shrinks it,
+        and one that shrinks it to nothing raises ``ValueError``. ``0`` leaves
+        it untouched.
     filename : str, optional
         Default ``None``. **All modes.** Carried onto the built
         :class:`LakeTable`. It names the ``laktab`` file ``mf.lak`` writes,
@@ -611,30 +913,28 @@ class LakeTableBuilder:
     Notes
     -----
     *Handing it to mf.lak.* Pass ``tables={lake_id: builder_or_table}``, with at
-    most one table per lake. The key is the lake id as a STRING: the
-    ``lake_id_field`` value converted with ``str()``, so an integer id ``101`` is
-    keyed ``"101"``. An int key raises ``ValueError: Lake table references
-    unknown lake '101'``, a message that prints the int exactly as it would the
-    string, so it reads as if lake ``"101"`` did not exist (ledger 318). Without
+    most one table per lake. A key is read as a lake id the way the ids are
+    made -- converted with ``str()`` -- so a lake whose ``lake_id_field`` value
+    is the integer ``101`` may be keyed ``101`` or ``"101"``; both at once raise
+    ``ValueError``. (An integer key used to raise ``unknown lake '101'``,
+    printing the int exactly as the id it missed; ledger 318.) Without
     ``lake_id_field``, the ids are the file stems when every file holds one
     feature, and otherwise ``"lake_0"``, ``"lake_1"``, ... in row order. A key
-    naming no lake raises ``ValueError: Lake table references unknown lake``.
-    ``mf.lak`` calls :meth:`build`, then refuses a ``starting_stage`` outside
-    ``[minimum_stage, maximum_stage]``. It writes each table as a child package
-    named ``"<package name>_<lake_id>_table"``. Lakes left out of the mapping get
-    no table.
+    naming no lake raises ``ValueError: Lake table references unknown lake``,
+    listing the ids there are. ``mf.lak`` calls :meth:`build`, then refuses a
+    ``starting_stage`` outside ``[minimum_stage, maximum_stage]``. It writes
+    each table as a child package named ``"<package name>_<lake_id>_table"``.
+    Lakes left out of the mapping get no table.
 
-    *What MF6 checks.* When it reads the file, MF6 needs the volumes STRICTLY
-    increasing and the areas nondecreasing. :class:`LakeTable` checks less than
-    that: it accepts equal volumes, and areas that fall. The DEM mode's areas
-    never fall, and with a positive ``storage_coefficient`` its volumes rise
-    strictly once any pixel is wet. So with a positive ``storage_coefficient``
-    the DEM mode trips MF6 two ways, both runs of zero-volume rows: two or more
-    stages at or below the lowest bed, and a footprint that reaches no valid
-    pixel (another CRS, off the raster, or thinner than a pixel so that no centre
-    falls inside), which makes EVERY row ``(stage, 0.0, 0.0)``. Measured: MF6
-    stops with ``TABLE VOLUME ENTRY 2 ... MUST BE GREATER THAN THE PREVIOUS
-    VOLUME ENTRY``.
+    *What MF6 checks.* When it reads the file, MF6 needs the stages and the
+    volumes STRICTLY increasing and the areas nondecreasing (``gwf-lak.f90``,
+    ``lak_read_table``), and :class:`LakeTable` checks exactly that, so a table
+    this builds is one MF6 reads. The DEM mode's areas never fall, and its
+    volumes rise strictly once any pixel is wet; its zero-volume rows below the
+    bed are reduced to one (``stages``), and a footprint reaching no pixel with
+    a bed is refused (``footprint``). Before ledger 318 both of those built,
+    and MF6 stopped with ``TABLE VOLUME ENTRY 2 ... MUST BE GREATER THAN THE
+    PREVIOUS VOLUME ENTRY``.
 
     *Beyond the table.* Below the first stage, MF6 uses the first row's volume
     and area. Above the last stage, it keeps the last row's area and grows the
@@ -658,20 +958,21 @@ class LakeTableBuilder:
     >>> trench.build().rows[:2]
     ((96.0, 0.0, 400.0), (96.5, 60.0, 400.0))
 
-    Rows you already have, e.g. from a survey or a spreadsheet:
+    Rows you already have, e.g. from a survey or a spreadsheet -- a DataFrame is
+    read by its ``stage``/``volume``/``area`` columns:
 
     >>> import pandas as pd
     >>> survey = pd.DataFrame({"stage": [96.0, 98.0, 100.0],
     ...                        "volume": [0.0, 1.5e4, 4.2e4],
     ...                        "area": [0.0, 1.2e4, 1.6e4]})
-    >>> mf.LakeTableBuilder(rows=survey[["stage", "volume", "area"]].to_numpy()).build().rows
+    >>> mf.LakeTableBuilder(rows=survey).build().rows
     ((96.0, 0.0, 0.0), (98.0, 15000.0, 12000.0), (100.0, 42000.0, 16000.0))
 
-    A bathymetry raster, masked to the lake outline:
+    A bathymetry raster, masked to the lake outline -- the ``ponds`` layer of a
+    GeoPackage, reprojected to the raster's CRS if it is in another:
 
-    >>> from pathlib import Path
-    >>> mf.LakeTableBuilder(dem="bathy.tif", footprint=Path("lake.gpkg"),
-    ...                     stages=np.arange(94.0, 102.25, 0.25))
+    >>> mf.LakeTableBuilder(dem="bathy.tif", footprint="lakes.gpkg",
+    ...                     footprint_layer="ponds", stages=np.arange(94.0, 102.25, 0.25))
 
     Bathymetry drawn as contours. The same ``mf.Contours`` can also be
     ``mf.lak``'s ``lake_bottom``, and ``resolve_source()`` hands this class its
@@ -681,7 +982,7 @@ class LakeTableBuilder:
     ...                         region_vector="pond.gpkg")
     >>> pond_table = mf.LakeTableBuilder(
     ...     dem=lak_bathy.resolve_source(),
-    ...     footprint=Path("pond.gpkg"),           # a Path -- a str is refused
+    ...     footprint="pond.gpkg",
     ...     stages=np.arange(526.0, 536.25, 0.25),  # from the lowest bed up
     ... )
 
@@ -693,36 +994,93 @@ class LakeTableBuilder:
     ...              tables={"sw": pond_table})   # writes lak_sw.lak.tab
     """
 
-    rows: Sequence[Sequence[float]] | None = None
+    rows: Sequence[Sequence[float]] | pd.DataFrame | None = None
     area: float | None = None
     top: float | None = None
     bottom: float | None = None
     stage_step: float = 1.0
     storage_coefficient: float = 1.0
-    dem: Path | None = None
-    footprint: Path | BaseGeometry | None = None
+    dem: str | Path | None = None
+    footprint: str | Path | Sequence[str | Path] | gpd.GeoDataFrame | gpd.GeoSeries | Area | BaseGeometry | None = None
+    footprint_layer: str | int | None = None
     stages: Sequence[float] | None = None
     footprint_buffer: float = 0.0
     filename: str | None = None
 
-    def _footprint_geometry(self) -> BaseGeometry:
-        """Resolve ``footprint`` to one geometry, buffered by ``footprint_buffer``.
+    def _coefficient(self) -> float:
+        """``storage_coefficient`` as a float in (0, 1], or a refusal naming the field (ledger 318)."""
 
-        A shapely geometry is used as given. A ``pathlib.Path`` is read with
-        ``gpd.read_file`` and no ``layer=``, so only the file's default (first)
-        layer is read, and every feature of it is unioned. Anything else -- a
-        ``str`` path included -- raises. Nothing is reprojected: the caller's
-        coordinates must be the raster's (ledger 318).
+        value = self.storage_coefficient
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+            raise TypeError(f"storage_coefficient must be a number, not {value!r}.")
+        value = float(value)
+        if not 0.0 < value <= 1.0:
+            raise ValueError(
+                f"storage_coefficient must be greater than 0 and at most 1 -- the fraction of "
+                f"the geometric volume that holds water -- not {value!r}. 0 builds a table of "
+                "zero volumes, which MF6 refuses; a negative value makes the volumes fall; and "
+                "above 1 the basin would hold more water than its own volume."
+            )
+        return value
+
+    def _dem_stages(self) -> list[float]:
+        """``stages`` as python floats: present, not empty, finite and strictly increasing."""
+
+        if self.stages is None:
+            raise ValueError("DEM-derived lake tables require stages.")
+        stages = [float(stage) for stage in self.stages]
+        if not stages:
+            raise ValueError("stages is empty: a DEM-derived lake table needs at least one stage.")
+        for stage in stages:
+            if not np.isfinite(stage):
+                raise ValueError(f"stages must be finite; got {stage!r}.")
+        for previous, current in zip(stages, stages[1:], strict=False):
+            if not current > previous:
+                raise ValueError(
+                    "Lake table stages must be strictly increasing (one row each): "
+                    f"{current!r} follows {previous!r}."
+                )
+        return stages
+
+    def _footprint_frame(self, crs) -> gpd.GeoDataFrame:
+        """``footprint`` read by the shared footprint reader, in ``crs`` (the raster's).
+
+        :func:`~myflopy.modflow.mf6.grid.geometry.read_footprints` -- the reader
+        ``mf.lak(lakes=)`` and ``LayerStack.excavate(within=)`` use -- so one file is
+        read the same way, at the same layer and in the same frame, by all three. It
+        refuses a feature that is not polygonal or has no area, and reprojects to
+        ``crs``; a footprint carrying no CRS is taken to be in it already.
         """
 
-        if isinstance(self.footprint, BaseGeometry):
-            geometry = self.footprint
-        elif isinstance(self.footprint, Path):
-            geometries = gpd.read_file(self.footprint).geometry
-            geometry = geometries.union_all()
+        footprint = self.footprint
+        is_file = isinstance(footprint, (str, Path)) or (
+            isinstance(footprint, (list, tuple))
+            and len(footprint) > 0
+            and all(isinstance(item, (str, Path)) for item in footprint)
+        )
+        if not is_file and self.footprint_layer is not None:
+            raise ValueError(
+                f"footprint_layer={self.footprint_layer!r} selects a layer of a footprint "
+                f"FILE, and the footprint is a {type(footprint).__name__}, which has none -- "
+                "drop footprint_layer=, or pass the path."
+            )
+        if is_file or isinstance(footprint, gpd.GeoDataFrame):
+            source = footprint
+        elif isinstance(footprint, gpd.GeoSeries):
+            source = gpd.GeoDataFrame(geometry=footprint)
+        elif isinstance(footprint, Area):
+            source = gpd.GeoDataFrame(geometry=[footprint.geometry], crs=footprint.crs)
+        elif isinstance(footprint, BaseGeometry):
+            source = gpd.GeoDataFrame(geometry=[footprint])
         else:
-            raise ValueError("DEM-derived lake tables require a footprint geometry or path.")
-        return geometry.buffer(self.footprint_buffer) if self.footprint_buffer else geometry
+            raise TypeError(
+                f"footprint got a {type(footprint).__name__}; pass a vector file path (str "
+                "or Path), a GeoDataFrame or GeoSeries, an mf.Area, or a shapely polygon."
+            )
+        layer = self.footprint_layer
+        if isinstance(layer, str):
+            layer = str(layer)  # a numpy string is stored as a plain one (ledger 265)
+        return read_footprints(source, layer=layer, crs=crs, noun="footprint")
 
     def _build_from_dem(self) -> LakeTable:
         """Integrate stage/volume/area from a DEM masked to the footprint at each stage.
@@ -730,13 +1088,38 @@ class LakeTableBuilder:
         For every stage, sums inundation depth x PIXEL area over the valid pixels
         whose centres fall in the footprint (times the storage coefficient) for
         the volume, and the area of the pixels with depth > 0 for the surface
-        area. Raster pixels, not model cells: the grid plays no part.
+        area. Raster pixels, not model cells: the grid plays no part. The footprint
+        is read and reprojected by the shared reader; a pixel with no bed (declared
+        no-data or ``NaN``) is left out; a footprint reaching no pixel with a bed is
+        refused, and a partial miss warns. The zero-volume rows at or below the
+        lowest bed are reduced to the last of them (ledger 318).
         """
 
-        if self.stages is None:
-            raise ValueError("DEM-derived lake tables require stages.")
-        geometry = self._footprint_geometry()
+        stages = self._dem_stages()
+        coefficient = self._coefficient()
+        if self.footprint is None:
+            raise ValueError(
+                "DEM-derived lake tables require a footprint: a vector file path, a "
+                "GeoDataFrame or GeoSeries, an mf.Area, or a shapely polygon."
+            )
         with rasterio.open(self.dem) as source:
+            raster_crs = CRS.from_user_input(source.crs) if source.crs else None
+            name = Path(str(self.dem)).name
+            if raster_crs is not None and raster_crs.is_geographic:
+                raise ValueError(
+                    f"{name} is in a geographic CRS ({raster_crs.to_string()}): its pixels "
+                    "measure degrees, and a lake table's areas and volumes come from the "
+                    "pixel size. Reproject the raster to the model's projected CRS first."
+                )
+            frame = self._footprint_frame(raster_crs)
+            geometry = frame.geometry.union_all()
+            if self.footprint_buffer:
+                geometry = geometry.buffer(self.footprint_buffer)
+            if geometry.is_empty:
+                raise ValueError(
+                    f"footprint_buffer={self.footprint_buffer!r} shrinks the footprint to "
+                    "nothing: there are no pixels left to tabulate."
+                )
             dem = source.read(1, masked=True)
             inside = geometry_mask(
                 [geometry],
@@ -744,21 +1127,86 @@ class LakeTableBuilder:
                 transform=source.transform,
                 invert=True,
             )
-            valid = inside & ~np.ma.getmaskarray(dem)
-            elevations = np.asarray(dem.filled(np.nan), dtype=float)
+            elevations = np.asarray(dem.astype(float).filled(np.nan), dtype=float)
+            # A NaN pixel is no bed either: it made every volume NaN (ledger 318).
+            valid = inside & ~np.ma.getmaskarray(dem) & np.isfinite(elevations)
             cell_area = abs(float(source.transform.a * source.transform.e))
+            pixel = f"{abs(source.transform.a):g} x {abs(source.transform.e):g}"
+            raster_box = box(*source.bounds)
+
+        where = _footprint_and_raster(
+            geometry, raster_box, source_crs=frame.attrs.get("source_crs"), raster_crs=raster_crs
+        )
+        inside_count = int(inside.sum())
+        valid_count = int(valid.sum())
+        if valid_count == 0:
+            if not geometry.intersects(raster_box):
+                why = "it lies off the raster"
+            elif inside_count == 0:
+                why = (
+                    f"no pixel CENTRE falls inside it -- it is narrower there than the "
+                    f"raster's {pixel} pixels; footprint_buffer= grows it"
+                )
+            else:
+                why = (
+                    f"all {inside_count} pixels whose centres fall inside it have no bed "
+                    "(the raster's declared no-data value, or NaN)"
+                )
+            raise ValueError(
+                f"The lake-table footprint reaches no pixel of {name} with a bed: {why}. "
+                f"Every row would be (stage, 0.0, 0.0), which MF6 refuses. {where}"
+            )
+        if inside_count > valid_count:
+            missing = inside_count - valid_count
+            _warn_table(
+                f"{missing} of the {inside_count} pixels of {name} whose centres fall inside "
+                "the lake-table footprint have no bed (the raster's declared no-data value, "
+                f"or NaN) and are left out, so the table's area and volume are short by up "
+                f"to {missing * cell_area:g} (raster units squared) of lake."
+            )
+        off = geometry.difference(raster_box).area
+        if off > cell_area:
+            _warn_table(
+                f"{off:g} of the lake-table footprint's {geometry.area:g} (raster units "
+                f"squared) lies off {name}, more than one pixel: the table covers only the "
+                f"part on the raster. {where}"
+            )
 
         rows = []
-        for stage in self.stages:
-            depth = np.where(valid, np.maximum(float(stage) - elevations, 0.0), 0.0)
+        for stage in stages:
+            depth = np.where(valid, np.maximum(stage - elevations, 0.0), 0.0)
             wet = depth > 0.0
             rows.append(
                 (
                     float(stage),
-                    float(depth.sum() * cell_area * self.storage_coefficient),
+                    float(depth.sum() * cell_area * coefficient),
                     float(wet.sum() * cell_area),
                 )
             )
+        # Every stage at or below the lowest bed gives (stage, 0.0, 0.0), and MF6 refuses
+        # two equal volumes. They are a prefix (volume is 0 exactly until a pixel is wet),
+        # and MF6 reads a stage below the first row AS the first row, so keeping only the
+        # last of them gives MF6 the same curve at every stage (ledger 318, measured).
+        dry = 0
+        while dry < len(rows) and rows[dry][1] == 0.0:
+            dry += 1
+        if dry == len(rows):
+            lowest = float(elevations[valid].min())
+            raise ValueError(
+                f"Every stage ({stages[0]:g} to {stages[-1]:g}) is at or below the lowest bed "
+                f"inside the footprint, {lowest:g}: the table would hold no water at any stage "
+                "it lists. Tabulate from the lowest bed up."
+            )
+        if dry > 1:
+            logger.info(
+                "LakeTableBuilder: %d stages at or below the lowest bed of %s are zero-volume "
+                "rows, which MF6 refuses; kept only the last, %g -- MF6 reads a lower stage as "
+                "that row, so the curve is unchanged.",
+                dry,
+                name,
+                rows[dry - 1][0],
+            )
+            rows = rows[dry - 1:]
         return LakeTable(tuple(rows), filename=self.filename)
 
     def build(self) -> LakeTable:
@@ -772,33 +1220,44 @@ class LakeTableBuilder:
         Returns
         -------
         LakeTable
-            The rows, carrying this builder's ``filename``.
+            The rows, carrying this builder's ``filename``. They pass MF6's own
+            table checks (:class:`LakeTable`).
 
         Raises
         ------
         ValueError
-            Rows mode: any :class:`LakeTable` rule, or a string ``float()``
-            cannot convert (including the string column labels of a bare
-            ``pandas.DataFrame``). DEM mode: ``stages`` is missing (checked
-            first); ``footprint`` is missing or of a refused type (a ``str``,
-            ``GeoDataFrame`` or ``GeoSeries``); or ``stages`` is empty or not
-            strictly increasing. Prism mode: ``area``, ``top`` or ``bottom`` is
+            Rows mode: any :class:`LakeTable` rule, a string ``float()`` cannot
+            convert, or a ``DataFrame`` whose columns cannot be told apart. DEM
+            mode, in this order: ``stages`` missing, empty, not finite or not
+            strictly increasing; ``storage_coefficient`` not in (0, 1];
+            ``footprint`` missing; the raster in a geographic CRS;
+            ``footprint_layer`` naming no layer of the file, or given with a
+            footprint that is not a file; a footprint feature that is not a
+            polygon or has no area; a ``footprint_buffer`` that shrinks it to
+            nothing; a footprint reaching no pixel with a bed; every stage at or
+            below the lowest bed. Prism mode: ``area``, ``top`` or ``bottom``
             missing (the message lists what each of the three modes needs),
-            ``area <= 0``, ``top <= bottom``, or ``stage_step <= 0``. Prism and
-            DEM modes: a negative ``storage_coefficient`` once any row after the
-            first is wet (``Lake table volumes must be nondecreasing``, a
-            message that does not name ``storage_coefficient``).
+            ``area <= 0``, ``top <= bottom``, ``stage_step <= 0``, or
+            ``storage_coefficient`` not in (0, 1].
         TypeError
-            Rows mode: a row that is not iterable, e.g. the default integer
-            column labels of a bare ``pandas.DataFrame`` (``'int' object is not
-            iterable``). DEM mode: ``dem`` is not something rasterio can open,
-            e.g. a ``Surface`` itself, or the float that ``resolve_source()``
-            returns for ``mf.Flat``.
+            Rows mode: a row that is not iterable, or ``rows`` a mapping or a
+            string. DEM mode: ``dem`` is not something rasterio can open, e.g. a
+            ``Surface`` itself, or the float that ``resolve_source()`` returns
+            for ``mf.Flat``; a ``footprint`` of another type; a ``bool``
+            ``footprint_layer``. Prism and DEM modes: a ``storage_coefficient``
+            that is a ``bool`` or not a number.
         rasterio.errors.RasterioIOError
             DEM mode: ``dem`` names a file that is missing or not a raster.
         pyogrio.errors.DataSourceError
-            DEM mode: ``footprint`` is a ``Path`` to a missing or unreadable
-            vector file.
+            DEM mode: ``footprint`` names a vector file that is missing or
+            unreadable.
+
+        Warns
+        -----
+        UserWarning
+            DEM mode: some pixels inside the footprint have no bed (declared
+            no-data or ``NaN``), or more than one pixel's area of the footprint
+            lies off the raster -- the table is short by that area. Also logged.
 
         See Also
         --------
@@ -811,7 +1270,7 @@ class LakeTableBuilder:
         """
 
         if self.rows is not None:
-            return LakeTable(tuple(tuple(row) for row in self.rows), filename=self.filename)
+            return LakeTable(self.rows, filename=self.filename)
         if self.dem is not None:
             return self._build_from_dem()
         if self.area is None or self.top is None or self.bottom is None:
@@ -825,6 +1284,7 @@ class LakeTableBuilder:
             raise ValueError("top must be above bottom.")
         if self.stage_step <= 0.0:
             raise ValueError("stage_step must be positive.")
+        coefficient = self._coefficient()
 
         stages = list(np.arange(self.bottom, self.top, self.stage_step))
         if not stages or not np.isclose(stages[-1], self.top):
@@ -832,13 +1292,156 @@ class LakeTableBuilder:
         rows = tuple(
             (
                 float(stage),
-                float(self.area * (stage - self.bottom) * self.storage_coefficient),
+                float(self.area * (stage - self.bottom) * coefficient),
                 float(self.area),
             )
             for stage in stages
         )
         return LakeTable(rows, filename=self.filename)
 
+
+def _warn_table(message: str) -> None:
+    """Say a lake table is short of lake, where a notebook sees it: logger AND ``warnings`` (ledger 288)."""
+
+    logger.warning(message)
+    warnings.warn(message, UserWarning, stacklevel=stacklevel_outside_package())
+
+
+def _footprint_and_raster(geometry, raster_box, *, source_crs, raster_crs) -> str:
+    """Where a lake-table footprint is and where its raster is: two boxes and two frames (ledger 211).
+
+    The raster-side twin of :func:`~myflopy.modflow.mf6.grid.geometry.where_they_are`,
+    which words a GRID; the footprint's box is the one it was masked with, in the
+    raster's frame after any reprojection.
+    """
+
+    def label(crs) -> str:
+        return crs.to_string() if hasattr(crs, "to_string") else str(crs)
+
+    if raster_crs is None:
+        frame = "the raster declares no CRS, so the footprint's coordinates were used as they are"
+    elif source_crs is None:
+        frame = f"the footprint carries no CRS, so it was read as the raster's ({label(raster_crs)})"
+    elif CRS.from_user_input(source_crs) != raster_crs:
+        frame = f"the footprint was reprojected from {label(source_crs)} to the raster's {label(raster_crs)}"
+    else:
+        frame = f"both are in {label(raster_crs)}"
+    span = ", ".join(f"{value:,.1f}" for value in geometry.bounds)
+    raster = ", ".join(f"{value:,.1f}" for value in raster_box.bounds)
+    return f"The footprint spans ({span}) and the raster ({raster}); {frame}."
+
+
+
+def _record_count(value: Any) -> int | None:
+    """How many rows a FloPy LAK block holds, or ``None`` when it is not rows in memory.
+
+    A list, a tuple or an array is counted; anything else -- FloPy's external-file
+    ``{"filename": ...}`` form, a DataFrame -- is not, and its count is left to FloPy
+    and MF6.
+    """
+
+    return len(value) if isinstance(value, (list, tuple, np.ndarray)) else None
+
+
+def _auxiliary_count(auxiliary: Any) -> int | None:
+    """How many auxiliary NAMES ``auxiliary`` declares, or ``None`` when its shape is unknown.
+
+    FloPy takes the names in several shapes and writes each one the same --
+    ``["a", "b"]``, ``[("a", "b")]``, ``["auxiliary", "a", "b"]`` and the one-row
+    recarray its own ``lak.auxiliary.get_data()`` returns, ``[("auxiliary", "a",
+    "b")]``, all write ``AUXILIARY a b`` and MF6 runs them (measured). So the names
+    are counted FLAT, through nested lists, tuples and record rows, and a leading
+    ``auxiliary`` keyword is not a name. ``len(auxiliary)`` counted the nested and the
+    recarray forms as ONE auxiliary, and :func:`_flopy_lak_refusals` then refused
+    every packagedata row carrying both values as a boundname. An element that is not
+    a string makes the shape unknown, and the caller then skips the check rather than
+    guess.
+    """
+
+    if auxiliary is None:
+        return 0
+    names: list[str] = []
+
+    def flatten(item: Any) -> bool:
+        if isinstance(item, str):
+            names.append(item)
+            return True
+        if isinstance(item, np.ndarray):
+            return flatten(item.tolist())
+        if isinstance(item, np.void):  # a record row: its fields, in order
+            return flatten(item.tolist())
+        if isinstance(item, (list, tuple)):
+            return all(flatten(inner) for inner in item)
+        return False
+
+    if not flatten(auxiliary):
+        return None
+    if names and names[0].strip().lower() == "auxiliary":
+        names = names[1:]
+    return len(names)
+
+
+def _flopy_lak_refusals(
+    packagedata: Any,
+    perioddata: Any,
+    *,
+    nlakes: int | None,
+    noutlets: int,
+    ntables: int,
+    options: Mapping[str, Any],
+) -> list[str]:
+    """What ``mf.lak.flopy`` refuses before FloPy or MF6 would, one message each (ledger 318).
+
+    The escape hatch keeps the caller's RECORDS as given; what it compares is each
+    COUNT with the block it counts, and the shape of a period value -- every case here
+    one FloPy fails at build or MF6 refuses by name when it reads the file, a run
+    later (measured, ``docs/reproducers/lak_docstring_claims.py``, section 9). FloPy
+    RAISES ``NOUTLETS``/``NTABLES`` to the rows given, so only a count ABOVE its rows
+    is refused; ``nlakes`` it writes as given, so any disagreement is.
+    """
+
+    refusals = []
+    lakes = _record_count(packagedata)
+    if nlakes is not None and lakes is not None and int(nlakes) != lakes:
+        refusals.append(
+            f"nlakes={nlakes} but packagedata has {lakes} row(s); MF6 needs one row per lake "
+            "and refuses either direction by name (NO DATA SPECIFIED FOR LAKE ..., lakeno MUST "
+            "BE > 0 and <= ...). Leave nlakes out to count the rows."
+        )
+    for count_name, count, block in (("noutlets", noutlets, "outlets"), ("ntables", ntables, "tables")):
+        given = options.get(block)
+        rows = 0 if given is None else _record_count(given)
+        if rows is not None and int(count) > rows:
+            refusals.append(
+                f"{count_name}={count} but {block} has {rows} row(s); FloPy raises the count to "
+                "the rows given but never lowers it, and MF6 refuses a count above them by name."
+            )
+    naux = _auxiliary_count(options.get("auxiliary"))
+    if lakes and naux is not None and not options.get("boundnames"):
+        long_rows = [
+            row for row in packagedata if isinstance(row, (list, tuple)) and len(row) > 3 + naux
+        ]
+        if long_rows:
+            refusals.append(
+                f"packagedata row {list(long_rows[0])} carries a value past [ifno, strt, "
+                f"nlakeconn{', aux' * naux}] -- a boundname -- but boundnames=True is not "
+                "set, and FloPy fails the build on it."
+            )
+    if isinstance(perioddata, Mapping):
+        for period, records in perioddata.items():
+            arrays = [
+                record
+                for record in (records if isinstance(records, (list, tuple)) else [])
+                if isinstance(record, (list, tuple))
+                and any(isinstance(item, (np.ndarray, pd.Series)) for item in record)
+            ]
+            if arrays:
+                refusals.append(
+                    f"perioddata[{period}] record {list(arrays[0][:2])} holds an array or "
+                    "Series as its value: FloPy writes it whole, as text, and MF6 died reading "
+                    "that (a segmentation fault). Give one number per record."
+                )
+    return refusals
 
 def _build_lak_with_tables(model, *, _spec=None, lake_tables=(), implicit=False, **options):
     """Build LAK and its child table packages, after checking the lake against the DISV.
@@ -910,8 +1513,8 @@ class LAKBuilder:
     ``mf.lak_connection`` reads, so every parameter below means what it means
     there, with the same entry (a test holds the two texts equal). The one
     difference is TIMING: construction checks only ``context``, ``nper``,
-    ``layer``, ``unexcavated`` and ``implicit``, and that ``tables`` reads as a dict and
-    ``outlets`` as a tuple; every other
+    ``layer``, ``unexcavated`` and ``implicit``, and that ``tables`` reads as a dict
+    whose keys name distinct lakes and ``outlets`` as a tuple; every other
     refusal an entry names is raised when :meth:`build` -- or the property that
     first reads the value (:attr:`lake_table`, :attr:`lake_cells`,
     :attr:`connectiondata`, ...) -- runs.
@@ -921,10 +1524,17 @@ class LAKBuilder:
     ``rectangular_interior`` take one value per lake. Where an entry below
     says "any per-lake form", that is: one number for every lake; the name
     of a column of ``lakes``; a numeric string (one number for every lake);
-    ``{lake_id: value}`` naming EVERY lake (a missing lake raises); a
-    ``pandas.Series`` whose index holds every lake id (read by label); or any
-    other sequence of one value per lake, in lake order
-    (``LAKBuilder.lake_ids``).
+    ``{lake_id: value}`` naming EVERY lake (a missing lake raises; a key is
+    read through ``str()``, as the ids are made, so ``101`` names lake
+    ``"101"`` -- it used to miss it, and ``only_vertical={101: True}`` was
+    ignored silently, ledger 318); a ``pandas.Series`` whose index names
+    every lake, read by label, a label naming a lake as a key does (an
+    integer-indexed Series used to be read by POSITION, so one out of lake
+    order gave each lake another's value; two labels naming one lake raise
+    ``ValueError``), except that for ``lake_bottom`` and ``lake_top`` an
+    integer-indexed Series that ALSO holds every cell of every lake is read
+    by cell, its integers being cell numbers too; or any other sequence of
+    one value per lake, in lake order (``LAKBuilder.lake_ids``).
 
     **Per-period values.** ``stage``, ``rainfall``, ``evaporation``,
     ``runoff``, ``withdrawals``, ``inflow`` and ``status`` each become one MF6
@@ -932,26 +1542,36 @@ class LAKBuilder:
     ZERO-based. The forms:
 
     * a scalar: every lake, every period;
-    * a list or tuple: every lake, by position (position 0 = the first stress
-      period);
+    * a list or tuple, or a one-dimensional ``numpy`` array: every lake, by
+      position (position 0 = the first stress period; ``None`` skips one);
     * ``{period: value}`` (every key an int): every lake, in the periods
       named;
     * ``{period: {lake_id: value}}``: the lakes named, in the periods named;
     * ``{lake_id: value}``: that lake, every period;
     * ``{lake_id: list}`` or ``{lake_id: {period: value}}``: that lake, per
-      period.
+      period;
+    * a ``pandas.Series``: the mapping of its index, so an integer index is
+      periods and a lake-id index is lakes.
 
     A period a value does not reach writes nothing for that lake, and MF6
     KEEPS the previous period's setting (measured: rainfall given for the
     first period only was still applied in the second). A mapping whose keys
-    are ALL integers is read as periods, so with integer-like lake ids key
-    by the STRING id: ``rainfall={101: 0.5}`` writes nothing at all, silently
-    (ledger 318). A ``numpy`` array or ``pandas`` Series is NOT split by
-    period: every period's record carries the whole array as text, and MF6
-    died reading it (measured, a segmentation fault; ledger 318). Pass a list.
-    None of these values is checked here; MF6 refuses a negative rainfall,
-    evaporation, runoff, inflow or withdrawal by name when it reads the file
-    (measured, all five).
+    are ALL integers is read as periods and any other by lake id, so with
+    integer-like lake ids key lakes by the STRING id. What would never be
+    written, or written to a guess, raises ``ValueError``: a period outside
+    ``range(nper)`` -- ``rainfall={101: 0.5}`` over lake ``"101"`` wrote
+    nothing at all, silently -- a list longer than ``nper``, and an
+    all-integer mapping whose every key is ALSO a lake id (give periods as
+    a list, or as ``{period: {lake_id: value}}``). A ``numpy`` array or
+    ``pandas`` Series was written WHOLE into every period, and MF6 died
+    reading it (a segmentation fault); both are read as above now, and an
+    array of two or more dimensions raises (ledger 318). Each value is
+    checked here as MF6 would check it one run later: a ``status`` other
+    than ``ACTIVE``, ``INACTIVE`` or ``CONSTANT`` (any case), a number that
+    is not finite, and a negative rainfall, evaporation, runoff, inflow or
+    withdrawal all raise ``ValueError``; a string elsewhere is written as
+    given, which is how MF6 names a time series. MF6 refused the status and
+    each negative forcing by name (measured, all five).
 
     Parameters
     ----------
@@ -1066,11 +1686,12 @@ class LAKBuilder:
         A zero-based layer index, for every lake or ``{lake_id: layer}``
         (a lake left out is unrestricted), to which a generated lake's
         connections are confined. ``None`` means every layer a face spans. In
-        ``"bathy"`` a cell whose bed is not in that layer raises ``ValueError:
-        ... does not intersect active cell``; in ``"rectangular"`` it gets NO
-        vertical connection, silently (ledger 318). On an EXCAVATED lake it
-        must name the top active layer under every lake cell (``ValueError``
-        otherwise), and its walls are confined to that layer.
+        either generated mode a cell whose bed is not in that layer raises
+        ``ValueError: ... does not intersect active cell`` (a ``"rectangular"``
+        lake used to get NO vertical connection there, silently; ledger 318).
+        On an EXCAVATED lake it must name the top active layer under every
+        lake cell (``ValueError`` otherwise), and its walls are confined to
+        that layer.
     rectangular_interior : bool or dict of str to bool, default False
         ``"rectangular"`` lakes only. ``True`` (or ``{lake_id: True}``) also
         connects each lake cell toward its neighbours INSIDE the lake,
@@ -1118,7 +1739,9 @@ class LAKBuilder:
           ``lake_bottom`` and a ``lake_top``. Per lake cell, ONE VERTICAL
           connection in the active layer holding ``lake_bottom``, written
           ``belev = lake_bottom``, ``telev = lake_top``; a cell where
-          ``lake_bottom`` falls in no active layer gets none, silently. Then,
+          ``lake_bottom`` falls in no active layer raises ``ValueError``, as in
+          ``"bathy"`` (it used to get no VERTICAL connection, silently; ledger
+          318). Then,
           toward each neighbour OUTSIDE the lake (every neighbour with
           ``rectangular_interior=True``), one HORIZONTAL connection per active
           layer of the lake cell between ``lake_bottom`` and ``lake_top``,
@@ -1210,18 +1833,19 @@ class LAKBuilder:
         ``LayerBuildResult`` the DISV was built from -- a NEW result, to build the DISV
         and the context from (``mf.disv(dug)``, ``ModelContext(surfaces=dug,
         domain=dug.idomain)``).
-    tables : dict of str to (LakeTable or LakeTableBuilder), default {}
+    tables : dict of str or int to (LakeTable or LakeTableBuilder), default {}
         Default ``{}``: no tables (``None`` raises ``TypeError`` here; ``mf.lak``
         reads it as ``{}``). Stage / volume /
         surface-area tables, at most one per lake. A value is a
         :class:`~myflopy.modflow.mf6.lakes.LakeTable` or a
         :class:`~myflopy.modflow.mf6.lakes.LakeTableBuilder`, which is built
-        here. A key is the lake id as a STRING: the ``lake_id_field`` value
-        converted with ``str()``. So an integer id ``101`` is keyed ``"101"``,
-        and the int ``101`` raises ``ValueError: Lake table references
-        unknown lake '101'`` -- which prints the same as the string id, so it
-        reads as if that lake did not exist (ledger 318). A key naming no lake
-        raises ``ValueError``. Without a table, MF6 computes a lake's volume
+        here; anything else raises ``TypeError``. A key is read as a lake id is
+        made, through ``str()``, so a lake whose ``lake_id_field`` value is the
+        integer ``101`` may be keyed ``101`` or ``"101"``; both at once raise
+        ``ValueError``. (An int key used to raise ``unknown lake '101'``,
+        printing the int exactly as the id it missed; ledger 318.) A key naming
+        no lake raises ``ValueError`` listing the lake ids. Without a table,
+        MF6 computes a lake's volume
         and surface area from the plan areas and TOPS of the cells its
         VERTICAL connections reach, not from the bed elevations. A table's
         stages must bracket that lake's ``starting_stage`` (``ValueError``
@@ -1241,38 +1865,45 @@ class LAKBuilder:
         ``invert`` and ``width``; ``"MANNING"`` uses those plus ``roughness``
         and ``slope``. A ``rate`` (a scalar for every period, a list with
         position 0 = the first stress period, or ``{period: value}`` keyed by
-        ZERO-based stress period) is written as a ``RATE`` period setting.
-        MF6 applies it only to a SPECIFIED outlet, where a NEGATIVE rate
+        ZERO-based stress period, or an array or Series read as
+        ``LakeOutlet.rate`` says) is written as a ``RATE`` period setting, and
+        refused (``ValueError``) where it would never be written or is not a
+        finite number. MF6 applies it only to a SPECIFIED outlet, where a NEGATIVE rate
         removes water from the lake and a POSITIVE rate ADDS water. ``()``:
         no outlets.
-    stage : float, list or tuple of float, or dict, optional
+    stage : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
         Default ``None`` (nothing written). The lake stage (length), a
         per-period value. MF6 applies it ONLY to a lake whose ``status`` is
-        ``"CONSTANT"``, and holds the lake at it.
-    rainfall : float, list or tuple of float, or dict, optional
+        ``"CONSTANT"``, and holds the lake at it. A number must be finite.
+    rainfall : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
         Default ``None``. Rainfall rate on the lake surface (length per
         time), a per-period value; MF6 multiplies it by the lake's surface
-        area. Must be >= 0 for MF6.
-    evaporation : float, list or tuple of float, or dict, optional
+        area. Must be >= 0 (``ValueError``; MF6 refuses it by name).
+    evaporation : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
         Default ``None``. The MAXIMUM evaporation rate from the lake surface
         (length per time), a per-period value; MF6 lowers it when the lake
-        cannot supply it. Must be >= 0 for MF6.
-    runoff : float, list or tuple of float, or dict, optional
+        cannot supply it. Must be >= 0 (``ValueError``; MF6 refuses it by
+        name).
+    runoff : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
         Default ``None``. Runoff into the lake (length cubed per time), a
-        per-period value. Must be >= 0 for MF6.
-    withdrawals : float, list or tuple of float, or dict, optional
+        per-period value. Must be >= 0 (``ValueError``; MF6 refuses it by
+        name).
+    withdrawals : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
         Default ``None``. The MAXIMUM withdrawal from the lake (length cubed
         per time), a per-period value, written as MF6's ``WITHDRAWAL``. Must
-        be >= 0 for MF6; it is a positive number that removes water.
-    inflow : float, list or tuple of float, or dict, optional
+        be >= 0 (``ValueError``; MF6 refuses it by name): it is a positive
+        number that removes water.
+    inflow : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
         Default ``None``. External inflow to the lake (length cubed per time),
-        a per-period value. Must be >= 0 for MF6.
-    status : str, list or tuple of str, or dict, optional
+        a per-period value. Must be >= 0 (``ValueError``; MF6 refuses it by
+        name).
+    status : str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
         Default ``None`` (MF6's default, ``ACTIVE``). Each lake's status, a
         per-period value: ``"ACTIVE"``, ``"INACTIVE"`` or ``"CONSTANT"`` (the
-        last holds the lake at ``stage``). Written as given, unchecked: MF6
-        accepts any case (measured with ``"constant"``) and refuses anything
-        else by name (measured: ``Unknown LAK lak status keyword: BOGUS``).
+        last holds the lake at ``stage``), in any case, written as given (MF6
+        accepts any case, measured with ``"constant"``). Anything else raises
+        ``ValueError`` here; MF6 refused it by name one run later (measured:
+        ``Unknown LAK lak status keyword: BOGUS``).
     name : str, default "lak"
         The package name. It is the FloPy ``pname``, the input file
         ``<model>.<name>``, the stem of the four output files
@@ -1356,19 +1987,21 @@ class LAKBuilder:
         there. These override what the builder sets by default --
         ``save_flows=True`` and the four output file records -- and a string
         value may contain ``{model_name}``, filled in at build. Rename
-        the package with ``name``, NOT with ``pname``/``filename`` here: those
-        change only what FloPy writes, while the spec's name, :meth:`connection`
-        and each table child keep ``name`` (ledger 318). What the builder
-        computes itself is not for here: ``noutlets``, ``ntables`` and the
-        three data blocks raise ``TypeError: ... got multiple values`` at
-        :meth:`build`, and ``nlakes`` silently replaces the lake count (ledger
-        318).
+        the package with ``name``: a ``pname`` here raises ``TypeError`` at
+        :meth:`build`, because it renamed only what FloPy writes while the
+        spec's name, :meth:`connection` and each table child kept ``name``
+        (ledger 318). A ``filename`` here names the LAK input file only. What
+        the builder computes itself is not for here: ``nlakes`` raises
+        ``TypeError`` naming it (it used to replace the lake count silently,
+        ledger 318), and ``noutlets``, ``ntables`` and the three data blocks
+        raise ``TypeError: ... got multiple values``, all at :meth:`build`.
 
     Raises
     ------
     ValueError
-        At construction, ``context.grid`` is ``None``, ``nper`` is below 1, or
-        ``unexcavated`` is not one of its three words. Every other refusal
+        At construction, ``context.grid`` is ``None``, ``nper`` is below 1,
+        ``unexcavated`` is not one of its three words, or two ``tables`` keys
+        name one lake (``101`` and ``"101"``). Every other refusal
         named above (the full list is ``mf.lak``'s) is raised by :meth:`build`
         or the property that first needs the value -- the excavated rule's by
         :attr:`lake_rules` and :attr:`connections`, the ``unexcavated="raise"``
@@ -1380,8 +2013,9 @@ class LAKBuilder:
         not a ``str`` (an integer reads as a model layer; that is
         ``only_layer``), a ``tables`` that ``dict()`` or an
         ``outlets`` that ``tuple()`` cannot read (``None`` included). At :meth:`build`, an
-        ``options`` name ``ModflowGwflak`` does not accept, or one the builder
-        sets itself.
+        ``options`` name ``ModflowGwflak`` does not accept, one the builder
+        sets itself, ``nlakes`` or ``pname``; a ``tables`` value that is
+        neither a ``LakeTable`` nor a ``LakeTableBuilder``.
 
     See Also
     --------
@@ -1416,7 +2050,7 @@ class LAKBuilder:
     bed_leakance: Any = 1.0
     connection_modes: str | Mapping[str, str | Sequence[LakeConnection]] = "bathy"
     unexcavated: str = "warn"
-    tables: Mapping[str, LakeTable | LakeTableBuilder] = field(default_factory=dict)
+    tables: Mapping[str | int, LakeTable | LakeTableBuilder] = field(default_factory=dict)
     outlets: tuple[LakeOutlet, ...] = ()
     stage: Any = None
     rainfall: Any = None
@@ -1468,6 +2102,10 @@ class LAKBuilder:
         default=None, init=False, repr=False, compare=False
     )
     _face_geometry: DisvFaces | None = field(default=None, init=False, repr=False, compare=False)
+    # `prepared_tables`' built tables, beside the `tables` entries they were built from.
+    _prepared: tuple[tuple[tuple[str, Any], ...], dict[str, LakeTable]] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         """Validate a grid is present, ``nper >= 1`` and ``unexcavated``, and freeze tables/outlets."""
@@ -1490,7 +2128,18 @@ class LAKBuilder:
             object.__setattr__(
                 self, "layer", _vector_layer_name(self.layer, of="lakes", model_layer="only_layer=")
             )
-        object.__setattr__(self, "tables", dict(self.tables))
+        # A table key is read as a lake id is made, through `str()`: an int key used to
+        # miss its lake and raise "unknown lake '101'" (ledger 318).
+        tables: dict[str, Any] = {}
+        for key, table in dict(self.tables).items():
+            label = str(_plain_scalar(key))
+            if label in tables:
+                raise ValueError(
+                    f"tables names lake {label!r} twice; lake ids are strings, so an integer "
+                    "key names the lake of that string."
+                )
+            tables[label] = table
+        object.__setattr__(self, "tables", tables)
         object.__setattr__(self, "outlets", tuple(self.outlets))
 
     def with_updates(self, **updates: Any) -> LAKBuilder:
@@ -1695,11 +2344,14 @@ class LAKBuilder:
 
         Accepts ``None`` (uses ``default``), a lake-table column name, a numeric
         string, a per-lake mapping, a scalar, a Series keyed by lake id (read by
-        label, never position), or a one-per-lake sequence; raises if a required
-        value is missing. With ``per_cell`` (``lake_bottom``/``lake_top``) it also
-        passes through what varies by CELL for :meth:`_per_cell`: a
+        label, never position, a label through ``str()`` as a key is --
+        :func:`_series_lake_labels`), or a one-per-lake sequence; raises if a
+        required value is missing. With ``per_cell`` (``lake_bottom``/``lake_top``)
+        it also passes through what varies by CELL for :meth:`_per_cell`: a
         :class:`~myflopy.surfaces.Surface`, a raster ``Path`` or ``str`` naming an
-        existing file, or a Series whose index is not the lake ids.
+        existing file, or a Series whose index does not name every lake -- or one
+        whose integer labels name every lake AND hold every lake cell, since those
+        integers are cell numbers too.
         """
 
         if value is None:
@@ -1720,7 +2372,8 @@ class LAKBuilder:
                     + (" or an existing raster file." if per_cell else ".")
                 ) from None
         if isinstance(value, Mapping):
-            if lake_id not in value:
+            found, inner = _lake_keyed(value, lake_id, name=name)
+            if not found:
                 hint = (
                     " A mapping here is keyed by lake id; for one value per cell pass a "
                     "cell-indexed pandas Series, a raster, or a Surface."
@@ -1728,7 +2381,6 @@ class LAKBuilder:
                     else ""
                 )
                 raise ValueError(f"{name} is missing lake '{lake_id}'.{hint}")
-            inner = value[lake_id]
             if per_cell and isinstance(inner, str) and Path(inner).is_file():
                 return Path(inner)
             return inner
@@ -1739,8 +2391,20 @@ class LAKBuilder:
         if isinstance(value, (Path, Real)):
             return value
         if isinstance(value, pd.Series):
-            if all(lake in value.index for lake in self.lake_ids):
-                return value[lake_id]
+            labels = _series_lake_labels(value, self.lake_ids, name=name)
+            if (
+                labels is not None
+                and per_cell
+                and not all(isinstance(label, str) for label in labels.values())
+            ):
+                # An integer is a cell number here as well as a lake id: a Series that
+                # also holds every cell of every lake is the per-cell map it was always
+                # read as (a whole-grid bed over lakes numbered 1, 2, ... holds both).
+                index = set(value.index)
+                if all(cell in index for lake in self.lake_ids for cell in self.lake_cells[lake]):
+                    labels = None
+            if labels is not None:
+                return value.loc[labels[lake_id]]
             if per_cell:
                 return value  # indexed by cell: the same map for every lake
         values = list(value)
@@ -1763,9 +2427,9 @@ class LAKBuilder:
 
         mode = self.connection_modes
         if isinstance(mode, Mapping):
-            if lake_id not in mode:
+            found, mode = _lake_keyed(mode, lake_id, name="connection_modes")
+            if not found:
                 raise ValueError(f"connection_modes is missing lake '{lake_id}'.")
-            mode = mode[lake_id]
         if isinstance(mode, str):
             mode = mode.lower()
             if mode == "automatic":  # retained alias for the natural-lake mode
@@ -1791,14 +2455,15 @@ class LAKBuilder:
         """
         value = self.only_vertical
         if isinstance(value, Mapping):
-            return bool(value.get(lake_id, False))
+            found, value = _lake_keyed(value, lake_id, name="only_vertical")
+            return bool(value) if found else False
         return bool(value)
 
     def _only_layer(self, lake_id: str) -> int | None:
         """Restrict a lake's connections to a single model layer (special cases only)."""
         value = self.only_layer
         if isinstance(value, Mapping):
-            return value.get(lake_id)
+            return _lake_keyed(value, lake_id, name="only_layer")[1]
         return value
 
     def _rectangular_interior(self, lake_id: str) -> bool:
@@ -1823,7 +2488,8 @@ class LAKBuilder:
         """
         value = self.rectangular_interior
         if isinstance(value, Mapping):
-            return bool(value.get(lake_id, False))
+            found, value = _lake_keyed(value, lake_id, name="rectangular_interior")
+            return bool(value) if found else False
         return bool(value)
 
     def _top(self, lake_id: str, cell: int) -> float:
@@ -1981,7 +2647,7 @@ class LAKBuilder:
                 if bed:
                     reason += " (only its neighbours default, to the model top)"
                 if isinstance(source, pd.Series):
-                    reason += "; a Series is read by CELL unless its index holds every lake id"
+                    reason += "; a Series is read by CELL unless its index names every lake id"
             raise ValueError(f"{name} for '{lake_id}' has no value at lake cell(s) {missing}: {reason}.")
         if not bed:
             return values
@@ -2056,8 +2722,20 @@ class LAKBuilder:
 
         if explicit is not None:
             return float(explicit)
-        if isinstance(self.bed_leakance, Mapping) and (lake_id, connection_type.lower()) in self.bed_leakance:
-            value = self.bed_leakance[(lake_id, connection_type.lower())]
+        pair = (
+            [
+                key
+                for key in self.bed_leakance
+                if isinstance(key, tuple)
+                and len(key) == 2
+                and str(_plain_scalar(key[0])) == lake_id
+                and key[1] == connection_type.lower()
+            ]
+            if isinstance(self.bed_leakance, Mapping)
+            else []
+        )
+        if pair:
+            value = self.bed_leakance[pair[0]]
         else:
             value = self._lake_value(self.bed_leakance, lake_id, name="bed_leakance")
         if isinstance(value, Mapping):
@@ -2084,22 +2762,30 @@ class LAKBuilder:
             for index, other in enumerate(adjacent)
         ]
 
-    def _vertical_connection(self, lake_id: str, cell: int, mode: str) -> LakeConnection | None:
+    def _vertical_connection(self, lake_id: str, cell: int, mode: str) -> LakeConnection:
         """One vertical (lake-bottom) connection for a cell.
 
         ``bathy``: at the layer containing the cell's lake bottom.
         ``rectangular``: the flat-bottom infiltration face; the connection spans
         ``lake_bottom -> lake_top`` and lands in the layer holding the lake bottom.
         MF6 ignores ``belev``/``telev`` for vertical connections, but they are set to
-        the physical extent for readability and parity with the legacy output.
+        the physical extent for readability and parity with the legacy output. A bed
+        in no active layer (of ``only_layer``, when given) raises in BOTH modes.
         """
         bottom = self._bottom(lake_id, cell)
         only_layer = self._only_layer(lake_id)
         layer = self._layer_containing(cell, bottom, only_layer)
         if layer is None:
-            if mode == "rectangular":
-                return None
-            raise ValueError(f"Lake '{lake_id}' bottom {bottom} does not intersect active cell {cell}.")
+            # Both modes refuse: a "rectangular" lake used to drop this cell's VERTICAL
+            # connection silently -- 8 HORIZONTAL and 0 VERTICAL written, nothing raised
+            # (ledger 318) -- where "bathy" raised in the same place.
+            where = "any active layer" if only_layer is None else f"only_layer={only_layer} (or it is inactive there)"
+            raise ValueError(
+                f"Lake '{lake_id}' bottom {bottom} does not intersect active cell {cell}: "
+                f"the bed is not inside {where}, so the cell's VERTICAL connection has no "
+                "cell to land in. Move lake_bottom or only_layer, or give the lake its "
+                "connections by hand (connection_modes={lake_id: [LakeConnection(...)]})."
+            )
         top = self._top(lake_id, cell) if mode == "rectangular" else bottom
         return LakeConnection(
             cellid=(layer, cell),
@@ -2291,7 +2977,9 @@ class LAKBuilder:
         """
 
         value = self.lake_bottom
-        if value is None or (isinstance(value, Mapping) and lake_id not in value):
+        if value is None or (
+            isinstance(value, Mapping) and not _lake_keyed(value, lake_id, name="lake_bottom")[0]
+        ):
             return
         declared = self._lake_value(value, lake_id, name="lake_bottom", per_cell=True)
         cells = self.lake_cells[lake_id]
@@ -2701,47 +3389,162 @@ class LAKBuilder:
         """Expand a stage/rainfall/etc setting into per-period MF6 ``[lake, keyword, amount]`` rows.
 
         Accepts a scalar (applied to all lakes/periods), a per-period mapping, a
-        per-lake mapping (scalar or per-period series), or a per-period sequence.
+        per-lake mapping (scalar or per-period series), or a per-period sequence; a
+        ``numpy`` array or ``pandas`` Series is first turned into the list or mapping it
+        means (:func:`_per_period_form`). Refuses what would never be written or what
+        MF6 refuses one run later (ledger 318): a period outside ``range(nper)``, a list
+        longer than ``nper``, an all-integer mapping whose every key is also a lake id
+        (periods or lakes would be a guess), an unknown status, a negative forcing, and
+        a number that is not finite.
         """
 
+        name = _SETTING_NAMES[keyword]
         result = {period: [] for period in range(self.nper)}
         if value is None:
             return result
+        value = _per_period_form(value, name=name)
 
-        def at_period(current: Any, period: int) -> Any:
-            """Pick one period's value from a scalar, per-period mapping, or sequence."""
-
-            if isinstance(current, Mapping) and current and all(isinstance(key, int) for key in current):
-                return current.get(period)
-            if isinstance(current, Sequence) and not isinstance(current, (str, bytes)):
-                return current[period] if period < len(current) else None
-            return current
-
-        for period in range(self.nper):
-            if isinstance(value, Mapping) and value and all(isinstance(key, int) for key in value):
-                current = value.get(period)
+        if isinstance(value, Mapping) and value and all(_is_period_key(key) for key in value):
+            self._check_period_keys(value, name, top_level=True)
+            for period, current in value.items():
                 if current is None:
                     continue
                 if isinstance(current, Mapping):
                     for lake_id, amount in current.items():
-                        result[period].append([self.lake_number(str(lake_id)), keyword, amount])
+                        number = self._setting_lake(lake_id, name)
+                        result[int(period)].append(
+                            [number, keyword, self._setting_amount(amount, keyword, name)]
+                        )
                     continue
                 for lake_id in self.lake_ids:
-                    result[period].append([self.lake_number(lake_id), keyword, current])
-                continue
+                    result[int(period)].append(
+                        [self.lake_number(lake_id), keyword, self._setting_amount(current, keyword, name)]
+                    )
+            return result
 
-            if isinstance(value, Mapping):
-                for lake_id, series in value.items():
-                    amount = at_period(series, period)
-                    if amount is not None:
-                        result[period].append([self.lake_number(str(lake_id)), keyword, amount])
-                continue
+        if isinstance(value, Mapping):
+            for lake_id, series in value.items():
+                number = self._setting_lake(lake_id, name)
+                for period, amount in self._by_period(series, f"{name}[{lake_id!r}]"):
+                    result[period].append([number, keyword, self._setting_amount(amount, keyword, name)])
+            return result
 
+        for period, amount in self._by_period(value, name):
             for lake_id in self.lake_ids:
-                amount = at_period(value, period)
-                if amount is not None:
-                    result[period].append([self.lake_number(lake_id), keyword, amount])
+                result[period].append(
+                    [self.lake_number(lake_id), keyword, self._setting_amount(amount, keyword, name)]
+                )
         return result
+
+    def _setting_lake(self, lake_id: Any, name: str) -> int:
+        """The lake number a per-period mapping's lake key names, or a refusal naming the value."""
+
+        label = str(_plain_scalar(lake_id))
+        if label not in self.lake_numbers:
+            raise ValueError(
+                f"{name} names lake {label!r}, which no lake has (lakes: "
+                f"{', '.join(repr(lake) for lake in self.lake_ids)}). A mapping whose keys "
+                "are ALL integers is read by stress period; any other is read by lake id."
+            )
+        return self.lake_number(label)
+
+    def _check_period_keys(self, value: Mapping, name: str, *, top_level: bool = False) -> None:
+        """Refuse a period key outside ``range(nper)``, and a mapping every key of which is also a lake id.
+
+        A key past the last period is never written -- ``rainfall={101: 0.5}`` over
+        integer lake ids wrote NOTHING, silently (ledger 318). And when every key of a
+        TOP-LEVEL mapping is a period AND a lake id, which one was meant is a guess; a
+        mapping inside a lake's entry can only be periods.
+        """
+
+        outside = [int(key) for key in value if not 0 <= int(key) < self.nper]
+        lakes = (
+            [str(int(key)) for key in value if str(int(key)) in self.lake_numbers] if top_level else []
+        )
+        hint = (
+            f" Lake ids are strings, and every key here is an integer, so each is read as a "
+            f"stress period; key a lake by its string id ({lakes[0]!r})."
+            if lakes
+            else ""
+        )
+        if outside:
+            raise ValueError(
+                f"{name}: {outside[0]} is not a stress period -- periods run from 0 to "
+                f"{self.nper - 1} (zero-based), so a value there would never be written.{hint}"
+            )
+        scalar_values = not any(isinstance(item, Mapping) for item in value.values())
+        if top_level and scalar_values and len(lakes) == len(value):
+            raise ValueError(
+                f"{name}: every key ({', '.join(str(key) for key in value)}) is both a stress "
+                "period and a lake id, so which one was meant would be a guess. Key lakes by "
+                "their string id, and give periods as a list (None skips one) or as "
+                "{period: {lake_id: value}}."
+            )
+
+    def _by_period(self, series: Any, name: str) -> list[tuple[int, Any]]:
+        """``(period, amount)`` for every period a per-period value reaches, ``None`` skipped.
+
+        A scalar reaches every period; a list or tuple one per position; an all-integer
+        mapping the periods it names. A list longer than ``nper`` and a period outside
+        ``range(nper)`` are refused -- they would never be written (ledger 318).
+        """
+
+        if isinstance(series, Mapping):
+            if not series:
+                return []
+            if not all(_is_period_key(key) for key in series):
+                raise ValueError(
+                    f"{name} is a mapping keyed by {next(iter(series))!r}; a per-period "
+                    "mapping here is keyed by zero-based stress period (an integer)."
+                )
+            self._check_period_keys(series, name)
+            return [(int(key), item) for key, item in series.items() if item is not None]
+        if isinstance(series, (list, tuple)):
+            if len(series) > self.nper:
+                raise ValueError(
+                    f"{name} has {len(series)} values for {self.nper} stress period(s): position "
+                    "0 is the first period, so the last "
+                    f"{len(series) - self.nper} would never be written."
+                )
+            return [(period, item) for period, item in enumerate(series) if item is not None]
+        return [(period, series) for period in range(self.nper)]
+
+    def _setting_amount(self, amount: Any, keyword: str, name: str) -> Any:
+        """One period value, checked as MF6 will check it, as a plain python value.
+
+        ``STATUS`` must be one of MF6's three words (any case, written as given); a
+        numeric setting is a finite number -- non-negative for the five MF6 refuses
+        below zero -- or a string, which MF6 reads as a time-series name. MF6 refused
+        each of these by name, one run late (ledger 318).
+        """
+
+        amount = _plain_scalar(amount)
+        if keyword == "STATUS":
+            if not isinstance(amount, str) or amount.strip().upper() not in _LAKE_STATUSES:
+                raise ValueError(
+                    f"status {amount!r} is not a lake status: MF6 takes "
+                    f"{', '.join(_LAKE_STATUSES)} (any case), and refuses anything else by name."
+                )
+            return amount
+        if isinstance(amount, str):
+            return amount
+        if isinstance(amount, (bool, np.bool_)) or not isinstance(amount, Real):
+            raise ValueError(
+                f"{name} value {amount!r} is not a number (or a time-series name): one number "
+                "per lake per period."
+            )
+        if not np.isfinite(amount):
+            raise ValueError(f"{name} value {amount!r} is not finite.")
+        if keyword in _NONNEGATIVE_SETTINGS and amount < 0.0:
+            raise ValueError(
+                f"{name} is {amount!r}: MF6 refuses a negative {keyword} by name. "
+                + (
+                    "It is a positive number that REMOVES water."
+                    if keyword == "WITHDRAWAL"
+                    else "Take water out with withdrawals= or an outlet."
+                )
+            )
+        return amount
 
     @property
     def outletdata(self) -> list[list[Any]]:
@@ -2784,27 +3587,52 @@ class LAKBuilder:
             rate = outlet.rate
             if rate is None:
                 continue
-            for period in range(self.nper):
-                if isinstance(rate, Mapping):
-                    amount = rate.get(period)
-                elif isinstance(rate, Sequence) and not isinstance(rate, (str, bytes)):
-                    amount = rate[period] if period < len(rate) else None
-                else:
-                    amount = rate
-                if amount is not None:
-                    result[period].append([outlet_number, "RATE", amount])
+            name = f"outlets[{outlet_number}].rate"
+            for period, amount in self._by_period(rate, name):
+                result[period].append([outlet_number, "RATE", self._setting_amount(amount, "RATE", name)])
         return result
 
     @property
     def prepared_tables(self) -> dict[str, LakeTable]:
-        """Per-lake built :class:`LakeTable` objects (builders resolved; unknown lakes raise)."""
+        """Per-lake built :class:`LakeTable` objects (builders resolved; unknown lakes raise).
 
+        Built ONCE per set of ``tables`` entries, and returned as a new dict each
+        time. :meth:`validate` reads this inside its per-lake loop and :meth:`build`
+        and the unexcavated check read it again, and each read rebuilt every
+        ``LakeTableBuilder`` -- a DEM table re-read its raster and footprint every
+        time, so one ``mf.lak`` call over two DEM-table lakes built 12 tables and
+        issued each table's no-data warning 6 times, growing with the square of the
+        lake count. The cache is keyed on the entries themselves (compared by
+        identity, and held, so an id cannot be reused), so replacing a table in
+        ``tables`` rebuilds.
+        """
+
+        entries = tuple(self.tables.items())
+        cached = self._prepared
+        if (
+            cached is not None
+            and len(cached[0]) == len(entries)
+            and all(
+                lake_id == seen_id and table is seen
+                for (lake_id, table), (seen_id, seen) in zip(entries, cached[0], strict=True)
+            )
+        ):
+            return dict(cached[1])
         result = {}
-        for lake_id, table in self.tables.items():
+        for lake_id, table in entries:
             if lake_id not in self.lake_numbers:
-                raise ValueError(f"Lake table references unknown lake '{lake_id}'.")
+                raise ValueError(
+                    f"Lake table references unknown lake '{lake_id}' (lakes: "
+                    f"{', '.join(repr(lake) for lake in self.lake_ids)})."
+                )
+            if not isinstance(table, (LakeTable, LakeTableBuilder)):
+                raise TypeError(
+                    f"tables[{lake_id!r}] is a {type(table).__name__}; give a LakeTable or a "
+                    "LakeTableBuilder."
+                )
             result[lake_id] = table.build() if isinstance(table, LakeTableBuilder) else table
-        return result
+        object.__setattr__(self, "_prepared", (entries, result))
+        return dict(result)
 
     def _refuse_lakes_off_the_grid(self) -> None:
         """Raise when a lake covers no grid cell, saying why and where (ledger 211).
@@ -2938,6 +3766,16 @@ class LAKBuilder:
         ('lak', ['pond'])
         """
 
+        for key, why in (
+            ("nlakes", "it is the number of lakes read from `lakes`"),
+            ("pname", "rename the package with name=, which also names its outputs, its "
+                      "table children and the endpoint a mover reads"),
+        ):
+            if key in self.options:
+                raise TypeError(
+                    f"LAK option {key}={self.options[key]!r} is not for **options: {why} "
+                    "(ledger 318)."
+                )
         self.validate()
         tables = self.prepared_tables
         table_records = []

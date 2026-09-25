@@ -382,25 +382,37 @@ table = LakeTableBuilder(
 `dem=` takes a raster path (`str` or `Path`), not a `Surface`: for bathymetry
 drawn as contours pass `mf.Contours(...).resolve_source()`, the path of its
 interpolated raster (`mf.Raster(p).resolve_source()` is `p`; algebra on a
-Surface has no single raster and raises). `footprint=` must be a `Path` or a
-shapely geometry -- a `str` is refused -- and is not reprojected, so it has to be
-in the raster's CRS (ledger 318). Nothing is unit-converted. Start `stages` at the
-lowest bed: two zero-volume rows are accepted here and refused by MF6. With a
-`storage_coefficient` other than 1, tabulate to the highest stage the lake can
-reach: past the last row MF6 grows the volume at the full area. The class
-docstring lists every field, which mode reads it, and what raises.
+Surface has no single raster and raises). `footprint=` is read by the same reader
+as `mf.lak(lakes=)` -- a path (`str` or `Path`, at `footprint_layer=`), a
+GeoDataFrame or GeoSeries, an `mf.Area` or a shapely polygon -- and REPROJECTED to
+the raster's CRS; one that reaches no pixel with a bed (off the raster, narrower
+than a pixel, all no-data) is refused with both extents and both CRSs, where it
+used to build a table of zeros MF6 refuses (ledger 318). A `NaN` pixel is no bed,
+like a declared no-data one. Nothing is unit-converted, and a raster in degrees is
+refused. Stages at or below the lowest bed are reduced to the last of them: MF6
+refuses two zero-volume rows and reads a lower stage as the first row, so the kept
+table is the same curve. `storage_coefficient` must be in (0, 1]. With one other
+than 1, tabulate to the highest stage the lake can reach: past the last row MF6
+grows the volume at the full area. The class docstring lists every field, which
+mode reads it, and what raises.
 
-`LakeTableBuilder.build()` returns an immutable `LakeTable`. `LAKBuilder`
-attaches configured tables as LAK child packages when its package spec builds,
-keyed by the lake id as a string (`"<name>_<lake_id>.lak.tab"` unless the table
-sets `filename`).
+`LakeTableBuilder.build()` returns an immutable `LakeTable`, validated by MF6's
+own table checks -- stages and volumes strictly increasing, areas nondecreasing --
+plus finite, non-negative values; `rows=` may be a DataFrame, read by its
+`stage`/`volume`/`area` columns. `LAKBuilder` attaches configured tables as LAK
+child packages when its package spec builds, keyed by lake id: a key is read
+through `str()` as the ids are made, so `101` finds lake `"101"`
+(`"<name>_<lake_id>.lak.tab"` unless the table sets `filename`).
 Semantic `LakeOutlet` objects refer to stable source and receiver lake IDs
 rather than generated lake numbers. A `SPECIFIED` outlet's `rate` follows MF6's
 sign: negative removes water from the lake, positive adds it; its periods, like
 every per-period lake value, are zero-based and a period left out keeps the
-previous value. A per-period value must be a scalar, list, tuple or mapping --
-a numpy array is written whole into every period and MF6 crashes reading it
-(ledger 318).
+previous value. A numpy array is read as the list it holds and a pandas Series as
+the mapping of its index; each used to be written whole into every period, and
+MF6 crashed reading it (ledger 318). A value that would never be written -- a
+period past the last, a list longer than `nper` -- is refused, and so are the
+values MF6 refuses by name one run later: an unknown `status` and a negative
+rainfall, evaporation, runoff, inflow or withdrawal.
 
 ## GeoPackage Sources
 

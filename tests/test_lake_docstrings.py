@@ -8,9 +8,10 @@ outlet sign, what MF6 does with a VERTICAL and a HORIZONTAL connection's elevati
 and ``LAKBuilder``'s copy of ``mf.lak``'s entries. It reads the docstrings with a
 small parser rather than numpydoc, which is not a dependency here.
 
-The MF6 claims run the model (``slow``). What the builders accept without checking is
-pinned too, under ledger 318: those tests describe CURRENT behaviour the docstrings now
-state, so a fix must update the docstring and the test together.
+The MF6 claims run the model (``slow``). Ledger 318 listed what the builders accepted
+without checking, and each item is now refused or read correctly: the behaviour is pinned
+in ``tests/test_lake_input_checks.py``, and what the docstrings SAY about it here, so a
+docstring left describing the old behaviour fails by name.
 """
 
 from __future__ import annotations
@@ -187,11 +188,15 @@ def test_mf_lak_flopy_states_what_it_requires_and_raises():
         assert _entry(doc, block).startswith("Required."), block
     assert "Raises" in doc and "TypeError" in doc
     assert "must equal the number of ``outlets`` rows" in _entry(doc, "noutlets")
+    assert "raises ``ValueError`` here" in _entry(doc, "noutlets")
     assert "must equal the number of ``tables`` rows" in _entry(doc, "ntables")
-    assert "REPLACES" in _entry(doc, "nlakes")
+    assert "so it must EQUAL the number of ``packagedata`` rows" in _entry(doc, "nlakes")
+    assert "without ``boundnames=True`` raises ``ValueError`` here" in _entry(doc, "packagedata")
+    assert "Series raises ``ValueError`` here" in _entry(doc, "perioddata")
     records = dict(packagedata=[[0, 101.0, 1]], perioddata={0: []},
                    connectiondata=[[0, 0, (0, 42), "VERTICAL", 0.1, 0.0, 0.0, 0.0, 0.0]])
-    assert mf.lak.flopy(**records, nlakes=3).options["nlakes"] == 3, "written as given"
+    with pytest.raises(ValueError, match="nlakes=3 but packagedata has 1 row"):
+        mf.lak.flopy(**records, nlakes=3)
     with pytest.raises(TypeError, match="did you mean 'print_stage'"):
         mf.lak.flopy(**records, print_stagee=True)
     with pytest.raises(TypeError, match="packagedata"):
@@ -273,14 +278,20 @@ def test_rectangular_writes_what_connection_modes_says(toy):
     assert all(row[3] == "VERTICAL" for row in _connections(toy, only_vertical=True, **kw))
 
 
-def test_a_rectangular_lake_drops_its_vertical_connection_silently(toy):
-    """Ledger 318: documented, not fixed. ``"bathy"`` raises in the same place."""
+def test_a_rectangular_lake_refuses_a_bed_outside_only_layer_as_bathy_does(toy):
+    """Ledger 318: ``"rectangular"`` dropped the VERTICAL connection here silently (8
+    HORIZONTAL and 0 VERTICAL written), where ``"bathy"`` raised. Both raise now, and
+    both entries say so."""
 
-    rows = _connections(toy, connection_modes="rectangular", lake_bottom=6.0, lake_top=11.0,
-                        only_layer=0)
-    assert rows and not any(row[3] == "VERTICAL" for row in rows)
+    with pytest.raises(ValueError, match="does not intersect active cell"):
+        _connections(toy, connection_modes="rectangular", lake_bottom=6.0, lake_top=11.0,
+                     only_layer=0)
     with pytest.raises(ValueError, match="does not intersect active cell"):
         _connections(toy, lake_bottom=6.0, only_layer=0)
+    call = type(mf.lak).__call__.__doc__
+    assert "falls in no active layer raises ``ValueError``, as in ``\"bathy\"``" in _entry(call, "connection_modes")
+    assert "In either generated mode a cell whose bed is not in that layer raises" in _entry(call, "only_layer")
+    assert "silently" not in _entry(call, "only_layer").split("(a")[0]
 
 
 def _period(toy, key="name", **kw):
@@ -312,39 +323,50 @@ def test_an_outlet_rate_is_keyed_by_zero_based_period(toy):
     assert data == {0: [], 1: [[0, "RATE", -2.0]], 2: []}
 
 
-def test_what_mf_lak_accepts_without_checking(toy):
-    """Ledger 318: documented, not fixed -- a fix updates the docstrings with this."""
+def test_what_mf_lak_used_to_accept_is_refused_and_the_docstrings_say_so(toy):
+    """Ledger 318's per-period items, fixed: the per-period paragraph (shared by
+    ``mf.lak`` and ``LAKBuilder``) says what is refused, and no entry still says an
+    array is written whole or that a value is unchecked. The full behaviour is in
+    ``tests/test_lake_input_checks.py``."""
 
-    silent, lake_id = _period(toy, key="num", rainfall={101: 0.5})
-    assert silent == {0: [], 1: [], 2: []}, "all-int keys are read as periods"
-    keyed, _ = _period(toy, key="num", rainfall={lake_id: 0.5})
+    with pytest.raises(ValueError, match="101 is not a stress period"):
+        _period(toy, key="num", rainfall={101: 0.5})
+    keyed, lake_id = _period(toy, key="num", rainfall={"101": 0.5})
     assert keyed[0] == [[0, "RAINFALL", 0.5]]
+    split, _ = _period(toy, rainfall=np.array([0.1, 0.2, 0.3]))
+    assert [split[p][0][2] for p in range(3)] == [0.1, 0.2, 0.3], "an array is split by period"
 
-    unsplit, _ = _period(toy, rainfall=np.array([0.1, 0.2, 0.3]))
-    assert isinstance(unsplit[0][0][2], np.ndarray), "an array is not split by period"
-
-    base = dict(context=toy["context"], nper=1, lakes=toy["lakes"], lake_id_field="num",
-                starting_stage=11.5, lake_bottom=9.0, connection_modes="rectangular", lake_top=11.0)
     table = LakeTableBuilder(area=4.0, bottom=9.0, top=12.0)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        assert mf.lak(**base, tables={"101": table}).options["tables"] == [[0, "lak_101.lak.tab"]]
-        with pytest.raises(ValueError, match=r"unknown lake '101'"):
-            mf.lak(**base, tables={101: table})
-        assert mf.lak(**base, nlakes=5).options["nlakes"] == 5
+    tables, _ = _period(toy, key="num", tables={101: table})
+    assert tables == {0: [], 1: [], 2: []}  # built; the key found lake "101"
+    with pytest.raises(TypeError, match="nlakes=5 is not for"):
+        _period(toy, key="num", nlakes=5)
+
+    call = _flat(type(mf.lak).__call__.__doc__)
+    for text in ("a period outside ``range(nper)``", "a list longer than ``nper``",
+                 "whose every key is ALSO a lake id", "a negative rainfall, evaporation, runoff, inflow or withdrawal all raise ``ValueError``"):
+        assert text in call, text
+    assert "None of these values is checked here" not in call
+    assert "``nlakes`` raises ``TypeError`` naming it" in _entry(type(mf.lak).__call__.__doc__, "**options")
+    assert "may be keyed ``101`` or ``\"101\"``" in _entry(type(mf.lak).__call__.__doc__, "tables")
 
 
-def test_a_pname_through_options_renames_only_what_flopy_writes(toy):
-    """Ledger 318: documented, not fixed -- ``name=`` is the way to rename."""
+def test_a_pname_through_options_is_refused_and_the_entry_says_so(toy):
+    """Ledger 318: a ``pname`` renamed only what FloPy writes, so a mover built from
+    ``mf.lak_connection`` named a package that did not exist. ``name=`` renames."""
 
-    spec = mf.lak(context=toy["context"], nper=1, lakes=toy["lakes"], lake_id_field="name",
+    kwargs = dict(context=toy["context"], nper=1, lakes=toy["lakes"], lake_id_field="name",
                   starting_stage=11.5, lake_bottom=9.0, connection_modes="rectangular",
-                  lake_top=11.0, pname="zz",
-                  tables={"pond": LakeTableBuilder(area=4.0, bottom=9.0, top=12.0)})
-    assert spec.options["pname"] == "zz"
-    assert (spec.name, spec.metadata["lak_index"]["package"]) == ("lak", "lak")
-    assert spec.options["lake_tables"][0]["pname"] == "lak_pond_table"
-    assert "NOT with ``pname=``/``filename=``" in _entry(type(mf.lak).__call__.__doc__, "**options")
+                  lake_top=11.0, tables={"pond": LakeTableBuilder(area=4.0, bottom=9.0, top=12.0)})
+    with pytest.raises(TypeError, match="rename the package with name="):
+        mf.lak(**kwargs, pname="zz")
+    spec = mf.lak(**kwargs, name="zz")
+    assert (spec.options["pname"], spec.metadata["lak_index"]["package"]) == ("zz", "zz")
+    assert spec.options["lake_tables"][0]["pname"] == "zz_pond_table"
+    entry = _entry(type(mf.lak).__call__.__doc__, "**options")
+    assert "a ``pname`` here raises ``TypeError``" in entry
+    assert "A ``filename`` here names the LAK INPUT file only" in entry
+    assert "a ``pname`` here raises ``TypeError`` at :meth:`build`" in _entry(LAKBuilder.__doc__, "options")
 
 
 def test_the_conversions_read_the_unit_names_the_docstring_lists(toy):
@@ -401,39 +423,48 @@ def test_past_the_highest_bed_the_volume_grows_by_area_times_the_coefficient(bed
 
 
 def test_the_footprint_rules_the_docstring_states(bed, tmp_path):
+    """Ledger 318's footprint items, fixed: the entry names the shared reader, the
+    reprojection, ``footprint_layer`` and the refusal, and no longer the old refusal of
+    a ``str``. The behaviour, form by form, is in ``tests/test_lake_input_checks.py``."""
+
     stages = [9, 10, 11]
     two = tmp_path / "two.gpkg"
     gpd.GeoDataFrame(geometry=[box(0, 0, 1, 2)], crs=2927).to_file(two, layer="a")
     gpd.GeoDataFrame(geometry=[box(1, 0, 2, 2)], crs=2927).to_file(two, layer="b")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        first_layer = LakeTableBuilder(dem=bed, footprint=two, stages=stages).build().rows
-    left_column = LakeTableBuilder(dem=bed, footprint=box(0, 0, 1, 2), stages=stages).build().rows
-    assert first_layer == left_column, "only the default (first) layer is read"
+    right_column = LakeTableBuilder(dem=bed, footprint=box(1, 0, 2, 2), stages=stages).build().rows
+    assert LakeTableBuilder(dem=bed, footprint=str(two), footprint_layer="b",
+                            stages=stages).build().rows == right_column
+    with pytest.raises(ValueError, match="it lies off the raster"):
+        LakeTableBuilder(dem=bed, footprint=box(100, 100, 101, 101), stages=stages).build()
 
-    zeros = ((9.0, 0.0, 0.0), (10.0, 0.0, 0.0), (11.0, 0.0, 0.0))
-    for footprint in (box(-122.5, 47.0, -122.4, 47.1), box(100, 100, 101, 101), box(0, 0, 0.4, 2)):
-        assert LakeTableBuilder(dem=bed, footprint=footprint, stages=stages).build().rows == zeros
-
-    with pytest.raises(ValueError, match="footprint geometry or path"):
-        LakeTableBuilder(dem=bed, footprint=str(two), stages=stages).build()
-    with pytest.raises(Exception, match="No such file") as missing:
-        LakeTableBuilder(dem=bed, footprint=tmp_path / "nope.gpkg", stages=stages).build()
-    assert type(missing.value).__name__ == "DataSourceError"
+    footprint = _entry(LakeTableBuilder.__doc__, "footprint")
+    assert "read_footprints" in footprint and "REPROJECTED" in footprint
+    assert "raises ``ValueError`` saying which of three things happened" in footprint
+    assert "is refused with ``ValueError``" not in footprint and "It is NOT reprojected" not in footprint
+    assert "Which layer of a ``footprint`` FILE to read" in _entry(LakeTableBuilder.__doc__, "footprint_layer")
 
 
 def test_the_refusals_the_rows_and_coefficient_entries_state():
     frame = pd.DataFrame({"stage": [96.0, 98.0], "volume": [0.0, 1.0], "area": [0.0, 2.0]})
-    with pytest.raises(ValueError, match="could not convert string to float"):
-        LakeTableBuilder(rows=frame).build()
-    with pytest.raises(TypeError, match="'int' object is not iterable"):
-        LakeTableBuilder(rows=pd.DataFrame([[1, 0, 0], [2, 1, 1]])).build()
-    assert LakeTableBuilder(rows=frame.to_numpy()).build().rows == ((96.0, 0.0, 0.0), (98.0, 1.0, 2.0))
-    with pytest.raises(ValueError, match="volumes must be nondecreasing"):
+    want = ((96.0, 0.0, 0.0), (98.0, 1.0, 2.0))
+    assert LakeTableBuilder(rows=frame).build().rows == want, "read by its column names"
+    assert LakeTableBuilder(rows=frame.to_numpy()).build().rows == want
+    with pytest.raises(ValueError, match="storage_coefficient must be greater than 0"):
         LakeTableBuilder(area=1.0, bottom=9.0, top=11.0, storage_coefficient=-1.0).build()
-    # Tables MF6 refuses pass LakeTable (section 2 of the reproducer runs MF6 on them).
-    LakeTable([(8.0, 0.0, 0.0), (9.0, 0.0, 0.0), (10.0, 5.0, 4.0)])
-    LakeTable([(8.0, 0.0, 5.0), (9.0, 1.0, 4.0)])
+    # Tables MF6 refuses are refused by LakeTable (MF6 runs on them in
+    # tests/test_lake_input_checks.py and section 2 of the reproducer).
+    with pytest.raises(ValueError, match="volumes must STRICTLY increase"):
+        LakeTable([(8.0, 0.0, 0.0), (9.0, 0.0, 0.0), (10.0, 5.0, 4.0)])
+    with pytest.raises(ValueError, match="surface areas must not fall"):
+        LakeTable([(8.0, 0.0, 5.0), (9.0, 1.0, 4.0)])
+
+    rows = _flat(_entry(LakeTable.__doc__, "rows"))
+    assert "volumes STRICTLY increasing" in rows and "surface areas NONDECREASING" in rows
+    assert "MF6 is STRICTER than this check" not in rows
+    coefficient = _entry(LakeTableBuilder.__doc__, "storage_coefficient")
+    assert "anything but a number greater than 0 and at most 1" in coefficient
+    assert "It is not validated here" not in coefficient
+    assert "**Only the LAST of them is kept**" in _entry(LakeTableBuilder.__doc__, "stages")
 
 
 # ------------------------------------------------------------------------------ MF6

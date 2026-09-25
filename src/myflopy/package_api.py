@@ -78,6 +78,7 @@ from myflopy.modflow.mf6.lakes import (
     LakeOutlet,
     LakeTable,
     LakeTableBuilder,
+    _flopy_lak_refusals,
 )
 from myflopy.modflow.mf6.mvr import Move, MoverConnection, MVRBuilder
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
@@ -5600,7 +5601,7 @@ class _LAKPackage:
         bed_leakance: Any = 1.0,
         connection_modes: str | Mapping[str, str | Sequence[LakeConnection]] = "bathy",
         unexcavated: str = "warn",
-        tables: Mapping[str, LakeTable | LakeTableBuilder] | None = None,
+        tables: Mapping[str | int, LakeTable | LakeTableBuilder] | None = None,
         outlets: tuple[LakeOutlet, ...] = (),
         stage: Any = None,
         rainfall: Any = None,
@@ -5639,10 +5640,17 @@ class _LAKPackage:
         ``rectangular_interior`` take one value per lake. Where an entry below
         says "any per-lake form", that is: one number for every lake; the name
         of a column of ``lakes``; a numeric string (one number for every lake);
-        ``{lake_id: value}`` naming EVERY lake (a missing lake raises); a
-        ``pandas.Series`` whose index holds every lake id (read by label); or any
-        other sequence of one value per lake, in lake order
-        (``LAKBuilder.lake_ids``).
+        ``{lake_id: value}`` naming EVERY lake (a missing lake raises; a key is
+        read through ``str()``, as the ids are made, so ``101`` names lake
+        ``"101"`` -- it used to miss it, and ``only_vertical={101: True}`` was
+        ignored silently, ledger 318); a ``pandas.Series`` whose index names
+        every lake, read by label, a label naming a lake as a key does (an
+        integer-indexed Series used to be read by POSITION, so one out of lake
+        order gave each lake another's value; two labels naming one lake raise
+        ``ValueError``), except that for ``lake_bottom`` and ``lake_top`` an
+        integer-indexed Series that ALSO holds every cell of every lake is read
+        by cell, its integers being cell numbers too; or any other sequence of
+        one value per lake, in lake order (``LAKBuilder.lake_ids``).
 
         **Per-period values.** ``stage``, ``rainfall``, ``evaporation``,
         ``runoff``, ``withdrawals``, ``inflow`` and ``status`` each become one MF6
@@ -5650,26 +5658,36 @@ class _LAKPackage:
         ZERO-based. The forms:
 
         * a scalar: every lake, every period;
-        * a list or tuple: every lake, by position (position 0 = the first stress
-          period);
+        * a list or tuple, or a one-dimensional ``numpy`` array: every lake, by
+          position (position 0 = the first stress period; ``None`` skips one);
         * ``{period: value}`` (every key an int): every lake, in the periods
           named;
         * ``{period: {lake_id: value}}``: the lakes named, in the periods named;
         * ``{lake_id: value}``: that lake, every period;
         * ``{lake_id: list}`` or ``{lake_id: {period: value}}``: that lake, per
-          period.
+          period;
+        * a ``pandas.Series``: the mapping of its index, so an integer index is
+          periods and a lake-id index is lakes.
 
         A period a value does not reach writes nothing for that lake, and MF6
         KEEPS the previous period's setting (measured: rainfall given for the
         first period only was still applied in the second). A mapping whose keys
-        are ALL integers is read as periods, so with integer-like lake ids key
-        by the STRING id: ``rainfall={101: 0.5}`` writes nothing at all, silently
-        (ledger 318). A ``numpy`` array or ``pandas`` Series is NOT split by
-        period: every period's record carries the whole array as text, and MF6
-        died reading it (measured, a segmentation fault; ledger 318). Pass a list.
-        None of these values is checked here; MF6 refuses a negative rainfall,
-        evaporation, runoff, inflow or withdrawal by name when it reads the file
-        (measured, all five).
+        are ALL integers is read as periods and any other by lake id, so with
+        integer-like lake ids key lakes by the STRING id. What would never be
+        written, or written to a guess, raises ``ValueError``: a period outside
+        ``range(nper)`` -- ``rainfall={101: 0.5}`` over lake ``"101"`` wrote
+        nothing at all, silently -- a list longer than ``nper``, and an
+        all-integer mapping whose every key is ALSO a lake id (give periods as
+        a list, or as ``{period: {lake_id: value}}``). A ``numpy`` array or
+        ``pandas`` Series was written WHOLE into every period, and MF6 died
+        reading it (a segmentation fault); both are read as above now, and an
+        array of two or more dimensions raises (ledger 318). Each value is
+        checked here as MF6 would check it one run later: a ``status`` other
+        than ``ACTIVE``, ``INACTIVE`` or ``CONSTANT`` (any case), a number that
+        is not finite, and a negative rainfall, evaporation, runoff, inflow or
+        withdrawal all raise ``ValueError``; a string elsewhere is written as
+        given, which is how MF6 names a time series. MF6 refused the status and
+        each negative forcing by name (measured, all five).
 
         Parameters
         ----------
@@ -5784,11 +5802,12 @@ class _LAKPackage:
             A zero-based layer index, for every lake or ``{lake_id: layer}``
             (a lake left out is unrestricted), to which a generated lake's
             connections are confined. ``None`` means every layer a face spans. In
-            ``"bathy"`` a cell whose bed is not in that layer raises ``ValueError:
-            ... does not intersect active cell``; in ``"rectangular"`` it gets NO
-            vertical connection, silently (ledger 318). On an EXCAVATED lake it
-            must name the top active layer under every lake cell (``ValueError``
-            otherwise), and its walls are confined to that layer.
+            either generated mode a cell whose bed is not in that layer raises
+            ``ValueError: ... does not intersect active cell`` (a ``"rectangular"``
+            lake used to get NO vertical connection there, silently; ledger 318).
+            On an EXCAVATED lake it must name the top active layer under every
+            lake cell (``ValueError`` otherwise), and its walls are confined to
+            that layer.
         rectangular_interior : bool or dict of str to bool, default False
             ``"rectangular"`` lakes only. ``True`` (or ``{lake_id: True}``) also
             connects each lake cell toward its neighbours INSIDE the lake,
@@ -5836,7 +5855,9 @@ class _LAKPackage:
               ``lake_bottom`` and a ``lake_top``. Per lake cell, ONE VERTICAL
               connection in the active layer holding ``lake_bottom``, written
               ``belev = lake_bottom``, ``telev = lake_top``; a cell where
-              ``lake_bottom`` falls in no active layer gets none, silently. Then,
+              ``lake_bottom`` falls in no active layer raises ``ValueError``, as in
+              ``"bathy"`` (it used to get no VERTICAL connection, silently; ledger
+              318). Then,
               toward each neighbour OUTSIDE the lake (every neighbour with
               ``rectangular_interior=True``), one HORIZONTAL connection per active
               layer of the lake cell between ``lake_bottom`` and ``lake_top``,
@@ -5928,17 +5949,18 @@ class _LAKPackage:
             result.excavate(bottom=, within=)`` on the ``LayerBuildResult`` the DISV was
             built from -- a NEW result, to build the DISV and the context from
             (``mf.disv(dug)``, ``ModelContext(surfaces=dug, domain=dug.idomain)``).
-        tables : dict of str to (LakeTable or LakeTableBuilder), optional
+        tables : dict of str or int to (LakeTable or LakeTableBuilder), optional
             Default ``None``, the same as ``{}``: no tables. Stage / volume /
             surface-area tables, at most one per lake. A value is a
             :class:`~myflopy.modflow.mf6.lakes.LakeTable` or a
             :class:`~myflopy.modflow.mf6.lakes.LakeTableBuilder`, which is built
-            here. A key is the lake id as a STRING: the ``lake_id_field`` value
-            converted with ``str()``. So an integer id ``101`` is keyed ``"101"``,
-            and the int ``101`` raises ``ValueError: Lake table references
-            unknown lake '101'`` -- which prints the same as the string id, so it
-            reads as if that lake did not exist (ledger 318). A key naming no lake
-            raises ``ValueError``. Without a table, MF6 computes a lake's volume
+            here; anything else raises ``TypeError``. A key is read as a lake id is
+            made, through ``str()``, so a lake whose ``lake_id_field`` value is the
+            integer ``101`` may be keyed ``101`` or ``"101"``; both at once raise
+            ``ValueError``. (An int key used to raise ``unknown lake '101'``,
+            printing the int exactly as the id it missed; ledger 318.) A key naming
+            no lake raises ``ValueError`` listing the lake ids. Without a table,
+            MF6 computes a lake's volume
             and surface area from the plan areas and TOPS of the cells its
             VERTICAL connections reach, not from the bed elevations. A table's
             stages must bracket that lake's ``starting_stage`` (``ValueError``
@@ -5958,38 +5980,45 @@ class _LAKPackage:
             ``invert`` and ``width``; ``"MANNING"`` uses those plus ``roughness``
             and ``slope``. A ``rate`` (a scalar for every period, a list with
             position 0 = the first stress period, or ``{period: value}`` keyed by
-            ZERO-based stress period) is written as a ``RATE`` period setting.
-            MF6 applies it only to a SPECIFIED outlet, where a NEGATIVE rate
+            ZERO-based stress period, or an array or Series read as
+            ``LakeOutlet.rate`` says) is written as a ``RATE`` period setting, and
+            refused (``ValueError``) where it would never be written or is not a
+            finite number. MF6 applies it only to a SPECIFIED outlet, where a NEGATIVE rate
             removes water from the lake and a POSITIVE rate ADDS water. ``()``:
             no outlets.
-        stage : float, list or tuple of float, or dict, optional
+        stage : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
             Default ``None`` (nothing written). The lake stage (length), a
             per-period value. MF6 applies it ONLY to a lake whose ``status`` is
-            ``"CONSTANT"``, and holds the lake at it.
-        rainfall : float, list or tuple of float, or dict, optional
+            ``"CONSTANT"``, and holds the lake at it. A number must be finite.
+        rainfall : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
             Default ``None``. Rainfall rate on the lake surface (length per
             time), a per-period value; MF6 multiplies it by the lake's surface
-            area. Must be >= 0 for MF6.
-        evaporation : float, list or tuple of float, or dict, optional
+            area. Must be >= 0 (``ValueError``; MF6 refuses it by name).
+        evaporation : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
             Default ``None``. The MAXIMUM evaporation rate from the lake surface
             (length per time), a per-period value; MF6 lowers it when the lake
-            cannot supply it. Must be >= 0 for MF6.
-        runoff : float, list or tuple of float, or dict, optional
+            cannot supply it. Must be >= 0 (``ValueError``; MF6 refuses it by
+            name).
+        runoff : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
             Default ``None``. Runoff into the lake (length cubed per time), a
-            per-period value. Must be >= 0 for MF6.
-        withdrawals : float, list or tuple of float, or dict, optional
+            per-period value. Must be >= 0 (``ValueError``; MF6 refuses it by
+            name).
+        withdrawals : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
             Default ``None``. The MAXIMUM withdrawal from the lake (length cubed
             per time), a per-period value, written as MF6's ``WITHDRAWAL``. Must
-            be >= 0 for MF6; it is a positive number that removes water.
-        inflow : float, list or tuple of float, or dict, optional
+            be >= 0 (``ValueError``; MF6 refuses it by name): it is a positive
+            number that removes water.
+        inflow : float, str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
             Default ``None``. External inflow to the lake (length cubed per time),
-            a per-period value. Must be >= 0 for MF6.
-        status : str, list or tuple of str, or dict, optional
+            a per-period value. Must be >= 0 (``ValueError``; MF6 refuses it by
+            name).
+        status : str, list, tuple, dict, numpy.ndarray or pandas.Series, optional
             Default ``None`` (MF6's default, ``ACTIVE``). Each lake's status, a
             per-period value: ``"ACTIVE"``, ``"INACTIVE"`` or ``"CONSTANT"`` (the
-            last holds the lake at ``stage``). Written as given, unchecked: MF6
-            accepts any case (measured with ``"constant"``) and refuses anything
-            else by name (measured: ``Unknown LAK lak status keyword: BOGUS``).
+            last holds the lake at ``stage``), in any case, written as given (MF6
+            accepts any case, measured with ``"constant"``). Anything else raises
+            ``ValueError`` here; MF6 refused it by name one run later (measured:
+            ``Unknown LAK lak status keyword: BOGUS``).
         name : str, default "lak"
             The package name. It is the FloPy ``pname``, the input file
             ``<model>.<name>``, the stem of the four output files
@@ -6070,17 +6099,19 @@ class _LAKPackage:
             with a did-you-mean. These override what ``mf.lak`` sets by default
             -- ``save_flows=True`` and the four output file records -- and a
             string value may contain ``{model_name}``, filled in at build.
-            Rename the package with ``name=``, NOT with ``pname=``/``filename=``
-            here: those are accepted and change only what FloPy writes, while the
+            Rename the package with ``name=``: a ``pname`` here raises
+            ``TypeError``. It used to rename only what FloPy writes, while the
             spec's name, the ``lak_index`` that ``mf.lak_connection`` hands
-            ``mf.mvr``, and each table child's ``pname`` and file all keep
+            ``mf.mvr``, and each table child's ``pname`` and file all kept
             ``name`` (measured: ``pname="zz"`` left all three at ``"lak"``), so a
-            mover built from ``mf.lak_connection`` names ``"lak"`` where FloPy
-            wrote ``"zz"`` (ledger 318).
-            What ``mf.lak`` computes itself is not for here: ``noutlets``,
-            ``ntables`` and the three data blocks raise ``TypeError: ... got
-            multiple values``, and ``nlakes`` silently replaces the lake count
-            (ledger 318).
+            mover built from ``mf.lak_connection`` named ``"lak"`` where FloPy
+            wrote ``"zz"`` (ledger 318). A ``filename`` here names the LAK INPUT
+            file only (default ``<model>.<name>``); the outputs, the table files
+            and the name a mover reads follow ``name``. What ``mf.lak`` computes
+            itself is not for here: ``nlakes`` raises ``TypeError`` naming it (it
+            used to replace the lake count silently, ledger 318), and
+            ``noutlets``, ``ntables`` and the three data blocks raise
+            ``TypeError: ... got multiple values``.
 
         Returns
         -------
@@ -6108,13 +6139,19 @@ class _LAKPackage:
             For every refusal named above: a missing grid or layer elevations,
             ``nper < 1``, a non-polygon or zero-area lake, a lake covering no
             cell, a missing or repeated lake id, a per-lake mapping missing a
-            lake or a sequence of the wrong length, an unknown connection mode,
-            a bed in no active layer (``"bathy"``), a missing ``lake_top`` or one
+            lake or a sequence of the wrong length, two keys naming one lake
+            (``101`` and ``"101"``), an unknown connection mode, a bed in no
+            active layer (either generated mode), a missing ``lake_top`` or one
             at or below the bottom (``"rectangular"``), a ``bed_leakance`` of
             zero or less, a ``starting_stage`` below the bed or outside its
             table, an unknown lake id in ``tables``, ``outlets`` or a per-period
             mapping, a non-``LakeOutlet`` outlet, and any ``LakeTableBuilder``
-            refusal. For an EXCAVATED lake: a lake covering only part of an
+            refusal. For a per-period value or an outlet ``rate``: a period
+            outside ``range(nper)``, a list longer than ``nper``, an all-integer
+            mapping whose every key is also a lake id, an array of two or more
+            dimensions, a ``status`` MF6 does not know, a number that is not
+            finite, and a negative rainfall, evaporation, runoff, inflow or
+            withdrawal. For an EXCAVATED lake: a lake covering only part of an
             excavation or cells of two, a ``lake_bottom`` that is not the
             excavation's bed, ``rectangular_interior=True``, and an
             ``only_layer`` that is not the top active layer. An
@@ -6127,7 +6164,9 @@ class _LAKPackage:
             A ``layer`` that is not a ``str`` (an integer reads as a model layer;
             that is ``only_layer``); an ``implicit`` that is not a bool; an
             ``**options`` name ``ModflowGwflak`` does not accept, or one ``mf.lak``
-            already sets (``implicit`` is not one: it is a named parameter).
+            already sets (``implicit`` is not one: it is a named parameter),
+            ``nlakes`` or ``pname``; a ``tables`` value that is neither a
+            ``LakeTable`` nor a ``LakeTableBuilder``.
         pyogrio.errors.DataSourceError
             A ``lakes`` path that does not exist or is not a vector file.
 
@@ -6225,11 +6264,15 @@ class _LAKPackage:
 
         Use this when you already have MF6 LAK records; otherwise prefer the
         geometry-driven ``mf.lak(...)`` builder. Nothing here resolves against a
-        grid or compares the records with each other or with the counts: they go
-        to ``flopy.mf6.ModflowGwflak`` as given, and what disagrees is refused by
-        FloPy at build or by MF6 when it reads the file -- one run late. Each
-        case below is measured (``docs/reproducers/lak_docstring_claims.py``,
-        section 9).
+        grid, and the RECORDS go to ``flopy.mf6.ModflowGwflak`` as given. What is
+        compared, at this call, is each COUNT with the block it counts, a
+        boundname column with ``boundnames``, and the shape of a period value --
+        every case one that FloPy fails at build or MF6 refuses by name when it
+        reads the file, a run later, which is where each was caught until ledger
+        318. Each case below is measured
+        (``docs/reproducers/lak_docstring_claims.py``, section 9). A count held
+        in a form this does not count (FloPy's external-file ``{"filename":
+        ...}`` form, a DataFrame) is left to FloPy and MF6.
 
         Parameters
         ----------
@@ -6238,8 +6281,14 @@ class _LAKPackage:
             nlakeconn]`` -- the ZERO-based lake number, its starting stage
             (length) and how many rows it has in ``connectiondata`` -- then any
             ``auxiliary`` values, then a boundname when ``boundnames=True`` is in
-            ``**options``. A boundname column without ``boundnames=True`` fails
-            the build with FloPy's ``MFDataException``.
+            ``**options``. A row longer than that without ``boundnames=True``
+            raises ``ValueError`` here; FloPy failed the build on it with an
+            ``MFDataException``. The auxiliary values are counted by NAME, in any
+            shape FloPy writes the same: ``["a", "b"]``, ``[("a", "b")]``,
+            ``["auxiliary", "a", "b"]`` and the recarray FloPy's own
+            ``lak.auxiliary.get_data()`` returns each declare two. An
+            ``auxiliary`` holding anything but strings is left to FloPy, and the
+            boundname check is then skipped.
         connectiondata : list of list
             Required. FloPy LAK ``connectiondata``, one row per lake-aquifer
             connection: ``[ifno, iconn, cellid, claktype, bedleak, belev, telev,
@@ -6257,14 +6306,17 @@ class _LAKPackage:
             ``AUXILIARY``, or an outlet number for ``RATE``, ``INVERT``,
             ``WIDTH``, ``SLOPE`` and ``ROUGH`` (``AUXILIARY`` takes the auxiliary
             variable's name before its value). A period left out, or given an
-            empty list, keeps the previous period's settings. A numpy array as a
-            value is written whole and kills MF6 (ledger 318): give numbers.
+            empty list, keeps the previous period's settings. A record whose value
+            is a ``numpy`` array or ``pandas`` Series raises ``ValueError`` here:
+            FloPy writes it whole, as text, and MF6 died reading it (a
+            segmentation fault, ledger 318). Give one number per record.
         nlakes : int, optional
             Default ``None``: ``len(packagedata)``. An explicit count REPLACES
-            that and is written as given; MF6 refuses one that disagrees with
-            ``packagedata`` in either direction (measured: ``nlakes=3`` for one
-            row, ``NO DATA SPECIFIED FOR LAKE 2``; ``nlakes=1`` for two rows,
-            ``lakeno MUST BE > 0 and <= 1``).
+            that, so it must EQUAL the number of ``packagedata`` rows: one that
+            disagrees raises ``ValueError`` here, where MF6 refused it in either
+            direction (measured: ``nlakes=3`` for one row, ``NO DATA SPECIFIED
+            FOR LAKE 2``; ``nlakes=1`` for two rows, ``lakeno MUST BE > 0 and <=
+            1``).
         name : str, default "lak"
             The package name: the FloPy ``pname``, the input file
             ``<model>.<name>`` and the stem of the four output files, as for
@@ -6273,15 +6325,16 @@ class _LAKPackage:
             MF6's ``NOUTLETS``, which must equal the number of ``outlets`` rows
             passed through ``**options``. FloPy RAISES the written count to that
             number when fewer are declared (measured: ``0`` or ``1`` with two
-            rows writes 2), but never lowers it, so a count above the rows, or one
-            with no ``outlets`` at all, reaches MF6, which refuses it (``NO DATA
+            rows writes 2), so a count below the rows is accepted; FloPy never
+            LOWERS it, so a count above the rows, or one with no ``outlets`` at
+            all, raises ``ValueError`` here -- MF6 refused each by name (``NO DATA
             SPECIFIED FOR OUTLET 2``; ``REQUIRED OUTLETS BLOCK NOT FOUND``).
         ntables : int, default 0
             MF6's ``NTABLES``, which must equal the number of ``tables`` rows
             passed through ``**options``, under the same rule: raised to the rows
-            given (``0`` with one table writes 1), never lowered, so
-            ``ntables=2`` with one table (``TABLE DATA ARE SPECIFIED 1 TIMES BUT
-            NTABLES IS SET TO 2``) and ``ntables=1`` with none are refused by MF6.
+            given (``0`` with one table writes 1), never lowered, so ``ntables=2``
+            with one table (MF6: ``TABLE DATA ARE SPECIFIED 1 TIMES BUT NTABLES
+            IS SET TO 2``) and ``ntables=1`` with none raise ``ValueError`` here.
         mover : bool, default False
             Writes MF6's ``MOVER`` option, so this package's lakes and outlets can
             take part in ``mf.mvr``. The spec carries no ``lak_index``, so
@@ -6296,8 +6349,7 @@ class _LAKPackage:
             four output file records and the ``pname``/``filename`` that ``name``
             gives. ``outlets`` and ``tables`` must agree with ``noutlets`` and
             ``ntables`` (above), and a boundname column in ``packagedata`` needs
-            ``boundnames=True``; nothing here checks either before FloPy or MF6
-            reads them.
+            ``boundnames=True``; each is checked at this call.
 
         Returns
         -------
@@ -6307,6 +6359,11 @@ class _LAKPackage:
 
         Raises
         ------
+        ValueError
+            Every disagreement listed in one message: an ``nlakes`` other than the
+            number of ``packagedata`` rows; a ``noutlets`` or ``ntables`` above the
+            ``outlets`` or ``tables`` rows; a boundname column without
+            ``boundnames=True``; an array or Series as a ``perioddata`` value.
         TypeError
             A required block (``packagedata``, ``connectiondata`` or
             ``perioddata``) left out, or an ``**options`` name
@@ -6329,8 +6386,25 @@ class _LAKPackage:
         ...              connectiondata=[[0, 0, (0, 42), "VERTICAL", 0.1, 0.0, 0.0, 0.0, 0.0]],
         ...              perioddata={0: [[0, "RATE", -5.0]]}, noutlets=1,
         ...              outlets=[[0, 0, -1, "SPECIFIED", 0.0, 0.0, 0.0, 0.0]])
+
+        A count above its block is refused here, not by MF6 a run later:
+
+        >>> mf.lak.flopy(packagedata=[[0, 101.0, 1]],
+        ...              connectiondata=[[0, 0, (0, 42), "VERTICAL", 0.1, 0.0, 0.0, 0.0, 0.0]],
+        ...              perioddata={0: []}, nlakes=3)
+        Traceback (most recent call last):
+        ...
+        ValueError: mf.lak.flopy: the records disagree with themselves, which FloPy or MF6 ...
         """
 
+        refusals = _flopy_lak_refusals(
+            packagedata, perioddata, nlakes=nlakes, noutlets=noutlets, ntables=ntables, options=options
+        )
+        if refusals:
+            raise ValueError(
+                "mf.lak.flopy: the records disagree with themselves, which FloPy or MF6 "
+                "would refuse a run later (ledger 318):\n  - " + "\n  - ".join(refusals)
+            )
         return lak_spec(
             packagedata,
             connectiondata,

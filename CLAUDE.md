@@ -446,9 +446,9 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4297 passed / 6 skipped**, 2026-09-25, with ledger 329 and its review):
-  `pytest -n 10` **1m54s** at load average ~3 (4286 took 2m50s at ~4, and 4271 with
-  ledger 328 2m21s). Its
+- Full suite (**4336 passed / 6 skipped**, 2026-09-25, with ledger 318's fix and its
+  review): `pytest -n 10` **1m32s** at load average ~7 (4332 took 1m38s at ~1.6, 4297
+  with ledger 329 1m54s at ~3, 4286 2m50s at ~4, and 4271 with ledger 328 2m21s). Its
   serial clock was not taken; 4266 on
   the same tree took serial (`-n0`) **8m49s** and `-n 10` **1m37s**, both with other work
   on the machine (load average 1.5-4.8 through the serial run, ~10 at the parallel one's
@@ -1028,7 +1028,8 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   0, never -1; a sliver under the bed is ABSORBED into the cell below (`min_remnant`,
   0.1), never deepened. `within` is read, covered and sampled through the SAME helpers
   as `mf.lak` (`geometry.read_footprints`/`footprint_cells`, `surfaces.sample_bed`), so
-  record cells == lake cells. The result carries `excavations` (`mf.ExcavationRecord`),
+  record cells == lake cells; `LakeTableBuilder(footprint=)` reads through
+  `read_footprints` too, reprojected to the RASTER's CRS (ledger 318). The result carries `excavations` (`mf.ExcavationRecord`),
   `ground`, `excavated`, `absorbed`; `attach=True` publishes `grid.excavations`, which
   the `gdf_topbtm` SETTER clears. `stack.to_disv` is now `build().to_disv()` (0 digests
   moved, 12 stacks). **An excavated stack SAVES** (ledger 323): excavations ride in the

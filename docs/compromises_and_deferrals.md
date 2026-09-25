@@ -33,7 +33,7 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 329 entries (331 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 329 entries (332 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
@@ -48,6 +48,7 @@
 | 321 | A package still naming a cell the built DISV REMOVED is refused at build -- a boundary, an observation, an... | 2026-09-25 |
 | 320 | `LayerStack.excavate`: a pond is a VOID cut after reconcile and pinch, absorbing rather than deepening -- t... | 2026-09-25 |
 | 319 | "The top active layer" is ONE rule, `idomain > 0`: the array form read `!= 0` and sent recharge into pass-t... | 2026-09-25 |
+| 318 | ~~Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewritin...~~ | 2026-09-25 |
 | 318 | Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewritin... | 2026-09-25 |
 | 317 | A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring doe... | 2026-09-24 |
 | 316 | ``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``,... | 2026-09-24 |
@@ -14086,3 +14087,130 @@ same day, which is the useful part of the result.
       `no_value`, the series guard and its counting exemption each fail their own, and so
       do the review's: the stage-file route's `dropna`/`min_count`, the pivot's
       `dropna=False`, each PEST writer's fill, and each map payload's gap rule.
+
+318. ~~**Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewriting their docstrings, documented, NOT fixed (2026-09-25).**~~
+      **RESOLVED 2026-09-25**, in the commit after b103ed5: every item the entry listed is
+      refused at the call or read as meant, and each docstring that stated the defect as
+      behaviour states the fix. What is still not done is at the end.
+      **`LakeTable` checks what MF6 checks, exactly.** `gwf-lak.f90`, `lak_read_table`
+      (~1440-1467), compares neighbouring rows only: `TABLE STAGE ENTRY` if `v <= v0`,
+      `TABLE VOLUME ENTRY` if `v <= v0`, `TABLE SURFACE AREA ENTRY` if `v < v0`. So stages
+      and volumes STRICTLY increase and areas never fall -- the volume rule was
+      "nondecreasing" and the area rule absent, so an equal volume and a falling area
+      passed and MF6 refused them one run later. Two refusals are OURS, because MF6 has no
+      sign or NaN rule: it RUNS a negative volume or area as given (a first volume of -5.0
+      read `VOLUME` -2.0 at 8.5, a first area of -4.0 `SURFACE-AREA` -3.0), and a NaN
+      never reaches it -- FloPy writes the row cut short at the NaN and MF6 stops with
+      `Could not read variable of type DOUBLE PRECISION from the following line:
+      '9.00000000'`, naming neither the value nor the lake. (This entry's first text said a
+      NaN "passes"; that was about the old `LakeTable`, and measured against MF6 it was not
+      what MF6 does.)
+      **The DEM mode's zero rows: ONE is kept, not refused -- the one call here that
+      departs from "refuse rather than guess", on a measurement.** Every stage at or below
+      the lowest bed gives `(stage, 0, 0)`; MF6 refuses two. MF6 reads a stage below a
+      table's first row AS the first row and interpolates between rows, so dropping all
+      but the LAST zero row leaves the function MF6 evaluates unchanged at every stage:
+      not a guess, the same curve. Measured: MF6 refused the requested stages 6-11 over a
+      bed of 8-10 (`TABLE VOLUME ENTRY 2`), and read the kept table, held at 6.5, 7.25,
+      8.0, 8.5, 9.5 and 10.75, as `VOLUME` 0, 0, 0, 0.5, 2.5, 7.0 and `SURFACE-AREA` 0, 0,
+      0, 0.5, 2.0, 3.75 -- `np.interp` of the requested rows to every digit. Refusing would
+      have sent the user to compute the DEM minimum inside the footprint, which "need not
+      be a contour label", to arrive at the same table. The visible change: the table's
+      `minimum_stage` is the kept stage, which `mf.lak` checks `starting_stage` against as
+      for any table. It is logged at INFO, not warned: nothing is lost. EVERY stage at or
+      below the bed is refused -- that table holds no water at any stage.
+      **`storage_coefficient` is (0, 1], so above 1 is refused.** It is the fraction of
+      the geometric volume that holds water; nothing stores more than its own volume, and
+      a larger lake is a geometry change. 0 built a zero-volume table MF6 refuses, and a
+      negative value fell out of `LakeTable` as "volumes must be nondecreasing", naming
+      nothing it came from. `NaN` and a `bool` are refused too; the rows mode still
+      ignores the field, as the class's mode rule says of every leftover field.
+      **The footprint goes through the shared reader** (`read_footprints`, from fedff7c):
+      a `str`, a list of paths, a GeoDataFrame, a GeoSeries, an `mf.Area`, a geometry;
+      `footprint_layer=` (new) picks the file's layer; a line or zero-area feature is
+      refused; it is REPROJECTED to the RASTER's CRS -- the reader's other callers
+      reproject to the grid's -- and a footprint carrying no CRS is taken to be in the
+      raster's frame, the reader's own rule. `footprint_layer` takes an INDEX as well as a
+      name, where `mf.lak(layer=)` refuses an integer: that one sits beside `only_layer`, a
+      model layer, and this one beside nothing an integer could mean. A footprint reaching
+      no pixel with a bed is refused naming which of three things happened (off the
+      raster, narrower than a pixel, every pixel no-data) with both boxes and both frames;
+      the wording is the raster-side twin of `where_they_are`, which words a GRID. A
+      partial miss WARNS (ledger 211's tier, through `warnings.warn` and the logger, ledger
+      288): no-data pixels inside, always; area off the raster only when it is more than
+      ONE pixel's, since the table is pixel-resolution anyway. A raster in a geographic CRS
+      is refused -- its pixel areas are square degrees. A `NaN` pixel is no-data, like a
+      declared one.
+      **Per-period values.** A `numpy` array is the list it holds and a `pandas` Series
+      the mapping of its index, so an integer index is periods, as a list's positions are,
+      and a lake-id index lakes; 2-D is refused (which axis is the period is a guess).
+      What would never be written is refused: a period key outside `range(nper)` (the
+      entry's `rainfall={101: 0.5}`) and a list longer than `nper` -- the same silent drop,
+      which the entry did not list. So is an all-integer mapping whose EVERY key is also a
+      lake id: with ids `"1"` and `nper >= 2`, `{1: 0.5}` was read as period 1 for every
+      lake -- written to the WRONG target, worse than nothing. It is refused only when every
+      key is both and the values are not mappings; `{period: {lake_id: value}}` cannot be
+      read two ways. Values are checked as MF6 checks them (an unknown `status`; a negative
+      rainfall, evaporation, runoff, inflow or withdrawal; and ours, a non-finite number); a
+      string passes, since MF6 reads it as a time-series name, and whether that series
+      exists is not checked. `LakeOutlet.rate` stores an array or Series as what it means.
+      **Lake-keyed mappings read their keys through `str()`** -- `tables` and, because it
+      is the same defect, every per-lake mapping: `only_vertical={101: True}` was ignored
+      silently. An int key and its string at once raise. Unknown keys in a per-lake mapping
+      are NOT refused: nothing in the entry asked for it, and a mapping shared between two
+      `mf.lak` calls over different lakes is a pattern that would break. **A `pandas.Series`'
+      index is read the same way** (amended on review, same day): its branch still tested
+      `lake in index` with the STRING id, so a Series keyed by the integer ids fell through
+      to the POSITIONAL reading -- `starting_stage=pd.Series({102: 12.0, 101: 11.5})` gave
+      lake `"101"` 12.0, and a leakance Series swapped the same way, silently, where the
+      dict was right. **One exception, a judgment call:** to `lake_bottom`/`lake_top` an
+      integer label is also a CELL number, so an integer-indexed Series that holds every
+      cell of every lake stays the per-cell map it always was. Read by label, a whole-grid
+      bed over lakes numbered 1 and 2 names every lake, and each would get ONE bed -- the
+      value at the cell numbered like it (measured on the 4 x 4 toy: 9.1 flat, where the
+      cells read 9.0/9.1/9.4/9.5); refusing instead would reject a whole-grid Series, the
+      natural spelling of a bed derived from the model top, whenever lakes carry small
+      integer ids. The price: such a Series reads differently from the same dict, which is
+      always by lake -- and a per-lake Series only covers every lake cell when each lake is
+      one cell numbered like some lake id.
+      **`**options`**: `nlakes` and `pname` raise `TypeError`; `filename` STAYS -- it names
+      the LAK input file, and nothing (a mover, a table child, an output) reads the package
+      by its file name. A `"rectangular"` lake whose bed no active layer holds raises as
+      `"bathy"` does. A HORIZONTAL `LakeConnection` needs `connection_length > 0` (MF6
+      refuses 0 by name) and `connection_width > 0` (MF6 runs 0 carrying nothing, and 0.0 is
+      the default -- for VERTICAL, which reads neither).
+      **`mf.lak.flopy` compares each count with its block, and still passes the records
+      through untouched** -- the escape hatch's contract was about records, and every case
+      refused is one FloPy or MF6 refused later (section 9 prints both). Only a count ABOVE
+      its rows is refused: FloPy raises a lower one to the rows, and that runs. A block in a
+      form this cannot count (FloPy's external-file dict, a DataFrame) is left to FloPy.
+      The boundname check counts auxiliary NAMES, flat (amended on review): `len(auxiliary)`
+      counted `[("a", "b")]` and FloPy's own `lak.auxiliary.get_data()` recarray, one row
+      `("auxiliary", "a", "b")`, as ONE auxiliary, and so refused rows FloPy writes as
+      `auxiliary  a  b` and MF6 runs (section 9). A leading `auxiliary` keyword is not a
+      name -- FloPy strips it -- and an `auxiliary` holding anything but strings skips the
+      check rather than guess.
+      **`LAKBuilder.prepared_tables` builds each table once** (amended on review): it
+      rebuilt every `LakeTableBuilder` on each read and `validate()` read it inside its
+      per-lake loop, so two DEM-table lakes built 12 tables and gave each table's no-data
+      warning 6 times, growing with the square of the lake count. It is cached on the
+      `tables` entries themselves, compared by identity, so replacing one rebuilds.
+      **Nothing valid moved**: 7 of 7 representative `mf.lak` specs digest identically
+      before and after (scalars, lists, mappings, numpy scalars, outlets, prism/DEM/rows
+      tables, bathy); only the in-memory records of a numpy-scalar input are now python
+      floats (ledger 265), which `_canonical` already normalized.
+      **Still not done:** `dem=` refuses a `Surface` (pass `resolve_source()`, as the entry
+      says); a DEM `stages` starting ABOVE the lowest bed is accepted and stated (MF6 gives
+      every lower stage the first row's volume) -- a truncated table is a legitimate thing
+      to want; a time-series name is not checked against a series; `LakeConnection(
+      bed_leakance=0.0)` still passes where `mf.lak` refuses a resolved one.
+      Reproducer: `docs/reproducers/lak_docstring_claims.py` (sections 2 and 6-10 print each
+      refusal beside what MF6 did with the same input, written unchecked through
+      `lak_spec`). Tests: `tests/test_lake_input_checks.py`, 39 (three run MF6), and the
+      text pins in `tests/test_lake_docstrings.py`. Reverting each fix alone fails at least
+      one test by name. The first text here claimed that of 25 fixes, and it was not true of
+      five: the key conversions in `only_layer`, `rectangular_interior`, `connection_modes`,
+      the `(lake_id, type)` leakance pair and a per-period lake key could each be reverted
+      with every lake test passing -- two of them silent, as `only_vertical` was
+      (`only_layer={101: 0}` read as no restriction, `rectangular_interior={101: True}` as
+      False). Each is pinned now, as is each amendment above.

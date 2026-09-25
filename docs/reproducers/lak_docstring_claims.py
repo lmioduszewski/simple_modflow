@@ -2,7 +2,9 @@
 
 Ledger 318. The measurements behind the ``LakeConnection``, ``LakeOutlet``,
 ``LakeTable``, ``LakeTableBuilder`` and ``mf.lak`` docstrings, and behind the list of
-things ``mf.lak`` and ``LakeTableBuilder`` accept without checking. Run it::
+things ``mf.lak`` and ``LakeTableBuilder`` accepted without checking -- each now
+refused or read correctly, so sections 2 and 6-9 print the refusal next to what MF6
+did with the same input, which is the reason for it. Run it::
 
     python docs/reproducers/lak_docstring_claims.py [workspace]
 
@@ -26,8 +28,11 @@ WHAT IT MEASURES
      the lake (0.0 when sealed). In a TRANSIENT period MF6 caps what leaves at what is
      available: 0.0 out, 2.0 with an INFLOW of 2.0, and -5.1475 (in) with the aquifer
      at 7.0.
-  2. MF6's table checks are stricter than ``LakeTable``'s: an equal volume and a
-     falling area both pass ``LakeTable`` and both stop MF6.
+  2. MF6's table checks (``gwf-lak.f90``, ``lak_read_table``) against ``LakeTable``'s:
+     an equal stage, an equal volume and a falling area stop MF6 and are refused by
+     ``LakeTable``; an equal area passes both. MF6 RUNS a negative volume or area
+     (VOLUME -2.0, SURFACE-AREA -3.0), and a NaN reaches it only as a row FloPy cut
+     short, which it cannot read; ``LakeTable`` refuses all three.
   3. Beyond the table MF6 grows the volume at the FULL last-row area, so a
      ``storage_coefficient`` table stopped at 11 gives 10.0 where one tabulated to 13
      gives 7.0 at stage 12.5.
@@ -38,23 +43,39 @@ WHAT IT MEASURES
      defaults: CONNLEN 0 is refused, CONNWIDTH 0 carries nothing, BELEV == TELEV is the
      whole cell, a TELEV above the cell top is refused, and a BEDLEAK of 0 carries
      nothing.
-  6. What each ``connection_modes`` writes, and that a rectangular lake loses its
-     VERTICAL connection silently when ``lake_bottom`` is outside ``only_layer``.
-  7. What ``mf.lak`` accepts without checking: integer keys in a per-period mapping
-     write nothing; a numpy array is written whole into every period and MF6 dies
-     reading it (SIGSEGV, for a RATE and a RAINFALL); ``nlakes=`` in ``**options``
-     replaces the lake count.
+  6. What each ``connection_modes`` writes, and that a rectangular lake whose
+     ``lake_bottom`` is outside ``only_layer`` is refused as a ``"bathy"`` one is (it
+     used to lose its VERTICAL connection silently).
+  7. What ``mf.lak`` refuses or reads now: an integer key past the last period (it
+     wrote nothing), ``nlakes=`` in ``**options`` (it replaced the lake count), and a
+     numpy array, now split by period -- where MF6, given the array whole, dies
+     reading it (SIGSEGV, for a RATE and a RAINFALL). A Series keyed by integer lake
+     ids out of lake order gives each lake its own value, as the dict does (it was
+     read by position); a whole-grid ``lake_bottom`` Series over lakes numbered 1 and
+     2 stays per cell, where a label reading would give each lake one bed.
   8. What ``LakeTableBuilder``/``LakeTable`` accept or refuse: a ``str`` footprint, a
-     footprint in another CRS or off the raster (a table of zeros), a GeoPackage's
-     second layer (never read), a bare DataFrame, a negative ``storage_coefficient``,
-     and an integer ``tables`` key whose message prints like the string id.
-  9. ``mf.lak.flopy``: an unknown option is a ``TypeError``; FloPy RAISES
-     ``NOUTLETS``/``NTABLES`` to the rows given but never lowers them, and writes
-     ``nlakes`` as given, so a count above its rows (or with no block) and an
+     footprint in another CRS (reprojected), one off the raster or narrower than a
+     pixel (refused, where it built a table of zeros), a GeoPackage's second layer
+     (``footprint_layer``), a DataFrame, a ``storage_coefficient`` out of (0, 1], an
+     integer ``tables`` key (it finds its lake).
+  9. ``mf.lak.flopy``: an unknown option is a ``TypeError``, and a count that
+     disagrees with its block is refused at the call. Beside each refusal, what MF6
+     does with the same records written unchecked (through ``lak_spec``): FloPy
+     RAISES ``NOUTLETS``/``NTABLES`` to the rows given but never lowers them, and
+     writes ``nlakes`` as given, so a count above its rows (or with no block) and an
      ``nlakes`` either side of ``packagedata`` reach MF6, which refuses each by name;
-     a boundname column without ``boundnames=True`` fails the build. And a ``pname``
-     through ``mf.lak``'s ``**options`` renames only FloPy's package: the spec, the
-     ``lak_index`` a mover reads and the table children keep ``name``.
+     a boundname column without ``boundnames=True`` fails the FloPy build. The
+     auxiliary values before a boundname are counted by NAME: ``[("a", "b")]``,
+     ``["auxiliary", "a", "b"]`` and FloPy's own ``lak.auxiliary.get_data()``
+     recarray (one row, ``("auxiliary", "a", "b")``) each write ``auxiliary  a  b``
+     and run, so a row carrying two values is accepted under each (``len()`` counted
+     two of them as one name and refused the row). And a
+     ``pname`` through ``mf.lak``'s ``**options`` is refused -- it renamed only
+     FloPy's package, while the spec, the ``lak_index`` a mover reads and the table
+     children kept ``name``.
+ 10. The DEM mode keeps ONE zero-volume row of several: MF6 cannot read the table
+     the requested stages make (two zero volumes), and reads the kept table as the
+     requested curve at every stage, below the kept first row included.
 """
 
 from __future__ import annotations
@@ -77,6 +98,7 @@ from shapely.geometry import box
 
 import myflopy as mf
 from myflopy import LAKBuilder, LakeOutlet, LakeTable, LakeTableBuilder, ModelContext
+from myflopy.advanced import lak_spec
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 
 MF6 = os.environ.get("MF6", "mf6")
@@ -163,14 +185,28 @@ def section_1(ws: Path) -> None:
 
 
 def section_2(ws: Path) -> None:
-    print("2. Tables LakeTable accepts and MF6 refuses")
-    for label, rows in (("equal volumes", [(8.0, 0.0, 0.0), (9.0, 0.0, 0.0), (10.0, 5.0, 4.0)]),
-                        ("falling area", [(8.0, 0.0, 5.0), (9.0, 1.0, 4.0), (10.0, 5.0, 4.0)])):
-        table = LakeTable(rows).rows  # accepted here
-        ok, _, error = _bench(ws / f"s2_{label[:3]}", connections=[VERTICAL],
-                              perioddata={0: [[0, "STATUS", "CONSTANT"], [0, "STAGE", 9.5]]},
-                              stage=9.5, table=table)
-        print(f"   {label}: LakeTable accepts; MF6 ran={ok}: {error[:110]}")
+    print("2. MF6's table checks against LakeTable's (lake held at 8.5 then 9.5)")
+    cases = {
+        "equal stage": [(8.0, 0.0, 0.0), (8.0, 1.0, 4.0), (10.0, 5.0, 4.0)],
+        "equal volume": [(8.0, 0.0, 0.0), (9.0, 0.0, 0.0), (10.0, 5.0, 4.0)],
+        "falling area": [(8.0, 0.0, 5.0), (9.0, 1.0, 4.0), (10.0, 5.0, 4.0)],
+        "equal area": [(8.0, 0.0, 4.0), (9.0, 1.0, 4.0), (10.0, 5.0, 4.0)],
+        "negative volume": [(8.0, -5.0, 0.0), (9.0, 1.0, 4.0), (10.0, 5.0, 4.0)],
+        "negative area": [(8.0, 0.0, -4.0), (9.0, 1.0, -2.0), (10.0, 5.0, 4.0)],
+        "NaN volume": [(8.0, 0.0, 0.0), (9.0, float("nan"), 4.0), (10.0, 5.0, 4.0)],
+    }
+    held = {i: [[0, "STATUS", "CONSTANT"], [0, "STAGE", s]] for i, s in enumerate((8.5, 9.5))}
+    for label, rows in cases.items():
+        try:
+            LakeTable(rows)
+            verdict = "accepts"
+        except ValueError as error:
+            verdict = f"refuses ({str(error)[:60]}...)"
+        ok, obs, error = _bench(ws / f"s2_{label.replace(' ', '_')}", connections=[VERTICAL],
+                                perioddata=held, nper=2, stage=8.5, table=rows)
+        mf6 = (f"ran, VOLUME/SURFACE-AREA {[(r['VOLUME'], r['SURFACEAREA']) for r in obs]}" if ok
+               else f"stopped: {error[:100]}")
+        print(f"   {label}: LakeTable {verdict}; MF6 {mf6}")
 
 
 def section_3(ws: Path, bed: Path) -> None:
@@ -260,7 +296,11 @@ def section_6() -> None:
     for label, kw in cases.items():
         with warnings.catch_warnings():
             warnings.simplefilter("error")  # a silent drop must not warn
-            rows = LAKBuilder(**{**base, **kw}).connectiondata
+            try:
+                rows = LAKBuilder(**{**base, **kw}).connectiondata
+            except ValueError as error:
+                print(f"   {label}: ValueError: {str(error)[:120]}")
+                continue
         kinds = pd.Series([r[3] for r in rows]).value_counts().to_dict()
         own_cells = all(r[2][1] in (5, 6, 9, 10) for r in rows)
         print(f"   {label}: {kinds}; every connection on a lake cell: {own_cells}")
@@ -268,19 +308,25 @@ def section_6() -> None:
 
 
 def section_7(ws: Path) -> None:
-    print("7. What mf.lak accepts without checking")
+    print("7. What mf.lak refuses or reads now, and what MF6 does with an array written whole")
     grid = _toy_grid()
     lakes = gpd.GeoDataFrame({"num": [101]}, geometry=[box(1, 1, 3, 3)], crs=grid.crs)
     ctx = ModelContext(grid=grid, domain=np.ones((2, 16), dtype=int))
     base = dict(context=ctx, nper=2, lakes=lakes, lake_id_field="num", starting_stage=11.5,
-                lake_bottom=9.0, connection_modes="rectangular", lake_top=11.0, bed_leakance=0.1)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        print("   rainfall={101: 0.5}:", mf.lak(**base, rainfall={101: 0.5}).options["perioddata"])
-        print("   rainfall={'101': 0.5}:", mf.lak(**base, rainfall={"101": 0.5}).options["perioddata"])
-        print("   **options nlakes=5 with one lake: nlakes =", mf.lak(**base, nlakes=5).options["nlakes"])
-        array = mf.lak(**base, outlets=[LakeOutlet("101", rate=np.array([-1.0, -2.0]))])
-    print("   LakeOutlet(rate=np.array([-1, -2])) period 0 record:", array.options["perioddata"][0])
+                lake_bottom=9.0, connection_modes="rectangular", lake_top=11.0, bed_leakance=0.1,
+                unexcavated="ignore")
+
+    def attempt(label, fn):
+        try:
+            print(f"   {label}: {fn()}")
+        except (ValueError, TypeError) as error:
+            print(f"   {label}: {type(error).__name__}: {str(error)[:130]}")
+
+    attempt("rainfall={101: 0.5}", lambda: mf.lak(**base, rainfall={101: 0.5}).options["perioddata"])
+    attempt("rainfall={'101': 0.5}", lambda: mf.lak(**base, rainfall={"101": 0.5}).options["perioddata"])
+    attempt("**options nlakes=5 with one lake", lambda: mf.lak(**base, nlakes=5).options["nlakes"])
+    attempt("LakeOutlet(rate=np.array([-1, -2]))", lambda: mf.lak(
+        **base, outlets=[LakeOutlet("101", rate=np.array([-1.0, -2.0]))]).options["perioddata"])
     ok, _, error = _bench(ws / "s7_array", connections=[VERTICAL], stage=10.0,
                           perioddata={0: [[0, "RATE", np.array([-1.0, -2.0])]]}, noutlets=1,
                           outlets=[[0, 0, -1, "SPECIFIED", 0.0, 0.0, 0.0, 0.0]], obs=())
@@ -292,43 +338,68 @@ def section_7(ws: Path) -> None:
                if "RAINFALL" in line]
     print(f"   MF6 on {written}: ran={ok} {error}")
 
+    # A Series keyed by integer lake ids is read by lake, as the dict is; to lake_bottom an
+    # integer is a cell number too, so a whole-grid bed stays per cell.
+    pair = gpd.GeoDataFrame({"num": [101, 102]}, geometry=[box(0, 0, 2, 2), box(2, 2, 4, 4)], crs=grid.crs)
+    two = {**base, "lakes": pair}
+    for label, stage in (("dict {102: 12.0, 101: 11.5}", {102: 12.0, 101: 11.5}),
+                         ("pd.Series({102: 12.0, 101: 11.5})", pd.Series({102: 12.0, 101: 11.5}))):
+        attempt(f"lakes 101, 102; starting_stage={label}", lambda stage=stage: [
+            (row[3], row[1]) for row in mf.lak(**{**two, "starting_stage": stage}).options["packagedata"]])
+    numbered = gpd.GeoDataFrame({"num": [1, 2]}, geometry=[box(0, 0, 2, 2), box(2, 2, 4, 4)], crs=grid.crs)
+    whole = pd.Series({cell: 9.0 + 0.1 * cell for cell in range(16)})
+    rows = mf.lak(**{**base, "lakes": numbered, "lake_bottom": whole, "connection_modes": "bathy",
+                     "nper": 1}).options["connectiondata"]
+    floors = {lake: sorted(round(r[5], 3) for r in rows if r[3] == "VERTICAL" and r[0] == lake) for lake in (0, 1)}
+    print(f"   lakes 1, 2; a whole-grid lake_bottom Series: VERTICAL beds {floors}; read by label, "
+          f"each lake would take ONE bed, {whole[1]:.1f} and {whole[2]:.1f}")
+
 
 def section_8(ws: Path, bed: Path) -> None:
     print("8. What LakeTableBuilder / LakeTable accept or refuse")
     full = box(0, 0, 2, 2)
     fp = ws / "fp.gpkg"
     gpd.GeoDataFrame(geometry=[full], crs=2927).to_file(fp)
+    fp4326 = ws / "fp4326.gpkg"
+    gpd.GeoDataFrame(geometry=[full], crs=2927).to_crs(4326).to_file(fp4326)
     two = ws / "two_layers.gpkg"
     gpd.GeoDataFrame(geometry=[box(0, 0, 1, 2)], crs=2927).to_file(two, layer="a")
     gpd.GeoDataFrame(geometry=[box(1, 0, 2, 2)], crs=2927).to_file(two, layer="b")
 
     def attempt(label, fn):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             try:
                 print(f"   {label}: {fn()}")
             except (ValueError, TypeError) as error:
-                print(f"   {label}: {type(error).__name__}: {error}")
+                print(f"   {label}: {type(error).__name__}: {str(error)[:150]}")
+        for warning in caught:
+            if "More than one layer" not in str(warning.message):
+                print(f"      warns: {str(warning.message)[:120]}")
 
     stages = [9, 10, 11]
     attempt("footprint=Path", lambda: LakeTableBuilder(dem=bed, footprint=fp, stages=stages).build().rows)
-    attempt("footprint=str", lambda: LakeTableBuilder(dem=bed, footprint=str(fp), stages=stages).build())
-    attempt("footprint in EPSG:4326 coordinates", lambda: LakeTableBuilder(
+    attempt("footprint=str", lambda: LakeTableBuilder(dem=bed, footprint=str(fp), stages=stages).build().rows)
+    attempt("footprint file in EPSG:4326 (reprojected)", lambda: LakeTableBuilder(
+        dem=bed, footprint=fp4326, stages=stages).build().rows)
+    attempt("footprint geometry in EPSG:4326 coordinates, no CRS", lambda: LakeTableBuilder(
         dem=bed, footprint=box(-122.5, 47.0, -122.4, 47.1), stages=stages).build().rows)
     attempt("footprint off the raster", lambda: LakeTableBuilder(
         dem=bed, footprint=box(100, 100, 101, 101), stages=stages).build().rows)
     attempt("footprint narrower than a pixel centre", lambda: LakeTableBuilder(
         dem=bed, footprint=box(0, 0, 0.4, 2), stages=stages).build().rows)
-    attempt("two-layer GeoPackage (a = left column, b = right)", lambda: LakeTableBuilder(
+    attempt("two-layer GeoPackage, default (a = left column)", lambda: LakeTableBuilder(
         dem=bed, footprint=two, stages=stages).build().rows)
+    attempt("two-layer GeoPackage, footprint_layer='b' (right column)", lambda: LakeTableBuilder(
+        dem=bed, footprint=two, footprint_layer="b", stages=stages).build().rows)
     frame = pd.DataFrame({"stage": [96.0, 98.0], "volume": [0.0, 1.0], "area": [0.0, 2.0]})
-    attempt("rows=DataFrame (string labels)", lambda: LakeTableBuilder(rows=frame).build())
-    attempt("rows=DataFrame (labels 0, 1, 2)", lambda: LakeTableBuilder(rows=pd.DataFrame([[1, 0, 0], [2, 1, 1]])).build())
-    attempt("storage_coefficient=-1 (prism)", lambda: LakeTableBuilder(area=1, bottom=9, top=11,
-                                                                     storage_coefficient=-1).build())
-    attempt("storage_coefficient=0 (prism)", lambda: LakeTableBuilder(area=1, bottom=9, top=11,
-                                                                    storage_coefficient=0).build().rows)
-    attempt("LakeTable with NaN and a negative volume", lambda: LakeTable(
+    attempt("rows=DataFrame (named)", lambda: LakeTableBuilder(rows=frame).build().rows)
+    attempt("rows=DataFrame (labels 0, 1, 2)", lambda: LakeTableBuilder(
+        rows=pd.DataFrame([[1, 0, 0], [2, 1, 1]])).build().rows)
+    for coefficient in (-1, 0, 1.5):
+        attempt(f"storage_coefficient={coefficient} (prism)", lambda c=coefficient: LakeTableBuilder(
+            area=1, bottom=9, top=11, storage_coefficient=c).build().rows)
+    attempt("LakeTable with a NaN and a negative volume", lambda: LakeTable(
         [(1, -5.0, 0.0), (2, float("nan"), 1.0)]).rows)
 
     grid = _toy_grid()
@@ -336,9 +407,9 @@ def section_8(ws: Path, bed: Path) -> None:
     ctx = ModelContext(grid=grid, domain=np.ones((2, 16), dtype=int))
     table = LakeTableBuilder(area=4.0, bottom=9.0, top=12.0)
     base = dict(context=ctx, nper=1, lakes=lakes, lake_id_field="num", starting_stage=11.5,
-                lake_bottom=9.0, connection_modes="rectangular", lake_top=11.0)
+                lake_bottom=9.0, connection_modes="rectangular", lake_top=11.0, unexcavated="ignore")
     attempt("tables={'101': ...}", lambda: mf.lak(**base, tables={"101": table}).options["tables"])
-    attempt("tables={101: ...}", lambda: mf.lak(**base, tables={101: table}))
+    attempt("tables={101: ...}", lambda: mf.lak(**base, tables={101: table}).options["tables"])
 
 
 def _flopy_bench(ws: Path, **overrides) -> str:
@@ -357,22 +428,29 @@ def _flopy_bench(ws: Path, **overrides) -> str:
               perioddata={0: [[0, "STATUS", "ACTIVE"]]})
     kw.update(overrides)
     try:
+        mf.lak.flopy(**kw)
+        verdict = "mf.lak.flopy accepts"
+    except ValueError as error:
+        verdict = f"mf.lak.flopy refuses ({str(error).splitlines()[1].strip()[:70]}...)"
+    # The same records written UNCHECKED -- lak_spec is what mf.lak.flopy wraps -- so what
+    # MF6 does with them is still measured.
+    try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            mf.lak.flopy(**kw).build(gwf)
+            lak_spec(kw.pop("packagedata"), kw.pop("connectiondata"), kw.pop("perioddata"), **kw).build(gwf)
     except flopy.mf6.mfbase.MFDataException as error:
-        return f"build raised MFDataException ({str(error).splitlines()[0][:60]}...)"
+        return f"{verdict}; unchecked, the build raised MFDataException ({str(error).splitlines()[0][:60]}...)"
     sim.write_simulation(silent=True)
     (ws / "t.lak.tab").write_text("BEGIN DIMENSIONS\n  NROW 3\n  NCOL 3\nEND DIMENSIONS\nBEGIN TABLE\n"
                                   "  8.0 0.0 0.0\n  10.0 200.0 100.0\n  14.0 600.0 100.0\nEND TABLE\n")
     proc = subprocess.run([MF6], cwd=ws, capture_output=True, text=True)
     lst = (ws / "mfsim.lst").read_text()
     written = [line.strip() for line in (ws / "m.lak").read_text().splitlines()
-               if line.strip().startswith(("NLAKES", "NOUTLETS", "NTABLES"))]
+               if line.strip().startswith(("NLAKES", "NOUTLETS", "NTABLES", "auxiliary"))]
     error = ""
     if "ERROR REPORT:" in lst:
         error = " ".join(line.strip() for line in lst.split("ERROR REPORT:")[1].splitlines()[:4]).strip()
-    return f"writes {written}; ran={proc.returncode == 0} {error[:90]}"
+    return f"{verdict}; unchecked, writes {written}; ran={proc.returncode == 0} {error[:90]}"
 
 
 def section_9(ws: Path) -> None:
@@ -398,20 +476,58 @@ def section_9(ws: Path) -> None:
         "a boundname column, boundnames unset": dict(packagedata=[[0, 10.0, 1, "pond"]]),
         "a boundname column, boundnames=True": dict(packagedata=[[0, 10.0, 1, "pond"]], boundnames=True),
     }
+    # FloPy's own shape for the auxiliary names, as `lak.auxiliary.get_data()` returns it.
+    probe = flopy.mf6.MFSimulation(sim_name="p", sim_ws=str(ws))
+    flopy.mf6.ModflowTdis(probe, nper=1)
+    probe_gwf = flopy.mf6.ModflowGwf(probe, modelname="p")
+    flopy.mf6.ModflowGwfdis(probe_gwf, nlay=1, nrow=3, ncol=3, top=8.0, botm=-10.0)
+    flopys_own = flopy.mf6.ModflowGwflak(
+        probe_gwf, nlakes=1, auxiliary=["a", "b"], packagedata=[[0, 10.0, 1, 5.0, 6.0]],
+        connectiondata=[[0, 0, *VERTICAL]], perioddata={0: []}).auxiliary.get_data()
+    print(f"   FloPy's own auxiliary.get_data(): {flopys_own.tolist()} (len {len(flopys_own)})")
+    two_aux = [[0, 10.0, 1, 5.0, 6.0]]
+    for label, auxiliary in (("['a', 'b']", ["a", "b"]), ("[('a', 'b')]", [("a", "b")]),
+                             ("['auxiliary', 'a', 'b']", ["auxiliary", "a", "b"]),
+                             ("FloPy's own get_data()", flopys_own)):
+        cases[f"two auxiliary values, auxiliary={label}"] = dict(packagedata=two_aux, auxiliary=auxiliary)
     for label, overrides in cases.items():
         print(f"   {label}: {_flopy_bench(ws / ('s9_' + ''.join(c for c in label if c.isalnum())), **overrides)}")
 
     grid = _toy_grid()
     lakes = gpd.GeoDataFrame({"name": ["pond"]}, geometry=[box(1, 1, 3, 3)], crs=grid.crs)
     ctx = ModelContext(grid=grid, domain=np.ones((2, 16), dtype=int))
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        spec = mf.lak(context=ctx, nper=1, lakes=lakes, lake_id_field="name", starting_stage=11.5,
-                      lake_bottom=9.0, connection_modes="rectangular", lake_top=11.0, pname="zz",
-                      tables={"pond": LakeTableBuilder(area=4.0, bottom=9.0, top=12.0)})
-    print(f"   mf.lak(..., pname='zz'): FloPy pname {spec.options['pname']!r}, spec name {spec.name!r}, "
+    kwargs = dict(context=ctx, nper=1, lakes=lakes, lake_id_field="name", starting_stage=11.5,
+                  lake_bottom=9.0, connection_modes="rectangular", lake_top=11.0, unexcavated="ignore",
+                  tables={"pond": LakeTableBuilder(area=4.0, bottom=9.0, top=12.0)})
+    try:
+        mf.lak(**kwargs, pname="zz")
+    except TypeError as error:
+        print(f"   mf.lak(..., pname='zz'): TypeError: {str(error)[:110]}")
+    spec = mf.lak(**kwargs, name="zz")
+    print(f"   mf.lak(..., name='zz'): FloPy pname {spec.options['pname']!r}, spec name {spec.name!r}, "
           f"lak_index package {spec.metadata['lak_index']['package']!r}, "
           f"table child {spec.options['lake_tables'][0]['pname']!r}")
+
+
+def section_10(ws: Path, bed: Path) -> None:
+    print("10. The DEM mode's zero-volume rows: MF6 on the requested list, and on the kept table")
+    requested = [6.0, 7.0, 7.5, 8.0, 9.0, 10.0, 11.0]
+    full = [(6.0, 0.0, 0.0), (7.0, 0.0, 0.0), (7.5, 0.0, 0.0), (8.0, 0.0, 0.0),
+            (9.0, 1.0, 1.0), (10.0, 4.0, 3.0), (11.0, 8.0, 4.0)]
+    kept = LakeTableBuilder(dem=bed, footprint=box(0, 0, 2, 2), stages=requested).build().rows
+    print(f"   requested stages {requested} -> kept rows {kept}")
+    held = [6.5, 7.25, 8.0, 8.5, 9.5, 10.75]
+    pdata = {i: [[0, "STATUS", "CONSTANT"], [0, "STAGE", s]] for i, s in enumerate(held)}
+    ok, _, error = _bench(ws / "s10_full", connections=[VERTICAL], perioddata=pdata, nper=len(held),
+                          stage=held[0], table=full)
+    print(f"   the requested list: MF6 ran={ok} {error[:90]}")
+    ok, obs, error = _bench(ws / "s10_kept", connections=[VERTICAL], perioddata=pdata,
+                            nper=len(held), stage=held[0], table=kept)
+    stages, volumes, areas = zip(*full, strict=True)
+    for stage, row in zip(held, obs, strict=True):
+        print(f"   held at {stage}: MF6 VOLUME {row['VOLUME']} SURFACE-AREA {row['SURFACEAREA']}; "
+              f"the requested curve {np.interp(stage, stages, volumes):.4f} "
+              f"{np.interp(stage, stages, areas):.4f}")
 
 
 def main() -> None:
@@ -430,6 +546,7 @@ def main() -> None:
     section_7(root)
     section_8(root, bed)
     section_9(root)
+    section_10(root, bed)
     print(f"workspace: {root}")
 
 

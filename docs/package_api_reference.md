@@ -215,15 +215,20 @@ run reopened with `Run.open` or `mf.load_mf6_run` keeps it, and so do
 `implicit` setting, so `diff().config` tells two runs apart by it.
 The `mf.lak` docstring (`help(mf.lak)`) spells out what each mode writes, and every
 parameter; a `LakeOutlet`'s `rate` is negative to remove water and positive to add
-it, and per-period values are zero-based (ledger 318 lists what `mf.lak` accepts
-without checking).
+it, and per-period values are zero-based. What it used to accept without checking
+(ledger 318) is refused at the call now: a period past the last, a `status` MF6
+does not know, a negative forcing, `nlakes`/`pname` in `**options`, a rectangular
+bed no layer holds; an array or Series is read by period.
 
 The same bathymetry can also give the lake a stage/volume/area table:
 `tables={"pond": mf.LakeTableBuilder(dem=bed.resolve_source(), footprint=Path("pond.gpkg"), stages=...)}`.
 `dem=` takes the raster PATH that `resolve_source()` returns, not the Surface.
-`footprint=` must be a `Path` or a geometry in the raster's CRS. Start `stages` at
-the lowest bed. The class docstring lists every field, its mode and its errors;
-the prism (`area`/`top`/`bottom`) and explicit-`rows` forms are there too.
+`footprint=` is any form `mf.lak(lakes=)` reads -- a path (`footprint_layer=` picks
+the layer), a frame, an `mf.Area`, a geometry -- reprojected to the raster's CRS,
+and refused when it reaches no pixel with a bed. Start `stages` at or below the
+lowest bed: extra zero-volume rows are reduced to one, the same curve to MF6. The
+class docstring lists every field, its mode and its errors; the prism
+(`area`/`top`/`bottom`) and explicit-`rows` forms (a DataFrame too) are there.
 
 **Which cells a lake covers.** By AREA, through the shared rule (ledger 241 -- the
 same `cell_shares` behind `.gpkg` boundaries and head targets): a lake polygon

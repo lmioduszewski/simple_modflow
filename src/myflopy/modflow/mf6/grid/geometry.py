@@ -1201,9 +1201,10 @@ def read_footprints(
 ) -> gpd.GeoDataFrame:
     """Read polygon footprints -- lakes, excavations -- into one frame in the grid's CRS.
 
-    The one reader behind ``mf.lak(lakes=)`` and ``LayerStack.excavate(within=)``, so
-    the two can never read different features, a different layer or a different frame
-    out of one file (the excavation design, section 3.4). It reads, reprojects, labels
+    The one reader behind ``mf.lak(lakes=)``, ``LayerStack.excavate(within=)`` and
+    ``LakeTableBuilder(footprint=)``, so they can never read different features, a
+    different layer or a different frame out of one file (the excavation design,
+    section 3.4; ledger 318 for the table, which reprojects to its RASTER's CRS). It reads, reprojects, labels
     each feature, and refuses what a footprint cannot be: a feature that is not a
     polygon, and one with no area -- a footprint covers cells by AREA, and the shared
     cell rule falls back to LENGTH for a geometry with none, so a collapsed outline
