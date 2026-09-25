@@ -4386,10 +4386,11 @@ class _RCHPackage:
             321-322). A per-column index -- an array, or ``"top_active"`` resolved
             eagerly or at build -- that names a REMOVED cell (``idomain <= 0``) in a
             column that has an active cell is REFUSED: it was resolved against
-            another domain, typically a ``context=`` from before the stack was
-            excavated, and MF6 would drop that column's recharge without a word.
-            ``None`` or one integer for every column stays legal, and the build
-            WARNS naming the columns and the rate lost.
+            another domain -- a ``context=`` from before the stack was excavated, or,
+            declared without one, the MODEL's context ``domain=`` -- and MF6 would
+            drop that column's recharge without a word. ``None`` or one integer for
+            every column stays legal, and the build WARNS naming the columns and the
+            rate lost (exact: MF6's budget shows that much less recharge).
         fixed_cell : bool, default False
             Write ``FIXED_CELL``, MF6's option to keep recharge in the IRCH cell
             even when that cell is inactive -- a convertible cell gone DRY included
@@ -4872,7 +4873,9 @@ class _EVTPackage:
             layer 1 is inactive. Checked at build as ``irch`` is (ledgers 321-322):
             a per-column index naming a removed cell in a column with an active cell
             is refused, ``None`` or one layer everywhere is warned with the rate
-            lost.
+            lost -- for ET an UPPER bound, "up to" ``rate`` times the lost area at
+            the maximum ET rate, because MF6 scales ET by the head's depth below
+            ``surface`` and so drops anything from zero to that.
         fixed_cell : bool, default False
             Write ``FIXED_CELL``, MF6's option to keep ET in the IEVT cell instead of
             passing it to the cell below when that cell is inactive.

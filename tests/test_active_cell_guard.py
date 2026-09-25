@@ -92,7 +92,7 @@ def _pond_area(grid, cells=POND):
 def _loss(message):
     """``(lost, total)`` as the message states them."""
 
-    lost, total = re.search(r": ([0-9.e+-]+) of ([0-9.e+-]+) ft3/d", message).groups()
+    lost, total = re.search(r": (?:up to )?([0-9.e+-]+) of ([0-9.e+-]+) ft3/d", message).groups()
     return float(lost), float(total)
 
 
@@ -113,6 +113,9 @@ def test_a_stale_array_recharge_is_refused_naming_the_excavation_and_the_loss(tm
     assert "package 'rch' (recharge as arrays)" in message
     assert "2 inside excavation 'pond'" in message
     assert "cell 5 (layer 1), cell 6 (layer 1)" in message
+    assert "declared against a context from BEFORE the cut" in message
+    assert "declare the package without context=" in message, "the eager package's own context"
+    assert "up to" not in message, "a recharge loss is exact"
     lost, total = _loss(message)
     assert lost == pytest.approx(RATE * _pond_area(grid), rel=1e-5)
     assert total == pytest.approx(RATE * grid.gdf_vorPolys.area.sum(), rel=1e-5)
@@ -120,11 +123,56 @@ def test_a_stale_array_recharge_is_refused_naming_the_excavation_and_the_loss(tm
 
 def test_a_lazy_array_resolved_against_a_stale_context_domain_is_refused(tmp_path, grid):
     """`irch='top_active'` without `context=` resolves at BUILD against the MODEL'S
-    context -- which, declared before the cut, still says layer 1 is there."""
+    context -- which, declared before the cut, still says layer 1 is there. The refusal
+    names THAT context: telling the user to declare the package without context= -- what
+    they already did -- got them the same refusal again."""
 
     s = _setup(grid)
-    with pytest.raises(ValueError, match=r"package 'rch' \(recharge as arrays\)"):
+    with pytest.raises(ValueError, match=r"package 'rch' \(recharge as arrays\)") as raised:
         _build(tmp_path, _simulation(s.stale, s.after, mf.rch.array(recharge=RATE)))
+    message = str(raised.value)
+    assert "the model's context is from BEFORE the cut" in message
+    assert "irch was left to the build" in message and "leave domain= out" in message
+    assert "declare the package without context=" not in message
+    # ...and the advice works: without domain= the build reads the DISV's own idomain
+    built, warned = _build(tmp_path, _simulation(ModelContext(grid=grid), s.after,
+                                                 mf.rch.array(recharge=RATE)), "fixed")
+    assert warned == []
+    irch = built.built_model("m").model.get_package("rcha").irch.get_data()[0]
+    assert (irch[list(POND)] == 1).all()
+
+
+def test_a_lazy_list_boundary_on_a_stale_model_context_names_that_context(tmp_path, grid):
+    """A `.gpkg` boundary declared without `context=` resolves its cells against the
+    MODEL's context domain too; re-declaring it would resolve them the same way."""
+
+    s = _setup(grid)
+    source = tmp_path / "chd.gpkg"
+    gpd.GeoDataFrame({"head": [98.0], "layer": [1], "name": ["c"]},
+                     geometry=[grid.gdf_vorPolys.geometry.loc[5].representative_point()],
+                     crs=grid.crs).to_file(source)
+    with pytest.raises(ValueError) as raised:
+        _build(tmp_path, _simulation(s.stale, s.after, mf.chd.gpkg(source, head="head", nper=1)))
+    message = str(raised.value)
+    assert "package 'chd' names 1 cell(s) the built DISV has REMOVED" in message
+    assert "the model's context is from BEFORE the cut" in message
+    assert "leave domain= out" in message and "Re-declare it against" not in message
+
+
+def test_a_bare_package_spec_is_checked_like_a_named_one(tmp_path, grid):
+    """Paired with its spec by the OBJECT it built, not by name: FloPy names a
+    `PackageSpec` without `pname` `chd_0`, and a name lookup skipped it -- a CHD on a dug
+    cell built clean, and a stale per-column irch was warned as 'irch left out'."""
+
+    s = _setup(grid)
+    chd = mf.PackageSpec("chd", flopy.mf6.ModflowGwfchd,
+                         {"stress_period_data": {0: [[(0, 5), 98.0]]}})
+    with pytest.raises(ValueError, match=r"package 'chd' names 1 cell\(s\) the built DISV has REMOVED"):
+        _build(tmp_path, _simulation(s.fresh, s.after, chd), "chd")
+    rcha = mf.PackageSpec("rch", flopy.mf6.ModflowGwfrcha,
+                          {"recharge": RATE, "irch": np.zeros(grid.ncpl, dtype=int)})
+    with pytest.raises(ValueError, match=r"'rcha_0' \(recharge as arrays\) addresses its recharge"):
+        _build(tmp_path, _simulation(s.fresh, s.after, rcha), "rcha")
 
 
 def test_a_stale_array_evt_is_refused(tmp_path, grid):
@@ -213,6 +261,11 @@ def test_one_layer_for_every_column_warns_with_the_rate_it_loses(tmp_path, grid,
     lost, total = _loss(message)
     assert lost == pytest.approx(RATE * _pond_area(grid), rel=1e-5)
     assert total == pytest.approx(RATE * grid.gdf_vorPolys.area.sum(), rel=1e-5)
+    # ET's figure is the MAXIMUM rate over the lost area -- MF6 scales ET by the head's
+    # depth below the surface -- so it is stated as a bound; recharge's is exact.
+    evt = "evapotranspiration" in message
+    assert ("up to" in message) is evt
+    assert ("at the maximum ET rate" in message) is evt
 
 
 def test_the_worst_period_is_named_when_it_is_not_the_first(tmp_path, grid):

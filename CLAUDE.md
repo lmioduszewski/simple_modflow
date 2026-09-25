@@ -1034,9 +1034,11 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   (ledger 321): `_discretization_complaints` checks every list-BC record, OBS6 cellid
   and per-column `irch`/`ievt` against the BUILT DISV's idomain (`<= 0` = removed) and
   names the excavation. FloPy does NOT catch a list BC on a removed cell (measured: a
-  CHD at a dug cell built clean); HFB is exempt (MF6 warns and drops it). `irch=None`
+  CHD at a dug cell built clean); HFB is exempt (MF6 warns and drops it). A spec is
+  paired with the FloPy package it BUILT, not by name (a bare `PackageSpec` is `chd_0`
+  to FloPy), and a LAZY package's refusal names the MODEL's stale `domain=`. `irch=None`
   / one layer everywhere stays the opt-out and WARNS with the rate lost, which matches
-  MF6's own budget to 1e-6 (ledger 322).
+  MF6's own budget to 1e-6 for recharge and is an UPPER bound for ET (ledger 322).
   `.plot.map()/.plot.section()/.plot.surface()` and `.vtk_3d()`, `from_modflow`).
   **Pictures come from `stack.plot`** as of 8.5a — `preview`/`thickness_map`/
   `cross_section`/`surface_3d`/`views` are gone. `qc()` stays a method: it is a

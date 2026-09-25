@@ -857,7 +857,7 @@ def excavation_cells(context) -> dict[int, str]:
     return found
 
 
-def _dug_note(cells, idomain, dug: dict[int, str], *, stale: bool = True) -> str:
+def _dug_note(cells, idomain, dug: dict[int, str], *, stale: bool = True, lazy: bool = False) -> str:
     """Which of ``cells`` -- ``(layer, cell)`` pairs -- an excavation dug out, in words.
 
     A cell counts when its column is in a record AND it lies above the column's first
@@ -865,6 +865,8 @@ def _dug_note(cells, idomain, dug: dict[int, str], *, stale: bool = True) -> str
     a dug column was removed by something else (a pinch), and is not blamed on the pond.
     ``stale`` adds the likely cause -- a context from before the cut -- which is true of
     a resolved index or cellid and not of a single layer typed for every column.
+    ``lazy`` says WHICH context: a package declared without ``context=`` resolved at
+    build against the MODEL's, so it is that one that predates the cut.
     """
 
     import numpy as np
@@ -881,9 +883,40 @@ def _dug_note(cells, idomain, dug: dict[int, str], *, stale: bool = True) -> str
         return ""
     parts = [f"{count} inside excavation {name!r}" for name, count in sorted(by_name.items())]
     note = f" -- {', '.join(parts)}, dug out of the stack by `LayerStack.excavate`"
-    if stale:
+    if stale and lazy:
+        note += ", so the model's context is from BEFORE the cut"
+    elif stale:
         note += ", so this was declared against a context from BEFORE the cut"
     return note
+
+
+#: What to do when a LAZY package -- declared without ``context=`` -- resolved against a
+#: model context that predates the cut. Re-declaring it, the eager advice, changes nothing:
+#: it resolves against the same stale ``domain=`` again.
+_STALE_MODEL_CONTEXT = (
+    "resolved at BUILD against the MODEL's context -- whose domain= is not this DISV's. "
+    "Rebuild that ModelContext with the excavated result's idomain, or leave domain= out "
+    "so the build reads the DISV's own idomain"
+)
+
+
+def _is_lazy(model, package) -> bool:
+    """Whether ``package`` resolved at build (it recorded its resolution on ``model``)."""
+
+    return package.name in (getattr(model, "_myflopy_resolved", None) or {})
+
+
+def _built_type(package, types: dict[str, str], built_packages) -> str | None:
+    """The FloPy package type ``package`` built, paired by OBJECT when ``built`` is given.
+
+    By name otherwise, which misses a bare ``PackageSpec`` with no ``pname``: FloPy names
+    that one ``chd_0``, not ``chd``, so a name lookup finds nothing and the package goes
+    unchecked.
+    """
+
+    flopy_package = (built_packages or {}).get(package.name)
+    kind = getattr(flopy_package, "package_type", None)
+    return str(kind) if kind is not None else types.get(package.name)
 
 
 def _listing(items, limit: int = 5) -> str:
@@ -905,7 +938,7 @@ def _flopy_types(model) -> dict[str, str]:
     }
 
 
-def _inactive_cellid_complaints(model, packages, idomain, dug) -> list[str]:
+def _inactive_cellid_complaints(model, packages, idomain, dug, built_packages=None) -> list[str]:
     """A list boundary or an observation naming a cell the built DISV removed.
 
     MF6 REFUSES both at read (``Cell is outside active grid domain`` for a boundary,
@@ -925,7 +958,7 @@ def _inactive_cellid_complaints(model, packages, idomain, dug) -> list[str]:
     resolved = getattr(model, "_myflopy_resolved", None) or {}
     for package in packages:
         effective = resolved.get(package.name, package)
-        if types.get(package.name) not in _LIST_BC_TYPES:
+        if _built_type(package, types, built_packages) not in _LIST_BC_TYPES:
             continue
         removed = sorted(
             {
@@ -938,12 +971,17 @@ def _inactive_cellid_complaints(model, packages, idomain, dug) -> list[str]:
             }
         )
         if removed:
+            lazy = _is_lazy(model, package)
+            advice = (
+                f"It was declared without context=, so it {_STALE_MODEL_CONTEXT}" if lazy
+                else "Re-declare it against the context of the layer stack this DISV "
+                "was built from"
+            )
             complaints.append(
                 f"package {package.name!r} names {len(removed)} cell(s) the built DISV "
                 f"has REMOVED (idomain <= 0), which MF6 refuses at read ('Cell is "
                 f"outside active grid domain'): {_listing(removed)}"
-                f"{_dug_note(removed, idomain, dug)}. Re-declare it against the context "
-                "of the layer stack this DISV was built from"
+                f"{_dug_note(removed, idomain, dug, lazy=lazy)}. {advice}"
             )
 
     for package in getattr(model, "packagelist", ()) or ():
@@ -1072,7 +1110,7 @@ def _flux_units(context) -> str:
     return f"{length}^3/{time}"
 
 
-def _array_index_findings(model, context, packages, idomain, dug):
+def _array_index_findings(model, context, packages, idomain, dug, built_packages=None):
     """``(complaints, warnings)`` for every array-form RCH/EVT built on the model.
 
     A per-column index (``irch``/``ievt`` as an array -- ``"top_active"`` resolved,
@@ -1082,6 +1120,13 @@ def _array_index_findings(model, context, packages, idomain, dug):
     opt-out (ledger 163), so the same loss is a WARNING, with the rate it costs
     (ledger 322). A column with no active cell loses nothing that was not already
     outside the model, and is not counted.
+
+    Each FloPy package is paired with the spec that built it by OBJECT when
+    ``built_packages`` (``{spec name: built FloPy package}``, what ``ModelSpec.build``
+    holds) is given, and
+    by name otherwise. For EVT the figure is the MAXIMUM rate over the lost area -- MF6
+    scales ET by the head's depth below the surface, so what it drops lies between zero
+    and that -- where for RCH it is exact.
     """
 
     import numpy as np
@@ -1090,7 +1135,12 @@ def _array_index_findings(model, context, packages, idomain, dug):
     complaints: list[str] = []
     warned: list[str] = []
     resolved = getattr(model, "_myflopy_resolved", None) or {}
-    declared = {package.name: resolved.get(package.name, package) for package in packages}
+    by_name = {package.name: package for package in packages}
+    by_object = {
+        id(flopy_package): package
+        for package in packages
+        if (flopy_package := (built_packages or {}).get(package.name)) is not None
+    }
     has_active = (idomain > 0).any(axis=0)
     columns = np.arange(ncpl)
     areas = None
@@ -1101,11 +1151,17 @@ def _array_index_findings(model, context, packages, idomain, dug):
             continue
         index_name, value_name, noun = _ARRAY_INDEX[kind]
         name = _flopy_name(flopy_package)
-        spec = declared.get(name)
+        declared = by_object.get(id(flopy_package)) or by_name.get(name)
+        spec = resolved.get(declared.name, declared) if declared is not None else None
+        # The index was left to the build ("top_active" with no context=): it resolved
+        # against the MODEL's context, which is the one to fix.
+        lazy = declared is not None and index_name in (declared.inputs or {})
         positional = spec is not None and (
-            index_name in (spec.inputs or {})
+            lazy
+            or index_name in (spec.inputs or {})
             or _index_is_positional((spec.options or {}).get(index_name))
         )
+        maximum = kind == "evta"
         indices = _read_period_data(flopy_package, index_name, ncpl)
         if indices is None:
             continue
@@ -1142,9 +1198,12 @@ def _array_index_findings(model, context, packages, idomain, dug):
             )
         cost = ""
         if lost is not None and total:
+            # ET is scaled by the head below the surface, so the declared rate is the
+            # most MF6 could have taken: "up to", at the maximum rate. RCH is exact.
             cost = (
-                f": {lost:.6g} of {total:.6g} {units} ({100.0 * lost / total:.1f}%) in "
-                f"stress period {period + 1}"
+                f": {'up to ' if maximum else ''}{lost:.6g} of {total:.6g} {units} "
+                f"({100.0 * lost / total:.1f}%){' at the maximum ET rate' if maximum else ''} "
+                f"in stress period {period + 1}"
             )
             worst = max(findings, key=lambda item: item[4] if item[4] is not None else -1.0)
             if worst[4] is not None and worst[4] > lost and worst[5]:
@@ -1153,16 +1212,22 @@ def _array_index_findings(model, context, packages, idomain, dug):
                     f"stress period {worst[0] + 1}"
                 )
         count = int(removed.sum() + beyond.sum())
-        note = _dug_note(pairs, idomain, dug)
+        note = _dug_note(pairs, idomain, dug, lazy=lazy)
         if positional:
+            advice = (
+                f"Its {index_name} was left to the build ('top_active' with no context=), "
+                f"so it {_STALE_MODEL_CONTEXT}"
+                if lazy
+                else f"Its {index_name} was resolved against a domain that is not this "
+                "DISV's: declare the package without context= (so "
+                f"{index_name}='top_active' resolves at build against this DISV) or "
+                "against the excavated result's idomain"
+            )
             complaints.append(
                 f"package {name!r} ({noun} as arrays) addresses its {noun} in {count} "
                 f"column(s) to a cell the built DISV has REMOVED although the column has "
                 f"an active cell below: {where}{note}. MF6 drops {noun} addressed to a "
-                f"removed cell without a word{cost}. Its {index_name} was resolved "
-                "against a domain that is not this DISV's: declare the package without "
-                f"context= (so {index_name}='top_active' resolves at build against this "
-                "DISV) or against the excavated result's idomain"
+                f"removed cell without a word{cost}. {advice}"
             )
         else:
             given = (spec.options or {}).get(index_name) if spec is not None else None
@@ -1203,7 +1268,7 @@ def _activity_inputs(model):
     return None if (idomain > 0).all() else idomain
 
 
-def _active_cell_complaints(model, context, packages) -> list[str]:
+def _active_cell_complaints(model, context, packages, built_packages=None) -> list[str]:
     """What names a cell the BUILT DISV has removed, as refusals (ledger 321).
 
     Separate from the mesh checks because the question is different: not "is this the
@@ -1217,11 +1282,13 @@ def _active_cell_complaints(model, context, packages) -> list[str]:
     if idomain is None:
         return []
     dug = excavation_cells(context)
-    complaints = _inactive_cellid_complaints(model, packages, idomain, dug)
-    return complaints + _array_index_findings(model, context, packages, idomain, dug)[0]
+    complaints = _inactive_cellid_complaints(model, packages, idomain, dug, built_packages)
+    return complaints + _array_index_findings(
+        model, context, packages, idomain, dug, built_packages
+    )[0]
 
 
-def active_cell_warnings(model, context, packages) -> list[str]:
+def active_cell_warnings(model, context, packages, *, built_packages=None) -> list[str]:
     """The WARNINGS of the build-time activity check: an ``irch``/``ievt`` opt-out that loses flux.
 
     ``irch=None`` (and ``ievt=None``, or one layer given for every column) is the
@@ -1241,24 +1308,37 @@ def active_cell_warnings(model, context, packages) -> list[str]:
         The packages built from specs, as ``ModelSpec.build`` passes them; each
         array-form package's declared ``irch``/``ievt`` decides warning against
         refusal.
+    built_packages : dict of str to flopy.mf6.mfpackage.MFPackage, optional
+        Keyword-only. ``{spec name: the FloPy package that spec built}``, as
+        ``ModelSpec.build`` holds it. Pairs each FloPy package with its spec by OBJECT.
+        Omitted (``None``, the default), they are paired by NAME, which misses a bare
+        ``PackageSpec`` declared with no ``pname`` -- FloPy names it ``rcha_0``, not
+        ``rch`` -- so its declared index is not found and a per-column one is reported
+        as the one-layer opt-out rather than refused.
 
     Returns
     -------
     list of str
         One message per package that loses flux; empty when none does, when the model
-        has no DISV, or when every cell of it is active.
+        has no DISV, or when every cell of it is active. The rate is exact for recharge;
+        for ET it is the MAXIMUM rate over the lost area ("up to ... at the maximum ET
+        rate"), because MF6 scales ET by the head's depth below the ET surface.
 
     Examples
     --------
     >>> from myflopy.grid_identity import active_cell_warnings
     >>> active_cell_warnings(object(), None, [])
     []
+    >>> active_cell_warnings(object(), None, [], built_packages={})
+    []
     """
 
     idomain = _activity_inputs(model)
     if idomain is None:
         return []
-    return _array_index_findings(model, context, packages, idomain, excavation_cells(context))[1]
+    return _array_index_findings(
+        model, context, packages, idomain, excavation_cells(context), built_packages
+    )[1]
 
 
 def _mesh_scale(points) -> float:
@@ -1307,7 +1387,7 @@ def _mesh_residual(built, wanted) -> float:
         np.max(np.abs((built - built.mean(axis=0)) - (wanted - wanted.mean(axis=0))))
     )
 
-def _discretization_complaints(model, context, packages) -> list[str]:
+def _discretization_complaints(model, context, packages, built_packages=None) -> list[str]:
     """Every way a built model's discretization disagrees with what it was declared against.
 
     The failure this exists to stop is silent. ``replace_grid`` swaps a grid and
@@ -1478,7 +1558,7 @@ def _discretization_complaints(model, context, packages) -> list[str]:
                 )
     # In range is not enough: a cell can exist on this mesh and still have been REMOVED
     # by the DISV's idomain -- what a context declared before an excavation leaves.
-    complaints += _active_cell_complaints(model, context, packages)
+    complaints += _active_cell_complaints(model, context, packages, built_packages)
     return complaints
 
 def dropped_context_fields(context) -> tuple[str, ...]:

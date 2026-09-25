@@ -13408,7 +13408,19 @@ same day, which is the useful part of the result.
       (`grid_identity.excavation_cells`: `context.surfaces`' records, a table's
       `attrs["excavations"]`, then `grid.excavations`) and, for an array, the rate MF6
       would drop. A lazy `rch.array()` is not immune: it resolves `"top_active"` against
-      the MODEL'S context, which declared before the cut still has layer 1 there.
+      the MODEL'S context, which declared before the cut still has layer 1 there -- and so
+      does a lazy `.gpkg` boundary. **For a LAZY package the refusal names the MODEL's
+      context**: the first wording told everyone to "declare the package without
+      context=", which is what a lazy package already was, so following it got the same
+      refusal again. It now says to rebuild that `ModelContext` from the excavated result
+      or leave `domain=` out (the build then reads the DISV's own idomain -- measured, it
+      builds with `irch` 1 under the pond). Lazy is read off the spec: an index left in
+      the declared spec's `inputs`, a boundary that recorded its resolution on the model.
+      **A spec is paired with its FloPy package by the OBJECT it built**
+      (`ModelSpec.build`'s `built_packages`), not by name: a bare `PackageSpec` with no
+      `pname` is named `chd_0` by FloPy, so a name lookup skipped it -- a CHD on a dug
+      cell built clean and MF6 refused it at read unnamed, and a stale per-column `irch`
+      on a bare RCHA was warned as "irch left out" instead of refused.
       **Measured premises, one of them against the design.** The design said FloPy
       refuses a list boundary's inactive cellid at construction; it does not -- a CHD at
       a dug cell built clean (FloPy's `_check_valid_cellids` fires for HFB and LAK, not
@@ -13442,7 +13454,7 @@ same day, which is the useful part of the result.
       Tests: `tests/test_active_cell_guard.py` (on the hand-built grid and
       `triangulated_grid`); reverting the call fails 14 by name, dropping the excavation
       note 14, treating every index as the opt-out 6, the head-target naming 2, the HFB
-      exemption 1.
+      exemption 1; after the adversarial review, the lazy wording 4, the object pairing 2.
 
 322. **`irch=None` -- one layer for every column -- stays the documented opt-out, and the build now SAYS what it loses (2026-09-25).**
       Ledger 163 made `"top_active"` the default and kept `irch=None` (and a single
@@ -13456,10 +13468,16 @@ same day, which is the useful part of the result.
       (ledger 288) -- naming the columns, the excavation that dug them, and the rate:
       the declared rate times each skipped column's DISV area, against the total over
       columns with an active cell, in the first period that loses flux and the worst
-      when that is a later one. The number is MF6's: on a steady NEWTON model with the
-      pond dug out of layer 1, the RCH inflow in MF6's budget file is the declared total
-      less the warned loss to 1e-6, and the budget closes (`test_the_warned_loss_is_what_
-      mf6_drops`, slow). What decides refusal against warning is the DECLARED value
+      when that is a later one. For RECHARGE the number is MF6's: on a steady NEWTON model
+      with the pond dug out of layer 1, the RCH inflow in MF6's budget file is the
+      declared total less the warned loss to 1e-6, and the budget closes
+      (`test_the_warned_loss_is_what_mf6_drops`, slow). **For ET it is an UPPER BOUND**,
+      stated as one ("up to X of Y ft3/d at the maximum ET rate"): the declared `rate` is
+      the MAXIMUM ET rate, which MF6 scales by the head's depth below the surface, so what
+      it drops lies anywhere from zero to that. The first wording read as the actual flux,
+      and nothing checked it against MF6 -- the test asserted rate x area, the maximum by
+      construction. Measuring the real ET loss needs the solved heads, so it is not done.
+      (Reverting the "up to" wording fails 2 named tests.) What decides refusal against warning is the DECLARED value
       (`None`, a scalar, a per-period dict of scalars), read off the resolved spec, not
       the FloPy data -- FloPy stores `irch=0` as a full array of zeros, so the built
       package cannot tell the two apart. Silent where the layer is active in every column

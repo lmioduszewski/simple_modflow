@@ -3934,7 +3934,11 @@ class ModelSpec:
         # directly to the model rather than as specs, so cellids it adds are outside
         # what this can read -- the grid pin is what will cover those.
         live = [p for p in packages if p.name in built_packages]
-        complaints = _discretization_complaints(model, context, live)
+        # `built_packages=`: pair each spec with the FloPy object it BUILT, not by name -- a bare
+        # PackageSpec with no pname is named `chd_0` by FloPy and went unchecked.
+        complaints = _discretization_complaints(
+            model, context, live, built_packages=built_packages
+        )
         complaints += moved_package_complaints(live)
         if complaints:
             raise ValueError(
@@ -3951,7 +3955,7 @@ class ModelSpec:
         # and MF6 drops the column's flux without a word, so it is SAID (ledger 322) --
         # through `warnings.warn` as well as the logger, which alone reaches nobody
         # (ledger 288).
-        for message in active_cell_warnings(model, context, live):
+        for message in active_cell_warnings(model, context, live, built_packages=built_packages):
             message = f"Model {self.name!r}: {message}"
             logger.warning(message)
             warnings.warn(message, UserWarning, stacklevel=2)

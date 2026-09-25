@@ -664,8 +664,9 @@ pass-through stack's recharge until ledger 319. Every "top active" in myflopy is
 array form and `nseg` raises. The build checks the index against the DISV it is
 built beside: a per-column index naming a REMOVED cell (`idomain <= 0`) in a column
 that has an active one is refused (ledger 321 -- most often a `context=` from before
-an excavation), and `irch=None` / one layer everywhere, the documented opt-out, is
-WARNED with the rate it loses (ledger 322).
+an excavation, or, for a package declared without one, the MODEL's context `domain=`),
+and `irch=None` / one layer everywhere, the documented opt-out, is WARNED with the rate
+it loses (ledger 322) -- exact for recharge, "up to" at the maximum rate for ET.
 
 ### Horizontal flow barriers — `mf.hfb`
 
