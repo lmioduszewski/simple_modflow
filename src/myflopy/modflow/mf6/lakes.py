@@ -20,8 +20,19 @@ import rasterio
 from rasterio.features import geometry_mask
 from shapely.geometry.base import BaseGeometry
 
+from myflopy._logging import get_logger
+from myflopy._warnings import stacklevel_outside_package
 from myflopy.advanced import lak_spec
-from myflopy.grid_identity import pin_metadata
+from myflopy.grid_identity import (
+    LAKE_CONNECTIONS,
+    LAKE_RULES,
+    _disv_arrays,
+    _listing,
+    bed_tolerance,
+    lak_geometry_complaints,
+    pin_metadata,
+)
+from myflopy.modflow.mf6.grid.connectivity import DisvFaces
 from myflopy.modflow.mf6.grid.geometry import (
     domain_active,
     footprint_cells,
@@ -32,11 +43,25 @@ from myflopy.modflow.utils.datatypes.readers import _vector_layer_name
 from myflopy.specs import (
     ModelContext,
     PackageSpec,
-    _layer_elevations,
+    _layer_elevation_source,
     mf6_length_conversion,
     mf6_time_conversion,
 )
 from myflopy.surfaces import Surface, sample_bed
+
+logger = get_logger(__name__)
+
+#: A HORIZONTAL face thinner than this (model length units) is not written. MF6 reads
+#: a face with ``belev == telev`` as the WHOLE cell (``gwf-lak.f90``), and FloPy writes
+#: connection elevations to 8 fixed decimals, so a face of 1e-9 written as ``99.90000000
+#: 99.90000000`` became a whole-cell face (measured). 1e-6 is 100x that precision; the
+#: thinnest face on a real pond's legacy connections is 1.3e-4, so the legacy rule
+#: writes exactly what it did (the excavation design's F9, ledger 325).
+FACE_TOL = 1.0e-6
+
+#: What ``unexcavated=`` accepts: the three words of the raster sampler's ``gaps=``
+#: that make sense here -- there is no "nearest" way to excavate a lake.
+_UNEXCAVATED_WORDS = ("warn", "raise", "ignore")
 
 
 @dataclass(frozen=True, slots=True)
@@ -814,13 +839,37 @@ class LakeTableBuilder:
         return LakeTable(rows, filename=self.filename)
 
 
-def _build_lak_with_tables(model, *, lake_tables=(), **options):
-    """Build LAK and its child table packages."""
+def _build_lak_with_tables(model, *, _spec=None, lake_tables=(), **options):
+    """Build LAK and its child table packages, after checking the lake against the DISV.
+
+    When the model already carries its DISV, the lake's connections are compared with
+    it BEFORE FloPy constructs the package (:func:`myflopy.grid_identity.
+    lak_geometry_complaints`, ledger 325): FloPy validates each connection's cellid
+    against the idomain at construction and would otherwise stop first with an
+    ``MFDataException`` naming only the cellid. ``_spec`` -- the ``PackageSpec`` this
+    builds, passed by ``PackageSpec.build`` -- is where the lake rules are read from.
+    A DISV built AFTER the lake is covered by ``ModelSpec.build``'s own check.
+    """
 
     options = {
         key: value.format(model_name=model.name) if isinstance(value, str) else value
         for key, value in options.items()
     }
+    rules = (getattr(_spec, "metadata", None) or {}).get(LAKE_RULES)
+    disv = model.get_package("disv") if rules and hasattr(model, "get_package") else None
+    if disv is not None and not isinstance(disv, list):
+        arrays = _disv_arrays(disv)
+        name = getattr(_spec, "name", "lak")
+        complaints = (
+            lak_geometry_complaints(*arrays, options.get("connectiondata"), rules, name=name)
+            if arrays is not None
+            else []
+        )
+        if complaints:
+            raise ValueError(
+                f"Lake package {name!r} does not fit the DISV it is being built with:\n  - "
+                + "\n  - ".join(complaints)
+            )
     package = flopy.mf6.ModflowGwflak(model, **options)
     for table in lake_tables:
         flopy.mf6.ModflowUtllaktab(
@@ -852,8 +901,9 @@ class LAKBuilder:
     ``LAKBuilder(**kw, options=options).build()`` plus the ``lak_index`` that
     ``mf.lak_connection`` reads, so every parameter below means what it means
     there, with the same entry (a test holds the two texts equal). The one
-    difference is TIMING: construction checks only ``context`` and ``nper``, and
-    that ``tables`` reads as a dict and ``outlets`` as a tuple; every other
+    difference is TIMING: construction checks only ``context``, ``nper``,
+    ``layer`` and ``unexcavated``, and that ``tables`` reads as a dict and
+    ``outlets`` as a tuple; every other
     refusal an entry names is raised when :meth:`build` -- or the property that
     first reads the value (:attr:`lake_table`, :attr:`lake_cells`,
     :attr:`connectiondata`, ...) -- runs.
@@ -904,7 +954,14 @@ class LAKBuilder:
         lengths and widths come from it. The layer elevations come from
         ``surfaces`` when given (a table or a
         ``LayerBuildResult``), else from ``grid.gdf_topbtm``, and one of the
-        two must exist (``ValueError``). ``domain`` is the idomain; ``None``
+        two must exist (``ValueError``). The EXCAVATION RECORDS that decide
+        whether a lake is written by the excavated rule (``connection_modes``)
+        come from the same place, never from the geometry: a
+        ``LayerBuildResult`` given as ``surfaces`` carries its
+        ``excavations``; with no ``surfaces`` the grid carries the ones
+        ``LayerStack.build(..., attach=True)`` published beside
+        ``gdf_topbtm``; a bare table carries none, unless it IS the grid's
+        own ``gdf_topbtm``. ``domain`` is the idomain; ``None``
         means every cell is active. ``length_units``/``time_units`` set the
         conversions when ``length_conversion``/``time_conversion`` are
         ``None``.
@@ -952,8 +1009,16 @@ class LAKBuilder:
         cells, and outside a lake's table (``[minimum_stage,
         maximum_stage]``).
     lake_bottom : float, str, pathlib.Path, Surface, pandas.Series or dict, optional
-        Default ``None``; required by the two generated modes, and not read
-        for a lake with explicit connections. The lakebed elevation (length).
+        Default ``None``. The lakebed elevation (length). For an EXCAVATED
+        lake (``connection_modes``) ``None`` takes the excavation's own bed --
+        the bed is declared once, on ``LayerStack.excavate`` -- and a
+        ``{lake_id: ...}`` mapping that leaves the lake out does the same. A
+        value GIVEN for an excavated lake must be that bed: it is sampled as
+        below and compared cell by cell, before any capping, and a difference
+        beyond ``max(1e-6 * |bed|, 1e-6)`` at any cell raises ``ValueError``
+        naming the worst (the stack was cut to another bottom). For every
+        other lake it is required by the two generated modes (``ValueError``),
+        and it is not read for a lake with explicit connections.
         One value per lake, in any per-lake form, is a flat bed -- what
         ``"rectangular"`` lakes take. ``"bathy"`` wants one per CELL:
 
@@ -995,7 +1060,9 @@ class LAKBuilder:
         connections are confined. ``None`` means every layer a face spans. In
         ``"bathy"`` a cell whose bed is not in that layer raises ``ValueError:
         ... does not intersect active cell``; in ``"rectangular"`` it gets NO
-        vertical connection, silently (ledger 318).
+        vertical connection, silently (ledger 318). On an EXCAVATED lake it
+        must name the top active layer under every lake cell (``ValueError``
+        otherwise), and its walls are confined to that layer.
     rectangular_interior : bool or dict of str to bool, default False
         ``"rectangular"`` lakes only. ``True`` (or ``{lake_id: True}``) also
         connects each lake cell toward its neighbours INSIDE the lake,
@@ -1004,7 +1071,9 @@ class LAKBuilder:
         ``False`` = edges only (a lined trench or vault). It is a physical
         choice about the basin, not a solver setting, although all-faces also
         spreads the lake-stage coupling, which steadies a small basin that
-        drains empty.
+        drains empty. Refused (``ValueError``) on an EXCAVATED lake: its
+        floor is open water, with no interior face to conduct through -- a
+        gravel-filled basin is aquifer, and is not excavated.
     bed_leakance : float, str, dict, pandas.Series or sequence of float, default 1.0
         The lakebed leakance (1/T: bed hydraulic conductivity divided by bed
         thickness) written on every generated connection, in any per-lake
@@ -1050,6 +1119,33 @@ class LAKBuilder:
           ``lake_top``, ``only_vertical``, ``only_layer`` and
           ``rectangular_interior`` do not touch that lake.
 
+        **An EXCAVATED lake is written by its own rule, in either generated
+        mode.** A lake is excavated when an excavation record reaches
+        ``mf.lak`` (see ``context``) and the lake's cells are EXACTLY that
+        excavation's cells -- ``LayerStack.excavate(within=<these lakes=
+        polygons>)``, which covers cells by the same rule. Chosen from the
+        record, never from the geometry (``LAKBuilder.lake_rules`` says which
+        rule each lake got). Per lake cell: ONE VERTICAL connection to the top
+        ACTIVE cell under it, whose top IS the bed, so MF6 counts from the
+        bed; then, toward each face neighbour whose model top -- its bed, for
+        a lake cell; the ground, for land; capped at ``lake_top`` for
+        ``"rectangular"`` -- is above this cell's bed, one HORIZONTAL
+        connection per active layer of the NEIGHBOUR the wall spans, written
+        INTO the neighbour's cell (the aquifer the water meets), with ``belev
+        = max(bed, layer bottom)``, ``telev = min(wall top, layer top)``,
+        ``CONNLEN`` the distance from the NEIGHBOUR's DISV centre to the line
+        of the shared face and ``CONNWIDTH`` the face's length -- MF6's own
+        DISV geometry, not ``grid.cl12``. A cell whose declared bed did not
+        reach below the ground (a rim cell) connects at the ground. Measured,
+        a pit lake below the water table in uniform flow against the same pit
+        as a K = 1e4 inclusion: through-flow 1.005 of the reference, where
+        ``"bathy"`` on the un-excavated stack gave 0.39. A lake covering only
+        part of an excavation, or cells of two, raises ``ValueError``
+        whatever ``unexcavated`` says. Declare the model with NEWTON: without
+        it MF6 carries nothing through a wall whose cell is dry (the build
+        warns). In EVERY mode a HORIZONTAL face thinner than 1e-6 is not
+        written: MF6 would read it as the whole cell.
+
         **MF6 IGNORES the BELEV and TELEV written for a VERTICAL connection**
         and uses the connected cell's TOP (and top + ``surfdep``) instead (MF6
         input guide: "Any value can be specified if CLAKTYPE is VERTICAL";
@@ -1077,6 +1173,25 @@ class LAKBuilder:
         a VERTICAL connection lands in and where each HORIZONTAL face starts.
         The elevations written never depend on the (transient) stage: MF6
         wets and dries each face itself, every time step.
+    unexcavated : {"warn", "raise", "ignore"}, default "warn"
+        What to do about a generated lake NO excavation record reached, when
+        MF6 will not see its bed. ``"warn"`` issues a ``UserWarning`` (and a
+        log line), ``"raise"`` raises ``ValueError`` with the same text, and
+        ``"ignore"`` says nothing; any other value raises ``ValueError`` when
+        the builder is constructed. Two findings trigger it. VERTICAL
+        connections in a cell whose TOP is above the lake's bed: MF6 counts
+        from that top, so each exchanges nothing until the stage reaches it
+        and, without a table, the storage between the bed and the top is
+        missing; the text gives how many, the worst and the median gap, and
+        how many of those tops are above the starting stage and the table's
+        highest stage (on a real pond, 577 of 612, worst 12.58). And a lake
+        that LOOKS excavated -- more than half its cells have a zero-thickness
+        layer above an active cell whose top is the bed -- but carries no
+        record, so it was written without walls into its neighbours. A lake
+        whose bed IS its cells' tops (a USG export's) triggers neither.
+        Checked when the lakes are validated: at the ``mf.lak`` call, or at
+        ``LAKBuilder.build``/``validate``. It never softens a partial match
+        with an excavation, which always raises.
     tables : dict of str to (LakeTable or LakeTableBuilder), default {}
         Default ``{}``: no tables (``None`` raises ``TypeError`` here; ``mf.lak``
         reads it as ``{}``). Stage / volume /
@@ -1202,9 +1317,12 @@ class LAKBuilder:
     Raises
     ------
     ValueError
-        At construction, ``context.grid`` is ``None`` or ``nper`` is below 1.
-        Every other refusal named above (the full list is ``mf.lak``'s) is
-        raised by :meth:`build` or the property that first needs the value.
+        At construction, ``context.grid`` is ``None``, ``nper`` is below 1, or
+        ``unexcavated`` is not one of its three words. Every other refusal
+        named above (the full list is ``mf.lak``'s) is raised by :meth:`build`
+        or the property that first needs the value -- the excavated rule's by
+        :attr:`lake_rules` and :attr:`connections`, the ``unexcavated="raise"``
+        refusal by :meth:`validate`.
     AttributeError
         ``context=None``.
     TypeError
@@ -1246,6 +1364,7 @@ class LAKBuilder:
     rectangular_interior: Any = False
     bed_leakance: Any = 1.0
     connection_modes: str | Mapping[str, str | Sequence[LakeConnection]] = "bathy"
+    unexcavated: str = "warn"
     tables: Mapping[str, LakeTable | LakeTableBuilder] = field(default_factory=dict)
     outlets: tuple[LakeOutlet, ...] = ()
     stage: Any = None
@@ -1282,14 +1401,34 @@ class LAKBuilder:
     # the grid's: a miss is diagnosed from the two frames, and after that
     # reprojection the frame on hand can only report the grid's own.
     _source_crs: Any = field(default=None, init=False, repr=False, compare=False)
+    # The elevation table (geometry dropped) and the excavation records beside it, read
+    # ONCE through the one resolver (`specs._layer_elevation_source`), so the rule a lake
+    # is given and the elevations it is written against cannot come from two places.
+    _source: tuple[pd.DataFrame | None, dict] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _elevations: np.ndarray | None = field(default=None, init=False, repr=False, compare=False)
+    # {lake_id: "excavated" | "legacy" | "explicit"} and each excavated lake's record.
+    _rules: dict[str, str] | None = field(default=None, init=False, repr=False, compare=False)
+    _records_of: dict[str, Any] | None = field(default=None, init=False, repr=False, compare=False)
+    # (lake_id, lake cell or None, role) beside each entry of `connections`.
+    _roles: tuple[tuple[str, int | None, str], ...] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _face_geometry: DisvFaces | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        """Validate a grid is present and ``nper >= 1``, and freeze tables/outlets."""
+        """Validate a grid is present, ``nper >= 1`` and ``unexcavated``, and freeze tables/outlets."""
 
         if self.context.grid is None:
             raise ValueError("ModelContext.grid is required for LAKBuilder.")
         if self.nper < 1:
             raise ValueError("nper must be at least 1.")
+        if self.unexcavated not in _UNEXCAVATED_WORDS:
+            raise ValueError(
+                f"unexcavated must be one of {', '.join(repr(w) for w in _UNEXCAVATED_WORDS)}, "
+                f"not {self.unexcavated!r}."
+            )
         if self.layer is not None:
             object.__setattr__(
                 self, "layer", _vector_layer_name(self.layer, of="lakes", model_layer="only_layer=")
@@ -1636,13 +1775,53 @@ class LAKBuilder:
         top = self._per_cell("lake_top", lake_id)
         return top if isinstance(top, float) else top[cell]
 
+    def _elevation_source(self) -> tuple[pd.DataFrame | None, dict]:
+        """The elevation table (geometry dropped) and the excavation records beside it.
+
+        Read once, through ``specs._layer_elevation_source`` -- the one resolver that
+        returns the records from the SAME place as the elevations (``context.surfaces``
+        when given, else the grid's ``gdf_topbtm`` and ``excavations``), so a lake can
+        never be given the excavated rule from one object and elevations from another.
+        """
+
+        if self._source is None:
+            table, records = _layer_elevation_source(self.context)
+            if table is not None:
+                table = table.drop(columns="geometry", errors="ignore")
+            object.__setattr__(self, "_source", (table, records))
+        return self._source
+
     def _surfaces(self) -> pd.DataFrame:
         """The per-cell top/bottom elevation table (context surfaces, else the grid's), geometry dropped."""
 
-        surfaces = _layer_elevations(self.context)
+        surfaces = self._elevation_source()[0]
         if surfaces is None:
             raise ValueError("ModelContext.surfaces or grid.gdf_topbtm is required.")
-        return surfaces.drop(columns="geometry", errors="ignore")
+        return surfaces
+
+    def _elevation_array(self) -> np.ndarray:
+        """``(ncpl, nlay + 1)`` floats: each cell's model top, then its layer bottoms."""
+
+        if self._elevations is None:
+            numbers = self._surfaces().select_dtypes("number")
+            array = numbers.reindex(range(self.grid.ncpl)).to_numpy(dtype=float)
+            object.__setattr__(self, "_elevations", array)
+        return self._elevations
+
+    def _top_active(self, cell: int) -> int | None:
+        """The highest layer at ``cell`` that is active AND has thickness, or ``None``.
+
+        What an excavated lake's VERTICAL connection lands in (the design's section
+        4.2). Activity alone is not enough: a layer the cut left at zero thickness has
+        ``top == bottom == bed`` and would still "contain" the bed, and with no
+        ``domain`` on the context every layer reads active.
+        """
+
+        column = self._elevation_array()[int(cell)]
+        for layer in range(len(column) - 1):
+            if column[layer] - column[layer + 1] > 0.0 and self._active(layer, cell):
+                return layer
+        return None
 
     def _active(self, layer: int, cell: int) -> bool:
         """Whether ``(layer, cell)`` is active in the context's idomain (True if none set).
@@ -1672,8 +1851,14 @@ class LAKBuilder:
         return None
 
     def _bottom(self, lake_id: str, cell: int) -> float:
-        """The lakebed elevation at ``cell`` -- one of the lake's cells, or a neighbour."""
+        """The lakebed elevation at ``cell`` -- one of the lake's cells, or a neighbour.
 
+        For an EXCAVATED lake it is the bed each connection is written at, the top of
+        the cell's top active layer (:meth:`_excavated_bed`); only lake cells are asked.
+        """
+
+        if self._rule(lake_id) == "excavated":
+            return self._excavated_bed(lake_id)[int(cell)]
         bed = self._per_cell("lake_bottom", lake_id)
         return bed if isinstance(bed, float) else bed[cell]
 
@@ -1687,6 +1872,13 @@ class LAKBuilder:
 
         key = (name, lake_id)
         if key not in self._per_lake:
+            if name == "lake_bottom" and self.lake_bottom is None:
+                raise ValueError(
+                    f"lake_bottom is required for lake {lake_id!r}: no excavation record "
+                    "reached mf.lak for it, and only an EXCAVATED lake takes its bed from "
+                    "one (LayerStack.build(attach=True), or ModelContext(surfaces=<the "
+                    "LayerBuildResult>)). Give lake_bottom=, or excavate the pond."
+                )
             value = self._lake_value(getattr(self, name), lake_id, name=name, per_cell=True)
             if isinstance(value, (Path, Surface, Mapping, pd.Series)):
                 self._per_lake[key] = self._cell_values(name, lake_id, value)
@@ -1899,7 +2091,10 @@ class LAKBuilder:
                     continue
                 belev = max(cell_bottom, face_bottom)
                 telev = min(cell_top, face_top)
-                if telev <= belev:
+                # A face thinner than FACE_TOL is dropped: MF6 reads belev == telev as
+                # the WHOLE cell, and 8-decimal output makes a 1e-9 face exactly that
+                # (the design's F9). Otherwise byte-identical to the rule before it.
+                if telev - belev < FACE_TOL:
                     continue
                 result.append(
                     LakeConnection(
@@ -1914,6 +2109,386 @@ class LAKBuilder:
                 )
         return result
 
+    # -- the excavated rule (ledger 325; the excavation design's section 4) ----------
+
+    def _rule(self, lake_id: str) -> str:
+        """``"excavated"``, ``"legacy"`` or ``"explicit"`` for one lake (see :attr:`lake_rules`)."""
+
+        if self._rules is None:
+            self._resolve_rules()
+        return self._rules[lake_id]
+
+    @property
+    def lake_rules(self) -> dict[str, str]:
+        """Which rule each lake's connections are written by, keyed by lake id.
+
+        Chosen from the EXCAVATION RECORD, never from the geometry (the excavation
+        design's section 4.1: a geometric test was measured wrong three ways -- it
+        changed output for lakes nobody excavated, missed a stack cut deeper than the
+        lake's bed, and refused a flat-floored basin that runs). The records come
+        through the same resolver as the layer elevations, in its order:
+        ``context.surfaces`` when given (a ``LayerBuildResult`` carries its
+        ``excavations``; a bare table carries none unless it IS the grid's own
+        ``gdf_topbtm``), else the grid's ``excavations``, which ``LayerStack.build(
+        attach=True)`` publishes beside ``gdf_topbtm``.
+
+        * ``"excavated"`` -- the lake's cells are exactly one excavation's cells. Its
+          VERTICAL connections go to each cell's top active cell, whose top is the bed,
+          and its HORIZONTAL ones into the NEIGHBOURING columns (``connection_modes``).
+        * ``"legacy"`` -- no excavation touches the lake: the rule ``mf.lak`` always
+          had, plus the ``unexcavated=`` guard.
+        * ``"explicit"`` -- the lake's connections were given as ``LakeConnection``
+          objects and are written as given; no excavation is consulted.
+
+        Returns
+        -------
+        dict of str to str
+            A copy, in lake order. Reading it resolves the lake cells and the records,
+            and raises what that resolution refuses.
+
+        Raises
+        ------
+        ValueError
+            A lake covering cells of two excavations; or the lakes touching an
+            excavation not covering exactly its cells (a lake cell the excavation did
+            not dig, or a dug cell no lake of this package covers) -- whatever
+            ``unexcavated=`` says.
+
+        Examples
+        --------
+        >>> builder.lake_rules
+        {'pond': 'excavated'}
+        """
+
+        if self._rules is None:
+            self._resolve_rules()
+        return dict(self._rules)
+
+    def _resolve_rules(self) -> None:
+        """Match every generated lake against the excavation records, refusing a partial match."""
+
+        generated = [lake_id for lake_id in self.lake_ids if isinstance(self._connection_mode(lake_id), str)]
+        records = self._elevation_source()[1] if generated else {}
+        rules: dict[str, str] = {}
+        matched: dict[str, Any] = {}
+        touching: dict[str, list[str]] = {}
+        for lake_id in self.lake_ids:
+            if lake_id not in generated:
+                rules[lake_id] = "explicit"
+                continue
+            cells = set(self.lake_cells[lake_id])
+            hits = [record for record in records.values() if cells & set(record.cells)]
+            if len(hits) > 1:
+                names = ", ".join(repr(record.name) for record in hits)
+                raise ValueError(
+                    f"lake {lake_id!r} covers cells of {len(hits)} excavations ({names}). An "
+                    "excavated lake is written at the bed of the ONE excavation cut for it; "
+                    "a lake spanning several would take two beds' rules at once. Give each "
+                    "pond its own lake (one feature per pond in lakes=), matching the "
+                    "excavation cut for it."
+                )
+            if hits:
+                rules[lake_id] = "excavated"
+                matched[lake_id] = hits[0]
+                touching.setdefault(hits[0].name, []).append(lake_id)
+            else:
+                rules[lake_id] = "legacy"
+        for name, lakes in touching.items():
+            record = matched[lakes[0]]
+            covered = set().union(*(set(self.lake_cells[lake_id]) for lake_id in lakes))
+            dug = set(record.cells)
+            if covered == dug:
+                continue
+            undug, spare = sorted(covered - dug), sorted(dug - covered)
+            parts = []
+            if undug:
+                parts.append(f"{len(undug)} lake cell(s) the excavation did not dig ({_listing(undug)})")
+            if spare:
+                parts.append(f"{len(spare)} dug cell(s) no lake of this package covers ({_listing(spare)})")
+            label = ", ".join(repr(lake_id) for lake_id in lakes)
+            raise ValueError(
+                f"lake(s) {label} and excavation {name!r} cover different cells: "
+                + " and ".join(parts)
+                + ". mf.lak writes a lake by the excavated rule only when the lake IS the "
+                "excavation -- the same polygons, e.g. LayerStack.excavate(within=<the "
+                "lakes= polygons>, layer=<the same layer>). Part of a lake over a pond "
+                "would exchange at the bed and the rest from the ground, which is neither "
+                "rule. This is refused whatever unexcavated= says."
+            )
+        object.__setattr__(self, "_rules", rules)
+        object.__setattr__(self, "_records_of", matched)
+
+    def _check_declared_bed(self, lake_id: str, record: Any) -> None:
+        """Refuse a ``lake_bottom`` that is not the bed ``record`` was cut to.
+
+        Compared BEFORE any capping, cell by cell, within
+        :func:`~myflopy.grid_identity.bed_tolerance` of the record's bed (the same
+        Surface samples to the identical float; no data on both sides is equal). A
+        ``lake_bottom`` left out -- ``None``, or a mapping without this lake -- IS the
+        record's bed (the design's F13), so there is nothing to compare.
+        """
+
+        value = self.lake_bottom
+        if value is None or (isinstance(value, Mapping) and lake_id not in value):
+            return
+        declared = self._lake_value(value, lake_id, name="lake_bottom", per_cell=True)
+        cells = self.lake_cells[lake_id]
+        if isinstance(declared, (Path, Surface)):
+            sampled = self._sample(declared)
+            raw = {cell: float(sampled[cell]) for cell in cells}
+        elif isinstance(declared, (Mapping, pd.Series)):
+            raw = {cell: float(declared[cell]) if cell in declared else np.nan for cell in cells}
+        else:
+            raw = dict.fromkeys(cells, float(declared))
+        different = []
+        for cell in cells:
+            mine, theirs = raw[cell], record.bed_at(cell)
+            if np.isnan(mine) and np.isnan(theirs):
+                continue
+            if np.isnan(mine) or np.isnan(theirs) or abs(mine - theirs) > bed_tolerance(theirs):
+                different.append((cell, mine, theirs))
+        if not different:
+            return
+        worst = max(
+            different,
+            key=lambda item: np.inf if np.isnan(item[1] - item[2]) else abs(item[1] - item[2]),
+        )
+        raise ValueError(
+            f"lake_bottom for lake {lake_id!r} is not the bed excavation {record.name!r} was "
+            f"cut to: {len(different)} of its {len(cells)} cells differ, the worst at cell "
+            f"{worst[0]} (lake_bottom {worst[1]:.6g}, excavation {worst[2]:.6g}). The stack "
+            "was cut to another bottom than this lake declares, so its connections would sit "
+            "at a bed its own lake_bottom contradicts. Leave lake_bottom out -- an excavated "
+            "lake takes its excavation's bed -- or excavate with the same surface (a surface "
+            "defined relative to the one above it samples differently off the excavated top)."
+        )
+
+    def _excavated_bed(self, lake_id: str) -> dict[int, float]:
+        """``{cell: bed}`` for an excavated lake: the top of each cell's top active layer.
+
+        The excavated top, ``min(declared bed, ground)``: exactly the bed where the
+        stack was cut, the ground at a rim cell the bed did not reach below. It is the
+        float the DISV is written from, so a wall's ``belev`` equals a cell surface to
+        the last digit (MF6 checks a face against its cell with no tolerance).
+        """
+
+        key = ("excavated_bed", lake_id)
+        if key not in self._per_lake:
+            record = self._records_of[lake_id]
+            self._check_declared_bed(lake_id, record)
+            beds, missing = {}, []
+            elevations = self._elevation_array()
+            for cell in self.lake_cells[lake_id]:
+                layer = self._top_active(cell)
+                if layer is None:
+                    missing.append(cell)
+                    continue
+                beds[int(cell)] = float(elevations[int(cell), layer])
+            if missing:
+                raise ValueError(
+                    f"excavated lake {lake_id!r}: {len(missing)} of its cells have no "
+                    f"active cell with thickness in any layer ({_listing(missing)}), so "
+                    "there is nothing under the bed to connect to. Check the context's "
+                    "domain= is the excavated result's idomain."
+                )
+            self._per_lake[key] = beds
+        return self._per_lake[key]
+
+    def _faces(self) -> DisvFaces:
+        """MF6's own DISV face geometry for the grid (built once per builder)."""
+
+        if self._face_geometry is None:
+            object.__setattr__(self, "_face_geometry", DisvFaces(self.grid.get_disv_gridprops()))
+        return self._face_geometry
+
+    def _excavated_connections(self, lake_id: str, mode: str) -> list[tuple[int, str, LakeConnection]]:
+        """``(lake cell, role, connection)`` for an excavated lake, lake cell by lake cell.
+
+        Per lake cell ``A`` at bed ``b``: one VERTICAL connection to the top active
+        cell, whose top IS ``b``; then, toward each face neighbour ``N`` whose model top
+        (its bed, for a lake cell; the ground, for land) is above ``b`` -- capped at
+        ``lake_top`` for ``"rectangular"`` -- one HORIZONTAL connection per active layer
+        of ``N`` the wall spans, written INTO ``N`` (the aquifer cell the water meets),
+        ``belev = max(b, bottom)``, ``telev = min(wall top, top)``, ``CONNLEN`` the
+        distance from ``N``'s DISV centre to the line of the shared face and
+        ``CONNWIDTH`` the face's length -- MF6's own DISV geometry. Faces thinner than
+        :data:`FACE_TOL` are dropped.
+        """
+
+        mode_label = "rectangular" if mode == "rectangular" else "bathy"
+        if mode == "rectangular" and self._rectangular_interior(lake_id):
+            raise ValueError(
+                f"rectangular_interior=True on excavated lake {lake_id!r}: an excavated lake "
+                "is open water over its whole floor, so there are no interior faces for a "
+                "permeable fill to conduct through -- it would change nothing. A "
+                "gravel-filled basin is aquifer, not lake: do not excavate it, and give it "
+                "rectangular_interior=True on the un-excavated stack."
+            )
+        beds = self._excavated_bed(lake_id)
+        record = self._records_of[lake_id]
+        only_layer = self._only_layer(lake_id)
+        only_vertical = self._only_vertical(lake_id)
+        elevations = self._elevation_array()
+        vertical_leakance = self._leakance(lake_id, "vertical")
+        result: list[tuple[int, str, LakeConnection]] = []
+        for cell in self.lake_cells[lake_id]:
+            cell = int(cell)
+            bed = beds[cell]
+            layer = self._top_active(cell)
+            if only_layer is not None and layer != only_layer:
+                raise ValueError(
+                    f"only_layer={only_layer} for excavated lake {lake_id!r}, but its bed at "
+                    f"cell {cell} is the top of layer {layer}, the top active cell there. An "
+                    "excavated lake's floor connects to the cell under the bed; drop "
+                    "only_layer, or excavate so the bed sits on that layer."
+                )
+            declared = record.bed_at(cell)
+            role = "rim" if (not np.isfinite(declared) or declared > bed + bed_tolerance(bed)) else "floor"
+            top = self._top(lake_id, cell) if mode_label == "rectangular" else bed
+            result.append(
+                (cell, role, LakeConnection((layer, cell), "VERTICAL", vertical_leakance, bed, top))
+            )
+            if only_vertical:
+                continue
+            ceiling = self._top(lake_id, cell) if mode_label == "rectangular" else None
+            for neighbour in self.grid.find_adjacent_cells(cell):
+                neighbour = int(neighbour)
+                wall_top = float(elevations[neighbour, 0])
+                if ceiling is not None:
+                    wall_top = min(ceiling, wall_top)
+                if not wall_top > bed + FACE_TOL:
+                    continue
+                metrics = self._faces().length_and_width(cell, neighbour, toward=neighbour)
+                if metrics is None:
+                    continue  # they meet at a corner only: MF6 connects no face there
+                length, width = metrics
+                column = elevations[neighbour]
+                for index in range(len(column) - 1):
+                    if only_layer is not None and index != only_layer:
+                        continue
+                    if not self._active(index, neighbour):
+                        continue
+                    belev = max(bed, float(column[index + 1]))
+                    telev = min(wall_top, float(column[index]))
+                    if telev - belev < FACE_TOL:
+                        continue
+                    result.append(
+                        (
+                            cell,
+                            "wall",
+                            LakeConnection(
+                                (index, neighbour),
+                                "HORIZONTAL",
+                                self._leakance(lake_id, "horizontal"),
+                                belev,
+                                telev,
+                                length,
+                                width,
+                            ),
+                        )
+                    )
+        return result
+
+    def _unexcavated_report(self) -> str | None:
+        """The ``unexcavated=`` guard's findings for every LEGACY lake, or ``None``.
+
+        Two findings, both about a lake no excavation record reached:
+
+        * VERTICAL connections in a cell whose TOP is above the lake's bed -- MF6
+          counts a vertical connection from its cell's top, so the storage and the
+          exchange between the bed and that top are missing (on a real pond, 577 of
+          612 cells, worst 12.58 ft, median 3.35);
+        * a lake that LOOKS excavated -- more than half its cells have a zero-thickness
+          layer above an active cell whose top is the bed -- yet was written by the old
+          rule, which puts no wall into the neighbours: the record never arrived.
+        """
+
+        lines = []
+        rows = list(zip(self.connections, self._roles, strict=True))
+        for lake_id in self.lake_ids:
+            if self._rule(lake_id) != "legacy":
+                continue
+            cells = self.lake_cells[lake_id]
+            elevations = self._elevation_array()
+            gaps, tops = [], []
+            for (owner, connection), _role in rows:
+                if owner != lake_id or connection.connection_type != "VERTICAL":
+                    continue
+                layer, cell = connection.cellid
+                cell_top = float(elevations[int(cell), int(layer)])
+                bed = self._bottom(lake_id, cell)
+                if cell_top - bed > bed_tolerance(bed):
+                    gaps.append(cell_top - bed)
+                    tops.append(cell_top)
+            looks = 0
+            for cell in cells:
+                layer = self._top_active(cell)
+                if not layer:
+                    continue
+                column = elevations[int(cell)]
+                if not (column[:layer] - column[1 : layer + 1] <= 0.0).any():
+                    continue
+                bed = self._bottom(lake_id, cell)
+                if abs(float(column[layer]) - bed) <= bed_tolerance(bed):
+                    looks += 1
+            parts = []
+            if gaps:
+                total = sum(
+                    1
+                    for (owner, connection), _role in rows
+                    if owner == lake_id and connection.connection_type == "VERTICAL"
+                )
+                stage = float(self._lake_value(self.starting_stage, lake_id, name="starting_stage"))
+                above = sum(1 for top in tops if top > stage)
+                text = (
+                    f"lake {lake_id!r}: {len(gaps)} of its {total} VERTICAL connections sit in a "
+                    f"cell whose TOP is above the bed, by up to {max(gaps):.4g} (median "
+                    f"{float(np.median(gaps)):.4g}); {above} of those tops are above its "
+                    f"starting stage {stage:g}"
+                )
+                table = self.prepared_tables.get(lake_id)
+                if table is not None:
+                    over = sum(1 for top in tops if top > table.maximum_stage)
+                    text += f", {over} above its table's highest stage {table.maximum_stage:g}"
+                parts.append(
+                    text + ". MF6 counts a VERTICAL connection from its cell's top, so each "
+                    "exchanges nothing until the stage reaches that top, and the storage "
+                    "between the bed and the top is missing without a table"
+                )
+            if looks > len(cells) / 2:
+                parts.append(
+                    f"lake {lake_id!r} LOOKS excavated -- {looks} of its {len(cells)} cells have "
+                    "a zero-thickness layer above an active cell whose top is the bed -- but no "
+                    f"excavation record reached mf.lak, so it was written by the "
+                    f"{self._connection_mode(lake_id)!r} rule, with no walls into its "
+                    "neighbours"
+                )
+            lines.extend(parts)
+        if not lines:
+            return None
+        return (
+            "mf.lak: lake(s) NOT excavated into the layer stack.\n  - "
+            + "\n  - ".join(lines)
+            + "\nCut the pond into the stack -- stack.excavate(bottom=<the same "
+            "lake_bottom>, within=<the lakes= polygons>) -- rebuild it with attach=True (or "
+            "pass the LayerBuildResult as ModelContext(surfaces=...)), and re-declare "
+            "mf.lak: those two spellings are what carry an excavation's record to it. "
+            "unexcavated='ignore' silences this; 'raise' refuses it."
+        )
+
+    def _apply_unexcavated_guard(self) -> None:
+        """Warn about, refuse, or ignore :meth:`_unexcavated_report`, per ``unexcavated=``."""
+
+        if self.unexcavated == "ignore":
+            return
+        report = self._unexcavated_report()
+        if report is None:
+            return
+        if self.unexcavated == "raise":
+            raise ValueError(report)
+        logger.warning(report)
+        warnings.warn(report, UserWarning, stacklevel=stacklevel_outside_package())
+
     @property
     def connections(self) -> tuple[tuple[str, LakeConnection], ...]:
         """Return generated or explicit connections keyed by stable lake ID."""
@@ -1921,10 +2496,20 @@ class LAKBuilder:
         if self._connections is not None:
             return self._connections
         result = []
+        roles: list[tuple[str, int | None, str]] = []
         for lake_id in self.lake_ids:
             mode = self._connection_mode(lake_id)
             if not isinstance(mode, str):
-                result.extend((lake_id, connection) for connection in mode)
+                for connection in mode:
+                    result.append((lake_id, connection))
+                    roles.append(
+                        (lake_id, None, "floor" if connection.connection_type == "VERTICAL" else "wall")
+                    )
+                continue
+            if self._rule(lake_id) == "excavated":
+                for cell, role, connection in self._excavated_connections(lake_id, mode):
+                    result.append((lake_id, connection))
+                    roles.append((lake_id, cell, role))
                 continue
             only_vertical = self._only_vertical(lake_id)
             lake_cells = self.lake_cells[lake_id]
@@ -1933,11 +2518,13 @@ class LAKBuilder:
                 vertical = self._vertical_connection(lake_id, cell, mode)
                 if vertical is not None:
                     result.append((lake_id, vertical))
+                    roles.append((lake_id, int(cell), "floor"))
                 if only_vertical:  # vault: concrete sidewalls, no horizontal exchange
                     continue
                 for connection in self._sidewall_connections(lake_id, cell, mode):
                     horizontal += 1
                     result.append((lake_id, connection))
+                    roles.append((lake_id, int(cell), "wall"))
             # Guard the degenerate bathy+flat-bottom config: 'bathy' connects a
             # cell to a neighbor only where its lake bottom is BELOW the
             # neighbor's (an exposed step). A flat lake_bottom has no steps, so a
@@ -1968,7 +2555,41 @@ class LAKBuilder:
                     stacklevel=2,
                 )
         object.__setattr__(self, "_connections", tuple(result))
+        object.__setattr__(self, "_roles", tuple(roles))
         return self._connections
+
+    @property
+    def connection_roles(self) -> dict[str, list[list[Any]]]:
+        """What each written connection IS, per lake: ``[[iconn, lake_cell, role], ...]``.
+
+        ``iconn`` is MF6's connection number within the lake (from zero), ``role`` is
+        ``"floor"`` (a VERTICAL connection under a lake cell), ``"rim"`` (a VERTICAL one
+        at a cell of an excavated lake whose declared bed did not reach below the ground,
+        so it connects at the ground) or ``"wall"`` (a HORIZONTAL one), and
+        ``lake_cell`` the lake cell the connection belongs to -- which a wall's own row
+        no longer says for an excavated lake, whose walls are written into the
+        NEIGHBOUR's cell. ``None`` for a lake whose connections were given by hand.
+        Stamped on the spec's metadata as ``lake_connections``.
+
+        Returns
+        -------
+        dict of str to list of list
+            ``{lake_id: rows}``, in connection order, every value a plain python type.
+
+        Examples
+        --------
+        >>> builder.connection_roles["pond"][:2]
+        [[0, 5, 'floor'], [1, 5, 'wall']]
+        """
+
+        self.connections
+        counts: dict[str, int] = {}
+        result: dict[str, list[list[Any]]] = {lake_id: [] for lake_id in self.lake_ids}
+        for lake_id, cell, role in self._roles:
+            index = counts.get(lake_id, 0)
+            counts[lake_id] = index + 1
+            result[lake_id].append([index, None if cell is None else int(cell), role])
+        return result
 
     @property
     def connectiondata(self) -> list[list[Any]]:
@@ -2204,6 +2825,7 @@ class LAKBuilder:
                 raise ValueError(f"starting_stage is outside the lake table range for lake '{lake_id}'.")
         self.connectiondata
         self.prepared_tables
+        self._apply_unexcavated_guard()
 
     def build(self) -> PackageSpec:
         """Validate stored configuration and return its package spec.
@@ -2290,6 +2912,11 @@ class LAKBuilder:
                 **pin_metadata(self.context, certifies=("connectiondata",)),
                 "builder": "LAKBuilder",
                 "lake_ids": list(self.lake_ids),
+                # Which rule wrote each lake, and what each connection is (ledger 325).
+                # Read by the build-time lake check and warnings; voided with the pin
+                # when an edit replaces `connectiondata`.
+                LAKE_RULES: dict(self.lake_rules),
+                LAKE_CONNECTIONS: self.connection_roles,
                 "connection_modes": {
                     lake_id: (
                         self._connection_mode(lake_id)

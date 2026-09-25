@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 324 entries (326 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 325 entries (327 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 325 | `mf.lak` reads the excavation RECORD: an excavated lake connects at its bed and into its neighbours' cells;... | 2026-09-25 |
 | 324 | A typed `ievt` beside an omitted ET `surface` was DROPPED, and a numpy-integer `irch`/`ievt` died inside FloPy | 2026-09-25 |
 | 323 | An excavated layer stack is written down, archived, hashed and moved like the rest of the stack -- the life... | 2026-09-25 |
 | 322 | `irch=None` -- one layer for every column -- stays the documented opt-out, and the build now SAYS what it l... | 2026-09-25 |
@@ -13372,10 +13373,11 @@ same day, which is the useful part of the result.
       `to_dict` (`NotImplementedError`, which `stamp_source_hashes` does not catch) rather
       than dropping the pond, so `mf.disv(<gridless excavated stack>)` raises at the call
       and such a stack cannot be saved or digested -- `mf.disv(stack.build(vor))` can
-      (C6)~~ -- closed by ledger 323, the excavations are written down. **`mf.lak` reads
+      (C6)~~ -- closed by ledger 323, the excavations are written down. ~~**`mf.lak` reads
       no record yet**: on a cut pond `bathy` still writes the old
       rule -- zero side walls and a false "flat bed" warning (design section 4.3) -- so the
-      cut alone is the geometry, not yet a better lake model (C7). ~~Nothing refuses a
+      cut alone is the geometry, not yet a better lake model (C7)~~ -- closed by ledger
+      325, an excavated lake is written by its own rule. ~~Nothing refuses a
       package declared against a context from BEFORE the cut (C5)~~ -- closed by ledgers
       321 and 322.
       **Measured, and what the tests assert because of it.** A steady NEWTON toy on the
@@ -13606,3 +13608,74 @@ same day, which is the useful part of the result.
       `docs/reproducers/lazy_typed_ievt.py` shows each premise: the EVT file written with
       no IEVT block before and `IEVT CONSTANT 2` after, the numpy index an
       `MFDataException` before and a build after, and the manifest count.
+
+325. **`mf.lak` reads the excavation RECORD: an excavated lake connects at its bed and into its neighbours' cells; every other lake keeps its rule byte for byte and is told what MF6 will not see (2026-09-25).**
+      The excavation design's C7 (section 4, F6/F7/F9/F13 as the user approved them).
+      Each generated lake gets a RULE -- `LAKBuilder.lake_rules`, stamped as metadata
+      `lake_rules` -- chosen from the excavation record, found through ONE resolver
+      (`specs._layer_elevation_source`) that returns the records from the same place as
+      the elevations, in `_layer_elevations`' order: a `LayerBuildResult` as `surfaces`,
+      else the grid's `excavations` (`attach=True`). **Excavated** (the lake's cells ARE
+      one record's cells): a VERTICAL connection to the top cell with idomain > 0 AND
+      thickness -- activity alone picks a zero-thickness layer when the context carries
+      no `domain` -- whose top is the bed; walls INTO the neighbouring columns wherever a
+      neighbour's model top is above the bed, `CONNLEN` the neighbour's DISV centre to
+      the face line and `CONNWIDTH` the shared edge, both from `get_disv_gridprops`
+      (`grid/connectivity.DisvFaces`, MF6's `shared_edge`/`distance_normal`, not
+      `grid.cl12`). `lake_bottom=None` takes the record's bed (F13); a declared one must
+      equal it within `max(1e-6*|b|, 1e-6)`, before capping. A partial match, a lake on
+      two records, `rectangular_interior=True` and an `only_layer` other than the top
+      active layer are REFUSED whatever `unexcavated=` says. **Legacy** (no record
+      touches it): the old rule, plus the `unexcavated=` guard ("warn" default, F7).
+      Faces thinner than 1e-6 are dropped in every mode (F9); nothing else in the legacy
+      rule moved.
+      **Measured** (`docs/reproducers/excavated_lake_rule.py`): a pit lake below the water
+      table in uniform flow carries 1.0054 / 1.0053 of the same pit's through-flow as a
+      K = 1e4 inclusion (two grids), where the legacy rule on the un-excavated stack gives
+      0.392 / 0.398; GWF and LAK discrepancy 0.00 -- the `slow` test asserts ratio 1.00 ±
+      0.01 AND both discrepancies. The legacy rule writes the SAME rows as before on five
+      synthetic fixtures and the canonical lake (`tests/data/lak_legacy_golden.json`,
+      written by the pre-change tree `8b3ce9d`), and on a 612-cell reconstruction of a real
+      pond from COPIES of its MF6 files (1,753 connections, 1,141 walls, thinnest face
+      1.32e-4) -- that last one is not reproducible from the repository. The guard on the
+      canonical lake: 33 of 33 verticals above the 96.0 floor, up to 13.45 ft.
+      **Judgment calls, each deliberate:**
+      - **A lake with explicit `LakeConnection`s is matched against no record** (rule
+        `"explicit"`): its connections are the caller's. An excavation shared between an
+        explicit lake and a generated one is therefore refused as a partial match.
+      - **A `{lake_id: ...}` `lake_bottom` that leaves an excavated lake out takes that
+        lake's record**, so a package mixing excavated and legacy lakes can declare only
+        the legacy beds -- F13 read per lake.
+      - **A bare elevation table carries no record, EXCEPT the grid's own live
+        `gdf_topbtm` object** -- `surfaces=vor.gdf_topbtm`, the spelling `mf.lak`'s own
+        example uses, would otherwise read an excavated pond as legacy. A COPY is bare.
+      - **The "looks excavated" warning rides `unexcavated=`**, so `"raise"` refuses it
+        too: a record that never arrived is exactly what `"raise"` is for.
+      - **The four build warnings (section 4.8) fire for EXCAVATED lakes only.** MF6's
+        IWETLAKE also switches recharge/ET off on a legacy lake's vertical cell whenever
+        the stage rises above that cell's top, but there it is occasional; warning on
+        every legacy lake would fire on the canonical model and every lake not yet
+        re-declared, and the guard already names the geometry. The transparent-bed test is
+        the design's: half-cell share > 90% at the median vertical AND a > 10x thickness
+        spread (a uniform floor is mesh-dependent but consistent).
+      - **The DISV check (`grid_identity.lak_geometry_complaints`) runs in two places**:
+        the LAK builder before FloPy constructs the package (FloPy's own refusal names only
+        a cellid) and `_discretization_complaints` after every package (a lake declared
+        before its DISV). Its "face inside its cell" comparison uses the same 1e-6 relative
+        tolerance, NOT MF6's exact compare: it exists to catch a lake resolved against
+        another build (feet, not ulps), so a hand-written face within 1e-6 of its cell
+        passes here and could still be refused by MF6. `mf.lak.flopy` packages carry no
+        `lake_rules` and are not checked.
+      - `lake_rules` and `lake_connections` (each connection's owner cell and role,
+        `floor`/`wall`/`rim`) are METADATA -- no digest moves -- and `void_pin` drops them
+        when an edit replaces `connectiondata`, pinned or not.
+      - The canonical lake stays unexcavated (F8): `tests/conftest.py` filters the guard in
+        its two canonical fixtures, and `canonical_example.py` is untouched.
+      **NOT built:** LAK `IMPLICIT` (its own entry, next); excavating the canonical lake (F8, a
+      follow-up that moves every canonical baseline); masking MF6's -1e30 dry lake stage
+      in the stage views (the design's D10 -- an excavated pond reads dry every recovery
+      day); a geometric rule choice (section 4.1: measured wrong three ways). Tests:
+      `tests/test_excavated_lake.py` (22, one MF6); reverting each piece -- the record
+      rule, the neighbour walls, `DisvFaces`' CONNLEN, the thickness test, the bed check,
+      both refusals, the guard, both DISV-check call sites, the warnings, the metadata
+      void, the rim bed, the face tolerance -- fails a named test (14 mutations).

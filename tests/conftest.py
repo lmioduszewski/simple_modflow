@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import warnings
 from pathlib import Path
 from uuid import uuid4
 
@@ -202,13 +203,28 @@ def _canonical_session_dir():
         pass
 
 
+#: The canonical rectangular lake is NOT excavated into its layers -- its 33 vertical
+#: connections sit 5.27-13.45 ft above its 96.0 floor -- so ``mf.lak``'s
+#: ``unexcavated=`` guard warns on every build. Filtered HERE, in the fixtures, not in
+#: ``canonical_example.py``: the model is known to be unexcavated, and excavating it is
+#: its own follow-up that moves every canonical baseline (the excavation design's F8,
+#: ledger 325).
+_UNEXCAVATED_CANONICAL_LAKE = r"mf\.lak: lake\(s\) NOT excavated into the layer stack"
+
+
+def _build_canonical(path, config):
+    """``build_canonical_model`` with the known unexcavated-lake warning filtered."""
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=_UNEXCAVATED_CANONICAL_LAKE)
+        return build_canonical_model(path, config=config)
+
+
 @pytest.fixture(scope="session")
 def canonical_model(canonical_config, _canonical_session_dir):
     """Build and contract-check the shared canonical model (once per session)."""
 
-    model = build_canonical_model(
-        _canonical_session_dir / "canonical", config=canonical_config
-    )
+    model = _build_canonical(_canonical_session_dir / "canonical", canonical_config)
     CANONICAL_MODEL_CONTRACT.validate(model)
     return model
 
@@ -232,7 +248,7 @@ def canonical_run(canonical_model):
 def canonical_run_fresh(tmp_path, canonical_config):
     """A private, freshly built + run canonical model for mutating tests."""
 
-    model = build_canonical_model(tmp_path / "canonical", config=canonical_config)
+    model = _build_canonical(tmp_path / "canonical", canonical_config)
     success, report = model.run_simulation()
     assert success, "\n".join(report[-30:])
     CANONICAL_MODEL_CONTRACT.validate(model)

@@ -924,10 +924,28 @@ rate it loses, ledger 322). The excavated stack saves like any other (ledger 323
 `mf.disv(stack)` on the gridless stack is lazy and re-covers the pond's cells on
 whatever mesh the model is built on, the footprint file and bed are carried by
 `project.save(bundle_sources=True)` and hashed, so `runs.drift()` reports an edited
-footprint, and a reopened run's frozen snapshot keeps the records. **`mf.lak` does not read the excavation records
-yet**: its generated connections still follow the un-excavated rule (on a cut pond,
-`bathy` writes no side walls), so the cut alone is the geometry, not yet the lake
-model (ledger 320).
+footprint, and a reopened run's frozen snapshot keeps the records.
+
+`mf.lak` then reads the excavation's RECORD (ledger 325) -- `attach=True` puts it on the
+grid, or pass `surfaces=pond` -- and a lake whose cells ARE the excavation's is written
+by the excavated rule: its floor connects to the cell under the bed (MF6 counts from
+that cell's top, which is now the bed) and its walls go into the NEIGHBOURS' cells, with
+MF6's own face geometry. Leave `lake_bottom` out -- the lake takes the excavation's bed
+-- and pass `unexcavated="raise"` so a record that never arrived is an error, not a lake
+quietly written by the old rule:
+
+```python
+lak = mf.lak(context=ctx, nper=nper, lakes="pond.gpkg", lake_id_field="name",
+             starting_stage={"pond": 526.0}, bed_leakance=3000.0, unexcavated="raise")
+lak.metadata["lake_rules"]           # {'pond': 'excavated'}
+```
+
+Declare the model with NEWTON (`mf.gwf(..., newtonoptions="NEWTON")`): without it MF6
+carries nothing through a wall whose cell is dry, and the build warns. It also warns
+about walls into `icelltype` 0 cells, recharge on the pond's floor with no `rainfall=`
+(MF6 switches it off while the pond is wet), and a bed so transparent that the mesh
+sets the infiltration rate. A lake NOT excavated keeps the old rule and is warned about
+by default: MF6 counts its floor from each cell's top, not from the bed.
 
 #### Look at it before you trust it
 

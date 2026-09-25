@@ -467,6 +467,7 @@
         "rectangular_interior:KEYWORD_ONLY=False",
         "bed_leakance:KEYWORD_ONLY=1.0",
         "connection_modes:KEYWORD_ONLY='bathy'",
+        "unexcavated:KEYWORD_ONLY='warn'",
         "tables:KEYWORD_ONLY=None",
         "outlets:KEYWORD_ONLY=()",
         "stage:KEYWORD_ONLY=None",

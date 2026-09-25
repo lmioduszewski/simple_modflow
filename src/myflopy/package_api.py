@@ -5546,7 +5546,11 @@ class _LAKPackage:
     bottom of every HORIZONTAL face written on the lake cell, and MF6 exchanges
     water through those faces from the bed up, even while the stage is below the
     cell top and the lake holds no volume -- though in a TRANSIENT period it lets
-    no more out of such a lake than arrives (the entry has the measurements).
+    no more out of such a lake than arrives (the entry has the measurements). A
+    lake the layer stack was EXCAVATED for (``LayerStack.excavate``) is the way
+    out: its vertical cell's top IS the bed, and its walls go into the
+    neighbours' cells -- the same entry says how, and ``unexcavated`` what is
+    said about a lake that was not.
 
     See Also
     --------
@@ -5576,6 +5580,7 @@ class _LAKPackage:
         rectangular_interior: Any = False,
         bed_leakance: Any = 1.0,
         connection_modes: str | Mapping[str, str | Sequence[LakeConnection]] = "bathy",
+        unexcavated: str = "warn",
         tables: Mapping[str, LakeTable | LakeTableBuilder] | None = None,
         outlets: tuple[LakeOutlet, ...] = (),
         stage: Any = None,
@@ -5655,7 +5660,14 @@ class _LAKPackage:
             lengths and widths come from it. The layer elevations come from
             ``surfaces`` when given (a table or a
             ``LayerBuildResult``), else from ``grid.gdf_topbtm``, and one of the
-            two must exist (``ValueError``). ``domain`` is the idomain; ``None``
+            two must exist (``ValueError``). The EXCAVATION RECORDS that decide
+            whether a lake is written by the excavated rule (``connection_modes``)
+            come from the same place, never from the geometry: a
+            ``LayerBuildResult`` given as ``surfaces`` carries its
+            ``excavations``; with no ``surfaces`` the grid carries the ones
+            ``LayerStack.build(..., attach=True)`` published beside
+            ``gdf_topbtm``; a bare table carries none, unless it IS the grid's
+            own ``gdf_topbtm``. ``domain`` is the idomain; ``None``
             means every cell is active. ``length_units``/``time_units`` set the
             conversions when ``length_conversion``/``time_conversion`` are
             ``None``.
@@ -5703,8 +5715,16 @@ class _LAKPackage:
             cells, and outside a lake's table (``[minimum_stage,
             maximum_stage]``).
         lake_bottom : float, str, pathlib.Path, Surface, pandas.Series or dict, optional
-            Default ``None``; required by the two generated modes, and not read
-            for a lake with explicit connections. The lakebed elevation (length).
+            Default ``None``. The lakebed elevation (length). For an EXCAVATED
+            lake (``connection_modes``) ``None`` takes the excavation's own bed --
+            the bed is declared once, on ``LayerStack.excavate`` -- and a
+            ``{lake_id: ...}`` mapping that leaves the lake out does the same. A
+            value GIVEN for an excavated lake must be that bed: it is sampled as
+            below and compared cell by cell, before any capping, and a difference
+            beyond ``max(1e-6 * |bed|, 1e-6)`` at any cell raises ``ValueError``
+            naming the worst (the stack was cut to another bottom). For every
+            other lake it is required by the two generated modes (``ValueError``),
+            and it is not read for a lake with explicit connections.
             One value per lake, in any per-lake form, is a flat bed -- what
             ``"rectangular"`` lakes take. ``"bathy"`` wants one per CELL:
 
@@ -5746,7 +5766,9 @@ class _LAKPackage:
             connections are confined. ``None`` means every layer a face spans. In
             ``"bathy"`` a cell whose bed is not in that layer raises ``ValueError:
             ... does not intersect active cell``; in ``"rectangular"`` it gets NO
-            vertical connection, silently (ledger 318).
+            vertical connection, silently (ledger 318). On an EXCAVATED lake it
+            must name the top active layer under every lake cell (``ValueError``
+            otherwise), and its walls are confined to that layer.
         rectangular_interior : bool or dict of str to bool, default False
             ``"rectangular"`` lakes only. ``True`` (or ``{lake_id: True}``) also
             connects each lake cell toward its neighbours INSIDE the lake,
@@ -5755,7 +5777,9 @@ class _LAKPackage:
             ``False`` = edges only (a lined trench or vault). It is a physical
             choice about the basin, not a solver setting, although all-faces also
             spreads the lake-stage coupling, which steadies a small basin that
-            drains empty.
+            drains empty. Refused (``ValueError``) on an EXCAVATED lake: its
+            floor is open water, with no interior face to conduct through -- a
+            gravel-filled basin is aquifer, and is not excavated.
         bed_leakance : float, str, dict, pandas.Series or sequence of float, default 1.0
             The lakebed leakance (1/T: bed hydraulic conductivity divided by bed
             thickness) written on every generated connection, in any per-lake
@@ -5801,6 +5825,33 @@ class _LAKPackage:
               ``lake_top``, ``only_vertical``, ``only_layer`` and
               ``rectangular_interior`` do not touch that lake.
 
+            **An EXCAVATED lake is written by its own rule, in either generated
+            mode.** A lake is excavated when an excavation record reaches
+            ``mf.lak`` (see ``context``) and the lake's cells are EXACTLY that
+            excavation's cells -- ``LayerStack.excavate(within=<these lakes=
+            polygons>)``, which covers cells by the same rule. Chosen from the
+            record, never from the geometry (``LAKBuilder.lake_rules`` says which
+            rule each lake got). Per lake cell: ONE VERTICAL connection to the top
+            ACTIVE cell under it, whose top IS the bed, so MF6 counts from the
+            bed; then, toward each face neighbour whose model top -- its bed, for
+            a lake cell; the ground, for land; capped at ``lake_top`` for
+            ``"rectangular"`` -- is above this cell's bed, one HORIZONTAL
+            connection per active layer of the NEIGHBOUR the wall spans, written
+            INTO the neighbour's cell (the aquifer the water meets), with ``belev
+            = max(bed, layer bottom)``, ``telev = min(wall top, layer top)``,
+            ``CONNLEN`` the distance from the NEIGHBOUR's DISV centre to the line
+            of the shared face and ``CONNWIDTH`` the face's length -- MF6's own
+            DISV geometry, not ``grid.cl12``. A cell whose declared bed did not
+            reach below the ground (a rim cell) connects at the ground. Measured,
+            a pit lake below the water table in uniform flow against the same pit
+            as a K = 1e4 inclusion: through-flow 1.005 of the reference, where
+            ``"bathy"`` on the un-excavated stack gave 0.39. A lake covering only
+            part of an excavation, or cells of two, raises ``ValueError``
+            whatever ``unexcavated`` says. Declare the model with NEWTON: without
+            it MF6 carries nothing through a wall whose cell is dry (the build
+            warns). In EVERY mode a HORIZONTAL face thinner than 1e-6 is not
+            written: MF6 would read it as the whole cell.
+
             **MF6 IGNORES the BELEV and TELEV written for a VERTICAL connection**
             and uses the connected cell's TOP (and top + ``surfdep``) instead (MF6
             input guide: "Any value can be specified if CLAKTYPE is VERTICAL";
@@ -5828,6 +5879,25 @@ class _LAKPackage:
             a VERTICAL connection lands in and where each HORIZONTAL face starts.
             The elevations written never depend on the (transient) stage: MF6
             wets and dries each face itself, every time step.
+        unexcavated : {"warn", "raise", "ignore"}, default "warn"
+            What to do about a generated lake NO excavation record reached, when
+            MF6 will not see its bed. ``"warn"`` issues a ``UserWarning`` (and a
+            log line), ``"raise"`` raises ``ValueError`` with the same text, and
+            ``"ignore"`` says nothing; any other value raises ``ValueError`` when
+            the builder is constructed. Two findings trigger it. VERTICAL
+            connections in a cell whose TOP is above the lake's bed: MF6 counts
+            from that top, so each exchanges nothing until the stage reaches it
+            and, without a table, the storage between the bed and the top is
+            missing; the text gives how many, the worst and the median gap, and
+            how many of those tops are above the starting stage and the table's
+            highest stage (on a real pond, 577 of 612, worst 12.58). And a lake
+            that LOOKS excavated -- more than half its cells have a zero-thickness
+            layer above an active cell whose top is the bed -- but carries no
+            record, so it was written without walls into its neighbours. A lake
+            whose bed IS its cells' tops (a USG export's) triggers neither.
+            Checked when the lakes are validated: at the ``mf.lak`` call, or at
+            ``LAKBuilder.build``/``validate``. It never softens a partial match
+            with an excavation, which always raises.
         tables : dict of str to (LakeTable or LakeTableBuilder), optional
             Default ``None``, the same as ``{}``: no tables. Stage / volume /
             surface-area tables, at most one per lake. A value is a
@@ -5955,8 +6025,19 @@ class _LAKPackage:
             The LAK package spec, with one child ``laktab`` per table. Its
             metadata carries ``lak_index`` (the package name and each lake id's
             MF6 lake number, which ``mf.lak_connection`` reads), the lake ids,
-            each lake's connection mode, and the grid pin that refuses a build
-            on another mesh.
+            each lake's connection mode, the rule each lake was written by
+            (``lake_rules``: ``"excavated"``, ``"legacy"`` or ``"explicit"``),
+            what each connection is (``lake_connections``: ``{lake_id:
+            [[iconn, lake_cell, "floor" | "wall" | "rim"], ...]}`` -- an
+            excavated lake's wall is written into its NEIGHBOUR's cell, so the
+            row alone does not say which lake cell owns it), and the grid pin
+            that refuses a build on another mesh. When the model is built, the
+            connections are checked against the built DISV (each cell active,
+            each face inside its cell, an excavated lake's vertical cell at its
+            bed), and an excavated lake WARNS about a model without NEWTON,
+            walls into ``icelltype`` 0 cells, recharge or ET on its vertical
+            cells with no ``rainfall``/``evaporation``, and a bed so transparent
+            that the mesh sets its infiltration rate.
 
         Raises
         ------
@@ -5970,7 +6051,13 @@ class _LAKPackage:
             zero or less, a ``starting_stage`` below the bed or outside its
             table, an unknown lake id in ``tables``, ``outlets`` or a per-period
             mapping, a non-``LakeOutlet`` outlet, and any ``LakeTableBuilder``
-            refusal.
+            refusal. For an EXCAVATED lake: a lake covering only part of an
+            excavation or cells of two, a ``lake_bottom`` that is not the
+            excavation's bed, ``rectangular_interior=True``, and an
+            ``only_layer`` that is not the top active layer. An
+            ``unexcavated`` that is not ``"warn"``, ``"raise"`` or
+            ``"ignore"``, and -- with ``unexcavated="raise"`` -- a lake no
+            excavation reached whose bed MF6 will not see.
         TypeError
             A ``layer`` that is not a ``str`` (an integer reads as a model layer;
             that is ``only_layer``); an ``**options`` name ``ModflowGwflak`` does
@@ -6029,6 +6116,7 @@ class _LAKPackage:
             rectangular_interior=rectangular_interior,
             bed_leakance=bed_leakance,
             connection_modes=connection_modes,
+            unexcavated=unexcavated,
             tables={} if tables is None else tables,
             outlets=outlets,
             stage=stage,

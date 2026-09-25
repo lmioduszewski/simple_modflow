@@ -60,6 +60,48 @@ CELLWISE_OPTIONS = "grid_cellwise_options"
 #: to one mesh then built clean on another.
 PIN_VOIDED = "grid_pin_voided"
 
+#: What ``mf.lak`` records about the RULE it wrote each lake's connections with (ledger
+#: 325): ``{lake_id: "excavated" | "legacy" | "explicit"}``, in lake-number order. The
+#: build-time geometry check (:func:`lak_geometry_complaints`) reads it to know which
+#: lakes promise a VERTICAL connection at the bed, and the build warnings read it to
+#: know which lakes are excavated. Metadata, so excluded from ``package_digest``.
+LAKE_RULES = "lake_rules"
+
+#: Each written connection's owner and role, ``{lake_id: [[iconn, lake_cell, role],
+#: ...]}`` with ``role`` one of ``"floor"`` / ``"wall"`` / ``"rim"``. An excavated
+#: lake's wall is written into its NEIGHBOUR's cell, so the row alone no longer says
+#: which lake cell it belongs to -- this does (``lake_cell`` is ``None`` for a lake
+#: whose connections were written by hand).
+LAKE_CONNECTIONS = "lake_connections"
+
+
+def bed_tolerance(value: float) -> float:
+    """How far two elevations may differ and still be one bed: ``max(1e-6 * |value|, 1e-6)``.
+
+    The scale ledger 290 settled on for an elevation compared across two writers:
+    relative so it survives State Plane-sized numbers, with an absolute floor so a
+    bed at zero is not held to exact equality. The same ``Surface`` sampled twice
+    gives the identical float; this admits the rounding of a round trip, not a
+    different bed.
+
+    Parameters
+    ----------
+    value : float
+        One of the two elevations, in model length units.
+
+    Returns
+    -------
+    float
+        The tolerance, in the same units.
+
+    Examples
+    --------
+    >>> bed_tolerance(526.0), bed_tolerance(0.0)
+    (0.000526, 1e-06)
+    """
+
+    return max(1e-6 * abs(float(value)), 1e-6)
+
 
 #: Context fields that ``ModelSpec.to_dict`` cannot carry, and that something reads.
 #: ``dates`` is deliberately absent: nothing in the library reads it, so losing it
@@ -267,8 +309,21 @@ def void_pin(metadata, touched):
 
     Returns the SAME object when nothing voids: ``with_options`` shares its metadata
     dict with the parent, so this must never mutate in place.
+
+    ``mf.lak``'s :data:`LAKE_RULES` and :data:`LAKE_CONNECTIONS` describe the
+    ``connectiondata`` the library wrote, so an edit that replaces ``connectiondata``
+    drops them too, pinned or not (ledger 325): the build-time lake check would
+    otherwise hold the caller's records to rules they were never written by.
     """
 
+    if "connectiondata" in set(touched) and metadata and (
+        LAKE_RULES in metadata or LAKE_CONNECTIONS in metadata
+    ):
+        metadata = {
+            key: value
+            for key, value in metadata.items()
+            if key not in (LAKE_RULES, LAKE_CONNECTIONS)
+        }
     pin = (metadata or {}).get(GRID_PIN)
     if pin is None:
         # `.get(...) is None` rather than falsy: the `.gpkg` site writes the key with a
@@ -1288,6 +1343,468 @@ def _active_cell_complaints(model, context, packages, built_packages=None) -> li
     )[0]
 
 
+#: Why a lake's connections can disagree with the DISV it is built with, said once in
+#: every lake complaint.
+_LAK_GEOMETRY_CAUSE = (
+    "The lake was resolved against a different geometry than this DISV -- most often "
+    "an eager mf.lak declared against one build of the layer stack and a DISV built "
+    "from another (a lazy mf.disv with other build kwargs such as min_sep= or "
+    "reconcile=, or a context from before an excavation). Declare mf.lak against the "
+    "context of the result this DISV was built from"
+)
+
+
+def _disv_arrays(disv):
+    """``(idomain, top, botm)`` of a built DISV, as ``(nlay, ncpl)`` arrays, or ``None``."""
+
+    import numpy as np
+
+    ncpl = _as_int(disv.ncpl.get_data())
+    nlay = _as_int(disv.nlay.get_data())
+    if not ncpl or not nlay:
+        return None
+    try:
+        top = np.asarray(disv.top.get_data(), dtype=float).reshape(ncpl)
+        botm = np.asarray(disv.botm.get_data(), dtype=float).reshape(nlay, ncpl)
+        idomain = _built_idomain(disv, nlay, ncpl)
+    except (TypeError, ValueError, AttributeError) as error:
+        logger.debug("could not read the DISV's elevations; lake geometry not checked: %s", error)
+        return None
+    return idomain, top, botm
+
+
+def lak_geometry_complaints(idomain, top, botm, connectiondata, lake_rules, *, name="lak") -> list[str]:
+    """What in a LAK package's connections the built discretization contradicts.
+
+    One check, run from two places because neither alone sees every build order
+    (ledger 325): by the LAK builder BEFORE FloPy constructs the package, when the
+    model already has its DISV -- FloPy validates a connection's cellid against the
+    idomain at construction and would otherwise stop first, naming only the cellid --
+    and by :func:`_discretization_complaints` after every package is built, which
+    covers a lake declared before its DISV.
+
+    Parameters
+    ----------
+    idomain : array_like of int, shape (nlay, ncpl)
+        The built DISV's idomain (``None`` in FloPy means every cell is active; pass
+        ones then). ``<= 0`` is a removed cell.
+    top : array_like of float, shape (ncpl,)
+        The built DISV's model top, in model length units.
+    botm : array_like of float, shape (nlay, ncpl)
+        The built DISV's layer bottoms.
+    connectiondata : sequence
+        The LAK ``connectiondata`` records, as ``mf.lak`` writes them: ``[lakeno,
+        iconn, (layer, cell), claktype, bedleak, belev, telev, connlen, connwidth]``,
+        lake numbers from zero. A record whose cellid is not a ``(layer, cell)`` pair
+        (a structured grid) is skipped.
+    lake_rules : mapping of str to str
+        ``{lake_id: rule}`` in lake-number order -- the :data:`LAKE_RULES` metadata
+        ``mf.lak`` stamps. Only ``"excavated"`` changes what is checked.
+    name : str, default "lak"
+        The package's name, for the messages.
+
+    Returns
+    -------
+    list of str
+        One sentence per kind of disagreement, each naming the lake, a sample of the
+        connections and the cause; empty when the connections fit the DISV. Checked,
+        per connection: its cell is ACTIVE (``idomain > 0``) -- MF6 refuses one that
+        is not; a HORIZONTAL face written with ``belev != telev`` lies INSIDE its cell
+        (``belev >= bottom``, ``telev <= top``), which MF6 refuses otherwise (a face
+        with ``belev == telev`` is MF6's "whole cell" and is not checked); and for an
+        ``"excavated"`` lake, a VERTICAL connection's cell top is the bed the lake
+        was resolved with (its written ``belev``) and every cell above it is
+        inactive. The comparisons use :func:`bed_tolerance`. MF6 itself does not
+        catch that last one: a lake resolved on an excavated context and run against
+        an un-excavated DISV of the same mesh simply exchanges from the wrong cell.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from myflopy.grid_identity import lak_geometry_complaints
+    >>> idomain = np.array([[0, 1], [1, 1]])
+    >>> top, botm = np.array([90.0, 100.0]), np.array([[90.0, 95.0], [80.0, 80.0]])
+    >>> rows = [[0, 0, (1, 0), "VERTICAL", 1.0, 90.0, 90.0, 0.0, 0.0]]
+    >>> lak_geometry_complaints(idomain, top, botm, rows, {"pond": "excavated"})
+    []
+    >>> rows = [[0, 0, (0, 0), "VERTICAL", 1.0, 90.0, 90.0, 0.0, 0.0]]
+    >>> print(lak_geometry_complaints(idomain, top, botm, rows, {"pond": "excavated"})[0][:60])
+    package 'lak': lake 'pond' connects to 1 cell(s) the built D
+    """
+
+    import numpy as np
+
+    idomain = np.asarray(idomain)
+    top = np.asarray(top, dtype=float).reshape(-1)
+    botm = np.asarray(botm, dtype=float)
+    nlay, ncpl = botm.shape
+    ids = list(lake_rules)
+    removed: dict[str, list] = {}
+    misplaced: dict[str, list] = {}
+    covered: dict[str, list] = {}
+    outside: dict[str, list] = {}
+    for row in connectiondata if connectiondata is not None else ():
+        row = list(row)
+        lake, cellid, kind = int(row[0]), row[2], str(row[3]).upper()
+        if not isinstance(cellid, (tuple, list)) or len(cellid) != 2:
+            continue
+        layer, cell = int(cellid[0]), int(cellid[1])
+        if not (0 <= layer < nlay and 0 <= cell < ncpl):
+            continue  # out of range: the range check reports it, by the cellid
+        lake_id = ids[lake] if 0 <= lake < len(ids) else str(lake)
+        rule = lake_rules.get(lake_id)
+        cell_top = float(top[cell] if layer == 0 else botm[layer - 1, cell])
+        cell_bottom = float(botm[layer, cell])
+        if idomain[layer, cell] <= 0:
+            removed.setdefault(lake_id, []).append((layer, cell))
+            continue
+        belev, telev = float(row[5]), float(row[6])
+        if kind == "VERTICAL" and rule == "excavated":
+            if abs(cell_top - belev) > bed_tolerance(belev):
+                misplaced.setdefault(lake_id, []).append(((layer, cell), belev, cell_top))
+            if layer and (idomain[:layer, cell] > 0).any():
+                covered.setdefault(lake_id, []).append((layer, cell))
+        elif kind == "HORIZONTAL" and belev != telev:
+            if belev < cell_bottom - bed_tolerance(cell_bottom) or telev > cell_top + bed_tolerance(cell_top):
+                outside.setdefault(lake_id, []).append(((layer, cell), belev, telev, cell_bottom, cell_top))
+
+    complaints = []
+    for lake_id, cells in removed.items():
+        complaints.append(
+            f"package {name!r}: lake {lake_id!r} connects to {len(cells)} cell(s) the built "
+            f"DISV has REMOVED (idomain <= 0), which MF6 refuses: {_listing(cells)}. "
+            f"{_LAK_GEOMETRY_CAUSE}"
+        )
+    for lake_id, found in misplaced.items():
+        worst = max(found, key=lambda item: abs(item[2] - item[1]))
+        complaints.append(
+            f"package {name!r}: excavated lake {lake_id!r} was resolved with its VERTICAL "
+            f"connections at the excavated bed, and the built DISV puts {len(found)} of "
+            f"those cells' tops elsewhere (worst {worst[0]}: bed {worst[1]:.6g}, cell top "
+            f"{worst[2]:.6g}). MF6 counts a VERTICAL connection from its cell's TOP. "
+            f"{_LAK_GEOMETRY_CAUSE}"
+        )
+    for lake_id, cells in covered.items():
+        complaints.append(
+            f"package {name!r}: excavated lake {lake_id!r} connects VERTICALLY to "
+            f"{len(cells)} cell(s) with an ACTIVE cell above them in the built DISV: "
+            f"{_listing(cells)} -- the pond is not dug out of this DISV. "
+            f"{_LAK_GEOMETRY_CAUSE}"
+        )
+    for lake_id, found in outside.items():
+        example = found[0]
+        complaints.append(
+            f"package {name!r}: lake {lake_id!r} has {len(found)} HORIZONTAL connection(s) "
+            f"reaching outside their cell in the built DISV, which MF6 refuses ('belev ... "
+            f"MUST BE >= cell bottom' / 'telev ... MUST BE <= cell top'); e.g. {example[0]} "
+            f"written {example[1]:.6g}-{example[2]:.6g} in a cell {example[3]:.6g}-"
+            f"{example[4]:.6g}. {_LAK_GEOMETRY_CAUSE}"
+        )
+    return complaints
+
+
+def _lak_complaints(model, packages) -> list[str]:
+    """:func:`lak_geometry_complaints` for every ``mf.lak`` package built on ``model``."""
+
+    disv = model.get_package("disv") if hasattr(model, "get_package") else None
+    if disv is None or isinstance(disv, list):
+        return []
+    lakes = [
+        package
+        for package in packages
+        if (package.metadata or {}).get(LAKE_RULES) and "connectiondata" in (package.options or {})
+    ]
+    if not lakes:
+        return []
+    arrays = _disv_arrays(disv)
+    if arrays is None:
+        return []
+    complaints = []
+    for package in lakes:
+        complaints += lak_geometry_complaints(
+            *arrays,
+            package.options["connectiondata"],
+            package.metadata[LAKE_RULES],
+            name=package.name,
+        )
+    return complaints
+
+
+def _layered(value, nlay: int, ncpl: int):
+    """A FloPy array value as ``(nlay, ncpl)`` floats -- a scalar or per-layer one broadcast."""
+
+    import numpy as np
+
+    if value is None:
+        return None
+    array = np.asarray(value, dtype=float)
+    if array.size == nlay * ncpl:
+        return array.reshape(nlay, ncpl)
+    if array.size == nlay:
+        return np.repeat(array.reshape(nlay, 1), ncpl, axis=1)
+    if array.size == 1:
+        return np.full((nlay, ncpl), float(array.reshape(-1)[0]))
+    return None
+
+
+def _npf_array(npf, option: str, nlay: int, ncpl: int):
+    """One NPF array as ``(nlay, ncpl)`` floats, or ``None`` when it cannot be read."""
+
+    from flopy.mf6.mfbase import MFDataException
+
+    field = getattr(npf, option, None) if npf is not None else None
+    try:
+        return _layered(field.get_data() if field is not None else None, nlay, ncpl)
+    except (MFDataException, OSError, ValueError, TypeError) as error:
+        logger.debug("could not read npf.%s; the lake warning that needs it is skipped: %s", option, error)
+        return None
+
+
+def _has_newton(model) -> bool:
+    """Whether the model's NAME FILE turns NEWTON on (``newtonoptions`` writes a record)."""
+
+    from flopy.mf6.mfbase import MFDataException
+
+    dataset = getattr(getattr(model, "name_file", None), "newtonoptions", None)
+    try:
+        return bool(dataset is not None and dataset.has_data() and dataset.get_data())
+    except (MFDataException, AttributeError, TypeError) as error:
+        logger.debug("could not read newtonoptions; NEWTON taken as off: %s", error)
+        return False
+
+
+def _lake_period_keywords(perioddata) -> dict[int, set[str]]:
+    """``{lake number: {keyword, ...}}`` over every period of a LAK ``perioddata``."""
+
+    found: dict[int, set[str]] = {}
+    for rows in (perioddata or {}).values():
+        for row in rows or ():
+            row = list(row)
+            if len(row) >= 2:
+                try:
+                    found.setdefault(int(row[0]), set()).add(str(row[1]).upper())
+                except (TypeError, ValueError):
+                    continue
+    return found
+
+
+def _addressed_cells(package, ncpl: int) -> set[tuple[int, int]]:
+    """Every ``(layer, cell)`` an RCH/EVT package puts its flux on, over all periods."""
+
+    kind = str(getattr(package, "package_type", ""))
+    cells: set[tuple[int, int]] = set()
+    if kind in _ARRAY_INDEX:
+        index_name = _ARRAY_INDEX[kind][0]
+        indices = _read_period_data(package, index_name, ncpl)
+        if indices is None:
+            return cells
+        if not any(value is not None for value in indices.values()):
+            indices = {0: None}
+        for value in indices.values():
+            layers = [0] * ncpl if value is None else [int(v) for v in value]
+            cells |= {(layer, cell) for cell, layer in enumerate(layers)}
+        return cells
+    try:
+        data = package.stress_period_data.get_data() or {}
+    except (AttributeError, ValueError, TypeError) as error:
+        logger.debug("could not read %s's records; not checked under the lake: %s", kind, error)
+        return cells
+    for records in data.values():
+        cells |= set(_cellids_in({"stress_period_data": {0: records}}))
+    return {cell for cell in cells if len(cell) == 2}
+
+
+def lak_build_warnings(model, packages) -> list[str]:
+    """The build-time WARNINGS for an excavated lake (ledger 325; the design's section 4.8).
+
+    Each names a configuration with a legitimate use, so none refuses; each was
+    measured to change the answer, so each is said, through ``warnings.warn`` as well
+    as the logger (ledger 288). Only lakes ``mf.lak`` wrote by the EXCAVATED rule
+    (:data:`LAKE_RULES`) are read: on them every VERTICAL connection's cell top IS the
+    bed and every wall lies in a neighbour's cell, which is what makes each of these
+    systematic rather than occasional.
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        The GWF model, after every package is built on it.
+    packages : sequence of PackageSpec
+        The packages built from specs; the lakes are the ones carrying
+        :data:`LAKE_RULES` with an ``"excavated"`` entry.
+
+    Returns
+    -------
+    list of str
+        One message per finding, per package:
+
+        * **no NEWTON** -- the model has an excavated lake and its name file writes no
+          ``newtonoptions``. Without it MF6 takes a wall's conductance head as the
+          mean of stage and cell head, and a dry wall cell's as HDRY: a toy lost 30
+          of its walls at one stage and 60 at another, leakage -12% / -13%.
+        * **walls into ``icelltype`` 0** -- MF6 uses a non-convertible cell's full
+          saturated thickness for the wall whatever the heads: 5.0x the wall flow on a
+          flat basin holding 2 ft of water. ``mf.npf(k=...)`` writes ``icelltype`` 0
+          unless told (ledger 290).
+        * **recharge or ET under a wet lake** -- an RCH or EVT package puts its flux on
+          a lake's VERTICAL cell and the lake declares no ``RAINFALL`` (for RCH) or
+          ``EVAPORATION`` (for EVT). MF6 switches both OFF on a lake's vertical cell
+          while the stage is above its top (``IWETLAKE``), which on an excavated lake
+          is whenever the pond holds water.
+        * **a transparent bed over uneven cells** -- over the lake's VERTICAL
+          connections, the half-cell term ``0.5 * thickness / K33`` is more than 90%
+          of MF6's vertical resistance ``1/bedleak + 0.5 * thickness / K33`` at the
+          median connection AND the connected cells' thickness varies more than 10x.
+          The bed then does not set the infiltration rate -- the mesh does (62x across
+          one floor, measured).
+
+        Empty when the model has no excavated lake or no DISV.
+
+    Examples
+    --------
+    >>> from myflopy.grid_identity import lak_build_warnings
+    >>> lak_build_warnings(object(), [])
+    []
+    """
+
+    import numpy as np
+
+    lakes = [
+        package
+        for package in packages
+        if "excavated" in ((package.metadata or {}).get(LAKE_RULES) or {}).values()
+        and "connectiondata" in (package.options or {})
+    ]
+    if not lakes:
+        return []
+    disv = model.get_package("disv") if hasattr(model, "get_package") else None
+    arrays = _disv_arrays(disv) if disv is not None and not isinstance(disv, list) else None
+    if arrays is None:
+        return []
+    idomain, top, botm = arrays
+    nlay, ncpl = botm.shape
+    elevations = np.vstack([top.reshape(1, -1), botm])
+    thickness = elevations[:-1] - elevations[1:]
+    npf = model.get_package("npf")
+    icelltype = _npf_array(npf, "icelltype", nlay, ncpl)
+    k33 = _npf_array(npf, "k33", nlay, ncpl)
+    if k33 is None:
+        k33 = _npf_array(npf, "k", nlay, ncpl)
+    newton = _has_newton(model)
+    fluxes = [
+        package
+        for package in getattr(model, "packagelist", ()) or ()
+        if str(getattr(package, "package_type", "")) in ("rch", "rcha", "evt", "evta")
+    ]
+    messages: list[str] = []
+    for package in lakes:
+        rules = package.metadata[LAKE_RULES]
+        ids = list(rules)
+        excavated = {number for number, lake_id in enumerate(ids) if rules[lake_id] == "excavated"}
+        rows = [list(row) for row in package.options["connectiondata"]]
+        rows = [
+            row
+            for row in rows
+            if int(row[0]) in excavated
+            and isinstance(row[2], (tuple, list))
+            and len(row[2]) == 2
+            and 0 <= int(row[2][0]) < nlay
+            and 0 <= int(row[2][1]) < ncpl
+        ]
+        names = sorted({ids[int(row[0])] for row in rows})
+        label = ", ".join(repr(name) for name in names)
+        if not newton:
+            messages.append(
+                f"package {package.name!r}: the model does not use NEWTON, and excavated "
+                f"lake(s) {label} exchange through side walls in their neighbours' cells. "
+                "Without NEWTON MF6 takes a wall's conductance head as the mean of the stage "
+                "and the cell's head, and a DRY wall cell carries nothing: measured, a toy "
+                "lost 30 and 60 of its walls at two stages and 12-13% of its leakage. "
+                "Declare the model with mf.gwf(..., newtonoptions='NEWTON') (the linear "
+                "acceleration must then be BICGSTAB)"
+            )
+        if icelltype is not None:
+            confined = [
+                (int(row[2][0]), int(row[2][1]))
+                for row in rows
+                if str(row[3]).upper() == "HORIZONTAL"
+                and icelltype[int(row[2][0]), int(row[2][1])] == 0
+            ]
+            if confined:
+                messages.append(
+                    f"package {package.name!r}: {len(confined)} wall connection(s) of "
+                    f"excavated lake(s) {label} enter cells with icelltype 0 "
+                    f"({_listing(sorted(set(confined)))}). MF6 gives such a wall the cell's "
+                    "FULL saturated thickness whatever the heads -- measured 5.0x the wall "
+                    "flow of a convertible cell on a flat basin holding 2 ft of water. "
+                    "mf.npf(k=...) writes icelltype 0 unless told (ledger 290); pass "
+                    "icelltype=1 for the layers the pond's walls reach"
+                )
+        keywords = _lake_period_keywords(package.options.get("perioddata"))
+        for flux in fluxes:
+            kind = str(flux.package_type)
+            wanted = "RAINFALL" if kind.startswith("rch") else "EVAPORATION"
+            noun = "recharge" if kind.startswith("rch") else "evapotranspiration"
+            addressed = _addressed_cells(flux, ncpl)
+            for number in sorted(excavated):
+                if wanted in keywords.get(number, set()):
+                    continue
+                vertical = {
+                    (int(row[2][0]), int(row[2][1]))
+                    for row in rows
+                    if int(row[0]) == number and str(row[3]).upper() == "VERTICAL"
+                }
+                hit = vertical & addressed
+                if not hit:
+                    continue
+                messages.append(
+                    f"package {_flopy_name(flux)!r} puts {noun} on {len(hit)} of excavated "
+                    f"lake {ids[number]!r}'s {len(vertical)} VERTICAL cell(s), and MF6 "
+                    f"switches {noun} OFF on a lake's vertical cell while the stage is above "
+                    "its top (IWETLAKE) -- on an excavated lake, whenever the pond holds water "
+                    f"-- so that water leaves the model, and the lake declares no "
+                    f"{wanted.lower()}= to carry it instead. Pass the rate as mf.lak("
+                    f"{wanted.lower()}=...) if the pond should receive it, or accept the loss. "
+                    "(UZF is the opposite: it keeps infiltrating under a wet lake, so adding "
+                    "rainfall there counts the water twice.)"
+                )
+        if k33 is not None:
+            for number in sorted(excavated):
+                vertical = [
+                    row for row in rows if int(row[0]) == number and str(row[3]).upper() == "VERTICAL"
+                ]
+                if len(vertical) < 2:
+                    continue
+                shares, thick = [], []
+                for row in vertical:
+                    layer, cell = int(row[2][0]), int(row[2][1])
+                    t = float(thickness[layer, cell])
+                    k = float(k33[layer, cell])
+                    if t <= 0.0 or k <= 0.0:
+                        continue
+                    half = 0.5 * t / k
+                    bed = row[4]
+                    leak = None if isinstance(bed, str) else float(bed)
+                    shares.append(1.0 if not leak or leak <= 0.0 else half / (1.0 / leak + half))
+                    thick.append(t)
+                if len(shares) < 2:
+                    continue
+                share = float(np.median(shares))
+                spread = max(thick) / min(thick)
+                if share > 0.9 and spread > 10.0:
+                    messages.append(
+                        f"package {package.name!r}: excavated lake {ids[number]!r}'s bed is "
+                        f"TRANSPARENT -- at the median VERTICAL connection the half-cell term "
+                        f"0.5*thickness/K33 is {100.0 * share:.1f}% of MF6's resistance "
+                        f"(1/bedleak + 0.5*thickness/K33) -- and the connected cells run "
+                        f"{min(thick):.3g}-{max(thick):.3g} thick ({spread:.0f}x), so the "
+                        "infiltration rate under the pond follows the MESH, not the bed "
+                        "(62x across one floor, measured). Give bed_leakance= a physical value, "
+                        "or choose the layering under the pond for it (min_remnant= on the "
+                        "excavation)"
+                    )
+    return messages
+
+
 def active_cell_warnings(model, context, packages, *, built_packages=None) -> list[str]:
     """The WARNINGS of the build-time activity check: an ``irch``/``ievt`` opt-out that loses flux.
 
@@ -1559,6 +2076,11 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
     # In range is not enough: a cell can exist on this mesh and still have been REMOVED
     # by the DISV's idomain -- what a context declared before an excavation leaves.
     complaints += _active_cell_complaints(model, context, packages, built_packages)
+    # A lake's connections, which the two checks above cannot read (`_cellids_in` skips
+    # `connectiondata` on purpose): active cells, faces inside their cells, and for an
+    # excavated lake the vertical cell at the bed (ledger 325). The LAK builder runs the
+    # same check before FloPy when the DISV already exists; this covers the other order.
+    complaints += _lak_complaints(model, packages)
     return complaints
 
 def dropped_context_fields(context) -> tuple[str, ...]:
@@ -1605,7 +2127,12 @@ __all__ = [
     "_mesh_scale",
     "disv_pin",
     "dropped_context_fields",
+    "LAKE_CONNECTIONS",
+    "LAKE_RULES",
+    "bed_tolerance",
     "excavation_cells",
     "grid_pin",
+    "lak_build_warnings",
+    "lak_geometry_complaints",
     "pin_metadata",
 ]

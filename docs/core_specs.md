@@ -322,7 +322,13 @@ connect through; `mf.lak`'s docstring has the rules.
 and HORIZONTAL connections from `lake_bottom` to `lake_top` toward the
 neighbours OUTSIDE the lake (every neighbour with `rectangular_interior=True`).
 Both generated modes write a lake's HORIZONTAL connections on the lake cell
-itself, not on the neighbour. A sequence of `LakeConnection` objects supplies
+itself, not on the neighbour -- except for a lake the layer stack was EXCAVATED for,
+whose record reaches `mf.lak` with the elevations (ledger 325): its VERTICAL connection
+goes to the top active cell under the bed, whose top IS the bed, and its walls go INTO
+the neighbouring cells with MF6's own DISV connection length and width.
+`LAKBuilder.lake_rules` says which rule each lake got (`"excavated"`, `"legacy"`,
+`"explicit"`), and `unexcavated=` says what to do about a lake whose bed MF6 will not
+see. A sequence of `LakeConnection` objects supplies
 explicit connections for one lake. Every generated connection resolves one MF6
 `bedleak` value; mappings may provide different values by lake or by
 `(lake_id, connection_type)`.

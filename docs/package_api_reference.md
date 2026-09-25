@@ -177,6 +177,17 @@ while a HORIZONTAL face on the same cell from the bed (3.0) up carried 3.46 ft3/
 out of the lake in a steady period. In a transient one MF6 lets no more out of a
 lake than it holds plus what arrives, so the same face carried 0.0 (2.0 with an
 inflow of 2.0), while water from the aquifer still came IN through it.
+**An excavated lake is the way out** (ledger 325). When the lake's cells ARE an
+excavation's (`stack.excavate(within=<the lakes= polygons>)`, its record reaching
+`mf.lak` through `attach=True` or `surfaces=<the result>`), `mf.lak` writes it by the
+EXCAVATED rule in either mode: one VERTICAL connection per lake cell to the top active
+cell, whose top IS the bed, and HORIZONTAL walls INTO each neighbour whose top is higher,
+`CONNLEN` from the neighbour's DISV centre to the shared face and `CONNWIDTH` the face --
+MF6's own geometry. `lake_bottom` defaults from the record; a partial match raises. A
+pit lake in uniform flow carries 1.005 of the through-flow of the same pit as a
+K = 1e4 inclusion, against 0.39 for `"bathy"` on the un-excavated stack. Every other lake
+keeps its rule and, by default, is warned about (`unexcavated="warn"`/`"raise"`/
+`"ignore"`); `metadata["lake_rules"]` says which rule each lake got.
 The `mf.lak` docstring (`help(mf.lak)`) spells out what each mode writes, and every
 parameter; a `LakeOutlet`'s `rate` is negative to remove water and positive to add
 it, and per-period values are zero-based (ledger 318 lists what `mf.lak` accepts
@@ -402,8 +413,9 @@ release-group boundnames; without them it names the fix and offers
   `excavate()` would refuse the call (a repeated or empty name, a relative bed, `layer=`
   beside an inline area); only the footprint file is left unread until build. A run's
   frozen snapshot keeps the records, so a reopened run still names its excavation.
-  `mf.lak` does not read the records yet: its connections still follow the
-  un-excavated rule (ledger 320).
+  `mf.lak` reads the records (ledger 325): a lake whose cells ARE an excavation's is
+  written by the excavated rule -- floor at the bed, walls into the neighbours' cells --
+  and `lake_bottom` defaults from the record.
 - `mf.Toward(target, fraction)` — the contact a share of the way from the surface
   above down to `target`; the primitive `split=` is built on.
 - `mf.CellSurfaceOffset("model_top"|"cell_top"|"cell_bottom", offset=, minimum=)`.

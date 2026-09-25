@@ -58,6 +58,7 @@ from myflopy.grid_identity import (
     disv_pin,  # noqa: F401
     dropped_context_fields,  # noqa: F401
     grid_pin,  # noqa: F401
+    lak_build_warnings,
     move_report,
     moved_package_complaints,
     package_move,  # noqa: F401 -- re-exported: the public spelling is myflopy.specs
@@ -3251,6 +3252,44 @@ def _layer_elevations(context: Any) -> Any:
     return surfaces
 
 
+def _layer_elevation_source(context: Any) -> tuple[Any, dict[str, Any]]:
+    """The elevation table :func:`_layer_elevations` returns AND the excavation records
+    that ride with it, from the SAME place, so the two can never disagree.
+
+    ``mf.lak`` chooses each lake's connection rule from an excavation record (the
+    excavation design's F6, ledger 325), and a record read from somewhere other than
+    the elevations it describes is the one way the rule and the geometry could part.
+    So this follows ``_layer_elevations``' precedence exactly:
+
+    * ``context.surfaces`` given as a ``LayerBuildResult`` -- its ``excavations``;
+    * given as a table -- the ``attrs["excavations"]`` a lazy DISV (or a thawed run)
+      published on it, or, when the table IS the grid's own live ``gdf_topbtm``
+      object, the grid's ``excavations``; any other bare table carries none;
+    * not given -- the grid's ``gdf_topbtm`` and the grid's ``excavations``, which
+      ``LayerBuildResult.attach_to_grid`` sets beside it (and the ``gdf_topbtm``
+      setter clears, so another writer leaves no stale record).
+
+    Returns ``(table, {name: record})``; the table is exactly what
+    :func:`_layer_elevations` returns (its warnings included), the dict is a copy.
+    """
+
+    table = _layer_elevations(context)
+    surfaces = getattr(context, "surfaces", None)
+    grid = getattr(context, "grid", None)
+    grid_records = getattr(grid, "excavations", None) or {}
+    if surfaces is None:
+        return table, dict(grid_records) if table is not None else {}
+    if not hasattr(surfaces, "columns") and hasattr(surfaces, "botm"):
+        return table, dict(getattr(surfaces, "excavations", None) or {})
+    attrs = getattr(surfaces, "attrs", None)
+    published = attrs.get("excavations") if isinstance(attrs, dict) else None
+    if published:
+        return table, dict(published)
+    if surfaces is getattr(grid, "gdf_topbtm", None):
+        return table, dict(grid_records)
+    return table, {}
+
+
 def _elevation_table_from_layers(layers: Any) -> Any:
     """``{0: top, 1..nlay: bottoms}`` from a ``LayerBuildResult``, no geometry.
 
@@ -3956,6 +3995,13 @@ class ModelSpec:
         # through `warnings.warn` as well as the logger, which alone reaches nobody
         # (ledger 288).
         for message in active_cell_warnings(model, context, live, built_packages=built_packages):
+            message = f"Model {self.name!r}: {message}"
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=2)
+        # An excavated lake's build-time warnings: no NEWTON, walls into icelltype 0,
+        # recharge/ET switched off under a wet lake, a transparent bed over uneven
+        # cells (ledger 325). Each has a legitimate use, so none refuses.
+        for message in lak_build_warnings(model, live):
             message = f"Model {self.name!r}: {message}"
             logger.warning(message)
             warnings.warn(message, UserWarning, stacklevel=2)

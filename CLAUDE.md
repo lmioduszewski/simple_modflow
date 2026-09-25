@@ -1029,7 +1029,22 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   `grid.gdf_topbtm`, with the records in `attrs["excavations"]`, marked as the DISV's
   own so `_layer_elevations` does not blame the context when `attach=False` leaves the
   grid's table behind. The frozen snapshot carries the records too, onto the thawed
-  table and grid. INTERIM: `mf.lak` does not read the records yet.
+  table and grid. **`mf.lak` reads the record** (ledger 325) through the SAME resolver
+  as the elevations (`specs._layer_elevation_source`: a `LayerBuildResult` as `surfaces`,
+  else the grid's `excavations`), never from geometry -- a geometric test was measured
+  wrong three ways. A lake whose cells ARE a record's gets the EXCAVATED rule: its
+  vertical goes to the top cell with idomain > 0 AND thickness (activity alone picks a
+  zero-thickness layer when the context has no `domain`), its walls go INTO the
+  neighbours' columns with MF6's own DISV `CONNLEN`/`CONNWIDTH`
+  (`grid/connectivity.DisvFaces`, NOT `grid.cl12` -- that measured 0.93 of a pit's
+  through-flow, this 1.005, the old rule 0.39), and `lake_bottom` defaults from the
+  record. A partial match RAISES whatever `unexcavated=` says. Every other lake keeps
+  the old rule byte for byte (`tests/data/lak_legacy_golden.json`, written by the old
+  code) except faces under 1e-6, and is WARNED about (`unexcavated="warn"`; the
+  canonical fixtures filter it, F8). `grid_identity.lak_geometry_complaints` checks the
+  connections against the BUILT DISV from the LAK builder AND
+  `_discretization_complaints`; `lak_build_warnings` says no-NEWTON, `icelltype` 0
+  walls, RCH/EVT under a wet lake, and a transparent bed -- for excavated lakes only.
   **A package declared against a context from BEFORE the cut is refused at build**
   (ledger 321): `_discretization_complaints` checks every list-BC record, OBS6 cellid
   and per-column `irch`/`ievt` against the BUILT DISV's idomain (`<= 0` = removed) and
