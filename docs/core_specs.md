@@ -318,11 +318,27 @@ connections from a bed that varies per cell: give `lake_bottom` a `Surface`
 (`mf.Raster`, `mf.Contours`), a raster path, or a cell-indexed Series. A per-lake
 value such as the column above is a flat bed, which has no shoreline steps to
 connect through; `mf.lak`'s docstring has the rules.
-`"rectangular"` builds a box-like facility with bottom connections and
-vertical sidewall connections across every face of its footprint cells.
-A sequence of `LakeConnection` objects supplies explicit connections for one
-lake. Every generated connection resolves one MF6 `bedleak` value; mappings
-may provide different values by lake or by `(lake_id, connection_type)`.
+`"rectangular"` builds a box-like facility: one VERTICAL connection per cell
+and HORIZONTAL connections from `lake_bottom` to `lake_top` toward the
+neighbours OUTSIDE the lake (every neighbour with `rectangular_interior=True`).
+Both generated modes write a lake's HORIZONTAL connections on the lake cell
+itself, not on the neighbour. A sequence of `LakeConnection` objects supplies
+explicit connections for one lake. Every generated connection resolves one MF6
+`bedleak` value; mappings may provide different values by lake or by
+`(lake_id, connection_type)`.
+
+**MF6 ignores the elevations written on a VERTICAL connection** and uses the
+connected cell's top (the MF6 input guide: "Any value can be specified if
+CLAKTYPE is VERTICAL"). A bed that lies inside a cell, below its top, therefore
+does not lower the VERTICAL connection: it picks the layer that connection lands
+in, and MF6 exchanges water through it only from the cell top up. Without a table,
+MF6's lake volume and area come from those cell tops. A HORIZONTAL connection is
+different: MF6 reads its elevations, and `"bathy"` writes the lake cell's own
+HORIZONTAL faces from the bed up, so through those MF6 exchanges water from the
+bed, below the cell top, even while the lake holds no volume there. In a transient
+period MF6 caps what leaves a lake at its storage plus what arrives, so such a lake
+takes water in through those faces freely but lets out only what arrives (measured
+in `docs/reproducers/lak_docstring_claims.py`, section 1).
 
 Lake tables remain separate, reusable values:
 
@@ -347,10 +363,28 @@ table = LakeTableBuilder(
 )
 ```
 
+`dem=` takes a raster path (`str` or `Path`), not a `Surface`: for bathymetry
+drawn as contours pass `mf.Contours(...).resolve_source()`, the path of its
+interpolated raster (`mf.Raster(p).resolve_source()` is `p`; algebra on a
+Surface has no single raster and raises). `footprint=` must be a `Path` or a
+shapely geometry -- a `str` is refused -- and is not reprojected, so it has to be
+in the raster's CRS (ledger 318). Nothing is unit-converted. Start `stages` at the
+lowest bed: two zero-volume rows are accepted here and refused by MF6. With a
+`storage_coefficient` other than 1, tabulate to the highest stage the lake can
+reach: past the last row MF6 grows the volume at the full area. The class
+docstring lists every field, which mode reads it, and what raises.
+
 `LakeTableBuilder.build()` returns an immutable `LakeTable`. `LAKBuilder`
-attaches configured tables as LAK child packages when its package spec builds.
+attaches configured tables as LAK child packages when its package spec builds,
+keyed by the lake id as a string (`"<name>_<lake_id>.lak.tab"` unless the table
+sets `filename`).
 Semantic `LakeOutlet` objects refer to stable source and receiver lake IDs
-rather than generated lake numbers.
+rather than generated lake numbers. A `SPECIFIED` outlet's `rate` follows MF6's
+sign: negative removes water from the lake, positive adds it; its periods, like
+every per-period lake value, are zero-based and a period left out keeps the
+previous value. A per-period value must be a scalar, list, tuple or mapping --
+a numpy array is written whole into every period and MF6 crashes reading it
+(ledger 318).
 
 ## GeoPackage Sources
 

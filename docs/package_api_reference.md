@@ -155,6 +155,30 @@ lak = mf.lak(context=ctx, nper=nper, lakes="pond.gpkg", lake_id_field="name",
 A flat-bottomed basin is `connection_modes="rectangular"`, with one `lake_bottom`
 and a `lake_top` per lake.
 
+**What the bed does in MF6.** MF6 ignores the elevations written on a VERTICAL
+lake connection and uses the connected cell's TOP instead, so a bed lying inside a
+cell, below its top, does not lower that connection: it picks the layer each
+VERTICAL connection lands in. It is also the bottom of each HORIZONTAL face
+`"bathy"` writes on the lake cell itself, and MF6 does read those, exchanging water
+through them from the bed up. Measured: a VERTICAL connection under a cell topped
+at 8.0 with the bed written as 3.0, 6.0 or 0.0 held the same 400.0 ft3 at stage
+12.0; held at 6.0, below the top, it carried nothing and the lake held 0.0 ft3,
+while a HORIZONTAL face on the same cell from the bed (3.0) up carried 3.46 ft3/d
+out of the lake in a steady period. In a transient one MF6 lets no more out of a
+lake than it holds plus what arrives, so the same face carried 0.0 (2.0 with an
+inflow of 2.0), while water from the aquifer still came IN through it.
+The `mf.lak` docstring (`help(mf.lak)`) spells out what each mode writes, and every
+parameter; a `LakeOutlet`'s `rate` is negative to remove water and positive to add
+it, and per-period values are zero-based (ledger 318 lists what `mf.lak` accepts
+without checking).
+
+The same bathymetry can also give the lake a stage/volume/area table:
+`tables={"pond": mf.LakeTableBuilder(dem=bed.resolve_source(), footprint=Path("pond.gpkg"), stages=...)}`.
+`dem=` takes the raster PATH that `resolve_source()` returns, not the Surface.
+`footprint=` must be a `Path` or a geometry in the raster's CRS. Start `stages` at
+the lowest bed. The class docstring lists every field, its mode and its errors;
+the prism (`area`/`top`/`bottom`) and explicit-`rows` forms are there too.
+
 **Which cells a lake covers.** By AREA, through the shared rule (ledger 241 -- the
 same `cell_shares` behind `.gpkg` boundaries and head targets): a lake polygon
 drawn along cell faces reaches only the cells inside it, and an overlap that is a

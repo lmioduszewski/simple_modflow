@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 317 entries (319 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 318 entries (320 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 318 | Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewritin... | 2026-09-25 |
 | 317 | A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring doe... | 2026-09-24 |
 | 316 | ``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``,... | 2026-09-24 |
 | 315 | ~~A head surface kept every DRY cell as a sample at -1e30 and erased real heads above 10,000 ft; the head map...~~ | 2026-09-24 |
@@ -13109,3 +13110,67 @@ same day, which is the useful part of the result.
       ``tests/test_dry_and_inactive_cells.py``, on the ``sentinel_run`` fixture, which
       moved to conftest and marks its tests slow. Reverting the fix fails all seven by
       name. Undoing either of the user's calls fails the mounding test alone.
+
+318. **Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewriting their docstrings, documented, NOT fixed (2026-09-25).**
+      The rewrite gave every lake-family parameter its own entry and measured each claim
+      against MF6 (6.8.0.dev0). It changed no behaviour: what these calls accept is a
+      separate decision, so each defect below is stated as behaviour where a reader looks
+      -- the parameter's own entry -- with its symptom, and left.
+      - **A numpy array or Series as a per-period value** (a forcing, or `LakeOutlet.rate`)
+        is not split by period: every period's record carries its repr (`1  RATE  [-1.
+        -2.]`) and MF6 dies with a segmentation fault reading it, for RATE and RAINFALL
+        alike. The loudest item, and the first to fix.
+      - **All-integer keys are read as PERIODS.** With integer-like lake ids,
+        `rainfall={101: 0.5}` writes nothing at all, silently. `tables={101: ...}` raises
+        `unknown lake '101'`, which prints the int exactly as the string id it missed.
+      - **`LakeTableBuilder(footprint=)`**: a `str` path is refused (so are a GeoDataFrame
+        and a GeoSeries) while `dem=` takes one; it is never REPROJECTED, and a footprint in
+        EPSG:4326 coordinates over an EPSG:2927 raster, one off the raster, and one narrower
+        than a pixel centre each build all-zero rows with no warning, which MF6 refuses; a
+        multi-layer GeoPackage reads its first layer only (`(10, 3, 2)` where both layers
+        give `(10, 4, 3)`), behind pyogrio's generic warning.
+      - **`storage_coefficient` is unvalidated**: 0 builds all-zero volumes, a negative
+        value raises `Lake table volumes must be nondecreasing` without naming the field.
+        MF6 never sees it past the last row: at stage 12.5, a 0.5 table stopped at 11 held
+        10.0 where the same table run to 13 held 7.0.
+      - **`LakeTable` passes tables MF6 refuses** -- equal volumes, a falling area -- and a
+        NaN or negative volume. `rows=` a bare DataFrame fails on its column LABELS
+        (`could not convert string to float: 's'`, or `'int' object is not iterable`).
+      - **A `"rectangular"` lake drops a VERTICAL connection silently** where `lake_bottom`
+        is in no active layer or outside `only_layer` (8 horizontal, 0 vertical, nothing
+        raised under `-W error`); `"bathy"` raises there.
+      - **`nlakes=` through `**options` replaces the lake count** (5 written for one lake).
+      - **`pname=`/`filename=` through `**options` rename only what FloPy writes**: the
+        spec's name, the `lak_index` `mf.lak_connection` hands `mf.mvr`, `LAKBuilder.connection`
+        and each table child keep `name` (`pname="zz"` left all three at `"lak"`). The
+        docstrings say to rename with `name=`.
+      - **`mf.lak.flopy` compares no count with its block.** FloPy RAISES `NOUTLETS`/
+        `NTABLES` to the rows given but never lowers them, and writes `nlakes` as given, so
+        a count above its rows, a count with no block, and an `nlakes` either side of
+        `packagedata` all reach MF6, which refuses each by name; a boundname column
+        without `boundnames=True` fails the FloPy build. It is the escape hatch, so the
+        records stay the caller's; the docstring states each case.
+      - Loud, one run late: `mf.lak` passes `status` and the forcings through, and MF6
+        refuses an unknown status and a negative rainfall, evaporation, runoff, inflow or
+        withdrawal by name; `LakeConnection`'s 0.0 length is refused on a HORIZONTAL
+        connection, and its 0.0 width runs carrying nothing.
+      **What the docstrings now state as MF6's own rule, not a defect:** MF6 ignores the
+      BELEV/TELEV written on a VERTICAL connection and uses the cell's top (written 3.0, 6.0
+      or 0.0 under a cell topped at 8.0: VOLUME 400.0 each time), so `bathy` bathymetry
+      reaches MF6 only through each connection's LAYER and the HORIZONTAL faces -- which
+      both generated modes write on the lake cell itself, not the neighbour, and whose
+      BELEV MF6 does read: held at 6.0 under that top, the lake held VOLUME 0.0 and its
+      VERTICAL connection carried nothing while a face from the bed (3.0) carried 3.46
+      out in a steady period. **In a TRANSIENT period MF6 caps what leaves a lake at its
+      storage plus what arrives**, so the same face carried 0.0 (2.0 with an INFLOW of
+      2.0) while water from the aquifer still came in (5.15). That is the excavation
+      design's subject, not this entry's. A `SPECIFIED` outlet's positive rate ADDS water
+      (+5 on a 100 ft2 lake raised it 0.05 ft/d).
+      **`LAKBuilder` repeats `mf.lak`'s Parameters TEXT** (it is public, and `mf.lak` is it
+      plus a `lak_index`) rather than pointing at it, because an editor shows only the
+      class's own text for `LAKBuilder(`; `tests/test_lake_docstrings.py` holds the two
+      equal entry for entry, four deliberate differences named (`tables`, `name`, `mover`,
+      `options`). Not generated: `scripts/derive_docstrings.py` splices only `plot` verbs.
+      Reproducer: `docs/reproducers/lak_docstring_claims.py` (every number above, ~10 s,
+      needs `mf6`). Revisit on the user's call; the array SIGSEGV and the integer keys are
+      silent or fatal, the rest refuse by name somewhere.
