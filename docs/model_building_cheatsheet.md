@@ -952,9 +952,11 @@ sets the infiltration rate. A lake NOT excavated keeps the old rule and is warne
 by default: MF6 counts its floor from each cell's top, not from the bed.
 
 An excavated pond couples tightly to the aquifer, and MF6's default lake solver pays for
-it in outer iterations (+81% and 16 failed time steps on a real pond). If your MF6 is a
-develop / 6.8 build, `mf.lak(..., implicit=True)` solves the stage in the flow matrix
-instead (+11%, none failed there) -- give the IMS `linear_acceleration="BICGSTAB"`
+it in outer iterations (+81% and 16 failed time steps on a real pond with its contour
+table, +80% and a 2.16% worst lake-budget step without one). If your MF6 is a develop /
+6.8 build, `mf.lak(..., implicit=True)` solves the stage in the flow matrix instead
+(+11% with the table, +14% without, none failed, the lake budget closed; ledger 327
+measured it end to end through this API) -- give the IMS `linear_acceleration="BICGSTAB"`
 (CG is refused at build) and keep NEWTON on. An MF6 without the option is warned about
 when the run starts (ledger 326).
 

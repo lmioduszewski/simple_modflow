@@ -13832,3 +13832,38 @@ same day, which is the useful part of the result.
         `core_specs.md`, `myflopy_context.md` and `project_workflow.md` say it; the
         cheatsheet and manual examples that still declare an un-excavated lake say that
         `mf.lak` will warn about it and point at the cut, rather than being rewritten.
+      **End to end on the real pond, through the shipped API** (the user's
+      `pond_mounding_SW.ipynb` cells 1-21 rebuilt from COPIES of every input under a
+      scratch project -- not reproducible from the repository): the stack chain gained
+      `.excavate(bottom=lak_bathy, within=POND_GPKG)`, and `mf.lak` lost `lake_bottom=` and
+      the contour table and gained `unexcavated="raise"` -- once with `implicit=True`,
+      once without. The un-excavated build IS the user's DISV (20,323 cells; top and
+      bottoms to 5e-9 ft, idomain equal). The cut reproduced the prototype's geometry
+      without being told it: 612 record = lake cells, 240 cells removed (16 of them
+      absorbed slivers, <= 0.084 ft), floor connections 401/182/29 in layers 1/2/3,
+      connected cells 0.10-48.99 ft, NLAKECONN 1,814 (612 floor/rim, 1,202 walls);
+      `mf.lak` read the record (`{'sw': 'excavated'}`) with no bed declared. Measured:
+
+      | | API, `implicit=True`, no table | API, default, no table | prototype, no table | prototype, table + `IMPLICIT` | user's run (legacy + table) |
+      |---|---|---|---|---|---|
+      | peak stage (t=46) | 529.885 | 529.935 | 529.935 | 529.878 | 529.945 |
+      | stage at t=50 | 526.486 | 526.492 | 526.492 | 526.491 | 527.188 |
+      | first below 526.05 after the peak | t=51 | t=51 | t=51 | t=51 | t=64 |
+      | steps; ATS failures | 502; 0 | 510; 0 | 510; 0 | 501; 0 | 500; 0 |
+      | outer iterations (vs the user's) | 6,787 (+14%) | 10,688 (+80%) | 10,608 | 6,615 | 5,950 |
+      | worst step, outer | 145 | 206 | 206 | 117 | 164 |
+      | LAK cumulative / worst-step error | 0.000% / 0.0006% | -0.076% / 2.16% | -0.073% / 2.16% | -0.002% / 0.19% | -0.005% / 0.05% |
+      | mound under the pond, layer 3, t=46 / t=50 (ft) | 6.777 / 7.715 | 6.781 / 7.724 | 6.781 / 7.724 | 6.770 / 7.712 | 7.026 / 8.315 |
+
+      Worst GWF discrepancy 0.00% in both; 0 of the 412 floor connections below the
+      peak carried zero all run (the 782 that did all sit above it); wall times 21.7 and
+      31.8 min, run concurrently. **The default run reproduces the prototype to the
+      digits the table shows**, so the shipped code is the rule the design measured.
+      **With `IMPLICIT` the pond costs +14% outer iterations and closes its lake budget;
+      without it +80% and a 2.16% worst LAK step** -- which is why the docs and the
+      user's notebook changes pass `implicit=True`. The re-measured storage on the
+      current footprint: no-table curve -3.28% / -0.66% / -0.44% / +1.26% of the contour
+      table at 527 / 530 / 533 / 536 ft. **Still open, and the user will see it:** the
+      LAK stage view keeps MF6's -1e30 for a DRY lake (the design's D10) -- 7 and 8 of the
+      38 saved stages here, every recovery day from t=51 on -- so
+      `packages.lak.results.stage.plot(...)` over those periods draws the sentinel.

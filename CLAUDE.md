@@ -435,14 +435,13 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4059 passed / 4 skipped**, 2026-09-24, with ledger 315's restatement):
-  serial (`-n0`) 6m58s, but measured WHILE another session's MF6 work ran (4052 in 6m59s
-  the same way, an hour earlier); the last quiet measurement is **4037 in ≈ 6m29s**
-  the same day (3853/6m24s on 2026-09-23; 20 of the 184 new
-  tests are `test_surface_domain_mask.py`, under 1 s, ledger 314 -- the rest landed with
-  ledgers 305-313 without a recount). `pytest -n 10` ≈ **2m08s** and the
-  inner loop `pytest -m "not slow"` ≈ 32 s are from 2026-09-19 and were NOT re-measured,
-  so do not read the serial/parallel ratio across those two dates.
+- Full suite (**4261 passed / 6 skipped**, 2026-09-25, with the excavation, ledgers
+  318-327): serial (`-n0`) **7m58s** and `pytest -n 10` **1m43s**, BOTH measured while
+  MF6 runs of a 20,323-cell model shared the machine (two during the serial run, one
+  during the parallel one), so neither is a quiet clock. The last quiet serial
+  measurement is **4037 in ≈ 6m29s** (2026-09-24; 3853/6m24s on 2026-09-23). The
+  inner loop `pytest -m "not slow"` ≈ 32 s is from 2026-09-19 and was NOT re-measured
+  (serially, under the same load, it took 2m02s for 3773 tests).
   **A parallel run competing with another MF6 workload fails intermittently** —
   a different test each time, all passing in isolation, wall time 85 s → 245 s.
   That is contention, not a regression; re-run alone before believing a failure.
@@ -1066,7 +1065,11 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   `IMPLICIT` alike (`docs/reproducers/lak_vertical_floor.py`, 26 cases against MF6's own
   formula, then the same bench excavated). On the real pond 411 of 612 carried exactly 0
   all run; after the cut a stage-volume table is OPTIONAL (MF6's own curve within 1% of
-  the contour table, 530-533 ft). **A model with NO stack** cuts a `LayerBuildResult`
+  the contour table, 530-533 ft). **End to end through the API on that pond** (ledger 327)
+  the default formulation reproduced the prototype's run to every digit the ledger shows
+  at +80% outer iterations and a 2.16% worst LAK step; `implicit=True` took +14% with the
+  lake budget closed, which is why the teaching passes it. Its stage view still draws
+  MF6's -1e30 on every dry recovery day (D10, open). **A model with NO stack** cuts a `LayerBuildResult`
   built from its loaded arrays (`result.excavate` returns a NEW one --
   `mounding_L3K_to_lak.ipynb`), and its loaded IRCH must become `"top_active"` or the
   build refuses the dug cells it names (ledger 321).
