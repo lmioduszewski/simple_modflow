@@ -460,8 +460,9 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4351 passed / 6 skipped**, 2026-09-26, ledger 331's branch at its final
-  check): serial (`-n0`) **7m33s** (load average ~3.9 at its start, the 5-minute figure
+- Full suite (**4380 passed / 6 skipped**, 2026-09-26, ledger 331 landed on top of 330):
+  serial (`-n0`) **9m22s** and `-n 10` **3m38s**, both under other sessions' load. Before
+  that merge, ledger 331's branch alone (4351) took serial (`-n0`) **7m33s** (load average ~3.9 at its start, the 5-minute figure
   ~11 as another workload wound down, and two scripts reading a real run shared its
   first two minutes) and `pytest -n 10` **2m13s** beside another session's serial suite
   (~4 at start), a ratio of 3.4x -- 2m55s when that session's own `-n 10` overlapped
