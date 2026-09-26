@@ -2537,7 +2537,9 @@ class GridSpec:
             ``profile``, ``idomain``, ``optimize`` and friends. **An unknown
             keyword raises**, with the nearest match suggested; before that,
             a misspelled option was accepted, never read, and silently meshed at
-            the default.
+            the default. ``tessellation="flopy"`` keeps FloPy's cells unrepaired
+            (the default ``"dual"`` repairs them -- ledgers 316, 317; see
+            :class:`~myflopy.modflow.mf6.grid.voronoi.VoronoiGridPlus`).
 
         Other Parameters
         ----------------
@@ -2701,7 +2703,7 @@ class GridSpec:
                 "verbose",
             }:
                 merged_mesh_options[key] = value
-            elif key in {"idomain", "idomain_path", "name", "qhull_options", "rasters"}:
+            elif key in {"idomain", "idomain_path", "name", "qhull_options", "rasters", "tessellation"}:
                 merged_voronoi_options[key] = value
             elif key in _VORONOI_OPTION_KEYS:
                 merged_options[key] = value

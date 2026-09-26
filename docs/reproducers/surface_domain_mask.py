@@ -5,7 +5,10 @@ to a convex hull but not the actual domain", while `plot_heatmap()` was clipped.
 
     /home/lukem/python/envs/gw/bin/python docs/reproducers/surface_domain_mask.py
 
-THE SETUP. A real triangulated grid -- `GridSpec.voronoi`, `max_area=5000` -- on an L:
+THE SETUP. A real triangulated grid -- `GridSpec.voronoi`, `max_area=5000` -- on an L,
+built with `tessellation="flopy"`: FloPy's own cells, which these numbers were measured on
+before ledger 316 repaired them (the default grid has no hole at the corner now, and
+section 4 then prints none). The L:
 1000 x 1000 ft with the north-east 600 x 600 removed, so the domain is NOT convex. On
 a convex domain the hull of the cell centres sits inside the footprint and none of
 this is visible, which is why no test on the usual rectangular fixtures saw it. The
@@ -27,7 +30,7 @@ WHAT IT MEASURES
   4. The grid's own footprint has a hole at the L's inner corner -- the cells leave
      a gap there -- and a masked surface shows it. That is the mask being faithful,
      not a defect of it. The hole is FloPy's ``tri2vor`` mis-sorting the corner cell:
-     ledger 316, ``voronoi_tiling_gaps.py``.
+     ledger 316, ``voronoi_tiling_gaps.py``, which the default grid now repairs.
 """
 
 from __future__ import annotations
@@ -54,7 +57,7 @@ def _l_grid(root: pathlib.Path):
     boundary = root / "boundary.gpkg"
     gpd.GeoDataFrame({"name": ["domain"]}, geometry=[shape], crs=2927).to_file(boundary)
     return mf.GridSpec.voronoi(
-        boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=5_000.0
+        boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=5_000.0, tessellation="flopy"
     ).resolve(workspace=root / "grid")
 
 

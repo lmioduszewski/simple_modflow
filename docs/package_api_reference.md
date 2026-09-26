@@ -459,6 +459,8 @@ release-group boundnames; without them it names the fix and offers
   parameter** (`boundary_*`/`refinement_*`/`breakline_*`), and an unknown keyword
   raises with the nearest match rather than being silently ignored. Sources must be
   file-backed specs — a GeoDataFrame, a bare path, or a list is refused by name.
+  The cells are repaired to tile the boundary (ledger 316); `tessellation="flopy"`
+  keeps FloPy's `tri2vor` cells as they were.
   Full table + traps in `docs/model_building_cheatsheet.md`.
 - `GridSpec.resolve(project_root=, workspace=, build=, return_triangle=)` — turns a
   grid *recipe* into a grid *object*. `project_root` anchors relative source paths;

@@ -455,7 +455,7 @@ def _voronoi_options(
     """Merge the spec's Voronoi options with top-level options; default CRS/name, resolve paths."""
 
     voronoi_options = dict(spec.voronoi_options)
-    for key in ("idomain", "idomain_path", "name", "qhull_options", "rasters"):
+    for key in ("idomain", "idomain_path", "name", "qhull_options", "rasters", "tessellation"):
         if key in options and key not in voronoi_options:
             voronoi_options[key] = options[key]
     voronoi_options.setdefault("crs", spec.crs or options.get("crs", DEFAULT_CRS))

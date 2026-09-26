@@ -1,16 +1,20 @@
-"""Voronoi cells that do not tile their boundary: two defects in FloPy's ``tri2vor``.
+"""Voronoi cells that did not tile their boundary: FloPy's ``tri2vor``, and the repair.
 
-Ledgers 316 and 317 (section 7). Ledger 314 found a 77.4 ft2 blank at the L's inner corner of a masked surface
-and put it down to the grid's own footprint. This is where that hole comes from, how
-general it is, and what reads it.
+Ledgers 316 and 317 (section 7). Ledger 314 found a 77.4 ft2 blank at the L's inner corner
+of a masked surface and put it down to the grid's own footprint. This is where that hole
+came from, how general it was, what read it -- and, on each, what the repaired default
+grid does instead.
 
     /home/lukem/python/envs/gw/bin/python docs/reproducers/voronoi_tiling_gaps.py
 
-About 15 seconds; it runs MF6 four times.
+About a minute; it runs MF6 four times.
 
 THE SETUP. The L of surface_domain_mask.py -- 1000 x 1000 ft with the north-east 600 x 600
 removed, EPSG:2927 -- through ``GridSpec.voronoi(max_area=...)`` on its defaults (profile
-"balanced", min angle 32). Every cell is compared with a REFERENCE: the node's restricted
+"balanced", min angle 32). "FloPy's cells" are that grid built with
+``tessellation="flopy"``, which keeps ``tri2vor``'s output as it is; "repaired" is the
+default, ``VoronoiGridPlus(tri)`` on the same triangulation. Every cell is compared with a
+REFERENCE: the node's restricted
 Voronoi cell, i.e. the bisector half-planes of its Triangle neighbours intersected, clipped
 to the polygon Triangle meshed, keeping the piece that touches the node. Not
 ``shapely.voronoi_polygons``: on cocircular nodes (an arc of boundary) GEOS returned a
@@ -38,15 +42,19 @@ WHAT IT MEASURES
      dropped, and the INTERIOR cell that needed it loses a triangle. The L at max_area
      10000, same defaults.
   5. What MF6 makes of it: connections from MF6's own .grb, and the steady flow around the
-     L, as built and with every bad cell rebuilt on its reference -- the same vertices,
-     reordered, plus the boundary midpoint tri2vor had already made for mode 2.
+     L, on FloPy's cells and on the repaired grid (the same nodes; only broken cells
+     re-outlined, on FloPy's own vertex ids).
   6. What myflopy's geometry makes of it: a feature inside the hole, the grid-edge cells,
      cell_coverage between two grids of the one boundary, and total area.
   7. A boundary that is not ONE simple polygon: with an interior ring it does not build,
-     and in two parts one part gets no cells -- tri2vor's domain is ``_polygons[0]`` alone.
+     and in two parts FloPy's cells cover one part only -- tri2vor's domain is
+     ``_polygons[0]`` alone. The repaired grid takes the dual's cells there.
   8. Not tri2vor: the default profile ("balanced", simplify_tolerance=2.0) simplifies the
      DOMAIN before meshing, so on a curved boundary the cells tile the simplified polygon,
      not the one supplied. A corridor 300 ft wide along a sine, at max_area 5000.
+  9. What the repair costs: its own CPU time inside ``GridSpec.resolve`` of the L, against
+     the rest of the resolve. It runs on every grid the smoothing loop builds (six per
+     resolve on the "balanced" profile), not only the last.
 """
 
 from __future__ import annotations
@@ -82,11 +90,15 @@ from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 L_SHAPE = Polygon([(0, 0), (1000, 0), (1000, 400), (400, 400), (400, 1000), (0, 1000)])
 
 
-def _grid(root: pathlib.Path, domain: Polygon, max_area: float, name: str):
-    """``GridSpec.voronoi`` on its defaults, returning the grid and its triangulation."""
+def _grid(root: pathlib.Path, domain: Polygon, max_area: float, name: str, tessellation: str = "flopy"):
+    """``GridSpec.voronoi`` on its defaults, returning the grid and its triangulation.
+
+    ``tessellation="flopy"`` by default: this measures what FloPy's cells did.
+    """
     path = root / f"{name}.gpkg"
     gpd.GeoDataFrame({"name": ["domain"]}, geometry=[domain], crs=2927).to_file(path)
-    spec = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=path), max_area=float(max_area))
+    spec = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=path), max_area=float(max_area),
+                               tessellation=tessellation)
     return spec.resolve(workspace=root / name, return_triangle=True)
 
 
@@ -149,25 +161,6 @@ def _bad(vor, reference):
     return [k for k, (c, r) in enumerate(zip(_cells(vor), reference, strict=True)) if c.symmetric_difference(r).area > 1e-7 * r.area]
 
 
-def _repaired(vor, reference, bad):
-    """Each bad cell rebuilt on its reference ring from vertices the grid already has."""
-    verts = np.asarray(vor.verts, dtype=float)
-    tree = shapely.STRtree([Point(v) for v in verts])
-    iverts = [list(iv) for iv in vor.iverts]
-    for k in bad:
-        ring = reference[k].exterior
-        chosen = set(iverts[k])
-        for xy in list(ring.coords)[:-1]:
-            hits = {int(i) for i in tree.query(Point(xy).buffer(1e-6))}
-            if not hits:
-                raise RuntimeError(f"cell {k}: reference vertex {xy} is not a grid vertex")
-            if not chosen & hits:
-                chosen.add(min(hits))
-        order = sorted(chosen, key=lambda v: ring.project(Point(verts[v])))
-        iverts[k] = order[::-1] if Polygon(verts[order]).exterior.is_ccw else order
-    return iverts
-
-
 def _faces(iverts):
     return [{frozenset((iv[i], iv[(i + 1) % len(iv)])) for i in range(len(iv))} for iv in iverts]
 
@@ -227,6 +220,10 @@ def main() -> None:
             and reference[corner].boundary.intersection(reference[j].buffer(1e-6)).length > 1e-4
             and not faces[corner] & faces[j]]
     print(f"   cells whose reference shares a face with it but whose polygon shares no edge: {lost}")
+    fixed = VoronoiGridPlus(tri)
+    funion = shapely.union_all(_cells(fixed))
+    print(f"   repaired: hole {meshed.difference(funion).area:.2g} ft2, outside {funion.difference(meshed).area:.2g}; "
+          f"{fixed.tessellation_report.summary()}")
 
     # 2. No myflopy code.
     failed = total = 0
@@ -251,7 +248,7 @@ def main() -> None:
     # 3. How general, on the default path.
     print("3. GridSpec.voronoi defaults, max_area 5000, one reflex corner, 3 rotations each:")
     for theta in (210, 240, 270, 300, 330):
-        wrong, holes = 0, []
+        wrong, holes, after = 0, [], 0.0
         for rot in (0, 17, 41):
             gvor, gtri = _grid(root, _wedge_notch(theta, rot), 5000, f"w{theta}_{rot}")
             gref, gmeshed = _reference(gvor, gtri)
@@ -262,8 +259,10 @@ def main() -> None:
                 gap = gmeshed.difference(shapely.union_all(_cells(gvor)))
                 near = sum(g.area for g in shapely.get_parts(gap) if g.distance(apex) < 1e-6)
                 holes.append(100 * near / gref[hit[0]].area)
+            gfixed = shapely.union_all(_cells(VoronoiGridPlus(gtri)))
+            after += gmeshed.difference(gfixed).area + gfixed.difference(gmeshed).area
         tail = f"; the hole is {', '.join(f'{h:.0f}%' for h in holes)} of the corner cell" if holes else ""
-        print(f"   {theta} deg: {wrong} of 3 wrong{tail}")
+        print(f"   {theta} deg: {wrong} of 3 wrong{tail}; repaired, {after:.2g} ft2 of gap and overshoot in all")
 
     # 4. Mode 2 on the L at max_area 10000.
     vor10, tri10 = _grid(root, L_SHAPE, 10000, "l10000")
@@ -286,17 +285,18 @@ def main() -> None:
 
     # 5. What MF6 makes of it.
     print("5. MF6, steady flow around the L (CHD 10 ft on the east arm's end, 0 ft on the north arm's):")
-    for label, g, ref, b in (("5000", vor, reference, bad), ("10000", vor10, reference10, bad10)):
+    for label, g, t in (("5000", vor, tri), ("10000", vor10, tri10)):
         built = _mf6(g, g.iverts, root / f"mf6_built_{label}")
-        fixed = _mf6(g, _repaired(g, ref, b), root / f"mf6_fixed_{label}")
+        repaired = VoronoiGridPlus(t)
+        fixed = _mf6(repaired, repaired.iverts, root / f"mf6_fixed_{label}")
         restored = (len(fixed["ja"]) - len(built["ja"])) // 2
         dh = np.abs(fixed["head"] - built["head"])
-        print(f"   max_area {label}: {restored} face(s) MF6 does not connect as built; flow "
-              f"{built['flow']:.4f} as built vs {fixed['flow']:.4f} ft3/d rebuilt "
+        print(f"   max_area {label}: {restored} face(s) MF6 does not connect on FloPy's cells; flow "
+              f"{built['flow']:.4f} on them vs {fixed['flow']:.4f} ft3/d repaired "
               f"({100 * (built['flow'] - fixed['flow']) / fixed['flow']:+.2f}%), largest head change {dh.max():.3f} ft")
         if label == "5000":
             neighbours = sorted(int(j) for j in built["ja"][built["ia"][corner] + 1: built["ia"][corner + 1]])
-            print(f"   the corner cell as built connects to {neighbours}")
+            print(f"   the corner cell on FloPy's cells connects to {neighbours}")
 
     # 6. What myflopy's geometry makes of it.
     polys = vor.gdf_vorPolys
@@ -310,8 +310,8 @@ def main() -> None:
     for name, feature in (("a 40 ft line through the corner", line), ("a 20 x 20 ft polygon at it", square)):
         total_share = sum(share for _, share in cell_shares(polys, feature))
         print(f"   {name}: its shares sum to {total_share:.3f} -- mf.Spread's default 'clip' writes that much")
-    for label, g, ref, b in (("5000", vor, reference, bad), ("10000", vor10, reference10, bad10)):
-        fixed = VoronoiGridPlus(verts=np.asarray(g.verts), iverts=_repaired(g, ref, b), xcyc=np.asarray(g.points))
+    for label, g, t in (("5000", vor, tri), ("10000", vor10, tri10)):
+        fixed = VoronoiGridPlus(t)
         extra = sorted(set(get_grid_edge_cells(g)) - set(get_grid_edge_cells(fixed)))
         boundary = Polygon(L_SHAPE).exterior
         distance = min((boundary.distance(c) for c in _cells(g, [g.iverts[k] for k in extra])), default=float("nan"))
@@ -338,14 +338,15 @@ def main() -> None:
     parts = [box(0, 0, 1000, 1000), box(1500, 0, 2500, 1000)]
     path = root / "two_parts.gpkg"
     gpd.GeoDataFrame({"name": ["west", "east"]}, geometry=parts, crs=2927).to_file(path)
-    pvor, ptri = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=path), max_area=5000.0).resolve(
-        workspace=root / "two_parts", return_triangle=True)
-    nodes, cells = np.asarray(ptri.verts), np.asarray(pvor.points)
-    print("   a boundary of two features, 1,000,000 ft2 each: Triangle meshes "
-          + " and ".join(f"{int(np.sum([Point(p).within(part.buffer(1e-6)) for p in nodes]))}" for part in parts)
-          + " nodes in them; the grid keeps "
-          + " and ".join(f"{int(np.sum([Point(p).within(part.buffer(1e-6)) for p in cells]))}" for part in parts)
-          + " cells")
+    pvor, ptri = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=path), max_area=5000.0,
+                                     tessellation="flopy").resolve(workspace=root / "two_parts", return_triangle=True)
+
+    def per_part(points):
+        return " and ".join(f"{int(np.sum([Point(p).within(part.buffer(1e-6)) for p in points]))}" for part in parts)
+
+    print(f"   a boundary of two features, 1,000,000 ft2 each: Triangle meshes {per_part(ptri.verts)} nodes in "
+          f"them; FloPy's cells cover {per_part(pvor.points)} of them, the repaired grid "
+          f"{per_part(VoronoiGridPlus(ptri).points)}")
 
     # 8. The boundary the default profile meshes.
     xs = np.linspace(0, 2000, 81)
@@ -358,6 +359,40 @@ def main() -> None:
           f"its {len(_reflex_corners(corridor))} reflex vertices; the cells leave {corridor.difference(cunion).area:,.0f} "
           f"ft2 of it uncovered and put {cunion.difference(corridor).area:,.0f} ft2 outside it")
 
+    # 9. The cost: the repair's own CPU time inside a resolve, as a share of the resolve.
+    #    A ratio of two timings taken together is what a busy machine distorts least; two
+    #    separate resolves compared wall clock to wall clock measured -12% at 2,136 cells.
+    import os
+
+    import myflopy.modflow.mf6.grid.voronoi as voronoi_module
+
+    def cpu():
+        t = os.times()
+        return t.user + t.system + t.children_user + t.children_system
+
+    spent = {"cpu": 0.0, "calls": 0}
+    original = voronoi_module.tessellate
+
+    def timed(*args, **kwargs):
+        begin = cpu()
+        try:
+            return original(*args, **kwargs)
+        finally:
+            spent["cpu"] += cpu() - begin
+            spent["calls"] += 1
+
+    voronoi_module.tessellate = timed
+    try:
+        for area in (5000, 500, 100):
+            spent.update(cpu=0.0, calls=0)
+            begin = cpu()
+            g, _ = _grid(root, L_SHAPE, area, f"cost_{area}", "dual")
+            total = cpu() - begin
+            print(f"9. GridSpec.resolve, the L at max_area {area} ({g.ncpl} cells): {total:.2f} CPU s, of which the "
+                  f"repair {spent['cpu']:.2f} ({100 * spent['cpu'] / (total - spent['cpu']):.0f}% on top of the rest) "
+                  f"over {spent['calls']} grid builds")
+    finally:
+        voronoi_module.tessellate = original
 
 if __name__ == "__main__":
     main()

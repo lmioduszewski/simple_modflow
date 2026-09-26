@@ -520,6 +520,16 @@ under a clean run. The wrong *shape* of source is refused the same way: a list i
 `refinement=`, a single source in `breaklines=`, or a live GeoDataFrame anywhere all
 name the fix instead of failing later as `'X' object has no attribute 'path'`.
 
+**The cells tile the boundary.** FloPy's `tri2vor` left a hole at a reflex (inside)
+corner of the boundary -- every 270° corner measured -- sometimes dropped a vertex lying
+exactly on a straight edge, and kept cells in only the first part of a boundary drawn as
+two features; a missing cell at a corner was the visible sign, and nudging the boundary
+until it went away was the usual dodge. `VoronoiGridPlus` now checks every cell against
+Triangle's own mesh and repairs the wrong ones (ledger 316), and a grid with nothing wrong
+is unchanged byte for byte. `vor.tessellation_report.summary()` says what was repaired;
+`GridSpec.voronoi(..., tessellation="flopy")` reproduces a grid made before the repair.
+A boundary with a hole in it does not build yet (ledger 317).
+
 **Sources must be file-backed.** A `GridSpec` is a serializable recipe — it has to
 survive `to_dict()` / `from_yaml()` — so an in-memory GeoDataFrame cannot be one.
 If you built your refinement polygons programmatically, write them out first:

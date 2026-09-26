@@ -2196,6 +2196,23 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
             metadata = package.metadata or {}
             pin = metadata.get(GRID_PIN)
             if pin is not None and pin != model_pin:
+                report = getattr(grid, "tessellation_report", None)
+                if report is not None and getattr(report, "legacy_pin", None) == pin:
+                    # The same mesh, re-outlined: ledger 316's repair rewrote cells that
+                    # FloPy drew wrong, so every cell keeps its number and the pin moves
+                    # anyway. The records CAN differ -- a feature the old hole dropped now
+                    # reaches its cell (measured: a CHD strip resolved to 8 records, then
+                    # 9) -- so this is still a refusal; what changes is that it says why.
+                    complaints.append(
+                        f"package {package.name!r} was resolved on this model's grid "
+                        f"BEFORE ledger 316's repair (grid {pin}): the same cells, "
+                        f"{len(report.rewritten)} of them re-outlined because FloPy drew "
+                        f"them wrong ({report.summary()}), so this grid is now "
+                        f"{model_pin}. Its records may differ on the repaired cells. "
+                        "Re-declare the package against this grid; to reproduce the old "
+                        "grid instead, build it with tessellation='flopy'"
+                    )
+                    continue
                 complaints.append(
                     f"package {package.name!r} was resolved against a different mesh: "
                     f"its records are pinned to grid {pin}, and this model's grid is "

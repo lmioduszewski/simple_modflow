@@ -1189,15 +1189,18 @@ copies now, and a result given a `grid=` of another cell count is refused at the
   `model.myflopy_context` instead of resolving eagerly. **That mode now exists** for the seven
   `.gpkg` forms and for `mf.rch`/`mf.evt` — omit `context=`. Deferred GridSpec therefore composes
   with disv, the list BCs and areal recharge/ET; still not with `mf.uzf/sfr/lak`.
-- **Either way, a `GridSpec.voronoi` grid does not exactly tile its boundary** (ledger 316,
-  open, not repaired). FloPy's `tri2vor` sorts a cell's vertices about their MEAN, which
-  mis-orders the cell AT a reflex corner (every 270° corner in the sweep), and drops a
-  Voronoi vertex lying exactly on a right-hand or top boundary edge. The result: holes,
-  cell area outside the boundary, and faces MF6 never connects (flow -5.12% on the L at
-  `max_area` 10000); `get_grid_edge_cells` returns interior cells beside a hole. Worse
-  (ledger 317), `tri2vor`'s domain is `_polygons[0]` alone: a boundary of two features
-  keeps cells in ONE of them, silently, and one with an interior ring raises `IndexError`.
-  `docs/reproducers/voronoi_tiling_gaps.py` shows each piece; do not assume a grid tiles.
+- **A grid built from a triangulation is REPAIRED to tile its boundary** (ledger 316).
+  `VoronoiGridPlus(tri)` runs FloPy's `tri2vor`, checks every cell against the dual of
+  Triangle's own mesh (`grid/tessellation.py`) and rewrites only the wrong ones, on
+  FloPy's vertex ids: a grid with nothing wrong is byte-identical and keeps its pin; one
+  that had a broken cell (every 270 deg reflex corner did) re-pins with no cell
+  renumbered. `tessellation_report` says what changed and carries `legacy_pin`, and a
+  package pinned to that is refused by a message naming the repair. Where FloPy's cell SET
+  is wrong -- a boundary in two parts (ledger 317), a point outside the domain -- the
+  dual's cells are taken whole, renumbered, logged at WARNING. `tessellation="flopy"`
+  (on `GridSpec.voronoi` or `VoronoiGridPlus`) rebuilds FloPy's cells exactly, and a grid
+  rebuilt from verts/iverts (snapshot, pickle, reloaded run) is never repaired. A
+  boundary with an interior ring still raises `IndexError` (ledger 317).
 
 Reference: `examples/mf6/package_first_full_stack.py` (full package-first stack on a Project).
 

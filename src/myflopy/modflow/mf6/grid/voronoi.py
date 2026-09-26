@@ -7,6 +7,8 @@ surface helpers, and selection utilities used throughout ``myflopy``.
 
 from __future__ import annotations
 
+import dataclasses
+import types
 import warnings
 from pathlib import Path
 
@@ -14,11 +16,13 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import shapely as shp
+from flopy.utils.cvfdutil import get_disv_gridprops
 from flopy.utils.triangle import Triangle
 from flopy.utils.voronoi import VoronoiGrid
 
 from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
+from myflopy.grid_identity import grid_pin
 from myflopy.modflow.mf6.grid.connectivity import build_disu_connectivity
 from myflopy.modflow.mf6.grid.geometry import (
     adjust_cells_by_id as geometry_adjust_cells_by_id,
@@ -123,6 +127,7 @@ from myflopy.modflow.mf6.grid.surfaces import (
 from myflopy.modflow.mf6.grid.surfaces import (
     get_raster_vals_at_centroids as surface_get_raster_vals_at_centroids,
 )
+from myflopy.modflow.mf6.grid.tessellation import tessellate
 
 logger = get_logger(__name__)
 
@@ -176,6 +181,9 @@ class VoronoiGridPlus(VoronoiGrid):
         truth for aligning vector/raster inputs.
     rasters
         Optional raster(s) sampled for cell elevations/properties.
+    tessellation
+        ``"dual"`` (default) or ``"flopy"``; see :meth:`__init__`. After a build,
+        ``tessellation_report`` says what the repair changed.
     """
 
     def __init__(
@@ -190,6 +198,7 @@ class VoronoiGridPlus(VoronoiGrid):
         verts: np.ndarray = None,
         iverts: list[list] = None,
         xcyc: np.ndarray = None,
+        tessellation: str = "dual",
         **kwargs,
     ):
         """Create a Voronoi view from Triangle output or DISU-style arrays.
@@ -210,9 +219,28 @@ class VoronoiGridPlus(VoronoiGrid):
             Optional active-cell selections used by edge-detection helpers.
         verts, iverts, xcyc
             Explicit vertex-grid arrays used when reconstructing from DISU data
-            instead of from a Triangle mesh.
+            instead of from a Triangle mesh. Taken exactly as given -- never repaired,
+            so a grid rebuilt from a saved run or snapshot is the grid that ran.
+        tessellation
+            How cells are made from ``tri``; ignored for ``verts``/``iverts``/``xcyc``.
+            ``"dual"`` (the default) runs FloPy's ``tri2vor`` and then repairs every cell
+            that does not match the dual of Triangle's own mesh -- a reflex corner's
+            cell drawn out of order, a vertex on the boundary dropped, a duplicate vertex
+            id MF6 cannot match (ledger 316), a domain part lost (ledger 317). Cells
+            FloPy got right keep its rings exactly, so a grid with nothing wrong is
+            byte-identical to FloPy's. ``"flopy"`` keeps ``tri2vor``'s cells as they
+            are, defects included -- the escape hatch for reproducing a grid made before
+            the repair. ``tessellation_report`` records what was changed and the
+            pre-repair ``grid_pin`` (``legacy_pin``).
         """
         logger.info('building the Voronoi grid')
+        if tessellation not in ("dual", "flopy"):
+            raise ValueError(
+                f"tessellation={tessellation!r} is not a tessellation. Use 'dual' (repair "
+                "FloPy's cells against Triangle's mesh, the default) or 'flopy' (keep "
+                "tri2vor's cells as they are)."
+            )
+        self.tessellation_report = None
         if tri:
             # FloPy's tri2vor helper currently emits harmless RuntimeWarnings from
             # point_in_polygon when domain edges are horizontal. Suppress only that
@@ -231,6 +259,8 @@ class VoronoiGridPlus(VoronoiGrid):
                     module=r"flopy\.utils\.geometry",
                 )
                 super().__init__(tri, qhull_options=qhull_options, **kwargs)
+            if tessellation == "dual":
+                self._repair_tessellation(tri)
         elif all(v is not None for v in [verts, iverts, xcyc]):
             self.verts = verts
             self.iverts = iverts
@@ -298,11 +328,40 @@ class VoronoiGridPlus(VoronoiGrid):
         }
 
     def __setstate__(self, state):
-        """Restore state, leaving dropped caches empty for lazy recomputation."""
+        """Restore state, leaving dropped caches empty for lazy recomputation.
+
+        Never repairs: a pickled grid is the grid something was built on. One saved
+        before ledger 316 has no ``tessellation_report`` and reads ``None``.
+        """
 
         self.__dict__.update(state)
         for key in self._PICKLE_VOLATILE:
             self.__dict__.setdefault(key, None)
+        self.__dict__.setdefault("tessellation_report", None)
+
+    def _repair_tessellation(self, tri) -> None:
+        """Replace FloPy's cells by :func:`~myflopy.modflow.mf6.grid.tessellation.tessellate`'s.
+
+        Runs inside ``__init__`` before any cache is built, so nothing needs
+        invalidating. Records the pre-repair ``grid_pin`` when anything changed, which
+        is what lets a refusal say a package was resolved on the unrepaired grid.
+        """
+
+        old_verts, old_iverts, old_points = self.verts, self.iverts, self.points
+        verts, iverts, points, report = tessellate(tri, old_verts, old_iverts, old_points)
+        if report.changed:
+            legacy = types.SimpleNamespace(
+                get_disv_gridprops=lambda: get_disv_gridprops(
+                    np.asarray(old_verts), old_iverts, xcyc=np.asarray(old_points)
+                )
+            )
+            report = dataclasses.replace(report, legacy_pin=grid_pin(legacy))
+            self.verts = np.asarray(verts)
+            self.iverts = iverts
+            self.points = np.asarray(points)
+            self.ncpl = len(iverts)
+            self.nverts = self.verts.shape[0]
+        self.tessellation_report = report
 
     @property
     def vor_list(self):

@@ -10,7 +10,9 @@ imports so the two cannot disagree about what a bad cell is.
 
 THE SETUP. A 1000 ft square less a wedge at (400, 400), so the domain has ONE reflex
 corner, of angle theta, rotated about (500, 500) so no answer rests on an axis-aligned
-edge. A corner FAILS when its node's cell differs from its reference (mode 1). A MODE 2
+edge. Every rate is of FloPy's cells (``tessellation="flopy"``); each grid is also
+repaired -- ``VoronoiGridPlus(tri)``, the default -- and the gap, overshoot and overlap it
+leaves against the union of Triangle's triangles are summed at the end. A corner FAILS when its node's cell differs from its reference (mode 1). A MODE 2
 EVENT is a Voronoi vertex exactly on the meshed boundary that ``point_in_polygon`` drops.
 The hole AT the corner is the gap touching its node, reported against the corner's own
 reference cell, against the mean cell and against ``max_area``.
@@ -61,7 +63,7 @@ def _build(path: str, domain: Polygon, max_area: float, angle: float, profile: s
         tri.add_region(domain.representative_point().coords[0], 0, maximum_area=max_area)
         tri.build()
         return VoronoiGrid(tri), tri
-    options = {} if profile is None else {"profile": profile}
+    options = {"tessellation": "flopy"} if profile is None else {"profile": profile, "tessellation": "flopy"}
     if angle != 32:
         options["min_angle"] = angle
     import geopandas as gpd
@@ -95,9 +97,16 @@ def _one(task):
     reference, meshed = _reference(vor, tri)
     bad = _bad(vor, reference)
     gap = meshed.difference(shapely.union_all(_cells(vor)))
+    from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+
+    fixed = _cells(VoronoiGridPlus(tri))
+    triangles = shapely.union_all([Polygon(np.asarray(tri.verts)[t]) for t in np.asarray(tri.iverts)])
+    funion = shapely.union_all(fixed)
+    after = (triangles.difference(funion).area + funion.difference(triangles).area
+             + abs(sum(c.area for c in fixed) - funion.area))
     row = dict(part=part, path=path, name=name, theta=theta, rot=rot, max_area=max_area, angle=angle,
                profile=profile, ncell=vor.ncpl, mean_cell=meshed.area / vor.ncpl, gap=gap.area,
-               mode2=_mode2_events(tri, meshed))
+               mode2=_mode2_events(tri, meshed), after=after)
     if name == "wedge":
         apex = affinity.rotate(Point(400, 400), rot, origin=(500, 500))
         node = [k for k in range(vor.ncpl) if Point(vor.points[k]).distance(apex) < 1e-6]
@@ -194,6 +203,9 @@ def main() -> None:
             tail = (f"; worst {worst['gap']:,.0f} ft2 ({100 * worst['gap'] / (worst['mean_cell'] * worst['ncell']):.1f}% "
                     f"of the domain) at max_area {worst['max_area']}") if worst else ""
             print(f"  {name:9s} {path:7s} angle {angle}: {len(hit)} of {len(group)} grids have a gap{tail}")
+    worst = max(rows, key=lambda r: r["after"])
+    print(f"\nREPAIRED (the default): {sum(r['after'] > 1e-6 for r in rows)} of {len(rows)} grids leave a gap, "
+          f"overshoot or overlap above 1e-6 ft2; the largest is {worst['after']:.2g} ft2")
 
 
 if __name__ == "__main__":

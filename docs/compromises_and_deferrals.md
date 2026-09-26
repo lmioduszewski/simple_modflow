@@ -33,7 +33,7 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 329 entries (332 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 329 entries (333 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
@@ -51,6 +51,7 @@
 | 318 | ~~Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewritin...~~ | 2026-09-25 |
 | 318 | Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewritin... | 2026-09-25 |
 | 317 | A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring doe... | 2026-09-24 |
+| 316 | ~~``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``,...~~ | 2026-09-24 |
 | 316 | ``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``,... | 2026-09-24 |
 | 315 | ~~A head surface kept every DRY cell as a sample at -1e30 and erased real heads above 10,000 ft; the head map...~~ | 2026-09-24 |
 | 315 | A head surface kept every DRY cell as a sample at -1e30 and erased real heads above 10,000 ft; the head map... | 2026-09-24 |
@@ -14214,3 +14215,52 @@ same day, which is the useful part of the result.
       with every lake test passing -- two of them silent, as `only_vertical` was
       (`only_layer={101: 0}` read as no restriction, `rectangular_interior={101: True}` as
       False). Each is pinned now, as is each amendment above.
+
+316. ~~**``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``, measured and NOT yet repaired (2026-09-24).**~~
+      **RESOLVED 2026-09-25**, in the commit after a69ac87: ``VoronoiGridPlus`` checks
+      FloPy's cells against the dual of Triangle's own mesh and repairs the wrong ones
+      (``grid/tessellation.py``). Over the 1,266 grids of ``voronoi_tiling_sweep.py`` the
+      repaired grid leaves no gap, overshoot or overlap above 1e-6 ft² (the largest 1e-9),
+      and the L's flow comes back (28.1645 ft³/d at max_area 10000, where FloPy's cells gave
+      26.7224). The design pass also found what the entry above did not list -- a kept
+      on-boundary vertex duplicating its midpoint under another id, so MF6 drops a face
+      between two correct polygons, and vertices taken across a thin notch from triangles
+      the mesh does not have -- and the repair covers both. What was decided:
+      **FloPy's numbering is kept wherever FloPy was right** (the user's call). A cell whose
+      ring matches the dual keeps FloPy's ring index for index; a wrong one is rewritten on
+      FloPy's own vertex ids, one id per location, with a vertex appended only where FloPy
+      has none. So a grid with nothing wrong is byte-identical -- pin, ``.disv`` bytes and
+      the smoothed mesh -- and only a grid that had a broken cell re-pins. The price is that
+      FloPy's vertex order is Qhull's facet order, so pins stay tied to Qhull's floating
+      point; a numbering of our own (Qhull-free, ~4.7x faster to build) was deferred because
+      it re-pins EVERY grid, convex ones included.
+      **Where FloPy's cell SET is wrong, the dual's cells are taken whole**, renumbered, and
+      logged at WARNING: a boundary in two parts (which resolves ledger 317's first half), a
+      constraint point outside the domain kept as a cell, cells Qhull dropped. Nothing can be
+      repaired in place when the cell is not there.
+      **Qhull's merged vertices are kept.** Far from the origin Qhull merges
+      near-cocircular facets into one vertex; the repair accepts FloPy's merged vertex
+      rather than splitting it (``QHULL_MERGE_RTOL``), so such a cell can sit a hundredth of
+      a foot off the exact cell and a face that short can stay unconnected. Splitting would
+      re-pin grids with nothing visibly wrong.
+      **It runs on every grid build, inside the smoothing loop too** (the user's call): the
+      repair is 15-21% on top of a ``GridSpec.resolve`` (section 9 of
+      ``voronoi_tiling_gaps.py``: 0.61 CPU s on top of 3.94 at 6,568 cells, over six builds), and
+      the final Triangle nodes are bit-identical with or without it. Repairing only the last
+      grid would have cost about a sixth of that.
+      **Old grids re-pin, on purpose** (the user's call: repair in place). A package pinned
+      to a grid that had a broken cell is refused, by a message that says it was resolved
+      before this repair (``tessellation_report.legacy_pin``) -- a true refusal, since its
+      records can differ. Frozen snapshots, pickled grids and runs reloaded from MF6 files
+      are never repaired: they are the grids that ran. ``tessellation="flopy"`` on
+      ``GridSpec.voronoi`` or ``VoronoiGridPlus`` rebuilds FloPy's cells exactly.
+      **Not done here:** a boundary with an interior ring (ledger 317's second half); the
+      run-level record that a re-resolved grid changed, which ledger 294 assigned to
+      ``runs.summary`` and never built; point constraints outside the boundary still reach
+      Triangle; a refinement region crossing the boundary is clipped to an inset domain and
+      meshes the sliver between (16-29x the nodes, pre-existing); profile "balanced"'s 2 ft
+      domain simplification. Not reported upstream.
+      Tests: ``tests/test_voronoi_tiling.py`` (16), where each of ten single-piece mutations
+      of the fix fails a named test. The reproducers now show FloPy's cells
+      (``tessellation="flopy"``) beside the repaired grid, and ``surface_domain_mask.py``
+      builds FloPy's cells so ledger 314's numbers still reproduce.
