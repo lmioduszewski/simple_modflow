@@ -2880,10 +2880,11 @@ class StackPlots:
             id, a residual); a flat ``(ncpl,)`` array raises rather than colouring
             every layer the same.
 
-            **Requires ``backend="mpl"``**: the renderer is FloPy's
-            ``PlotCrossSection`` and there is no Plotly equivalent to defer to.
-            Passing ``fill=`` with the default backend raises and says so, rather
-            than returning a line profile you did not ask for.
+            **Both backends draw it, and draw the same thing**: one
+            :class:`~myflopy.modflow.mf6.cross_section_plotting.FilledSection`
+            reads one FloPy ``PlotCrossSection``, so the Plotly picture has the
+            Matplotlib one's cells, colours, water levels, legend and framing --
+            plus a hover naming each cell's layer, number, top and bottom.
 
             The line-profile arguments -- ``interpolate``, ``spacing``,
             ``num_points``, ``use_rbf``, ``interpolator``, ``x_or_y``,

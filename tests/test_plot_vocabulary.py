@@ -790,7 +790,6 @@ def test_a_results_fill_paints_the_cells_and_earns_a_colorbar(canonical_run):
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"fill": "layer"}, "backend='mpl'"),
         ({"fill": "layer", "backend": "mpl", "interpolate": True}, "line PROFILE"),
         ({"fill": "layer", "backend": "mpl", "spacing": 99}, "line PROFILE"),
         ({"fill": "nope", "backend": "mpl"}, "fill must be"),
@@ -799,9 +798,11 @@ def test_a_results_fill_paints_the_cells_and_earns_a_colorbar(canonical_run):
 def test_fill_refuses_what_it_cannot_honour(kwargs, message, canonical_run):
     """Every one of these was silently accepted somewhere in this family before.
 
-    A `fill=` that quietly returned a Plotly line profile, or that took
-    `interpolate=True` and ignored it, would be the same defect the whole 8.8
-    pass exists to end -- a parameter an editor completes and the code discards.
+    A `fill=` that took `interpolate=True` and ignored it would be the same
+    defect the whole 8.8 pass exists to end -- a parameter an editor completes
+    and the code discards. (`fill=` with the Plotly backend raised here too until
+    2026-09-26; it draws now, the same cells as Matplotlib --
+    `tests/test_filled_section_plotly.py`.)
     """
 
     with pytest.raises(ValueError, match=message):

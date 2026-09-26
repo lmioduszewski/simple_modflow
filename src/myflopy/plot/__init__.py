@@ -670,15 +670,10 @@ def _filled_section(source, vor, is_model, *, line, cells, per, kstpkper,
     model look like in cross-section". Same subject, same verb; `fill` chooses
     which. This resolves the verb's arguments; the drawing is
     :func:`~myflopy.modflow.mf6.cross_section_plotting.filled_section`, which the
-    grid scope calls directly.
+    grid scope calls directly. Both backends draw it, from one
+    :class:`~myflopy.modflow.mf6.cross_section_plotting.FilledSection`.
     """
 
-    if backend != "mpl":
-        raise ValueError(
-            "fill= draws the cells through FloPy's cross-section renderer, "
-            "which is Matplotlib; pass backend='mpl'. Without fill=, the "
-            "section is a line profile and both backends draw it."
-        )
     stray = sorted(
         name for name, default in _PROFILE_ONLY_SECTION_ARGS.items()
         if _asked_for(asked.get(name, default), default)
@@ -729,7 +724,7 @@ def _filled_section(source, vor, is_model, *, line, cells, per, kstpkper,
         fill=fill, layers=layers, head_layers=head_layers,
         layer_labels=layer_labels, show_grid=show_grid, legend=legend,
         reverse=reverse, per=per, kstpkper=kstpkper,
-        cmap=fill_cmap, label=fill_label, title=title,
+        cmap=fill_cmap, label=fill_label, title=title, backend=backend,
     )
 
 
@@ -870,10 +865,11 @@ def section(
         id, a residual); a flat ``(ncpl,)`` array raises rather than colouring
         every layer the same.
 
-        **Requires ``backend="mpl"``**: the renderer is FloPy's
-        ``PlotCrossSection`` and there is no Plotly equivalent to defer to.
-        Passing ``fill=`` with the default backend raises and says so, rather
-        than returning a line profile you did not ask for.
+        **Both backends draw it, and draw the same thing**: one
+        :class:`~myflopy.modflow.mf6.cross_section_plotting.FilledSection`
+        reads one FloPy ``PlotCrossSection``, so the Plotly picture has the
+        Matplotlib one's cells, colours, water levels, legend and framing --
+        plus a hover naming each cell's layer, number, top and bottom.
 
         The line-profile arguments -- ``interpolate``, ``spacing``,
         ``num_points``, ``use_rbf``, ``interpolator``, ``x_or_y``,
@@ -968,11 +964,11 @@ def section(
 
     Returns
     -------
-    XSection or GridSection or matplotlib.figure.Figure
+    XSection or GridSection or FilledSection or matplotlib.figure.Figure
         With ``backend='plotly'`` (the default) a
         :class:`~myflopy.viz.Picture` -- ``XSection`` for a model, which also
-        carries ``.ani``, or ``GridSection`` for a bare grid. Both answer
-        ``.plot_mpl()``.
+        carries ``.ani``, or ``GridSection`` for a bare grid; with ``fill=``, a
+        ``FilledSection`` on either. All three answer ``.plot_mpl()``.
 
         With ``backend='mpl'``, a bare Matplotlib ``Figure``: use
         ``.savefig(path)`` and ``.axes[0]``, not the picture verbs.
@@ -1880,10 +1876,11 @@ class ModelPlots:
             id, a residual); a flat ``(ncpl,)`` array raises rather than colouring
             every layer the same.
 
-            **Requires ``backend="mpl"``**: the renderer is FloPy's
-            ``PlotCrossSection`` and there is no Plotly equivalent to defer to.
-            Passing ``fill=`` with the default backend raises and says so, rather
-            than returning a line profile you did not ask for.
+            **Both backends draw it, and draw the same thing**: one
+            :class:`~myflopy.modflow.mf6.cross_section_plotting.FilledSection`
+            reads one FloPy ``PlotCrossSection``, so the Plotly picture has the
+            Matplotlib one's cells, colours, water levels, legend and framing --
+            plus a hover naming each cell's layer, number, top and bottom.
 
             The line-profile arguments -- ``interpolate``, ``spacing``,
             ``num_points``, ``use_rbf``, ``interpolator``, ``x_or_y``,
@@ -1978,11 +1975,11 @@ class ModelPlots:
 
         Returns
         -------
-        XSection or GridSection or matplotlib.figure.Figure
+        XSection or GridSection or FilledSection or matplotlib.figure.Figure
             With ``backend='plotly'`` (the default) a
             :class:`~myflopy.viz.Picture` -- ``XSection`` for a model, which also
-            carries ``.ani``, or ``GridSection`` for a bare grid. Both answer
-            ``.plot_mpl()``.
+            carries ``.ani``, or ``GridSection`` for a bare grid; with ``fill=``, a
+            ``FilledSection`` on either. All three answer ``.plot_mpl()``.
 
             With ``backend='mpl'``, a bare Matplotlib ``Figure``: use
             ``.savefig(path)`` and ``.axes[0]``, not the picture verbs.

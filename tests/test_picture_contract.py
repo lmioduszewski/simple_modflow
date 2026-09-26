@@ -18,13 +18,14 @@ from __future__ import annotations
 
 import pytest
 
+from myflopy.modflow.mf6.cross_section_plotting import FilledSection
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.grid.plotting import GridSection
 from myflopy.modflow.utils.datatypes.choros import Choro
 from myflopy.modflow.utils.datatypes.xsections import XSection
 from myflopy.viz import Fig, Picture
 
-PICTURES = [Choro, XSection, GridSection, InterpolatedSurface]
+PICTURES = [Choro, XSection, GridSection, FilledSection, InterpolatedSurface]
 IDS = [cls.__name__ for cls in PICTURES]
 
 
@@ -291,6 +292,9 @@ def test_every_real_picture_is_idempotent(canonical_run):
         "XSection": model.plot.section(cells=[0, 1, 2]),
         "GridMesh": vor.plot.grid(),
         "GridSection": vor.plot.section(LineString([(xmin, mid), (xmax, mid)])),
+        "FilledSection": model.plot.section(
+            line=LineString([(xmin + 1, mid), (xmax - 1, mid)]), fill="layer"
+        ),
         "InterpolatedSurface": model.plot.surface(layer=0),
         "FrameAnimation": model.plot.animate(
             [model.plot.map(per=0, layer=0), model.plot.map(per=1, layer=0)]

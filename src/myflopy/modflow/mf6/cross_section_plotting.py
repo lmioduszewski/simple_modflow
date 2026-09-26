@@ -21,7 +21,7 @@ from flopy.plot import PlotCrossSection
 from matplotlib.colors import ListedColormap
 
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
-from myflopy.viz import category_colors, mpl_axes
+from myflopy.viz import Fig, Picture, category_colors, mpl_axes
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -110,6 +110,25 @@ def _resolve_layer_array(grid) -> np.ndarray:
         ncpl = grid.ncpl
         return np.arange(nlay)[:, None] * np.ones((1, ncpl), dtype=int)
     raise ValueError("layered cross sections currently expect a grid with an 'ncpl' attribute.")
+
+
+def _masked_to_layers(modelgrid, values, chosen):
+    """``(layer_id, values)`` as a filled section paints them: NaN outside ``chosen``.
+
+    Masked, not dropped: FloPy's ``plot_array`` skips NaN cells, which keeps every
+    other cell's geometry exactly where it was. Both renderers of a filled section
+    paint from these arrays, so they cannot disagree about which cells are drawn.
+    """
+
+    nlay = modelgrid.nlay
+    layer_id = _resolve_layer_array(modelgrid)
+    if chosen is not None:
+        keep = np.zeros(nlay, dtype=bool)
+        keep[chosen] = True
+        layer_id = np.where(keep[:, None], layer_id.astype(float), np.nan)
+        if values is not None:
+            values = np.where(keep[:, None], np.asarray(values, dtype=float), np.nan)
+    return layer_id, values
 
 
 def _resolve_head_data(
@@ -286,6 +305,17 @@ def _drawn_elevation_bounds(axes):
         for line in axes.lines
         if len(line.get_ydata())
     ]
+    return _padded_elevation_bounds(values)
+
+
+def _padded_elevation_bounds(values):
+    """``(ymin, ymax)`` over ``values`` -- arrays of drawn elevations -- padded 5%.
+
+    The arithmetic behind :func:`_drawn_elevation_bounds`, separate so the Plotly
+    renderer frames a cropped section from the same numbers rather than from a
+    second rule of its own.
+    """
+
     if not values:                                         # pragma: no cover
         return None
     stacked = np.concatenate(values)
@@ -532,16 +562,8 @@ def plot_layered_cross_section(
     style = ModelCrossSectionStyle() if style is None else style
     line_spec = normalize_line(line)
     nlay = modelgrid.nlay
-    layer_id = _resolve_layer_array(modelgrid)
     chosen = _resolve_drawn_layers(layers, nlay)
-    if chosen is not None:
-        # Masked, not dropped: FloPy's `plot_array` skips NaN cells, which keeps
-        # every other cell's geometry exactly where it was.
-        keep = np.zeros(nlay, dtype=bool)
-        keep[chosen] = True
-        layer_id = np.where(keep[:, None], layer_id.astype(float), np.nan)
-        if values is not None:
-            values = np.where(keep[:, None], np.asarray(values, dtype=float), np.nan)
+    layer_id, values = _masked_to_layers(modelgrid, values, chosen)
     resolved_layer_colors = _resolve_layer_colors(nlay, layer_colors, style)
     resolved_layer_labels = _resolve_layer_labels(nlay, layer_labels)
 
@@ -738,6 +760,7 @@ def filled_section(
     cmap: str = "viridis",
     label: str | None = None,
     title: str | None = None,
+    backend: str = "mpl",
 ):
     """The shared renderer behind ``section(fill=...)`` at every scope.
 
@@ -751,38 +774,457 @@ def filled_section(
     field and ``fill="layer"`` draws the simulated head as a water surface over
     the geology; without one (a bare grid) neither is available and
     ``fill="results"`` raises rather than quietly degrading to ``"layer"``.
+
+    Every argument but ``backend`` is :class:`FilledSection`'s, documented
+    there. ``backend="mpl"`` returns a Matplotlib ``Figure``; ``"plotly"``
+    returns the :class:`FilledSection` picture itself. Both come from one
+    picture, so the two renderers cannot be handed different arguments.
     """
 
-    show, loc, anchor = legend_placement(legend)
-    values = section_values(model, fill, per=per, kstpkper=kstpkper)
-    surfaces = section_head_surfaces(
-        model, head_layers, per=per, kstpkper=kstpkper
-    ) if values is None else []
-    names = layer_labels
-    if names is None and model is not None:
-        names = layer_labels_from_model(model, modelgrid.nlay)
-    figure, _axes = plot_layered_cross_section(
-        modelgrid,
-        normalize_line(line),
-        values=values,
-        values_cmap=cmap,
-        values_label=label,
-        layers=layers,
-        layer_labels=names,
-        show_grid=show_grid,
-        reverse=reverse,
-        show_legend=show,
-        legend_loc=loc,
-        legend_anchor=anchor,
-        head_surfaces=surfaces,
-        flopy_model=getattr(model, "gwf", None),
-        title=title,
-        show_head=bool(surfaces),
+    if backend not in ("mpl", "plotly"):
+        raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
+    picture = FilledSection(
+        modelgrid, line, model=model, fill=fill, layers=layers,
+        head_layers=head_layers, layer_labels=layer_labels, show_grid=show_grid,
+        legend=legend, reverse=reverse, per=per, kstpkper=kstpkper, cmap=cmap,
+        label=label, title=title,
     )
-    return figure
+    return picture.plot_mpl() if backend == "mpl" else picture
 
 
-def section_head_surfaces(model, head_layers, *, per=None, kstpkper=None) -> list:
+#: Where a Plotly legend sits for each placement matplotlib's ``loc`` names:
+#: ``(x, y, xanchor, yanchor)`` in the plot area's own coordinates, which is
+#: what matplotlib's axes coordinates are. ``"best"`` has no Plotly equivalent
+#: and is left to Plotly's own default.
+_PLOTLY_LEGEND_INSIDE = {
+    "upper right": (1.0, 1.0, "right", "top"),
+    "upper left": (0.0, 1.0, "left", "top"),
+    "lower left": (0.0, 0.0, "left", "bottom"),
+    "lower right": (1.0, 0.0, "right", "bottom"),
+    "right": (1.0, 0.5, "right", "middle"),
+    "center left": (0.0, 0.5, "left", "middle"),
+    "center right": (1.0, 0.5, "right", "middle"),
+    "lower center": (0.5, 0.0, "center", "bottom"),
+    "upper center": (0.5, 1.0, "center", "top"),
+    "center": (0.5, 0.5, "center", "middle"),
+}
+
+#: The four ``"outside <side>"`` placements. Farther out than matplotlib's
+#: anchors on the left and bottom, because Plotly's axis titles sit in the
+#: margin where matplotlib's anchor would put the legend on top of them.
+_PLOTLY_LEGEND_OUTSIDE = {
+    "right": {"x": 1.02, "y": 0.5, "xanchor": "left", "yanchor": "middle"},
+    "left": {"x": -0.12, "y": 0.5, "xanchor": "right", "yanchor": "middle"},
+    "bottom": {"x": 0.5, "y": -0.18, "xanchor": "center", "yanchor": "top",
+               "orientation": "h"},
+    "top": {"x": 0.5, "y": 1.02, "xanchor": "center", "yanchor": "bottom",
+            "orientation": "h"},
+}
+
+
+def _plotly_legend(loc, anchor, style) -> dict | None:
+    """The ``layout.legend`` for a placement :func:`legend_placement` resolved.
+
+    Driven by the SAME resolved ``(loc, anchor)`` the Matplotlib renderer
+    receives, so one ``legend=`` word means one placement on both backends and an
+    unknown word has already been refused. ``None`` means Plotly's own default.
+    """
+
+    if anchor is not None:
+        x, y = anchor
+        side = "right" if x > 1 else "left" if x < 0 else "bottom" if y < 0 else "top"
+        return dict(_PLOTLY_LEGEND_OUTSIDE[side])
+    loc = loc or style.legend_loc
+    if loc == "best":
+        return None
+    x, y, xanchor, yanchor = _PLOTLY_LEGEND_INSIDE[loc]
+    # Inside the plot the legend sits on the geology it describes. Matplotlib's
+    # is frameless; an opaque Plotly box would hide the cells under it.
+    return {"x": x, "y": y, "xanchor": xanchor, "yanchor": yanchor,
+            "bgcolor": "rgba(255,255,255,0.6)"}
+
+
+def _plotly_rgba(rgba) -> str:
+    """A Matplotlib RGBA tuple as Plotly's ``rgba(r,g,b,a)``."""
+
+    red, green, blue, alpha = (float(c) for c in rgba)
+    return (
+        f"rgba({round(red * 255)},{round(green * 255)},{round(blue * 255)},"
+        f"{alpha:.6g})"
+    )
+
+
+def _points_to_px(points: float) -> float:
+    """A Matplotlib line width in points as a Plotly width in pixels (96 dpi).
+
+    Floored at half a pixel: the house hairline is 0.2 pt, which browsers render
+    as nothing at all.
+    """
+
+    return max(0.5, float(points) * 96.0 / 72.0)
+
+
+class FilledSection(Picture):
+    """The cells a section line cuts, coloured by layer or by a field.
+
+    The picture behind ``section(fill=...)`` at every scope, on BOTH renderers:
+    ``.fig`` is the interactive Plotly figure, and ``.plot_mpl()`` draws the same
+    section with Matplotlib through :func:`plot_layered_cross_section`. The two
+    read ONE FloPy ``PlotCrossSection`` -- its ``polygons`` for the cells and its
+    ``projpts`` for the water levels -- and ONE resolved set of arrays, colours
+    and labels, so they draw the same cells in the same colours with the same
+    water levels. Plotly re-derives none of the geometry; a second derivation is
+    what would let the two drift.
+
+    Everything is resolved when the picture is built, so a bad argument raises
+    at the call rather than at the first ``.fig``: the line (one that crosses no
+    cell), ``fill``, ``layers``, ``head_layers``, ``legend`` and ``cmap``.
+
+    What Plotly adds is hover: every drawn cell names its layer, its cell number
+    and its top and bottom along the line, plus its value under a field fill.
+
+    Parameters
+    ----------
+    modelgrid : flopy.discretization.VertexGrid
+        The grid to section. Needs ``nlay`` and ``ncpl``.
+    line : LineString, dict, sequence of (x, y), or path
+        The section line -- anything :func:`normalize_line` accepts: a shapely
+        ``LineString``, a flopy ``{"line": [...]}`` dict, ``[(x, y), ...]``, or
+        a vector file to read one from.
+    model : SimulationBase, optional
+        Whose results ``fill="results"`` paints and whose water levels are drawn
+        over ``fill="layer"``. Without one -- a bare grid -- there are no
+        results: ``"layer"`` draws the geometry alone and ``"results"`` raises.
+    fill : {'layer', 'results'} or array-like, default 'layer'
+        What colours the cells. ``"layer"`` colours each cell by its layer and
+        draws the water levels chosen by ``head_layers`` on top. ``"results"``
+        colours them by the model's own dependent variable -- heads on GWF,
+        concentration on GWT, temperature on GWE -- with a colorbar. An
+        ``(nlay, ncpl)`` array colours them by anything else (K, a zone id, a
+        residual); a flat ``(ncpl,)`` array raises rather than painting every
+        layer the same. A cell whose value is NaN (a dry or inactive cell under
+        ``"results"``) is left unfilled.
+    layers : int or sequence of int, optional
+        Which layers' cells to draw, zero-based; every layer by default. The rest
+        are masked out and the vertical extent is cropped to what is drawn. A
+        layer outside the model raises.
+    head_layers : int, sequence of int, or None, default 0
+        Whose water levels to draw over ``fill="layer"``: one line per layer,
+        labelled when there are several. ``None`` draws none. Ignored under
+        ``"results"`` or an array, which already paint the field onto the cells.
+    layer_labels : sequence of str, optional
+        Legend names for the layers, one per layer in model order. Defaults to
+        the names the model's build context carries, else ``Layer 1..N``.
+    show_grid : bool, default True
+        Draw the cell edges.
+    legend : bool or str, default True
+        Where the layer legend goes: ``False`` drops it, ``True`` puts it at the
+        upper right, ``"auto"`` leaves it to the renderer, a side or corner
+        (``"bottom"``, ``"topleft"``, matplotlib's ``"upper right"``) places it
+        inside, and ``"outside right"``/``"outside bottom"`` (also ``left`` and
+        ``top``) place it beside the plot. An unknown word raises.
+    reverse : bool, default False
+        Draw the line from its other end, measuring distance from the new start.
+    per : int, optional
+        Stress period (zero-based) of the results painted or drawn. Defaults to
+        the last saved time.
+    kstpkper : tuple of (int, int), optional
+        Exact ``(time step, period)``; takes precedence over ``per``.
+    cmap : str, default 'viridis'
+        A MATPLOTLIB colormap name for ``"results"`` or an array fill. Both
+        renderers colour from its lookup table, so a name Matplotlib does not
+        know raises here. Unused by ``fill="layer"``, which has its own palette.
+    label : str, optional
+        Colorbar title for ``"results"`` or an array fill.
+    title : str, optional
+        The figure title.
+    """
+
+    #: Class attributes, so an instance built with `object.__new__` (a test
+    #: double) still answers the idempotency contract, as `XSection` does.
+    _assembled = False
+    _fig = None
+
+    def __init__(
+        self,
+        modelgrid,
+        line,
+        *,
+        model=None,
+        fill="layer",
+        layers=None,
+        head_layers=0,
+        layer_labels=None,
+        show_grid: bool = True,
+        legend=True,
+        reverse: bool = False,
+        per=None,
+        kstpkper=None,
+        cmap: str = "viridis",
+        label: str | None = None,
+        title: str | None = None,
+    ):
+        from matplotlib import colormaps
+
+        self._grid = modelgrid
+        self._line = normalize_line(line)
+        self._model = model
+        self._style = ModelCrossSectionStyle()
+        self._show_legend, self._legend_loc, self._legend_anchor = legend_placement(legend)
+        self._values = section_values(model, fill, per=per, kstpkper=kstpkper)
+        names = layer_labels
+        if names is None and model is not None:
+            names = layer_labels_from_model(model, modelgrid.nlay)
+        self._layer_labels = names
+        # The water levels are named from the SAME list as the layers, so
+        # `layer_labels=["sand", ...]` reaches "Head, sand" too -- it stopped at
+        # the layer entries before, and the lines read "Head, Layer 1".
+        self._surfaces = section_head_surfaces(
+            model, head_layers, per=per, kstpkper=kstpkper,
+            names=_resolve_layer_labels(modelgrid.nlay, names) if names is not None else None,
+        ) if self._values is None else []
+        self._layers = layers
+        self._chosen = _resolve_drawn_layers(layers, modelgrid.nlay)
+        if cmap not in colormaps:
+            raise ValueError(
+                f"cmap={cmap!r} is not a Matplotlib colormap; both renderers of a "
+                f"filled section colour from Matplotlib's lookup table. Try "
+                f"'viridis', 'magma', 'RdBu' or 'terrain'."
+            )
+        self._cmap = cmap
+        self._label = label
+        self._title = title
+        self._show_grid = bool(show_grid)
+        self._reverse = bool(reverse)
+        self._flopy_model = getattr(model, "gwf", None)
+        # Built now: it is what refuses a line that crosses no cell, and a
+        # picture that raised on first `.fig` instead of at the call would be
+        # the lazy-failure defect `Picture` exists to rule out.
+        self._xsect = _cross_section(self._flopy_model, modelgrid, self._line)
+
+    def plot_mpl(self, ax=None):
+        """Draw this section with Matplotlib and return the ``Figure``.
+
+        The renderer ``section(fill=..., backend="mpl")`` uses; a fresh figure
+        per call, like ``Choro.plot_mpl``.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            Draw into this Axes rather than a new figure.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+        """
+
+        figure, _axes = plot_layered_cross_section(
+            self._grid,
+            self._line,
+            ax=ax,
+            values=self._values,
+            values_cmap=self._cmap,
+            values_label=self._label,
+            layers=self._layers,
+            layer_labels=self._layer_labels,
+            show_grid=self._show_grid,
+            reverse=self._reverse,
+            show_legend=self._show_legend,
+            legend_loc=self._legend_loc,
+            legend_anchor=self._legend_anchor,
+            head_surfaces=self._surfaces,
+            flopy_model=self._flopy_model,
+            title=self._title,
+            show_head=bool(self._surfaces),
+        )
+        return figure
+
+    @property
+    def fig(self) -> Fig:
+        """The Plotly figure, assembled once and then reused."""
+
+        if not self._assembled:
+            self._fig = self._assemble()
+            self._assembled = True
+        return self._fig
+
+    def _assemble(self) -> Fig:
+        """Build the Plotly figure from the SAME inputs `plot_mpl` draws.
+
+        Mirrors :func:`plot_layered_cross_section` step for step: the grid edges
+        under the fill when every layer is drawn (FloPy's ``plot_grid`` outlines
+        EVERY cut cell, filled or not), the edges on the fill itself when a
+        subset is (so excluded layers are not outlined), the water levels from
+        FloPy's own ``projpts`` exactly as ``plot_surface`` walks them, the
+        extent FloPy frames, and ``reverse`` as distance from the other end.
+        """
+
+        from matplotlib import colormaps
+        from matplotlib.colors import Normalize, to_rgba
+
+        style, grid, xsect = self._style, self._grid, self._xsect
+        nlay, ncpl = int(grid.nlay), int(grid.ncpl)
+        xmin, xmax, ymin, ymax = (float(v) for v in xsect.extent)
+        mirror = xmin + xmax
+
+        def along(x):
+            """Distance along the line as DRAWN -- from the far end when reversed."""
+
+            x = np.asarray(x, dtype=float)
+            return mirror - x if self._reverse else x
+
+        layer_id, values = _masked_to_layers(grid, self._values, self._chosen)
+        painted = np.ravel(np.asarray(values if values is not None else layer_id, dtype=float))
+        polygons = [
+            (int(node), np.asarray(polygon.get_xy(), dtype=float))
+            for node, cell_polygons in sorted(xsect.polygons.items())
+            for polygon in cell_polygons
+        ]
+        filled = [
+            (node, vertices) for node, vertices in polygons
+            if node < painted.size and np.isfinite(painted[node])
+        ]
+        labels = _resolve_layer_labels(nlay, self._layer_labels)
+        edge_colour = _plotly_rgba(to_rgba(style.grid_color))
+        edge_width = _points_to_px(style.grid_linewidth)
+        subset = self._chosen is not None
+
+        def outlines(pieces):
+            """``(x, y)`` with each polygon closed and separated by ``None``."""
+
+            xs, ys = [], []
+            for _node, vertices in pieces:
+                xs += [*along(vertices[:, 0]), None]
+                ys += [*vertices[:, 1], None]
+            return xs, ys
+
+        figure = Fig()
+        edges = (
+            {"color": edge_colour, "width": edge_width}
+            if self._show_grid and subset else {"width": 0}
+        )
+
+        if values is not None:
+            drawn = np.array([painted[node] for node, _ in filled], dtype=float)
+            colormap = colormaps[self._cmap]
+            norm = Normalize()
+            norm.autoscale_None(drawn)
+            groups: dict[str, list] = {}
+            for (node, vertices), value in zip(filled, drawn, strict=True):
+                colour = _plotly_rgba(to_rgba(colormap(norm(value)), style.layer_alpha))
+                groups.setdefault(colour, []).append((node, vertices))
+            for colour, pieces in groups.items():
+                xs, ys = outlines(pieces)
+                figure.add_scatter(
+                    x=xs, y=ys, mode="lines", fill="toself", fillcolor=colour,
+                    line=edges, hoverinfo="skip", showlegend=False, meta="cells",
+                )
+            stops = [
+                [index / (colormap.N - 1), _plotly_rgba(colormap(index))]
+                for index in range(colormap.N)
+            ]
+            figure.add_scatter(
+                x=[None, None], y=[None, None], mode="markers", hoverinfo="skip",
+                showlegend=False, meta="colorbar",
+                marker={
+                    "color": [norm.vmin, norm.vmax], "cmin": norm.vmin,
+                    "cmax": norm.vmax, "colorscale": stops, "showscale": True,
+                    "colorbar": {"title": {"text": self._label or ""}},
+                },
+            )
+        else:
+            palette = ListedColormap(_resolve_layer_colors(nlay, None, style))
+            norm = Normalize(vmin=0, vmax=nlay - 1)
+            shown = self._chosen if subset else range(nlay)
+            for layer in shown:
+                pieces = [(n, v) for n, v in filled if n // ncpl == layer]
+                xs, ys = outlines(pieces) if pieces else ([None], [None])
+                figure.add_scatter(
+                    x=xs, y=ys, mode="lines", fill="toself",
+                    fillcolor=_plotly_rgba(to_rgba(palette(norm(layer)), style.layer_alpha)),
+                    line=edges, hoverinfo="skip", name=labels[layer],
+                    legendgroup=f"layer {layer}", showlegend=self._show_legend,
+                    meta="cells",
+                )
+
+        if self._show_grid and not subset:
+            # Every cut cell, filled or not -- FloPy's `plot_grid` outlines them
+            # all, so a dry cell under `fill="results"` keeps its edges. Drawn
+            # OVER the fill: under an 85%-opaque fill a hairline does not show.
+            xs, ys = outlines(polygons)
+            figure.add_scatter(
+                x=xs, y=ys, mode="lines", line={"color": edge_colour, "width": edge_width},
+                hoverinfo="skip", showlegend=False, name="cell edges", meta="grid",
+            )
+
+        surface_colours = _surface_colours([name for name, _ in self._surfaces], style)
+        extents = {
+            node: (float(np.min(np.asarray(verts)[:, 0])), float(np.max(np.asarray(verts)[:, 0])))
+            for node, verts in sorted(xsect.projpts.items())
+        }
+        drawn_levels = []
+        for (name, surface), colour in zip(self._surfaces, surface_colours, strict=False):
+            level = np.ravel(np.asarray(surface, dtype=float))
+            xs, ys = [], []
+            for node, (left, right) in extents.items():
+                if node >= level.size or np.isnan(level[node]):  # FloPy's own test
+                    continue
+                xs += [*along([left, right]), None]
+                ys += [level[node], level[node], None]
+                drawn_levels.append(level[node])
+            figure.add_scatter(
+                x=xs, y=ys, mode="lines",
+                line={"color": colour, "width": _points_to_px(style.head_linewidth)},
+                name=name, showlegend=self._show_legend, meta="surface",
+                hovertemplate=f"{name}<br>%{{y:.2f}}<extra></extra>",
+            )
+
+        if filled:
+            rows = []
+            for node, vertices in filled:
+                corners = vertices[:-1] if len(vertices) > 1 and np.allclose(
+                    vertices[0], vertices[-1]) else vertices
+                rows.append((
+                    float(np.mean(along(corners[:, 0]))), float(np.mean(corners[:, 1])),
+                    labels[node // ncpl], node % ncpl,
+                    float(np.max(corners[:, 1])), float(np.min(corners[:, 1])),
+                    float(painted[node]),
+                ))
+            valued = values is not None
+            name = self._label or "value"
+            figure.add_scatter(
+                x=[r[0] for r in rows], y=[r[1] for r in rows], mode="markers",
+                marker={"size": 10, "opacity": 0}, showlegend=False, meta="hover",
+                customdata=[r[2:] for r in rows],
+                hovertemplate=(
+                    "%{customdata[0]}, cell %{customdata[1]}<br>"
+                    "top %{customdata[2]:.2f}, bottom %{customdata[3]:.2f}"
+                    + (f"<br>{name} %{{customdata[4]:.4g}}" if valued else "")
+                    + "<extra></extra>"
+                ),
+            )
+
+        if subset:
+            bounds = _padded_elevation_bounds(
+                [vertices[:, 1] for _node, vertices in filled]
+                + ([np.asarray(drawn_levels, dtype=float)] if drawn_levels else [])
+            )
+            y_range = list(bounds) if bounds is not None else [ymin, ymax]
+        else:
+            y_range = [ymin, ymax]
+        legend = _plotly_legend(self._legend_loc, self._legend_anchor, style)
+        figure.update_layout(
+            title=self._title or style.title,
+            xaxis={"title": {"text": style.xlabel}, "range": [xmin, xmax]},
+            yaxis={"title": {"text": style.ylabel}, "range": y_range},
+            showlegend=self._show_legend and values is None,
+            hovermode="closest",
+            **({"legend": legend} if legend else {}),
+        )
+        return figure
+
+
+def section_head_surfaces(model, head_layers, *, per=None, kstpkper=None, names=None) -> list:
     """``[(label, array)]`` -- one water surface per requested layer.
 
     ``head_layers=None`` draws none, an int or a list draws those layers. The
@@ -791,7 +1233,8 @@ def section_head_surfaces(model, head_layers, *, per=None, kstpkper=None) -> lis
 
     Labelled per layer rather than "Simulated Head" once, because several
     unlabelled lines on one section are unreadable -- and the label carries the
-    layer NAME when the model's build context knows it.
+    layer NAME: ``names`` (one per layer, the caller's ``layer_labels``) when
+    given, else the names the model's build context knows, else ``Layer N``.
     """
 
     if model is None or head_layers is None:
@@ -803,7 +1246,9 @@ def section_head_surfaces(model, head_layers, *, per=None, kstpkper=None) -> lis
     chosen = _resolve_drawn_layers(head_layers, nlay)
     if chosen is None:                                     # pragma: no cover
         chosen = list(range(nlay))
-    names = layer_labels_from_model(model, nlay) or [f"Layer {k + 1}" for k in range(nlay)]
+    names = list(names) if names is not None else (
+        layer_labels_from_model(model, nlay) or [f"Layer {k + 1}" for k in range(nlay)]
+    )
     return [
         (f"Head, {names[k]}" if len(chosen) > 1 else "Simulated Head",
          reader.array(layer=k, per=per, kstpkper=kstpkper))

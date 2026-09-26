@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 331 entries (336 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 332 entries (337 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 332 | `section(fill=...)` draws on Plotly too, and draws what Matplotlib draws: one `FilledSection`, one FloPy... | 2026-09-26 |
 | 331 | A stage target read a lake's stage once per connected cell, and a reach's once per saved time step: one sta... | 2026-09-25 |
 | 330 | A run records the grid each model was built on, and ``runs.summary()`` says how its cells were made -- not... | 2026-09-25 |
 | 329 | A lake with no stage is a gap in every LAK stage view: MF6's -1e30 (dry) and +1e30 (inactive) are masked on... | 2026-09-25 |
@@ -5517,6 +5518,9 @@ same day, which is the useful part of the result.
         which is the same shape `plot.grid` already uses for `pathlines=` with
         the plotly backend. Silently returning the line profile instead would
         have been this session's own defect, one verb along.
+        **SUPERSEDED by ledger 332 (2026-09-26): both backends draw it now**, the
+        same cells from the same FloPy `PlotCrossSection`. The rest of this bullet
+        -- refusing rather than degrading -- stands for what is still refused.
       - **The profile-only arguments RAISE too.** `interpolate`, `spacing`,
         `num_points`, `use_rbf`, `interpolator`, `x_or_y`, `show_model_top`,
         `show_model_btm`, `surf_type`, `clip`,
@@ -14423,3 +14427,53 @@ same day, which is the useful part of the result.
       non-extensive branch to a sum fails 9 by name; dropping the period-end rule 4; the
       refusal 3; the partial-NaN refusal 1; `kind="extensive"` at each of the four call
       sites fails its own (7, 3, 1 and 1).
+
+332. **`section(fill=...)` draws on Plotly too, and draws what Matplotlib draws: one `FilledSection`, one FloPy `PlotCrossSection`, two renderers (2026-09-26).**
+      Asked for by the user when the section's defaults came up ("i wouldn't mind a
+      plotly 'filled' section, equivalent to mpl. we just haven't built it yet"), and
+      built FIRST, before any default moves, so that `fill="layer"` can be the default
+      on both backends rather than a default that depends on the backend.
+      Undoes ledger 177's "`fill=` is Matplotlib ONLY"; its refusals stand.
+      **Equivalent by construction, then checked.** Both renderers read ONE
+      `PlotCrossSection` -- `polygons` for the cells, `projpts` for the water levels
+      exactly as its `plot_surface` walks them, `extent` for the framing -- and one set
+      of resolved arrays (`_masked_to_layers`), colours and labels. Plotly re-derives
+      none of the geometry; a second derivation is what would let the two drift.
+      `tests/test_filled_section_plotly.py` reads BOTH drawings back and compares them
+      polygon by polygon -- cells and colours, outlines, water-level segments and their
+      colours, legend entries in order, both axis ranges -- over ten option sets, an
+      array fill and the bare-grid scope: on the canonical model 124 cells in 4 colours
+      (up to 92 under `fill="results"`) and 31 segments per water level. Four
+      deliberate breaks each fail named tests (palette off by one 8, `reverse` ignored
+      2, subset crop dropped 3, field colours unnormalized 4).
+      **Judgment calls.**
+      - **The cell edges go OVER the fill on Plotly.** Matplotlib adds `plot_grid`
+        first, so under the 85%-opaque fill its hairlines barely show, and the edges one
+        sees there are the seaborn style's white patch edges, not `show_grid`'s. Same
+        cells outlined, deliberately different z-order.
+      - **`fill_cmap` stays a MATPLOTLIB colormap name on both.** Plotly's colorscale is
+        built from that colormap's own 256-entry lookup table -- the quantization
+        Matplotlib applies -- so the colours are equal, not similar; one trace per
+        distinct colour, since a scatter fill takes one. A Plotly-only name
+        (`"earth"`) raises at the call. `viz.mpl_colormap_for` converts the other way
+        (Plotly to Matplotlib, for maps) and was not reused: this parameter already
+        was a Matplotlib name.
+      - **The legend reads the same resolved `(loc, anchor)` from `legend_placement`**,
+        so one word is one placement and an unknown word is already refused. `"auto"`
+        (Matplotlib's `best`) is Plotly's own default; the outside placements sit
+        farther out on the left and bottom than Matplotlib's anchors, because Plotly's
+        axis titles live in that margin; an inside legend gets a 60% white box, where
+        an opaque one would hide the cells (Matplotlib's is frameless).
+      - **Everything is validated at the CALL.** `.fig` is lazy, so the constructor
+        builds the `PlotCrossSection` (refusing a line that crosses no cell) and checks
+        `fill`, `layers`, `head_layers`, `legend` and `fill_cmap`, rather than failing
+        at the first `.fig`.
+      **Fixed in passing, on both renderers:** `layer_labels=` named the layers and
+      stopped there -- with two water levels the legend read "sand, clay, ..., Head,
+      Layer 1". `section_head_surfaces(names=)` takes the same list now; passing it
+      nowhere fails the two tests that pin it, one per backend.
+      **Not done here.** No default moved: `section()` is still the Plotly line profile. `viz.mosaic` takes maps and Plotly `Figure`s, not a
+      `FilledSection` (its `.fig` works). The grid's outline picture without `fill=`
+      (`GridSection`) is untouched, and `reverse=` there still needs `backend="mpl"`.
+      Plotly adds what Matplotlib cannot: a hover naming each cell's layer, number, top
+      and bottom along the line, and its value under a field fill.

@@ -737,9 +737,10 @@ class GridPlots:
             The section line, as a geometry or a vector file to read it from.
         fill : {'layer'} or array-like, optional
             Draw the CELLS rather than their outlines, coloured by layer
-            (``"layer"``) or by a ``(nlay, ncpl)`` array. Requires
-            ``backend="mpl"``. A bare grid has no results, so ``"results"`` is
-            not available here -- ``model.plot.section(fill="results")`` is.
+            (``"layer"``) or by a ``(nlay, ncpl)`` array, on either backend --
+            the two draw the same cells. A bare grid has no results, so
+            ``"results"`` is not available here --
+            ``model.plot.section(fill="results")`` is.
         fill_cmap : str, default 'viridis'
             Colormap for an array ``fill``.
         fill_label : str, optional
@@ -858,9 +859,10 @@ class GridPlots:
 
         Returns
         -------
-        GridSection or matplotlib.figure.Figure
-            A :class:`~myflopy.viz.Picture` under the default backend; a bare
-            Matplotlib figure under ``"mpl"``.
+        GridSection or FilledSection or matplotlib.figure.Figure
+            A :class:`~myflopy.viz.Picture` under the default backend -- a
+            ``FilledSection`` with ``fill=``, else the ``GridSection`` outlines;
+            a bare Matplotlib figure under ``"mpl"``.
 
             .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
         Raises
@@ -885,16 +887,12 @@ class GridPlots:
         """
 
         if fill is not None:
-            if normalize_backend(backend) != "mpl":
-                raise ValueError(
-                    "fill= draws the cells through FloPy's cross-section "
-                    "renderer, which is Matplotlib; pass backend='mpl'."
-                )
             # Straight to the layer-1 renderer. Routing through
             # `myflopy.plot.section` would be an UPWARD import from this module.
             return filled_section(
                 _grid_section_factory(self.vor, line=line).grid, line,
                 fill=fill, cmap=fill_cmap, label=fill_label, reverse=reverse,
+                backend=normalize_backend(backend),
             )
         if reverse and normalize_backend(backend) != "mpl":
             raise ValueError(

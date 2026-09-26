@@ -114,9 +114,11 @@ separate PyVista sheets, which is the rule holding rather than bending). Everyth
 colours cells by layer and draws the head as a water surface; `fill="results"`
 colours them by head/conc/temp with a colorbar; a `(nlay, ncpl)` array paints
 anything else. Plain `section()` is a LINE PROFILE (head vs distance) and draws
-no cells -- that difference is what sent this looking twice. `fill=` is mpl-only
-and raises rather than degrading: on the plotly backend, on any profile-only
-argument, on `"results"` for a bare grid, and on a flat `(ncpl,)` array.
+no cells -- that difference is what sent this looking twice. `fill=` draws on
+BOTH backends, the same cells (ledger 332): one `FilledSection` reads one FloPy
+`PlotCrossSection`, so Plotly is not a second derivation of the geometry. It
+raises rather than degrading: on any profile-only argument, on `"results"` for a
+bare grid, and on a flat `(ncpl,)` array.
 Pick what it contains with `layers=` (which layers' cells; masks and CROPS the
 view), `head_layers=` (whose water levels ride on top -- default `0`, a list
 draws one labelled surface each, `None` none) and `layer_labels=` (unit names for

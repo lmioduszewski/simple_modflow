@@ -135,14 +135,19 @@ and "clay". **`layer=` RAISES in the filled branch**: it means "overlay these
 layers' head profiles" on the other branch, and it silently did nothing here on
 the first cut.
 
-`fill=` is **matplotlib only** (FloPy's `PlotCrossSection` is the renderer and
-has no Plotly counterpart), and it RAISES rather than falling back: with the
-default backend, with any line-profile argument that cannot act on it
-(`interpolate`, `spacing`, `num_points`, ...), with `fill="results"` on a bare
-grid, and on a flat `(ncpl,)` array, which would paint every layer the same and
-look like an answer. Before this existed the picture was
-`myflopy.modflow.mf6.plot_model_cross_section` -- a deep import, on no scope,
-and lost twice by the person who asked for it.
+`fill=` draws on **both backends, and they draw the same thing** (ledger 332):
+one `FilledSection` picture reads one FloPy `PlotCrossSection` -- its `polygons`
+for the cells, its `projpts` for the water levels -- and one set of resolved
+arrays, colours and labels, so `.fig` (Plotly) and `.plot_mpl()` fill the same
+cells in the same colours under the same water levels, legend and framing.
+Plotly adds a hover naming each cell's layer, number, top and bottom.
+`tests/test_filled_section_plotly.py` reads both drawings back and compares them
+polygon by polygon. It RAISES rather than falling back: with any line-profile
+argument that cannot act on it (`interpolate`, `spacing`, `num_points`, ...),
+with `fill="results"` on a bare grid, and on a flat `(ncpl,)` array, which would
+paint every layer the same and look like an answer. Before this existed the
+picture was `myflopy.modflow.mf6.plot_model_cross_section` -- a deep import, on
+no scope, and lost twice by the person who asked for it.
 
 **`.plot_mpl()` on the returned picture is the same renderer reached a second
 way, and is not the spelling to teach.** It still exists, still works, and is
