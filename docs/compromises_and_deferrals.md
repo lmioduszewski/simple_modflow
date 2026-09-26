@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 329 entries (334 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 330 entries (335 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 330 | A run records the grid each model was built on, and ``runs.summary()`` says how its cells were made -- not... | 2026-09-25 |
 | 329 | A lake with no stage is a gap in every LAK stage view: MF6's -1e30 (dry) and +1e30 (inactive) are masked on... | 2026-09-25 |
 | 328 | `grid.cl12` is MF6's PER-SIDE connection length again: from 2025-07-02 every DISU myflopy wrote carried abo... | 2026-09-25 |
 | 327 | The excavation's docs pass (C8): what the teaching material says now, which notebooks were left teaching th... | 2026-09-25 |
@@ -14257,7 +14258,7 @@ same day, which is the useful part of the result.
       ``GridSpec.voronoi`` or ``VoronoiGridPlus`` rebuilds FloPy's cells exactly.
       **Not done here:** a boundary with an interior ring (ledger 317's second half); the
       run-level record that a re-resolved grid changed, which ledger 294 assigned to
-      ``runs.summary`` and never built; point constraints outside the boundary still reach
+      ``runs.summary`` and never built (ledger 330 records it); point constraints outside the boundary still reach
       Triangle; a refinement region crossing the boundary is clipped to an inset domain and
       meshes the sliver between (16-29x the nodes, pre-existing); profile "balanced"'s 2 ft
       domain simplification. Not reported upstream.
@@ -14294,3 +14295,29 @@ same day, which is the useful part of the result.
       drawn one (ledger 316's section 8).
       Tests: ``tests/test_boundary_parts_and_holes.py`` (7); each of five single-piece
       mutations fails a named test.
+
+330. **A run records the grid each model was built on, and ``runs.summary()`` says how its cells were made -- not whether the recipe would build them the same today (2026-09-25).**
+      Ledger 316's repair gives the same ``GridSpec`` a different grid, and nothing a run
+      recorded covered a grid: no digest does, and ``built_from`` hashes package sources
+      only. So a run whose packages are all lazy rebuilt on the repaired grid silently
+      (on the L, CHD inflow +3.81% with ``drift()`` and ``summary()`` blank). Ledger 294
+      assigned "grid changed" to ``runs.summary()`` and never built it; the user chose to
+      build it with the repair.
+      **What is recorded:** at build, beside ``built_from`` and inside ``metadata`` for the
+      same reason, each model's ``grid_pin``, its ``tessellation`` (``"dual"``,
+      ``"flopy"``, or none for a grid rebuilt from arrays) and what the repair changed
+      (``run.grids``). **What is shown:** a ``grid`` column -- ``unrecorded`` for a run
+      from before this whose recipe declares a grid, ``m: FloPy's cells``,
+      ``m: N cells repaired``/``m: cells rebuilt``, else ``—``. A model with no grid
+      (structured DIS) reads ``—`` whether recorded or not: "unrecorded" there would flag
+      something that cannot have happened to it.
+      **Deliberately NOT a comparison with today's recipe.** Asking whether the recipe
+      still resolves to the recorded pin means triangulating every grid on every
+      ``summary()`` -- seconds per grid (the smoothing loop builds six) in a call Jupyter
+      makes on every bare cell. The column says what each run's grid WAS; the record makes
+      the comparison possible later, where it can be paid for.
+      **Not done:** a grid's own source files (boundary, refinement, breaklines) are still
+      not hashed, so editing the boundary GeoPackage moves no drift state; ``unfrozen`` is
+      still unbuilt.
+      Tests: ``tests/test_run_grid_record.py`` (4); each of four single-piece mutations
+      fails a named test.

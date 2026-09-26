@@ -1292,6 +1292,7 @@
       "execute",
       "flopy_model",
       "frozen",
+      "grids",
       "load",
       "manifest_path",
       "model",

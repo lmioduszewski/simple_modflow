@@ -241,6 +241,9 @@ class VoronoiGridPlus(VoronoiGrid):
                 "tri2vor's cells as they are)."
             )
         self.tessellation_report = None
+        #: "dual" or "flopy" for a grid made from a triangulation, None for one rebuilt
+        #: from arrays -- what a run records about the grid it was built on.
+        self.tessellation = tessellation if tri else None
         if tri:
             # FloPy's tri2vor helper currently emits harmless RuntimeWarnings from
             # point_in_polygon when domain edges are horizontal. Suppress only that
@@ -348,6 +351,7 @@ class VoronoiGridPlus(VoronoiGrid):
         for key in self._PICKLE_VOLATILE:
             self.__dict__.setdefault(key, None)
         self.__dict__.setdefault("tessellation_report", None)
+        self.__dict__.setdefault("tessellation", None)
 
     def _repair_tessellation(self, tri) -> None:
         """Replace FloPy's cells by :func:`~myflopy.modflow.mf6.grid.tessellation.tessellate`'s.

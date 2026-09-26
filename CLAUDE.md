@@ -362,10 +362,13 @@ PROVENANCE, not buildability. That split is also what keeps the cost honest — 
 **0.15%** of the work it describes for an ordinary GeoPackage, but a full read of a
 3.7 GB DEM is **~1.9 s**, and the build only samples such a raster. A package naming
 several files reports the WORST with a count (`edited (1 of 3)`).
-**NOT built, and why** (same ledger): `grid-changed` and `unfrozen` are per-RUN facts
-and `drift()` is per (run, package key), so either would fan one fact across every row —
-they belong in `runs.summary()`. `legacy-digest` has no era marker to read, and 0 of 84
-real stored digests move under HEAD.
+**NOT built, and why** (same ledger): `unfrozen` is a per-RUN fact and `drift()` is per
+(run, package key), so it belongs in `runs.summary()`. `legacy-digest` has no era marker to
+read, and 0 of 84 real stored digests move under HEAD. **`runs.summary()` has a `grid`
+column** (ledger 330): a run records each model's grid pin and how its cells were made
+(`run.grids`), and the column reads `unrecorded` for a run from before that, `FloPy's
+cells`, or `N cells repaired`. It does NOT re-resolve the recipe to ask whether the grid
+changed -- that is a triangulation per grid per call.
 `project.save()` returns a **`SaveReport`**,
 not a path, and persists what it can rather than refusing the whole project.
 Runnable tour: `examples/mf6/notebooks/project_libraries_tour.ipynb` (executed by

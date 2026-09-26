@@ -355,6 +355,15 @@ nothing to answer about and says so; `source` is the column that answers for it.
 keys. A run reading `unchanged` throughout is reproducible from the library as it
 stands; anything else names exactly what to look at.
 
+Its `grid` column says what each model's grid was. A `GridSpec` is a recipe, and the
+grid it resolves to changed on 2026-09-25 without the recipe changing: myflopy now
+repairs the cells FloPy draws wrong at reflex corners and on the boundary (ledger 316).
+So a run records each model's grid pin and how its cells were made (`run.grids`), and
+the column reads `unrecorded` for a run from before that (it may sit on FloPy's cells,
+holes and all), `m: FloPy's cells` for one built with `tessellation="flopy"`, and
+`m: 4 cells repaired` where the repair changed something. `—` means there is nothing
+to say.
+
 **A run rebuilds from its own copy, not from the library** (ledger 230).
 `prepare_run` copies each library package the simulation references into
 `<run>/_library/`, and a rebuild resolves `mf.ref` from those copies first. So

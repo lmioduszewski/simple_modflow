@@ -18,6 +18,7 @@ import flopy
 
 from myflopy._logging import get_logger
 from myflopy.areas import Area, register_project_areas
+from myflopy.grid_identity import grid_pin
 from myflopy.library import (
     AoiLibrary,
     GridLibrary,
@@ -787,6 +788,7 @@ class RunLibrary(SpecLibrary["Run"]):
         "outcome",
         "stale",
         "drift",
+        "grid",
         "elapsed",
         "simulation",
         "models",
@@ -1117,6 +1119,32 @@ class RunLibrary(SpecLibrary["Run"]):
             self._digest_memo = None
         return pd.DataFrame(rows, columns=list(self._columns))
 
+    @staticmethod
+    def _grid_label(entry: Run) -> str:
+        """How each model's grid was made, where there is something to say (ledger 316).
+
+        ``unrecorded``: a run whose models declare a grid, built before runs recorded
+        one -- so it may sit on FloPy's cells as they were, holes and all, and a rebuild
+        re-resolves its grid under the repair. ``FloPy's cells``: built with
+        ``tessellation="flopy"``. ``N cells repaired``/``cells rebuilt``: what the repair
+        changed on this run's grid. ``—``: nothing to say.
+        """
+
+        grids = (entry.metadata or {}).get(Run.GRIDS)
+        if grids is None:
+            models = (entry.spec_recipe or {}).get("models") or ()
+            return "unrecorded" if any(model.get("grid") for model in models) else "—"
+        notes = []
+        for name, record in sorted(grids.items()):
+            if record.get("tessellation") == "flopy":
+                notes.append(f"{name}: FloPy's cells")
+            elif record.get("rebuilt"):
+                notes.append(f"{name}: cells rebuilt")
+            elif record.get("repaired"):
+                count = record["repaired"]
+                notes.append(f"{name}: {count} cell{'s' if count != 1 else ''} repaired")
+        return ", ".join(notes) if notes else "—"
+
     def _row(self, key: str, entry: Run) -> dict[str, Any]:
         """Summarize one run: what myflopy did, and what MF6 did."""
 
@@ -1130,6 +1158,7 @@ class RunLibrary(SpecLibrary["Run"]):
             "outcome": outcome.outcome,
             "stale": outcome.stale,
             "drift": self._drift_label(entry, self._library_digest_memo()),
+            "grid": self._grid_label(entry),
             "elapsed": outcome.elapsed or "—",
             "simulation": block.get("name", "—"),
             "models": ", ".join(models) or "—",
@@ -1388,6 +1417,7 @@ class Run:
         self._model_views.clear()
         self._from_library = self._check_library_fallback(build_context)
         self._record_built_from(build_context)
+        self._record_grids()
         self._freeze()
         self._record_status("built")
         return self
@@ -1481,6 +1511,43 @@ class Run:
         """What each package's sources SAID when this run was built."""
 
         return dict((self.metadata or {}).get(self.BUILT_FROM) or {})
+
+    #: Key under which a run records the grid each model was built on, inside
+    #: ``metadata`` for the reason ``BUILT_FROM`` gives.
+    GRIDS = "grids"
+
+    def _record_grids(self) -> None:
+        """Record the grid each model was built on: its pin, and how its cells were made.
+
+        A ``GridSpec`` is a recipe, and the grid it resolves to is not a function of the
+        recipe alone: ledger 316's repair re-outlines the cells FloPy drew wrong, so the
+        SAME spec built before and after it gives two grids. Nothing else in a run says
+        which one it got -- no digest covers a grid, and ``built_from`` hashes package
+        sources only -- so a run whose packages are all lazy rebuilt on the repaired grid
+        silently (measured on the L: CHD inflow +3.81%). ``runs.summary()`` reads this.
+        """
+
+        grids: dict[str, dict[str, Any]] = {}
+        for name, built in (getattr(self.built, "models", None) or {}).items():
+            grid = getattr(getattr(built, "context", None), "grid", None)
+            if grid is None:
+                continue
+            record: dict[str, Any] = {
+                "pin": grid_pin(grid),
+                "tessellation": getattr(grid, "tessellation", None),
+            }
+            report = getattr(grid, "tessellation_report", None)
+            if report is not None:
+                record["repaired"] = len(report.rewritten)
+                record["rebuilt"] = bool(report.adopted)
+            grids[name] = record
+        self.metadata = {**(self.metadata or {}), self.GRIDS: grids}
+
+    @property
+    def grids(self) -> dict[str, dict[str, Any]]:
+        """The grid each model was built on (``pin``, ``tessellation``, what was repaired)."""
+
+        return dict((self.metadata or {}).get(self.GRIDS) or {})
 
     def _freeze(self) -> None:
         """Snapshot the resolved simulation beside the run, best effort.
