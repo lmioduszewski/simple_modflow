@@ -546,6 +546,21 @@ one zone: its cells are the union, and it is reported missing only when every
 part of it misses. Zone membership is geometry only: a covered cell that carries
 no drain is still in the zone and adds zero.
 
+A lake or reach STAGE target reads one of two routes: MF6's own STAGE observation,
+when one workspace CSV holds a column for every target NAME (the lake or reach id is
+not consulted), else the stage file. On the stage file it reads ONE stage per lake per
+saved record and ONE per reach per stress period -- that period's last saved step
+(ledger 331; it had added a lake's copies, one per connected cell, and a period's
+steps). The two routes label `time` differently -- MF6's simulated time against the
+record index (LAK) or the stress period (SFR) -- and targets must be keyed by the
+route's label: on the observation route a target keyed by period matches nothing, and
+the PEST build keeps the simulated value as its observed one. On the LAK stage-file
+route the record index IS the period only when output control saves one step per
+period. Saving several (`SAVE HEAD ALL` at `nstp=3`), a lake target keyed by period
+silently reads a step inside an EARLIER period, while the SFR and head targets beside
+it read period end -- key it by saved-record index there, until
+`build_lak_stage_result_table` carries the stage file's own `kstpkper` (ledger 301).
+
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
 `mf.LakeStageTargets`, `mf.DrnFlowTargets`. Calibration: `model.pest(name,
 start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(...)` /

@@ -11,8 +11,15 @@ import pandas as pd
 
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.geometry import where_they_are
+from myflopy.modflow.mf6.package_registry import agg_for_kind
 
 logger = get_logger(__name__)
+
+#: How far apart two copies of ONE value may sit and still be the same number,
+#: relative to the value (floored at 1). The rows a feature-valued table repeats
+#: for each connected cell are bit-identical in every table measured, so this only
+#: absorbs a rounding a future reader might introduce (ledger 331).
+_COPY_RTOL = 1e-9
 
 
 def _copy_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -674,8 +681,26 @@ def _aggregate_named_series(
     *,
     id_column: str,
     value_column: str,
+    kind: str,
 ) -> pd.DataFrame:
-    """Aggregate model result rows to one value per period and integer id.
+    """Reduce a result table to ONE value per ``per`` and integer id, by what the value IS.
+
+    Rows ADD only when the value is extensive -- ledger 297's rule, asked of
+    :func:`~myflopy.modflow.mf6.package_registry.agg_for_kind` rather than restated
+    here. A stage table repeats a feature's ONE stage on every cell the feature
+    connects to, so its rows of one id in one record are copies, and adding them
+    read a pond at 526.00 ft as 401,339.97 ft -- 763 connected cells (ledger 331).
+    For a non-extensive value the copies are reduced to the one number they hold,
+    which is what the registry's ``"mean"`` gives for copies that agree; copies
+    that DISAGREE are refused, because averaging them would invent a value the
+    table never held and a table like that is not the one this assumes.
+
+    A table that carries ``kstpkper`` is first reduced to each period's LAST saved
+    time step, the period-end rule ``HeadTargets`` already uses
+    (``_simulated_field_by_period``): a series keyed by ``per`` holds one row per
+    period, and adding a period's time steps multiplied an SFR stage by the number
+    saved. A table without it -- the LAK stage table, whose ``per`` is the index of
+    the saved record (ledger 301's stage clock) -- keeps every record.
 
     A row whose VALUE is missing is kept, and an id with no value in a period comes
     back ``NaN`` rather than absent or 0.0: a lake with no stage (ledger 329) is a
@@ -685,20 +710,119 @@ def _aggregate_named_series(
     fails at end of file (``docs/reproducers/pest_no_value_fields.py``).
     ``sum(min_count=1)`` keeps an all-``NaN`` group ``NaN``; a plain ``sum``
     makes it 0.0.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        One row per (record, id, cell): a ``per`` (or ``time``) column holding
+        zero-based integers, ``id_column``, ``value_column`` and, optionally,
+        ``kstpkper`` tuples.
+    id_column : str
+        The integer feature id each row belongs to (``"lake"``, ``"reach"``).
+    value_column : str
+        The column holding the value to reduce (``"stage"``).
+    kind : str
+        What the value is, in :class:`~myflopy.modflow.mf6.package_registry.FieldSpec`'s
+        words: ``"extensive"`` (a flux -- rows add), or ``"elevation"`` /
+        ``"intensive"`` (a level -- rows are copies of one number). Required, so a
+        new caller has to say.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``per``, ``id_column`` and ``value_column``, one row per (``per``, id),
+        sorted by both; ``NaN`` where the id holds no value in that ``per``.
+
+    Raises
+    ------
+    ValueError
+        If ``kind`` is not one of the three; if a ``per`` or ``time`` value is not
+        numeric; or, for a non-extensive ``kind``, if the rows of one id in one
+        ``per`` disagree by more than ``1e-9`` of the value (at least ``1e-9``) or
+        some hold a value and some do not -- naming the id, the ``per`` and the
+        spread.
     """
 
+    combine = agg_for_kind(kind)
     data = frame.copy()
     data["per"] = _numeric_periods(data, caller="_aggregate_named_series(...)")
     data[id_column] = pd.to_numeric(data[id_column], errors="coerce")
     data[value_column] = pd.to_numeric(data[value_column], errors="coerce")
     data = data.dropna(subset=[id_column]).copy()
     data[id_column] = data[id_column].astype(int)
-    return (
-        data.groupby(["per", id_column], dropna=False, as_index=False)[value_column]
-        .sum(min_count=1)
-        .sort_values(["per", id_column])
-        .reset_index(drop=True)
-    )
+    if "kstpkper" in data.columns and not data.empty:
+        kstp = data["kstpkper"].map(lambda value: int(value[0]))
+        data = data.loc[kstp == kstp.groupby(data["per"]).transform("max")]
+    grouped = data.groupby(["per", id_column], dropna=False)[value_column]
+    if combine == "sum":
+        reduced = grouped.sum(min_count=1)
+    else:
+        reduced = _one_value_per_group(grouped, id_column=id_column, value_column=value_column)
+    return reduced.reset_index().sort_values(["per", id_column]).reset_index(drop=True)
+
+
+def _one_value_per_group(grouped, *, id_column: str, value_column: str) -> pd.Series:
+    """The one number each group's rows are copies of; refuse a group whose copies differ.
+
+    Taken as the FIRST copy, so it is the table's number to the bit; for copies
+    that agree that is the registry's ``"mean"`` (ledger 331). A group that is
+    ``NaN`` throughout stays ``NaN``.
+
+    Parameters
+    ----------
+    grouped : pandas.core.groupby.SeriesGroupBy
+        The value column grouped by ``(per, id)``.
+    id_column : str
+        The id level's name, used to name an offending group (``"lake"``).
+    value_column : str
+        The value's name, used in the message (``"stage"``).
+
+    Returns
+    -------
+    pandas.Series
+        One value per ``(per, id)``, indexed by both.
+
+    Raises
+    ------
+    ValueError
+        If any group's copies span more than ``_COPY_RTOL`` of the value (floored
+        at 1), or some hold a value and some do not; the message names up to
+        five such groups by id, ``per`` and spread.
+    """
+
+    first = grouped.first()
+    low = grouped.min()
+    high = grouped.max()
+    rows = grouped.size()
+    held = grouped.count()
+    spread = high - low
+    tolerance = _COPY_RTOL * np.maximum(1.0, high.abs().fillna(0.0))
+    partial = (held > 0) & (held < rows)
+    differ = (spread > tolerance) | partial
+    if differ.any():
+        offenders = []
+        for (per, feature) in differ[differ].index[:5]:
+            if partial.loc[(per, feature)]:
+                offenders.append(
+                    f"{id_column} {feature} at per={per}: {held.loc[(per, feature)]} of "
+                    f"{rows.loc[(per, feature)]} rows hold a {value_column}"
+                )
+            else:
+                offenders.append(
+                    f"{id_column} {feature} at per={per}: {rows.loc[(per, feature)]} rows "
+                    f"span {low.loc[(per, feature)]:.10g}..{high.loc[(per, feature)]:.10g} "
+                    f"(spread {spread.loc[(per, feature)]:.6g})"
+                )
+        more = int(differ.sum()) - len(offenders)
+        listing = "; ".join(offenders) + (f"; and {more} more" if more else "")
+        raise ValueError(
+            f"The rows of one {id_column} in one saved record should be copies of ONE "
+            f"{value_column} -- the {id_column}'s own, repeated on each cell it connects "
+            f"to -- and these are not: {listing}. A {value_column} is not added "
+            "(ledger 297), and averaging values that differ would invent one "
+            "(ledger 331)."
+        )
+    return first
 
 
 def _default_compare_stats(frame: pd.DataFrame, *, residual_column: str = "residual") -> pd.DataFrame:

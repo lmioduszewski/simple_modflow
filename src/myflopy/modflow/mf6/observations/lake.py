@@ -217,6 +217,15 @@ class LakeStageTargets:
         label ``time`` differently: the observation route carries MF6's simulated
         time, the stage-file route the zero-based index of the saved stage record.
 
+        **That index is the stress period only when output control saves one step
+        per period** (ledger 331). Saving several -- ``SAVE HEAD ALL`` at
+        ``nstp=3`` -- writes three records per period, so a target keyed by stress
+        period silently reads a step inside an EARLIER period, where the
+        ``SfrStageTargets`` and ``HeadTargets`` beside it read each period's last
+        step. Key a lake target by saved-record index there. The open fix is
+        ``build_lak_stage_result_table`` carrying the stage file's own
+        ``kstpkper`` (ledger 301).
+
         **A period with no stage is a row holding ``NaN``, never a missing row**
         (ledger 329). An INACTIVE lake is ``NaN`` on both routes: the observation
         file's 3e30 had been read as a stage of 0.0 ft, and the stage file's +1e30
@@ -237,9 +246,12 @@ class LakeStageTargets:
         1e30 in place of ``NaN``, because PEST++ refuses an empty field and ``nan``
         alike (see ``write_named_series_targets``).
 
-        On the stage-file route a lake's value is SUMMED over its connected
-        cells, so a lake with two connections reads twice its stage (ledger 329,
-        found and not fixed); the observation route reads the lake itself.
+        **A lake reads its ONE stage on both routes** (ledger 331). The stage
+        table repeats a lake's stage on every cell the lake connects to, and the
+        stage-file route used to ADD those copies: the user's pond, 763 connected
+        cells, read 401,339.97 ft for a stage of 526.00. It takes the one number
+        per saved record now, as a stage is not added (ledger 297), and refuses
+        copies that disagree rather than averaging them.
 
         Parameters
         ----------
@@ -262,6 +274,11 @@ class LakeStageTargets:
             When no workspace CSV holds the targets and there is no stage file
             to fall back on: the model has no LAK package ("Package 'lak' is not
             attached to model ...") or its LAK declares no ``stage_filerecord``.
+        ValueError
+            On the stage-file route, when the rows of one lake in one saved
+            record are not copies of one stage -- naming the lake, the record and
+            the spread. MF6's stage table cannot produce that; it guards a table
+            that is not the one this reads.
 
         Examples
         --------
@@ -278,7 +295,9 @@ class LakeStageTargets:
         frame = model.packages.lak.results.stage.get().copy()
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._series.keys()])
-        frame = _aggregate_named_series(frame, id_column="lake", value_column="stage")
+        frame = _aggregate_named_series(
+            frame, id_column="lake", value_column="stage", kind="elevation"
+        )
         definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
         # A target naming a lake the model does not have matches no row; drop it
         # here, as the pivot always did, rather than as a NaN ``time`` row.
@@ -296,9 +315,45 @@ class LakeStageTargets:
     def compare(self, model) -> pd.DataFrame:
         """Compare target lake stages against simulated lake stages.
 
-        ``sim_stage`` is ``NaN`` where MF6 reports no stage, and so are
-        ``residual`` and ``abs_residual``; which lakes that covers depends on the
-        route (see :meth:`simulated_series`, ledger 329).
+        ``sim_stage`` comes from the same two routes as :meth:`simulated_series`,
+        and is the lake's ONE stage on both: the stage-file route used to add the
+        copies the stage table holds for each connected cell (ledger 331). It is
+        ``NaN`` where MF6 reports no stage, and so are ``residual`` and
+        ``abs_residual``; which lakes that covers depends on the route (ledger
+        329). Targets are matched on ``per``, read from their ``time`` as a
+        zero-based integer -- which on the observation route is compared with
+        MF6's simulated time, and on the stage-file route with the index of the
+        saved stage record. That index is the stress period only at one saved step
+        per period: with several, a target keyed by period silently reads a step
+        inside an earlier period (measured at ``nstp=3``: periods 0, 1, 2 read
+        steps 1, 2, 3 of period 0), unlike ``SfrStageTargets`` and
+        ``HeadTargets``, which read each period's last step. Key it by
+        saved-record index there until ``build_lak_stage_result_table`` carries
+        the stage file's ``kstpkper`` (ledgers 331, 301).
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with a LAK package, as ``mf.load_mf6_run(ws)`` or
+            ``run.model()`` returns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per target row (per simulated row when the targets hold no
+            values): ``name``, ``lake``, ``time``, ``per``, ``stage_target``,
+            ``sim_stage``, ``residual`` (simulated minus target) and
+            ``abs_residual``.
+
+        Raises
+        ------
+        AttributeError
+            As :meth:`simulated_series`: no workspace CSV holds the targets and
+            the model has no LAK stage file.
+        ValueError
+            On the stage-file route, when a lake's copies in one record disagree
+            (as :meth:`simulated_series`), or when a target's ``time`` is not a
+            number.
         """
 
         definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
@@ -311,7 +366,9 @@ class LakeStageTargets:
             simulated = definitions.merge(simulated, on="name", how="left")
         else:
             simulated = model.packages.lak.results.stage.get().copy()
-            simulated = _aggregate_named_series(simulated, id_column="lake", value_column="stage")
+            simulated = _aggregate_named_series(
+                simulated, id_column="lake", value_column="stage", kind="elevation"
+            )
             simulated = definitions.merge(simulated, on="lake", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
             compare = simulated.rename(columns={"per": "time"}).copy()

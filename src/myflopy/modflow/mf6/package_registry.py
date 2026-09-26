@@ -56,6 +56,46 @@ def advanced_output_filerecords(
 _FIELD_KINDS = frozenset({"extensive", "elevation", "intensive"})
 
 
+def agg_for_kind(kind: str) -> str:
+    """How several values of one quantity combine, from what the quantity IS.
+
+    THE rule of ledger 297, in one place: only an ``"extensive"`` value -- a flux or
+    a conductance, which MF6 superposes -- ADDS; an elevation or an intensive value
+    never does. :attr:`FieldSpec.agg` returns this for its own ``kind``, and the
+    observation targets' reduction (``observations._shared._aggregate_named_series``)
+    asks it before it decides whether rows add, so a stage is never summed there
+    either (ledger 331: a pond's stage read 763 times itself).
+
+    Parameters
+    ----------
+    kind : str
+        What the number is: ``"extensive"``, ``"elevation"`` or ``"intensive"``,
+        the closed set a :class:`FieldSpec` declares.
+
+    Returns
+    -------
+    str
+        ``"sum"`` for ``"extensive"``, ``"mean"`` for the other two.
+
+    Raises
+    ------
+    ValueError
+        If ``kind`` is not one of the three: a typo would otherwise fall through
+        to the non-additive branch and quietly change how a value combines.
+
+    Examples
+    --------
+    >>> agg_for_kind("extensive")
+    'sum'
+    >>> agg_for_kind("elevation")
+    'mean'
+    """
+
+    if kind not in _FIELD_KINDS:
+        raise ValueError(f"kind {kind!r} is not one of {sorted(_FIELD_KINDS)}.")
+    return "sum" if kind == "extensive" else "mean"
+
+
 @dataclass(frozen=True)
 class FieldSpec:
     """Registry metadata for one package input field."""
@@ -93,10 +133,11 @@ class FieldSpec:
         flux is right; summing a water level is not.
 
         A caller who wants something else passes ``agg=`` at the call, which every map
-        and table already accepts -- this is the DEFAULT, not a restriction.
+        and table already accepts -- this is the DEFAULT, not a restriction. The rule
+        itself is :func:`agg_for_kind`, which the observation targets ask too.
         """
 
-        return "sum" if self.kind == "extensive" else "mean"
+        return agg_for_kind(self.kind)
 
 
 @dataclass(frozen=True)

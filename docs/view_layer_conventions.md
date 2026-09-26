@@ -99,6 +99,18 @@ A difference a number cannot measure is COUNTED: the stage diff's `n_one_sided`.
 **SFR's stage file is NOT masked** (a dry reach is -1e30 too, by MF6's source); it is
 the same change, not made here.
 
+**A feature's value is ONE number, however many rows repeat it** (ledger 331). The LAK
+stage table carries a lake's stage once per CONNECTED CELL and the SFR stage table a
+reach's once per SAVED TIME STEP; a reduction to one value per feature must not add
+them. Ask `package_registry.agg_for_kind(kind)` -- the rule `FieldSpec.agg` returns --
+rather than writing `.sum()`: only an extensive value adds. The observation targets'
+`_aggregate_named_series` takes `kind=` for that reason, refuses copies that disagree
+rather than averaging them, and reads a period's LAST saved step as `HeadTargets` does.
+It had summed: a pond with 763 connected cells read 401,339.97 ft for 526.00. The
+period-end rule needs a table carrying `kstpkper`, and the LAK stage table carries none
+(its `per` is the saved-record index, ledger 301), so a LAK target keyed by period at
+several saves per period reads a step inside an earlier period -- still open (ledger 331).
+
 **A section has two subjects, and `fill=` picks which** (ledger 177, 2026-09-02).
 Without it, `section` answers *what is the head along this line* -- a profile,
 two traces, no geometry. With it, *what does the model look like through here* --

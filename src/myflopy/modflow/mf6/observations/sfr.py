@@ -128,7 +128,50 @@ class SfrStageTargets:
         }
 
     def simulated_series(self, model) -> pd.DataFrame:
-        """Return one wide simulated-stage table indexed by stress period."""
+        """Return one wide simulated-stage table: a ``time`` column and one column per target.
+
+        Read from the model's SFR stage observations when one workspace CSV holds
+        every target's column (MF6's observation labels, as :meth:`to_flopy_obs`
+        writes them), else from ``packages.sfr.results.stage``. The two routes
+        label ``time`` differently: the observation route carries MF6's simulated
+        time, one row per time step; the stage-file route the zero-based stress
+        period.
+
+        **On the stage-file route a period holds ONE stage per reach: its LAST
+        saved time step** (ledger 331), the period-end rule ``HeadTargets`` uses.
+        The route used to ADD every time step a period saved, so under ``SAVE HEAD
+        ALL`` with three steps per period a reach at 141.43 ft read 424.29 --
+        a stage is not added (ledger 297). One saved step per period (``SAVE HEAD
+        LAST``, or one time step) reads as before. A dry reach is still MF6's
+        -1e30 on this route: SFR's stage is not masked yet (ledger 329).
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with an SFR package, as ``mf.load_mf6_run(ws)`` or
+            ``run.model()`` returns. The observation route needs its workspace;
+            the stage-file route needs an SFR ``stage_filerecord``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` plus one float column per target name. On the stage-file
+            route a target naming a reach the model does not have gets no column.
+            Empty (those columns, no rows) when the stage file holds no record.
+
+        Raises
+        ------
+        ValueError
+            On the stage-file route, when the rows of one reach in one saved
+            record are not copies of one stage -- naming the reach, the period
+            and the spread. MF6's stage table cannot produce that; it guards a
+            table that is not the one this reads.
+
+        Examples
+        --------
+        >>> targets = mf.SfrStageTargets(locations={"gage": 12})
+        >>> series = targets.simulated_series(model)   # one row per stress period
+        """
 
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
         if observed is not None:
@@ -136,14 +179,45 @@ class SfrStageTargets:
         frame = model.packages.sfr.results.stage.get().copy()
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
-        frame = _aggregate_named_series(frame, id_column="reach", value_column="stage")
+        frame = _aggregate_named_series(
+            frame, id_column="reach", value_column="stage", kind="elevation"
+        )
         merged = self._locations.merge(frame, on="reach", how="left")
         wide = merged.pivot_table(index="per", columns="name", values="stage", aggfunc="first").reset_index()
         wide.columns.name = None
         return wide.rename(columns={"per": "time"})
 
     def compare(self, model) -> pd.DataFrame:
-        """Compare target reach stages against simulated SFR stages (with residuals)."""
+        """Compare target reach stages against simulated SFR stages (with residuals).
+
+        ``sim_stage`` comes from the same two routes as :meth:`simulated_series`:
+        on the stage-file route, one stage per reach per stress period, its last
+        saved time step (ledger 331). Targets are matched on ``per``, read from
+        their ``time`` as a zero-based integer -- compared with MF6's simulated
+        time on the observation route and with the stress period on the
+        stage-file route.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with an SFR package, as ``mf.load_mf6_run(ws)`` or
+            ``run.model()`` returns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per target row (per simulated row when the targets hold no
+            values): ``name``, ``reach``, ``time``, ``per``, ``stage_target``,
+            ``sim_stage``, ``residual`` (simulated minus target) and
+            ``abs_residual``.
+
+        Raises
+        ------
+        ValueError
+            On the stage-file route, when a reach's copies in one record
+            disagree (as :meth:`simulated_series`), or when a target's ``time``
+            is not a number.
+        """
 
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
         if observed is not None:
@@ -151,7 +225,12 @@ class SfrStageTargets:
             simulated["per"] = simulated["time"]
             simulated = self._locations.merge(simulated, on="name", how="left")
         else:
-            simulated = _aggregate_named_series(model.packages.sfr.results.stage.get().copy(), id_column="reach", value_column="stage")
+            simulated = _aggregate_named_series(
+                model.packages.sfr.results.stage.get().copy(),
+                id_column="reach",
+                value_column="stage",
+                kind="elevation",
+            )
             simulated = self._locations.merge(simulated, on="reach", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
             compare = simulated.rename(columns={"per": "time"}).copy()

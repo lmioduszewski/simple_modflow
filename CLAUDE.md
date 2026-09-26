@@ -85,6 +85,17 @@ HELPER's argument names (`drn.elevation`, `ghb.head`, `wel.rate`), NOT the recor
 NOTHING for those three and raises nothing. `_EXTENSIVE_FIELDS` is deliberately a
 STRICT SUBSET of `kind == "extensive"`: it asks whether the declared column holds a
 TOTAL, which an unwrapped conductance does not.
+**The rule is ONE function, `package_registry.agg_for_kind`, and the observation targets
+ask it too** (ledger 331): `_aggregate_named_series` takes a REQUIRED `kind=`. A stage
+table repeats a lake's one stage on every connected cell, and the targets ADDED the
+copies -- the user's pond, 763 cells, read **401,339.97 ft for 526.00**, in the CSVs PEST
+read. Copies that disagree are REFUSED, not averaged; a table carrying `kstpkper` reads
+each period's LAST step (HeadTargets' rule). STILL OPEN: the SFR/DRN FLOW targets add a
+period's saved steps (3x at `nstp=3`), and on the OBSERVATION route a target keyed by
+period silently matches nothing -- PEST keeps the simulated value as its `obsval`. A
+LAK STAGE-FILE target is keyed by SAVED RECORD (301's `per`-as-record-index), the period
+only at one save per period: at `nstp=3` periods 0-2 read steps 1-3 of period 0, where
+head and SFR targets beside it read period end.
 Figures are **always `viz.Fig`**, never a bare `go.Figure` — a bare figure silently
 drops `scrollZoom`, `dragmode='pan'`, and the house template. Colors come from the
 policy helper, not hex literals at the call site.
@@ -449,7 +460,13 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4336 passed / 6 skipped**, 2026-09-25, with ledger 318's fix and its
+- Full suite (**4351 passed / 6 skipped**, 2026-09-26, ledger 331's branch at its final
+  check): serial (`-n0`) **7m33s** (load average ~3.9 at its start, the 5-minute figure
+  ~11 as another workload wound down, and two scripts reading a real run shared its
+  first two minutes) and `pytest -n 10` **2m13s** beside another session's serial suite
+  (~4 at start), a ratio of 3.4x -- 2m55s when that session's own `-n 10` overlapped
+  the last 90 s. The same 4351 took 2m12s at ~14-15 the day before, 4350 1m37s at ~6.4.
+  4336 (ledger 318's fix and its
   review): serial (`-n0`) **7m03s** and `pytest -n 10` **1m35s**, the branch's final
   check with no other MF6 workload on the machine (load average ~3.5 at the serial
   run's start), a ratio of 4.4x; an earlier `-n 10` of the same 4336 took 1m32s at ~7

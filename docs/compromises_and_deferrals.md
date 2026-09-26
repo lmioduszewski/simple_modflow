@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 330 entries (335 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 331 entries (336 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 331 | A stage target read a lake's stage once per connected cell, and a reach's once per saved time step: one sta... | 2026-09-25 |
 | 330 | A run records the grid each model was built on, and ``runs.summary()`` says how its cells were made -- not... | 2026-09-25 |
 | 329 | A lake with no stage is a gap in every LAK stage view: MF6's -1e30 (dry) and +1e30 (inactive) are masked on... | 2026-09-25 |
 | 328 | `grid.cl12` is MF6's PER-SIDE connection length again: from 2025-07-02 every DISU myflopy wrote carried abo... | 2026-09-25 |
@@ -12641,7 +12642,8 @@ same day, which is the useful part of the result.
       * **The STAGE-clock family, ~12 sites, same root shape.**
         `LakStageOutput.get` reshapes with no clock at all and
         `build_lak_stage_result_table` labels `per` by SAVED-RECORD INDEX (measured
-        `per = 0..5` on a 2-period model); `group/lak.py` pairs stage records with
+        `per = 0..5` on a 2-period model; a `LakeStageTargets` keyed by period reads
+        through it, ledger 331); `group/lak.py` pairs stage records with
         `model.kstpkper` and truncates; `group/sfr.py` decodes `SFRStageOutput`'s
         reach-indexed frame as if it were LAK's time-indexed array, so `per=` and `reach=`
         both select the wrong thing; `_coerce_kstpkper` and `XSection.__init__` index the
@@ -14056,6 +14058,8 @@ same day, which is the useful part of the result.
         stage over its connected cells (`_aggregate_named_series`): a lake at 108.0 with two
         connections read 216.0 (measured). The observation route is unaffected, and its
         `time` is MF6's total time where the stage-file route's is the period index.
+        **The sum is RESOLVED by ledger 331** (one stage per lake per saved record); the
+        two `time` labels are not, and 331 measures what they cost.
       - A lake connected in several layers draws one identical line per layer (three on the
         user's pond). Unchanged.
       - **What PEST reads for a lake with no stage is 1e30, on both routes** -- a call
@@ -14321,3 +14325,101 @@ same day, which is the useful part of the result.
       still unbuilt.
       Tests: ``tests/test_run_grid_record.py`` (4); each of four single-piece mutations
       fails a named test.
+331. **A stage target read a lake's stage once per connected cell, and a reach's once per saved time step: one stage per feature per record now, by ledger 297's rule (2026-09-25).**
+      `_aggregate_named_series` ADDED every row of one (`per`, id). `packages.lak.results.
+      stage` holds a lake's one stage once per CONNECTED CELL, so `LakeStageTargets`'
+      stage-file route read the user's excavated pond (`sw_mounding_flow_pitk_9232026_
+      QpogK15_exc`, 763 connected cells) at **401,339.97 ft for 526.0026** -- 763 times
+      itself -- and so did the CSV PEST's base run and every forward run write (`prepare_
+      lake_stage_observations`, `write_named_series_targets`; nothing in `pest/` attaches
+      LAK observations, so this was the route unless the model carried them).
+      `SfrStageTargets` shared the helper, and its table is one row per reach per SAVED
+      TIME STEP, so a period saving three steps read three stages added: 141.43 ft ->
+      424.29 on the canonical model at `nstp=3` with `SAVE HEAD ALL`. `compare()`'s
+      fallback went through the same sum on both.
+      **The helper takes what the value IS, and asks the registry.** `kind=` is REQUIRED
+      (a new caller has to say) and is answered by `package_registry.agg_for_kind`, the
+      one rule `FieldSpec.agg` now also returns -- not a second copy of "sum only if
+      extensive". Extensive rows add (`sum(min_count=1)`, as before). Otherwise the rows
+      are COPIES of one number and give that number: the FIRST copy, so it equals the
+      file to the bit; for copies that agree that IS the registry's `mean`. **Copies that
+      DISAGREE are REFUSED, not averaged** -- by more than 1e-9 of the value (floor 1e-9),
+      or some holding a value and some not -- naming the id, the `per` and the spread.
+      MF6's tables cannot produce that (the stage is merged onto each cell), so the
+      refusal guards the assumption rather than a case seen; averaging would invent a
+      stage the file never held.
+      **A period that saved several steps reads its LAST: a judgment call.** A table
+      carrying `kstpkper` is reduced to each period's period-end save before the copies
+      are read -- the rule `HeadTargets` already applies (`_simulated_field_by_period`),
+      so head and SFR-stage targets in one PEST run read the same instant. Refusing was
+      the other candidate (the house default), and would have made SFR stage targets
+      unusable under `SAVE HEAD ALL` while head targets beside them quietly took period
+      end. Not warned. The LAK table carries no `kstpkper` -- its `per` IS the saved
+      record's index (ledger 301's stage clock) -- so every LAK record is kept, as before,
+      and **lake targets on the stage-file route are NOT on that instant**: at more than
+      one saved step per period they sit on the record clock (the time-labels bullet).
+      **The extensive branch has no caller today.** The flow targets never went through
+      this helper -- `SfrFlowTargets._package_flow_table` and `DrnFlowTargets` sum with
+      their own `groupby`; it exists because the rule is "sum only if extensive", and it
+      is where they would go (below).
+      **Found alongside, NOT fixed, each measured:**
+      - **The flow targets add a period's saved steps too.** The canonical model at
+        `nstp=3`, `SAVE BUDGET ALL`: SFR flow at reach 54 37,817.76 -> 113,453.29, a
+        one-cell DRN zone -97.50 -> -292.51, both 3.0x (1 step per period reads right).
+        Same class, other axis: summing over cells is right for a flux, over time steps
+        is not. Routing them through this helper (`kind="extensive"`) would take the
+        period-end step; whether a flow's per-period value should be the period END or a
+        time-weighted mean is the call not made here.
+      - **The two routes' `time` labels** (the stage-clock family, ledger 301). Measured
+        on the reproducer's lake (one step per period) through `compare()` and a PstFrom
+        build: the observation route's `time` is MF6's simulated time (10.0 .. 60.0), the
+        stage-file route's the saved record's index (LAK) or the stress period (SFR). A
+        target keyed by PERIOD on the observation route matches 0 of 6 rows in
+        `compare()`, and in the PEST build every observation keeps the base run's
+        SIMULATED value as its `obsval`, weight 1 -- the targets silently dropped
+        (`_assign_target_values` `continue`s on a name it cannot find). Keyed by MF6's
+        time as integers it matches both; as FLOATS (10.0) `compare()` matches and PEST
+        does not (`time:10.0` against pyEMU's `time:10`), silently again. Keyed by period
+        on the stage-file route both work -- **at ONE saved step per period only.** When
+        output control saves several, a LAK stage-file target must be keyed by
+        SAVED-RECORD index: keyed by stress period it silently reads a step inside an
+        EARLIER period, unlike the SFR and head targets beside it, which read period end.
+        Measured on the same grid with one three-connection lake, `nper=3`, `nstp=3`,
+        `SAVE HEAD ALL`: the stage file holds 9 records and the route labels them 0..8;
+        targets at `time` 0, 1, 2 read 102.7025, 101.8236, 101.2282 -- steps 1-3 of
+        period 0 -- where the period ends are 101.2282, 100.3666, 100.0987 (records 2, 5,
+        8), and `HeadTargets` on that run reads each period's step 3. The PEST build puts
+        the three targets on `time:0..2` and keeps the SIMULATED value, weight 1, as the
+        `obsval` of `time:3..8`. Nothing warns. The open fix is
+        `build_lak_stage_result_table` carrying the stage file's own `kstpkper` (ledger
+        301), after which this helper's period-end reduction applies to LAK as it does to
+        SFR. Not fixed here: that table is `packages.lak.results.stage`, so the fix moves
+        `per` under every LAK stage view (the plots, maps, `stage_change` and the
+        exchange hover's `join_lak_stage`), not only these targets. Pinned as a limit by
+        `test_a_lake_target_keyed_by_period_reads_the_record_clock_at_several_saves`, so
+        this sentence fails with the fix rather than outliving it.
+      - **The observation route is chosen, and read, by NAME.** The lake id is never
+        consulted: `LakeStageTargets(locations={"drying": 1})` returned lake 0's
+        `DRYING` column (100.09 ft) where lake 1 holds 108.0.
+      - The period-end rule is now stated twice in `observations/_shared.py` (per
+        (`per`, layer, cell) in `_simulated_field_by_period`, per period here); the same
+        for every table that saves each id at every step, not merged.
+      **Blast radius, read-only.** No test asserted a summed value: every test that drove
+      the stage-file route had one-connection lakes or one step per period, where the sum
+      IS the value. The canonical model attaches LAK and SFR observations for its own
+      target names, so `canonical_00`/`canonical_01`, `master_large_model_visualization_
+      prt_workflow` and the master-example test read the observation route; `canonical_
+      04`/`05`/`06` observe head targets only. Of the user's `.pst` files, `tw2_aqtest`
+      observes heads and the SSPA `calib40_regul` set was not built by myflopy; no
+      `*_simulated_lake_stage.csv` exists outside a test scratch directory. The user's
+      pond run has NO LAK observations, so any `LakeStageTargets` on it read 763x.
+      Reproducer: `docs/reproducers/stage_targets_one_stage.py` (toy lake and stream,
+      before by the old rule and after; the three-save lake's record clock through
+      `compare()`, `HeadTargets` and a PEST build; and any run passed on the command
+      line). Tests:
+      `tests/test_stage_targets_one_stage.py`, 15 (9 on three real MF6 runs; the ninth
+      pins the record-clock LIMIT above, and fails by name when a period clock is
+      substituted into `build_lak_stage_result_table`). Reverting the
+      non-extensive branch to a sum fails 9 by name; dropping the period-end rule 4; the
+      refusal 3; the partial-NaN refusal 1; `kind="extensive"` at each of the four call
+      sites fails its own (7, 3, 1 and 1).
