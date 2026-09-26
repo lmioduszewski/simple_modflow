@@ -46,9 +46,13 @@ WHAT IT MEASURES
      re-outlined, on FloPy's own vertex ids).
   6. What myflopy's geometry makes of it: a feature inside the hole, the grid-edge cells,
      cell_coverage between two grids of the one boundary, and total area.
-  7. A boundary that is not ONE simple polygon: with an interior ring it does not build,
-     and in two parts FloPy's cells cover one part only -- tri2vor's domain is
-     ``_polygons[0]`` alone. The repaired grid takes the dual's cells there.
+  7. A boundary that is not ONE simple polygon: in two parts FloPy's cells cover one part
+     only -- tri2vor's domain is ``_polygons[0]`` alone -- and the repaired grid takes the
+     dual's cells there. An interior ring did not build at all (FloPy's add_polygon handed
+     the ring to add_hole, which wants a point); it builds now, and a refinement drawn
+     around the hole shows the clip inset's sliver: the node count with the default
+     ``domain_clip_tolerance`` against 0, and a refinement box clear of the outer edge,
+     ending on it, and crossing it.
   8. Not tri2vor: the default profile ("balanced", simplify_tolerance=2.0) simplifies the
      DOMAIN before meshing, so on a curved boundary the cells tile the simplified polygon,
      not the one supplied. A corridor 300 ft wide along a sine, at max_area 5000.
@@ -330,11 +334,32 @@ def main() -> None:
 
     # 7. A boundary with a hole.
     ringed = Polygon(box(0, 0, 1000, 1000).exterior.coords, [box(300, 300, 600, 600).exterior.coords])
-    try:
-        _grid(root, ringed, 5000, "ringed")
-        print("7. a boundary with an interior ring: built")
-    except Exception as exc:  # noqa: BLE001 - reported, whatever it is
-        print(f"7. a boundary with an interior ring: {type(exc).__name__}: {exc}")
+    rvor, _ = _grid(root, ringed, 5000, "ringed", "dual")
+    runion = shapely.union_all(_cells(rvor))
+    print(f"7. a boundary with an interior ring builds: {rvor.ncpl} cells, gap {ringed.difference(runion).area:.2g} "
+          f"ft2, outside {runion.difference(ringed).area:.2g} ft2; {rvor.tessellation_report.summary()}")
+    from myflopy.modflow.mf6.grid.triangle import TriangleGrid
+
+    for tolerance in (None, 0.0):
+        sliver = TriangleGrid(model_ws=str(root / f"sliver_{tolerance}"), angle=32, domain_clip_tolerance=tolerance)
+        sliver.set_domain_polygon(ringed, max_area=5000.0)
+        sliver.add_region_polygon(box(250, 250, 650, 650), max_area=1000.0)
+        sliver.build_mesh(profile="clean")
+        print(f"   ...with a refinement box around the hole, domain_clip_tolerance={tolerance}: "
+              f"{len(sliver.verts):,} nodes")
+    for label, region in (("50 ft clear of the L's south edge", box(100, 50, 350, 300)),
+                          ("ending exactly on it", box(100, 0, 350, 250)),
+                          ("crossing it", box(100, -100, 350, 150))):
+        counts = []
+        for tolerance in (None, 0.0):
+            edge = TriangleGrid(model_ws=str(root / f"edge_{region.bounds[1]}_{tolerance}"), angle=32,
+                                domain_clip_tolerance=tolerance)
+            edge.set_domain_polygon(L_SHAPE, max_area=5000.0)
+            edge.add_region_polygon(region, max_area=1000.0)
+            edge.build_mesh(profile="clean")
+            counts.append(len(edge.verts))
+        print(f"   a refinement box {label}: {counts[0]:,} nodes on defaults, {counts[1]:,} with "
+              "domain_clip_tolerance=0")
     parts = [box(0, 0, 1000, 1000), box(1500, 0, 2500, 1000)]
     path = root / "two_parts.gpkg"
     gpd.GeoDataFrame({"name": ["west", "east"]}, geometry=parts, crs=2927).to_file(path)

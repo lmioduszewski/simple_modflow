@@ -528,7 +528,16 @@ until it went away was the usual dodge. `VoronoiGridPlus` now checks every cell 
 Triangle's own mesh and repairs the wrong ones (ledger 316), and a grid with nothing wrong
 is unchanged byte for byte. `vor.tessellation_report.summary()` says what was repaired;
 `GridSpec.voronoi(..., tessellation="flopy")` reproduces a grid made before the repair.
-A boundary with a hole in it does not build yet (ledger 317).
+A boundary with a hole in it (an island, a lake cut out) builds now (ledger 317); one
+that touches itself -- a hole meeting the edge, two parts meeting at a corner -- is
+refused by name, because the cell there would be two pieces.
+
+**Keep refinement polygons clear of the boundary.** A refinement polygon that crosses the
+boundary -- or ends exactly on it, which is what clipping it to the boundary yourself
+produces -- is clipped to a slightly inset domain, and Triangle meshes the thin sliver
+between: 6,903 nodes against 493 for the same box kept 50 ft clear (the L, `max_area`
+5000, refinement 1000), and 44,324 around a hole. Stop refinement polygons about a cell
+width short of the edge.
 
 **Sources must be file-backed.** A `GridSpec` is a serializable recipe — it has to
 survive `to_dict()` / `from_yaml()` — so an in-memory GeoDataFrame cannot be one.

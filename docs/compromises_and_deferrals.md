@@ -33,7 +33,7 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 329 entries (333 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 329 entries (334 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
@@ -50,6 +50,7 @@
 | 319 | "The top active layer" is ONE rule, `idomain > 0`: the array form read `!= 0` and sent recharge into pass-t... | 2026-09-25 |
 | 318 | ~~Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewritin...~~ | 2026-09-25 |
 | 318 | Lake inputs that `mf.lak`, `LakeTableBuilder` and `LakeTable` accept without checking: found while rewritin... | 2026-09-25 |
+| 317 | ~~A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring doe...~~ | 2026-09-24 |
 | 317 | A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring doe... | 2026-09-24 |
 | 316 | ~~``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``,...~~ | 2026-09-24 |
 | 316 | ``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``,... | 2026-09-24 |
@@ -14264,3 +14265,32 @@ same day, which is the useful part of the result.
       of the fix fails a named test. The reproducers now show FloPy's cells
       (``tessellation="flopy"``) beside the repaired grid, and ``surface_domain_mask.py``
       builds FloPy's cells so ledger 314's numbers still reproduce.
+
+317. ~~**A ``GridSpec.voronoi`` boundary in two parts silently keeps cells in ONE, and one with an interior ring does not build (2026-09-24).**~~
+      **RESOLVED 2026-09-25**, in two commits. The two-part half went with ledger 316's
+      repair: Triangle meshes every part, and where FloPy's cells cover one, the dual of
+      Triangle's mesh -- which finds its boundary from the mesh itself -- is taken whole
+      (353 and 372 cells where FloPy gave 0 and 372). The hole half is in ``TriangleGrid``'s
+      input: each part's exterior, then each hole as a ring polygon plus a point inside it --
+      the order ``tri2vor`` reads -- and a region's own ring passed as a segment, never to
+      ``add_hole`` (an annular refinement had its whole middle carved out of the mesh, and a
+      region ring that IS a domain hole is not added a second time, which FloPy refused as
+      duplicate points). A holed square builds and tiles exactly; its hole corners are reflex
+      corners, and ledger 316's repair rewrites the two FloPy draws wrong.
+      **A boundary that touches itself is refused**, naming the place: a hole meeting the
+      edge, or two parts meeting at a corner. Shapely calls both valid and Triangle meshes
+      them, but the cell at that node would be two pieces, which one DISV cell cannot be.
+      **Not done:** a refinement polygon crossing the boundary, or ending exactly on it, is
+      clipped to the domain inset by 1e-4 of its diagonal, and Triangle meshes the sliver
+      between -- on the L 6,903 nodes against 493 for the same box kept 50 ft clear, and
+      44,324 against 691 (``domain_clip_tolerance=0``) around the holed square's hole
+      (section 7 of ``voronoi_tiling_gaps.py``). The inset predates this; its stated reason
+      is that Triangle aborts on a region segment lying on the boundary, yet with the
+      tolerance at 0 the crossing and ending-on-edge boxes built cleanly (383 and 411 nodes,
+      same section), so the reason itself wants re-measuring. ``GridSpec.voronoi`` does not
+      accept ``domain_clip_tolerance``. That is its own change; the cheatsheet says to keep
+      refinement clear of the boundary meanwhile. A curved boundary is simplified by
+      2 ft before meshing (profile "balanced"), so the cells tile the meshed boundary, not the
+      drawn one (ledger 316's section 8).
+      Tests: ``tests/test_boundary_parts_and_holes.py`` (7); each of five single-piece
+      mutations fails a named test.

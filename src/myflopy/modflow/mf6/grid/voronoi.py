@@ -258,6 +258,16 @@ class VoronoiGridPlus(VoronoiGrid):
                     category=RuntimeWarning,
                     module=r"flopy\.utils\.geometry",
                 )
+                # tri2vor averages an EMPTY vertex list for each cell it is about to pop --
+                # every cell of a boundary's second part, say -- before the repair below
+                # puts those cells back.
+                warnings.filterwarnings("ignore", message="Mean of empty slice", category=RuntimeWarning)
+                warnings.filterwarnings(
+                    "ignore",
+                    message="invalid value encountered in divide",
+                    category=RuntimeWarning,
+                    module=r"numpy\._core\._methods",
+                )
                 super().__init__(tri, qhull_options=qhull_options, **kwargs)
             if tessellation == "dual":
                 self._repair_tessellation(tri)

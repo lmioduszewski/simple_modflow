@@ -1200,7 +1200,9 @@ copies now, and a result given a `grid=` of another cell count is refused at the
   dual's cells are taken whole, renumbered, logged at WARNING. `tessellation="flopy"`
   (on `GridSpec.voronoi` or `VoronoiGridPlus`) rebuilds FloPy's cells exactly, and a grid
   rebuilt from verts/iverts (snapshot, pickle, reloaded run) is never repaired. A
-  boundary with an interior ring still raises `IndexError` (ledger 317).
+  boundary with an interior ring builds (ledger 317): `TriangleGrid` gives Triangle each
+  hole as ring plus interior point, never a region's ring as a hole, and refuses a
+  boundary that touches itself (a hole meeting its edge, parts meeting at a corner).
 
 Reference: `examples/mf6/package_first_full_stack.py` (full package-first stack on a Project).
 

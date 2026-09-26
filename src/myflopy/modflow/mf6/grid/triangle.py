@@ -491,6 +491,7 @@ class TriangleGrid(Triangle):
     ):
         """Record the domain geometry and, when ``max_area`` is set, add a background sizing region."""
 
+        self._refuse_a_self_touching_domain(geometry)
         self.domain_spec = DomainSpec(geometry=geometry, label=label, max_area=max_area)
         if max_area is not None:
             domain_region_geometry = self._domain_background_geometry(geometry, max_area=max_area)
@@ -502,6 +503,31 @@ class TriangleGrid(Triangle):
                 source="domain",
             )
         return geometry
+
+    @classmethod
+    def _refuse_a_self_touching_domain(cls, geometry: Polygon | MultiPolygon) -> None:
+        """Refuse a domain that touches itself: two parts meeting, a hole meeting an edge.
+
+        Shapely calls both valid, and Triangle meshes them, but the node where the domain
+        touches itself has two separate fans of triangles, so its Voronoi cell would be two
+        pieces -- which one DISV cell cannot be. Refused here, where the place can be named,
+        rather than as FloPy's "duplicate points" or a fan that does not close.
+        """
+
+        parts = list(cls._iter_polygons(geometry))
+        rings = []
+        for index, polygon in enumerate(parts):
+            rings.append((f"part {index}'s edge", polygon.exterior))
+            rings.extend((f"part {index}'s hole {j}", ring) for j, ring in enumerate(polygon.interiors))
+        for i, (name_a, ring_a) in enumerate(rings):
+            for name_b, ring_b in rings[i + 1:]:
+                if ring_a.intersects(ring_b):
+                    x, y = ring_a.intersection(ring_b).representative_point().coords[0]
+                    raise ValueError(
+                        f"The model boundary touches itself at ({x:.6g}, {y:.6g}): {name_a} "
+                        f"meets {name_b}. A Voronoi cell there would be two pieces, which a "
+                        "DISV cell cannot be. Separate them, or merge them into one polygon."
+                    )
 
     def _domain_background_geometry(
         self,
@@ -1243,11 +1269,33 @@ class TriangleGrid(Triangle):
         if self.domain_spec is None:
             return
 
-        for polygon in self._iter_polygons(self.domain_spec.geometry):
-            super().add_polygon(polygon)
+        # Every part's exterior, then every hole as a ring polygon PLUS a point inside it:
+        # the order FloPy's tri2vor reads (domain, holes, then regions). FloPy's own
+        # add_polygon hands an interior ring to add_hole, which wants a point -- the ring
+        # was never a segment and the "point" was its first two vertices, so a boundary
+        # with a hole did not build (ledger 317).
+        parts = list(self._iter_polygons(self.domain_spec.geometry))
+        for polygon in parts:
+            super().add_polygon(polygon, ignore_holes=True)
+        holes = []
+        for polygon in parts:
+            for ring in polygon.interiors:
+                hole = Polygon(ring)
+                super().add_polygon(hole, ignore_holes=True)
+                Triangle.add_hole(self, hole.representative_point().coords[0])
+                holes.append(hole)
 
         for region in self._prepared_regions:
-            super().add_polygon(region.geometry)
+            super().add_polygon(region.geometry, ignore_holes=True)
+            # A region's own ring is a SEGMENT, never a hole: handed to add_hole it carved
+            # the region's middle out of the mesh -- an annular refinement lost its whole
+            # disc. A ring that IS a domain hole is a segment already, and adding it a
+            # second time, from an intersection's coordinates, is refused by FloPy as
+            # duplicate points (measured with domain_clip_tolerance=0).
+            for ring in region.geometry.interiors:
+                inner = Polygon(ring)
+                if not any(inner.symmetric_difference(h).area <= 1e-9 * max(h.area, 1.0) for h in holes):
+                    super().add_polygon(inner, ignore_holes=True)
             Triangle.add_region(
                 self,
                 point=region.point,
