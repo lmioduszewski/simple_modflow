@@ -111,7 +111,7 @@ def test_an_animation_can_mix_picture_kinds(canonical_run, tmp_path):
     model = canonical_run
     mixed = [
         ("a map", model.plot.map(layer=0)),
-        ("a section", model.plot.section(cells=[0, 1, 2])),
+        ("a section", model.plot.section(cells=[0, 1, 2], backend="plotly")),
     ]
 
     written = plot.animate(mixed, backend="png").html(tmp_path / "mixed.html")

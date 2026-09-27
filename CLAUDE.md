@@ -108,17 +108,23 @@ never verbs; **`backend=` switches the renderer, never the subject** (which is w
 the 3-D volume is `grid(backend="vtk")`, not `surface(...)` — `surface` means a
 height field; `surface(backend="vtk")` exists and draws those height fields as
 separate PyVista sheets, which is the rule holding rather than bending). Everything returned is a `viz.Picture`: `.fig` / `.show()` /
-`.save(path)` / `.html(path)`, and never a trailing `.plot()`.
-**A cross-section of the MODEL (grid + layers + results) is
-`section(fill=..., backend="mpl")`** (ledger 177, 2026-09-02) -- `fill="layer"`
-colours cells by layer and draws the head as a water surface; `fill="results"`
-colours them by head/conc/temp with a colorbar; a `(nlay, ncpl)` array paints
-anything else. Plain `section()` is a LINE PROFILE (head vs distance) and draws
-no cells -- that difference is what sent this looking twice. `fill=` draws on
-BOTH backends, the same cells (ledger 332): one `FilledSection` reads one FloPy
-`PlotCrossSection`, so Plotly is not a second derivation of the geometry. It
-raises rather than degrading: on any profile-only argument, on `"results"` for a
-bare grid, and on a flat `(ncpl,)` array.
+`.save(path)` / `.html(path)`, and never a trailing `.plot()` -- bar a `backend="mpl"`
+figure, which is `section`'s DEFAULT (next paragraph).
+**`section()` IS the model's cross-section, drawn by Matplotlib** (ledger 333, the
+user's call, 2026-09-26; the picture since ledger 177): the defaults are
+`fill="layer"` -- cells coloured by layer, the head as a water surface on top -- and
+`backend="mpl"`, the ONE verb whose default is static, so a bare call returns a bare
+`Figure` (`.savefig`), not a Picture. `fill="results"` colours the cells by
+head/conc/temp with a colorbar; a `(nlay, ncpl)` array paints anything else.
+**`fill=None` is the LINE PROFILE** (head vs distance, no cells -- the old default)
+and the ONE spelling of it: a profile argument (`layer=`, `interpolate=`, ...) given
+without it RAISES naming `fill=None`, so the picture never depends on which other
+arguments were passed. Both pictures draw on BOTH backends, the same cells (ledger
+332): one `FilledSection` reads one FloPy `PlotCrossSection`, so Plotly is not a
+second derivation of the geometry. `.ani` stays the Plotly profile's
+(`fill=None, backend="plotly"`). It raises rather than degrading: on the other
+picture's arguments, on `"results"` or a results argument for a bare grid, and on
+a flat `(ncpl,)` array.
 Pick what it contains with `layers=` (which layers' cells; masks and CROPS the
 view), `head_layers=` (whose water levels ride on top -- default `0`, a list
 draws one labelled surface each, `None` none) and `layer_labels=` (unit names for

@@ -4,8 +4,8 @@
 
     plot.map(model, layer=0)                  # plan view
     plot.map(vor, values=drawdown)            # ... of any per-cell array
-    plot.section(model, cells=[1653, 651])    # vertical slice through results
-    plot.section(vor, line=line)              # ... of the grid itself
+    plot.section(model, cells=[1653, 651])    # the model's cross-section, by layer
+    plot.section(vor, line=line)              # ... of the grid's layers alone
     plot.surface(model, layer=0)              # 3-D
     plot.grid(vor)                            # the bare mesh, no basemap
     plot.mosaic([a, b, c])                    # compose any pictures
@@ -28,7 +28,9 @@ else changes.
 
 **Everything returned is a Picture** (:class:`myflopy.viz.Picture`): it renders
 itself in Jupyter, and answers ``.fig``, ``.show()``, ``.save(path)`` and
-``.html(path)``. You never need a trailing ``.plot()``.
+``.html(path)``. You never need a trailing ``.plot()``. The exception is a static
+picture: ``backend="mpl"`` returns a bare Matplotlib ``Figure``, and that is
+``section``'s default.
 
 Two things deliberately absent:
 
@@ -680,25 +682,43 @@ def _filled_section(source, vor, is_model, *, line, cells, per, kstpkper,
     )
     if stray:
         raise ValueError(
-            f"{', '.join(stray)} shape the line PROFILE; fill= draws the cells "
-            f"themselves, so they have nothing to act on. Drop them, or drop "
-            f"fill= to get the profile."
+            f"{', '.join(stray)} shape the LINE PROFILE, which is fill=None; "
+            f"the cross-section (fill={fill!r}, the default being 'layer') "
+            f"draws the cells themselves, so they have nothing to act on. Pass "
+            f"fill=None for the profile, or drop them."
         )
     if _asked_for(asked.get("layer", 0), 0):
         raise ValueError(
-            "layer= overlays head PROFILES, which the filled section does not "
-            "draw. Use layers= to choose which layers' cells to draw, and "
-            "head_layers= to choose whose water levels go on top."
+            "layer= chooses whose head LINES the line profile draws (fill=None). "
+            "On the cross-section use layers= to choose which layers' cells to "
+            "draw, and head_layers= to choose whose water levels go on top."
         )
     if extra:
         # The profile branch forwards its tail to `XSection`; this branch builds
         # no such class, so anything left over would be accepted and dropped --
         # which is how `show_grid=False` did nothing before it was named.
         raise ValueError(
-            f"{', '.join(sorted(extra))} are not arguments of a filled section. "
-            f"The **kwargs tail reaches the line-profile class, which this "
-            f"branch does not build."
+            f"{', '.join(sorted(extra))} are not arguments of the cross-section. "
+            f"The **kwargs tail reaches the line profile's section class "
+            f"(fill=None), which this branch does not build."
         )
+    if not is_model:
+        # Nothing here reads results, so on a bare grid these would be taken and
+        # dropped: `plot.section(vor, line, per=3)` drew the same geometry as
+        # without it once the cross-section became the default.
+        needs_results = [
+            name for name, value, default in (
+                ("per", per, None), ("kstpkper", kstpkper, None),
+                ("head_layers", asked.get("head_layers", 0), 0),
+            )
+            if _asked_for(value, default)
+        ]
+        if needs_results:
+            raise ValueError(
+                f"{', '.join(needs_results)} need a model's results; a bare grid's "
+                f"cross-section draws its layers alone. Pass a model as the first "
+                f"argument, or drop them."
+            )
     if line is None and cells is None:
         raise ValueError("fill= needs a section line: pass line= or cells=.")
     if line is not None and cells is not None:
@@ -771,235 +791,216 @@ def section(
     cells=None,
     per: int | None = None,
     kstpkper: tuple[int, int] | None = None,
-    layer: int | list[int] = 0,
-    x_or_y: str = "x",
-    spacing: int = 10,
-    num_points: int = 100,
-    interpolate: bool = False,
-    use_rbf: bool = True,
-    interpolator: str | None = None,
-    extrapolate_beyond_section_ends: bool = False,
-    show_model_top: bool = True,
-    show_model_btm: bool = False,
-    surf_type: str = "hds",
-    section_name: str | None = None,
-    clip=None,
-    animation_kstpkpers=None,
-    fill=None,
-    fill_cmap: str = "viridis",
-    fill_label: str | None = None,
+    fill="layer",
     layers=None,
     head_layers: int | list[int] | None = 0,
     layer_labels=None,
     show_grid: bool = True,
     legend=True,
+    fill_cmap: str = "viridis",
+    fill_label: str | None = None,
+    layer: int | list[int] = 0,
+    interpolate: bool = False,
+    interpolator: str | None = None,
+    use_rbf: bool = True,
+    num_points: int = 100,
+    clip=None,
+    x_or_y: str = "x",
+    show_model_top: bool = True,
+    show_model_btm: bool = False,
+    surf_type: str = "hds",
+    animation_kstpkpers=None,
+    spacing: int = 10,
+    extrapolate_beyond_section_ends: bool = False,
     reverse: bool = False,
-    backend: str = "plotly",
+    section_name: str | None = None,
+    backend: str = "mpl",
     **kwargs,
 ):
-    """Draw a vertical slice through a model's results, or a grid's geometry.
+    """Draw a vertical slice along a line: the model's cells, or a line profile.
 
-    Through a MODEL this is the results section -- the field against distance
-    along the line. Through a bare GRID it is the geometry section: layers and
-    cell edges, no results. They are different classes because they answer
-    different questions, and **most arguments below only apply to the model
-    branch** -- they are marked. A grid takes ``line`` and nothing else.
+    ``section`` draws one of two pictures, and ``fill`` chooses which:
+
+    ===============================  =============================================
+    ``fill="layer"`` (the default)   The CROSS-SECTION: every cell the line cuts,
+                                     drawn from its bottom to its top and coloured
+                                     by layer, with the simulated water level on
+                                     top.
+    ``fill="results"``               The same cells, coloured by the model's own
+                                     result -- head on GWF, concentration on GWT,
+                                     temperature on GWE -- with a colorbar.
+    ``fill=<(nlay, ncpl) array>``    The same cells, coloured by any field of your
+                                     own: K, a zone id, a residual.
+    ``fill=None``                    The LINE PROFILE: head against distance along
+                                     the line, one line per ``layer=``, plus the
+                                     model top. No cells.
+    ===============================  =============================================
+
+    Both pictures draw on both backends, and each backend draws the same cells.
+    ``backend="mpl"`` -- the default -- returns a static Matplotlib ``Figure``;
+    ``backend="plotly"`` returns an interactive picture, which for the line
+    profile can also step through the saved times (``.ani``).
+
+    Through a bare GRID (``vor.plot.section(line)``) there are no results: the
+    cross-section is the layer geometry alone, ``fill="results"`` raises, and
+    ``fill=None`` draws the cell outlines.
+
+    **Which arguments go with which picture.** An argument given to the other
+    picture RAISES and says which picture it belongs to, rather than being
+    quietly ignored:
+
+    - *either picture:* ``line`` or ``cells``, ``per`` or ``kstpkper``,
+      ``reverse``, ``section_name``, ``backend``;
+    - *the cross-section:* ``layers``, ``head_layers``, ``layer_labels``,
+      ``show_grid``, ``legend``, ``fill_cmap``, ``fill_label``;
+    - *the line profile (``fill=None``):* ``layer``, ``interpolate``,
+      ``interpolator``, ``use_rbf``, ``num_points``, ``clip``, ``x_or_y``,
+      ``show_model_top``, ``show_model_btm``, ``surf_type``,
+      ``animation_kstpkpers``, ``spacing``, ``extrapolate_beyond_section_ends``.
+
+    Mind ``layers=`` against ``layer=``: the cross-section's chooses whose CELLS
+    are drawn, the profile's whose head LINES.
 
     Parameters
     ----------
     source : SimulationBase or VoronoiGridPlus
-        Positional only. A model gives results; a grid gives geometry.
-    line : LineString or Path, optional
-        The section line as a geometry or a vector file. Positional, so
-        ``plot.section(vor, line)`` reads naturally. For a bare grid this is the
-        only way to specify the path. Mutually exclusive with ``cells``.
+        Positional only. A model gives results; a grid gives the geometry alone.
+    line : LineString, sequence of (x, y), or path, optional
+        The section line: a shapely ``LineString``, ``[(x, y), ...]``, or a
+        vector file to read one from. Positional, so ``plot.section(vor, line)``
+        reads naturally. Give ``line`` or ``cells``, not both.
     cells : int or list of int, optional
-        *(model only)* Cell indices defining the section path, in order.
+        The section path as cell numbers, in order; the line runs through their
+        centroids.
     per : int, optional
-        *(model only)* Stress period (0-based). Mutually exclusive with
-        ``kstpkper``.
+        Stress period (zero-based) of the results drawn. The cross-section
+        defaults to the LAST saved time and the line profile to the FIRST.
+        Mutually exclusive with ``kstpkper``. A model only.
     kstpkper : tuple of (int, int), optional
-        *(model only)* Exact ``(timestep, period)``.
-    layer : int or list of int, default 0
-        *(model only)* Layer(s) to draw. A list overlays several.
-    x_or_y : {'x', 'y'}, default 'x'
-        Which coordinate becomes the horizontal axis.
-    spacing : int, default 10
-        *(model only)* Sample spacing along the line, in model units.
-    num_points : int, default 100
-        *(model only)* Number of samples when interpolating.
-    interpolate : bool, default False
-        *(model only)* Interpolate between cell centers rather than stepping
-        cell to cell.
-    use_rbf : bool, default True
-        *(model only)* Use radial-basis interpolation when ``interpolate`` is
-        True.
-    interpolator : str, optional
-        *(model only)* Override the interpolation method by name.
-    extrapolate_beyond_section_ends : bool, default False
-        *(model only)* Extend the section past the first and last cell centers.
-    show_model_top : bool, default True
-        *(model only)* Draw the model-top profile.
-    show_model_btm : bool, default False
-        *(model only)* Draw layer-bottom profiles.
-    surf_type : {'hds', 'lyr'}, default 'hds'
-        *(model only)* Section the head field, or the layer elevations.
-    section_name : str, optional
-        *(model only)* Legend name for the traces.
-    clip : Path or geometry, optional
-        *(model only)* Restrict the section to the cells this region covers.
-    animation_kstpkpers : sequence of tuple, optional
-        *(model only)* The periods ``.ani`` steps through; defaults to every
-        output time.
-    fill : {'layer', 'results'} or array-like, optional
-        Draw the CELLS instead of a line profile -- the grid, its layers, and a
-        field painted on them. This is the "cross-section of the model" picture:
-        without it, ``section`` answers *what is the head along this line*; with
-        it, *what does the model look like through here*.
-
-        ``'layer'`` colours each cell by its layer and draws the simulated head
-        as a water surface over the geology. ``'results'`` colours the cells by
-        the model's own dependent variable instead -- heads on GWF,
-        concentration on GWT, temperature on GWE -- with a colorbar. Any
-        ``(nlay, ncpl)`` array does the same for a field of your own (K, a zone
-        id, a residual); a flat ``(ncpl,)`` array raises rather than colouring
-        every layer the same.
-
-        **Both backends draw it, and draw the same thing**: one
-        :class:`~myflopy.modflow.mf6.cross_section_plotting.FilledSection`
-        reads one FloPy ``PlotCrossSection``, so the Plotly picture has the
-        Matplotlib one's cells, colours, water levels, legend and framing --
-        plus a hover naming each cell's layer, number, top and bottom.
-
-        The line-profile arguments -- ``interpolate``, ``spacing``,
-        ``num_points``, ``use_rbf``, ``interpolator``, ``x_or_y``,
-        ``show_model_top``, ``show_model_btm``, ``surf_type``, ``clip``,
-        ``extrapolate_beyond_section_ends``, ``animation_kstpkpers`` -- have
-        nothing to act on here and raise if given. ``line=`` and ``cells=`` both
-        work; a cell path becomes the polyline through those cells' centroids.
-    fill_cmap : str, default 'viridis'
-        Colormap for ``fill='results'`` or an array ``fill``. Ignored for
-        ``fill='layer'``, which uses the discrete layer palette.
-    fill_label : str, optional
-        Colorbar label for ``fill='results'`` or an array ``fill``.
+        The exact ``(time step, period)`` to draw. A model only.
+    fill : {'layer', 'results'}, array-like, or None, default 'layer'
+        Which picture, and what colours the cells -- see the table above.
+        ``'layer'``: by layer, water level on top. ``'results'``: by the
+        model's own result, with a colorbar; a model only. An ``(nlay, ncpl)``
+        array: by that field; a flat ``(ncpl,)`` array raises rather than
+        painting every layer the same. ``None``: the line profile, no cells.
     layers : int or sequence of int, optional
-        *(``fill=`` only)* Which layers' CELLS to draw, zero-based. With none,
-        every layer. The unselected cells are masked out and the vertical extent
-        is cropped to what remains -- leaving the axis at full height would put
-        the two layers you asked for in a thin band with empty space above and
-        below. A layer outside the model raises rather than drawing nothing.
-
-        This is why ``layer=`` raises here: it means something else. ``layer=``
-        overlays head PROFILES on the line-profile section; the filled section
-        draws cells, so choosing them needs its own name.
-    head_layers : int or sequence of int or None, default 0
-        *(``fill='layer'`` only)* Whose water levels to draw over the geology.
-        The default, layer 0, is the single water table every filled section drew
-        before this parameter existed. A list draws one surface per layer, each
-        labelled and coloured through :func:`~myflopy.viz.category_colors` -- so
-        a given layer's water level keeps its colour across figures. ``None``
-        draws none, for the geology alone.
-
-        Ignored with ``fill='results'`` or an array fill: those paint the field
-        onto the cells, so a line of the same quantity on top would say it twice.
-    reverse : bool, default False
-        Traverse the line the other way -- a section drawn north-south comes
-        back south-north, mirrored about its own centre.
-
-        Works with ``line=`` (a geometry, coordinates, a flopy dict, or a vector
-        file) and with ``cells=``.
-
-        The two branches reach it differently, which matters if you were
-        thinking of doing it by hand. ``XSection`` samples the line itself, so
-        the PROFILE is mirrored by reversing the coordinates -- and reversing
-        them yourself works. The FILLED section is not: FloPy's
-        ``PlotCrossSection`` normalizes direction internally, so a reversed line
-        gives it byte-identical geometry and changes nothing. That branch
-        mirrors the view instead, and relabels the distance axis so it still
-        reads from the left edge.
-    legend : bool or str, default True
-        *(``fill=`` only)* Where the layer legend goes. ``False`` drops it;
-        ``True`` uses the house default (upper right); ``"auto"`` lets
-        matplotlib choose. A plain side -- ``"bottom"``, ``"left"``, ``"right"``,
-        ``"top"`` -- or a corner (``"topright"``, or matplotlib's own
-        ``"upper right"``) places it inside the axes.
-
-        ``"outside right"`` / ``"outside bottom"`` (also ``left``/``top``) put it
-        BESIDE the axes and make room for it. On a section that is usually what
-        you want: a layer legend placed anywhere inside sits on top of the
-        geology it is describing.
-
-        An unrecognised word raises and lists the accepted ones, rather than
-        quietly falling back to a placement you did not ask for.
-    show_grid : bool, default True
-        *(``fill=`` only)* Draw cell edges. With ``layers=`` they come from the
-        filled cells themselves rather than FloPy's ``plot_grid``, which takes no
-        layer filter and would outline the very layers you excluded.
+        *(cross-section)* Which layers' CELLS to draw, zero-based; every layer
+        by default. The rest are masked out and the vertical extent is cropped
+        to what remains. A layer outside the model raises.
+    head_layers : int, sequence of int, or None, default 0
+        *(cross-section, ``fill='layer'``)* Whose water levels go on top:
+        layer 0 by default, a list draws one labelled line each, ``None`` none.
+        Ignored by ``'results'`` and an array, which paint the field onto the
+        cells instead. A model only.
     layer_labels : sequence of str, optional
-        *(``fill=`` only)* Legend names for the layers -- your unit names rather
-        than ``Layer 1..N``. One per layer, in model order.
-
-        Defaults to the names the model's own build context carries
-        (``ModelContext(surfaces=stack.build(vor))`` keeps them, so a model
-        declared through the spec API already knows its layers are called
-        "sand" and "clay"). A model built imperatively, or one whose ``surfaces``
-        is a plain frame, has no names to find and falls back to ``Layer N``.
-    backend : {'plotly', 'mpl'}, default 'plotly'
-        Which renderer draws the section. ``'plotly'`` returns the interactive
-        picture; ``'mpl'`` returns a static
-        :class:`matplotlib.figure.Figure`. Accepts ``'interactive'`` and
-        ``'matplotlib'``/``'static'`` as aliases; anything else raises.
-
-        Applies to both branches: a model section renders through the same
-        overlay builder the noun grammar uses
-        (``model.hds.section(line=..., backend='mpl')``), and a grid section
-        through ``GridSection``'s own cell-outline renderer. Until 2026-09-02
-        this parameter did not exist on the verb and a caller who passed it got
-        a Plotly figure back with no error at all -- it vanished into the
-        ``**kwargs`` tail. Passing it is now the documented spelling; prefer it
-        to ``.plot_mpl()`` on the result, which is the same renderer reached a
-        second way.
+        *(cross-section)* Names for the layers, one per layer in model order,
+        for the legend and the water levels. Defaults to the names the model was
+        built with (``ModelContext(surfaces=stack.build(vor))`` keeps them),
+        else ``Layer 1..N``.
+    show_grid : bool, default True
+        *(cross-section)* Draw the cell edges.
+    legend : bool or str, default True
+        *(cross-section)* Where the legend goes. ``False`` drops it; ``True``
+        puts it at the upper right; ``"auto"`` leaves it to the renderer; a side
+        or corner (``"bottom"``, ``"topright"``, or matplotlib's own
+        ``"upper right"``) places it inside the plot; ``"outside right"`` or
+        ``"outside bottom"`` (also ``left`` and ``top``) places it beside the
+        plot -- usually what you want, since inside it sits on the geology it
+        describes. An unknown word raises.
+    fill_cmap : str, default 'viridis'
+        *(cross-section, ``fill='results'`` or an array)* A Matplotlib colormap
+        name. Both backends colour from it.
+    fill_label : str, optional
+        *(cross-section, ``fill='results'`` or an array)* The colorbar title.
+    layer : int or list of int, default 0
+        *(line profile)* Whose head lines to draw; a list overlays several.
+    interpolate : bool, default False
+        *(line profile)* Sample an interpolated surface along the line, rather
+        than stepping from cell centre to cell centre.
+    interpolator : str, optional
+        *(line profile)* The interpolation method by name -- ``'griddata'``,
+        ``'rbf'``, ``'linearND'`` or ``'cloughTocher2D'``. Giving one turns
+        ``interpolate`` on.
+    use_rbf : bool, default True
+        *(line profile, interpolating)* With no ``interpolator``: radial basis
+        functions (``True``) or ``griddata`` (``False``).
+    num_points : int, default 100
+        *(line profile, interpolating)* How many points to sample along the line.
+    clip : Path or geometry, optional
+        *(line profile, interpolating)* Clip the interpolated surface to this
+        region.
+    x_or_y : {'x', 'y'}, default 'x'
+        *(line profile)* With a single cell in ``cells``, run the line east-west
+        (``'x'``) or north-south (``'y'``) through it.
+    show_model_top : bool, default True
+        *(line profile)* Draw the model top.
+    show_model_btm : bool, default False
+        *(line profile)* Draw the bottoms of the layers in ``layer``.
+    surf_type : {'hds', 'lyr'}, default 'hds'
+        *(line profile, interpolating)* Interpolate the head field, or the layer
+        elevations.
+    animation_kstpkpers : sequence of tuple, optional
+        *(line profile, ``backend='plotly'``)* The times ``.ani`` steps through;
+        every saved time by default. A Matplotlib figure has no ``.ani``, so
+        this raises with ``backend='mpl'``.
+    spacing : int, default 10
+        *(line profile)* Has NO effect: nothing reads it (ledger 333).
+    extrapolate_beyond_section_ends : bool, default False
+        *(line profile)* Not implemented: ``True`` raises ``NotImplementedError``
+        on a ``cells=`` path of two or more cells and is ignored otherwise
+        (ledger 333).
+    reverse : bool, default False
+        Draw the line from its other end: a section drawn west to east comes back
+        east to west, with distance measured from the new start.
+    section_name : str, optional
+        The cross-section's title, or the line profile's legend name.
+    backend : {'mpl', 'plotly'}, default 'mpl'
+        ``'mpl'`` returns a static :class:`matplotlib.figure.Figure`;
+        ``'plotly'`` an interactive :class:`~myflopy.viz.Picture`. Accepts
+        ``'matplotlib'``/``'static'`` and ``'interactive'`` as aliases; anything
+        else raises.
     **kwargs
-        Forwarded to the underlying section class.
+        *(line profile)* Passed on to the line profile's section class, which
+        hands them to the interpolated surface when interpolating
+        (``resolution``, ``crs``).
 
     Returns
     -------
-    XSection or GridSection or FilledSection or matplotlib.figure.Figure
-        With ``backend='plotly'`` (the default) a
-        :class:`~myflopy.viz.Picture` -- ``XSection`` for a model, which also
-        carries ``.ani``, or ``GridSection`` for a bare grid; with ``fill=``, a
-        ``FilledSection`` on either. All three answer ``.plot_mpl()``.
-
-        With ``backend='mpl'``, a bare Matplotlib ``Figure``: use
-        ``.savefig(path)`` and ``.axes[0]``, not the picture verbs.
+    matplotlib.figure.Figure, FilledSection, XSection or GridSection
+        With ``backend='mpl'`` (the default), a Matplotlib ``Figure``: use
+        ``.savefig(path)`` and ``.axes[0]``. With ``backend='plotly'``, a
+        :class:`~myflopy.viz.Picture` (``.fig``, ``.show()``, ``.save(path)``):
+        a ``FilledSection`` for the cross-section, an ``XSection`` for a model's
+        line profile (which also has ``.ani``), or a ``GridSection`` for a bare
+        grid's outlines. Each answers ``.plot_mpl()``.
 
     Raises
     ------
     ValueError
-        If a model-only argument is given for a bare grid. It names the
-        arguments, because the alternative is a ``TypeError`` from a constructor
-        the caller never mentioned.
+        An argument that belongs to the other picture, naming the picture it
+        belongs to; a model's argument given to a bare grid;
+        ``fill='results'`` on a bare grid; a flat fill array; a line that crosses
+        no cell.
 
     See Also
     --------
-    map : the same data in plan view.
+    map : the same model in plan view.
     myflopy.plot.grid : the mesh itself.
 
     Examples
     --------
-    >>> model.plot.section(cells=[1653, 651, 1241])
-    >>> model.plot.section(line=line, layer=[0, 1], interpolate=True)
-    >>> model.plot.section(cells=cells).save("section.png")
-    >>> vor.plot.section(line)                       # geometry, no results
-    >>> model.plot.section(line=line, backend="mpl") # a static mpl Figure
-    >>> vor.plot.section(line, backend="mpl").savefig("grid_section.png")
-    >>> model.plot.section(line=line, fill="layer", backend="mpl")
-    >>> model.plot.section(line=line, fill="results", per=15, backend="mpl")
-    >>> vor.plot.section(line, fill="layer", backend="mpl")   # geometry only
-    >>> model.plot.section(line=line, fill="layer", layers=[0, 1], backend="mpl")
-    >>> model.plot.section(line=line, fill="layer", head_layers=[0, 2], backend="mpl")
-    >>> model.plot.section(line=line, fill="layer", backend="mpl",
+    >>> model.plot.section(line=line)                    # the cross-section, by layer
+    >>> model.plot.section(line=line, fill="results")    # cells coloured by head
+    >>> model.plot.section(line=line, layers=[0, 1], head_layers=[0, 1],
     ...                    layer_labels=["fill", "sand", "clay", "till"])
+    >>> model.plot.section(line=line, legend="outside right").savefig("section.png")
+    >>> model.plot.section(line=line, backend="plotly")  # the same, interactive
+    >>> model.plot.section(line=line, fill=None)         # the head line profile
+    >>> model.plot.section(cells=[1653, 651, 1241], fill=None, layer=[0, 1],
+    ...                    interpolate=True)
+    >>> model.plot.section(cells=cells, fill=None, backend="plotly").ani
+    >>> vor.plot.section(line)                           # a bare grid's layers
     """
 
     vor, is_model = _grid_of(source)
@@ -1020,12 +1021,28 @@ def section(
             title=section_name, backend=kind,
             asked=locals(), extra=kwargs,
         )
-    if (layers is not None or layer_labels is not None or head_layers != 0
-            or not show_grid or legend is not True):
+    stray = [
+        name for name, value, default in (
+            ("layers", layers, None), ("head_layers", head_layers, 0),
+            ("layer_labels", layer_labels, None), ("show_grid", show_grid, True),
+            ("legend", legend, True), ("fill_cmap", fill_cmap, "viridis"),
+            ("fill_label", fill_label, None),
+        )
+        if _asked_for(value, default)
+    ]
+    if stray:
+        # `fill_cmap`/`fill_label` were missing from this list and so were
+        # accepted and ignored here -- the silent drop the list exists to stop.
         raise ValueError(
-            "layers=, head_layers=, layer_labels= and show_grid= describe the "
-            "CELLS a filled section draws; the line profile has none. Pass "
-            "fill= (with backend='mpl'), or use layer= to overlay profiles."
+            f"{', '.join(stray)} describe the cells of the CROSS-SECTION; "
+            f"fill=None is the line profile, which draws none. Drop "
+            f"fill=None for the cross-section, or drop these. For the profile, "
+            f"layer= chooses whose head lines are drawn."
+        )
+    if animation_kstpkpers is not None and kind == "mpl":
+        raise ValueError(
+            "animation_kstpkpers= picks the times `.ani` steps through, and "
+            "only the Plotly line profile has `.ani`; pass backend='plotly'."
         )
     if is_model:
         picture = XSection(
@@ -1406,7 +1423,8 @@ def animate(
     >>> plot.animate(frames).show()
     >>> plot.animate(frames, backend="png").html("heads.html")
     >>> plot.animate([("start", first), ("end", last)])
-    >>> mixed = [("a map", model.plot.map()), ("a section", model.plot.section(cells=cells))]
+    >>> mixed = [("a map", model.plot.map()),
+    ...          ("a section", model.plot.section(cells=cells, backend="plotly"))]
     >>> plot.animate(mixed, backend="png")           # only png can mix kinds
     """
 
@@ -1781,236 +1799,217 @@ class ModelPlots:
         cells=None,
         per: int | None = None,
         kstpkper: tuple[int, int] | None = None,
-        layer: int | list[int] = 0,
-        x_or_y: str = "x",
-        spacing: int = 10,
-        num_points: int = 100,
-        interpolate: bool = False,
-        use_rbf: bool = True,
-        interpolator: str | None = None,
-        extrapolate_beyond_section_ends: bool = False,
-        show_model_top: bool = True,
-        show_model_btm: bool = False,
-        surf_type: str = "hds",
-        section_name: str | None = None,
-        clip=None,
-        animation_kstpkpers=None,
-        fill=None,
-        fill_cmap: str = "viridis",
-        fill_label: str | None = None,
+        fill="layer",
         layers=None,
         head_layers: int | list[int] | None = 0,
         layer_labels=None,
         show_grid: bool = True,
         legend=True,
+        fill_cmap: str = "viridis",
+        fill_label: str | None = None,
+        layer: int | list[int] = 0,
+        interpolate: bool = False,
+        interpolator: str | None = None,
+        use_rbf: bool = True,
+        num_points: int = 100,
+        clip=None,
+        x_or_y: str = "x",
+        show_model_top: bool = True,
+        show_model_btm: bool = False,
+        surf_type: str = "hds",
+        animation_kstpkpers=None,
+        spacing: int = 10,
+        extrapolate_beyond_section_ends: bool = False,
         reverse: bool = False,
-        backend: str = "plotly",
+        section_name: str | None = None,
+        backend: str = "mpl",
         **kwargs,
     ):
-        """A vertical slice through this model. See :func:`myflopy.plot.section`.
+        """This model's cross-section, or a line profile. See :func:`myflopy.plot.section`.
 
         .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
         Bound form of :func:`myflopy.plot.section`.
 
-        Through a MODEL this is the results section -- the field against distance
-        along the line. Through a bare GRID it is the geometry section: layers and
-        cell edges, no results. They are different classes because they answer
-        different questions, and **most arguments below only apply to the model
-        branch** -- they are marked. A grid takes ``line`` and nothing else.
+        ``section`` draws one of two pictures, and ``fill`` chooses which:
+
+        ===============================  =============================================
+        ``fill="layer"`` (the default)   The CROSS-SECTION: every cell the line cuts,
+                                         drawn from its bottom to its top and coloured
+                                         by layer, with the simulated water level on
+                                         top.
+        ``fill="results"``               The same cells, coloured by the model's own
+                                         result -- head on GWF, concentration on GWT,
+                                         temperature on GWE -- with a colorbar.
+        ``fill=<(nlay, ncpl) array>``    The same cells, coloured by any field of your
+                                         own: K, a zone id, a residual.
+        ``fill=None``                    The LINE PROFILE: head against distance along
+                                         the line, one line per ``layer=``, plus the
+                                         model top. No cells.
+        ===============================  =============================================
+
+        Both pictures draw on both backends, and each backend draws the same cells.
+        ``backend="mpl"`` -- the default -- returns a static Matplotlib ``Figure``;
+        ``backend="plotly"`` returns an interactive picture, which for the line
+        profile can also step through the saved times (``.ani``).
+
+        Through a bare GRID (``vor.plot.section(line)``) there are no results: the
+        cross-section is the layer geometry alone, ``fill="results"`` raises, and
+        ``fill=None`` draws the cell outlines.
+
+        **Which arguments go with which picture.** An argument given to the other
+        picture RAISES and says which picture it belongs to, rather than being
+        quietly ignored:
+
+        - *either picture:* ``line`` or ``cells``, ``per`` or ``kstpkper``,
+          ``reverse``, ``section_name``, ``backend``;
+        - *the cross-section:* ``layers``, ``head_layers``, ``layer_labels``,
+          ``show_grid``, ``legend``, ``fill_cmap``, ``fill_label``;
+        - *the line profile (``fill=None``):* ``layer``, ``interpolate``,
+          ``interpolator``, ``use_rbf``, ``num_points``, ``clip``, ``x_or_y``,
+          ``show_model_top``, ``show_model_btm``, ``surf_type``,
+          ``animation_kstpkpers``, ``spacing``, ``extrapolate_beyond_section_ends``.
+
+        Mind ``layers=`` against ``layer=``: the cross-section's chooses whose CELLS
+        are drawn, the profile's whose head LINES.
 
         Parameters
         ----------
-        line : LineString or Path, optional
-            The section line as a geometry or a vector file. Positional, so
-            ``plot.section(vor, line)`` reads naturally. For a bare grid this is the
-            only way to specify the path. Mutually exclusive with ``cells``.
+        line : LineString, sequence of (x, y), or path, optional
+            The section line: a shapely ``LineString``, ``[(x, y), ...]``, or a
+            vector file to read one from. Positional, so ``plot.section(vor, line)``
+            reads naturally. Give ``line`` or ``cells``, not both.
         cells : int or list of int, optional
-            *(model only)* Cell indices defining the section path, in order.
+            The section path as cell numbers, in order; the line runs through their
+            centroids.
         per : int, optional
-            *(model only)* Stress period (0-based). Mutually exclusive with
-            ``kstpkper``.
+            Stress period (zero-based) of the results drawn. The cross-section
+            defaults to the LAST saved time and the line profile to the FIRST.
+            Mutually exclusive with ``kstpkper``. A model only.
         kstpkper : tuple of (int, int), optional
-            *(model only)* Exact ``(timestep, period)``.
-        layer : int or list of int, default 0
-            *(model only)* Layer(s) to draw. A list overlays several.
-        x_or_y : {'x', 'y'}, default 'x'
-            Which coordinate becomes the horizontal axis.
-        spacing : int, default 10
-            *(model only)* Sample spacing along the line, in model units.
-        num_points : int, default 100
-            *(model only)* Number of samples when interpolating.
-        interpolate : bool, default False
-            *(model only)* Interpolate between cell centers rather than stepping
-            cell to cell.
-        use_rbf : bool, default True
-            *(model only)* Use radial-basis interpolation when ``interpolate`` is
-            True.
-        interpolator : str, optional
-            *(model only)* Override the interpolation method by name.
-        extrapolate_beyond_section_ends : bool, default False
-            *(model only)* Extend the section past the first and last cell centers.
-        show_model_top : bool, default True
-            *(model only)* Draw the model-top profile.
-        show_model_btm : bool, default False
-            *(model only)* Draw layer-bottom profiles.
-        surf_type : {'hds', 'lyr'}, default 'hds'
-            *(model only)* Section the head field, or the layer elevations.
-        section_name : str, optional
-            *(model only)* Legend name for the traces.
-        clip : Path or geometry, optional
-            *(model only)* Restrict the section to the cells this region covers.
-        animation_kstpkpers : sequence of tuple, optional
-            *(model only)* The periods ``.ani`` steps through; defaults to every
-            output time.
-        fill : {'layer', 'results'} or array-like, optional
-            Draw the CELLS instead of a line profile -- the grid, its layers, and a
-            field painted on them. This is the "cross-section of the model" picture:
-            without it, ``section`` answers *what is the head along this line*; with
-            it, *what does the model look like through here*.
-
-            ``'layer'`` colours each cell by its layer and draws the simulated head
-            as a water surface over the geology. ``'results'`` colours the cells by
-            the model's own dependent variable instead -- heads on GWF,
-            concentration on GWT, temperature on GWE -- with a colorbar. Any
-            ``(nlay, ncpl)`` array does the same for a field of your own (K, a zone
-            id, a residual); a flat ``(ncpl,)`` array raises rather than colouring
-            every layer the same.
-
-            **Both backends draw it, and draw the same thing**: one
-            :class:`~myflopy.modflow.mf6.cross_section_plotting.FilledSection`
-            reads one FloPy ``PlotCrossSection``, so the Plotly picture has the
-            Matplotlib one's cells, colours, water levels, legend and framing --
-            plus a hover naming each cell's layer, number, top and bottom.
-
-            The line-profile arguments -- ``interpolate``, ``spacing``,
-            ``num_points``, ``use_rbf``, ``interpolator``, ``x_or_y``,
-            ``show_model_top``, ``show_model_btm``, ``surf_type``, ``clip``,
-            ``extrapolate_beyond_section_ends``, ``animation_kstpkpers`` -- have
-            nothing to act on here and raise if given. ``line=`` and ``cells=`` both
-            work; a cell path becomes the polyline through those cells' centroids.
-        fill_cmap : str, default 'viridis'
-            Colormap for ``fill='results'`` or an array ``fill``. Ignored for
-            ``fill='layer'``, which uses the discrete layer palette.
-        fill_label : str, optional
-            Colorbar label for ``fill='results'`` or an array ``fill``.
+            The exact ``(time step, period)`` to draw. A model only.
+        fill : {'layer', 'results'}, array-like, or None, default 'layer'
+            Which picture, and what colours the cells -- see the table above.
+            ``'layer'``: by layer, water level on top. ``'results'``: by the
+            model's own result, with a colorbar; a model only. An ``(nlay, ncpl)``
+            array: by that field; a flat ``(ncpl,)`` array raises rather than
+            painting every layer the same. ``None``: the line profile, no cells.
         layers : int or sequence of int, optional
-            *(``fill=`` only)* Which layers' CELLS to draw, zero-based. With none,
-            every layer. The unselected cells are masked out and the vertical extent
-            is cropped to what remains -- leaving the axis at full height would put
-            the two layers you asked for in a thin band with empty space above and
-            below. A layer outside the model raises rather than drawing nothing.
-
-            This is why ``layer=`` raises here: it means something else. ``layer=``
-            overlays head PROFILES on the line-profile section; the filled section
-            draws cells, so choosing them needs its own name.
-        head_layers : int or sequence of int or None, default 0
-            *(``fill='layer'`` only)* Whose water levels to draw over the geology.
-            The default, layer 0, is the single water table every filled section drew
-            before this parameter existed. A list draws one surface per layer, each
-            labelled and coloured through :func:`~myflopy.viz.category_colors` -- so
-            a given layer's water level keeps its colour across figures. ``None``
-            draws none, for the geology alone.
-
-            Ignored with ``fill='results'`` or an array fill: those paint the field
-            onto the cells, so a line of the same quantity on top would say it twice.
-        reverse : bool, default False
-            Traverse the line the other way -- a section drawn north-south comes
-            back south-north, mirrored about its own centre.
-
-            Works with ``line=`` (a geometry, coordinates, a flopy dict, or a vector
-            file) and with ``cells=``.
-
-            The two branches reach it differently, which matters if you were
-            thinking of doing it by hand. ``XSection`` samples the line itself, so
-            the PROFILE is mirrored by reversing the coordinates -- and reversing
-            them yourself works. The FILLED section is not: FloPy's
-            ``PlotCrossSection`` normalizes direction internally, so a reversed line
-            gives it byte-identical geometry and changes nothing. That branch
-            mirrors the view instead, and relabels the distance axis so it still
-            reads from the left edge.
-        legend : bool or str, default True
-            *(``fill=`` only)* Where the layer legend goes. ``False`` drops it;
-            ``True`` uses the house default (upper right); ``"auto"`` lets
-            matplotlib choose. A plain side -- ``"bottom"``, ``"left"``, ``"right"``,
-            ``"top"`` -- or a corner (``"topright"``, or matplotlib's own
-            ``"upper right"``) places it inside the axes.
-
-            ``"outside right"`` / ``"outside bottom"`` (also ``left``/``top``) put it
-            BESIDE the axes and make room for it. On a section that is usually what
-            you want: a layer legend placed anywhere inside sits on top of the
-            geology it is describing.
-
-            An unrecognised word raises and lists the accepted ones, rather than
-            quietly falling back to a placement you did not ask for.
-        show_grid : bool, default True
-            *(``fill=`` only)* Draw cell edges. With ``layers=`` they come from the
-            filled cells themselves rather than FloPy's ``plot_grid``, which takes no
-            layer filter and would outline the very layers you excluded.
+            *(cross-section)* Which layers' CELLS to draw, zero-based; every layer
+            by default. The rest are masked out and the vertical extent is cropped
+            to what remains. A layer outside the model raises.
+        head_layers : int, sequence of int, or None, default 0
+            *(cross-section, ``fill='layer'``)* Whose water levels go on top:
+            layer 0 by default, a list draws one labelled line each, ``None`` none.
+            Ignored by ``'results'`` and an array, which paint the field onto the
+            cells instead. A model only.
         layer_labels : sequence of str, optional
-            *(``fill=`` only)* Legend names for the layers -- your unit names rather
-            than ``Layer 1..N``. One per layer, in model order.
-
-            Defaults to the names the model's own build context carries
-            (``ModelContext(surfaces=stack.build(vor))`` keeps them, so a model
-            declared through the spec API already knows its layers are called
-            "sand" and "clay"). A model built imperatively, or one whose ``surfaces``
-            is a plain frame, has no names to find and falls back to ``Layer N``.
-        backend : {'plotly', 'mpl'}, default 'plotly'
-            Which renderer draws the section. ``'plotly'`` returns the interactive
-            picture; ``'mpl'`` returns a static
-            :class:`matplotlib.figure.Figure`. Accepts ``'interactive'`` and
-            ``'matplotlib'``/``'static'`` as aliases; anything else raises.
-
-            Applies to both branches: a model section renders through the same
-            overlay builder the noun grammar uses
-            (``model.hds.section(line=..., backend='mpl')``), and a grid section
-            through ``GridSection``'s own cell-outline renderer. Until 2026-09-02
-            this parameter did not exist on the verb and a caller who passed it got
-            a Plotly figure back with no error at all -- it vanished into the
-            ``**kwargs`` tail. Passing it is now the documented spelling; prefer it
-            to ``.plot_mpl()`` on the result, which is the same renderer reached a
-            second way.
+            *(cross-section)* Names for the layers, one per layer in model order,
+            for the legend and the water levels. Defaults to the names the model was
+            built with (``ModelContext(surfaces=stack.build(vor))`` keeps them),
+            else ``Layer 1..N``.
+        show_grid : bool, default True
+            *(cross-section)* Draw the cell edges.
+        legend : bool or str, default True
+            *(cross-section)* Where the legend goes. ``False`` drops it; ``True``
+            puts it at the upper right; ``"auto"`` leaves it to the renderer; a side
+            or corner (``"bottom"``, ``"topright"``, or matplotlib's own
+            ``"upper right"``) places it inside the plot; ``"outside right"`` or
+            ``"outside bottom"`` (also ``left`` and ``top``) places it beside the
+            plot -- usually what you want, since inside it sits on the geology it
+            describes. An unknown word raises.
+        fill_cmap : str, default 'viridis'
+            *(cross-section, ``fill='results'`` or an array)* A Matplotlib colormap
+            name. Both backends colour from it.
+        fill_label : str, optional
+            *(cross-section, ``fill='results'`` or an array)* The colorbar title.
+        layer : int or list of int, default 0
+            *(line profile)* Whose head lines to draw; a list overlays several.
+        interpolate : bool, default False
+            *(line profile)* Sample an interpolated surface along the line, rather
+            than stepping from cell centre to cell centre.
+        interpolator : str, optional
+            *(line profile)* The interpolation method by name -- ``'griddata'``,
+            ``'rbf'``, ``'linearND'`` or ``'cloughTocher2D'``. Giving one turns
+            ``interpolate`` on.
+        use_rbf : bool, default True
+            *(line profile, interpolating)* With no ``interpolator``: radial basis
+            functions (``True``) or ``griddata`` (``False``).
+        num_points : int, default 100
+            *(line profile, interpolating)* How many points to sample along the line.
+        clip : Path or geometry, optional
+            *(line profile, interpolating)* Clip the interpolated surface to this
+            region.
+        x_or_y : {'x', 'y'}, default 'x'
+            *(line profile)* With a single cell in ``cells``, run the line east-west
+            (``'x'``) or north-south (``'y'``) through it.
+        show_model_top : bool, default True
+            *(line profile)* Draw the model top.
+        show_model_btm : bool, default False
+            *(line profile)* Draw the bottoms of the layers in ``layer``.
+        surf_type : {'hds', 'lyr'}, default 'hds'
+            *(line profile, interpolating)* Interpolate the head field, or the layer
+            elevations.
+        animation_kstpkpers : sequence of tuple, optional
+            *(line profile, ``backend='plotly'``)* The times ``.ani`` steps through;
+            every saved time by default. A Matplotlib figure has no ``.ani``, so
+            this raises with ``backend='mpl'``.
+        spacing : int, default 10
+            *(line profile)* Has NO effect: nothing reads it (ledger 333).
+        extrapolate_beyond_section_ends : bool, default False
+            *(line profile)* Not implemented: ``True`` raises ``NotImplementedError``
+            on a ``cells=`` path of two or more cells and is ignored otherwise
+            (ledger 333).
+        reverse : bool, default False
+            Draw the line from its other end: a section drawn west to east comes back
+            east to west, with distance measured from the new start.
+        section_name : str, optional
+            The cross-section's title, or the line profile's legend name.
+        backend : {'mpl', 'plotly'}, default 'mpl'
+            ``'mpl'`` returns a static :class:`matplotlib.figure.Figure`;
+            ``'plotly'`` an interactive :class:`~myflopy.viz.Picture`. Accepts
+            ``'matplotlib'``/``'static'`` and ``'interactive'`` as aliases; anything
+            else raises.
         **kwargs
-            Forwarded to the underlying section class.
+            *(line profile)* Passed on to the line profile's section class, which
+            hands them to the interpolated surface when interpolating
+            (``resolution``, ``crs``).
 
         Returns
         -------
-        XSection or GridSection or FilledSection or matplotlib.figure.Figure
-            With ``backend='plotly'`` (the default) a
-            :class:`~myflopy.viz.Picture` -- ``XSection`` for a model, which also
-            carries ``.ani``, or ``GridSection`` for a bare grid; with ``fill=``, a
-            ``FilledSection`` on either. All three answer ``.plot_mpl()``.
-
-            With ``backend='mpl'``, a bare Matplotlib ``Figure``: use
-            ``.savefig(path)`` and ``.axes[0]``, not the picture verbs.
+        matplotlib.figure.Figure, FilledSection, XSection or GridSection
+            With ``backend='mpl'`` (the default), a Matplotlib ``Figure``: use
+            ``.savefig(path)`` and ``.axes[0]``. With ``backend='plotly'``, a
+            :class:`~myflopy.viz.Picture` (``.fig``, ``.show()``, ``.save(path)``):
+            a ``FilledSection`` for the cross-section, an ``XSection`` for a model's
+            line profile (which also has ``.ani``), or a ``GridSection`` for a bare
+            grid's outlines. Each answers ``.plot_mpl()``.
 
         Raises
         ------
         ValueError
-            If a model-only argument is given for a bare grid. It names the
-            arguments, because the alternative is a ``TypeError`` from a constructor
-            the caller never mentioned.
+            An argument that belongs to the other picture, naming the picture it
+            belongs to; a model's argument given to a bare grid;
+            ``fill='results'`` on a bare grid; a flat fill array; a line that crosses
+            no cell.
 
         See Also
         --------
-        map : the same data in plan view.
+        map : the same model in plan view.
         myflopy.plot.grid : the mesh itself.
 
         Examples
         --------
-        >>> model.plot.section(cells=[1653, 651, 1241])
-        >>> model.plot.section(line=line, layer=[0, 1], interpolate=True)
-        >>> model.plot.section(cells=cells).save("section.png")
-        >>> vor.plot.section(line)                       # geometry, no results
-        >>> model.plot.section(line=line, backend="mpl") # a static mpl Figure
-        >>> vor.plot.section(line, backend="mpl").savefig("grid_section.png")
-        >>> model.plot.section(line=line, fill="layer", backend="mpl")
-        >>> model.plot.section(line=line, fill="results", per=15, backend="mpl")
-        >>> vor.plot.section(line, fill="layer", backend="mpl")   # geometry only
-        >>> model.plot.section(line=line, fill="layer", layers=[0, 1], backend="mpl")
-        >>> model.plot.section(line=line, fill="layer", head_layers=[0, 2], backend="mpl")
-        >>> model.plot.section(line=line, fill="layer", backend="mpl",
+        >>> model.plot.section(line=line)                    # the cross-section, by layer
+        >>> model.plot.section(line=line, fill="results")    # cells coloured by head
+        >>> model.plot.section(line=line, layers=[0, 1], head_layers=[0, 1],
         ...                    layer_labels=["fill", "sand", "clay", "till"])
+        >>> model.plot.section(line=line, legend="outside right").savefig("section.png")
+        >>> model.plot.section(line=line, backend="plotly")  # the same, interactive
+        >>> model.plot.section(line=line, fill=None)         # the head line profile
+        >>> model.plot.section(cells=[1653, 651, 1241], fill=None, layer=[0, 1],
+        ...                    interpolate=True)
+        >>> model.plot.section(cells=cells, fill=None, backend="plotly").ani
+        >>> vor.plot.section(line)                           # a bare grid's layers
         """
 
         return section(self.model, **_bound_args(locals(), "kwargs"), **kwargs)
@@ -2269,7 +2268,8 @@ class ModelPlots:
         >>> plot.animate(frames).show()
         >>> plot.animate(frames, backend="png").html("heads.html")
         >>> plot.animate([("start", first), ("end", last)])
-        >>> mixed = [("a map", model.plot.map()), ("a section", model.plot.section(cells=cells))]
+        >>> mixed = [("a map", model.plot.map()),
+        ...          ("a section", model.plot.section(cells=cells, backend="plotly"))]
         >>> plot.animate(mixed, backend="png")           # only png can mix kinds
         """
 

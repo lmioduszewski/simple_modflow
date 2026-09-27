@@ -664,9 +664,11 @@ class VoronoiGridPlus(VoronoiGrid):
         """The plotting verbs for this grid: ``map``, ``section``, ``grid``.
 
         ``vor.plot.map(values=...)`` for a basemap choropleth,
-        ``vor.plot.section(line)`` for a geometry section, ``vor.plot.grid()``
-        -- or just ``vor.plot()`` -- for the bare mesh. Everything returned is a
-        :class:`~myflopy.viz.Picture`.
+        ``vor.plot.section(line)`` for the grid's layers in cross-section,
+        ``vor.plot.grid()`` -- or just ``vor.plot()`` -- for the bare mesh.
+        Everything returned is a :class:`~myflopy.viz.Picture`, except
+        ``section``'s default, a Matplotlib ``Figure`` (``backend="plotly"`` for
+        the picture).
 
         **This deliberately shadows FloPy's inherited ``VoronoiGrid.plot()``.**
         That renderer is not lost: ``vor.plot.grid().plot_mpl()`` is the same

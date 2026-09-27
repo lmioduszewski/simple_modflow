@@ -715,7 +715,7 @@ class SimulationBase:
         Examples
         --------
         >>> model.plot.map(layer=0, contours=True).show()
-        >>> model.plot.section(cells=[1653, 651]).save("section.png")
+        >>> model.plot.section(cells=[1653, 651]).savefig("section.png")  # mpl default
         >>> model.plot.surface(layer=0)
         >>> model.plot.grid()                                    # the bare mesh
         >>> model.plot.grid(pathlines=tracks, backend="vtk")     # 3-D scene

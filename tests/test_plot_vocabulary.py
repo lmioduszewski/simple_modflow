@@ -345,6 +345,7 @@ def test_every_model_backed_map_gets_the_sectioned_hover(canonical_run):
 #: Each verb's forwarding chain, nearest link first. A parameter's default is
 #: owned by the FIRST link that names it; that is the value the verb must mirror.
 def _chains():
+    from myflopy.modflow.mf6.cross_section_plotting import FilledSection
     from myflopy.modflow.mf6.grid import plotting as gp
     from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
     from myflopy.modflow.mf6.grid.plotting import Choro
@@ -356,7 +357,9 @@ def _chains():
 
     return {
         "map": [gp._choropleth_factory, Choro.__init__],
-        "section": [XSection.__init__],
+        # The cross-section's renderer owns `fill`'s default ('layer'), and the
+        # profile's owns the rest; the verb restates both.
+        "section": [XSection.__init__, FilledSection.__init__],
         "surface": [InterpolatedSurface.__init__],
         "grid": [build_particle_tracking_scene],
         "animate": [SliderAnimation.__init__],
@@ -756,7 +759,7 @@ def test_a_filled_section_draws_the_cells_and_the_line_profile_does_not(canonica
     matplotlib.use("Agg")
     line = _mid_line(canonical_run)
 
-    profile = canonical_run.plot.section(line=line, backend="mpl").axes[0]
+    profile = canonical_run.plot.section(line=line, fill=None, backend="mpl").axes[0]
     assert not profile.collections, "the line profile drew filled cells"
     assert profile.lines, "the line profile drew no profile"
 
@@ -790,8 +793,13 @@ def test_a_results_fill_paints_the_cells_and_earns_a_colorbar(canonical_run):
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
-        ({"fill": "layer", "backend": "mpl", "interpolate": True}, "line PROFILE"),
-        ({"fill": "layer", "backend": "mpl", "spacing": 99}, "line PROFILE"),
+        ({"fill": "layer", "backend": "mpl", "interpolate": True}, "Pass fill=None"),
+        ({"fill": "layer", "backend": "mpl", "spacing": 99}, "Pass fill=None"),
+        # The cross-section is the DEFAULT now (2026-09-26), so a profile argument
+        # on a bare call is refused too -- and the refusal names the spelling
+        # that draws the profile.
+        ({"interpolate": True}, "Pass fill=None"),
+        ({"layer": [0, 1]}, r"line profile draws \(fill=None\)"),
         ({"fill": "nope", "backend": "mpl"}, "fill must be"),
     ],
 )
@@ -936,11 +944,16 @@ def test_layer_labels_name_the_units_and_default_to_the_models_own(canonical_run
 
 
 def test_the_filled_only_arguments_are_refused_on_the_profile(canonical_run):
-    """They describe cells; a line profile has none, so they must not be ignored."""
+    """They describe cells; a line profile has none, so they must not be ignored.
 
-    for kwargs in ({"layers": [0]}, {"layer_labels": ["a"]}, {"head_layers": [0, 1]}):
-        with pytest.raises(ValueError, match="filled section draws"):
-            canonical_run.plot.section(line=_mid_line(canonical_run), **kwargs)
+    `fill_cmap`/`fill_label` were missing from this refusal and were accepted and
+    dropped on the profile -- measured byte-identical (2026-09-26).
+    """
+
+    for kwargs in ({"layers": [0]}, {"layer_labels": ["a"]}, {"head_layers": [0, 1]},
+                   {"fill_cmap": "magma"}, {"fill_label": "head"}):
+        with pytest.raises(ValueError, match="cells of the CROSS-SECTION"):
+            canonical_run.plot.section(line=_mid_line(canonical_run), fill=None, **kwargs)
 
 
 def test_layers_hides_the_excluded_cells_outlines_too(canonical_run):
@@ -1019,7 +1032,7 @@ def test_show_grid_is_named_and_leftover_arguments_are_refused(canonical_run):
         "show_grid=False still styled the cell edges"
     )
 
-    with pytest.raises(ValueError, match="not arguments of a filled section"):
+    with pytest.raises(ValueError, match="not arguments of the cross-section"):
         section(interpolate_me=True)
 
 
@@ -1251,8 +1264,8 @@ def test_reverse_mirrors_the_grid_scopes_geometry_section_too(canonical_run):
     line = _mid_line(canonical_run)
     vor = canonical_run.vor
 
-    forward = vor.plot.section(line, backend="mpl")
-    mirrored = vor.plot.section(line, backend="mpl", reverse=True)
+    forward = vor.plot.section(line, fill=None, backend="mpl")
+    mirrored = vor.plot.section(line, fill=None, backend="mpl", reverse=True)
 
     assert forward.axes[0].get_xlim()[0] < forward.axes[0].get_xlim()[1]
     low, high = mirrored.axes[0].get_xlim()
@@ -1272,7 +1285,7 @@ def test_reverse_mirrors_the_grid_scopes_geometry_section_too(canonical_run):
     assert right - left == pytest.approx(abs(high - low), rel=1e-5)
 
     with pytest.raises(ValueError, match="not an axes"):
-        vor.plot.section(line, reverse=True)
+        vor.plot.section(line, fill=None, backend="plotly", reverse=True)
 
 
 def test_reverse_needs_a_line_to_reverse(canonical_run):

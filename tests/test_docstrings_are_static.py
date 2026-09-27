@@ -223,7 +223,7 @@ def test_an_edit_to_a_reference_reaches_the_bound_copies():
     sentinel = "PROPAGATION-SENTINEL-9c1f."
     try:
         plot.section.__doc__ = original.replace(
-            "The section line as a geometry", sentinel + " The section line as a geometry", 1
+            "The section line: a shapely", sentinel + " The section line: a shapely", 1
         )
         assert sentinel in plot.section.__doc__, "the reference edit did not apply"
         plot._inherit_verb_docs(plot.ModelPlots)

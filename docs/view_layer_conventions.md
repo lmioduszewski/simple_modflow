@@ -111,16 +111,19 @@ period-end rule needs a table carrying `kstpkper`, and the LAK stage table carri
 (its `per` is the saved-record index, ledger 301), so a LAK target keyed by period at
 several saves per period reads a step inside an earlier period -- still open (ledger 331).
 
-**A section has two subjects, and `fill=` picks which** (ledger 177, 2026-09-02).
-Without it, `section` answers *what is the head along this line* -- a profile,
-two traces, no geometry. With it, *what does the model look like through here* --
-the cells, their layers, and a field painted on them. `fill="layer"` colours by
-layer and draws the simulated head as a water surface over the geology;
-`fill="results"` colours the cells by the model's own dependent variable (head /
-concentration / temperature, resolved through `_field_reader`) with a colorbar;
-any `(nlay, ncpl)` array does the same for a field of your own. It stays ONE
-verb because both are vertical slices -- geometry chooses the verb, and this is
-the same geometry drawn two ways.
+**A section has two subjects, and `fill=` picks which** (ledger 177, 2026-09-02;
+defaults since ledger 333, 2026-09-26). By default -- `fill="layer"`,
+`backend="mpl"` -- `section` answers *what does the model look like through here*:
+the cells, their layers, and the simulated head as a water surface over the
+geology. `fill="results"` colours the cells by the model's own dependent variable
+(head / concentration / temperature, resolved through `_field_reader`) with a
+colorbar; any `(nlay, ncpl)` array does the same for a field of your own.
+`fill=None` answers *what is the head along this line* -- the line profile, no
+geometry -- and is the ONE spelling of it: a profile argument given without it
+raises and names it, so the picture never depends on which other arguments were
+passed. It stays ONE verb because both are vertical slices -- geometry chooses the
+verb, and this is the same geometry drawn two ways. `section` is the one verb
+whose default backend is Matplotlib, so a bare call returns a bare `Figure`.
 
 **Choosing what goes in it: `layers=`, `head_layers=`, `layer_labels=`.**
 `layers=` picks which layers' CELLS are drawn — masked, and the vertical extent

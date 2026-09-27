@@ -1160,7 +1160,10 @@ picture.html("heads.html")    # standalone page
 
 There is never a trailing `.plot()`. Three renderers back this: most pictures are
 Plotly; `MplPicture` (Matplotlib) offers `.axes` and `VtkScene` (PyVista) offers
-`.scene` instead of `.fig`, and their `.fig` raises saying so.
+`.scene` instead of `.fig`, and their `.fig` raises saying so. A `backend="mpl"`
+picture is the exception -- a bare Matplotlib `Figure` -- and that is
+`model.plot.section()`'s default (the cross-section by layer; `fill=None` is the
+head line profile, `backend="plotly"` the interactive picture).
 
 ### Standalone HTML
 

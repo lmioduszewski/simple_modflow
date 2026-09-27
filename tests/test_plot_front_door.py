@@ -101,7 +101,15 @@ def test_every_verb_draws_on_the_canonical_model(canonical_run):
     assert isinstance(picture, viz.Picture)
     assert len(picture.fig.data) >= 1
 
-    section = plot.section(canonical_run, cells=[0, 1, 2])
+    # The default is the Matplotlib cross-section, a bare Figure (2026-09-26);
+    # the interactive one is a Picture like every other verb's.
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib.figure import Figure
+
+    assert isinstance(plot.section(canonical_run, cells=[0, 1, 2]), Figure)
+    section = plot.section(canonical_run, cells=[0, 1, 2], backend="plotly")
     assert isinstance(section, viz.Picture)
 
     surface = plot.surface(canonical_run, layer=0)

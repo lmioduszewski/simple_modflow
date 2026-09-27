@@ -53,15 +53,24 @@ def combined_section_frame(sections: dict[str, XSection]) -> pd.DataFrame:
     """Concatenate section profile tables into one long overlay frame.
 
     Each section contributes its head-profile series (labeled by its
-    ``section_name``) at its *current* ``kstpkper``; the model top is included
-    once, from the first section. This is the shared data step behind
+    ``section_name``) at its *current* ``kstpkper``; the model top and the layer
+    bottoms are included once, from the first section, as ITS ``show_model_top``
+    and ``show_model_btm`` say. This is the shared data step behind
     :func:`render_xsections` and the ``kind="section"`` composers.
+
+    Both flags were forced here -- the top always, the bottoms never -- so on
+    the Matplotlib backend ``plot.section(fill=None, show_model_top=False)`` and
+    ``show_model_btm=True`` drew exactly what the defaults draw, while the Plotly
+    picture honoured them. The defaults (top on, bottoms off) draw as before.
     """
 
     if not sections:
         raise ValueError("at least one section is required.")
     frames = [
-        section.to_frame(include_model_top=(index == 0), include_model_btm=False)
+        section.to_frame(
+            include_model_top=index == 0 and bool(section.show_model_top),
+            include_model_btm=index == 0 and bool(section.show_model_btm),
+        )
         for index, section in enumerate(sections.values())
     ]
     return pd.concat(frames, ignore_index=True)

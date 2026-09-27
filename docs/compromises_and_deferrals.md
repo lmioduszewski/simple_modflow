@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 332 entries (337 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 333 entries (338 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 333 | `section()` draws the model's cross-section by default -- `fill="layer"`, `backend="mpl"` -- and... | 2026-09-26 |
 | 332 | `section(fill=...)` draws on Plotly too, and draws what Matplotlib draws: one `FilledSection`, one FloPy... | 2026-09-26 |
 | 331 | A stage target read a lake's stage once per connected cell, and a reach's once per saved time step: one sta... | 2026-09-25 |
 | 330 | A run records the grid each model was built on, and ``runs.summary()`` says how its cells were made -- not... | 2026-09-25 |
@@ -14477,3 +14478,51 @@ same day, which is the useful part of the result.
       (`GridSection`) is untouched, and `reverse=` there still needs `backend="mpl"`.
       Plotly adds what Matplotlib cannot: a hover naming each cell's layer, number, top
       and bottom along the line, and its value under a field fill.
+
+333. **`section()` draws the model's cross-section by default -- `fill="layer"`, `backend="mpl"` -- and `fill=None` is the one spelling of the line profile (2026-09-26).**
+      The user's call: "It just feels like a quirky API that is confusing. I want
+      model.plot.section(line=line) to default to fill='layer' and backend='mpl'", with
+      Plotly to draw "something else" until it could fill -- and then "i wouldn't mind a
+      plotly 'filled' section, equivalent to mpl". Built first (ledger 332), so the
+      default is the SAME picture on both backends and nothing defaults by backend.
+      **Four forks, answered by the user:** the Plotly filled section first; a profile
+      argument without `fill=None` RAISES and names it, rather than switching to the
+      profile on its own (the picture would then depend on which OTHER arguments were
+      passed); `model.hds.section()` stays the head profile (the next change); and the
+      new default returns a bare `Figure`, as `backend="mpl"` does everywhere (ledger
+      176), not an `MplPicture`.
+      **Where it reaches:** the free verb, `model.plot` and `vor.plot` (a bare grid:
+      its layers, or with `fill=None` its `GridSection` outlines). `stack.plot.section`
+      already drew the filled layers. The noun `model.hds.section()` and the
+      `kind="section"` composers are unchanged -- the head profile, Plotly. The
+      signature is reordered so an editor lists the cross-section's parameters first,
+      and the docstring opens with a table of the two pictures and says which
+      arguments belong to which. `FilledSection.__init__` joins the section chain in
+      `test_plot_vocabulary`, so `fill`'s default is pinned to the renderer that owns it.
+      **What the default costs, measured in the tree:** a `section(...)` with no
+      `backend=` returns a Matplotlib figure, so `.save()`, `.ani`, and a panel of
+      `plot.animate`/`viz.mosaic` need `backend="plotly"` (and `fill=None` for `.ani`):
+      9 test call sites, 4 notebook cells (`plotting_vocabulary_tour` 3,
+      `master_large_model_visualization_prt_workflow` 1) and 6 doc examples, edited;
+      `.save(...)` on the default became `.savefig(...)`.
+      **Fixed on the way -- each accepted and IGNORED before, measured byte-identical
+      2026-09-26:** `fill_cmap=`/`fill_label=` on the profile (the refusal listed the
+      other five cross-section arguments and not these); `show_model_top=False` and
+      `show_model_btm=True` on the Matplotlib profile (`combined_section_frame` forced
+      the top on and the bottoms off; it reads the section's own flags now, and the
+      defaults draw as before, so the noun and the composers do not move);
+      `animation_kstpkpers=` with `backend="mpl"`, which has no `.ani` (refused); and
+      a bare grid's cross-section took `per`/`kstpkper`/`head_layers` and drew the
+      same geometry without them (refused, naming them).
+      **Found and LEFT, stated in the docstring:** `spacing` is read by nothing, and
+      `extrapolate_beyond_section_ends` only ever raises `NotImplementedError` (on a
+      path of two or more cells). Both stay, documented as having no effect: removing
+      them is an API change nobody was asked about, and `XSection`, the engine behind
+      the profile, takes them too. The two pictures open on DIFFERENT times by default
+      -- the cross-section on the last saved time (`section_time`), the profile on the
+      first (`XSection` takes `model.kstpkper[0]`) -- documented, not changed, because
+      either change moves every existing figure of that kind, the noun's included.
+      Tests: `tests/test_section_defaults.py`, 16. Reverting the free verb's default
+      fails the free scope's test by name; forcing the profile's flags again fails 1;
+      dropping the bare-grid refusal 3; the `fill_cmap` refusal 1; the
+      `animation_kstpkpers` refusal 1.

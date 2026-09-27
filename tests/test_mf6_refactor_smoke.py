@@ -823,7 +823,7 @@ def test_direct_voronoi_grid_smoke():
     # The matplotlib renderer is flopy's own, reached through the Picture.
     assert mesh.plot_mpl() is not None
 
-    section = vor.plot.section(LineString([(0.5, -0.5), (0.5, 1.5)]))
+    section = vor.plot.section(LineString([(0.5, -0.5), (0.5, 1.5)]), fill=None, backend="plotly")
     assert isinstance(section, GridSection)
     assert len(section.poly_coords) >= 1
     assert len(section.fig.data) >= 1

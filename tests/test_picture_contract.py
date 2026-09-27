@@ -289,11 +289,13 @@ def test_every_real_picture_is_idempotent(canonical_run):
     mid = (ymin + ymax) / 2
     pictures = {
         "Choro": model.plot.map(layer=0),
-        "XSection": model.plot.section(cells=[0, 1, 2]),
+        "XSection": model.plot.section(cells=[0, 1, 2], fill=None, backend="plotly"),
         "GridMesh": vor.plot.grid(),
-        "GridSection": vor.plot.section(LineString([(xmin, mid), (xmax, mid)])),
+        "GridSection": vor.plot.section(
+            LineString([(xmin, mid), (xmax, mid)]), fill=None, backend="plotly"
+        ),
         "FilledSection": model.plot.section(
-            line=LineString([(xmin + 1, mid), (xmax - 1, mid)]), fill="layer"
+            line=LineString([(xmin + 1, mid), (xmax - 1, mid)]), backend="plotly"
         ),
         "InterpolatedSurface": model.plot.surface(layer=0),
         "FrameAnimation": model.plot.animate(
@@ -334,7 +336,7 @@ def test_a_section_animation_is_the_sections_figure_from_then_on(canonical_run):
     the other was not.
     """
 
-    section = canonical_run.plot.section(cells=[0, 1, 2])
+    section = canonical_run.plot.section(cells=[0, 1, 2], fill=None, backend="plotly")
     animation = section.ani
 
     assert animation.frames, "no frames on the section animation"
