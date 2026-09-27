@@ -213,8 +213,12 @@ def test_a_noun_verb_offers_the_measured_parameter_set(name, rel, line, fn, sour
     if name in UNCONVERTED:
         pytest.xfail(f"{name} is recorded debt (ledger 169b)")
 
+    from myflopy.modflow.mf6.package_plotting import NOUN_SECTION_PARAMS
+
     named = {a.arg for a in fn.args.kwonlyargs}
-    missing = [p for p in NOUN_MAP_PARAMS if p not in named]
+    # A noun's `section` draws a line profile and has a set of its own (ledger 334).
+    measured = NOUN_SECTION_PARAMS if name.endswith(".section") else NOUN_MAP_PARAMS
+    missing = [p for p in measured if p not in named]
     assert not missing, f"{rel}:{line} {name} forwards but never names {missing}"
 
 
@@ -505,3 +509,116 @@ def test_a_composer_refuses_map_options_on_a_kind_that_draws_no_map(verb, kind):
         refuse_panel_drawing_options(kind, verb, {"logscale": True})
     # nothing set, nothing to refuse
     assert refuse_panel_drawing_options(kind, verb, {}) is None
+
+
+# ---------------------------------------------------------------------------
+# The noun's SECTION (ledger 334, 2026-09-26)
+#
+# `SpatialView.section` renders through `render_xsections`, so `_discovered()`
+# -- which keys on a body mentioning `plot.map(`/`plot.section(`/
+# `_choropleth_factory` -- never found it: the gap ledger 258 closed for the
+# composers, one verb over. It took `**kwargs` into `XSection`, and 24 of 28
+# keywords came back byte-identical (`docs/reproducers/section_noun_kwargs_tail.py`),
+# `fill=` among them. The sweep reaches it now only because its docstring points at
+# `model.plot.section(`, which is prose; so it is also swept explicitly here.
+# ---------------------------------------------------------------------------
+
+#: Named on NO noun's section, each for a measured reason (ledger 334): the
+#: cross-section's arguments are refused by name; `spacing` and
+#: `extrapolate_beyond_section_ends` never act; `animation_kstpkpers` needs `.ani`,
+#: which a noun never returns; `section_name` crashed a group; `surf_type`
+#: sections another field.
+_NOT_ON_A_NOUNS_SECTION = (
+    "spacing", "extrapolate_beyond_section_ends", "animation_kstpkpers",
+    "section_name", "surf_type",
+)
+
+
+def test_the_nouns_section_names_the_measured_set_and_nothing_else():
+    from myflopy.modflow.mf6.package_plotting import (
+        NOUN_SECTION_PARAMS,
+        NOUN_SECTION_REFUSED,
+        SpatialView,
+    )
+
+    params = inspect.signature(SpatialView.section).parameters
+    named = {n for n, p in params.items() if p.kind is p.KEYWORD_ONLY}
+    assert named == set(NOUN_SECTION_PARAMS) | {"backend", "title"}, (
+        f"SpatialView.section names {sorted(named)}"
+    )
+    offered = named & (set(NOUN_SECTION_REFUSED) | set(_NOT_ON_A_NOUNS_SECTION))
+    assert not offered, f"SpatialView.section offers what it cannot honour: {sorted(offered)}"
+    tails = [p.name for p in params.values() if p.kind is p.VAR_KEYWORD]
+    assert tails == ["refused"], (
+        "the tail exists only to refuse, and is named so an editor's popup says so"
+    )
+
+
+def test_the_nouns_section_documents_every_parameter_it_names():
+    """Checked on the SOURCE literal -- what a static reader actually gets."""
+
+    from myflopy.modflow.mf6.package_plotting import SpatialView
+
+    source = pathlib.Path(inspect.getsourcefile(SpatialView)).read_text()
+    fn = next(
+        f
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and node.name == "SpatialView"
+        for f in node.body
+        if isinstance(f, ast.FunctionDef) and f.name == "section"
+    )
+    doc = ast.get_docstring(fn) or ""
+    documented, inside = set(), False
+    lines = doc.splitlines()
+    for index, line in enumerate(lines):
+        underlined = (
+            index + 1 < len(lines) and lines[index + 1].strip()
+            and set(lines[index + 1].strip()) == {"-"}
+        )
+        if line.strip() in _SECTION_HEADS and underlined:
+            inside = line.strip() == "Parameters"
+            continue
+        if inside and line and not line[0].isspace():
+            for part in line.split(":")[0].split(","):
+                part = part.strip().lstrip("*")
+                if part.isidentifier():
+                    documented.add(part)
+    named = [a.arg for a in (*fn.args.args[1:], *fn.args.kwonlyargs)] + [fn.args.kwarg.arg]
+    missing = sorted(set(named) - documented)
+    assert not missing, f"SpatialView.section names but never documents {missing}"
+    assert "model.plot.section(" in doc, "the docstring must say where the cross-section lives"
+
+
+def _section_tails() -> set[str]:
+    """Every ``Class.section`` in src/ that takes a ``**kwargs`` tail."""
+
+    found = set()
+    for path in sorted(SRC.rglob("*.py")):
+        if "_vendor" in path.parts:
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ClassDef):
+                for fn in node.body:
+                    if (isinstance(fn, ast.FunctionDef) and fn.name == "section"
+                            and fn.args.kwarg is not None):
+                        found.add(f"{node.name}.section")
+    return found
+
+
+#: Each `section` with a tail, and why it may have one. EXACT in both directions:
+#: a new noun defining its own `section(**kwargs)` is what swallowed `fill=`.
+_SECTION_TAILS = {
+    "SpatialView.section": "refuses: the tail forwards nothing (ledger 334)",
+    "FieldMappable.section": "the namespace `field=` sugar (8.8's one exemption)",
+    "PRTPathlineView.section": "raises NotImplementedError: a trajectory is no field",
+    "ModelPlots.section": "a VERB scope: the tail rides to the free verb",
+    "StackPlots.section": "a VERB scope over a layer stack",
+}
+
+
+def test_every_section_with_a_tail_is_accounted_for():
+    found = _section_tails()
+    assert found == set(_SECTION_TAILS), (
+        f"new: {sorted(found - set(_SECTION_TAILS))}; "
+        f"gone: {sorted(set(_SECTION_TAILS) - found)}"
+    )

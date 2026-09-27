@@ -452,7 +452,7 @@ rule; it is what makes the API guessable without reading source.
 | `summary()` | `DataFrame` — a compact digest | every noun |
 | `plot(...)` | `viz.Fig` — the node's NON-SPATIAL chart | every noun |
 | `map(...)` | choropleth | spatial nouns |
-| `section(...)` | cross-section | spatial nouns |
+| `section(...)` | the field's LINE PROFILE along a line (ledger 334; the model's cross-section is `model.plot.section`) | per-layer field nouns (heads, conc, temp) |
 | `mosaic(...)` / `animate(...)` | multi-panel / animated | spatial nouns |
 
 These are the same Layer-1 and Layer-2 verbs as the table at the top of this

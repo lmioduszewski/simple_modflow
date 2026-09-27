@@ -876,9 +876,10 @@ class GridPlots:
         section_name : str, optional
             The cross-section's title, or the line profile's legend name.
         **kwargs
-            *(line profile)* Passed on to the line profile's section class, which
-            hands them to the interpolated surface when interpolating
-            (``resolution``, ``crs``).
+            *(line profile, interpolating)* Passed on to the interpolated surface:
+            ``resolution`` (its grid size per axis, default 1000) and ``crs``, or its
+            ``xs``/``ys``/``zs``/``vor``/``hds`` inputs. Any other keyword raises
+            ``TypeError``, on either picture.
 
             .. end generated
 
@@ -897,6 +898,8 @@ class GridPlots:
             belongs to; a model's argument given to a bare grid;
             ``fill='results'`` on a bare grid; a flat fill array; a line that crosses
             no cell.
+        TypeError
+            A keyword ``section`` does not take at all -- a typo -- on either picture.
 
         See Also
         --------

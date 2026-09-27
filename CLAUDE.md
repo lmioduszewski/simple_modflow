@@ -124,7 +124,11 @@ arguments were passed. Both pictures draw on BOTH backends, the same cells (ledg
 second derivation of the geometry. `.ani` stays the Plotly profile's
 (`fill=None, backend="plotly"`). It raises rather than degrading: on the other
 picture's arguments, on `"results"` or a results argument for a bare grid, and on
-a flat `(ncpl,)` array.
+a flat `(ncpl,)` array. **The NOUN `model.hds.section()` stays the head LINE
+PROFILE** (ledger 334, the user's call): it names what measured to act
+(`NOUN_SECTION_PARAMS`), and `fill=` and the cross-section's other arguments RAISE
+there, naming `model.plot.section(fill=...)`; its `**refused` tail forwards nothing.
+`XSection` checks its own tail when built, so a typo raises on every section.
 Pick what it contains with `layers=` (which layers' cells; masks and CROPS the
 view), `head_layers=` (whose water levels ride on top -- default `0`, a list
 draws one labelled surface each, `None` none) and `layer_labels=` (unit names for
@@ -294,6 +298,10 @@ signatures — it stays `*args, **kwargs` and points at the leaf.
 **This reaches the NOUN tier too, and as of 2026-09-02 all 15 are converted**
 (`tests/test_noun_signatures.py`, which DISCOVERS its subjects by AST sweep
 rather than listing them; its `UNCONVERTED` set is now empty and asserted empty).
+The sweep keys on a body mentioning `plot.map(`/`plot.section(`, so the noun's
+`section` (it renders through `render_xsections`) sat outside it with a `**kwargs`
+tail that swallowed `fill=` until ledger 334; it is swept explicitly now, and every
+`Class.section` with a tail is pinned.
 A noun names Tier 1 (`NOUN_MAP_PARAMS`, 25 including `backend`) plus its own
 selectors, REFUSES `values`/`type`/the legacy hover trio, and omits the Tier 2
 per-layer names that were measured byte-identical on a record noun. **Docstrings are STATIC, and generated** (ledger 178/180, 2026-09-05): the free
@@ -468,7 +476,11 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4380 passed / 6 skipped**, 2026-09-26, ledger 331 landed on top of 330):
+- Full suite (**4542 passed / 4 skipped**, 2026-09-26, ledgers 332-334): serial (`-n0`)
+  **7m00s** in a detached checkout outside `.claude` (so `test_docs_structure` runs its
+  cases), load average ~1.3 at its start -- the quietest serial clock since 4037. The
+  same tree's `-n 6` inside the worktree took 5m18s at a load of ~21-30 (another
+  session's suite). Before that, 4380 (ledger 331 on 330):
   serial (`-n0`) **9m22s** and `-n 10` **3m38s**, both under other sessions' load. Before
   that merge, ledger 331's branch alone (4351) took serial (`-n0`) **7m33s** (load average ~3.9 at its start, the 5-minute figure
   ~11 as another workload wound down, and two scripts reading a real run shared its

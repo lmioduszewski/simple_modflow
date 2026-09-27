@@ -1032,7 +1032,7 @@ def test_show_grid_is_named_and_leftover_arguments_are_refused(canonical_run):
         "show_grid=False still styled the cell edges"
     )
 
-    with pytest.raises(ValueError, match="not arguments of the cross-section"):
+    with pytest.raises(TypeError, match="not arguments of the cross-section"):
         section(interpolate_me=True)
 
 

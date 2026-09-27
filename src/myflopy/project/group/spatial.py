@@ -101,6 +101,11 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
     #: unit shown in hovers; the per-kind conventions the hover factories use
     value_unit: str = "ft"
 
+    def _noun_path(self) -> str:
+        """``group.hds`` / ``group.conc`` / ``group.temp``, for messages."""
+
+        return f"group.{self.reader_attribute}"
+
     def __init__(self, group: ModelGroup):
         """Bind the grouped field accessor to its :class:`ModelGroup`."""
 

@@ -697,10 +697,11 @@ def _filled_section(source, vor, is_model, *, line, cells, per, kstpkper,
         # The profile branch forwards its tail to `XSection`; this branch builds
         # no such class, so anything left over would be accepted and dropped --
         # which is how `show_grid=False` did nothing before it was named.
-        raise ValueError(
-            f"{', '.join(sorted(extra))} are not arguments of the cross-section. "
-            f"The **kwargs tail reaches the line profile's section class "
-            f"(fill=None), which this branch does not build."
+        raise TypeError(
+            f"section got unexpected keyword argument(s) {sorted(extra)}: not "
+            f"arguments of the cross-section. The **kwargs tail reaches the line "
+            f"profile's interpolated surface (fill=None, interpolating), which "
+            f"this branch does not build."
         )
     if not is_model:
         # Nothing here reads results, so on a bare grid these would be taken and
@@ -961,9 +962,10 @@ def section(
         ``'matplotlib'``/``'static'`` and ``'interactive'`` as aliases; anything
         else raises.
     **kwargs
-        *(line profile)* Passed on to the line profile's section class, which
-        hands them to the interpolated surface when interpolating
-        (``resolution``, ``crs``).
+        *(line profile, interpolating)* Passed on to the interpolated surface:
+        ``resolution`` (its grid size per axis, default 1000) and ``crs``, or its
+        ``xs``/``ys``/``zs``/``vor``/``hds`` inputs. Any other keyword raises
+        ``TypeError``, on either picture.
 
     Returns
     -------
@@ -982,6 +984,8 @@ def section(
         belongs to; a model's argument given to a bare grid;
         ``fill='results'`` on a bare grid; a flat fill array; a line that crosses
         no cell.
+    TypeError
+        A keyword ``section`` does not take at all -- a typo -- on either picture.
 
     See Also
     --------
@@ -1970,9 +1974,10 @@ class ModelPlots:
             ``'matplotlib'``/``'static'`` and ``'interactive'`` as aliases; anything
             else raises.
         **kwargs
-            *(line profile)* Passed on to the line profile's section class, which
-            hands them to the interpolated surface when interpolating
-            (``resolution``, ``crs``).
+            *(line profile, interpolating)* Passed on to the interpolated surface:
+            ``resolution`` (its grid size per axis, default 1000) and ``crs``, or its
+            ``xs``/``ys``/``zs``/``vor``/``hds`` inputs. Any other keyword raises
+            ``TypeError``, on either picture.
 
         Returns
         -------
@@ -1991,6 +1996,8 @@ class ModelPlots:
             belongs to; a model's argument given to a bare grid;
             ``fill='results'`` on a bare grid; a flat fill array; a line that crosses
             no cell.
+        TypeError
+            A keyword ``section`` does not take at all -- a typo -- on either picture.
 
         See Also
         --------

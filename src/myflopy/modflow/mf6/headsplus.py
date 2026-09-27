@@ -291,6 +291,11 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
 
         return "mean"  # heads/conc/temp average over cells; summing them is meaningless
 
+    def _noun_path(self) -> str:
+        """``model.hds`` / ``model.conc`` / ``model.temp``, for messages."""
+
+        return f"model.{self._choro_type}"
+
     def _sections(
         self,
         model=None,

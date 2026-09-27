@@ -84,6 +84,11 @@ class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
     #: short label for the differenced quantity
     value_label = "head"
 
+    def _noun_path(self) -> str:
+        """``diff.hds`` / ``diff.conc`` / ``diff.temp``, for messages."""
+
+        return f"diff.{self.group_attribute}"
+
     @property
     def _field(self):
         """The grouped field accessor backing this diff leaf."""

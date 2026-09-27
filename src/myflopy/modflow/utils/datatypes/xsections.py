@@ -125,6 +125,14 @@ def render_xsections(
     raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
 
 
+#: The names ``XSection``'s ``**kwargs`` may carry: ``InterpolatedSurface``'s
+#: parameters that ``XSection`` does not already pass it itself. Checked when the
+#: section is BUILT -- the surface is built only when interpolating, so anything
+#: else used to be stored and dropped, or raise from a class the caller never
+#: named (ledger 334).
+SURFACE_OPTIONS = ("resolution", "crs", "xs", "ys", "zs", "vor", "hds")
+
+
 class XSection(Picture):
 
     #: Whether `.fig` has assembled its traces. A CLASS attribute so instances
@@ -193,15 +201,26 @@ class XSection(Picture):
         :param use_rbf: Defaults to True, rbf is an interpolation method, use this if having issues
         :param clip: shapely Polygon object to clip the cross-section to
         :param interpolator: define interpolation method. See InterpolatedSurface class for options.
-        :param kwargs: additional keyword arguments to pass to InterpolatedSurface class
+        :param kwargs: passed to the InterpolatedSurface built when interpolating --
+            only ``resolution``, ``crs``, ``xs``, ``ys``, ``zs``, ``vor``, ``hds``;
+            anything else raises ``TypeError`` here
 
         """
+        unknown = sorted(set(kwargs) - set(SURFACE_OPTIONS))
+        if unknown:
+            raise TypeError(
+                f"section got unexpected keyword argument(s) {unknown}. A line "
+                f"profile passes its **kwargs only to the interpolated surface it "
+                f"builds when interpolating, which takes {', '.join(SURFACE_OPTIONS)}."
+            )
         self._model = model
         self._vor = None
         self._kstpkper = self.model.kstpkper[per] if per is not None else kstpkper
         self.interpolator = interpolator
         self._layer = None
-        self._cells = cells
+        # A bare int is one cell, as the docstring's own example says; stored
+        # as given it died at `len()` when the line was first drawn.
+        self._cells = [int(cells)] if isinstance(cells, (int, np.integer)) else cells
         self._x_or_y = x_or_y
         self.spacing = spacing
         self._num_points = num_points

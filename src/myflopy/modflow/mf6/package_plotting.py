@@ -706,6 +706,83 @@ def refuse_noun_parameters(noun: str, field: str, kwargs: dict) -> None:
         )
 
 
+#: The line-profile options a field noun's ``section`` NAMES and forwards to
+#: ``XSection``, each measured to change the picture
+#: (``docs/reproducers/section_noun_kwargs_tail.py``, ledger 334). Everything else
+#: the noun used to take through ``**kwargs`` was either the cross-section's, inert
+#: on a noun (``spacing``, ``extrapolate_beyond_section_ends``,
+#: ``animation_kstpkpers`` -- a noun returns a figure, never ``.ani``), or
+#: ``section_name``, which crashed a group and a diff by colliding with the name
+#: each member's line carries.
+NOUN_SECTION_PARAMS = (
+    "line", "cells", "per", "kstpkper", "layer", "interpolate", "interpolator",
+    "use_rbf", "num_points", "clip", "x_or_y", "show_model_top", "show_model_btm",
+)
+
+#: The model's CROSS-SECTION's arguments. A field noun draws its field's line
+#: profile, so these are refused BY NAME, pointing at the verb that draws the
+#: cross-section -- the user's call (ledger 334), taken over routing them: a noun
+#: fixes the field it draws (why map nouns refuse ``values=``), ``fill="layer"``
+#: draws the geology and an array any field, and a group or a diff has no one
+#: model's cells to fill.
+NOUN_SECTION_REFUSED = (
+    "fill", "fill_cmap", "fill_label", "layers", "head_layers", "layer_labels",
+    "show_grid", "legend",
+)
+
+#: What a ``kind="section"`` composer forwards to each panel's sections: the
+#: noun's options less the ones the composer owns (``per``, ``layer``, ``model``)
+#: and ``kstpkper``, which each panel overwrites with its own time.
+COMPOSER_SECTION_OPTIONS = tuple(
+    name for name in NOUN_SECTION_PARAMS if name not in ("per", "kstpkper", "layer")
+)
+
+
+def refuse_section_arguments(where: str, unexpected: dict, accepted) -> None:
+    """Raise a ``TypeError`` naming every keyword a noun's section did not take.
+
+    ``where`` is how the caller spelled the call (``"model.hds.section()"``).
+    The cross-section's arguments get the verb that draws them; ``surf_type``
+    gets why a noun refuses it; anything else is named, with the nearest
+    accepted spelling when there is one. Nothing is forwarded from here: a
+    keyword that reaches this function was not taken.
+    """
+
+    if not unexpected:
+        return
+    names = sorted(unexpected)
+    cross = [name for name in names if name in NOUN_SECTION_REFUSED]
+    if cross:
+        raise TypeError(
+            f"{where} draws this field's LINE PROFILE, so it takes no "
+            f"{', '.join(name + '=' for name in cross)} -- those draw the model's "
+            f"CROSS-SECTION, the cells coloured by layer or by a field. That picture "
+            f"is model.plot.section(line=..., fill=...); from a group or a diff, one "
+            f"member's: group.models[name].plot.section(line=..., fill=...)."
+        )
+    if "surf_type" in unexpected:
+        raise TypeError(
+            f"{where} draws this field; surf_type= would section the layer "
+            f"elevations instead. Section them from the model: "
+            f"model.plot.section(line=..., fill=None, surf_type='lyr', interpolate=True)."
+        )
+    if "kstpkper" in unexpected and "per" not in accepted:
+        raise TypeError(
+            f"{where} takes no kstpkper=: each panel of a section composer reads "
+            f"its own time. Choose the times with per=."
+        )
+    import difflib
+
+    described = []
+    for name in names:
+        near = difflib.get_close_matches(name, list(accepted), n=1)
+        described.append(f"{name!r}" + (f" (did you mean {near[0]!r}?)" if near else ""))
+    raise TypeError(
+        f"{where} got unexpected keyword argument(s) {', '.join(described)}. It "
+        f"takes {', '.join(accepted)}."
+    )
+
+
 #: Aggregations whose 0 is a real answer for a group holding no value.
 _COUNTING_AGGREGATIONS = ("count", "size", "nunique")
 
@@ -1555,6 +1632,11 @@ class SpatialView:
             "heads leaves (model.hds, group.hds, diff heads)."
         )
 
+    def _noun_path(self) -> str:
+        """How a caller reached this noun, for messages (``model.hds``, ``group.conc``)."""
+
+        return type(self).__name__
+
     def section(
         self,
         model=None,
@@ -1562,24 +1644,109 @@ class SpatialView:
         line=None,
         cells=None,
         per: int | None = None,
+        kstpkper: tuple[int, int] | None = None,
         layer=0,
+        interpolate: bool = False,
+        interpolator: str | None = None,
+        use_rbf: bool = True,
+        num_points: int = 100,
+        clip=None,
+        x_or_y: str = "x",
+        show_model_top: bool = True,
+        show_model_btm: bool = False,
         backend: str = "plotly",
         title: str | None = None,
-        **kwargs,
+        **refused,
     ):
-        """Cross-section panel: this field vs distance along a section line.
+        """This field's LINE PROFILE: its value against distance along a line.
 
-        ``line`` is a shapely ``LineString`` / ``(x, y)`` pairs / flopy dict;
-        alternatively ``cells`` traces the section through cell centroids. On a
-        group surface ``model=None`` overlays every member; a diff overlays the
-        reference with each compared model. ``backend="plotly"`` returns a
-        ``viz.Fig``, ``backend="mpl"`` a matplotlib figure.
+        One line per ``layer``, plus the model top. On a group ``model=None``
+        overlays every member; on a diff, the reference and each compared model.
+        This is the picture ``model.plot.section(fill=None)`` draws. The model's
+        CROSS-SECTION -- the cells the line cuts, coloured by layer or by a field --
+        is ``model.plot.section(line=..., fill=...)``; its arguments (``fill``,
+        ``layers``, ``head_layers``, ...) RAISE here and say so, rather than being
+        taken and dropped (ledger 334).
+
+        Parameters
+        ----------
+        model : str, optional
+            On a group or a diff, one member's name, to draw that member alone.
+            A single model's noun takes none.
+        line : LineString, sequence of (x, y), or dict, optional
+            The section line: a shapely ``LineString``, ``[(x, y), ...]``, or a
+            flopy ``{"line": [...]}`` dict. Give ``line`` or ``cells``.
+        cells : int or list of int, optional
+            The section path as cell numbers, in order; the line runs through
+            their centroids. One cell draws a straight line through it, east-west
+            or north-south as ``x_or_y`` says.
+        per : int, optional
+            Stress period (zero-based) to draw; the first saved time by default.
+        kstpkper : tuple of (int, int), optional
+            The exact ``(time step, period)`` to draw; ``per`` wins when both
+            are given.
+        layer : int or list of int, default 0
+            Whose values to draw, zero-based; a list overlays one line per layer.
+        interpolate : bool, default False
+            Sample an interpolated surface along the line, rather than stepping
+            from cell centre to cell centre.
+        interpolator : str, optional
+            The interpolation method by name -- ``'griddata'``, ``'rbf'``,
+            ``'linearND'`` or ``'cloughTocher2D'``. Giving one turns
+            ``interpolate`` on.
+        use_rbf : bool, default True
+            With ``interpolate`` and no ``interpolator``: radial basis functions
+            (``True``) or ``griddata`` (``False``).
+        num_points : int, default 100
+            How many points to sample along the line when interpolating.
+        clip : Path or geometry, optional
+            Clip the interpolated surface to this region.
+        x_or_y : {'x', 'y'}, default 'x'
+            With a single cell in ``cells``, run the line east-west (``'x'``) or
+            north-south (``'y'``) through it.
+        show_model_top : bool, default True
+            Draw the model top.
+        show_model_btm : bool, default False
+            Draw the bottoms of the layers in ``layer``.
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            ``'plotly'`` returns an interactive :class:`~myflopy.viz.Fig`;
+            ``'mpl'`` a Matplotlib ``Figure``.
+        title : str, optional
+            The figure title.
+        **refused
+            Nothing is accepted here. It exists so a keyword this noun does not
+            take raises a ``TypeError`` that says why: the cross-section's
+            arguments name ``model.plot.section(fill=...)``, and anything else is
+            named with its nearest accepted spelling.
+
+        Returns
+        -------
+        myflopy.viz.Fig or matplotlib.figure.Figure
+
+        Raises
+        ------
+        TypeError
+            For any keyword not named above -- the cross-section's pointing at
+            ``model.plot.section(fill=...)``, a typo with its nearest spelling.
+
+        Examples
+        --------
+        >>> model.hds.section(line=line)
+        >>> model.hds.section(line=line, layer=[0, 1], per=3)
+        >>> model.hds.section(cells=[1653, 651, 1241], interpolator="griddata")
+        >>> model.hds.section(line=line, backend="mpl").savefig("heads.png")
         """
 
+        refuse_section_arguments(
+            f"{self._noun_path()}.section()", refused, NOUN_SECTION_PARAMS
+        )
         from myflopy.modflow.utils.datatypes.xsections import render_xsections
 
         sections = self._sections(
-            model=model, line=line, cells=cells, per=per, layer=layer, **kwargs
+            model=model, line=line, cells=cells, per=per, kstpkper=kstpkper,
+            layer=layer, interpolate=interpolate, interpolator=interpolator,
+            use_rbf=use_rbf, num_points=num_points, clip=clip, x_or_y=x_or_y,
+            show_model_top=show_model_top, show_model_btm=show_model_btm,
         )
         return render_xsections(sections, backend=backend, title=title)
 
@@ -1885,6 +2052,11 @@ class SpatialView:
                 title=title,
             )
         if kind_key == "section":
+            refuse_section_arguments(
+                f"{self._noun_path()}.mosaic(kind='section')",
+                {k: v for k, v in kwargs.items() if k not in COMPOSER_SECTION_OPTIONS},
+                COMPOSER_SECTION_OPTIONS,
+            )
             return self._xs_mosaic(
                 by=by,
                 per=per,
@@ -2393,6 +2565,11 @@ class SpatialView:
                 title=title,
             )
         if kind_key == "section":
+            refuse_section_arguments(
+                f"{self._noun_path()}.animate(kind='section')",
+                {k: v for k, v in kwargs.items() if k not in COMPOSER_SECTION_OPTIONS},
+                COMPOSER_SECTION_OPTIONS,
+            )
             return self._xs_animation(
                 over=over,
                 per=per,

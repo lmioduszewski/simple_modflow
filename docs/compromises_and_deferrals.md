@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 333 entries (338 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 334 entries (339 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 334 | A field noun's `section` names what acts on it and refuses the rest: `fill=` and the cross-section's argume... | 2026-09-26 |
 | 333 | `section()` draws the model's cross-section by default -- `fill="layer"`, `backend="mpl"` -- and... | 2026-09-26 |
 | 332 | `section(fill=...)` draws on Plotly too, and draws what Matplotlib draws: one `FilledSection`, one FloPy... | 2026-09-26 |
 | 331 | A stage target read a lake's stage once per connected cell, and a reach's once per saved time step: one sta... | 2026-09-25 |
@@ -13190,6 +13191,8 @@ same day, which is the useful part of the result.
       ``hds.section(fill=...)`` silently draws a profile: the noun forwards ``fill=`` to
       ``XSection``, which keeps it for a surface it never builds without
       ``interpolator=``. That is not a sentinel defect, so it is left for its own change.
+      **RESOLVED by ledger 334 (2026-09-26):** the noun names what acts on it, and
+      ``fill=`` raises there, naming ``model.plot.section(fill=...)``.
       Reproducer: section 5 of ``docs/reproducers/head_surface_sentinels.py``; tests:
       ``tests/test_dry_and_inactive_cells.py``, on the ``sentinel_run`` fixture, which
       moved to conftest and marks its tests slow. Reverting the fix fails all seven by
@@ -14526,3 +14529,65 @@ same day, which is the useful part of the result.
       fails the free scope's test by name; forcing the profile's flags again fails 1;
       dropping the bare-grid refusal 3; the `fill_cmap` refusal 1; the
       `animation_kstpkpers` refusal 1.
+
+334. **A field noun's `section` names what acts on it and refuses the rest: `fill=` and the cross-section's arguments raise, naming `model.plot.section(fill=...)` (2026-09-26).**
+      Closes ledger 315's "Not done". `model.hds.section(line=..., fill="layer")` returned
+      the plain head profile, byte-identical, and with `interpolator=` raised `TypeError`
+      from `InterpolatedSurface.__init__`, a class the caller never named: the noun took
+      `**kwargs` into `XSection`, which keeps its tail only for the surface it builds
+      when interpolating. **Measured** (`docs/reproducers/section_noun_kwargs_tail.py`, at
+      a69ac87): of 28 keywords passed one at a time -- every parameter the verb names and
+      the noun did not, `InterpolatedSurface`'s extras, `extent=`, two typos -- 24 came
+      back byte-identical on `model.hds`, `group.hds` and `diff.hds`, on both backends;
+      `section_name=` crashed the group and the diff ("got multiple values"); the
+      `kind="section"` composers swallowed the same set and `kstpkper`; the verb's line
+      profile swallowed every typo.
+      **Refuse, not route -- the user's call**, for the reasons put with the fork: a noun
+      fixes the field it draws (why map nouns refuse `values=`/`type=`), and `fill="layer"`
+      draws the geology while an array draws any field; a group, a diff and the section
+      composers have no one model's cells to fill, so routing would have split one
+      `SpatialView` method into two behaviours; and the model scope teaches the
+      cross-section (ledger 177). The refusal names what draws it, and
+      `group.models[name].plot.section(...)` for a group or a diff.
+      **What the noun names is what measured to act:** `kstpkper`, `layer`,
+      `interpolate`, `interpolator`, `use_rbf`, `num_points`, `clip`, `x_or_y`,
+      `show_model_top`, `show_model_btm` (`NOUN_SECTION_PARAMS`; the last two act since
+      ledger 333's frame fix). Deliberately NOT named: `spacing` and
+      `extrapolate_beyond_section_ends` (they never act, ledger 333);
+      `animation_kstpkpers` (a noun returns a figure, never `.ani`); `section_name` (it was
+      the group's and the diff's crash, and `title=` labels a figure); `resolution`/`crs`
+      (the verb takes them only through its tail, and a narrower scope may not offer what
+      the wider does not name); `surf_type` (the noun fixes its field; the refusal gives
+      the verb spelling that sections the layers).
+      **`**refused` stays on the signature and forwards NOTHING.** With no tail, a stray
+      `fill=` gets Python's own `TypeError`, naming `SpatialView.section` -- a class nobody
+      typed -- and no way to the picture; with it the refusal names the verb, and a typo
+      gets its nearest accepted spelling. Named `refused` so an editor's popup says what
+      it is for.
+      **The funnel closes too.** `XSection` checks its tail when BUILT against
+      `SURFACE_OPTIONS`, the names `InterpolatedSurface` takes that `XSection` does not
+      pass itself -- the SAME names as before, checked always rather than only when
+      interpolating -- so the verb's line profile refuses a typo as well. An unknown
+      keyword is a `TypeError` on both of the verb's pictures now (the cross-section's
+      leftover check raised `ValueError`); an argument the verb DOES name, given to the
+      other picture, stays a `ValueError` naming that picture. The composers check their
+      tail with the same helper, and refuse `kstpkper` (each panel reads its own time;
+      `per=` chooses them).
+      **Fixed in passing:** `cells=<int>` died at `len()` on the line profile at both
+      scopes, where both document `int or list of int` and `XSection`'s own docstring
+      shows `cells=69`.
+      **Why no test saw it:** `test_noun_signatures` discovers subjects by a body
+      mentioning `plot.map(`/`plot.section(`/`_choropleth_factory`, and the noun's
+      `section` renders through `render_xsections` -- ledger 258's gap, one verb over. It
+      reaches it now only through its docstring's pointer at the verb, so it is swept
+      explicitly as well, the measured set is verb-aware, and every `Class.section` in
+      `src/` with a `**kwargs` tail is pinned, exact in both directions.
+      **Not done:** `surf_type="lyr"` while interpolating crashes on the verb (`'NoneType'
+      object has no attribute 'loc'`); each line-profile section reloads the simulation
+      through FloPy at its default verbosity, which prints; and `XSection` reads `per` as
+      an index into the SAVED times, the stage-clock family CLAUDE.md lists as open.
+      Tests: `tests/test_section_noun.py`, 48, and three in `tests/test_noun_signatures.py`.
+      Reverting the noun's refusal and `XSection`'s check together fails 32 of the 48 by
+      name -- both agreement tests and all four typo tests among them; the noun's alone
+      28 (the typos are still caught at `XSection`); `XSection`'s alone the 4 typo tests;
+      the composers' check 4; the `cells` fix 1.
