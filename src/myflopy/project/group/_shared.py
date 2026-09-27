@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, TypeVar
 
 import pandas as pd
 
+from myflopy.modflow.mf6.period_end import last_saved_step, last_saved_steps
+
 if TYPE_CHECKING:
     from myflopy.project.group.core import ModelGroup
 
@@ -17,12 +19,18 @@ TResultsNamespace = TypeVar("TResultsNamespace")
 
 
 def _coerce_kstpkper(model, per: int | None = None, kstpkper: tuple[int, int] | None = None):
-    """Normalize stress-period selectors to a concrete ``(kstp, kper)`` tuple."""
+    """Normalize stress-period selectors to a concrete ``(kstp, kper)`` tuple.
+
+    ``per`` is a stress PERIOD, read at its last saved step on THIS model's own
+    clock (:func:`~myflopy.modflow.mf6.period_end.last_saved_step`, ledger 337),
+    so two members with different ``nstp`` each give their own period end. It
+    indexed the saved records until then: ``per=1`` at ``nstp=3`` was ``(1, 0)``.
+    """
 
     if kstpkper is not None:
         return tuple(int(value) for value in kstpkper)
     if per is not None:
-        return tuple(int(value) for value in model.kstpkper[per])
+        return last_saved_step(model.kstpkper, per)
     return None
 
 
@@ -106,19 +114,18 @@ def _reduce_to_period_end(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty or "kstpkper" not in frame.columns:
         return frame
     out = frame.copy()
-    out["per"] = out["kstpkper"].map(lambda kk: int(kk[1]))
-    out["_kstp"] = out["kstpkper"].map(lambda kk: int(kk[0]))
-    identity = [
-        column
-        for column in ("model", "package", "layer", "cell", "node", "node2", "reach")
-        if column in out.columns
-    ]
-    return (
-        out.sort_values(["per", "_kstp"])
-        .drop_duplicates(subset=[*identity, "per"], keep="last")
-        .drop(columns="_kstp")
-        .reset_index(drop=True)
-    )
+    keys = out["kstpkper"].map(lambda kk: (int(kk[0]), int(kk[1])))
+    out["per"] = keys.map(lambda kk: kk[1])
+    # Each model's OWN last saved step per period, by the one rule (ledger 337).
+    # It used to keep each ROW identity's largest kstp, so a cell with no record
+    # at its model's last step kept an earlier step's value -- a different number.
+    models = out["model"] if "model" in out.columns else pd.Series("", index=out.index)
+    ends = {
+        name: set(last_saved_steps(keys[models == name]).values())
+        for name in models.unique()
+    }
+    keep = [key in ends[name] for key, name in zip(keys, models, strict=True)]
+    return out.loc[keep].sort_values("per", kind="stable").reset_index(drop=True)
 
 
 def _resolve_group_compare_target(group: ModelGroup, model_name: str | None) -> str:

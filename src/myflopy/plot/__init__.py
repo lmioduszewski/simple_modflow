@@ -623,12 +623,10 @@ _MODEL_ONLY_SECTION_ARGS = {
     "kstpkper": None,
     "layer": 0,
     "x_or_y": "x",
-    "spacing": 10,
     "num_points": 100,
     "interpolate": False,
     "use_rbf": True,
     "interpolator": None,
-    "extrapolate_beyond_section_ends": False,
     "show_model_top": True,
     "show_model_btm": False,
     "surf_type": "hds",
@@ -646,12 +644,10 @@ _MODEL_ONLY_SECTION_ARGS = {
 #: branch say so instead of accepting a knob it will not turn.
 _PROFILE_ONLY_SECTION_ARGS = {
     "x_or_y": "x",
-    "spacing": 10,
     "num_points": 100,
     "interpolate": False,
     "use_rbf": True,
     "interpolator": None,
-    "extrapolate_beyond_section_ends": False,
     "show_model_top": True,
     "show_model_btm": False,
     "surf_type": "hds",
@@ -811,8 +807,6 @@ def section(
     show_model_btm: bool = False,
     surf_type: str = "hds",
     animation_kstpkpers=None,
-    spacing: int = 10,
-    extrapolate_beyond_section_ends: bool = False,
     reverse: bool = False,
     section_name: str | None = None,
     backend: str = "mpl",
@@ -857,7 +851,7 @@ def section(
     - *the line profile (``fill=None``):* ``layer``, ``interpolate``,
       ``interpolator``, ``use_rbf``, ``num_points``, ``clip``, ``x_or_y``,
       ``show_model_top``, ``show_model_btm``, ``surf_type``,
-      ``animation_kstpkpers``, ``spacing``, ``extrapolate_beyond_section_ends``.
+      ``animation_kstpkpers``.
 
     Mind ``layers=`` against ``layer=``: the cross-section's chooses whose CELLS
     are drawn, the profile's whose head LINES.
@@ -874,11 +868,14 @@ def section(
         The section path as cell numbers, in order; the line runs through their
         centroids.
     per : int, optional
-        Stress period (zero-based) of the results drawn. The cross-section
-        defaults to the LAST saved time and the line profile to the FIRST.
-        Mutually exclusive with ``kstpkper``. A model only.
+        Stress period, zero-based: the LAST step saved in it is drawn, so
+        ``per=0`` is the end of the first period as the output saved it, on
+        both pictures (and on ``map`` and ``surface``). With neither ``per`` nor
+        ``kstpkper``, both pictures draw the model's FIRST saved time. Giving
+        both raises. A model only.
     kstpkper : tuple of (int, int), optional
-        The exact ``(time step, period)`` to draw. A model only.
+        The exact ``(time step, period)`` to draw; one the output did not save
+        raises. A model only.
     fill : {'layer', 'results'}, array-like, or None, default 'layer'
         Which picture, and what colours the cells -- see the table above.
         ``'layer'``: by layer, water level on top. ``'results'``: by the
@@ -915,7 +912,8 @@ def section(
     fill_label : str, optional
         *(cross-section, ``fill='results'`` or an array)* The colorbar title.
     layer : int or list of int, default 0
-        *(line profile)* Whose head lines to draw; a list overlays several.
+        *(line profile)* Whose head lines to draw; a list overlays several. An
+        interpolated profile draws one layer, so a list of more raises there.
     interpolate : bool, default False
         *(line profile)* Sample an interpolated surface along the line, rather
         than stepping from cell centre to cell centre.
@@ -925,12 +923,14 @@ def section(
         ``interpolate`` on.
     use_rbf : bool, default True
         *(line profile, interpolating)* With no ``interpolator``: radial basis
-        functions (``True``) or ``griddata`` (``False``).
+        functions (``True``) or ``griddata`` (``False``). ``False`` without
+        interpolation raises.
     num_points : int, default 100
         *(line profile, interpolating)* How many points to sample along the line.
+        Changed without interpolation, it raises: nothing is sampled then.
     clip : Path or geometry, optional
         *(line profile, interpolating)* Clip the interpolated surface to this
-        region.
+        region; raises without interpolation.
     x_or_y : {'x', 'y'}, default 'x'
         *(line profile)* With a single cell in ``cells``, run the line east-west
         (``'x'``) or north-south (``'y'``) through it.
@@ -939,18 +939,14 @@ def section(
     show_model_btm : bool, default False
         *(line profile)* Draw the bottoms of the layers in ``layer``.
     surf_type : {'hds', 'lyr'}, default 'hds'
-        *(line profile, interpolating)* Interpolate the head field, or the layer
-        elevations.
+        *(line profile, interpolating)* Interpolate the head field, or with
+        ``'lyr'`` the TOP of ``layer`` -- the model top for ``layer=0``, the bottom
+        of layer ``k - 1`` for ``layer=k`` -- from the model's own
+        discretization. ``'lyr'`` without interpolation raises.
     animation_kstpkpers : sequence of tuple, optional
         *(line profile, ``backend='plotly'``)* The times ``.ani`` steps through;
         every saved time by default. A Matplotlib figure has no ``.ani``, so
         this raises with ``backend='mpl'``.
-    spacing : int, default 10
-        *(line profile)* Has NO effect: nothing reads it (ledger 333).
-    extrapolate_beyond_section_ends : bool, default False
-        *(line profile)* Not implemented: ``True`` raises ``NotImplementedError``
-        on a ``cells=`` path of two or more cells and is ignored otherwise
-        (ledger 333).
     reverse : bool, default False
         Draw the line from its other end: a section drawn west to east comes back
         east to west, with distance measured from the new start.
@@ -964,7 +960,8 @@ def section(
     **kwargs
         *(line profile, interpolating)* Passed on to the interpolated surface:
         ``resolution`` (its grid size per axis, default 1000) and ``crs``, or its
-        ``xs``/``ys``/``zs``/``vor``/``hds`` inputs. Any other keyword raises
+        ``xs``/``ys``/``zs``/``vor``/``hds`` inputs. Any of them without
+        interpolation raises ``ValueError``; any other keyword raises
         ``TypeError``, on either picture.
 
     Returns
@@ -981,7 +978,9 @@ def section(
     ------
     ValueError
         An argument that belongs to the other picture, naming the picture it
-        belongs to; a model's argument given to a bare grid;
+        belongs to; an interpolation argument without interpolation, naming
+        ``interpolate=True``; ``per`` and ``kstpkper`` together; a period or
+        time the output did not save; a model's argument given to a bare grid;
         ``fill='results'`` on a bare grid; a flat fill array; a line that crosses
         no cell.
     TypeError
@@ -1001,8 +1000,8 @@ def section(
     >>> model.plot.section(line=line, legend="outside right").savefig("section.png")
     >>> model.plot.section(line=line, backend="plotly")  # the same, interactive
     >>> model.plot.section(line=line, fill=None)         # the head line profile
-    >>> model.plot.section(cells=[1653, 651, 1241], fill=None, layer=[0, 1],
-    ...                    interpolate=True)
+    >>> model.plot.section(cells=[1653, 651, 1241], fill=None, layer=[0, 1])
+    >>> model.plot.section(line=line, fill=None, interpolate=True, num_points=200)
     >>> model.plot.section(cells=cells, fill=None, backend="plotly").ani
     >>> vor.plot.section(line)                           # a bare grid's layers
     """
@@ -1057,12 +1056,10 @@ def section(
             kstpkper=kstpkper,
             layer=layer,
             x_or_y=x_or_y,
-            spacing=spacing,
             num_points=num_points,
             interpolate=interpolate,
             use_rbf=use_rbf,
             interpolator=interpolator,
-            extrapolate_beyond_section_ends=extrapolate_beyond_section_ends,
             show_model_top=show_model_top,
             show_model_btm=show_model_btm,
             surf_type=surf_type,
@@ -1082,10 +1079,9 @@ def section(
 
     asked = {
         "cells": cells, "per": per, "kstpkper": kstpkper, "layer": layer,
-        "x_or_y": x_or_y, "spacing": spacing, "num_points": num_points,
+        "x_or_y": x_or_y, "num_points": num_points,
         "interpolate": interpolate, "use_rbf": use_rbf,
         "interpolator": interpolator,
-        "extrapolate_beyond_section_ends": extrapolate_beyond_section_ends,
         "show_model_top": show_model_top, "show_model_btm": show_model_btm,
         "surf_type": surf_type, "section_name": section_name, "clip": clip,
         "animation_kstpkpers": animation_kstpkpers,
@@ -1138,11 +1134,16 @@ def surface(
     layer : int, default 0
         Zero-based layer to interpolate.
     per : int, optional
-        Stress period (0-based). Mutually exclusive with ``kstpkper``.
+        Stress period (0-based), drawn at its LAST saved step, as on ``map`` and
+        ``section`` (ledger 337). Mutually exclusive with ``kstpkper``: both
+        raise.
     kstpkper : tuple of (int, int), optional
         Exact ``(timestep, period)``. Defaults to the model's FIRST output time.
     surf_type : {'hds', 'lyr'}, default 'hds'
-        Interpolate the head field, or the layer elevation surface.
+        Interpolate the head field, or with ``'lyr'`` the TOP of ``layer`` -- the
+        model top for ``layer=0``, the bottom of layer ``k - 1`` for ``layer=k``
+        -- read from the model's own discretization (a bare grid's
+        ``gdf_topbtm``). Anything else raises.
     resolution : int, default 1000
         Interpolation grid size per axis. Higher is smoother and slower.
     use_rbf : bool, default False
@@ -1822,8 +1823,6 @@ class ModelPlots:
         show_model_btm: bool = False,
         surf_type: str = "hds",
         animation_kstpkpers=None,
-        spacing: int = 10,
-        extrapolate_beyond_section_ends: bool = False,
         reverse: bool = False,
         section_name: str | None = None,
         backend: str = "mpl",
@@ -1871,7 +1870,7 @@ class ModelPlots:
         - *the line profile (``fill=None``):* ``layer``, ``interpolate``,
           ``interpolator``, ``use_rbf``, ``num_points``, ``clip``, ``x_or_y``,
           ``show_model_top``, ``show_model_btm``, ``surf_type``,
-          ``animation_kstpkpers``, ``spacing``, ``extrapolate_beyond_section_ends``.
+          ``animation_kstpkpers``.
 
         Mind ``layers=`` against ``layer=``: the cross-section's chooses whose CELLS
         are drawn, the profile's whose head LINES.
@@ -1886,11 +1885,14 @@ class ModelPlots:
             The section path as cell numbers, in order; the line runs through their
             centroids.
         per : int, optional
-            Stress period (zero-based) of the results drawn. The cross-section
-            defaults to the LAST saved time and the line profile to the FIRST.
-            Mutually exclusive with ``kstpkper``. A model only.
+            Stress period, zero-based: the LAST step saved in it is drawn, so
+            ``per=0`` is the end of the first period as the output saved it, on
+            both pictures (and on ``map`` and ``surface``). With neither ``per`` nor
+            ``kstpkper``, both pictures draw the model's FIRST saved time. Giving
+            both raises. A model only.
         kstpkper : tuple of (int, int), optional
-            The exact ``(time step, period)`` to draw. A model only.
+            The exact ``(time step, period)`` to draw; one the output did not save
+            raises. A model only.
         fill : {'layer', 'results'}, array-like, or None, default 'layer'
             Which picture, and what colours the cells -- see the table above.
             ``'layer'``: by layer, water level on top. ``'results'``: by the
@@ -1927,7 +1929,8 @@ class ModelPlots:
         fill_label : str, optional
             *(cross-section, ``fill='results'`` or an array)* The colorbar title.
         layer : int or list of int, default 0
-            *(line profile)* Whose head lines to draw; a list overlays several.
+            *(line profile)* Whose head lines to draw; a list overlays several. An
+            interpolated profile draws one layer, so a list of more raises there.
         interpolate : bool, default False
             *(line profile)* Sample an interpolated surface along the line, rather
             than stepping from cell centre to cell centre.
@@ -1937,12 +1940,14 @@ class ModelPlots:
             ``interpolate`` on.
         use_rbf : bool, default True
             *(line profile, interpolating)* With no ``interpolator``: radial basis
-            functions (``True``) or ``griddata`` (``False``).
+            functions (``True``) or ``griddata`` (``False``). ``False`` without
+            interpolation raises.
         num_points : int, default 100
             *(line profile, interpolating)* How many points to sample along the line.
+            Changed without interpolation, it raises: nothing is sampled then.
         clip : Path or geometry, optional
             *(line profile, interpolating)* Clip the interpolated surface to this
-            region.
+            region; raises without interpolation.
         x_or_y : {'x', 'y'}, default 'x'
             *(line profile)* With a single cell in ``cells``, run the line east-west
             (``'x'``) or north-south (``'y'``) through it.
@@ -1951,18 +1956,14 @@ class ModelPlots:
         show_model_btm : bool, default False
             *(line profile)* Draw the bottoms of the layers in ``layer``.
         surf_type : {'hds', 'lyr'}, default 'hds'
-            *(line profile, interpolating)* Interpolate the head field, or the layer
-            elevations.
+            *(line profile, interpolating)* Interpolate the head field, or with
+            ``'lyr'`` the TOP of ``layer`` -- the model top for ``layer=0``, the bottom
+            of layer ``k - 1`` for ``layer=k`` -- from the model's own
+            discretization. ``'lyr'`` without interpolation raises.
         animation_kstpkpers : sequence of tuple, optional
             *(line profile, ``backend='plotly'``)* The times ``.ani`` steps through;
             every saved time by default. A Matplotlib figure has no ``.ani``, so
             this raises with ``backend='mpl'``.
-        spacing : int, default 10
-            *(line profile)* Has NO effect: nothing reads it (ledger 333).
-        extrapolate_beyond_section_ends : bool, default False
-            *(line profile)* Not implemented: ``True`` raises ``NotImplementedError``
-            on a ``cells=`` path of two or more cells and is ignored otherwise
-            (ledger 333).
         reverse : bool, default False
             Draw the line from its other end: a section drawn west to east comes back
             east to west, with distance measured from the new start.
@@ -1976,7 +1977,8 @@ class ModelPlots:
         **kwargs
             *(line profile, interpolating)* Passed on to the interpolated surface:
             ``resolution`` (its grid size per axis, default 1000) and ``crs``, or its
-            ``xs``/``ys``/``zs``/``vor``/``hds`` inputs. Any other keyword raises
+            ``xs``/``ys``/``zs``/``vor``/``hds`` inputs. Any of them without
+            interpolation raises ``ValueError``; any other keyword raises
             ``TypeError``, on either picture.
 
         Returns
@@ -1993,7 +1995,9 @@ class ModelPlots:
         ------
         ValueError
             An argument that belongs to the other picture, naming the picture it
-            belongs to; a model's argument given to a bare grid;
+            belongs to; an interpolation argument without interpolation, naming
+            ``interpolate=True``; ``per`` and ``kstpkper`` together; a period or
+            time the output did not save; a model's argument given to a bare grid;
             ``fill='results'`` on a bare grid; a flat fill array; a line that crosses
             no cell.
         TypeError
@@ -2013,8 +2017,8 @@ class ModelPlots:
         >>> model.plot.section(line=line, legend="outside right").savefig("section.png")
         >>> model.plot.section(line=line, backend="plotly")  # the same, interactive
         >>> model.plot.section(line=line, fill=None)         # the head line profile
-        >>> model.plot.section(cells=[1653, 651, 1241], fill=None, layer=[0, 1],
-        ...                    interpolate=True)
+        >>> model.plot.section(cells=[1653, 651, 1241], fill=None, layer=[0, 1])
+        >>> model.plot.section(line=line, fill=None, interpolate=True, num_points=200)
         >>> model.plot.section(cells=cells, fill=None, backend="plotly").ani
         >>> vor.plot.section(line)                           # a bare grid's layers
         """
@@ -2053,11 +2057,16 @@ class ModelPlots:
         layer : int, default 0
             Zero-based layer to interpolate.
         per : int, optional
-            Stress period (0-based). Mutually exclusive with ``kstpkper``.
+            Stress period (0-based), drawn at its LAST saved step, as on ``map`` and
+            ``section`` (ledger 337). Mutually exclusive with ``kstpkper``: both
+            raise.
         kstpkper : tuple of (int, int), optional
             Exact ``(timestep, period)``. Defaults to the model's FIRST output time.
         surf_type : {'hds', 'lyr'}, default 'hds'
-            Interpolate the head field, or the layer elevation surface.
+            Interpolate the head field, or with ``'lyr'`` the TOP of ``layer`` -- the
+            model top for ``layer=0``, the bottom of layer ``k - 1`` for ``layer=k``
+            -- read from the model's own discretization (a bare grid's
+            ``gdf_topbtm``). Anything else raises.
         resolution : int, default 1000
             Interpolation grid size per axis. Higher is smoother and slower.
         use_rbf : bool, default False

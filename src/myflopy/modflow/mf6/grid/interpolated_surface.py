@@ -37,10 +37,16 @@ from myflopy.modflow.mf6.grid.geometry import (
 )
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
 from myflopy.modflow.mf6.headsplus import _is_sentinel
+from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.viz import Picture
 
 logger = get_logger(__name__)
+
+
+#: What ``InterpolatedSurface(surf_type=...)`` interpolates: the head field, or a
+#: layer's top elevation.
+SURFACE_TYPES = ("hds", "lyr")
 
 
 class InterpolatedSurface(Picture):
@@ -78,11 +84,18 @@ class InterpolatedSurface(Picture):
         :param hds: Optional, HeadsPlus object corresponding to model, will get from model if not provided
         :param model: mf6 SimulationBase model
         :param layer: defaults to 0
-        :param per: stress period number, O-based index; will take precedence over kstpkper if provided
+        :param per: stress period, zero-based: its LAST saved step is drawn
+            (ledger 337, the one rule -- ``period_end.last_saved_step``); it
+            indexed the saved records before, so ``per=1`` at ``nstp=3`` drew
+            ``(1, 0)``. Give ``per`` or ``kstpkper``, not both.
         :param kstpkper: tuple of time step and period for surface
         :param resolution: defaults to 1000
         :param use_rbf: defaults to False
-        :param surf_type: defaults to 'hds', can be 'lyr' or 'hds'. 'lyr' returns just model surfaces
+        :param surf_type: ``'hds'`` (default) interpolates the head field at
+            ``kstpkper``; ``'lyr'`` the TOP of layer ``layer`` -- the model top for
+            ``layer=0``, the bottom of layer ``k - 1`` for ``layer=k`` -- read from
+            the model's own discretization when a model is given, else from the
+            grid's ``gdf_topbtm``. Anything else raises.
         :param clip: optional region -- a (Multi)Polygon or a vector file path -- to
             clip the surface to. Without one, a surface that knows its grid is
             masked to the grid's footprint (see ``region``).
@@ -106,6 +119,12 @@ class InterpolatedSurface(Picture):
         self._interpolator = None
         self.interpolator = interpolator
         self.crs = crs
+        if surf_type not in SURFACE_TYPES:
+            # Anything else left `zs` unset, and the refusal said every cell was
+            # NaN rather than naming the word.
+            raise ValueError(
+                f"surf_type must be one of {SURFACE_TYPES}, not {surf_type!r}."
+            )
         self.surf_type = surf_type
         self._xs = xs
         self._ys = ys
@@ -119,8 +138,10 @@ class InterpolatedSurface(Picture):
         self._meshgrid = None
         self._kstpkper = None
         self._hds = hds
+        if per is not None and kstpkper is not None:
+            raise ValueError("per= and kstpkper= both choose the time; pass one.")
         if per is not None:
-            self.kstpkper = self.model.kstpkper[per]
+            self.kstpkper = last_saved_step(self.model.kstpkper, per)
         else:
             self.kstpkper = kstpkper
         self.layer = layer
@@ -333,9 +354,33 @@ class InterpolatedSurface(Picture):
                 zs[_is_sentinel(zs)] = np.nan  # inactive (+1e30) and dry (-1e30) cells
                 self._zs = zs
             if self.surf_type == 'lyr':
-                zs = self.vor.gdf_topbtm.loc[cells, self.layer].values
-                self._zs = zs
+                self._zs = self._layer_top_table().loc[cells, self.layer].values
         return self._zs
+
+    def _layer_top_table(self) -> pd.DataFrame:
+        """Per-cell layer elevations, columns ``0`` (model top) to ``nlay`` (last bottom).
+
+        A model's OWN discretization -- what MF6 ran, and what the section's model
+        top and layer bottoms read -- when there is one. The grid's ``gdf_topbtm``
+        was the only source, and a grid built for a hand-written DISV has none, so
+        ``surf_type='lyr'`` died with ``'NoneType' object has no attribute 'loc'``
+        on such a model while working on the same run reloaded (ledger 337). A
+        bare grid still reads its own table, and without either this says so.
+        """
+
+        flopy_model = getattr(self.model, "gwf", None)
+        modelgrid = getattr(flopy_model, "modelgrid", None)
+        if modelgrid is not None and modelgrid.top is not None:
+            top = np.asarray(modelgrid.top, dtype=float).ravel()
+            botm = np.asarray(modelgrid.botm, dtype=float).reshape(-1, top.size)
+            return pd.DataFrame({0: top, **{k + 1: row for k, row in enumerate(botm)}})
+        table = getattr(self.vor, "gdf_topbtm", None) if self.vor is not None else None
+        if table is None:
+            raise ValueError(
+                "surf_type='lyr' needs layer elevations: pass model= (its "
+                "discretization is read), or a grid whose gdf_topbtm is set."
+            )
+        return table
 
     @zs.setter
     def zs(self, val):

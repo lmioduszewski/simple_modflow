@@ -65,7 +65,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.utils.derived_raster`
 - `myflopy.modflow.utils.raster`
 - `myflopy.modflow.utils.validators`
-- `myflopy.project.group._shared` *(deferred imports: 1)*
 - `myflopy.project.group.budget`
 - `myflopy.project.model_config`
 - `myflopy.run_record`
@@ -98,6 +97,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.utils.datatypes.features`
 - `myflopy.modflow.utils.prism_ppt`
 - `myflopy.modflow.utils.surfaces`
+- `myflopy.project.group._shared` *(deferred imports: 1)*
 - `myflopy.specs` *(deferred imports: 10)*
 
 ## Layer 2

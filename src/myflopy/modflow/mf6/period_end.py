@@ -87,6 +87,88 @@ def saved_steps(reader) -> list[tuple[int, int, float]]:
     return [(kstp, kper, pertim) for (kstp, kper), pertim in seen.items()]
 
 
+def last_saved_steps(saved: Iterable[Sequence]) -> dict[int, tuple[int, int]]:
+    """Each stress period's LAST saved step -- the one rule for it (ledger 337).
+
+    What ``per=N`` means wherever a picture or a table takes one: the last step
+    the file saved in stress period ``N``, zero-based. Every reader of that rule
+    calls this function (:func:`last_saved_step` for one period,
+    :func:`period_end_steps` before it checks that the step ENDS its period, the
+    map's ``per``, both sections, ``surface``, the section composers, a group's
+    ``per`` and its period-end reduction, ``HeadsPlus.array``); there were five
+    copies of it, and a sixth reading ``per`` as a SAVED-RECORD index, so
+    ``per=1`` drew step (2, 1) on one picture and (1, 0) on the next.
+
+    Parameters
+    ----------
+    saved : iterable of tuple
+        The file's saved times, zero-based: ``(kstp, kper)`` pairs -- a reader's
+        or a model's ``kstpkper``, or a table's ``kstpkper`` column -- or
+        ``(kstp, kper, pertim)`` as :func:`saved_steps` returns them (``pertim``
+        is not read here).
+
+    Returns
+    -------
+    dict of int to tuple of (int, int)
+        ``{kper: (kstp, kper)}``, sorted by period: the highest-numbered step
+        saved in each period that saved anything. A period that saved nothing is
+        absent.
+
+    Examples
+    --------
+    >>> last_saved_steps([(0, 0), (2, 0), (1, 0), (0, 1)])
+    {0: (2, 0), 1: (0, 1)}
+    """
+
+    last: dict[int, int] = {}
+    for item in saved:
+        kstp, kper = int(item[0]), int(item[1])
+        if kstp > last.get(kper, -1):
+            last[kper] = kstp
+    return {kper: (kstp, kper) for kper, kstp in sorted(last.items())}
+
+
+def last_saved_step(saved: Iterable[Sequence], per: int) -> tuple[int, int]:
+    """The last step saved in stress period ``per``, refusing a period with none.
+
+    :func:`last_saved_steps` for one period: what ``per=`` selects on every
+    picture and table that takes it (ledger 337, the user's rule -- ``per=0`` is
+    the last saved step of the FIRST stress period).
+
+    Parameters
+    ----------
+    saved : iterable of tuple
+        The file's saved times, zero-based, as :func:`last_saved_steps` takes them.
+    per : int
+        The stress period, zero-based. Not a position in ``saved``: at ``nstp=3``
+        with every step saved, ``per=1`` is ``(2, 1)``, the sixth saved time.
+
+    Returns
+    -------
+    tuple of (int, int)
+        ``(kstp, kper)``, zero-based.
+
+    Raises
+    ------
+    ValueError
+        When the file saved nothing in ``per`` -- a period past the end, a
+        negative one, or one output control skipped -- naming the periods it has.
+
+    Examples
+    --------
+    >>> last_saved_step([(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)], per=1)
+    (2, 1)
+    """
+
+    steps = last_saved_steps(saved)
+    try:
+        return steps[int(per)]
+    except KeyError:
+        raise ValueError(
+            f"Stress period {per} is unavailable. Available periods: {sorted(steps)}"
+        ) from None
+
+
 def period_end_steps(
     saved: Iterable[Sequence],
     *,
@@ -150,14 +232,15 @@ def period_end_steps(
     {0: (2, 0)}
     """
 
+    saved = [tuple(item) for item in saved]
+    ends = last_saved_steps(saved)
+    if perlen is None:
+        return ends
     steps: dict[int, dict[int, float | None]] = {}
     for item in saved:
         kstp, kper = int(item[0]), int(item[1])
         pertim = float(item[2]) if len(item) > 2 else None
         steps.setdefault(kper, {})[kstp] = pertim
-    ends = {kper: (max(by_step), kper) for kper, by_step in sorted(steps.items())}
-    if perlen is None:
-        return ends
 
     lengths = [float(value) for value in perlen]
     short: list[str] = []
@@ -369,6 +452,8 @@ def at_period_end(
 __all__ = [
     "END_RTOL",
     "at_period_end",
+    "last_saved_step",
+    "last_saved_steps",
     "period_end_steps",
     "period_ends",
     "period_lengths",

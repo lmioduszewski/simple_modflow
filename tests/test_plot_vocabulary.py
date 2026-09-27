@@ -794,7 +794,7 @@ def test_a_results_fill_paints_the_cells_and_earns_a_colorbar(canonical_run):
     ("kwargs", "message"),
     [
         ({"fill": "layer", "backend": "mpl", "interpolate": True}, "Pass fill=None"),
-        ({"fill": "layer", "backend": "mpl", "spacing": 99}, "Pass fill=None"),
+        ({"fill": "layer", "backend": "mpl", "num_points": 20}, "Pass fill=None"),
         # The cross-section is the DEFAULT now (2026-09-26), so a profile argument
         # on a bare call is refused too -- and the refusal names the spelling
         # that draws the profile.

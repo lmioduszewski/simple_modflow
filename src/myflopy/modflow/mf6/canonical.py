@@ -9,6 +9,7 @@ from scipy.spatial import Voronoi
 from shapely.geometry import Polygon, box
 
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.modflow.mf6.period_end import last_saved_step
 
 CANONICAL_TARGET_NAMES = frozenset(
     {"heads", "lake_stage", "sfr_stage", "sfr_flow", "drn_flow"}
@@ -258,7 +259,7 @@ def canonical_sfr_signals(model, *, per: int = 0) -> dict[str, object]:
     routing = model.packages.sfr.budget.flow_ja_face.get(per=per)
     routed_flow = np.asarray([], dtype=float)
     if not routing.empty:
-        last_kstpkper = max(routing["kstpkper"], key=lambda key: int(key[0]))
+        last_kstpkper = last_saved_step(routing["kstpkper"], per)
         routing = routing.loc[
             routing["kstpkper"].apply(lambda key: tuple(key) == tuple(last_kstpkper))
         ]

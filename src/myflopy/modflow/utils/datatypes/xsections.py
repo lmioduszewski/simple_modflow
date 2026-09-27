@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 import numpy as np
 import plotly.graph_objs as go
 import shapely as shp
-from flopy.mf6 import MFSimulation
 from pandas import IndexSlice as idxx
 from shapely import line_locate_point
 from shapely.geometry import LineString
@@ -19,6 +18,7 @@ from myflopy import viz as f
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.headsplus import _is_sentinel
+from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.animations import Animation
 from myflopy.viz import Fig, Picture
 
@@ -132,6 +132,13 @@ def render_xsections(
 #: named (ledger 334).
 SURFACE_OPTIONS = ("resolution", "crs", "xs", "ys", "zs", "vor", "hds")
 
+#: ``XSection``'s own arguments that act only on the INTERPOLATED profile, with
+#: the value that means "not asked for". Without interpolation the profile steps
+#: from cell centre to cell centre and never builds the surface these shape, so
+#: each came back byte-identical on both backends and on the noun (measured,
+#: ledger 337) -- they raise now, naming ``interpolate=True``, the user's call.
+INTERPOLATION_ONLY = {"num_points": 100, "use_rbf": True, "clip": None, "surf_type": "hds"}
+
 
 class XSection(Picture):
 
@@ -150,9 +157,7 @@ class XSection(Picture):
             cells: int | list[int] = None,
             line=None,
             x_or_y: str = 'x',
-            spacing: int = 10,
             num_points: int = 100,
-            extrapolate_beyond_section_ends: bool = False,
             surf_type: str = 'hds',
             interpolate: bool = False,
             use_rbf: bool = True,
@@ -184,26 +189,32 @@ class XSection(Picture):
 
         :param model: model (SimulationBase object) instance
         :param section_name: name of section to show on figure (optional), will default to model name
-        :param per: stress period number, O-based index; will take presedence over kstpkper if provided
-        :param kstpkper: defaults to the first model stress period if not provided
-        :param layer: defaults to 0
+        :param per: stress period, zero-based: its LAST saved step is drawn (ledger 337,
+            ``period_end.last_saved_step``). Give ``per`` or ``kstpkper``, not both.
+        :param kstpkper: an exact saved ``(time step, period)``; with neither, the
+            model's FIRST saved time
+        :param layer: defaults to 0; a list overlays one head line per layer, and
+            an interpolated profile takes exactly one
         :param cells: defines cross-section location. Can provide any number of cells
         :param line: defines the cross-section location directly as a shapely
         LineString, a sequence of (x, y) pairs, or a flopy-style {'line': [...]}
         dict. Takes precedence over 'cells' when provided.
         :param x_or_y: only used if one cell is given, defines whether
         the cross-section is vertical (along 'y' axis) or horizontal (along 'x' axis).
-        :param spacing: x distance between points on the plot
-        :param num_points: number of points in the cross-section plot
-        :param extrapolate_beyond_section_ends: not implemented
-        :param surf_type: can be hds (default) or lyr (for model layers)
+        :param num_points: interpolating only: how many points to sample along the line
+        :param surf_type: interpolating only: ``'hds'`` (default) interpolates the
+            heads, ``'lyr'`` the TOP of layer ``layer`` (the model top for 0)
         :param interpolate: whether to interpolate the cross-section
-        :param use_rbf: Defaults to True, rbf is an interpolation method, use this if having issues
-        :param clip: shapely Polygon object to clip the cross-section to
+        :param use_rbf: interpolating only: Defaults to True, rbf is an interpolation
+            method, use this if having issues
+        :param clip: interpolating only: shapely Polygon object to clip the surface to
         :param interpolator: define interpolation method. See InterpolatedSurface class for options.
+            Giving one turns ``interpolate`` on.
         :param kwargs: passed to the InterpolatedSurface built when interpolating --
             only ``resolution``, ``crs``, ``xs``, ``ys``, ``zs``, ``vor``, ``hds``;
-            anything else raises ``TypeError`` here
+            anything else raises ``TypeError`` here, and any of them without
+            interpolation raises ``ValueError``, as do ``num_points``, ``use_rbf``,
+            ``clip`` and ``surf_type`` changed from their defaults
 
         """
         unknown = sorted(set(kwargs) - set(SURFACE_OPTIONS))
@@ -215,23 +226,61 @@ class XSection(Picture):
             )
         self._model = model
         self._vor = None
-        self._kstpkper = self.model.kstpkper[per] if per is not None else kstpkper
+        if per is not None and kstpkper is not None:
+            # `per` silently won here while the filled section let `kstpkper`
+            # win, for a pair the verb documents as exclusive (ledger 337).
+            raise ValueError("per= and kstpkper= both choose the time; pass one.")
+        self._kstpkper = None
+        if per is not None:
+            # A stress PERIOD at its last saved step, the one rule (ledger 337).
+            # `model.kstpkper[per]` read it as a saved-RECORD index: per=1 at
+            # nstp=3 was (1, 0) here and (2, 1) on the filled section and the map.
+            self._kstpkper = last_saved_step(self.model.kstpkper, per)
+        elif kstpkper is not None:
+            key = tuple(int(value) for value in kstpkper)
+            saved = [tuple(int(value) for value in time) for time in self.model.kstpkper]
+            if key not in saved:
+                # It was stored unchecked and failed later, at the first read.
+                raise ValueError(f"kstpkper {key} is unavailable. Available: {saved}")
+            self._kstpkper = key
         self.interpolator = interpolator
         self._layer = None
         # A bare int is one cell, as the docstring's own example says; stored
         # as given it died at `len()` when the line was first drawn.
         self._cells = [int(cells)] if isinstance(cells, (int, np.integer)) else cells
         self._x_or_y = x_or_y
-        self.spacing = spacing
         self._num_points = num_points
         self._points = None
-        self._extrapolate_beyond_section_ends = extrapolate_beyond_section_ends
         self._xsect_linestring = None if line is None else _normalize_section_line(line)
         self._xs_as_length = None
         self._x_min_max = None
         self._y_min_max = None
         self.surf_type = surf_type
         self.interpolate = True if self.interpolator is not None else interpolate
+        if not self.interpolate:
+            given = {"num_points": num_points, "use_rbf": use_rbf, "clip": clip,
+                     "surf_type": surf_type}
+            inert = sorted(
+                [name for name, default in INTERPOLATION_ONLY.items()
+                 if given[name] is not default and given[name] != default]
+                + list(kwargs)
+            )
+            if inert:
+                raise ValueError(
+                    f"{', '.join(inert)} shape the INTERPOLATED profile; without "
+                    f"interpolation it steps from cell centre to cell centre and "
+                    f"they have nothing to act on. Pass interpolate=True (or an "
+                    f"interpolator=), or drop them."
+                )
+        elif not isinstance(layer, (int, np.integer)) and len(layer) != 1:
+            raise ValueError(
+                f"an interpolated profile draws ONE layer's surface, and "
+                f"layer={layer!r} names {len(layer)}; the others were dropped "
+                f"without a word. Pass one layer=, or interpolate=False to overlay "
+                f"a head line per layer."
+            )
+        if surf_type not in ("hds", "lyr"):
+            raise ValueError(f"surf_type must be 'hds' or 'lyr', not {surf_type!r}.")
         self.use_rbf = use_rbf
         self._all_heads = None
         self.section_name = model.name if section_name is None else section_name
@@ -279,20 +328,19 @@ class XSection(Picture):
 
     @property
     def model_top(self):
-        """Model-top elevation per cell, read from the DISV grid (cached).
+        """Model-top elevation per cell, from the model's own discretization (cached).
 
-        Loaded from the written simulation's ``disv`` package the first time it is
-        needed, so it reflects the model as run.
+        The SAME source as the layer bottoms here and the filled section's cells:
+        ``model.gwf.modelgrid``. It reloaded the written simulation through FloPy
+        instead, at FloPy's default verbosity -- ten printed lines per section --
+        taking ``sim.gwf[0]``, the FIRST flow model, so the second of two drew the
+        first one's top (10,100 for 10,300); on a 30,444-cell model the reload
+        took 1.37 s against 0.9 ms for this (ledger 337).
         """
 
         if self._model_top is None:
-            sim = MFSimulation.load(
-                sim_name=self.model.sim.name_file.filename[:-4],
-                sim_ws=self.model.model_output_folder_path,
-                load_only=['disv']
-            )
-            top = pd.Series(sim.gwf[0].disv.top.data)
-            self._model_top = top
+            top = np.asarray(self.model.gwf.modelgrid.top, dtype=float).ravel()
+            self._model_top = pd.Series(top)
         return self._model_top
 
     @property
@@ -385,19 +433,6 @@ class XSection(Picture):
         return self._y_min_max
 
     @property
-    def extrapolate_beyond_section_ends(self):
-        """Whether the section is extended past its end cells (not yet implemented)."""
-
-        return self._extrapolate_beyond_section_ends
-
-    @extrapolate_beyond_section_ends.setter
-    def extrapolate_beyond_section_ends(self, val):
-        """Set the beyond-ends extrapolation flag (must be a bool)."""
-
-        assert isinstance(val, bool), f'{val} is not a bool'
-        self._extrapolate_beyond_section_ends = val
-
-    @property
     def num_points(self):
         """Number of equally spaced sample points taken along the section line."""
 
@@ -450,8 +485,6 @@ class XSection(Picture):
             elif len(self.cells) > 1:
                 cell_centroids = [[self.vor.centroids_x[cell], self.vor.centroids_y[cell]] for cell in self.cells]
                 linestring = LineString(cell_centroids)
-                if self.extrapolate_beyond_section_ends:
-                    raise NotImplementedError
 
             else:
                 raise ValueError(f'{self.cells} has no cells given to define the cross-section')
@@ -562,6 +595,14 @@ class XSection(Picture):
             return None
 
     @property
+    def _surface_name(self) -> str:
+        """The interpolated line's legend name: the section, or which layer TOP it is."""
+
+        if self.surf_type == "lyr":
+            return f"Lyr {self.layer[0]} top - {self.section_name}"
+        return self.section_name
+
+    @property
     def xs_as_length(self):
         """gets xs for cross-section as length along self.xsect_linestring"""
 
@@ -594,7 +635,7 @@ class XSection(Picture):
                     {
                         "distance": float(distance),
                         "elevation": float(elevation),
-                        "series": self.section_name,
+                        "series": self._surface_name,
                         "kind": "profile",
                     }
                 )
@@ -678,7 +719,7 @@ class XSection(Picture):
         points, elevations = self.xsect
 
         if self.interpolate is True:
-            fig.add_scatter(x=self.xs_as_length, y=elevations, name=self.section_name)
+            fig.add_scatter(x=self.xs_as_length, y=elevations, name=self._surface_name)
 
         elif self.interpolate is False:
             for i, lyr in enumerate(self.layer):
@@ -718,6 +759,7 @@ class XSection(Picture):
             logger.info('using the %s interpolation method', self.interpolator)
 
         periods = self.animation_kstpkpers
+        first = None
         for per in periods:
 
             logger.debug('reading kstpkper %s', per)
@@ -734,6 +776,8 @@ class XSection(Picture):
                 # caller asked for, not a data gap.
                 logger.debug("skipping cross-section frame %s: %s", per, error)
                 continue
+            if first is None:
+                first = self.kstpkper
 
             # if minimum and max y-values for this period are greater than the previous max and min,
             # then update the max and min values for the animation
@@ -786,6 +830,12 @@ class XSection(Picture):
 
         y_max = y_max + ((y_max - y_min) * 0.05)  # add a buffer of 5% of the total y-span to y max
 
+        # The still picture is the FIRST frame's, where the slider starts. It was
+        # `self.fig` at whatever time the loop left behind -- the LAST frame's --
+        # under a slider on frame 0 (ledger 337).
+        if first is not None:
+            self._kstpkper = first
+            self._assembled = False
         # define figure and update layout to include buttons and slider
         fig = f.Fig(
             data=self.fig.data,

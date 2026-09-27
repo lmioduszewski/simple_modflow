@@ -20,6 +20,7 @@ import shapely as shp
 from flopy.plot import PlotCrossSection
 from matplotlib.colors import ListedColormap
 
+from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.viz import Fig, Picture, category_colors, mpl_axes
 
@@ -726,21 +727,28 @@ def section_values(model, fill, *, per=None, kstpkper=None):
     return values
 
 
-def section_time(model, per, kstpkper):
-    """The ``(kstp, kper)`` a filled section reads, from ``per``/``kstpkper``/the end."""
+def section_kstpkper(model, per=None, kstpkper=None):
+    """The ``(kstp, kper)`` a filled section reads, on its field reader's own clock.
 
+    ``kstpkper`` as given; ``per`` at its LAST saved step (the one rule,
+    :func:`~myflopy.modflow.mf6.period_end.last_saved_step`, ledger 337); with
+    neither, the FIRST saved time -- where the line profile, ``map`` and
+    ``surface`` open. It opened on the LAST, through the reader's own default, so
+    the two sections of one call drew different times. ``None`` without a model
+    or a reader: a bare grid has no time.
+    """
+
+    if per is not None and kstpkper is not None:
+        raise ValueError("per= and kstpkper= both choose the time; pass one.")
     if kstpkper is not None:
-        return tuple(kstpkper)
-    times = list(model.kstpkper)
-    if per is None:
-        return times[-1]
-    matching = [t for t in times if int(t[1]) == int(per)]
-    if not matching:
-        raise ValueError(
-            f"per={per} has no saved output; this model wrote periods "
-            f"{sorted({int(t[1]) for t in times})}."
-        )
-    return max(matching)
+        return tuple(int(value) for value in kstpkper)
+    reader = getattr(model, "_field_reader", None) if model is not None else None
+    if reader is None:
+        return None
+    saved = [tuple(int(value) for value in time) for time in reader.kstpkper]
+    if per is not None:
+        return last_saved_step(saved, per)
+    return saved[0]
 
 
 def filled_section(
@@ -926,10 +934,10 @@ class FilledSection(Picture):
     reverse : bool, default False
         Draw the line from its other end, measuring distance from the new start.
     per : int, optional
-        Stress period (zero-based) of the results painted or drawn. Defaults to
-        the last saved time.
+        Stress period (zero-based) of the results painted or drawn, at its LAST
+        saved step. With neither ``per`` nor ``kstpkper``, the FIRST saved time.
     kstpkper : tuple of (int, int), optional
-        Exact ``(time step, period)``; takes precedence over ``per``.
+        Exact ``(time step, period)``. Giving it with ``per`` raises.
     cmap : str, default 'viridis'
         A MATPLOTLIB colormap name for ``"results"`` or an array fill. Both
         renderers colour from its lookup table, so a name Matplotlib does not
@@ -971,6 +979,9 @@ class FilledSection(Picture):
         self._model = model
         self._style = ModelCrossSectionStyle()
         self._show_legend, self._legend_loc, self._legend_anchor = legend_placement(legend)
+        # ONE time for the colours and the water levels, resolved here.
+        kstpkper = section_kstpkper(model, per=per, kstpkper=kstpkper)
+        per = None
         self._values = section_values(model, fill, per=per, kstpkper=kstpkper)
         names = layer_labels
         if names is None and model is not None:

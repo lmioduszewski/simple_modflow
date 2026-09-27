@@ -40,7 +40,7 @@ from myflopy.modflow.mf6.package_plotting import (
     refuse_noun_parameters,
     resolve_noun_hover,
 )
-from myflopy.modflow.mf6.period_end import at_period_end, period_ends
+from myflopy.modflow.mf6.period_end import at_period_end, last_saved_step, period_ends
 from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
 from myflopy.modflow.utils.datatypes.hover import HoverSpec, conc_hover, head_hover, temp_hover
 
@@ -417,11 +417,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         elif per in (None, -1):
             key = keys[-1]
         else:
-            matches = [k for k in keys if k[1] == int(per)]
-            if not matches:
-                available = sorted({k[1] for k in keys})
-                raise ValueError(f"Stress period {per} is unavailable. Available periods: {available}")
-            key = matches[-1]
+            key = last_saved_step(keys, per)
 
         ncpl = int(self.vor.ncpl)
         field = _as_layer_cell_heads(self.get_data(kstpkper=key), nlay=self.nlay, ncpl=ncpl)

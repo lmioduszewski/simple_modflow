@@ -524,14 +524,11 @@ def test_a_composer_refuses_map_options_on_a_kind_that_draws_no_map(verb, kind):
 # ---------------------------------------------------------------------------
 
 #: Named on NO noun's section, each for a measured reason (ledger 334): the
-#: cross-section's arguments are refused by name; `spacing` and
-#: `extrapolate_beyond_section_ends` never act; `animation_kstpkpers` needs `.ani`,
-#: which a noun never returns; `section_name` crashed a group; `surf_type`
-#: sections another field.
-_NOT_ON_A_NOUNS_SECTION = (
-    "spacing", "extrapolate_beyond_section_ends", "animation_kstpkpers",
-    "section_name", "surf_type",
-)
+#: cross-section's arguments are refused by name; `animation_kstpkpers` needs
+#: `.ani`, which a noun never returns; `section_name` crashed a group; `surf_type`
+#: sections another field. (`spacing` and `extrapolate_beyond_section_ends` never
+#: acted, and are gone from every scope since ledger 337.)
+_NOT_ON_A_NOUNS_SECTION = ("animation_kstpkpers", "section_name", "surf_type")
 
 
 def test_the_nouns_section_names_the_measured_set_and_nothing_else():

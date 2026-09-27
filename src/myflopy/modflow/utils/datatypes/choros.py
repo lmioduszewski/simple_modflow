@@ -28,6 +28,7 @@ from myflopy._warnings import stacklevel_outside_package
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.hydraulics import flow_model, model_transmissivity
+from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.extent import Extent, resolve_extent
 from myflopy.modflow.utils.datatypes.features import (
@@ -576,14 +577,14 @@ class Choro(Picture):
             self._per = per
             return
         if per is not None:
+            # `last_saved_step` is the one rule for "the last saved step of a
+            # period" (ledger 337), and it refuses a period with no saved step.
+            last = last_saved_step(self.model.kstpkper, per)
             matches = [tuple(value) for value in self.model.kstpkper if int(value[1]) == int(per)]
-            if not matches:
-                available = sorted({int(value[1]) for value in self.model.kstpkper})
-                raise ValueError(f"Stress period {per} is unavailable. Available periods: {available}")
 
             selector = self.per_timestep
             if selector == "last":
-                selected = matches[-1]
+                selected = last
             elif selector == "first":
                 selected = matches[0]
             elif isinstance(selector, int):

@@ -119,16 +119,18 @@ at `0.04166667`). A period the file saved without its end is REFUSED, naming the
 `SAVE ... LAST` that fixes it. `model.hds`/`conc`/`temp.get()` read it too: under `SAVE
 HEAD FIRST` it returned step 1 of 3 as each period's head. Do not add another "last
 saved step": the flow targets each had their own sum and the forward run its own
-`by_period[kper]`. The pictures and group comparisons are NOT on the rule yet, and
-deliberately so (ledger 336): a map's `per_timestep="last"`,
-`cross_section_plotting.section_time`, `package_plotting._period_end_kstpkper` and the
-group's `_reduce_to_period_end` take a period's last SAVED step unchecked, while
-`_coerce_kstpkper`, `XSection` and `InterpolatedSurface` read `per` as a saved-RECORD
-index -- ledger 301's open stage-clock family. They move together: a group selects
-`per=` through `_coerce_kstpkper`, so a period-end filter under `_reduce_to_period_end`
-alone turns `group.hds.compare(per=0)` and `(per=1)` at `nstp=3` -- which read steps 1
-and 2 of period 0 -- into a `KeyError`, and leaves `per=2` reading period 0's end
-(`docs/reproducers/flow_targets_period_end.py`, 8d). The period-end rule needs a table
+`by_period[kper]`. **The pictures and group tables read `per=N` as the LAST SAVED step
+of period N** (ledger 337, the user's rule) -- not the end-checked rule, deliberately, so
+a run saved with `SAVE HEAD FIRST` still draws -- through ONE function,
+`period_end.last_saved_step(s)`: a map's `per_timestep="last"`, both sections,
+`surface`, `package_plotting._period_end_kstpkper`, `HeadsPlus.array` and the group's
+`_coerce_kstpkper` and `_reduce_to_period_end` all call it, and `period_end_steps` is it
+plus the end check. `_coerce_kstpkper`, `XSection` and `InterpolatedSurface` read `per`
+as a saved-RECORD index until then, and they moved WITH `_reduce_to_period_end`: alone,
+a period-end filter there turned `group.hds.compare(per=0)` and `(per=1)` at `nstp=3`
+into a `KeyError` (`docs/reproducers/flow_targets_period_end.py`, 8d, measured before
+ledger 337). The reduction keeps each MODEL's last saved step now, not each row's: a cell
+with no record there is dropped rather than read at an earlier step. The period-end rule needs a table
 carrying `kstpkper`, and the LAK stage table carries none (its `per` is the
 saved-record index, ledger 301), so a LAK target keyed by period at several saves per
 period reads a step inside an earlier period -- still open (ledger 331); it IS refused
@@ -169,7 +171,7 @@ cells in the same colours under the same water levels, legend and framing.
 Plotly adds a hover naming each cell's layer, number, top and bottom.
 `tests/test_filled_section_plotly.py` reads both drawings back and compares them
 polygon by polygon. It RAISES rather than falling back: with any line-profile
-argument that cannot act on it (`interpolate`, `spacing`, `num_points`, ...),
+argument that cannot act on it (`interpolate`, `num_points`, `use_rbf`, ...),
 with `fill="results"` on a bare grid, and on a flat `(ncpl,)` array, which would
 paint every layer the same and look like an answer. Before this existed the
 picture was `myflopy.modflow.mf6.plot_model_cross_section` -- a deep import, on

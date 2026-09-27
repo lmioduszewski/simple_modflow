@@ -68,8 +68,7 @@ a named tributary) writes two budget records per saved time, which overran the
 model-budget clock the same way -- `model.bud("riv").df` raised `IndexError`.
 STILL OPEN there: the ~12-site STAGE-clock family (`LakStageOutput`,
 `build_lak_stage_result_table`'s `per`-as-record-index, `group/sfr.py`'s
-transposed decode, `_coerce_kstpkper`, `XSection`), and `_kstpkper` is still
-never invalidated.
+transposed decode), and `_kstpkper` is still never invalidated.
 The rule is `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()` — **every noun
 is an object, every object answers the same verbs** (`get`/`summary`/`plot`, plus
 `map`/`section`/`mosaic`/`animate` for spatial nouns). Never add a `foo()` + `plot_foo()`
@@ -97,12 +96,15 @@ on the file's OWN clock and by `pertim == perlen` (ATS breaks `kstp == nstp`) to
 because FloPy WRITES `perlen` at 8 decimals (at 1e-9 a live model's hourly periods were
 all refused), and a period saved without its end is REFUSED naming `SAVE ... LAST`. The
 SFR/DRN flow targets had ADDED a period's steps: the canonical outlet at `nstp=3` read
-**113,453.29 for 37,817.76**. Do not add another "last saved step". The VIEW layer's
-pictures and group comparisons are NOT on the rule yet, on purpose: a map's
-`per_timestep="last"`, `section_time`, `_period_end_kstpkper` and group
-`_reduce_to_period_end` take a period's last SAVED step unchecked, and
-`_coerce_kstpkper`/`XSection`/`InterpolatedSurface` read `per` as a saved-record index
--- one family with 301's stage clock, to move together. STILL OPEN: on the OBSERVATION route a target keyed by period silently matches
+**113,453.29 for 37,817.76**. Do not add another "last saved step".
+**On a picture or a group table, `per=N` is the LAST SAVED step of period N** (ledger
+337, the user's words), through ONE function, `period_end.last_saved_step(s)`: the map,
+both sections, `surface`, the section composers, `HeadsPlus.array`, the group's
+`_coerce_kstpkper`/`_reduce_to_period_end` and `canonical_sfr_signals` call it, and
+`period_end_steps` is it plus the end check. Deliberately NOT the end-checked rule, so a
+`SAVE HEAD FIRST` run still draws. The profile, the noun, `surface` and a group read `per`
+as a saved-RECORD index until then: `per=1` at `nstp=3` drew (1, 0) beside the map's
+(2, 1). The LAK stage file's `per` is still a record index (301's stage clock). STILL OPEN: on the OBSERVATION route a target keyed by period silently matches
 nothing -- PEST puts the STARTING model's simulated flows in its place at weight 1, which
 anchors the calibration to the uncalibrated model -- and the
 SFR flow there keeps MF6's NEGATIVE `DOWNSTREAM-FLOW` where the file route reports the
@@ -130,7 +132,11 @@ user's call, 2026-09-26; the picture since ledger 177): the defaults are
 `Figure` (`.savefig`), not a Picture. `fill="results"` colours the cells by
 head/conc/temp with a colorbar; a `(nlay, ncpl)` array paints anything else.
 **`fill=None` is the LINE PROFILE** (head vs distance, no cells -- the old default)
-and the ONE spelling of it: a profile argument (`layer=`, `interpolate=`, ...) given
+and the ONE spelling of it (both pictures open on the FIRST saved time, ledger 337;
+its interpolation-only arguments -- `num_points`, `use_rbf`, `clip`, `surf_type`, the
+surface tail -- RAISE without interpolation, naming `interpolate=True`; `spacing` and
+`extrapolate_beyond_section_ends` never acted and are GONE; it reads its model top from
+the model it draws, where a FloPy reload printed and took the FIRST flow model's): a profile argument (`layer=`, `interpolate=`, ...) given
 without it RAISES naming `fill=None`, so the picture never depends on which other
 arguments were passed. Both pictures draw on BOTH backends, the same cells (ledger
 332): one `FilledSection` reads one FloPy `PlotCrossSection`, so Plotly is not a

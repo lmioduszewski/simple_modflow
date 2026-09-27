@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 336 entries (341 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 337 entries (342 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 337 | `per=N` is the last SAVED step of stress period N on every picture and group table, through ONE function; b... | 2026-09-27 |
 | 336 | A period's flow is its END-of-period flow: the SFR and DRN flow targets added every step a period saved, an... | 2026-09-26 |
 | 335 | A test session writes its temp files in its OWN root and a leak fails by name; `layers.py` no longer leaves... | 2026-09-26 |
 | 334 | A field noun's `section` names what acts on it and refuses the rest: `fill=` and the cross-section's argume... | 2026-09-26 |
@@ -14593,7 +14594,9 @@ same day, which is the useful part of the result.
       `animation_kstpkpers=` with `backend="mpl"`, which has no `.ani` (refused); and
       a bare grid's cross-section took `per`/`kstpkper`/`head_layers` and drew the
       same geometry without them (refused, naming them).
-      **Found and LEFT, stated in the docstring:** `spacing` is read by nothing, and
+      **Found and LEFT, stated in the docstring** (RESOLVED by ledger 337, the user's
+      calls: both arguments removed, both pictures open on the first saved time):
+      `spacing` is read by nothing, and
       `extrapolate_beyond_section_ends` only ever raises `NotImplementedError` (on a
       path of two or more cells). Both stay, documented as having no effect: removing
       them is an API change nobody was asked about, and `XSection`, the engine behind
@@ -14658,7 +14661,8 @@ same day, which is the useful part of the result.
       reaches it now only through its docstring's pointer at the verb, so it is swept
       explicitly as well, the measured set is verb-aware, and every `Class.section` in
       `src/` with a `**kwargs` tail is pinned, exact in both directions.
-      **Not done:** `surf_type="lyr"` while interpolating crashes on the verb (`'NoneType'
+      **Not done** (RESOLVED by ledger 337, all three):
+      `surf_type="lyr"` while interpolating crashes on the verb (`'NoneType'
       object has no attribute 'loc'`); each line-profile section reloads the simulation
       through FloPy at its default verbosity, which prints; and `XSection` reads `per` as
       an index into the SAVED times, the stage-clock family CLAUDE.md lists as open.
@@ -14812,7 +14816,9 @@ same day, which is the useful part of the result.
       `HeadTargets` beside it refused. It refuses now, naming `SAVE HEAD LAST`
       (`CONCENTRATION`, `TEMPERATURE`); a reader opened from a path with no model has no
       TDIS and takes the last saved step.
-      **The VIEW layer is LEFT, deliberately** -- scope cut. A map's `per_timestep="last"`,
+      **The VIEW layer is LEFT, deliberately** -- scope cut (MOVED by ledger 337, on the
+      user's rule: `per=N` is period N's last SAVED step there, through one function, and
+      `section_time`, never called, is deleted). A map's `per_timestep="last"`,
       `cross_section_plotting.section_time`, `package_plotting._period_end_kstpkper` and
       the group's `_reduce_to_period_end` take a period's last SAVED step unchecked, and
       `_coerce_kstpkper`, `XSection` and `InterpolatedSurface` read `per` as a saved-RECORD
@@ -14846,3 +14852,75 @@ same day, which is the useful part of the result.
       (`test_mf6_pest`'s forward-run test), `END_RTOL` back to 1e-9 (2), the refusal at
       six figures (1), the observation route's row-by-row label map (1), and `hds.get()`'s
       largest-`kstp` copy (1).
+
+337. **`per=N` is the last SAVED step of stress period N on every picture and group table, through ONE function; both sections open on the first saved time; the line profile's dead, inert and crashing arguments are removed, refused or fixed (2026-09-27).**
+      Closes ledger 333's "Found and LEFT" and 334's "Not done". Four of these were the
+      user's calls, put to them with the measurements below; the rest are ours.
+      **`per` (the user's words):** "i want per to equal the last saved step of that
+      stress period (0-based numbering). so per=0 is the last saved step of the 1st stress
+      period". It held on the filled section and the map; the line profile, the noun, a
+      group's `get`/`compare`/sections and `surface` read `per` as an index into the SAVED
+      records (`model.kstpkper[per]`), so at `nstp=3` with every step saved `per=1` drew
+      (2, 1) on one and (1, 0) on the other, both documented as "stress period". **And "do
+      not duplicate the logic": ONE function**, `period_end.last_saved_steps` /
+      `last_saved_step`, and every reader defers to it -- `XSection`,
+      `InterpolatedSurface`, `HeadsPlus.array`, the map's `per` setter,
+      `_period_end_kstpkper` (composers), the group's `_coerce_kstpkper` and
+      `_reduce_to_period_end`, `canonical_sfr_signals`, and ledger 336's
+      `period_end_steps`, which is it plus the end check. Five copies existed;
+      `cross_section_plotting.section_time` was a sixth and was never called (measured by
+      making it raise) -- deleted. The view layer takes the last SAVED step, deliberately
+      NOT 336's end-checked rule: a `SAVE HEAD FIRST` run still draws. A group now reads
+      each MEMBER's own last step, and its period-end reduction keeps each model's last
+      step, not each row's: a cell with no record there is dropped rather than read at an
+      earlier step. The LAK stage file's record-indexed `per` (301) is still open.
+      **Default time (the user's call: both on the FIRST saved time).** The filled section
+      opened on the LAST (the reader's own default), the profile, noun, map and surface on
+      the first. It now resolves one time for its colours and water levels
+      (`section_kstpkper`). 0 test assertions moved; three cells of
+      `plotting_vocabulary_tour` draw a different time.
+      **`per` with `kstpkper` RAISES** on both sections and `surface` (documented as
+      exclusive; the profile let `per` win, the filled section `kstpkper`), and a
+      `kstpkper` the output did not save raises at construction instead of at first read.
+      **`spacing` and `extrapolate_beyond_section_ends` REMOVED (the user's call).** Nothing
+      has read `spacing` since it was added (2024-09-21); `extrapolate` only ever raised a
+      bare `NotImplementedError`, on a `cells=` path of 2+ cells. Nothing in the tree passed
+      either but one refusal test (swapped to `num_points`). Implementing was declined:
+      `spacing` would be a second knob for what `num_points` sets.
+      **Interpolation-only arguments RAISE without interpolation (the user's call),
+      naming `interpolate=True`:** `num_points`, `use_rbf`, `clip`, `surf_type` and the
+      surface tail (`resolution`, `crs`, ...) came back byte-identical on both backends
+      and on the noun (measured). Only a value changed from its default is caught. In the
+      same class, an interpolated profile draws ONE layer and silently dropped the rest of
+      `layer=[0, 1]` -- which the verb's own example showed; it raises now, and the example
+      is split in two. One notebook cell passed `use_rbf=False` to an uninterpolated
+      profile (`master_large_model_visualization_prt_workflow`, cell 19); the line is
+      removed.
+      **`surf_type="lyr"` FIXED, not refused:** it read `vor.gdf_topbtm`, which a grid built
+      for a hand-written DISV never has, so it crashed there while working on the same run
+      reloaded -- and `plot.surface(surf_type="lyr")`, a docstring example on three scopes,
+      crashed the same way. It reads the model's own discretization now (a bare grid's
+      table otherwise), meaning unchanged: the TOP of `layer` (model top for 0). Labelled
+      `Lyr k top - <name>`, not the model's name; any other word raises.
+      **The model top is read from the model drawn.** Every line profile reloaded the
+      written simulation through FloPy at its default verbosity -- ten printed lines per
+      call, about half of a small section's time -- and took `sim.gwf[0]`, the FIRST flow
+      model: the second of two drew the first's top (10,100 for its own 10,300). It reads
+      `model.gwf.modelgrid.top` now, the source of the filled section and of the profile's
+      own bottoms. Given up: after an in-memory edit of the top the profile shows the edit,
+      as the filled section already did; FloPy's write rounding (5e-9 ft) is gone from it.
+      `test_no_library_prints` cannot see FloPy's prints; a `capfd` test now does.
+      **`.ani` opens on its first frame**: its still picture was built at whatever time the
+      frame loop left behind, the LAST, under a slider on frame 0.
+      **Found, not fixed:** `Project.run(silent=True)` prints FloPy's write log (`Run.write`
+      defaults to `silent=False`); saving a Matplotlib line profile writes ~287 `findfont`
+      lines to stderr (the vendored theme names Calibri with no fallback); a live DIS
+      `run.model()` cannot draw either section (`get_disv_gridprops`); `x_or_y` still acts
+      only on a one-cell `cells=` path; `regions.filter_region_heads(per=)` keeps every
+      step of the period, which is a filter, not a choice of one.
+      Tests: `tests/test_section_times.py`, 33, on one run of two GWF models at `nstp=3`.
+      Each of ten single-piece reverts fails a named test: `per` as a record index in
+      `XSection` (6), in `InterpolatedSurface` (1), in `_coerce_kstpkper` (1); the filled
+      default back to the last time (2); the FloPy reload (5); `.ani`'s still at the last
+      frame (1); `lyr` back on `gdf_topbtm` (2); the interpolation check (5); the one-layer
+      check (1); the per-row reduction (1).

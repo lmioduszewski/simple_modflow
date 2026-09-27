@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 from myflopy.modflow.mf6.package_explorer_utils import (
     _aggregate_hover_strings,
 )
+from myflopy.modflow.mf6.period_end import last_saved_steps
 
 #: Spellings each renderer answers to. One tuple pair, because the alias set was
 #: written out three times (here, `SpatialView._normalize_backend`, and
@@ -708,10 +709,12 @@ def refuse_noun_parameters(noun: str, field: str, kwargs: dict) -> None:
 
 #: The line-profile options a field noun's ``section`` NAMES and forwards to
 #: ``XSection``, each measured to change the picture
-#: (``docs/reproducers/section_noun_kwargs_tail.py``, ledger 334). Everything else
-#: the noun used to take through ``**kwargs`` was either the cross-section's, inert
-#: on a noun (``spacing``, ``extrapolate_beyond_section_ends``,
-#: ``animation_kstpkpers`` -- a noun returns a figure, never ``.ani``), or
+#: (``docs/reproducers/section_noun_kwargs_tail.py``, ledger 334) -- ``use_rbf``,
+#: ``num_points`` and ``clip`` only when interpolating, and ``XSection`` refuses
+#: them otherwise (ledger 337). Everything else the noun used to take through
+#: ``**kwargs`` was either the cross-section's, inert on a noun
+#: (``animation_kstpkpers`` -- a noun returns a figure, never ``.ani``; ``spacing``
+#: and ``extrapolate_beyond_section_ends``, removed everywhere in ledger 337), or
 #: ``section_name``, which crashed a group and a diff by colliding with the name
 #: each member's line carries.
 NOUN_SECTION_PARAMS = (
@@ -1681,12 +1684,15 @@ class SpatialView:
             their centroids. One cell draws a straight line through it, east-west
             or north-south as ``x_or_y`` says.
         per : int, optional
-            Stress period (zero-based) to draw; the first saved time by default.
+            Stress period (zero-based) to draw, at its LAST saved step -- on each
+            member's own clock on a group or a diff. With neither ``per`` nor
+            ``kstpkper``, the first saved time.
         kstpkper : tuple of (int, int), optional
-            The exact ``(time step, period)`` to draw; ``per`` wins when both
-            are given.
+            The exact ``(time step, period)`` to draw. Giving it with ``per``
+            raises, as does a time the output did not save.
         layer : int or list of int, default 0
             Whose values to draw, zero-based; a list overlays one line per layer.
+            An interpolated profile draws one, so a list of more raises there.
         interpolate : bool, default False
             Sample an interpolated surface along the line, rather than stepping
             from cell centre to cell centre.
@@ -1696,11 +1702,14 @@ class SpatialView:
             ``interpolate`` on.
         use_rbf : bool, default True
             With ``interpolate`` and no ``interpolator``: radial basis functions
-            (``True``) or ``griddata`` (``False``).
+            (``True``) or ``griddata`` (``False``). ``False`` without
+            interpolation raises.
         num_points : int, default 100
-            How many points to sample along the line when interpolating.
+            How many points to sample along the line when interpolating;
+            changed without interpolation, it raises.
         clip : Path or geometry, optional
-            Clip the interpolated surface to this region.
+            Clip the interpolated surface to this region; raises without
+            interpolation.
         x_or_y : {'x', 'y'}, default 'x'
             With a single cell in ``cells``, run the line east-west (``'x'``) or
             north-south (``'y'``) through it.
@@ -1728,6 +1737,10 @@ class SpatialView:
         TypeError
             For any keyword not named above -- the cross-section's pointing at
             ``model.plot.section(fill=...)``, a typo with its nearest spelling.
+        ValueError
+            ``use_rbf``/``num_points``/``clip`` without interpolation, naming
+            ``interpolate=True``; a list of layers when interpolating; ``per``
+            with ``kstpkper``; a period or time the output did not save.
 
         Examples
         --------
@@ -1768,14 +1781,12 @@ class SpatialView:
 
     @staticmethod
     def _period_end_kstpkper(model, period: int):
-        """Return the period-end ``(kstp, kper)`` saved for ``period`` (or None)."""
+        """Return the last ``(kstp, kper)`` saved in ``period`` (or None if it saved none).
 
-        candidates = [
-            tuple(int(v) for v in key)
-            for key in model.kstpkper
-            if int(key[1]) == int(period)
-        ]
-        return max(candidates) if candidates else None
+        The one rule, :func:`~myflopy.modflow.mf6.period_end.last_saved_steps`.
+        """
+
+        return last_saved_steps(model.kstpkper).get(int(period))
 
     def mosaic(
         self,
