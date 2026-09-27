@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 335 entries (340 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 336 entries (341 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 336 | A period's flow is its END-of-period flow: the SFR and DRN flow targets added every step a period saved, an... | 2026-09-26 |
 | 335 | A test session writes its temp files in its OWN root and a leak fails by name; `layers.py` no longer leaves... | 2026-09-26 |
 | 334 | A field noun's `section` names what acts on it and refuses the rest: `fill=` and the cross-section's argume... | 2026-09-26 |
 | 333 | `section()` draws the model's cross-section by default -- `fill="layer"`, `backend="mpl"` -- and... | 2026-09-26 |
@@ -14367,12 +14368,12 @@ same day, which is the useful part of the result.
       record's index (ledger 301's stage clock) -- so every LAK record is kept, as before,
       and **lake targets on the stage-file route are NOT on that instant**: at more than
       one saved step per period they sit on the record clock (the time-labels bullet).
-      **The extensive branch has no caller today.** The flow targets never went through
+      ~~**The extensive branch has no caller today.**~~ **It has two since ledger 336.** The flow targets never went through
       this helper -- `SfrFlowTargets._package_flow_table` and `DrnFlowTargets` sum with
       their own `groupby`; it exists because the rule is "sum only if extensive", and it
       is where they would go (below).
       **Found alongside, NOT fixed, each measured:**
-      - **The flow targets add a period's saved steps too.** The canonical model at
+      - ~~**The flow targets add a period's saved steps too.**~~ **RESOLVED by ledger 336** (the user's call: a period's flow is its END-of-period value). The canonical model at
         `nstp=3`, `SAVE BUDGET ALL`: SFR flow at reach 54 37,817.76 -> 113,453.29, a
         one-cell DRN zone -97.50 -> -292.51, both 3.0x (1 step per period reads right).
         Same class, other axis: summing over cells is right for a flux, over time steps
@@ -14410,7 +14411,7 @@ same day, which is the useful part of the result.
       - **The observation route is chosen, and read, by NAME.** The lake id is never
         consulted: `LakeStageTargets(locations={"drying": 1})` returned lake 0's
         `DRYING` column (100.09 ft) where lake 1 holds 108.0.
-      - The period-end rule is now stated twice in `observations/_shared.py` (per
+      - ~~The period-end rule is now stated twice~~ **RESOLVED by ledger 336: one function, `period_end.period_end_steps`.** It was stated twice in `observations/_shared.py` (per
         (`per`, layer, cell) in `_simulated_field_by_period`, per period here); the same
         for every table that saves each id at every step, not merged.
       **Blast radius, read-only.** No test asserted a summed value: every test that drove
@@ -14652,3 +14653,122 @@ same day, which is the useful part of the result.
       **Not done:** the source of the 13,926 entries is unidentified; user notebooks and
       scripts that call `tempfile.mkdtemp()` themselves (the tour notebook, run by a
       reader) are unchanged.
+336. **A period's flow is its END-of-period flow: the SFR and DRN flow targets added every step a period saved, and every target family now reads the record that ends the period through ONE rule, refusing a period whose end was not saved (2026-09-26).**
+      The user's call, on ledger 331's open item: "a period's flow should be end of
+      period value". `SfrFlowTargets` and `DrnFlowTargets` ADDED every saved step on their
+      budget-file route: the canonical model (testing profile, `nstp=3`, `SAVE ALL`) read
+      its outlet reach at **113,453.29 for 37,817.76** and a one-cell spring zone (cell
+      317) at **-292.51 for -97.50**. Adding a zone's CELLS within one step stays -- that
+      is what a lumped seepage measurement is (`kind="extensive"`); adding its STEPS goes.
+      Both now route through `_aggregate_named_series(kind="extensive", ends=...)`.
+      **ONE rule, and where it lives.** `myflopy.modflow.mf6.period_end.period_end_steps`
+      picks each period's record for heads and concentration (`_simulated_field_by_period`),
+      SFR stage, SFR flow and DRN flow (`_aggregate_named_series`), LAK stage (the refusal
+      only, below) and PEST's forward-run head/concentration writers, which each held a copy
+      (`by_period[kper] = ...`). It reads the FILE's own clock (the reader's `recordarray`,
+      ledger 301) -- a flow the budget file's, a head or stage the head file's -- and the
+      module imports numpy and pandas only, because the forward run imports it on every
+      model run: importing the observations package measured 2.36 s against 0.05 s. That is
+      also why `pest.forward_run`'s deferred imports go 1 -> 3 in the ratchet: pyEMU copies
+      only a function's source, so its imports cannot be hoisted. Its model-level wrappers,
+      `period_lengths(model)` and `period_ends(model, reader=, ...)`, live there too, not in
+      the observations package, so the head noun (import layer 2) reaches them.
+      **The END is found by TIME, not by step count** -- judgment call. A record ends its
+      period when its `pertim` is the TDIS `perlen` (to 1e-8 of it, below), not when `kstp`
+      is `nstp - 1`: under ATS the step count is decided at run time (periods declared
+      `nstp=1` took 7 and 6 steps in one probe, 4 each in the tests), so `nstp` would
+      refuse every ATS period, and MF6 writes the final step's `pertim` as the `perlen` it
+      READ, EXACTLY (measured at `tsmult` 1.2 and 0.9 and under ATS).
+      **The tolerance is FloPy's WRITE precision** -- judgment call, from review. What MF6
+      read is FloPy's 8-decimal rendering (`{:15.8f}` from 0.001 to 1e5, `{:.8E}`
+      outside), while the check compares the `perlen` FloPy HOLDS: an hour held as `1/24`
+      is written `0.04166667`, 3.3e-9 off. At 1e-9 x max(1, `perlen`) a LIVE model
+      (`run.model()`) with hourly, 1/3- or 4/3-unit periods had every period refused --
+      heads, flows and the forward run given the lengths the build records -- while the
+      same run reloaded read fine, and the refusal read "ending 0.0416667 into a period
+      0.0416667 long". `END_RTOL` is 1e-8 now, twice FloPy's worst (5e-9 x max(1,
+      `perlen`), measured at 100000.00049 written `1.00000000E+05`), and the refusal prints
+      digits enough to tell its two numbers apart. **Considered and not taken:**
+      round-tripping `perlen` through FloPy's formatter (exact for a live model, WRONG for
+      one loaded from a file written with more digits than FloPy writes, whose values ARE
+      what MF6 read) and parsing the TDIS file (OPEN/CLOSE and missing-file fallbacks for
+      a number the tolerance already settles). **Limits:** a FloPy `float_precision` below
+      its default 8 (myflopy sets none) is refused, loudly; a last time step shorter than
+      1e-8 of its period (`tsmult=0.5` over 27+ steps) would let the step before it read
+      as the end.
+      **A period whose end the file does not hold is REFUSED, not warned** -- judgment call,
+      the user's rule arguing for it. Under `SAVE ... FIRST`, `STEPS` short of the end or
+      `FREQUENCY`, the end-of-period value does not exist, and the old rule silently read
+      an earlier step (the toy zone at step 1 of 3: -27.02 where the period ends at
+      -709.47). The error names the periods, the steps saved and `SAVE BUDGET LAST` (or
+      `HEAD`). **Measured cost: nothing seen.** All 26 MF6 OC files under
+      `/home/lukem/models` save `ALL` or `LAST` (16 `LAST`/`LAST`, 8 `ALL`/`ALL`, 2 `HEAD
+      ALL` + `BUDGET LAST`); every tracked `saverecord` is `ALL`/`LAST` except
+      `tests/test_budget_clocks.py`'s `STEPS 1`/`STEPS 3` fixture, which no target reads;
+      the canonical model saves `ALL` (`steps_per_period` 2, the testing profile 1);
+      `OutputControl` and `simplemodel` default to `LAST`; and every existing target and
+      PEST test passed with the refusal in place, three after their doubles gained a clock
+      (a fake head file's `recordarray`, a fake SFR budget's `types`). A warning would have
+      left the wrong number in PEST's files. **Applied to every family for consistency**:
+      heads, concentration, SFR stage, LAK stage, SFR flow, DRN flow, and the forward run,
+      whose calls now carry `perlen=[...]` from the build so a realization whose ATS moved
+      a `STEPS` save off the end fails rather than hands PEST an early value (a forward run
+      generated before this reads unchecked). A period that saved NOTHING is absent, not
+      refused: nothing is read for it, so nothing can be wrong. A model with no TDIS -- only
+      a duck-typed double -- reads each period's last saved step unchecked.
+      **LAK keeps its record clock** (ledger 331's limit, `build_lak_stage_result_table`,
+      open under 301): its table has no `kstpkper` to reduce. What it gains is the refusal,
+      which catches the worst of it -- one `FIRST` record per period made the record index
+      look like the period with every stage read at step 1.
+      **Found on the same route and FIXED:** the SFR flow route asked FloPy for `TO-MVR`
+      unconditionally, which RAISES on every stream without a mover ("The specified text
+      string is not in the budget file") -- it reads only the terms the file holds now;
+      and an OUTLET reach had no row, its water leaving as `EXT-OUTFLOW`, which was not
+      read. A reach's flow is outbound FLOW-JA-FACE + `TO-MVR` + `EXT-OUTFLOW` now, equal to
+      MF6's own `DOWNSTREAM-FLOW` at every period end (toy reaches 0 and 3; canonical
+      reaches 46 and 54, the second through a mover). A DRN zone is keyed by NAME, its cells
+      the union of its rows, as `_resolve_drn_zone_cells` already made them for geometry --
+      on BOTH routes: the observation route's label map was built row by row by
+      assignment until review, so the LAST row won, and a zone given as rows `[20]` and
+      `[21, 27]` read -474.37 where it ends period 0 at -709.47. (`to_flopy_obs` still
+      writes a cell listed in two rows twice; MF6 accepts it and the reader takes one.)
+      **`model.hds`/`conc`/`temp.get()` read the rule too** (review). Documented as
+      "period-end values", it took each period's largest `kstp` unchecked, so under `SAVE
+      HEAD FIRST` it returned step 1 of 3 (97.61 where period 0 ends at 101.18) while
+      `HeadTargets` beside it refused. It refuses now, naming `SAVE HEAD LAST`
+      (`CONCENTRATION`, `TEMPERATURE`); a reader opened from a path with no model has no
+      TDIS and takes the last saved step.
+      **The VIEW layer is LEFT, deliberately** -- scope cut. A map's `per_timestep="last"`,
+      `cross_section_plotting.section_time`, `package_plotting._period_end_kstpkper` and
+      the group's `_reduce_to_period_end` take a period's last SAVED step unchecked, and
+      `_coerce_kstpkper`, `XSection` and `InterpolatedSurface` read `per` as a saved-RECORD
+      index -- 301's open stage-clock family, and they move with it: a group selects `per=`
+      through `_coerce_kstpkper`, so on the toy at `nstp=3` `group.hds.compare(per=0/1/2)`
+      reads steps 1-3 of period 0, every row labelled `per` 0, and a period-end filter
+      under `_reduce_to_period_end` alone turned `per=0` and `per=1` into a `KeyError` and
+      left `per=2` reading period 0's end.
+      **The observation route, recorded and NOT changed** (the period-end rule does not
+      need it): MF6 writes a flow observation every time step, labelled by simulated time,
+      and its period-end rows equal the file route -- the DRN zone to the bit, the SFR reach
+      with MF6's NEGATIVE sign where the file route reports the magnitude, so a positive
+      gauged flow Q matched exactly there reads a residual of -2Q. A target keyed by
+      PERIOD matches nothing: `compare()` gives `NaN`, and a PEST build keeps all nine
+      simulated rows (`time:3.333333333333` .. `time:30.0`) as `obsval`, weight 1 -- the
+      targets silently dropped (ledger 331's finding, for flows too), and not inertly:
+      each row enters phi with the BASE run's value as its observation, so every
+      realization is pulled back toward the uncalibrated model's flows. Keyed by time
+      10/20/30 it matches. Both are open.
+      **Not built:** a time-weighted mean over the period (the user chose the end); the LAK
+      period clock.
+      Reproducer: `docs/reproducers/flow_targets_period_end.py` (the toy under five OC
+      schedules and ATS, the observation route and its PEST build, the canonical model at
+      `nstp=3`; and section 8, the review's four: hourly periods, a zone given as two rows,
+      `hds.get()` under `SAVE HEAD FIRST`, and the group filter). Tests:
+      `tests/test_flow_targets_period_end.py`, 22 (16 on six real MF6 runs). Each of
+      seventeen single-piece mutations fails a named test: dropping the period-end filter
+      (7), the refusal (8), `EXT-OUTFLOW` (4), the held-terms check (7), either forward-run
+      writer's own copy back (2, 1), the LAK check (1), the heads, SFR stage, SFR flow or
+      DRN check alone (1 each), `nstp` for `pertim` (16), the build's `perlen`
+      (`test_mf6_pest`'s forward-run test), `END_RTOL` back to 1e-9 (2), the refusal at
+      six figures (1), the observation route's row-by-row label map (1), and `hds.get()`'s
+      largest-`kstp` copy (1).

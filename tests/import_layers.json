@@ -83,6 +83,7 @@
  "myflopy.modflow.mf6.package_tables": 1,
  "myflopy.modflow.mf6.parallel": 1,
  "myflopy.modflow.mf6.paths": 0,
+ "myflopy.modflow.mf6.period_end": 0,
  "myflopy.modflow.mf6.pest": 0,
  "myflopy.modflow.mf6.pest.forward_run": 0,
  "myflopy.modflow.mf6.pest.geostats": 8,

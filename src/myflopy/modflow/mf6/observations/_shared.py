@@ -12,6 +12,7 @@ import pandas as pd
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.geometry import where_they_are
 from myflopy.modflow.mf6.package_registry import agg_for_kind
+from myflopy.modflow.mf6.period_end import at_period_end, period_end_steps, period_ends
 
 logger = get_logger(__name__)
 
@@ -361,17 +362,28 @@ def _normalize_values_frame(
     return _copy_frame(long)
 
 
+#: The reader behind each dependent-variable table, what to call its file, and the
+#: output-control word that schedules it -- for the period-end rule's refusal.
+_FIELD_FILES = {
+    "all_heads": ("hds", "the head file", "HEAD"),
+    "all_conc": ("conc", "the concentration file", "CONCENTRATION"),
+}
+
+
 def _simulated_field_by_period(
     model: Any,
     *,
     table_attribute: str = "all_heads",
     store_column: str = "elev",
 ) -> pd.DataFrame:
-    """Build one simulated record per period/layer/cell for a dependent variable.
+    """One simulated value per period/layer/cell: each period's END (ledger 336).
 
-    Keeps the last available time step within each stress period, because that is
-    typically the most useful calibration target when the target data are defined
-    per stress period.
+    The record read for a period is the one that ENDS it, by the one rule every
+    target uses (:func:`~myflopy.modflow.mf6.period_end.period_ends`), on the
+    dependent-variable file's own clock. A period whose end the file does not
+    hold -- output control saved ``FIRST`` or ``STEPS`` short of it -- is refused
+    rather than read at an earlier step, which it used to be: the last saved step
+    was taken, wherever it fell.
 
     ``table_attribute``/``store_column`` select the field: heads
     (``all_heads``/``elev``) or concentration (``all_conc``/``conc``). The output
@@ -379,16 +391,41 @@ def _simulated_field_by_period(
     simulated value", and keeping it shared is what lets the calibration-plot and
     PEST machinery in ``calcs/calibration.py`` serve concentration unchanged
     (ledger 102).
+
+    Parameters
+    ----------
+    model : SimulationBase
+        A run model holding the dependent-variable file.
+    table_attribute : {"all_heads", "all_conc"}, default "all_heads"
+        The model's ``kstpkper``/``layer``/``cell`` table to read.
+    store_column : str, default "elev"
+        That table's value column (``"elev"`` for heads, ``"conc"``).
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``per``, ``layer``, ``cell``, ``sim_head``: one row per cell per period
+        the file saved, the value at that period's end.
+
+    Raises
+    ------
+    ValueError
+        When a period the file saved lacks its final step, naming the period,
+        the steps saved and the ``SAVE HEAD LAST`` setting that fixes it.
     """
 
     frame = getattr(model, table_attribute).reset_index().copy()
-    frame["kstp"] = frame["kstpkper"].apply(lambda item: int(item[0]))
-    frame["per"] = frame["kstpkper"].apply(lambda item: int(item[1]))
-    frame = frame.sort_values(["per", "kstp"]).drop_duplicates(
-        subset=["per", "layer", "cell"],
-        keep="last",
+    reader_attribute, file, saves = _FIELD_FILES[table_attribute]
+    ends = period_ends(
+        model,
+        reader=lambda: getattr(model, reader_attribute),
+        file=file,
+        saves=saves,
+        fallback=frame["kstpkper"],
     )
-    frame = frame.rename(columns={store_column: "sim_head"})
+    frame = at_period_end(frame, ends).copy()
+    frame["per"] = frame["kstpkper"].map(lambda item: int(item[1]))
+    frame = frame.sort_values("per", kind="stable").rename(columns={store_column: "sim_head"})
     return frame.loc[:, ["per", "layer", "cell", "sim_head"]].reset_index(drop=True)
 
 
@@ -682,25 +719,31 @@ def _aggregate_named_series(
     id_column: str,
     value_column: str,
     kind: str,
+    ends: dict[int, tuple[int, int]] | None = None,
 ) -> pd.DataFrame:
     """Reduce a result table to ONE value per ``per`` and integer id, by what the value IS.
 
     Rows ADD only when the value is extensive -- ledger 297's rule, asked of
     :func:`~myflopy.modflow.mf6.package_registry.agg_for_kind` rather than restated
-    here. A stage table repeats a feature's ONE stage on every cell the feature
-    connects to, so its rows of one id in one record are copies, and adding them
-    read a pond at 526.00 ft as 401,339.97 ft -- 763 connected cells (ledger 331).
-    For a non-extensive value the copies are reduced to the one number they hold,
-    which is what the registry's ``"mean"`` gives for copies that agree; copies
-    that DISAGREE are refused, because averaging them would invent a value the
-    table never held and a table like that is not the one this assumes.
+    here. A flow's rows are the cells or connections of one feature in one time
+    step, and they add: that is what a seepage zone or a reach's outflow IS. A
+    stage table repeats a feature's ONE stage on every cell the feature connects
+    to, so its rows of one id in one record are copies, and adding them read a
+    pond at 526.00 ft as 401,339.97 ft -- 763 connected cells (ledger 331). For a
+    non-extensive value the copies are reduced to the one number they hold, which
+    is what the registry's ``"mean"`` gives for copies that agree; copies that
+    DISAGREE are refused, because averaging them would invent a value the table
+    never held and a table like that is not the one this assumes.
 
-    A table that carries ``kstpkper`` is first reduced to each period's LAST saved
-    time step, the period-end rule ``HeadTargets`` already uses
-    (``_simulated_field_by_period``): a series keyed by ``per`` holds one row per
-    period, and adding a period's time steps multiplied an SFR stage by the number
-    saved. A table without it -- the LAK stage table, whose ``per`` is the index of
-    the saved record (ledger 301's stage clock) -- keeps every record.
+    **Time steps never add, whatever the kind** (ledgers 331, 336). A table that
+    carries ``kstpkper`` is first reduced to the record that ENDS each period --
+    the one rule every target reads,
+    :func:`~myflopy.modflow.mf6.period_end.period_end_steps` -- so a period's
+    value is its end-of-period value. Adding a period's saved steps multiplied an
+    SFR stage, an SFR flow and a DRN zone's flow by the number of steps saved
+    (3.0x at ``nstp=3``). A table without it -- the LAK stage table, whose ``per``
+    is the index of the saved record (ledger 301's stage clock) -- keeps every
+    record.
 
     A row whose VALUE is missing is kept, and an id with no value in a period comes
     back ``NaN`` rather than absent or 0.0: a lake with no stage (ledger 329) is a
@@ -716,16 +759,22 @@ def _aggregate_named_series(
     frame : pandas.DataFrame
         One row per (record, id, cell): a ``per`` (or ``time``) column holding
         zero-based integers, ``id_column``, ``value_column`` and, optionally,
-        ``kstpkper`` tuples.
+        ``kstpkper`` tuples on the clock of the file the table was read from.
     id_column : str
         The integer feature id each row belongs to (``"lake"``, ``"reach"``).
     value_column : str
-        The column holding the value to reduce (``"stage"``).
+        The column holding the value to reduce (``"stage"``, ``"sim_flow"``).
     kind : str
         What the value is, in :class:`~myflopy.modflow.mf6.package_registry.FieldSpec`'s
-        words: ``"extensive"`` (a flux -- rows add), or ``"elevation"`` /
-        ``"intensive"`` (a level -- rows are copies of one number). Required, so a
-        new caller has to say.
+        words: ``"extensive"`` (a flux -- rows of one step add), or
+        ``"elevation"`` / ``"intensive"`` (a level -- rows are copies of one
+        number). Required, so a new caller has to say.
+    ends : dict of int to tuple of (int, int), optional
+        The record that ends each period, ``{kper: (kstp, kper)}``, as
+        ``period_end.period_ends`` reads it off the table's own file
+        and checks it against the TDIS. ``None`` (the default) takes each
+        period's last ``kstpkper`` in the table, unchecked -- for a table with no
+        file behind it. Ignored for a table without ``kstpkper``.
 
     Returns
     -------
@@ -751,8 +800,9 @@ def _aggregate_named_series(
     data = data.dropna(subset=[id_column]).copy()
     data[id_column] = data[id_column].astype(int)
     if "kstpkper" in data.columns and not data.empty:
-        kstp = data["kstpkper"].map(lambda value: int(value[0]))
-        data = data.loc[kstp == kstp.groupby(data["per"]).transform("max")]
+        if ends is None:
+            ends = period_end_steps(data["kstpkper"])
+        data = at_period_end(data, ends)
     grouped = data.groupby(["per", id_column], dropna=False)[value_column]
     if combine == "sum":
         reduced = grouped.sum(min_count=1)

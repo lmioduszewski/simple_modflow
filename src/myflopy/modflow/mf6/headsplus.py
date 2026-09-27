@@ -40,6 +40,7 @@ from myflopy.modflow.mf6.package_plotting import (
     refuse_noun_parameters,
     resolve_noun_hover,
 )
+from myflopy.modflow.mf6.period_end import at_period_end, period_ends
 from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
 from myflopy.modflow.utils.datatypes.hover import HoverSpec, conc_hover, head_hover, temp_hover
 
@@ -194,10 +195,17 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
     ) -> pd.DataFrame:
         """Return period-end values as a tidy ``per``/``layer``/``cell``/``<value>`` frame.
 
-        Each stress period is reduced to its last saved timestep. MODFLOW's no-value
-        sentinels (+1e30 inactive, -1e30 dry; ``|value| >= 1e29``) become ``NaN``,
-        by the same rule as :meth:`array` and the maps (ledger 315). The three
-        selectors combine with AND; floats inside a sequence are truncated to int.
+        Each stress period is its END-of-period value: the record that ends it on
+        this file's own clock, by the rule every target reads
+        (:func:`~myflopy.modflow.mf6.period_end.period_ends`, ledger 336). A period
+        whose end output control did not save (``SAVE HEAD FIRST``, ``STEPS`` short
+        of it, ``FREQUENCY``) is refused rather than read at its last saved step,
+        which it used to be -- step 1 of 3 labelled as the period. A reader opened
+        from a path with no model has no TDIS to check against and takes each
+        period's last saved step. MODFLOW's no-value sentinels (+1e30 inactive,
+        -1e30 dry; ``|value| >= 1e29``) become ``NaN``, by the same rule as
+        :meth:`array` and the maps (ledger 315). The three selectors combine with
+        AND; floats inside a sequence are truncated to int.
 
         Parameters
         ----------
@@ -226,6 +234,11 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         TypeError
             If a selector is a bare float, or any other value that is neither an
             integer nor iterable.
+        ValueError
+            If a period the file saved lacks its final step -- naming the period,
+            the steps saved and the ``SAVE HEAD LAST`` (``CONCENTRATION``,
+            ``TEMPERATURE``) setting that fixes it. Checked over the whole file,
+            whatever ``per`` selects.
 
         Examples
         --------
@@ -235,10 +248,15 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
 
         value = self.value_name
         frame = self.all_values.reset_index()
-        frame["kstp"] = [int(key[0]) for key in frame["kstpkper"]]
+        ends = period_ends(
+            self.model,
+            reader=lambda: self,
+            file=f"the {self._binary_text} file",
+            saves=self._binary_text.upper(),
+            fallback=frame["kstpkper"],
+        )
+        frame = at_period_end(frame, ends).copy()
         frame["per"] = [int(key[1]) for key in frame["kstpkper"]]
-        period_end = frame.groupby("per")["kstp"].transform("max")
-        frame = frame[frame["kstp"] == period_end].copy()
         frame = frame.rename(columns={self.store_column: value})
         frame[value] = pd.to_numeric(frame[value], errors="coerce")
         frame.loc[_is_sentinel(frame[value]), value] = np.nan

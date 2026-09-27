@@ -150,6 +150,12 @@ def _run_forward(tmp_path, monkeypatch, mapping) -> pd.DataFrame:
     import flopy
 
     class _FakeHeadFile:
+        # The file's own clock, one-based as on disk: the forward run picks each
+        # period's END from it (ledger 336).
+        recordarray = np.array(
+            [(1, 1, 1.0)], dtype=[("kstp", int), ("kper", int), ("pertim", float)]
+        )
+
         def __init__(self, *_args, **_kwargs):
             pass
 

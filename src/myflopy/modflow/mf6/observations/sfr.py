@@ -23,6 +23,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _observation_label,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
+from myflopy.modflow.mf6.period_end import period_ends
 
 
 def _exchange_column(frame: pd.DataFrame) -> str:
@@ -36,6 +37,52 @@ def _exchange_column(frame: pd.DataFrame) -> str:
     return "q_gwf" if "q_gwf" in frame.columns else "q"
 
 
+def _stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
+    """One stage per reach per stress period: the one that ENDS it (ledgers 331, 336).
+
+    The SFR stage table holds one row per reach per saved step, labelled from the
+    stage file's own clock -- which MF6 writes when it saves HEAD, not BUDGET
+    (ledger 301). The period-end record is read off that file and checked against
+    the TDIS, so a period whose end was not saved is refused rather than read at
+    an earlier step.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        The run model the table was read from.
+    frame : pandas.DataFrame
+        ``packages.sfr.results.stage.get()``: ``kstpkper``, ``per``, ``reach``,
+        ``stage``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``per``, ``reach``, ``stage``: one row per reach per period.
+
+    Raises
+    ------
+    ValueError
+        When a period the stage file saved lacks its final step, or a reach's
+        rows in one record disagree.
+    """
+
+    ends = period_ends(
+        model,
+        reader=lambda: model.sfr.output.stage(),
+        file="the SFR stage file",
+        saves="HEAD",
+        fallback=frame["kstpkper"] if "kstpkper" in frame.columns else (),
+    )
+    return _aggregate_named_series(
+        frame, id_column="reach", value_column="stage", kind="elevation", ends=ends
+    )
+
+
+#: SFR budget terms that carry water OUT of a reach downstream -- to the next
+#: reach, to a mover, or out of the network -- and so make up its streamflow.
+_OUTFLOW_TERMS = ("TO-MVR", "EXT-OUTFLOW")
+
+
 @dataclass
 class SfrStageTargets:
     """Observed SFR stage time series tied to named reaches, for review or PEST.
@@ -46,6 +93,10 @@ class SfrStageTargets:
     simulated SFR stage. Pass an instance straight to ``cal.observe(...)`` for
     calibration, or use ``.compare(model)`` / ``.stats(model)`` to review
     residuals without PEST. Omitting ``values`` yields an observation *template*.
+
+    A target keyed by stress period reads the stage at that period's END (ledger
+    336): on the stage file, the record that ends the period, and a period whose
+    final step output control did not save is refused rather than read early.
 
     Parameters
     ----------
@@ -137,13 +188,17 @@ class SfrStageTargets:
         time, one row per time step; the stage-file route the zero-based stress
         period.
 
-        **On the stage-file route a period holds ONE stage per reach: its LAST
-        saved time step** (ledger 331), the period-end rule ``HeadTargets`` uses.
-        The route used to ADD every time step a period saved, so under ``SAVE HEAD
-        ALL`` with three steps per period a reach at 141.43 ft read 424.29 --
-        a stage is not added (ledger 297). One saved step per period (``SAVE HEAD
-        LAST``, or one time step) reads as before. A dry reach is still MF6's
-        -1e30 on this route: SFR's stage is not masked yet (ledger 329).
+        **On the stage-file route a period holds ONE stage per reach: the stage at
+        the period's END** (ledgers 331, 336) -- the record that ends the period on
+        the stage file's own clock (MF6 writes it when it saves HEAD), the one rule
+        head and flow targets read too. The route used to ADD every time step a
+        period saved, so under ``SAVE HEAD ALL`` with three steps per period a
+        reach at 141.43 ft read 424.29 -- a stage is not added (ledger 297). One
+        saved step per period that ends it (``SAVE HEAD LAST``, or one time step)
+        reads as before; a period whose final step was not saved (``FIRST``,
+        ``STEPS`` short of it) is refused, because its end-of-period stage does not
+        exist in the file. A dry reach is still MF6's -1e30 on this route: SFR's
+        stage is not masked yet (ledger 329).
 
         Parameters
         ----------
@@ -162,10 +217,12 @@ class SfrStageTargets:
         Raises
         ------
         ValueError
-            On the stage-file route, when the rows of one reach in one saved
-            record are not copies of one stage -- naming the reach, the period
-            and the spread. MF6's stage table cannot produce that; it guards a
-            table that is not the one this reads.
+            On the stage-file route: when a period the stage file saved lacks
+            its final step -- naming the period, the steps saved and the ``SAVE
+            HEAD LAST`` setting that fixes it; or when the rows of one reach in
+            one saved record are not copies of one stage -- naming the reach, the
+            period and the spread. MF6's stage table cannot produce the second;
+            it guards a table that is not the one this reads.
 
         Examples
         --------
@@ -179,9 +236,7 @@ class SfrStageTargets:
         frame = model.packages.sfr.results.stage.get().copy()
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
-        frame = _aggregate_named_series(
-            frame, id_column="reach", value_column="stage", kind="elevation"
-        )
+        frame = _stage_at_period_end(model, frame)
         merged = self._locations.merge(frame, on="reach", how="left")
         wide = merged.pivot_table(index="per", columns="name", values="stage", aggfunc="first").reset_index()
         wide.columns.name = None
@@ -191,8 +246,8 @@ class SfrStageTargets:
         """Compare target reach stages against simulated SFR stages (with residuals).
 
         ``sim_stage`` comes from the same two routes as :meth:`simulated_series`:
-        on the stage-file route, one stage per reach per stress period, its last
-        saved time step (ledger 331). Targets are matched on ``per``, read from
+        on the stage-file route, one stage per reach per stress period, the stage
+        at the period's END (ledgers 331, 336). Targets are matched on ``per``, read from
         their ``time`` as a zero-based integer -- compared with MF6's simulated
         time on the observation route and with the stress period on the
         stage-file route.
@@ -214,9 +269,10 @@ class SfrStageTargets:
         Raises
         ------
         ValueError
-            On the stage-file route, when a reach's copies in one record
-            disagree (as :meth:`simulated_series`), or when a target's ``time``
-            is not a number.
+            On the stage-file route, when a period the stage file saved lacks
+            its final step or a reach's copies in one record disagree (as
+            :meth:`simulated_series`), or when a target's ``time`` is not a
+            number.
         """
 
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
@@ -225,12 +281,7 @@ class SfrStageTargets:
             simulated["per"] = simulated["time"]
             simulated = self._locations.merge(simulated, on="name", how="left")
         else:
-            simulated = _aggregate_named_series(
-                model.packages.sfr.results.stage.get().copy(),
-                id_column="reach",
-                value_column="stage",
-                kind="elevation",
-            )
+            simulated = _stage_at_period_end(model, model.packages.sfr.results.stage.get().copy())
             simulated = self._locations.merge(simulated, on="reach", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
             compare = simulated.rename(columns={"per": "time"}).copy()
@@ -305,6 +356,13 @@ class SfrFlowTargets:
     calibration targets. Pass an instance to ``cal.observe(...)`` /
     ``cal.forecast(...)``, or call ``.compare(model)`` / ``.stats(model)`` for
     standalone residual review. Omitting ``values`` yields a capture template.
+
+    **A period's flow is its END-of-period flow** (ledger 336): on the SFR budget
+    file, the flow in the time step that ends the period -- never the sum of the
+    steps saved -- and a period whose final step output control did not save is
+    refused rather than read early. A reach's flow is what it sends downstream,
+    to the next reach, to a mover or out of the network, as MF6's own
+    ``DOWNSTREAM-FLOW`` observation measures it.
 
     Parameters
     ----------
@@ -386,14 +444,45 @@ class SfrFlowTargets:
         }
 
     def _package_flow_table(self, model) -> pd.DataFrame:
-        """Build a per-period, per-reach simulated-flow table from the SFR budget output.
+        """Each reach's streamflow at each stress period's END, from the SFR budget file.
 
-        Uses the FLOW-JA-FACE in-channel *routing* through-flow (outbound rows, plus
-        TO-MVR) and returns ``per``/``reach``/``sim_flow``. If routing flow is
-        unavailable on a real model it returns an empty frame with a warning — it does
-        **not** substitute ``sfr.results.q`` (the stream-aquifer *exchange*, a different
-        physical quantity, ~1e2 leakage), because relabeling that as ``sim_flow`` would
-        silently feed PEST the wrong quantity under the streamflow column name.
+        A reach's streamflow is the water it sends downstream in one time step:
+        its outbound FLOW-JA-FACE rows (to the next reaches), plus ``TO-MVR`` and
+        ``EXT-OUTFLOW`` (out of the network) where the budget file holds them --
+        the quantity MF6's own ``DOWNSTREAM-FLOW`` observation reports (measured
+        equal on the canonical model and on a stream with no mover), as a
+        magnitude. Those rows ADD, within one time step (``kind="extensive"``).
+
+        **A period's value is its END-of-period value** (ledger 336): the record
+        read is the one that ends the period on the SFR budget file's own clock
+        (``SAVE BUDGET``, not ``SAVE HEAD`` -- ledger 301), through the one rule
+        every target reads (``_aggregate_named_series``). It used to ADD every
+        step a period saved: the canonical model at ``nstp=3`` under ``SAVE
+        BUDGET ALL`` read its outlet reach at 113,453.29 where each step held
+        37,817.76. A period whose final step the file does not hold is refused.
+
+        If routing flow is unavailable on a real model it returns an empty frame
+        with a warning -- it does **not** substitute ``sfr.results.q`` (the
+        stream-aquifer *exchange*, a different physical quantity, ~1e2 leakage),
+        because relabeling that as ``sim_flow`` would silently feed PEST the wrong
+        quantity under the streamflow column name.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with an SFR ``budget_filerecord``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``per``, ``reach`` (zero-based) and ``sim_flow``, one row per reach
+            that sends water downstream, per stress period.
+
+        Raises
+        ------
+        ValueError
+            When a period the SFR budget file saved lacks its final step --
+            naming the period, the steps saved and ``SAVE BUDGET LAST``.
         """
 
         if not hasattr(model, "outputs"):
@@ -417,7 +506,8 @@ class SfrFlowTargets:
             ).abs()
             return flow.loc[:, ["per", "reach", "sim_flow"]]
 
-        flow = model.outputs.sfr.bud.get("FLOW-JA-FACE")
+        budget = model.outputs.sfr.bud
+        flow = budget.get("FLOW-JA-FACE")
         if not isinstance(flow, pd.DataFrame) or flow.empty:
             # In-channel routing flow is unavailable -- the SFR budget file holds
             # no FLOW-JA-FACE rows. Do NOT substitute ``sfr.results.q`` here: that
@@ -441,43 +531,87 @@ class SfrFlowTargets:
             )
             return pd.DataFrame(columns=["per", "reach", "sim_flow"])
 
+        ends = period_ends(
+            model,
+            reader=lambda: budget.budget,
+            file="the SFR budget file",
+            saves="BUDGET",
+            fallback=flow["kstpkper"],
+        )
         frame = flow.copy()
-        frame["per"] = frame["kstpkper"].apply(lambda values: int(values[1]))
-        frame["reach"] = pd.to_numeric(frame["node"], errors="coerce")
-        frame["reach_to"] = pd.to_numeric(frame["node2"], errors="coerce")
-        if frame["reach"].dropna().min() >= 1:
-            frame["reach"] = frame["reach"] - 1
-        if frame["reach_to"].dropna().min() >= 1:
-            frame["reach_to"] = frame["reach_to"] - 1
         frame["q"] = _clean_observation_output_values(frame["q"])
-
         # For in-channel through-flow, use the outbound FLOW-JA-FACE rows
         # leaving each reach. Those are the negative rows in the SFR package
         # budget. Taking absolute values keeps the reported flow intuitive.
-        outbound = frame.loc[frame["q"] <= 0.0, ["per", "reach", "q"]].copy()
-        outbound["sim_flow"] = outbound["q"].abs()
-        grouped = outbound.groupby(["per", "reach"], as_index=False)["sim_flow"].sum()
-
-        to_mvr = model.outputs.sfr.bud.get("TO-MVR")
-        if isinstance(to_mvr, pd.DataFrame) and not to_mvr.empty:
-            mvr = to_mvr.copy()
-            mvr["per"] = mvr["kstpkper"].apply(lambda values: int(values[1]))
-            mvr["reach"] = pd.to_numeric(mvr["node"], errors="coerce")
-            if mvr["reach"].dropna().min() >= 1:
-                mvr["reach"] = mvr["reach"] - 1
-            mvr["sim_flow"] = _clean_observation_output_values(mvr["q"]).abs()
-            grouped = (
-                pd.concat([grouped, mvr.loc[:, ["per", "reach", "sim_flow"]]], ignore_index=True)
-                .groupby(["per", "reach"], as_index=False)["sim_flow"]
-                .sum()
-            )
-
-        grouped["reach"] = grouped["reach"].astype(int)
-        grouped["per"] = grouped["per"].astype(int)
-        return grouped
+        pieces = [frame.loc[frame["q"] <= 0.0, ["kstpkper", "node", "q"]]]
+        # Only the terms the file HOLDS: FloPy raises on a record text the budget
+        # file does not have, and a stream with no mover writes no TO-MVR -- so
+        # asking for it unconditionally failed every such model on this route.
+        held = {str(term).strip().upper() for term in budget.types}
+        for term in _OUTFLOW_TERMS:
+            if term not in held:
+                continue
+            extra = budget.get(term)
+            if isinstance(extra, pd.DataFrame) and not extra.empty:
+                extra = extra.loc[:, ["kstpkper", "node", "q"]].copy()
+                extra["q"] = _clean_observation_output_values(extra["q"])
+                pieces.append(extra)
+        rows = pd.concat(pieces, ignore_index=True)
+        rows["reach"] = pd.to_numeric(rows["node"], errors="coerce")
+        if rows["reach"].dropna().min() >= 1:
+            rows["reach"] = rows["reach"] - 1
+        rows["sim_flow"] = rows["q"].abs()
+        rows["per"] = rows["kstpkper"].map(lambda value: int(value[1]))
+        return _aggregate_named_series(
+            rows, id_column="reach", value_column="sim_flow", kind="extensive", ends=ends
+        )
 
     def simulated_series(self, model) -> pd.DataFrame:
-        """Return one wide simulated-flow table indexed by stress period."""
+        """Return one wide simulated-flow table: a ``time`` column and one column per target.
+
+        Read from the model's SFR flow observations when one workspace CSV holds
+        every target's column (MF6's observation labels, as :meth:`to_flopy_obs`
+        writes them), else from the SFR budget file. The two routes label
+        ``time`` differently: the observation route carries MF6's simulated time,
+        one row per time step, and MF6's own sign (``DOWNSTREAM-FLOW`` is
+        negative); the budget-file route the zero-based stress period, and the
+        flow's magnitude.
+
+        **On the budget-file route a period holds ONE flow per reach: the flow
+        at the period's END** (ledger 336) -- the record that ends the period on
+        the SFR budget file's own clock, the same rule head and stage targets
+        read. The route used to ADD every time step a period saved (3.0x at
+        ``nstp=3`` under ``SAVE BUDGET ALL``). One saved step per period that ends
+        it (``SAVE BUDGET LAST``, or one time step) reads as before; a period
+        whose final step was not saved (``FIRST``, ``STEPS`` short of it) is
+        refused, because its end-of-period flow does not exist in the file.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with an SFR package, as ``mf.load_mf6_run(ws)`` or
+            ``run.model()`` returns. The observation route needs its workspace;
+            the budget-file route an SFR ``budget_filerecord``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` plus one float column per target name. On the budget-file
+            route a target naming a reach that sends no water downstream gets no
+            column.
+
+        Raises
+        ------
+        ValueError
+            On the budget-file route, when a period the SFR budget file saved
+            lacks its final step -- naming the period, the steps saved and the
+            ``SAVE BUDGET LAST`` setting that fixes it.
+
+        Examples
+        --------
+        >>> targets = mf.SfrFlowTargets(locations={"gage": 27})
+        >>> series = targets.simulated_series(model)   # one row per stress period
+        """
 
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
         if observed is not None:
@@ -493,7 +627,36 @@ class SfrFlowTargets:
         return wide.rename(columns={"per": "time"})
 
     def compare(self, model) -> pd.DataFrame:
-        """Compare target reach flows against simulated SFR flows (with residuals)."""
+        """Compare target reach flows against simulated SFR flows (with residuals).
+
+        ``sim_flow`` comes from the same two routes as :meth:`simulated_series`:
+        on the budget-file route, one flow per reach per stress period, the flow
+        at the period's END (ledger 336). Targets are matched on ``per``, read
+        from their ``time`` as a zero-based integer -- compared with the stress
+        period on the budget-file route, and with MF6's simulated time on the
+        observation route, where a target keyed by period matches no row.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with an SFR package, as ``mf.load_mf6_run(ws)`` or
+            ``run.model()`` returns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per target row (per simulated row when the targets hold no
+            values): ``name``, ``reach``, ``time``, ``per``, ``flow_target``,
+            ``sim_flow``, ``residual`` (simulated minus target) and
+            ``abs_residual``.
+
+        Raises
+        ------
+        ValueError
+            On the budget-file route, when a period the SFR budget file saved
+            lacks its final step (as :meth:`simulated_series`), or when a
+            target's ``time`` is not a number.
+        """
 
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
         if observed is not None:

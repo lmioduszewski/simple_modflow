@@ -662,8 +662,14 @@ def _fake_flow_ja_face_model():
             return to_mvr.copy()
         return None
 
+    # ``types``: the record texts the file holds, which is what the table asks
+    # before reading TO-MVR or EXT-OUTFLOW (a stream with no mover writes none).
     return SimpleNamespace(
-        outputs=SimpleNamespace(sfr=SimpleNamespace(bud=SimpleNamespace(get=_get)))
+        outputs=SimpleNamespace(
+            sfr=SimpleNamespace(
+                bud=SimpleNamespace(get=_get, types=["    FLOW-JA-FACE", "          TO-MVR"])
+            )
+        )
     )
 
 
@@ -1299,6 +1305,9 @@ def test_native_pstfrom_parameterize_build_and_forward_run_end_to_end():
     ]
     assert any("hds_simulated_heads.csv" in line for line in call_lines)
     assert any("fore1_simulated_heads.csv" in line for line in call_lines)
+    # The period lengths ride along, so every realization checks that the head it
+    # reads ENDS its period, as the build did (ledger 336).
+    assert all("perlen=[1.0]" in line for line in call_lines)
     assert pst.pestpp_options.get("forecasts")
 
     settings_after = cal.settings()

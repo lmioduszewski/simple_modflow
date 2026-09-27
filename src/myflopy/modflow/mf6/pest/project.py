@@ -20,6 +20,7 @@ from myflopy.modflow.mf6.observations import (
     SfrFlowTargets,
     SfrStageTargets,
 )
+from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.geostats import build_geostruct
 from myflopy.modflow.mf6.pest.native_parameters import (
     NativeParameterSpec,
@@ -747,6 +748,11 @@ class PestProject:
         """Add post-model functions that regenerate simulated observation CSVs."""
 
         helper_path = Path(__file__).with_name("forward_run.py")
+        # Each period's length, so the forward run can check that the record it
+        # reads ENDS its period, as the base run's build did (ledger 336). OC is
+        # not a parameter, but ATS can move a STEPS save off a period's end in one
+        # realization and not another.
+        perlen = period_lengths(self.model)
         for item in self._prepared_observations:
             head_config = item.get("forward_run_config")
             if head_config is not None:
@@ -755,7 +761,8 @@ class PestProject:
                     "_write_head_target_csv("
                     f"model_name='{self.model.name}', "
                     f"mapping_csv='{head_config['mapping_csv']}', "
-                    f"output_csv='{head_config['output_csv']}')",
+                    f"output_csv='{head_config['output_csv']}', "
+                    f"perlen={perlen!r})",
                     is_pre_cmd=False,
                 )
                 continue
@@ -766,7 +773,8 @@ class PestProject:
                     "_write_conc_target_csv("
                     f"model_name='{conc_config['model_name']}', "
                     f"mapping_csv='{conc_config['mapping_csv']}', "
-                    f"output_csv='{conc_config['output_csv']}')",
+                    f"output_csv='{conc_config['output_csv']}', "
+                    f"perlen={perlen!r})",
                     is_pre_cmd=False,
                 )
                 continue

@@ -542,21 +542,46 @@ It used to take every cell it touched, so a zone drawn on one cell claimed nine
 and two zones abutting on a column of faces both claimed that column, summing
 every drain in it into two observations; a zone off the grid came back empty and
 its flow as zero, and now raises (ledger 238). A zone given as several rows is
-one zone: its cells are the union, and it is reported missing only when every
-part of it misses. Zone membership is geometry only: a covered cell that carries
-no drain is still in the zone and adds zero.
+one zone: its cells are the union -- on the observation route as on the budget
+file, which until ledger 336 summed only the LAST row's cells there -- and it is
+reported missing only when every part of it misses. Zone membership is geometry
+only: a covered cell that carries no drain is still in the zone and adds zero.
 
-A lake or reach STAGE target reads one of two routes: MF6's own STAGE observation,
-when one workspace CSV holds a column for every target NAME (the lake or reach id is
-not consulted), else the stage file. On the stage file it reads ONE stage per lake per
-saved record and ONE per reach per stress period -- that period's last saved step
-(ledger 331; it had added a lake's copies, one per connected cell, and a period's
-steps). The two routes label `time` differently -- MF6's simulated time against the
-record index (LAK) or the stress period (SFR) -- and targets must be keyed by the
-route's label: on the observation route a target keyed by period matches nothing, and
-the PEST build keeps the simulated value as its observed one. On the LAK stage-file
-route the record index IS the period only when output control saves one step per
-period. Saving several (`SAVE HEAD ALL` at `nstp=3`), a lake target keyed by period
+**A target keyed by stress period reads the value at the period's END** -- head,
+concentration, reach stage, reach flow and zone flow alike (ledger 336; the user's
+rule, "a period's flow should be end of period value"). The record read is the one
+that ENDS the period on the clock of the file the value comes from -- the head and
+stage files follow `SAVE HEAD`, the budget files `SAVE BUDGET` (ledger 301) -- found
+by time, so an ATS period that takes more steps than it declared is read at its real
+end. One rule, `myflopy.modflow.mf6.period_end`, serves every family, PEST's
+forward run and `model.hds`/`conc`/`temp.get()`. The end is where a record's time
+into the period meets the period's length, to 1e-8 of it: FloPy writes that length
+at 8 decimals, so an hour held as `1/24` ends MF6's period at `0.04166667`.
+**A period whose end the file does not hold is REFUSED**, naming the
+period, the steps output control saved and the fix (`SAVE BUDGET LAST` or `ALL`):
+under `FIRST`, `STEPS` short of the end or `FREQUENCY` the value does not exist, and
+the step before it is a different number. A reach's flow is what it sends downstream
+-- to the next reach, a mover, or out of the network (`EXT-OUTFLOW`, so an outlet
+reach reads its outflow) -- the quantity MF6's `DOWNSTREAM-FLOW` observation reports;
+a zone's flow is its cells ADDED within that one step. Both flows used to add every
+step a period saved as well: 3.0x at `nstp=3` under `SAVE BUDGET ALL`.
+
+A lake, reach or zone target reads one of two routes: MF6's own observation, when one
+workspace CSV holds a column for every target NAME (the lake or reach id is not
+consulted), else the output file. On the file it reads ONE value per lake per saved
+record and ONE per reach or zone per stress period, at the period's end (ledgers 331,
+336; it had added a lake's copies, one per connected cell, and a period's steps). The
+two routes label `time` differently -- MF6's simulated time, one row per time step,
+against the record index (LAK) or the stress period (SFR, DRN) -- and targets must be
+keyed by the route's label: on the observation route a target keyed by period matches
+nothing, and the PEST build puts the STARTING model's own simulated flow in its place,
+every time step at weight 1 -- so the measurement is dropped and phi pulls the
+calibration back toward the uncalibrated model. Key flow targets by simulated time
+there (`10, 20, 30` for three 10-day periods). The
+observation route's SFR flow also keeps MF6's sign (`DOWNSTREAM-FLOW` is negative)
+where the file route reports the magnitude. On the LAK stage-file route the record
+index IS the period only when output control saves one step per period, the step that
+ends it. Saving several (`SAVE HEAD ALL` at `nstp=3`), a lake target keyed by period
 silently reads a step inside an EARLIER period, while the SFR and head targets beside
 it read period end -- key it by saved-record index there, until
 `build_lak_stage_result_table` carries the stage file's own `kstpkper` (ledger 301).

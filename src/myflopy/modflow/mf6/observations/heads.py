@@ -86,6 +86,15 @@ class HeadTargets:
         row identifier shared with simulated results.
     value_column
         Value column name used when ``values`` is supplied in long form.
+
+    Notes
+    -----
+    A target keyed by stress period reads the value at that period's END (ledger
+    336) -- the record that ends the period on the head (or concentration) file's
+    own clock, the one rule the stage and flow targets read too. A period whose
+    final step output control did not save (``SAVE HEAD FIRST``, ``STEPS`` short
+    of it) is refused: its end-of-period value does not exist in the file, and it
+    used to be read at the last step saved, wherever that fell.
     """
 
     #: model attribute holding the full value table for this field
@@ -499,6 +508,27 @@ class HeadTargets:
         The result is a wide table suitable for pyEMU list-style observation
         setup: one row per stress period and one column per observation LABEL
         (see :meth:`observation_labels`, which a repeated name disambiguates).
+        Each period's value is the one at its END (ledger 336), read on the
+        head file's own clock.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model holding the head (or, for ``ConcTargets``, the
+            concentration) file, as ``mf.load_mf6_run(ws)`` or ``run.model()``
+            returns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``per`` plus one column per observation label.
+
+        Raises
+        ------
+        ValueError
+            When a period the file saved lacks its final step -- naming the
+            period, the steps saved and the ``SAVE HEAD LAST`` setting that
+            fixes it; or when no target lands on an active cell (ledger 211).
         """
 
         matches = self.observation_labels(model)
@@ -526,7 +556,27 @@ class HeadTargets:
         The first implementation assumes the target table's ``time_column`` can
         be interpreted directly as a zero-based stress period integer. This
         matches the initial Cumberland calibration use case where targets are
-        defined per stress period.
+        defined per stress period. ``sim_head`` is the head at each period's END
+        (ledger 336), as :meth:`simulated_heads` reads it.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model holding the head (or concentration) file.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per target row: the target's columns plus ``per``,
+            ``cell``, ``sim_head``, ``residual`` (simulated minus target) and
+            ``abs_residual``.
+
+        Raises
+        ------
+        ValueError
+            When a target's ``time`` is not a zero-based stress-period integer,
+            or a period the file saved lacks its final step (as
+            :meth:`simulated_heads`).
         """
 
         targets = self.get().copy()

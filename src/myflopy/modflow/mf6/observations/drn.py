@@ -13,6 +13,7 @@ from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.domain import model_domain
 from myflopy.modflow.mf6.grid.geometry import cell_shares, domain_active, miss_reason
 from myflopy.modflow.mf6.observations._shared import (
+    _aggregate_named_series,
     _clean_observation_output_values,
     _copy_frame,
     _default_compare_stats,
@@ -27,6 +28,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _report_missed_features,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
+from myflopy.modflow.mf6.period_end import period_ends
 
 logger = get_logger(__name__)
 
@@ -172,6 +174,34 @@ def _resolve_drn_zone_cells(locations: pd.DataFrame, model, *, owner=None) -> pd
     return resolved
 
 
+def _zone_members(zones: pd.DataFrame) -> dict[str, set[int]]:
+    """Each zone's member cells by NAME: a zone given as several rows is ONE zone.
+
+    ``_resolve_drn_zone_cells`` gives every row of a geometry zone the union of
+    its rows' cells already; a zone given as several rows of explicit cells is
+    united here, so its flow is summed once over all of them rather than once
+    per row.
+
+    Parameters
+    ----------
+    zones : pandas.DataFrame
+        Resolved zones (``DrnFlowTargets.zone_definitions``): ``name`` and
+        ``cells``.
+
+    Returns
+    -------
+    dict of str to set of int
+        Zone name to its cells, in the order the zones first appear.
+    """
+
+    members: dict[str, set[int]] = {}
+    for row in zones.itertuples(index=False):
+        members.setdefault(str(row.name), set()).update(
+            int(value) for value in getattr(row, "cells", [])
+        )
+    return members
+
+
 @dataclass
 class DrnFlowTargets:
     """Observed seepage/discharge targets aggregated from DRN budget cells.
@@ -184,6 +214,11 @@ class DrnFlowTargets:
     explicit cell list), and the comparison aggregates the DRN cell-by-cell
     budget. Pass an instance to ``cal.observe(...)`` / ``cal.forecast(...)``, or
     call ``.compare(model)`` / ``.stats(model)`` for standalone review.
+
+    **A period's flow is its END-of-period flow** (ledger 336): the zone's cells
+    ADD within the time step that ends the period -- that is what a lumped seepage
+    measurement is -- and the steps a period saved do not; a period whose final
+    step output control did not save is refused rather than read early.
 
     Parameters
     ----------
@@ -306,16 +341,89 @@ class DrnFlowTargets:
         budget["q"] = pd.to_numeric(budget["q"], errors="coerce")
         return budget
 
+    def _zone_flow_table(self, model, zones: pd.DataFrame) -> pd.DataFrame:
+        """Each zone's DRN flow at each stress period's END, from the model's budget file.
+
+        A zone's flow is the sum of its cells' DRN budget rows in ONE time step
+        (``kind="extensive"`` -- a seepage zone IS that sum), read at the record
+        that ends each period on the budget file's own clock (``SAVE BUDGET``,
+        ledger 301), through the one period-end rule every target reads (ledger
+        336). It used to add every step a period saved as well: a one-cell zone
+        on the canonical model at ``nstp=3`` under ``SAVE BUDGET ALL`` read
+        -292.51 where each step held -97.50.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with a DRN package and a cell-budget file.
+        zones : pandas.DataFrame
+            The resolved zones (:meth:`zone_definitions`): ``name`` and ``cells``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``per``, ``name`` and ``sim_flow`` (MF6's sign: a drain's outflow is
+            negative), one row per zone with cells per period the file saved.
+
+        Raises
+        ------
+        ValueError
+            When a period the budget file saved lacks its final step -- naming
+            the period, the steps saved and ``SAVE BUDGET LAST``.
+        """
+
+        budget = self._drn_budget_frame(model)
+        members = _zone_members(zones)
+        names = list(members)
+        pieces = [
+            budget.loc[budget["node"].isin(cells)].assign(zone=index)
+            for index, cells in enumerate(members.values())
+            if cells
+        ]
+        if not pieces:
+            return pd.DataFrame(columns=["per", "name", "sim_flow"])
+        rows = pd.concat(pieces, ignore_index=True)
+        ends = None
+        if "kstpkper" in rows.columns:
+            ends = period_ends(
+                model,
+                reader=lambda: model._get_budget_reader(),
+                file="the model's cell-budget file",
+                saves="BUDGET",
+                fallback=budget["kstpkper"],
+            )
+        table = _aggregate_named_series(
+            rows, id_column="zone", value_column="q", kind="extensive", ends=ends
+        )
+        table["name"] = [names[int(zone)] for zone in table["zone"]]
+        return table.rename(columns={"q": "sim_flow"}).loc[:, ["per", "name", "sim_flow"]]
+
     def _obs_column_map(self, model) -> tuple[pd.DataFrame, dict[str, list[str]]]:
-        """Return the resolved zones and, per zone, its per-cell MF6 observation labels."""
+        """The resolved zones and, per zone NAME, the MF6 observation label of each member cell.
+
+        A zone given as several rows is ONE zone here as on the budget-file route
+        (:func:`_zone_members`): its labels are those of the union of its rows'
+        cells, each once. It was keyed per row by assignment, so the LAST row won
+        and a zone of rows ``[20]`` and ``[21, 27]`` summed cells 21 and 27 only on
+        this route while the budget route summed all three (ledger 336).
+
+        Parameters
+        ----------
+        model : SimulationBase
+            The run model the zones are resolved against.
+
+        Returns
+        -------
+        tuple of (pandas.DataFrame, dict of str to list of str)
+            The resolved zones (:meth:`zone_definitions`), and each zone's labels
+            in ascending cell order.
+        """
 
         zones = self.zone_definitions(model)
-        zone_columns: dict[str, list[str]] = {}
-        for row in zones.itertuples(index=False):
-            zone_columns[str(row.name)] = [
-                _observation_label(f"{row.name}_c{int(cell)}")
-                for cell in getattr(row, "cells", [])
-            ]
+        zone_columns = {
+            name: [_observation_label(f"{name}_c{cell}") for cell in sorted(cells)]
+            for name, cells in _zone_members(zones).items()
+        }
         return zones, zone_columns
 
     def _simulated_series_from_obs(self, model) -> pd.DataFrame | None:
@@ -371,53 +479,113 @@ class DrnFlowTargets:
         return _copy_frame(compare)
 
     def simulated_series(self, model) -> pd.DataFrame:
-        """Return one wide simulated-discharge table per zone, summed over each zone's DRN cells."""
+        """Return one wide simulated-discharge table: a ``time`` column and one column per zone.
+
+        Read from the model's DRN observations when one workspace CSV holds a
+        column for every member cell (MF6's labels, as :meth:`to_flopy_obs` writes
+        them) -- each row is one time step at MF6's simulated time, the zone the
+        sum of its cells in that step -- else from the model's cell-budget file.
+
+        **On the budget-file route a period holds ONE flow per zone: the flow at
+        the period's END** (ledger 336), summed over the zone's cells in that
+        step -- the record that ends the period on the budget file's own clock,
+        the rule head and stage targets read too. The route used to ADD every
+        time step a period saved as well (3.0x at ``nstp=3`` under ``SAVE BUDGET
+        ALL``). A period whose final step was not saved (``FIRST``, ``STEPS``
+        short of it) is refused, because its end-of-period flow does not exist in
+        the file.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with a DRN package, as ``mf.load_mf6_run(ws)`` or
+            ``run.model()`` returns; zones drawn as geometry are resolved against
+            its grid.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` plus one float column per zone, in MF6's sign (a drain's
+            outflow is negative). On the budget-file route a zone with no member
+            cell gets no column.
+
+        Raises
+        ------
+        ValueError
+            On the budget-file route, when a period the budget file saved lacks
+            its final step -- naming the period, the steps saved and the ``SAVE
+            BUDGET LAST`` setting that fixes it; or when no zone lands on an
+            active cell (ledger 211).
+
+        Examples
+        --------
+        >>> seeps = mf.DrnFlowTargets(locations={"north": [317, 342]})
+        >>> series = seeps.simulated_series(model)   # one row per stress period
+        """
 
         observed = self._simulated_series_from_obs(model)
         if observed is not None:
             return observed
 
         zones = self.zone_definitions(model)
-        budget = self._drn_budget_frame(model)
-        rows = []
-        for row in zones.itertuples(index=False):
-            zone_cells = {int(value) for value in getattr(row, "cells", [])}
-            if not zone_cells:
-                continue
-            subset = budget.loc[budget["node"].isin(zone_cells)].copy()
-            grouped = subset.groupby("per", as_index=False)["q"].sum()
-            grouped["name"] = str(row.name)
-            rows.append(grouped)
-        if not rows:
+        frame = self._zone_flow_table(model, zones)
+        if frame.empty:
             return pd.DataFrame(columns=["time", *zones["name"].astype(str).tolist()])
-        frame = pd.concat(rows, ignore_index=True)
-        wide = frame.pivot_table(index="per", columns="name", values="q", aggfunc="first").reset_index()
+        wide = frame.pivot_table(index="per", columns="name", values="sim_flow", aggfunc="first").reset_index()
         wide.columns.name = None
         return wide.rename(columns={"per": "time"})
 
     def compare(self, model) -> pd.DataFrame:
-        """Compare observed discharge against simulated per-zone DRN flow (with residuals)."""
+        """Compare observed discharge against simulated per-zone DRN flow (with residuals).
+
+        ``sim_flow`` comes from the same two routes as :meth:`simulated_series`:
+        on the budget-file route, one flow per zone per stress period, the flow at
+        the period's END (ledger 336). Targets are matched on ``per``, read from
+        their ``time`` as a zero-based integer -- compared with the stress period
+        on the budget-file route, and with MF6's simulated time on the
+        observation route, where a target keyed by period matches no row.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with a DRN package, as ``mf.load_mf6_run(ws)`` or
+            ``run.model()`` returns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per target row (per simulated row when the targets hold no
+            values): ``name``, ``time``, ``per``, ``flow_target``, ``sim_flow``,
+            ``residual`` (simulated minus target), ``abs_residual``, and the
+            zone's ``group``, ``weight`` and ``cells``.
+
+        Raises
+        ------
+        ValueError
+            On the budget-file route, when a period the budget file saved lacks
+            its final step (as :meth:`simulated_series`), or when a target's
+            ``time`` is not a number.
+        """
 
         observed = self._compare_from_obs(model)
         if observed is not None:
             return observed
 
         zones = self.zone_definitions(model)
-        budget = self._drn_budget_frame(model)
-        rows = []
-        for row in zones.itertuples(index=False):
-            zone_cells = {int(value) for value in getattr(row, "cells", [])}
-            subset = budget.loc[budget["node"].isin(zone_cells)].copy()
-            grouped = subset.groupby("per", as_index=False)["q"].sum()
-            grouped["name"] = str(row.name)
-            grouped["group"] = getattr(row, "group", pd.NA)
-            grouped["weight"] = getattr(row, "weight", np.nan)
-            grouped["cells"] = [list(zone_cells)] * len(grouped)
-            rows.append(grouped)
-        if rows:
-            simulated = pd.concat(rows, ignore_index=True).rename(columns={"q": "sim_flow"})
-        else:
-            simulated = pd.DataFrame(columns=["per", "name", "sim_flow", "group", "weight", "cells"])
+        simulated = self._zone_flow_table(model, zones)
+        details = pd.DataFrame(
+            [
+                {
+                    "name": str(row.name),
+                    "group": getattr(row, "group", pd.NA),
+                    "weight": getattr(row, "weight", np.nan),
+                }
+                for row in zones.itertuples(index=False)
+            ]
+        ).drop_duplicates(subset="name")
+        members = _zone_members(zones)
+        details["cells"] = [sorted(members[name]) for name in details["name"]]
+        simulated = simulated.merge(details, on="name", how="left")
         if self._values.empty:
             compare = simulated.rename(columns={"per": "time"}).copy()
             compare["flow_target"] = np.nan

@@ -62,20 +62,55 @@ def apply_pilotpoints_to_array(parameter_csv, points_meta_csv, cells_meta_csv, a
     np.savetxt(array_file, arr.reshape(-1, 1), fmt="%.10E")
 
 
-def _write_head_target_csv(model_name, mapping_csv, output_csv):
-    """Write simulated heads by stress period for named target locations."""
+def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None):
+    """Write simulated heads at each stress period's END for named target locations.
+
+    Post-model command in the native forward run. A period's head is the one that
+    ENDS it, picked by the one rule every target reads
+    (``myflopy.modflow.mf6.period_end``, ledger 336) on the head file's own clock
+    -- the rule ``HeadTargets.simulated_heads`` applied to the base run this
+    realization is compared with. It kept its own copy of that rule until then.
+
+    Self-contained: pyEMU copies only this function's source into the generated
+    forward run, so its imports live inside it.
+
+    Parameters
+    ----------
+    model_name : str
+        The flow model's name; its head file is ``<model_name>.hds`` in the
+        working directory.
+    mapping_csv : str
+        The target map the build wrote: ``obsname``/``name``, ``layer``, ``cell``.
+    output_csv : str
+        The simulated CSV to write, one row per stress period, one column per
+        observation label.
+    perlen : list of float, optional
+        Each stress period's length, recorded from the TDIS at build time. With
+        it a period whose final step the head file does not hold is REFUSED --
+        the run fails rather than hand PEST a value from before the period ended;
+        ATS can move a ``STEPS`` save off the end in one realization and not
+        another. ``None`` (a forward run generated before ledger 336) takes each
+        period's last saved step unchecked.
+
+    Raises
+    ------
+    ValueError
+        With ``perlen``, when a period the head file saved lacks its final step.
+    """
 
     import flopy
+
+    from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
 
     mapping = pd.read_csv(mapping_csv)
     hds = flopy.utils.HeadFile(f"{model_name}.hds")
     try:
-        by_period = {}
-        for kstp, kper in hds.get_kstpkper():
-            by_period[int(kper)] = (int(kstp), int(kper))
+        ends = period_end_steps(
+            saved_steps(hds), perlen=perlen, file=f"{model_name}.hds", saves="HEAD"
+        )
         rows = []
-        for per in sorted(by_period):
-            data = np.asarray(hds.get_data(kstpkper=by_period[per]), dtype=float)
+        for per, kstpkper in ends.items():
+            data = np.asarray(hds.get_data(kstpkper=kstpkper), dtype=float)
             row = {"per": int(per)}
             for target in mapping.itertuples(index=False):
                 layer_values = np.asarray(data[int(target.layer)], dtype=float).reshape(-1)
@@ -91,30 +126,51 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv):
         hds.close()
 
 
-def _write_conc_target_csv(model_name, mapping_csv, output_csv):
-    """Write simulated concentrations by stress period for named target locations.
+def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None):
+    """Write simulated concentrations at each stress period's END for named target locations.
 
     The concentration twin of ``_write_head_target_csv``, and deliberately the
-    same shape: open the binary directly and index it. The named-series helper
-    would instead reload the whole simulation on every forward run, and its
-    ``all_conc`` read is kind-gated, so it would have to resolve to the GWT model
-    rather than the flow model it loads by default.
+    same shape: open the binary directly and index it, at the record the one
+    period-end rule picks (ledger 336). The named-series helper would instead
+    reload the whole simulation on every forward run, and its ``all_conc`` read
+    is kind-gated, so it would have to resolve to the GWT model rather than the
+    flow model it loads by default.
 
-    ``model_name`` is the TRANSPORT model's name -- the ``.ucn`` sits beside the
-    flow model's ``.hds`` at the workspace root because the simulation is flat.
+    Parameters
+    ----------
+    model_name : str
+        The TRANSPORT model's name -- the ``.ucn`` sits beside the flow model's
+        ``.hds`` at the workspace root because the simulation is flat.
+    mapping_csv : str
+        The target map the build wrote: ``obsname``/``name``, ``layer``, ``cell``.
+    output_csv : str
+        The simulated CSV to write, one row per stress period.
+    perlen : list of float, optional
+        Each stress period's length, recorded from the TDIS at build time; with
+        it a period whose final step the file does not hold is refused (see
+        ``_write_head_target_csv``). ``None`` takes each period's last saved step
+        unchecked.
+
+    Raises
+    ------
+    ValueError
+        With ``perlen``, when a period the concentration file saved lacks its
+        final step.
     """
 
     import flopy
 
+    from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
+
     mapping = pd.read_csv(mapping_csv)
     ucn = flopy.utils.HeadFile(f"{model_name}.ucn", text="concentration")
     try:
-        by_period = {}
-        for kstp, kper in ucn.get_kstpkper():
-            by_period[int(kper)] = (int(kstp), int(kper))
+        ends = period_end_steps(
+            saved_steps(ucn), perlen=perlen, file=f"{model_name}.ucn", saves="CONCENTRATION"
+        )
         rows = []
-        for per in sorted(by_period):
-            data = np.asarray(ucn.get_data(kstpkper=by_period[per]), dtype=float)
+        for per, kstpkper in ends.items():
+            data = np.asarray(ucn.get_data(kstpkper=kstpkper), dtype=float)
             row = {"per": int(per)}
             for target in mapping.itertuples(index=False):
                 layer_values = np.asarray(data[int(target.layer)], dtype=float).reshape(-1)
@@ -148,6 +204,31 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws="."):
     field and ``nan`` each fail the run, and so does a file one row short of the
     base run, at end of file. A dry lake is otherwise legitimate -- zero-weighted,
     1e30 changes nothing; weighted, it makes that realization's phi ~1e60.
+
+    Each period's value is the one at its END (ledger 336) -- an SFR or DRN flow
+    included, which used to be the sum of the steps the period saved -- because
+    this calls the same ``simulated_series`` the base run's build did, and that
+    reads the one period-end rule on each file's own clock, checked against the
+    TDIS it reloads. A realization whose output lacks a period's end fails the
+    run rather than hand PEST a value from before the period ended.
+
+    Parameters
+    ----------
+    kind : {"lake_stage", "sfr_stage", "sfr_flow", "drn_flow"}
+        Which target family the saved definition file describes.
+    locations_file : str or pathlib.Path
+        The ``*_target_locations`` snapshot the build wrote: a CSV (lake and
+        reach ids, or DRN zones with comma-joined ``cells``) or a GeoPackage.
+    output_csv : str or pathlib.Path
+        The simulated CSV to write, the file pyEMU's instruction file reads.
+    sim_ws : str or pathlib.Path, default "."
+        The just-run MF6 workspace to reload.
+
+    Raises
+    ------
+    ValueError
+        For an unknown ``kind``; or, as the family's ``simulated_series`` does,
+        when a period the output file saved lacks its final step.
     """
 
     # Deliberately duplicated: pyEMU extracts this function's SOURCE into the

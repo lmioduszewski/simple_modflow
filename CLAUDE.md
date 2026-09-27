@@ -89,13 +89,26 @@ TOTAL, which an unwrapped conductance does not.
 ask it too** (ledger 331): `_aggregate_named_series` takes a REQUIRED `kind=`. A stage
 table repeats a lake's one stage on every connected cell, and the targets ADDED the
 copies -- the user's pond, 763 cells, read **401,339.97 ft for 526.00**, in the CSVs PEST
-read. Copies that disagree are REFUSED, not averaged; a table carrying `kstpkper` reads
-each period's LAST step (HeadTargets' rule). STILL OPEN: the SFR/DRN FLOW targets add a
-period's saved steps (3x at `nstp=3`), and on the OBSERVATION route a target keyed by
-period silently matches nothing -- PEST keeps the simulated value as its `obsval`. A
-LAK STAGE-FILE target is keyed by SAVED RECORD (301's `per`-as-record-index), the period
-only at one save per period: at `nstp=3` periods 0-2 read steps 1-3 of period 0, where
-head and SFR targets beside it read period end.
+read. Copies that disagree are REFUSED, not averaged.
+**A period's value is its END-of-period value, for a flow too** (ledger 336, the user's
+rule): every family -- heads, conc, SFR stage, SFR flow, DRN flow, PEST's forward run,
+`model.hds.get()` -- picks the record through ONE function, `period_end.period_end_steps`,
+on the file's OWN clock and by `pertim == perlen` (ATS breaks `kstp == nstp`) to 1e-8,
+because FloPy WRITES `perlen` at 8 decimals (at 1e-9 a live model's hourly periods were
+all refused), and a period saved without its end is REFUSED naming `SAVE ... LAST`. The
+SFR/DRN flow targets had ADDED a period's steps: the canonical outlet at `nstp=3` read
+**113,453.29 for 37,817.76**. Do not add another "last saved step". The VIEW layer's
+pictures and group comparisons are NOT on the rule yet, on purpose: a map's
+`per_timestep="last"`, `section_time`, `_period_end_kstpkper` and group
+`_reduce_to_period_end` take a period's last SAVED step unchecked, and
+`_coerce_kstpkper`/`XSection`/`InterpolatedSurface` read `per` as a saved-record index
+-- one family with 301's stage clock, to move together. STILL OPEN: on the OBSERVATION route a target keyed by period silently matches
+nothing -- PEST puts the STARTING model's simulated flows in its place at weight 1, which
+anchors the calibration to the uncalibrated model -- and the
+SFR flow there keeps MF6's NEGATIVE `DOWNSTREAM-FLOW` where the file route reports the
+magnitude. A LAK STAGE-FILE target is keyed by SAVED RECORD (301's `per`-as-record-index),
+the period only at one save per period: at `nstp=3` periods 0-2 read steps 1-3 of period
+0, where head and SFR targets beside it read period end.
 Figures are **always `viz.Fig`**, never a bare `go.Figure` — a bare figure silently
 drops `scrollZoom`, `dragmode='pan'`, and the house template. Colors come from the
 policy helper, not hex literals at the call site.
@@ -476,7 +489,9 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4542 passed / 4 skipped**, 2026-09-26, ledgers 332-335): serial (`-n0`)
+- Full suite (**4566 passed / 4 skipped**, 2026-09-26, ledger 336 on top of 332-335):
+  serial (`-n0`) **7m32s** and `-n 10` **2m46s**, both in a detached checkout outside
+  `.claude` (load average ~2.5 at the end). Before it, 4542 passed / 4 skipped (ledgers 332-335): serial (`-n0`)
   **7m00s** in a detached checkout outside `.claude` (so `test_docs_structure` runs its
   cases), load average ~1.3 at its start -- the quietest serial clock since 4037. Ledger
   335's tree, the same count, took **14m49s** at a load of ~23.5 from other sessions'

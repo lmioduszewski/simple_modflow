@@ -104,12 +104,35 @@ stage table carries a lake's stage once per CONNECTED CELL and the SFR stage tab
 reach's once per SAVED TIME STEP; a reduction to one value per feature must not add
 them. Ask `package_registry.agg_for_kind(kind)` -- the rule `FieldSpec.agg` returns --
 rather than writing `.sum()`: only an extensive value adds. The observation targets'
-`_aggregate_named_series` takes `kind=` for that reason, refuses copies that disagree
-rather than averaging them, and reads a period's LAST saved step as `HeadTargets` does.
-It had summed: a pond with 763 connected cells read 401,339.97 ft for 526.00. The
-period-end rule needs a table carrying `kstpkper`, and the LAK stage table carries none
-(its `per` is the saved-record index, ledger 301), so a LAK target keyed by period at
-several saves per period reads a step inside an earlier period -- still open (ledger 331).
+`_aggregate_named_series` takes `kind=` for that reason and refuses copies that disagree
+rather than averaging them. It had summed: a pond with 763 connected cells read
+401,339.97 ft for 526.00.
+
+**Time steps never add, whatever the kind: a period's value is its END-of-period value**
+(ledger 336). Every target family -- heads, concentration, SFR stage, SFR flow, DRN
+flow, and PEST's forward run -- picks the period's record through ONE function,
+`myflopy.modflow.mf6.period_end.period_end_steps`, read on the file's OWN clock (the
+reader's `recordarray`, never `model.kstpkper`) and checked against the TDIS by
+`pertim == perlen` -- not `kstp == nstp`, which ATS breaks -- to 1e-8 of the length,
+because FloPy writes `perlen` at 8 decimals (an hour held as `1/24` ends MF6's period
+at `0.04166667`). A period the file saved without its end is REFUSED, naming the
+`SAVE ... LAST` that fixes it. `model.hds`/`conc`/`temp.get()` read it too: under `SAVE
+HEAD FIRST` it returned step 1 of 3 as each period's head. Do not add another "last
+saved step": the flow targets each had their own sum and the forward run its own
+`by_period[kper]`. The pictures and group comparisons are NOT on the rule yet, and
+deliberately so (ledger 336): a map's `per_timestep="last"`,
+`cross_section_plotting.section_time`, `package_plotting._period_end_kstpkper` and the
+group's `_reduce_to_period_end` take a period's last SAVED step unchecked, while
+`_coerce_kstpkper`, `XSection` and `InterpolatedSurface` read `per` as a saved-RECORD
+index -- ledger 301's open stage-clock family. They move together: a group selects
+`per=` through `_coerce_kstpkper`, so a period-end filter under `_reduce_to_period_end`
+alone turns `group.hds.compare(per=0)` and `(per=1)` at `nstp=3` -- which read steps 1
+and 2 of period 0 -- into a `KeyError`, and leaves `per=2` reading period 0's end
+(`docs/reproducers/flow_targets_period_end.py`, 8d). The period-end rule needs a table
+carrying `kstpkper`, and the LAK stage table carries none (its `per` is the
+saved-record index, ledger 301), so a LAK target keyed by period at several saves per
+period reads a step inside an earlier period -- still open (ledger 331); it IS refused
+when no period end was saved at all.
 
 **A section has two subjects, and `fill=` picks which** (ledger 177, 2026-09-02;
 defaults since ledger 333, 2026-09-26). By default -- `fill="layer"`,
