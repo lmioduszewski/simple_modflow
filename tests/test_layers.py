@@ -262,12 +262,10 @@ def test_algebra_aliases_build_the_right_kinds():
 
 # --- views (need a real Voronoi grid; built once for the module) -------------
 @pytest.fixture(scope="module")
-def real_vor():
-    import tempfile
-
+def real_vor(tmp_path_factory):
     import myflopy as mf
 
-    ws = tempfile.mkdtemp(prefix="vorgrid_")
+    ws = str(tmp_path_factory.mktemp("vorgrid"))
     tri = mf.TriangleGrid(model_ws=ws, angle=30)
     tri.set_domain_rectangle(x_dist=400, y_dist=300, origin=(0, 0))
     tri.build()

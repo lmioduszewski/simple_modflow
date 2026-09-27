@@ -476,11 +476,13 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4542 passed / 4 skipped**, 2026-09-26, ledgers 332-334): serial (`-n0`)
+- Full suite (**4542 passed / 4 skipped**, 2026-09-26, ledgers 332-335): serial (`-n0`)
   **7m00s** in a detached checkout outside `.claude` (so `test_docs_structure` runs its
-  cases), load average ~1.3 at its start -- the quietest serial clock since 4037. The
-  same tree's `-n 6` inside the worktree took 5m18s at a load of ~21-30 (another
-  session's suite). Before that, 4380 (ledger 331 on 330):
+  cases), load average ~1.3 at its start -- the quietest serial clock since 4037. Ledger
+  335's tree, the same count, took **14m49s** at a load of ~23.5 from other sessions'
+  suites: the load, not its temp guard, which lists one near-empty directory twice per
+  test (5.7 us, 26 ms a run, measured). The ledger-334 tree's `-n 6` inside the worktree
+  took 5m18s at ~21-30. Before that, 4380 (ledger 331 on 330):
   serial (`-n0`) **9m22s** and `-n 10` **3m38s**, both under other sessions' load. Before
   that merge, ledger 331's branch alone (4351) took serial (`-n0`) **7m33s** (load average ~3.9 at its start, the 5-minute figure
   ~11 as another workload wound down, and two scripts reading a real run shared its
@@ -510,6 +512,15 @@ validation — that bug was found twice, in `read_gpkg` and `contour_line_segmen
   price of the `-n0` pre-commit check below, not a regression.
   **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction
   can report green while serial catches real failures (see ledger 48).
+- **A session writes its temp files in its OWN root, and a leak fails by name** (ledger
+  335): `tests/conftest.py` points TMPDIR at `/tmp/myflopy-pytest-*` (one subdirectory
+  per xdist worker) and removes it at the end, even after a failure. A test that leaves
+  anything in `tempfile.gettempdir()` ERRORS at its teardown naming the entry; what a
+  fixture or a process leaves fails the run, with a red section and "temp leaks" in the
+  count. Write under `tmp_path`/`tmp_path_factory`, or clean up what you make. /tmp is
+  a 16 GB tmpfs with a per-user quota: when it is full EVERY write the user makes there
+  fails, Claude Code's own tool output included (commands return "Exit code 1" with
+  nothing printed).
 - Tests share ONE session-scoped canonical model on
   `CanonicalModelConfig.testing()` (21×21, smallest contract-complete profile —
   all 15 packages + 5 obs families). Weekly CI re-runs everything on the 50×50

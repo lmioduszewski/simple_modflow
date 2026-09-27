@@ -26,6 +26,114 @@ def _pytest_temp_root() -> Path:
     return _REPO_ROOT / ".pytest-work" / "custom_tmp"
 
 
+# --- The session's temp directory is its OWN, and a leak fails by name -------
+# (ledger 335, 2026-09-26). Python's `tempfile` writes under TMPDIR -- here /tmp,
+# a quota'd tmpfs -- and a full run left 49 entries there that nothing removed:
+# `layers.py` made one per 3-D stack view and one per draft grid, and test helpers
+# called `tempfile.mkdtemp()` for files they never deleted. So each session gets
+# its own temp root: a test that leaves something in it fails, naming what; what
+# a fixture or a stray process leaves fails the run at the end; and the root is
+# removed either way, so a run -- even a failing one -- leaves nothing in /tmp.
+#
+# The root is short and under the usual temp dir on purpose: multiprocessing puts
+# an AF_UNIX socket in it, whose path may not exceed 107 bytes. pytest's own
+# `tmp_path_factory` area keeps its usual place and retention
+# (`PYTEST_DEBUG_TEMPROOT`), and each xdist worker gets a subdirectory, so one
+# worker's entries are never blamed on another worker's test.
+
+#: Entries a session may leave in its temp root: each owned by a dependency, and
+#: made once per root rather than once per use -- so they cannot accumulate.
+_TEMP_ENTRIES_ALLOWED = {
+    "port_locks": "pyemu's PortManager lock directory (pyemu/utils/os_utils.py), "
+                  "a fixed name made once under tempfile.gettempdir()",
+}
+
+#: Set by the controller; each worker's root is a subdirectory of it.
+_SESSION_TEMP_ROOT = "MYFLOPY_PYTEST_TEMP_ROOT"
+
+
+def pytest_configure(config):
+    import tempfile
+
+    worker = getattr(config, "workerinput", None)
+    shared = os.environ.get(_SESSION_TEMP_ROOT)
+    if worker is not None and shared:
+        root = os.path.join(shared, worker["workerid"])
+        os.makedirs(root, exist_ok=True)
+    else:
+        os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", tempfile.gettempdir())
+        root = tempfile.mkdtemp(prefix="myflopy-pytest-")
+        os.environ[_SESSION_TEMP_ROOT] = root
+    os.environ["TMPDIR"] = root
+    tempfile.tempdir = None                 # forget a root computed before this
+
+
+def _temp_leftovers(root: Path, before: set[str]) -> list[str]:
+    return sorted(set(os.listdir(root)) - before - set(_TEMP_ENTRIES_ALLOWED))
+
+
+@pytest.fixture(autouse=True)
+def _leaves_nothing_in_the_temp_dir():
+    """Fail the test that leaves an entry in the temp directory, naming it.
+
+    Autouse and function-scoped, so it is set up before, and torn down after, every
+    other function-scoped fixture: what they clean up at teardown is gone by the
+    time this looks, and a session fixture's own entries predate its snapshot.
+    """
+
+    import gc
+    import tempfile
+
+    root = Path(tempfile.gettempdir())
+    before = set(os.listdir(root))
+    yield
+    left = _temp_leftovers(root, before)
+    if left:
+        gc.collect()          # a TemporaryDirectory only garbage still holds removes itself
+        left = _temp_leftovers(root, before)
+    if left:
+        pytest.fail(
+            f"left {left} in the temp directory {root}. Write under pytest's "
+            f"tmp_path/tmp_path_factory, or remove what you make (ledger 335).",
+            pytrace=False,
+        )
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run if anything is left in the session's temp root; then remove it."""
+
+    if getattr(session.config, "workerinput", None) is not None:
+        return
+    root = os.environ.get(_SESSION_TEMP_ROOT)
+    if not root or not os.path.isdir(root):
+        return
+    workers = {name for name in os.listdir(root) if name.startswith("gw")}
+    left = [
+        os.path.join(place, name) if place else name
+        for place in ["", *sorted(workers)]
+        for name in sorted(os.listdir(os.path.join(root, place)))
+        if name not in _TEMP_ENTRIES_ALLOWED and not (place == "" and name in workers)
+    ]
+    if left:
+        session.config._temp_leftovers = left
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    shutil.rmtree(root, ignore_errors=True)
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    left = getattr(config, "_temp_leftovers", None)
+    if not left:
+        return
+    terminalreporter.section("left in the session's temp directory", red=True)
+    terminalreporter.line(
+        "Made outside any single test -- a session or module fixture, or a process "
+        "a test started -- and never removed (ledger 335):"
+    )
+    for entry in left:
+        terminalreporter.line(f"  {entry}")
+    terminalreporter.stats.setdefault("temp leaks", []).extend(left)
+
+
 @pytest.fixture
 def tmp_path():
     """Repo-local replacement for pytest's builtin tmp_path fixture.

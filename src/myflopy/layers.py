@@ -2213,7 +2213,6 @@ class LayerBuildResult:
         ``scene.meshes[0].save("stack.vtu")`` the useful thing to hand to
         ParaView."""
         import tempfile
-        from pathlib import Path
 
         import flopy
         from flopy.export.vtk import Vtk
@@ -2227,22 +2226,26 @@ class LayerBuildResult:
             )
         sel = self._resolve_layer_indices(layers)
         p = self.vor.get_disv_gridprops()
-        ws = Path(tempfile.mkdtemp(prefix="layer_view_"))
-        sim = flopy.mf6.MFSimulation(sim_name="layerview", sim_ws=str(ws))
-        flopy.mf6.ModflowTdis(sim)
-        flopy.mf6.ModflowIms(sim)
-        gwf = flopy.mf6.ModflowGwf(sim, modelname="layers")
-        flopy.mf6.ModflowGwfdisv(
-            gwf, nlay=self.nlay, ncpl=p["ncpl"], nvert=len(p["vertices"]),
-            vertices=p["vertices"], cell2d=p["cell2d"],
-            top=self.top, botm=self.botm, idomain=self.idomain,
-        )
-        vtk = Vtk(model=gwf, vertical_exageration=1, binary=True, smooth=False)
-        vtk.add_model(gwf)
-        # Always attach a per-cell layer index so a subset can be selected.
-        # Integer, so `add_array` leaves it alone -- see the float note below.
-        vtk.add_array(np.repeat(np.arange(self.nlay)[:, None], p["ncpl"], axis=1), "layer")
-        mesh = vtk.to_pyvista()
+        # FloPy's VTK exporter wants a MODEL, so one is built for the geometry and
+        # thrown away. Nothing is written into its workspace, and the mesh is in
+        # memory by the end of the block -- which is what lets the directory go:
+        # a `mkdtemp` here left one behind on every 3-D stack view (ledger 335).
+        with tempfile.TemporaryDirectory(prefix="layer_view_") as ws:
+            sim = flopy.mf6.MFSimulation(sim_name="layerview", sim_ws=ws)
+            flopy.mf6.ModflowTdis(sim)
+            flopy.mf6.ModflowIms(sim)
+            gwf = flopy.mf6.ModflowGwf(sim, modelname="layers")
+            flopy.mf6.ModflowGwfdisv(
+                gwf, nlay=self.nlay, ncpl=p["ncpl"], nvert=len(p["vertices"]),
+                vertices=p["vertices"], cell2d=p["cell2d"],
+                top=self.top, botm=self.botm, idomain=self.idomain,
+            )
+            vtk = Vtk(model=gwf, vertical_exageration=1, binary=True, smooth=False)
+            vtk.add_model(gwf)
+            # Always attach a per-cell layer index so a subset can be selected.
+            # Integer, so `add_array` leaves it alone -- see the float note below.
+            vtk.add_array(np.repeat(np.arange(self.nlay)[:, None], p["ncpl"], axis=1), "layer")
+            mesh = vtk.to_pyvista()
         if isinstance(mesh, pv.MultiBlock):
             mesh = mesh.combine()
 
@@ -3717,13 +3720,18 @@ class LayerStack:
                 f"draft_grid() got an empty extent: {(xmin, ymin, xmax, ymax)}."
             )
 
-        tri = TriangleGrid(model_ws=tempfile.mkdtemp(prefix="draft_grid_"), angle=30)
-        tri.set_domain_rectangle(
-            x_dist=width, y_dist=height, origin=(xmin, ymin),
-            max_area=(width * height) / max(int(cells), 1),
-        )
-        tri.build()
-        return VoronoiGridPlus(tri, crs=crs)
+        # Triangle writes its input and output files here; `build()` reads the mesh
+        # back into memory and the Voronoi grid is made from that, so the files are
+        # spent once the grid exists. A `mkdtemp` left them behind on every draft
+        # grid (ledger 335).
+        with tempfile.TemporaryDirectory(prefix="draft_grid_") as workspace:
+            tri = TriangleGrid(model_ws=workspace, angle=30)
+            tri.set_domain_rectangle(
+                x_dist=width, y_dist=height, origin=(xmin, ymin),
+                max_area=(width * height) / max(int(cells), 1),
+            )
+            tri.build()
+            return VoronoiGridPlus(tri, crs=crs)
 
     def for_grid(self, vor) -> LayerStack:
         """Return a copy of this stack bound to ``vor``.

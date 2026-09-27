@@ -27,10 +27,23 @@ class _FlopyModelLike:
         self.name = name
 
 
+#: Where `_tiny_config` puts its simulations: one pytest-managed directory for the
+#: module, rather than a bare `tempfile.mkdtemp()` per call that nothing removed.
+_WORKSPACE = None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _workspace(tmp_path_factory):
+    global _WORKSPACE
+    _WORKSPACE = tmp_path_factory.mktemp("model_config")
+    yield
+    _WORKSPACE = None
+
+
 def _tiny_config(
     *, kappa=0.1, outer=1e-2, tsmult=1.4, nstp=5, spec_discharge=True, newtonoptions=None
 ) -> ModelConfig:
-    ws = tempfile.mkdtemp()
+    ws = tempfile.mkdtemp(dir=_WORKSPACE)
     sim = flopy.mf6.MFSimulation(sim_name="t", sim_ws=ws)
     flopy.mf6.ModflowTdis(
         sim, time_units="days", nper=2, perioddata=[(10.0, 1, 1.1), (100.0, nstp, tsmult)]

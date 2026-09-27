@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 334 entries (339 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 335 entries (340 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 335 | A test session writes its temp files in its OWN root and a leak fails by name; `layers.py` no longer leaves... | 2026-09-26 |
 | 334 | A field noun's `section` names what acts on it and refuses the rest: `fill=` and the cross-section's argume... | 2026-09-26 |
 | 333 | `section()` draws the model's cross-section by default -- `fill="layer"`, `backend="mpl"` -- and... | 2026-09-26 |
 | 332 | `section(fill=...)` draws on Plotly too, and draws what Matplotlib draws: one `FilledSection`, one FloPy... | 2026-09-26 |
@@ -14591,3 +14592,63 @@ same day, which is the useful part of the result.
       name -- both agreement tests and all four typo tests among them; the noun's alone
       28 (the typos are still caught at `XSection`); `XSection`'s alone the 4 typo tests;
       the composers' check 4; the `cells` fix 1.
+
+335. **A test session writes its temp files in its OWN root and a leak fails by name; `layers.py` no longer leaves a directory behind per 3-D stack view or draft grid (2026-09-26).**
+      /tmp here is a 16 GB tmpfs with a per-user quota. On 2026-09-26 it held 13,926
+      `/tmp/tmp*` entries (5.9 GB), the quota was hit, and EVERY write the user made there
+      failed, Claude Code's own tool output included. They were deleted with the user's
+      consent; none was held open.
+      **Measured, the suite was NOT the source of that volume** -- a correction to the
+      premise this work was asked on. A full run at 720dd4b, serial and `-n 8` alike,
+      left **50** entries in an isolated TMPDIR: pytest's own `pytest-of-<user>` (24.6-26
+      MB, which pytest rotates, keeping three runs) and **49 leaks totalling about 2 MB**
+      -- 17 `layer_view_*` and 7 `draft_grid_*` from `layers.py`, 22 from test helpers,
+      2 from subprocess probes, and pyemu's `port_locks`, attributed by instrumenting
+      `tempfile` per test. At 2 MB a run the suite could not have made 13,926 entries or
+      4 GB in an hour; that rate had been blamed on concurrent test runs from their
+      timing alone, and the real source (another session's branch, a script, a notebook)
+      was not identified before the entries were gone.
+      **The library half, which leaks for users as well:** `_vtk_plotter` (every 3-D
+      stack view) built a throwaway FloPy model in `mkdtemp(prefix="layer_view_")` only
+      to reach FloPy's VTK exporter -- nothing is written there, and the mesh is in
+      memory by the end -- and `LayerStack.draft_grid` left Triangle's files in
+      `mkdtemp(prefix="draft_grid_")` although `build()` reads the mesh back into memory
+      before the Voronoi grid is made. Both are `TemporaryDirectory` blocks now; the tests
+      of both pass unchanged.
+      **The test half:** helpers and fixtures write under `tmp_path`/`tmp_path_factory`;
+      the two subprocess probes use a self-removing `TemporaryDirectory`. The tour
+      notebook's `tempfile.mkdtemp()` is ASSERTED by its test (a reader running it
+      litters nothing in the repo), so the notebook keeps it and the test points
+      `tempfile.tempdir` at its `tmp_path` instead. No assertion changed.
+      **The guard, `tests/conftest.py`:** each session gets its own root,
+      `mkdtemp(prefix="myflopy-pytest-")`, with one subdirectory per xdist worker so one
+      worker's entries are never blamed on another's test. An autouse function-scoped
+      fixture fails the test that leaves an entry, naming it; the session-end sweep fails
+      the run over what a fixture or a process left (exit code 1, a red section, "temp
+      leaks" in the count); the root is removed either way, so even a failing run leaves
+      nothing. Judgment calls:
+      - **The root sits under the usual temp dir, not in the repo:** multiprocessing puts
+        an AF_UNIX socket in the temp dir, and its path may not exceed 107 bytes -- a
+        repo path inside a `.claude` worktree is about 85 characters before the socket's
+        own name.
+      - **pytest's `tmp_path_factory` area keeps its place and its retention**
+        (`PYTEST_DEBUG_TEMPROOT` is set to the prior temp dir) instead of being deleted
+        with the root: pytest already bounds it to three runs, and a failed run's fixture
+        output stays there to inspect.
+      - **`port_locks` is allowed by name:** pyemu's `PortManager` makes it once under
+        `tempfile.gettempdir()` with a fixed name, so it cannot accumulate, and the
+        root's removal takes it anyway. `pymp-*` (multiprocessing's per-process
+        directory, removed at exit) is NOT allowed ahead of need: no test was measured to
+        leave one at teardown.
+      - **A per-test failure does not delete the entry**, so the sweep lists it again;
+        deleting could remove a directory a still-live fixture made lazily.
+      - **A subprocess started with an environment that drops TMPDIR** writes to /tmp
+        outside the root and the guard cannot see it; none does today.
+      Broken three ways to check it: a test writing into `mkdtemp` again ERRORS at its
+      teardown naming the entry; the 3-D view regressing errors every test that draws a
+      scene; a module fixture's `mkdtemp` fails the run at the end (exit code 1).
+      **After:** a full run leaves nothing in the temp dir but pytest's own rotating area
+      (28 MB), and no session root is left behind.
+      **Not done:** the source of the 13,926 entries is unidentified; user notebooks and
+      scripts that call `tempfile.mkdtemp()` themselves (the tour notebook, run by a
+      reader) are unchanged.

@@ -127,7 +127,8 @@ def test_reading_a_geopackage_is_silent_but_loggable():
         import geopandas as gpd, shapely as shp
         from myflopy.modflow.utils.datatypes.readers import read_gpkg
 
-        path = pathlib.Path(tempfile.mkdtemp()) / "p.gpkg"
+        scratch = tempfile.TemporaryDirectory()          # removed when the probe exits
+        path = pathlib.Path(scratch.name) / "p.gpkg"
         gpd.GeoDataFrame({"n": ["a"]}, geometry=[shp.Point(0, 0)],
                          crs="EPSG:2927").to_file(path, driver="GPKG")
 

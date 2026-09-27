@@ -248,10 +248,11 @@ _PROBE = textwrap.dedent(
     found["relayer_array_target"] = callable(np_mod.relayer_array_target)
 
     import pathlib, tempfile
-    workspace = pathlib.Path(tempfile.mkdtemp())
-    (workspace / "m.npf_k_layer1.txt").write_text("1.0\\n")
-    (workspace / "m.npf_k.txt").write_text("1.0\\n")
-    resolved = np_mod._resolve_files(workspace, "m", np_mod._RECIPES["zzz"])
+    with tempfile.TemporaryDirectory() as scratch:
+        workspace = pathlib.Path(scratch)
+        (workspace / "m.npf_k_layer1.txt").write_text("1.0\\n")
+        (workspace / "m.npf_k.txt").write_text("1.0\\n")
+        resolved = np_mod._resolve_files(workspace, "m", np_mod._RECIPES["zzz"])
     found["resolve_files.layered_first"] = resolved == ["m.npf_k_layer1.txt"]
 
     try:

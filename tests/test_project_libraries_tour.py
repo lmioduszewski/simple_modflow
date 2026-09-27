@@ -26,10 +26,25 @@ def _code_cells() -> list[str]:
     ]
 
 
+def _keep_the_tour_in(tmp_path, monkeypatch):
+    """Point Python's temp root at this test's directory for the tour's run.
+
+    The tour builds its project in `tempfile.mkdtemp()` -- asserted below, so a reader
+    running it litters nothing -- and never removes it. Executed here in-process, two
+    tests left two projects in /tmp on every run. With the temp root inside `tmp_path`,
+    the fixture's own teardown removes them.
+    """
+
+    import tempfile
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+
 def test_the_tour_runs_top_to_bottom(tmp_path, monkeypatch):
     """Execute every code cell in order, in one namespace, as a reader would."""
 
     monkeypatch.chdir(NOTEBOOK.parent)
+    _keep_the_tour_in(tmp_path, monkeypatch)
     namespace: dict[str, object] = {"__name__": "__main__"}
 
     for index, source in enumerate(_code_cells(), start=1):
@@ -53,6 +68,7 @@ def test_the_tour_teaches_the_distinctions_that_cost_the_most(tmp_path, monkeypa
     """The three that are easy to get wrong, and each is shown rather than told."""
 
     monkeypatch.chdir(NOTEBOOK.parent)
+    _keep_the_tour_in(tmp_path, monkeypatch)
     namespace: dict[str, object] = {"__name__": "__main__"}
     for source in _code_cells():
         exec(compile(source, "<tour>", "exec"), namespace)

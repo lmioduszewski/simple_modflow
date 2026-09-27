@@ -18,7 +18,6 @@ than ``_SLIVER_WIDTH`` is dropped as well.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -78,14 +77,6 @@ def _gpkg(tmp_path, geometry):
         crs="EPSG:2927",
     ).to_file(path, layer="bc", driver="GPKG")
     return path
-
-
-def _gpkg_at(context, geometry):
-    """A one-feature GeoPackage beside nothing else, for tests without tmp_path."""
-
-    import tempfile
-
-    return _gpkg(Path(tempfile.mkdtemp()), geometry)
 
 
 def _records(spec):
@@ -394,59 +385,59 @@ def test_the_lowest_numbered_cell_wins_whatever_order_the_index_returns(tmp_path
 # --- a second review of the width rule (ledger 210, revised) ---------------- #
 
 
-def test_a_piece_that_also_touches_its_cell_along_a_face_is_measured_by_its_area():
+def test_a_piece_that_also_touches_its_cell_along_a_face_is_measured_by_its_area(tmp_path):
     """Cell 1 exactly, plus a 1.2 ft square inside cell 4: the piece in cell 4 is a
     GeometryCollection holding the shared face as a line. Counted in the perimeter,
     that line made the square a 0.00998 'sliver'."""
 
     context = _context(n=3, length=900.0)
     zone = MultiPolygon([box(300.0, 0.0, 600.0, 300.0), box(449.4, 449.4, 450.6, 450.6)])
-    source = GeoPackageSource(_gpkg_at(context, zone), context, 1, layer="bc")
+    source = GeoPackageSource(_gpkg(tmp_path, zone), context, 1, layer="bc")
     assert np.flatnonzero(source.k_array(value="k", nlay=1, defaults=1.0)[0] != 1.0).tolist() == [1, 4]
 
 
-def test_a_lab_scale_grid_keeps_its_coverage():
+def test_a_lab_scale_grid_keeps_its_coverage(tmp_path):
     """0.01-unit cells: every piece is narrower than the tolerance, and all were lost."""
 
     context = _context(n=10, length=0.1)
-    spec = mf.drn.gpkg(_gpkg_at(context, box(0.0, 0.0, 0.1, 0.1)), layer="bc", context=context, nper=1)
+    spec = mf.drn.gpkg(_gpkg(tmp_path, box(0.0, 0.0, 0.1, 0.1)), layer="bc", context=context, nper=1)
     assert len(_cells(spec)) == 100
 
 
-def test_a_thin_piece_that_is_a_real_share_of_its_cell_is_kept():
+def test_a_thin_piece_that_is_a_real_share_of_its_cell_is_kept(tmp_path):
     """0.05-unit cells: whole cells are 0.025 wide, and the cut edge pieces 0.007 wide
     -- under the tolerance, but 14% of their cell. That is coverage, not noise."""
 
     context = _context(n=10, length=0.5)
     zone = box(0.043, 0.043, 0.457, 0.457)
-    spec = mf.drn.gpkg(_gpkg_at(context, zone), layer="bc", context=context, nper=1)
+    spec = mf.drn.gpkg(_gpkg(tmp_path, zone), layer="bc", context=context, nper=1)
     assert len(_cells(spec)) == 100
 
 
-def test_a_strip_centred_on_a_face_reaches_both_rows():
+def test_a_strip_centred_on_a_face_reaches_both_rows(tmp_path):
     """0.015 wide on y=25: two halves of 0.0075, both below the tolerance -- all slivers."""
 
     context = _context()
     spec = mf.drn.gpkg(
-        _gpkg_at(context, box(0.0, 24.9925, 100.0, 25.0075)), layer="bc", context=context, nper=1
+        _gpkg(tmp_path, box(0.0, 24.9925, 100.0, 25.0075)), layer="bc", context=context, nper=1
     )
     assert _cells(spec) == list(range(8))
 
 
-def test_a_collection_with_an_empty_member_is_measured_by_the_rest():
+def test_a_collection_with_an_empty_member_is_measured_by_the_rest(tmp_path):
     context = _context()
     spec = mf.drn.gpkg(
-        _gpkg_at(context, GeometryCollection([CELL_5, LineString()])), layer="bc",
+        _gpkg(tmp_path, GeometryCollection([CELL_5, LineString()])), layer="bc",
         context=context, nper=1,
     )
     assert _cells(spec) == [5]
 
 
-def test_a_clipped_zone_keeps_its_polygon_and_drops_its_edge_artifacts():
+def test_a_clipped_zone_keeps_its_polygon_and_drops_its_edge_artifacts(tmp_path):
     """What gpd.clip returns by default where a zone runs along the clip edge: its
     polygon plus zero-area lines. The lines lie on the face y=50 and add no area."""
 
     context = _context()
     clipped = GeometryCollection([CELL_5, LineString([(50.0, 50.0), (100.0, 50.0)])])
-    source = GeoPackageSource(_gpkg_at(context, clipped), context, 1, layer="bc")
+    source = GeoPackageSource(_gpkg(tmp_path, clipped), context, 1, layer="bc")
     assert np.flatnonzero(source.k_array(value="k", nlay=1, defaults=1.0)[0] != 1.0).tolist() == [5]

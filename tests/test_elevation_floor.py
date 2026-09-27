@@ -26,7 +26,7 @@ from myflopy.specs import package_digest
 
 
 @pytest.fixture(scope="module")
-def sloping():
+def sloping(tmp_path_factory):
     """A 2-layer context whose layer-1 bottom SLOPES, so one flat elevation cannot suit it.
 
     A flat base would make a scalar floor indistinguishable from a per-cell one, which is
@@ -34,10 +34,7 @@ def sloping():
     cannot track a bottom that moves across the cells one feature covers.
     """
 
-    import tempfile
-    from pathlib import Path
-
-    workspace = Path(tempfile.mkdtemp())
+    workspace = tmp_path_factory.mktemp("sloping")
     boundary = workspace / "b.gpkg"
     gpd.GeoDataFrame(
         {"name": ["d"]}, geometry=[box(0.0, 0.0, 600.0, 600.0)], crs=2927
@@ -91,11 +88,11 @@ def test_a_below_bottom_elevation_is_reported_without_being_asked(sloping):
     assert "min_above_bottom" in str(caught[0].message)
 
 
-def test_the_detection_says_nothing_when_every_elevation_is_inside_its_cell(sloping):
+def test_the_detection_says_nothing_when_every_elevation_is_inside_its_cell(sloping, tmp_path):
     """The refusing direction: a clean declaration must stay silent, or it is noise."""
 
     context, _, _ = sloping
-    path = _one_line(context, elev=None)
+    path = _one_line(tmp_path, context, elev=None)
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -105,11 +102,8 @@ def test_the_detection_says_nothing_when_every_elevation_is_inside_its_cell(slop
         )
 
 
-def _one_line(context, *, elev):
-    import tempfile
-    from pathlib import Path
-
-    path = Path(tempfile.mkdtemp()) / "one.gpkg"
+def _one_line(directory, context, *, elev):
+    path = directory / "one.gpkg"
     columns = {"name": ["drn"], "layer": [1], "conductance": [100.0]}
     if elev is not None:
         columns["elev"] = [elev]
@@ -186,7 +180,7 @@ def test_a_negative_clearance_is_refused(sloping):
 # --- RIV is a PAIR ----------------------------------------------------------
 
 
-def test_riv_lifts_the_pair_so_the_declared_river_depth_survives(sloping):
+def test_riv_lifts_the_pair_so_the_declared_river_depth_survives(sloping, tmp_path):
     """Where the STAGE is below the floor too, it is carried up with the bed.
 
     MF6 checks `rbot` and enforces `stage >= rbot` separately, so raising `rbot` alone
@@ -200,10 +194,7 @@ def test_riv_lifts_the_pair_so_the_declared_river_depth_survives(sloping):
     """
 
     context, _, bottoms = sloping
-    import tempfile
-    from pathlib import Path
-
-    path = Path(tempfile.mkdtemp()) / "r.gpkg"
+    path = tmp_path / "r.gpkg"
     gpd.GeoDataFrame(
         {"name": ["riv"], "layer": [1], "stage": [40.0], "rbot": [35.0],
          "conductance": [100.0]},
@@ -229,7 +220,7 @@ def test_riv_lifts_the_pair_so_the_declared_river_depth_survives(sloping):
     assert np.allclose(stage[~moved], 40.0), "and a stage that did not have to move stays"
 
 
-def test_a_river_whose_stage_is_already_inside_its_cell_keeps_it(sloping):
+def test_a_river_whose_stage_is_already_inside_its_cell_keeps_it(sloping, tmp_path):
     """The half ledger 290 generalised past: a bed below the cell, a legal stage.
 
     That is what an ordinary river looks like, and the stage is the water surface it
@@ -241,10 +232,7 @@ def test_a_river_whose_stage_is_already_inside_its_cell_keeps_it(sloping):
     """
 
     context, _, bottoms = sloping
-    import tempfile
-    from pathlib import Path
-
-    path = Path(tempfile.mkdtemp()) / "ordinary.gpkg"
+    path = tmp_path / "ordinary.gpkg"
     gpd.GeoDataFrame(
         {"name": ["riv"], "layer": [1], "stage": [75.0], "rbot": [28.0],
          "conductance": [100.0]},
@@ -266,15 +254,12 @@ def test_a_river_whose_stage_is_already_inside_its_cell_keeps_it(sloping):
     assert np.allclose(stage, 75.0), "and not one stage moved"
 
 
-def test_a_river_stage_below_its_own_bottom_is_refused(sloping):
+def test_a_river_stage_below_its_own_bottom_is_refused(sloping, tmp_path):
     """MF6 refuses `stage < rbot` at BOTH icelltypes, and `mf.riv.gpkg`'s own docstring
     already promised the invariant while nothing enforced it."""
 
     context, _, _ = sloping
-    import tempfile
-    from pathlib import Path
-
-    path = Path(tempfile.mkdtemp()) / "bad.gpkg"
+    path = tmp_path / "bad.gpkg"
     gpd.GeoDataFrame(
         {"name": ["riv"], "layer": [1], "stage": [30.0], "rbot": [40.0],
          "conductance": [100.0]},
@@ -309,17 +294,14 @@ def test_it_is_not_offered_where_no_field_is_an_elevation(sloping, helper_name):
     assert getattr(mf, helper_name).gpkg(drains, nper=1).inputs
 
 
-def test_the_floor_is_applied_AFTER_a_nearest_snap(sloping):
+def test_the_floor_is_applied_AFTER_a_nearest_snap(sloping, tmp_path):
     """A snapped point lands in a DIFFERENT cell with a different bottom, so a floor
     applied before the snap would use the wrong one (ledger 288 added the snap)."""
 
     context, _, bottoms = sloping
-    import tempfile
-    from pathlib import Path
-
     grid = context.grid
     xmax = float(grid.gdf_vorPolys.total_bounds[2])
-    path = Path(tempfile.mkdtemp()) / "near.gpkg"
+    path = tmp_path / "near.gpkg"
     gpd.GeoDataFrame(
         {"name": ["just_out"], "layer": [1], "elev": [-500.0], "conductance": [100.0]},
         geometry=[Point(xmax + 3.0, 300.0)], crs=2927,
