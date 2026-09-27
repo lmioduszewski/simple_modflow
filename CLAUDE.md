@@ -495,7 +495,9 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4575 passed / 4 skipped**, 2026-09-26, ledger 316's revision on top of 336):
+- Full suite (**4608 passed / 4 skipped**, 2026-09-27, ledger 337): serial (`-n0`) **6m57s**
+  in a detached checkout outside `.claude` at a load average of ~0.9. Before it, 4575 passed /
+  4 skipped (2026-09-26, ledger 316's revision on top of 336):
   `-n 10` **2m08s** in a detached checkout outside `.claude` at a load average of ~10.7;
   serial not re-measured. Before it, 4566 passed / 4 skipped (ledger 336 on 332-335):
   serial (`-n0`) **7m32s** and `-n 10` **2m46s**, both in a detached checkout outside
