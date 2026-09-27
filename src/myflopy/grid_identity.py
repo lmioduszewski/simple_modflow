@@ -2213,12 +2213,24 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
                         "grid instead, build it with tessellation='flopy'"
                     )
                     continue
-                complaints.append(
+                message = (
                     f"package {package.name!r} was resolved against a different mesh: "
                     f"its records are pinned to grid {pin}, and this model's grid is "
                     f"{model_pin}. Cell numbers do not carry between meshes, and a "
                     "number that happens to be in range is still the wrong cell"
                 )
+                if report is not None and getattr(report, "changed", False):
+                    # The first version of the repair (2026-09-25) outlined some cells
+                    # differently and pinned no record of its own, so a package resolved
+                    # on it reaches here, not the branch above -- with every cell number
+                    # still right. Only the caller knows when it was resolved; say so.
+                    message += (
+                        ". Unless it was resolved on this same grid by the first version of "
+                        "ledger 316's repair (myflopy 9bd3651, 2026-09-25): that version "
+                        "outlined some cells differently, so the pin moved though every cell "
+                        "kept its number. Re-declare the package against this grid either way"
+                    )
+                complaints.append(message)
                 continue
             voided = metadata.get(PIN_VOIDED)
             if voided and voided.get("was") not in (None, model_pin):

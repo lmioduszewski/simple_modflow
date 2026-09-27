@@ -15,6 +15,8 @@ left by angle about the vertices' MEAN. Ledger 316 measured what that costs:
   two correct polygons share no index pair and MF6 drops their face;
 - across a thin notch, Qhull's Delaunay (of all nodes) is not Triangle's, and cells take
   vertices from triangles the mesh does not have;
+- a vertex lying straight between its two neighbours in ONE cell is dropped from that cell
+  by FloPy's 180-degree filter and kept by the cell beside it, which loses their face;
 - a boundary that is not ONE simple polygon keeps cells in its first part only
   (ledger 317).
 
@@ -23,18 +25,19 @@ The TRUTH used here is the dual of Triangle's own conforming Delaunay mesh
 around it, plus -- for a boundary node -- the midpoints of its two boundary edges and the
 node itself. A certificate proves the result tiles the meshed domain exactly.
 
-:func:`tessellate` keeps FloPy's output wherever it is right, index for index, and
-rewrites only the cells that are not, in FloPy's own vertex ids. A grid with nothing
-wrong therefore comes back byte-identical -- the same ``grid_pin``, the same ``.disv``
-bytes -- and only a grid that had a broken cell re-pins. Where FloPy's cell SET is wrong
-(a part of the domain lost, a stray node kept as a cell) nothing can be repaired in place,
-and the dual's cells are taken whole: renumbered, and logged at WARNING.
+:func:`tessellate` gives every one of the dual's vertices a FloPy vertex id -- the one
+FloPy has at that location, or an appended one where it has none -- so every ring it
+returns IS the dual's ring, and no face can be lost between two cells. A FloPy ring that
+already is that ring is returned exactly as FloPy wrote it. A grid with nothing wrong
+therefore comes back byte-identical -- the same ``grid_pin``, the same ``.disv`` bytes --
+and only a grid that had a broken cell re-pins. Where FloPy's cell SET is wrong (a part of
+the domain lost, a stray node kept as a cell) the dual's cells are taken whole:
+renumbered, and logged at WARNING.
 """
 
 from __future__ import annotations
 
-import math
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -44,25 +47,24 @@ from myflopy._logging import get_logger
 
 logger = get_logger(__name__)
 
-TWO_PI = 2.0 * math.pi
-
 #: Two dual vertices closer than this fraction of their mesh edge are ONE vertex:
 #: cocircular triangles, or a right triangle's circumcentre on its boundary hypotenuse.
 #: Measured over 349 grids: merged pairs were at most 8.05e-12 of the edge, the shortest
 #: kept dual segment 2.63e-6 -- this sits orders of magnitude from both.
 MERGE_RTOL = 1e-9
 
-#: How far (as a fraction of the circumradius) FloPy's vertex may sit from a triangle's
-#: exact circumcentre and still be taken as that circumcentre. Qhull merges
-#: near-cocircular facets, and its roundoff grows with the coordinates: at state-plane
-#: magnitudes, measured 1e-6 to 1.4e-2 of the circumradius. A mesh that is not globally
-#: Delaunay across a thin notch puts the nearest FloPy vertex 0.24-0.34 away -- a
-#: different point, which is appended instead.
-QHULL_MERGE_RTOL = 0.05
-
-#: Coincidence tolerance, in units of the coordinates' own spacing. Circumcentre against
-#: FloPy's vertex, and a kept on-boundary vertex against its midpoint twin, measured 1-25
-#: ulp apart; genuinely distinct vertices never closer than 3.5e-5 ft.
+#: Coincidence tolerance, in units of the coordinates' own spacing, used twice: FloPy's
+#: vertex IS a dual vertex within it, and two circumcentres within it are one vertex.
+#: Circumcentre against FloPy's vertex, and a kept on-boundary vertex against its midpoint
+#: twin, measured 1-25 ulp apart on grids at the origin, where distinct vertices were never
+#: closer than 3.5e-5 ft. At state-plane magnitudes the match still holds -- no grid FloPy
+#: draws right at (1.2e6, 6.5e5) or (5e6, 5e6) had a ring rewritten
+#: (``voronoi_tiling_sweep.py`` part F), and on a spiky star at 1.2e6, where FloPy's cells
+#: ARE wrong, 96% of circumcentres sat on FloPy's vertex and the nearest of the rest was
+#: 4.6e-4 ft away, 2,000 times the tolerance (``voronoi_tiling_gaps.py`` section 11) -- but
+#: DISTINCT circumcentres do come closer than it there, and are merged (part E counts them).
+#: The first repair took a vertex up to 5% of the circumradius away as the same one, and
+#: lost faces that way.
 COINCIDENT_ULPS = 1000.0
 
 
@@ -85,9 +87,11 @@ class TessellationReport:
         ``{cell: reason}`` for every cell whose ring was rewritten in place, on FloPy's
         (unchanged) numbering. Reasons: ``"corner-order"`` (a boundary cell's vertices
         out of order -- the reflex-corner defect), ``"missing-vertex"`` (a vertex FloPy
-        dropped), ``"twin-vertex"`` (the right polygon, but on a duplicate vertex id MF6
-        cannot match), ``"foreign-vertex"`` (a vertex from a triangle the mesh does not
-        have), ``"interior-order"``.
+        dropped: outside by its ray test, or straight between two others), ``"twin-vertex"``
+        (the right polygon, but on a duplicate vertex id MF6 cannot match, or holding one
+        location twice -- a zero-width connection), ``"foreign-vertex"`` (a vertex that is
+        not one of this cell's: a circumcentre of a triangle the mesh does not have, a
+        neighbour's across a thin notch, or Qhull's merge of two), ``"interior-order"``.
     appended
         Vertices added because FloPy had none at a location a cell needs.
     adopted
@@ -176,10 +180,28 @@ def dual_cells(tri, *, straight_sin: float = 1e-5):
 
     Raises :class:`NotConformingDelaunay` unless every interior edge is locally Delaunay
     and every boundary triangle has its circumcentre on the domain side -- together they
-    make every ring star-shaped from its node, and so the cells an exact tiling. Raises
-    it too where the domain touches itself at a node (two parts meeting at a corner, a hole
-    touching the edge): that node's cell is two pieces, which one DISV ring cannot hold.
+    make every ring star-shaped from its node, and so the cells an exact tiling. (The two
+    circumcentres of an edge both lie on its bisector, and a fan triangle's turn is the
+    sign of their separation along it, so the certificate IS the orientation of every fan
+    triangle whose vertices the merge below leaves where they were.) The certificate's
+    tolerance is 1e-9 of the edge and no wider: widened to 1000 ulp, it passed a boundary
+    circumcentre 2.1e-7 ft outside the domain and returned a cell crossing itself.
+    Circumcentres closer than 1000 ulp of the coordinates (``COINCIDENT_ULPS``) are then ONE
+    vertex, so no edge a few ulps long reaches a written grid; a merged vertex moves by up
+    to that much, which can turn a fan triangle that small over -- a mesh measured doing so
+    still gave valid cells. Because of that merge, a node whose triangles' circumcentres
+    all fall that close together has no cell left: that, and two nodes closer than 1000
+    ulp, are refused rather than dropped. So is a domain that touches itself at a node
+    (two parts meeting at a corner, a hole touching the edge): that node's cell is two
+    pieces, which one DISV ring cannot hold.
     """
+
+    verts, iverts, points, _ = _dual(tri, straight_sin=straight_sin)
+    return verts, iverts, points
+
+
+def _dual(tri, *, straight_sin: float = 1e-5):
+    """:func:`dual_cells`, plus whether each cell's node is on the boundary."""
 
     P_abs = np.asarray(tri.verts, dtype=float)
     origin = P_abs.min(axis=0) if len(P_abs) else np.zeros(2)
@@ -216,11 +238,28 @@ def dual_cells(tri, *, straight_sin: float = 1e-5):
 
     d = P[end] - P[start]
     L = np.hypot(d[:, 0], d[:, 1])
+    resolvable = COINCIDENT_ULPS * float(np.spacing(max(float(np.abs(P_abs).max()), 1.0)))
+    if L.min() < resolvable:
+        e = int(np.argmin(L))
+        x0, y0 = P_abs[start[e]]
+        raise NotConformingDelaunay(
+            f"two of the mesh's nodes are {L[e]:.3g} apart at ({x0:.6g}, {y0:.6g}), closer than "
+            f"1000 ulp of its coordinates ({resolvable:.3g}), inside which circumcentres are "
+            "merged into one vertex, so the cells between them would have no area. (FloPy "
+            "writes a vertex to nine significant digits, so cells far larger than that reach "
+            "MF6 with zero area too.) A point constraint on a boundary edge, or within "
+            "rounding of one, can make Triangle pack nodes that close; move it clear of the edge."
+        )
     rot = np.column_stack([-d[:, 1], d[:, 0]]) / L[:, None]
     s_int = ((cc[tri_of[interior]] - cc[tri_of[twin[interior]]]) * rot[interior]).sum(1)
     s_bnd = ((cc[tri_of[boundary]] - P[start[boundary]]) * rot[boundary]).sum(1)
+    # The certificate stays at 1e-9 of the edge; two circumcentres closer than 1000 ulp are
+    # MERGED whatever the edge: kept apart, they write an edge a few ulps long that a
+    # reprojection can turn over.
     bad_int = s_int < -MERGE_RTOL * L[interior]
     bad_bnd = s_bnd < -MERGE_RTOL * L[boundary]
+    near_int = np.maximum(MERGE_RTOL * L[interior], resolvable)
+    near_bnd = np.maximum(MERGE_RTOL * L[boundary], resolvable)
     if bad_int.any() or bad_bnd.any():
         raise NotConformingDelaunay(
             f"{int(bad_int.sum())} interior edge(s) not locally Delaunay and {int(bad_bnd.sum())} "
@@ -233,9 +272,9 @@ def dual_cells(tri, *, straight_sin: float = 1e-5):
     # circumcentre on its boundary hypotenuse IS that edge's midpoint.
     B = len(boundary)
     uf = _UnionFind(M + B)
-    for e in interior[np.abs(s_int) <= MERGE_RTOL * L[interior]]:
+    for e in interior[np.abs(s_int) <= near_int]:
         uf.union(int(tri_of[e]), int(tri_of[twin[e]]))
-    for k in np.flatnonzero(np.abs(s_bnd) <= MERGE_RTOL * L[boundary]):
+    for k in np.flatnonzero(np.abs(s_bnd) <= near_bnd):
         uf.union(int(tri_of[boundary[k]]), M + int(k))
     roots = np.array([uf.find(i) for i in range(M + B)])
     mids = 0.5 * (P[start[boundary]] + P[end[boundary]])
@@ -261,7 +300,7 @@ def dual_cells(tri, *, straight_sin: float = 1e-5):
     corners_of = [[] for _ in range(N)]
     for cid, n in enumerate(start):
         corners_of[n].append(cid)
-    rings, kept = [], []
+    rings, kept, on_boundary = [], [], []
     for n in range(N):
         cs = corners_of[n]
         if not cs:
@@ -300,9 +339,16 @@ def dual_cells(tri, *, straight_sin: float = 1e-5):
             ring = [int(tri_vid[tri_of[x]]) for x in walk]
         ring = [x for i, x in enumerate(ring) if x != ring[i - 1]] if len(ring) > 1 else ring
         if len(ring) < 3:
-            continue
+            x0, y0 = P_abs[n]
+            raise NotConformingDelaunay(
+                f"the node at ({x0:.6g}, {y0:.6g}) has no cell left: the circumcentres of its "
+                f"triangles lie within 1000 ulp of each other ({resolvable:.3g}), where they are "
+                "one vertex. A point constraint on a boundary edge, or within rounding of one, "
+                "can make Triangle pack nodes that close; move it clear of the edge."
+            )
         rings.append(ring[::-1])  # clockwise
         kept.append(n)
+        on_boundary.append(bool(starts))
 
     new = np.full(len(all_xy), -1)
     count = 0
@@ -315,15 +361,12 @@ def dual_cells(tri, *, straight_sin: float = 1e-5):
     verts = np.zeros((count, 2))
     verts[new[used]] = all_xy[used] + origin
     iverts = [[int(new[x]) for x in r] for r in rings]
-    return verts, iverts, P_abs[np.asarray(kept, dtype=np.int64)]
+    points = P_abs[np.asarray(kept, dtype=np.int64)]
+    return verts, iverts, points, np.asarray(on_boundary, dtype=bool)
 
 
 # --------------------------------------------------------------------------------------
-# FloPy's cells, repaired in place
-
-
-class _NotRepairable(Exception):
-    """FloPy's output does not have the shape the in-place repair relies on."""
+# FloPy's cells, checked against the dual
 
 
 def _clusters(V, tol):
@@ -344,281 +387,103 @@ def _clusters(V, tol):
     return np.array([root(i) for i in range(len(V))], dtype=np.int64)
 
 
-def _near180_filter(ring, V):
-    """FloPy ``get_sorted_vertices``' straight-angle filter, so a rewritten ring drops what FloPy drops."""
+def _onto_flopy(d_verts, d_iverts, verts, iverts, on_boundary):
+    """``(verts, iverts, rewritten, appended)``: the dual's cells on FloPy's vertex ids.
 
-    out, n = [], len(ring)
-    for i in range(n):
-        x0, y0 = V[ring[i - 1]]
-        x1, y1 = V[ring[i]]
-        x2, y2 = V[ring[(i + 1) % n]]
-        s0x, s0y, s2x, s2y = x0 - x1, y0 - y1, x2 - x1, y2 - y1
-        m = math.hypot(s0x, s0y) * math.hypot(s2x, s2y)
-        if m > 0 and abs((s0x * s2y - s0y * s2x) / m) < 1e-5 and s0x * s2x + s0y * s2y < 0:
-            continue
-        out.append(ring[i])
-    return out
-
-
-def _signed_area(xy):
-    x, y = xy[:, 0], xy[:, 1]
-    return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
-
-
-def _repair_in_place(verts, iverts, points, tri):
-    """``(iverts, verts, rewritten, appended)``: FloPy's cells, wrong ones rewritten.
-
-    Every cell's ring is compared against what the dual of Triangle's mesh says it holds
-    -- the circumcentres of its node's triangles and, on the boundary, its two edge
-    midpoints and the node -- with sets and angles, no polygon clipping. A cell that
-    passes keeps its ring exactly as FloPy wrote it; one that does not is rebuilt by
-    walking the triangle fan around its node, on ONE FloPy vertex id per location (the
-    one most rings already use there), so a face is the same index pair in both cells.
-    Raises :class:`_NotRepairable` when FloPy's output is not laid out as expected.
+    Each of the dual's vertices is given the FloPy vertex at its location -- the one most
+    of FloPy's rings use there, since FloPy can hold one location under several ids -- or,
+    where FloPy has none, is appended. Every ring is then the dual's ring under that one
+    relabelling, so two neighbours share their face as the same index pair by
+    construction. A FloPy ring that already IS that ring is kept exactly as FloPy wrote it,
+    starting vertex included; any other is replaced, and its reason recorded.
     """
 
     V = np.asarray(verts, dtype=float)
-    P = np.asarray(tri.verts, dtype=float)
-    T = np.asarray(tri.iverts, dtype=np.int64)
+    D = np.asarray(d_verts, dtype=float)
+    scale = max(float(np.abs(V).max()) if len(V) else 0.0, float(np.abs(D).max()) if len(D) else 0.0, 1.0)
+    tol = COINCIDENT_ULPS * float(np.spacing(scale))
     ncell = len(iverts)
-    tol = COINCIDENT_ULPS * float(np.spacing(max(float(np.abs(P).max()), 1.0)))
-
-    pts = np.asarray(points, dtype=float)
-    if ncell == len(P):
-        node_of = np.arange(ncell)
-        if not np.array_equal(pts, P):
-            raise _NotRepairable("cell centres are not Triangle's nodes")
-    else:
-        key = {(float(x), float(y)): i for i, (x, y) in enumerate(P)}
-        try:
-            node_of = np.array([key[(float(x), float(y))] for x, y in pts], dtype=np.int64)
-        except KeyError as exc:
-            raise _NotRepairable("a cell centre is not a Triangle node") from exc
-    cell_of = np.full(len(P), -1, dtype=np.int64)
-    cell_of[node_of] = np.arange(ncell)
-
-    # The boundary edges tri2vor closes cells on, and its vertex layout for them:
-    # [kept Voronoi vertices..., (midpoint, endpoint1, endpoint2) per boundary edge].
-    marker = tri.edge["boundary_marker"]
-    try:
-        nexterior = len(tri._polygons[0]) + sum(len(tri._polygons[i + 1]) for i in range(len(tri._holes)))
-    except (IndexError, TypeError) as exc:
-        raise _NotRepairable("the triangulation's holes are not polygons") from exc
-    be = tri.edge[(marker > 0) & (marker <= nexterior)]
-    nbe = len(be)
-    base = len(V) - 3 * nbe
-    e1, e2 = be["endpoint1"].astype(np.int64), be["endpoint2"].astype(np.int64)
-    mid = base + 3 * np.arange(nbe)
-    if base < 0 or not (np.array_equal(V[mid], (P[e1] + P[e2]) / 2) and np.array_equal(V[mid + 1], P[e1])
-                        and np.array_equal(V[mid + 2], P[e2])):
-        raise _NotRepairable("tri2vor's vertex layout is not the one this repair reads")
-
-    cc = _circumcentres(P, T)
-    loc = _clusters(V, tol)
-    tree = cKDTree(V)
-    dist, nearest = tree.query(cc)
-    cc_loc = np.where(dist <= tol, loc[nearest], -1)
-    appended_rows = []
-    unmatched = np.flatnonzero(cc_loc < 0)
-    if len(unmatched):
-        # Qhull merged near-cocircular facets (keep its vertex: the three cells already
-        # share it), or the mesh is not globally Delaunay across a thin notch (FloPy has
-        # no vertex there at all: append the circumcentre).
-        radius = np.hypot(*(P[T[unmatched, 0]] - cc[unmatched]).T)
-        ring_locs = {}
-        for t, R in zip(unmatched, radius, strict=True):
-            common = None
-            for q in T[t]:
-                j = int(cell_of[q])
-                if j < 0:
-                    continue
-                if j not in ring_locs:
-                    ring_locs[j] = {int(loc[v]) for v in iverts[j]}
-                common = set(ring_locs[j]) if common is None else common & ring_locs[j]
-            best = min(common, key=lambda x: float(np.hypot(*(V[x] - cc[t])))) if common else None
-            if best is not None and float(np.hypot(*(V[best] - cc[t]))) < QHULL_MERGE_RTOL * R:
-                cc_loc[t] = best
-            else:
-                appended_rows.append(int(t))
-        if appended_rows:
-            rows = np.asarray(appended_rows)
-            cc_loc[rows] = len(V) + np.arange(len(rows))
-            loc = np.concatenate([loc, len(V) + np.arange(len(rows))])
-            V = np.vstack([V, cc[rows]])
-    NL = len(V)
 
     lens = np.fromiter((len(r) for r in iverts), dtype=np.int64, count=ncell)
-    starts = np.concatenate([[0], np.cumsum(lens)[:-1]]).astype(np.int64)
     flat = np.fromiter((v for r in iverts for v in r), dtype=np.int64, count=int(lens.sum()))
-    cellid = np.repeat(np.arange(ncell), lens)
-    floc = loc[flat]
-
-    # the canonical id at each location: the most used, ties to the smallest
-    uses = np.bincount(flat, minlength=NL)
-    order = np.lexsort((np.arange(NL), -uses, loc))
-    first = np.ones(NL, dtype=bool)
+    loc = _clusters(V, tol)
+    uses = np.bincount(flat, minlength=len(V))
+    order = np.lexsort((np.arange(len(V)), -uses, loc))
+    first = np.ones(len(V), dtype=bool)
     first[1:] = loc[order][1:] != loc[order][:-1]
-    canon = np.full(NL, -1, dtype=np.int64)
+    canon = np.full(len(V), -1, dtype=np.int64)
     canon[loc[order][first]] = order[first]
 
-    own_loc = np.full(ncell, -1, dtype=np.int64)  # a boundary cell's own node location
-    ok1, ok2 = cell_of[e1] >= 0, cell_of[e2] >= 0
-    own_loc[cell_of[e1[ok1]]] = loc[mid[ok1] + 1]
-    own_loc[cell_of[e2[ok2]]] = loc[mid[ok2] + 2]
-    is_own = floc == own_loc[cellid]
+    # One FloPy id per dual vertex and one dual vertex per FloPy id, nearest pairs first,
+    # so two dual vertices closer than the tolerance never collapse onto one id.
+    ids = np.unique(canon[loc])
+    near = cKDTree(V[ids]).query_ball_point(D, tol)
+    pair_d = np.fromiter((i for i, js in enumerate(near) for _ in js), dtype=np.int64)
+    pair_f = ids[np.fromiter((j for js in near for j in js), dtype=np.int64, count=len(pair_d))]
+    dist = np.hypot(*(D[pair_d] - V[pair_f]).T)
+    label = np.full(len(D), -1, dtype=np.int64)
+    dual_at = {}  # FloPy canonical id -> the dual vertex holding it
+    for n in np.argsort(dist, kind="stable"):
+        i, c = int(pair_d[n]), int(pair_f[n])
+        if label[i] < 0 and c not in dual_at:
+            dual_at[c] = i
+            label[i] = c
+    extra = np.flatnonzero(label < 0)
+    label[extra] = len(V) + np.arange(len(extra))
+    V = np.vstack([V, D[extra]]) if len(extra) else V
 
-    expected_cell = np.concatenate([cell_of[T[:, 0]], cell_of[T[:, 1]], cell_of[T[:, 2]], cell_of[e1], cell_of[e2]])
-    expected_loc = np.concatenate([cc_loc, cc_loc, cc_loc, loc[mid], loc[mid]])
-    keep = expected_cell >= 0
-    expected = np.unique(expected_cell[keep] * NL + expected_loc[keep])
-    held, held_count = np.unique(cellid[~is_own] * NL + floc[~is_own], return_counts=True)
-    flags = {}
-    for k in np.unique(np.setdiff1d(held, expected) // NL):
-        flags[int(k)] = "foreign-vertex"
-    for k in np.unique(np.setdiff1d(expected, held) // NL):
-        flags[int(k)] = "missing-vertex"
-    twin_id = (~is_own) & (canon[floc] != flat)
-    for k in np.unique(np.concatenate([cellid[twin_id], held[held_count > 1] // NL])):
-        flags.setdefault(int(k), "twin-vertex")
-
-    # interior cells: clockwise about the node is exactly one descent of atan2(-dy, dx)
-    node_xy = P[node_of][cellid]
-    ang = np.arctan2(node_xy[:, 1] - V[flat, 1], V[flat, 0] - node_xy[:, 0])
-    after = np.arange(len(flat)) + 1
-    after[starts + lens - 1] = starts
-    descents = np.add.reduceat((ang[after] < ang).astype(np.int64), starts)
-    for k in np.flatnonzero((own_loc < 0) & (descents != 1)):
-        flags.setdefault(int(k), "interior-order")
-
-    tv = T.ravel()
-    torder = np.argsort(tv, kind="stable")
-    tptr = np.searchsorted(tv[torder], np.arange(len(P) + 1))
-
-    def incident(p):
-        return (torder[tptr[p]:tptr[p + 1]] // 3).tolist()
-
-    bnode = defaultdict(list)  # node -> [(other endpoint, midpoint id, own-vertex id)]
-    for j in range(nbe):
-        bnode[int(e1[j])].append((int(e2[j]), int(mid[j]), int(mid[j] + 1)))
-        bnode[int(e2[j])].append((int(e1[j]), int(mid[j]), int(mid[j] + 2)))
-
-    def first_last(p):
-        """(first, last) midpoint of boundary node p: the domain lies clockwise from first."""
-        entries = bnode[p]
-        if len(entries) != 2:
-            return None
-        (qa, ma, _), (_qb, mb, _) = entries
-        shared = [t for t in incident(p) if qa in T[t]]
-        if len(shared) != 1:
-            return None
-        qc = next(int(q) for q in T[shared[0]] if q != p and q != qa)
-        u, w = P[qa] - P[p], P[qc] - P[p]
-        return (ma, mb) if u[0] * w[1] - u[1] * w[0] < 0 else (mb, ma)
-
-    # boundary cells: [first midpoint, ...clockwise about the node..., last midpoint, (node)]
-    fl_of = {}
-    for p in bnode:
-        k = int(cell_of[p])
-        if k < 0:
-            continue
-        fl = first_last(p)
-        if fl is None:
-            raise _NotRepairable(f"boundary node {p} does not have exactly two boundary edges")
-        fl_of[p] = fl
-        if k in flags:
-            continue
-        ring = list(iverts[k])
-        rl = [int(loc[v]) for v in ring]
-        lf, ll, own = int(loc[fl[0]]), int(loc[fl[1]]), int(own_loc[k])
-        if lf not in rl:
-            flags[k] = "missing-vertex"
-            continue
-        s = rl.index(lf)
-        rr, rrl = ring[s:] + ring[:s], rl[s:] + rl[:s]
-        body = rr[:-1] if rrl[-1] == own else rr
-        good = int(loc[body[-1]]) == ll and own not in rrl[:-1]
-        if good:
-            px, py = P[p]
-            a0 = math.atan2(py - V[fl[0], 1], V[fl[0], 0] - px)
-            phis = [(math.atan2(py - V[v, 1], V[v, 0] - px) - a0) % TWO_PI for v in body[1:]]
-            good = all(0.0 < x <= y for x, y in zip(phis, phis[1:], strict=False)) and (not phis or phis[0] > 0.0)
-        if not good:
-            flags[k] = "corner-order"
-
-    new_iverts = list(iverts)
-    for k, _reason in flags.items():
-        p = int(node_of[k])
-        tris = incident(p)
-        fl = fl_of.get(p)
-        across = defaultdict(list)
-        for t in tris:
-            for q in T[t]:
-                if q != p:
-                    across[int(q)].append(t)
-
-        def walk(t, q, p=p, across=across):
-            seq, seen = [], set()
-            while t is not None and t not in seen:
-                seen.add(t)
-                seq.append(int(cc_loc[t]))
-                q = next(int(r) for r in T[t] if r != p and r != q)
-                t = next((s for s in across[q] if s != t), None)
-            return seq
-
-        if fl is not None:
-            q0 = next(qa for qa, m, _ in bnode[p] if m == fl[0])
-            seq = [int(loc[fl[0]])] + walk(across[q0][0], q0) + [int(loc[fl[1]])]
+    new_iverts, rewritten = [], {}
+    for k in range(ncell):
+        want = [int(label[x]) for x in d_iverts[k]]
+        have = [int(v) for v in iverts[k]]
+        if len(have) == len(want) and have[0] in want:
+            i = want.index(have[0])
+            if want[i:] + want[:i] == have:
+                new_iverts.append(iverts[k])
+                continue
+        if have[0] in want:
+            i = want.index(have[0])
+            want = want[i:] + want[:i]
+        new_iverts.append(want)
+        at = [dual_at.get(int(canon[loc[v]])) for v in have]
+        if any(x is None for x in at) or set(at) - set(d_iverts[k]):
+            reason = "foreign-vertex"
+        elif set(d_iverts[k]) - set(at):
+            reason = "missing-vertex"
+        elif len(at) != len(set(at)) or sorted(have) != sorted(want):
+            reason = "twin-vertex"  # one location under another id, or twice in the ring
         else:
-            t0 = tris[0]
-            seq = walk(t0, next(int(r) for r in T[t0] if r != p))
-        locs = []
-        for x in seq:
-            if not locs or locs[-1] != x:
-                locs.append(x)
-        if fl is None and len(locs) > 1 and locs[0] == locs[-1]:
-            locs.pop()
-        ring = [int(canon[x]) for x in locs]
-        if fl is not None:
-            own = int(own_loc[k])
-            ring.append(next((int(v) for v in iverts[k] if int(loc[v]) == own), bnode[p][0][2]))
-        ring = _near180_filter(ring, V)
-        if _signed_area(V[ring]) > 0:
-            ring = ring[::-1]
-        new_iverts[k] = ring
-    rewritten = {k: r for k, r in sorted(flags.items()) if list(new_iverts[k]) != list(iverts[k])}
-    return new_iverts, V, rewritten, len(appended_rows)
+            reason = "corner-order" if on_boundary[k] else "interior-order"
+        rewritten[k] = reason
+    return V, new_iverts, rewritten, len(extra)
 
 
 def tessellate(tri, verts, iverts, points) -> tuple[np.ndarray, list, np.ndarray, TessellationReport]:
     """FloPy's ``tri2vor`` output made to tile the domain: ``(verts, iverts, points, report)``.
 
-    ``verts``/``iverts``/``points`` are what ``tri2vor(tri)`` returned. Cells FloPy got
-    right come back exactly as it wrote them; the rest are rewritten on its vertex ids,
-    appending a vertex only where FloPy has none. When FloPy's cell SET differs from the
-    dual's -- a domain part lost, a node outside the domain kept as a cell, cells Qhull
-    dropped -- the dual's cells are returned whole, renumbered, and a WARNING is logged.
-    Raises :class:`NotConformingDelaunay` for a mesh whose dual is not a tiling.
+    ``verts``/``iverts``/``points`` are what ``tri2vor(tri)`` returned. The cells are the
+    dual's (:func:`dual_cells`) on FloPy's vertex ids: a cell FloPy got right comes back
+    exactly as it wrote it, the rest are rewritten, and a vertex is appended only where
+    FloPy has none. When FloPy's cell SET differs from the dual's -- a domain part lost, a
+    node outside the domain kept as a cell -- the dual's cells are returned whole,
+    renumbered, and a WARNING is logged. Raises :class:`NotConformingDelaunay` for a mesh
+    whose dual is not a tiling.
     """
 
-    d_verts, d_iverts, d_points = dual_cells(tri)
+    d_verts, d_iverts, d_points, on_boundary = _dual(tri)
     flopy_points = np.asarray(points, dtype=float)
     ncell = len(iverts)
 
-    def adopt(reason):
+    if flopy_points.shape != d_points.shape or not np.array_equal(flopy_points, d_points):
+        lost = len({tuple(p) for p in d_points.tolist()} - {tuple(p) for p in flopy_points.tolist()})
+        extra = len({tuple(p) for p in flopy_points.tolist()} - {tuple(p) for p in d_points.tolist()})
+        reason = f"FloPy dropped {lost} cell(s) the mesh has and kept {extra} it has not"
         logger.warning(
             "the Voronoi grid's cells were rebuilt from Triangle's mesh (%s): FloPy's %d "
             "cells became %d, renumbered (ledgers 316, 317)", reason, ncell, len(d_iverts))
         return d_verts, d_iverts, d_points, TessellationReport(
             adopted=True, reason=reason, flopy_ncpl=ncell, ncpl=len(d_iverts))
-
-    if flopy_points.shape != d_points.shape or not np.array_equal(flopy_points, d_points):
-        lost = len({tuple(p) for p in d_points.tolist()} - {tuple(p) for p in flopy_points.tolist()})
-        extra = len({tuple(p) for p in flopy_points.tolist()} - {tuple(p) for p in d_points.tolist()})
-        return adopt(f"FloPy dropped {lost} cell(s) the mesh has and kept {extra} it has not")
-    try:
-        new_iverts, new_verts, rewritten, appended = _repair_in_place(verts, iverts, flopy_points, tri)
-    except _NotRepairable as exc:
-        return adopt(str(exc))
+    new_verts, new_iverts, rewritten, appended = _onto_flopy(d_verts, d_iverts, verts, iverts, on_boundary)
     report = TessellationReport(rewritten=rewritten, appended=appended, flopy_ncpl=ncell, ncpl=ncell)
     if report.changed:
         logger.info("Voronoi grid repaired: %s", report.summary())

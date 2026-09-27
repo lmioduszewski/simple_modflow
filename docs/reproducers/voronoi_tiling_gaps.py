@@ -59,6 +59,21 @@ WHAT IT MEASURES
   9. What the repair costs: its own CPU time inside ``GridSpec.resolve`` of the L, against
      the rest of the resolve. It runs on every grid the smoothing loop builds (six per
      resolve on the "balanced" profile), not only the last.
+ 10. What a fuzz pass found that the repair does not fix, and one thing it now refuses.
+     A ``points=`` point on a boundary edge to rounding -- the fuzz's own point, and one
+     computed as a fraction along the edge: how far off the edge, how many nodes Triangle
+     puts within a foot of it, how close the closest two are, and what the build says.
+     Then two pre-existing, reproduced here so they are not taken for the repair: the L
+     with a refinement box inside it on the default profile, and the L at a ``max_area``
+     far larger than its 400 ft arms.
+ 11. Why the repair matches FloPy's vertices to 1000 ulp and not to a fraction of the
+     circumradius: a 30-point star at (1.2e6, 6.5e5) ft ("baseline" profile, min angle 21,
+     ``max_area`` 10000 -- the star of ``tests/test_voronoi_tiling.py``). For every
+     circumcentre of Triangle's mesh, the distance to FloPy's nearest vertex: how many sit
+     within 1000 ulp, and how far, absolutely and as a fraction of the circumradius, the
+     nearest of the rest is.
+ 12. What FloPy writes: one DISV vertex at (1200000.123456789, 650000.987654321) through
+     ``write_simulation`` on FloPy's default float precision, read back from the file.
 """
 
 from __future__ import annotations
@@ -197,7 +212,11 @@ def _mf6(vor, iverts, ws: pathlib.Path):
 
 def main() -> None:
     warnings.simplefilter("ignore")
-    root = pathlib.Path(tempfile.mkdtemp())
+    with tempfile.TemporaryDirectory() as tmp:
+        _measure(pathlib.Path(tmp))
+
+
+def _measure(root: pathlib.Path) -> None:
 
     # 1. Mode 1 on the L.
     vor, tri = _grid(root, L_SHAPE, 5000, "l5000")
@@ -418,6 +437,94 @@ def main() -> None:
                   f"over {spent['calls']} grid builds")
     finally:
         voronoi_module.tessellate = original
+
+    # 10. The fuzz pass: a point on an edge to rounding, then two pre-existing failures.
+    from scipy.spatial import cKDTree
+
+    from myflopy.modflow.mf6.grid.tessellation import NotConformingDelaunay
+
+    star = Polygon([(661.8362256750904, 883.1029801823399), (511.91496377356594, 626.1164105850135),
+                    (397.21997094758257, 885.1137352756316), (386.40892476116454, 557.6707655713188),
+                    (109.1024319089716, 485.9970101374019), (370.24990640694506, 465.76037745899043),
+                    (347.44602898891804, 135.9209639441857), (475.2659797603329, 367.603618660851),
+                    (619.0565569568803, 109.47346703950711), (597.078140534828, 424.58165921244836)])
+    a, b = np.array(star.exterior.coords[1]), np.array(star.exterior.coords[2])
+    for label, point in (("the fuzz's point", (393.48212885521264, 771.9026644960962)),
+                         ("a + 0.3 (b - a)", tuple(a + 0.3 * (b - a))),
+                         ("a + 0.61 (b - a)", tuple(a + 0.61 * (b - a)))):
+        path = root / "point.gpkg"
+        gpd.GeoDataFrame({"name": ["p"]}, geometry=[Point(point)], crs=2927).to_file(path)
+        gpd.GeoDataFrame({"name": ["domain"]}, geometry=[star], crs=2927).to_file(root / "star.gpkg")
+        spec = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=root / "star.gpkg"), max_area=1000.0,
+                                   profile="clean", min_angle=29, points=[mf.GeoPackageSourceSpec(path=path)],
+                                   tessellation="flopy")
+        _, ptri = spec.resolve(workspace=root / f"point_{label[-4:]}", return_triangle=True)
+        nodes = np.asarray(ptri.verts)
+        try:
+            VoronoiGridPlus(ptri)
+            verdict = "the repaired grid builds"
+        except NotConformingDelaunay as exc:
+            verdict = f"refused: {str(exc)[:70]}..."
+        print(f"10. {label}, {star.exterior.distance(Point(point)):.2g} ft off the edge: "
+              f"{int((np.hypot(*(nodes - point).T) < 1).sum())} nodes within 1 ft, the closest two "
+              f"{cKDTree(nodes).query(nodes, k=2)[0][:, 1].min():.2g} ft apart; {verdict}")
+
+    path = root / "box.gpkg"
+    gpd.GeoDataFrame({"area": [2500.0]}, geometry=[box(50, 50, 300, 300)], crs=2927).to_file(path)
+    gpd.GeoDataFrame({"name": ["domain"]}, geometry=[L_SHAPE], crs=2927).to_file(root / "L.gpkg")
+    try:
+        mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=root / "L.gpkg"), max_area=10000.0, min_angle=28,
+                            refinement=mf.GeoPackageSourceSpec(path=path, fields={"area": "area"}),
+                            tessellation="flopy").resolve(workspace=root / "refined")
+        print("    the L with a refinement box inside it builds")
+    except Exception as exc:  # noqa: BLE001 - FloPy raises a bare Exception here; that is the finding
+        print(f"    the L with a refinement box inside it, default profile: {type(exc).__module__}."
+              f"{type(exc).__name__}: {str(exc)[:110]}")
+    for area in (1e5, 1e6):
+        g, _ = _grid(root, L_SHAPE, area, f"huge_{int(area)}")
+        print(f"    the L at max_area {area:,.0f}: {g.ncpl:,} cells, the smallest "
+              f"{min(c.area for c in _cells(g)):.2g} ft2")
+
+    # 11. How far FloPy's vertices sit from the exact circumcentres at state-plane magnitudes.
+    from myflopy.modflow.mf6.grid.tessellation import COINCIDENT_ULPS, _circumcentres
+
+    spikes = [(832.7, 272.9), (612.4, 462.2), (921.4, 419.7), (615.6, 483.0), (786.3, 790.1), (556.0, 600.6),
+              (678.2, 912.3), (548.8, 619.9), (619.0, 873.6), (483.2, 612.2), (424.1, 884.4), (447.4, 618.0),
+              (314.3, 889.7), (429.1, 601.4), (223.9, 828.8), (422.2, 586.8), (201.7, 831.2), (421.2, 587.3),
+              (214.9, 762.5), (415.1, 575.3), (148.3, 653.1), (374.1, 537.9), (110.1, 468.9), (398.8, 425.0),
+              (228.7, 147.6), (422.9, 396.5), (324.1, 127.7), (485.8, 376.2), (626.8, 108.6), (576.1, 415.4)]
+    star = Polygon([(1.2e6 + x, 6.5e5 + y) for x, y in spikes])
+    gpd.GeoDataFrame({"name": ["domain"]}, geometry=[star], crs=2927).to_file(root / "spikes.gpkg")
+    svor, stri = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=root / "spikes.gpkg"), max_area=10000.0,
+                                     profile="baseline", min_angle=21, tessellation="flopy").resolve(
+        workspace=root / "spikes", return_triangle=True)
+    P, T = np.asarray(stri.verts, dtype=float), np.asarray(stri.iverts, dtype=np.int64)
+    origin = P.min(axis=0)
+    cc = _circumcentres(P - origin, T) + origin
+    radius = np.hypot(*(cc - P[T[:, 0]]).T)
+    dist = cKDTree(np.asarray(svor.verts, dtype=float)).query(cc)[0]
+    tol = COINCIDENT_ULPS * float(np.spacing(np.abs(P).max()))
+    far = dist > tol
+    print(f"11. the star at (1.2e6, 6.5e5): {int((~far).sum())} of {len(cc)} circumcentres "
+          f"({100 * (~far).mean():.0f}%) on a FloPy vertex to within 1000 ulp ({tol:.2g} ft), "
+          f"{int((dist == 0).sum())} to the last bit; the nearest of the other {int(far.sum())} is "
+          f"{dist[far].min():.3g} ft away ({(dist[far] / radius[far]).min():.2g} of its circumradius), "
+          f"the farthest {(dist[far] / radius[far]).max():.2g} of it")
+
+    # 12. The precision FloPy writes a DISV vertex at.
+    sim = flopy.mf6.MFSimulation(sim_name="p", sim_ws=str(root / "precision"), exe_name="mf6")
+    flopy.mf6.ModflowTdis(sim)
+    flopy.mf6.ModflowIms(sim)
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="p")
+    x, y = 1200000.123456789, 650000.987654321
+    flopy.mf6.ModflowGwfdisv(gwf, nlay=1, ncpl=1, nvert=3, top=1.0, botm=[0.0],
+                             vertices=[[0, x, y], [1, x + 10, y], [2, x, y - 10]],
+                             cell2d=[[0, x + 3, y - 3, 3, 0, 1, 2]])
+    sim.write_simulation(silent=True)
+    text = (root / "precision" / "p.disv").read_text()
+    line = text[text.index("BEGIN vertices"):].splitlines()[1].split()
+    print(f"12. FloPy writes the vertex ({x}, {y}) as ({line[1]}, {line[2]}): "
+          f"{abs(float(line[1]) - x):.3g} and {abs(float(line[2]) - y):.3g} ft off")
 
 if __name__ == "__main__":
     main()

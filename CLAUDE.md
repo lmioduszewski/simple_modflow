@@ -489,7 +489,9 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4566 passed / 4 skipped**, 2026-09-26, ledger 336 on top of 332-335):
+- Full suite (**4575 passed / 4 skipped**, 2026-09-26, ledger 316's revision on top of 336):
+  `-n 10` **2m08s** in a detached checkout outside `.claude` at a load average of ~10.7;
+  serial not re-measured. Before it, 4566 passed / 4 skipped (ledger 336 on 332-335):
   serial (`-n0`) **7m32s** and `-n 10` **2m46s**, both in a detached checkout outside
   `.claude` (load average ~2.5 at the end). Before it, 4542 passed / 4 skipped (ledgers 332-335): serial (`-n0`)
   **7m00s** in a detached checkout outside `.claude` (so `test_docs_structure` runs its
@@ -1261,8 +1263,20 @@ copies now, and a result given a `grid=` of another cell count is refused at the
   Triangle's own mesh (`grid/tessellation.py`) and rewrites only the wrong ones, on
   FloPy's vertex ids: a grid with nothing wrong is byte-identical and keeps its pin; one
   that had a broken cell (every 270 deg reflex corner did) re-pins with no cell
-  renumbered. `tessellation_report` says what changed and carries `legacy_pin`, and a
-  package pinned to that is refused by a message naming the repair. Where FloPy's cell SET
+  renumbered. **Every returned ring IS the dual's ring under one relabelling** -- each
+  dual vertex gets FloPy's id at its location (to 1000 ulp) or an appended one, one to
+  one -- so no face can be lost; the first version kept FloPy's ring unless a detector
+  objected, and a fuzz pass found faces it missed (a Qhull-merged vertex accepted at 5% of
+  the circumradius, FloPy's 180-degree filter re-applied). Circumcentres within 1000 ulp
+  of the coordinates are ONE vertex (an edge of two ulps turned over under reprojection
+  and GEOS refused the grid), so two NODES that close, or a node whose circumcentres all
+  merge, have no cell left and are REFUSED by name rather than dropped -- a point
+  constraint on a boundary edge, or within rounding of one, can do that. The certificate
+  stays at 1e-9 of the edge: widened with the merge it passed a boundary circumcentre
+  outside the domain and returned a cell crossing itself. `tessellation_report` says what
+  changed and carries `legacy_pin` (FloPy's own pin), and a package pinned to that is
+  refused by a message naming the repair; one resolved under the FIRST version of the
+  repair (9bd3651) has no pin on record, and its refusal says so. Where FloPy's cell SET
   is wrong -- a boundary in two parts (ledger 317), a point outside the domain -- the
   dual's cells are taken whole, renumbered, logged at WARNING. `tessellation="flopy"`
   (on `GridSpec.voronoi` or `VoronoiGridPlus`) rebuilds FloPy's cells exactly, and a grid

@@ -247,8 +247,20 @@ def points_to_latlon(vor, x, y):
 def get_grid_centroid(vor):
     """
     Return the centroid of the Voronoi domain in lat/lon coordinates.
+
+    The union is taken of the REPROJECTED cells. A cell with an edge a few ulps long can
+    cross itself once reprojected -- 17 of 156,582 cells at (5e6, 5e6) ft in EPSG:2927 did,
+    each valid where it was drawn, and GEOS refused the union, so the grid did not build
+    (ledger 316; ``docs/reproducers/voronoi_centroid_reprojection.py``). The tessellation
+    no longer writes such edges; should GEOS refuse anyway, the centroid is taken in the
+    model's own coordinates and only that point is reprojected.
     """
-    return vor.gdf_latlon.union_all().centroid
+    try:
+        return vor.gdf_latlon.union_all().centroid
+    except shp.errors.GEOSException as exc:
+        logger.debug("grid centroid taken in model coordinates: the lat/lon cells do not union (%s)", exc)
+        centroid = vor.gdf_vorPolys.union_all().centroid
+        return gpd.GeoSeries([centroid], crs=vor.gdf_vorPolys.crs).to_crs(vor.crs_latlon).iloc[0]
 
 
 def get_overlapping_area(vor, shp_gpkg=None, cell_list=None):

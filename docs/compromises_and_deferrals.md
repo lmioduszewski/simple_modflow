@@ -14235,8 +14235,9 @@ same day, which is the useful part of the result.
 316. ~~**``GridSpec.voronoi`` cells do not tile a boundary with a reflex corner: two defects in FloPy's ``tri2vor``, measured and NOT yet repaired (2026-09-24).**~~
       **RESOLVED 2026-09-25**, in the commit after a69ac87: ``VoronoiGridPlus`` checks
       FloPy's cells against the dual of Triangle's own mesh and repairs the wrong ones
-      (``grid/tessellation.py``). Over the 1,266 grids of ``voronoi_tiling_sweep.py`` the
-      repaired grid leaves no gap, overshoot or overlap above 1e-6 ft² (the largest 1e-9),
+      (``grid/tessellation.py``). Over the grids of ``voronoi_tiling_sweep.py`` (1,266 then,
+      1,510 since the fuzz pass) the repaired grid leaves no gap, overshoot or overlap above
+      1e-6 ft²,
       and the L's flow comes back (28.1645 ft³/d at max_area 10000, where FloPy's cells gave
       26.7224). The design pass also found what the entry above did not list -- a kept
       on-boundary vertex duplicating its midpoint under another id, so MF6 drops a face
@@ -14254,14 +14255,78 @@ same day, which is the useful part of the result.
       logged at WARNING: a boundary in two parts (which resolves ledger 317's first half), a
       constraint point outside the domain kept as a cell, cells Qhull dropped. Nothing can be
       repaired in place when the cell is not there.
-      **Qhull's merged vertices are kept.** Far from the origin Qhull merges
-      near-cocircular facets into one vertex; the repair accepts FloPy's merged vertex
-      rather than splitting it (``QHULL_MERGE_RTOL``), so such a cell can sit a hundredth of
-      a foot off the exact cell and a face that short can stay unconnected. Splitting would
-      re-pin grids with nothing visibly wrong.
+      **A fuzz pass found the first version still losing faces; the rings are now the
+      dual's by construction** (2026-09-26). A fuzz pass of 494 generated grids -- stars,
+      holes, boundaries in parts, refinement, breaklines, point constraints, near-collinear
+      and short-edged boundaries, at the origin, (1.2e6, 6.5e5) and (5e6, 5e6) ft; its
+      harness is not checked in, and the sweep's parts E and F are the checked-in measure --
+      found 38 where the repaired grid still lost a face (always fewer than FloPy's cells
+      lost). That version kept a FloPy ring unless a detector objected, and three things got
+      past it. FloPy's vertex was taken for a circumcentre up to 5% of the circumradius
+      away, on the reading that Qhull's roundoff grows with the coordinates, which the
+      measurements do not bear out: no grid FloPy draws right at either offset has a ring
+      rewritten under a 1000-ulp match (part F), and on a spiky star at 1.2e6 96% of
+      circumcentres sit on FloPy's vertex and the nearest of the rest is 4.6e-4 ft away, in
+      cells FloPy drew wrong (``voronoi_tiling_gaps.py`` section 11). Of two nearby
+      circumcentres, one was accepted and the other appended. And FloPy's 180-degree
+      filter, re-applied to a rewritten ring, dropped a vertex the cell beside it kept. Now
+      each of the dual's vertices gets the FloPy id at its location (to 1000 ulp), or an
+      appended one, one to one, so every ring IS the dual's ring under that relabelling and
+      a face cannot be lost; a FloPy ring already equal to it is kept index for index.
+      **"Qhull's merged vertices are kept" is undone**: a cell drawn on a vertex no triangle
+      has is rewritten and its grid re-pins. Over the sweep's 1,510 grids -- 144 of them
+      spiky stars at the three offsets (part E), 100 grids FloPy gets right moved to the two
+      state-plane offsets (part F) -- no repaired grid loses a face, where FloPy's cells lost
+      361,957 in 810 grids, and of the 697 grids FloPy got right none changed; one more,
+      which tiled but held one location twice in a ring (a zero-width connection), was
+      rewritten.
+      **Circumcentres within 1000 ulp of the coordinates are one vertex** whatever the mesh
+      edge: the merge had been 1e-9 of the edge, finer than the coordinates at state plane,
+      and a star at (5e6, 5e6) carried cells with an edge of one to three ulps, 17 of which
+      turned over when ``get_grid_centroid`` reprojected them, so GEOS refused the union and
+      the grid did not build (``voronoi_centroid_reprojection.py``). That centroid now falls
+      back to the model's own coordinates if GEOS refuses again, which no grid measured
+      since does. **The certificate is NOT widened with it** -- it stays at 1e-9 of the edge:
+      widened, it passed a boundary circumcentre 2.1e-7 ft outside a half-disc and returned
+      a cell crossing itself (a review found it; now a test).
+      **Two nodes closer than 1000 ulp, and a node whose circumcentres all merge, are refused
+      by name, not dropped** -- the merge leaves either with no cell, and the second was
+      dropped without a word until a review found it. A ``points=`` point on a boundary
+      edge, or within rounding of it, can make Triangle pack hundreds of nodes around it
+      (section 10 of ``voronoi_tiling_gaps.py``: 0 and 1.5e-14 ft off the edge, 394 and 448
+      nodes within a foot, the closest 5.7e-14 ft apart; one 3.2e-14 ft off built normally),
+      on "baseline" and "clean" alike, so it is Triangle's refinement and not the smoothing
+      loop. The loop takes the refusal as a failed Voronoi build and falls back, which
+      rescues nothing when the pair was there before it started: the final build refuses.
+      The first version built such meshes -- at about 1 ulp its cells came out
+      counter-clockwise (the fuzz pass: 232 in one grid) -- and the cells between two nodes
+      1000 ulp apart are 2.3e-7 ft across at x = 1.2e6, far below the 0.01 ft FloPy writes a
+      coordinate to (section 12).
+      A ring check on the written coordinates was built and taken back out: a fan
+      triangle's turn is the sign of the certificate's own separation on that edge, so the
+      two could only disagree by rounding or by the merge -- a merged vertex moves up to 1000
+      ulp and can turn a fan triangle that small over, which a review's mesh does while
+      every cell stays valid (a test holds that) -- and the one disagreement found was a
+      boundary node's own vertex a spacing off the node, a false refusal.
+      **What the merge gives up, measured:** a face shorter than 1000 ulp is one vertex, not
+      two -- 98 faces in 4 of the star grids at (5e6, 5e6) and 2 in 2 at (1.2e6, 6.5e5)
+      (part E); FloPy writes a vertex to nine significant digits, 0.01 ft at x = 1.2e6
+      (``voronoi_tiling_gaps.py`` section 12), so no written grid held one anyway.
+      **A package resolved under the first version has no pin on record**: that version's
+      grids pinned differently and nothing kept their pin, so such a package meets the
+      generic "different mesh" refusal -- which now adds, on a repaired grid, that a
+      package resolved there under 9bd3651 kept every cell number. Only packages resolved
+      between that commit and this one are affected.
+      ``tests/test_voronoi_tiling.py`` gains nine tests (25 in all), and each of ten
+      single-piece mutations of the change fails a named one: the resolution merge, the
+      one-to-one assignment, the exact-ring comparison, the 1000-ulp match (the 5%-of-radius
+      rule put back passed every OTHER test with cells 0.3 ft off their own shape),
+      appending, both refusals, the strict certificate, the centroid fallback and the
+      first-version message.
       **It runs on every grid build, inside the smoothing loop too** (the user's call): the
-      repair is 15-21% on top of a ``GridSpec.resolve`` (section 9 of
-      ``voronoi_tiling_gaps.py``: 0.61 CPU s on top of 3.94 at 6,568 cells, over six builds), and
+      repair is 3-13% on top of a ``GridSpec.resolve`` (section 9 of
+      ``voronoi_tiling_gaps.py``: 0.50 CPU s on top of 4.07 at 6,568 cells, over six builds;
+      the first version measured 15-21%), and
       the final Triangle nodes are bit-identical with or without it. Repairing only the last
       grid would have cost about a sixth of that.
       **Old grids re-pin, on purpose** (the user's call: repair in place). A package pinned
@@ -14275,9 +14340,18 @@ same day, which is the useful part of the result.
       ``runs.summary`` and never built (ledger 330 records it); point constraints outside the boundary still reach
       Triangle; a refinement region crossing the boundary is clipped to an inset domain and
       meshes the sliver between (16-29x the nodes, pre-existing); profile "balanced"'s 2 ft
-      domain simplification. Not reported upstream.
-      Tests: ``tests/test_voronoi_tiling.py`` (16), where each of ten single-piece mutations
-      of the fix fails a named test. The reproducers now show FloPy's cells
+      domain simplification. Not reported upstream. **Found by the fuzz pass, pre-existing,
+      not examined** (section 10 reproduces the first two): the L with a refinement box
+      inside it fails on the default profile with FloPy's bare "duplicate points"
+      ``Exception`` from ``tri2vor``; a ``max_area`` far larger than a domain's arms meshes
+      the clip-inset sliver (the L at 1e6: 149,385 cells), which is also why the spiky stars
+      at ``max_area`` 10000 came to ~200,000 cells; a point constraint on a boundary edge is
+      refused, not snapped clear of it; breaklines that overlap or end on the boundary can
+      raise shapely's "A linearring requires at least 4 coordinates"; and some small or
+      thin boundaries raise "geometry does not contain any polygonal area after
+      preprocessing".
+      Tests: ``tests/test_voronoi_tiling.py`` (16 then, 21 after the fuzz pass), where each
+      of ten single-piece mutations of the fix fails a named test. The reproducers now show FloPy's cells
       (``tessellation="flopy"``) beside the repaired grid, and ``surface_domain_mask.py``
       builds FloPy's cells so ledger 314's numbers still reproduce.
 

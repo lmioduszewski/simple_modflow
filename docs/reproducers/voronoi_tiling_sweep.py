@@ -6,7 +6,7 @@ imports so the two cannot disagree about what a bad cell is.
 
     /home/lukem/python/envs/gw/bin/python docs/reproducers/voronoi_tiling_sweep.py
 
-1,266 grids on 10 processes: several minutes.
+1,510 grids on 10 processes: about half an hour.
 
 THE SETUP. A 1000 ft square less a wedge at (400, 400), so the domain has ONE reflex
 corner, of angle theta, rotated about (500, 500) so no answer rests on an axis-aligned
@@ -24,11 +24,38 @@ WHAT IT MEASURES
   C. The build path: flopy's own Triangle + VoronoiGrid at angle 20 (its default) and 32,
      and myflopy's "baseline" profile (no cleanup, no smoothing), at max_area 1000 and 5000.
   D. Convex domains, where only mode 2 can occur: a square and a 1500 x 600 rectangle.
+  E. Spiky stars -- 8 to 40 points, alternating long and short radii, seeded -- at the
+     origin, at (1.2e6, 6.5e5) and at (5e6, 5e6) ft, on the "baseline" and "clean"
+     profiles at max_area 1000 and 10000. Across a thin spike Qhull's Delaunay (of all
+     nodes) is not Triangle's, and state-plane coordinates are where a fuzz pass found the
+     first repair losing faces.
+  F. The grids FloPy gets right, moved: the square and rectangle of D (4 rotations x
+     max_area 500-20,000) and wedges of 190-210 deg (3 rotations x max_area 1000 and 5000),
+     at (1.2e6, 6.5e5) and (5e6, 5e6) ft. Qhull's roundoff grows with the coordinates, so
+     this is where a repair matching FloPy's vertices to 1000 ulp would re-pin a grid with
+     nothing wrong, if it were going to.
+
+Every grid, every part, also counts LOST FACES: mesh edges whose dual segment is longer
+than 1e-7 of the edge (an interior edge between two distinct circumcentres, a boundary
+edge whose circumcentre is not its midpoint) AND than 1000 ulp of the coordinates (9.3e-7
+ft at 5e6 -- the repair makes two circumcentres that close one vertex, and FloPy writes a
+vertex to nine significant digits anyway, ``voronoi_tiling_gaps.py`` section 12), and
+that the two cells do not share as a vertex pair, which is how MF6 DISV finds a face --
+for FloPy's cells and for the repaired grid. And for each grid FloPy got right (no lost face; no gap, overshoot or overlap; no
+ring holding one location twice, which is a zero-width MF6 connection), it says whether
+the repair changed it anyway: that would re-pin a grid with nothing wrong.
+
+A gap, overshoot or overlap is measured against the union of Triangle's triangles with
+GEOS, and on a grid of 200,000 cells a tenth of a foot across at state-plane coordinates
+the union itself is off (measured: 0.00065 ft2 of "overshoot" to which no cell contributes
+1e-9). So a misfit of the repaired grid above 1e-6 ft2 is re-measured cell by cell, where
+it is: each cell's own area outside the triangles near it, and the gap no cell covers.
 """
 
 from __future__ import annotations
 
 import collections
+import math
 import pathlib
 import sys
 import tempfile
@@ -53,10 +80,13 @@ ROTATIONS = (0, 7, 17, 29, 41, 53)
 AREAS = (500, 1000, 2000, 5000, 10000, 20000)
 ANGLES = (20, 25, 28, 30, 32, 33, 34)
 CONVEX = {"square": box(0, 0, 1000, 1000), "rectangle": box(0, 0, 1500, 600)}
+STAR_SEEDS = range(12)
+OFFSETS = ((0.0, 0.0), (1.2e6, 6.5e5), (5e6, 5e6))
 
 
-def _build(path: str, domain: Polygon, max_area: float, angle: float, profile: str | None):
-    root = pathlib.Path(tempfile.mkdtemp())
+def _build(path: str, domain: Polygon, max_area: float, angle: float, profile: str | None,
+           root: pathlib.Path | None = None):
+    root = pathlib.Path(tempfile.mkdtemp()) if root is None else root
     if path == "flopy":
         tri = Triangle(model_ws=str(root), angle=angle, maximum_area=max_area)
         tri.add_polygon(domain)
@@ -76,6 +106,58 @@ def _build(path: str, domain: Polygon, max_area: float, angle: float, profile: s
     return spec.resolve(workspace=root / "g", return_triangle=True)
 
 
+def _lost_faces(vor, tri, short: bool = False) -> int:
+    """Mesh faces the cells do not share as a vertex pair (see the module docstring).
+
+    ``short=True`` counts instead the faces longer than 1e-7 of their edge but NOT longer
+    than 1000 ulp: the ones the repair makes one vertex. Pass the repaired grid, which has a
+    cell for every node.
+    """
+    P = np.asarray(tri.verts, dtype=float)
+    T = np.asarray(tri.iverts, dtype=np.int64)
+    cell_of = {(float(x), float(y)): k for k, (x, y) in enumerate(np.asarray(vor.points))}
+    node_cell = [cell_of.get((float(x), float(y))) for x, y in P]
+    P = P - P.min(axis=0)  # the circumcentre below squares coordinates: 1e12 at state plane
+    a, b, c = P[T[:, 0]], P[T[:, 1]], P[T[:, 2]]
+    ba, ca = b - a, c - a
+    d = 2.0 * (ba[:, 0] * ca[:, 1] - ba[:, 1] * ca[:, 0])
+    b2, c2 = (ba**2).sum(1), (ca**2).sum(1)
+    cc = a + np.column_stack([(ca[:, 1] * b2 - ba[:, 1] * c2) / d, (ba[:, 0] * c2 - ca[:, 0] * b2) / d])
+    edges = collections.defaultdict(list)
+    for t, (i, j, k) in enumerate(T):
+        for u, v in ((i, j), (j, k), (k, i)):
+            edges[(min(u, v), max(u, v))].append(t)
+    resolvable = 1000 * float(np.spacing(np.abs(np.asarray(tri.verts, dtype=float)).max()))
+    want = set()
+    for (u, v), ts in edges.items():
+        if node_cell[u] is None or node_cell[v] is None:
+            continue
+        end = cc[ts[1]] if len(ts) == 2 else (P[u] + P[v]) / 2
+        dual, floor = np.hypot(*(cc[ts[0]] - end)), 1e-7 * np.hypot(*(P[u] - P[v]))
+        if (floor < dual <= resolvable) if short else dual > max(floor, resolvable):
+            want.add((min(node_cell[u], node_cell[v]), max(node_cell[u], node_cell[v])))
+    if short:
+        return len(want)
+    owner, have = {}, set()
+    for k, ring in enumerate(vor.iverts):
+        for i in range(len(ring)):
+            edge = frozenset((int(ring[i]), int(ring[(i + 1) % len(ring)])))
+            if edge in owner and owner[edge] != k:
+                have.add((min(owner[edge], k), max(owner[edge], k)))
+            owner[edge] = k
+    return len(want - have)
+
+
+def _star(seed: int) -> Polygon | None:
+    """8 to 40 points around (500, 500), alternating long and short radii, as a fuzz pass drew them."""
+    rng = np.random.default_rng(seed)
+    angles = np.unique(np.round(np.sort(rng.uniform(0, 2 * math.pi, int(rng.integers(8, 40)))), 4))
+    radius = np.where(np.arange(len(angles)) % 2 == 0, rng.uniform(380, 450, len(angles)),
+                      rng.uniform(25, 135, len(angles)))
+    star = Polygon([(500 + r * math.cos(t), 500 + r * math.sin(t)) for t, r in zip(angles, radius, strict=True)])
+    return star if star.is_valid else None
+
+
 def _mode2_events(tri, meshed: Polygon) -> int:
     vertices = Voronoi(tri.verts).vertices
     on_edge = [v for v in vertices if meshed.exterior.distance(Point(v)) < 1e-6]
@@ -87,26 +169,75 @@ def _mode2_events(tri, meshed: Polygon) -> int:
 
 
 def _one(task):
+    """One grid, measured in a temporary directory that is removed after it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        return _measure(task, pathlib.Path(tmp))
+
+
+def _measure(task, root: pathlib.Path):
     part, path, name, theta, rot, max_area, angle, profile = task
     warnings.simplefilter("ignore")
-    domain = _wedge_notch(theta, rot) if name == "wedge" else affinity.rotate(CONVEX[name], rot, origin="centroid")
+    import logging
+
+    logging.disable(logging.WARNING)  # the repair's adopted-grid WARNING, once per star
+    rotation, offset = rot if part == "F" else (rot, None)  # F carries (rotation, offset)
+    if name == "wedge":
+        domain = _wedge_notch(theta, rotation)
+    elif name == "star":
+        domain = affinity.translate(_star(theta), *rot)  # theta is the seed, rot the offset
+    else:
+        domain = affinity.rotate(CONVEX[name], rotation, origin="centroid")
+    if offset is not None:
+        domain = affinity.translate(domain, *offset)
     try:
-        vor, tri = _build(path, domain, max_area, angle, profile)
+        vor, tri = _build(path, domain, max_area, angle, profile, root)
     except Exception as exc:  # noqa: BLE001 - a failed build is a row, not the end of the sweep
         return dict(part=part, error=f"{type(exc).__name__}: {exc}")
+    from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+
+    try:
+        repaired = VoronoiGridPlus(tri)
+    except Exception as exc:  # noqa: BLE001 - a refused mesh is a row, not the end of the sweep
+        return dict(part=part, error=f"repair: {type(exc).__name__}: {exc}")
+    pieces = [Polygon(np.asarray(tri.verts)[t]) for t in np.asarray(tri.iverts)]
+    triangles = shapely.union_all(pieces)
+
+    def misfit(grid, local=False):
+        cells = _cells(grid)
+        union = shapely.union_all(cells)
+        gap, over = triangles.difference(union), union.difference(triangles)
+        total = gap.area + over.area + abs(sum(c.area for c in cells) - union.area)
+        if not local or total <= 1e-6:
+            return total
+        cell_tree, piece_tree = shapely.STRtree(cells), shapely.STRtree(pieces)
+        out = 0.0
+        for k in cell_tree.query(over):
+            near = shapely.union_all([pieces[j] for j in piece_tree.query(cells[k])])
+            out += cells[k].difference(near).area
+        uncovered = gap.difference(shapely.union_all([cells[k] for k in cell_tree.query(gap)])).area
+        overlap = 0.0
+        region = gap.union(over)
+        suspects = sorted(set(cell_tree.query(region.buffer(1.0))))
+        for k in suspects:
+            for j in cell_tree.query(cells[k]):
+                if j > k:
+                    overlap += cells[k].intersection(cells[j]).area
+        return out + uncovered + overlap
+
+    flopy_rings = [np.asarray(vor.verts, dtype=float)[list(ring)] for ring in vor.iverts]
+    ulps = 1000 * float(np.spacing(np.abs(np.asarray(tri.verts, dtype=float)).max()))
+    twice = sum(bool(np.any(np.hypot(*(ring - np.roll(ring, -1, axis=0)).T) < ulps)) for ring in flopy_rings)
+
+    row = dict(part=part, path=path, name=name, theta=theta, rot=rot, max_area=max_area, angle=angle,
+               profile=profile, ncell=vor.ncpl, after=misfit(repaired, local=True), before=misfit(vor), twice=twice,
+               lost=_lost_faces(vor, tri), lost_after=_lost_faces(repaired, tri), short=_lost_faces(repaired, tri, True),
+               changed=repaired.tessellation_report.changed)
+    if name == "star" or part == "F":
+        return row
     reference, meshed = _reference(vor, tri)
     bad = _bad(vor, reference)
     gap = meshed.difference(shapely.union_all(_cells(vor)))
-    from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
-
-    fixed = _cells(VoronoiGridPlus(tri))
-    triangles = shapely.union_all([Polygon(np.asarray(tri.verts)[t]) for t in np.asarray(tri.iverts)])
-    funion = shapely.union_all(fixed)
-    after = (triangles.difference(funion).area + funion.difference(triangles).area
-             + abs(sum(c.area for c in fixed) - funion.area))
-    row = dict(part=part, path=path, name=name, theta=theta, rot=rot, max_area=max_area, angle=angle,
-               profile=profile, ncell=vor.ncpl, mean_cell=meshed.area / vor.ncpl, gap=gap.area,
-               mode2=_mode2_events(tri, meshed), after=after)
+    row.update(mean_cell=meshed.area / vor.ncpl, gap=gap.area, mode2=_mode2_events(tri, meshed))
     if name == "wedge":
         apex = affinity.rotate(Point(400, 400), rot, origin=(500, 500))
         node = [k for k in range(vor.ncpl) if Point(vor.points[k]).distance(apex) < 1e-6]
@@ -139,6 +270,22 @@ def _tasks():
                 yield ("D", "flopy", name, 0, rot, area, 20, None)
                 yield ("D", "flopy", name, 0, rot, area, 32, None)
                 yield ("D", "myflopy", name, 0, rot, area, 32, None)
+    for seed in STAR_SEEDS:
+        if _star(seed) is None:
+            continue
+        for offset in OFFSETS:
+            for profile in ("baseline", "clean"):
+                for area in (1000, 10000):
+                    yield ("E", "myflopy", "star", seed, offset, area, 21, profile)
+    for offset in OFFSETS[1:]:
+        for name in CONVEX:
+            for rot in ROTATIONS[:4]:
+                for area in (500, 2000, 5000, 20000):
+                    yield ("F", "myflopy", name, 0, (rot, offset), area, 32, None)
+        for theta in (190, 200, 210):
+            for rot in (0, 17, 41):
+                for area in (1000, 5000):
+                    yield ("F", "myflopy", "wedge", theta, (rot, offset), area, 32, None)
 
 
 def _failure_table(rows, column, label):
@@ -164,10 +311,12 @@ def main() -> None:
     rows = [r for r in rows if "error" not in r]
     print(f"{len(tasks)} grids in {time.time() - start:.0f} s; {len(errors)} failed to build "
           f"{dict(collections.Counter(e['error'][:60] for e in errors))}")
-    missing = [r for r in rows if r["name"] == "wedge" and not r["corner_ok"]]
+    missing = [r for r in rows if r["name"] == "wedge" and r["part"] != "F" and not r.get("corner_ok")]
     print(f"wedges whose corner is not a node (not scored): {len(missing)}")
 
     part = [r for r in rows if r["part"] == "A"]
+    for r in part:
+        r.setdefault("corner_ok", False)
     _failure_table(part, lambda r: r["max_area"], "A. GridSpec.voronoi defaults, 6 rotations per cell")
     scored = [r for r in part if r.get("corner_ok")]
     print(f"  all: {sum(r['failed'] for r in scored)} of {len(scored)} corners failed; of those, "
@@ -203,9 +352,30 @@ def main() -> None:
             tail = (f"; worst {worst['gap']:,.0f} ft2 ({100 * worst['gap'] / (worst['mean_cell'] * worst['ncell']):.1f}% "
                     f"of the domain) at max_area {worst['max_area']}") if worst else ""
             print(f"  {name:9s} {path:7s} angle {angle}: {len(hit)} of {len(group)} grids have a gap{tail}")
+    print("\nE. spiky stars, 'baseline' and 'clean' profiles, max_area 1000 and 10000:")
+    for offset in OFFSETS:
+        group = [r for r in rows if r["part"] == "E" and tuple(r["rot"]) == offset]
+        print(f"  at {offset}: {sum(r['lost'] > 0 for r in group)} of {len(group)} grids lose faces on FloPy's "
+              f"cells ({sum(r['lost'] for r in group)} faces), {sum(r['lost_after'] > 0 for r in group)} on the "
+              f"repaired grid; {sum(r['before'] > 1e-6 for r in group)} leave a gap, overshoot or overlap on "
+              f"FloPy's cells, {sum(r['after'] > 1e-6 for r in group)} repaired; {sum(r['short'] for r in group)} "
+              f"faces no longer than 1000 ulp in {sum(r['short'] > 0 for r in group)} grids, made one vertex")
+    print("\nF. grids FloPy gets right, at state-plane offsets:")
+    for offset in OFFSETS[1:]:
+        group = [r for r in rows if r["part"] == "F" and tuple(r["rot"][1]) == offset]
+        good = [r for r in group if r["lost"] == 0 and r["before"] <= 1e-6 and not r["twice"]]
+        print(f"  at {offset}: FloPy's cells right in {len(good)} of {len(group)} grids; the repair changed "
+              f"{sum(r['changed'] for r in good)} of those; repaired, {sum(r['lost_after'] > 0 for r in group)} lose "
+              f"a face and {sum(r['after'] > 1e-6 for r in group)} leave a gap, overshoot or overlap")
     worst = max(rows, key=lambda r: r["after"])
+    right = [r for r in rows if r["lost"] == 0 and r["before"] <= 1e-6 and not r["twice"]]
     print(f"\nREPAIRED (the default): {sum(r['after'] > 1e-6 for r in rows)} of {len(rows)} grids leave a gap, "
-          f"overshoot or overlap above 1e-6 ft2; the largest is {worst['after']:.2g} ft2")
+          f"overshoot or overlap above 1e-6 ft2 (the largest {worst['after']:.2g} ft2), and "
+          f"{sum(r['lost_after'] > 0 for r in rows)} lose a face, where FloPy's cells lost "
+          f"{sum(r['lost'] for r in rows)} faces in {sum(r['lost'] > 0 for r in rows)} grids. Of the "
+          f"{len(right)} grids FloPy got right, the repair changed {sum(r['changed'] for r in right)}; "
+          f"{sum(r['twice'] > 0 and r['lost'] == 0 and r['before'] <= 1e-6 for r in rows)} more tiled but "
+          "held a location twice in a ring, and the repair took the zero-width connection out.")
 
 
 if __name__ == "__main__":

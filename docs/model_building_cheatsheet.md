@@ -539,6 +539,13 @@ between: 6,903 nodes against 493 for the same box kept 50 ft clear (the L, `max_
 5000, refinement 1000), and 44,324 around a hole. Stop refinement polygons about a cell
 width short of the edge.
 
+**Keep point constraints off the boundary.** A `points=` point on a boundary edge, or
+within rounding of one, can make Triangle pack hundreds of nodes around it -- measured
+at 0 and 1.5e-14 ft off the edge: 394 and 448 nodes within a foot, the closest two
+5.7e-14 ft apart, where no cell has any area. The grid is refused by name, with where
+and how far apart (ledger 316). Not every such point does it -- one 3.2e-14 ft off the
+same edge built normally -- so move a point clear of the edge rather than trusting it.
+
 **Sources must be file-backed.** A `GridSpec` is a serializable recipe — it has to
 survive `to_dict()` / `from_yaml()` — so an in-memory GeoDataFrame cannot be one.
 If you built your refinement polygons programmatically, write them out first:
