@@ -6,7 +6,8 @@ imports so the two cannot disagree about what a bad cell is.
 
     /home/lukem/python/envs/gw/bin/python docs/reproducers/voronoi_tiling_sweep.py
 
-1,510 grids on 10 processes: about half an hour.
+1,510 grids on 10 processes: about 3-8 minutes (half an hour before the sizing fix of 2026-09-28,
+which removed the ~200,000-cell sliver meshes).
 
 THE SETUP. A 1000 ft square less a wedge at (400, 400), so the domain has ONE reflex
 corner, of angle theta, rotated about (500, 500) so no answer rests on an axis-aligned

@@ -14347,19 +14347,19 @@ same day, which is the useful part of the result.
       than the file can write either way, and joined, six of the sweep's spiky stars at
       state plane refused to build as GRIDS; split, they build, and the model build refuses
       what the file would actually hold -- where more digits can still hold it.
-      **Over the sweep's 1,510 grids** (``voronoi_tiling_sweep.py``, re-run): every grid
-      builds; none loses a face the file can hold; of the 702 FloPy gets right none
-      changed and none writes a zero-length face. Faces WRITTEN with zero length: FloPy's
-      cells 309 in 41 grids, the repair as bb56668 built it 23,484 in 41, now 679 in 17 --
-      every one a spiky star at (1.2e6, 6.5e5) or (5e6, 5e6), most of them the
-      38,000-41,000-cell meshes of the clip-inset sliver (the "max_area far larger than a
-      domain's arms" item below) where a cell is smaller than the file can write, and
-      the rest faces FloPy drew itself; those models are refused at build rather than
-      run to NaN. 53,542 dual vertices were joined in 43 grids (5 of them grids FloPy gets
-      right, where joining gave FloPy's own rings back). The price: 11 grids now miss the
-      triangles by more than 1e-6 ft² -- a joined corner moves by less than one written
-      unit -- the largest 1.7 ft² on a 37,978-cell sliver star whose FloPy cells miss by
-      2,480 ft²; every vertex at state plane is written up to 0.005 ft off in any case.
+      **Over the sweep's 1,510 grids** (``voronoi_tiling_sweep.py``, re-run with all of ledger
+      316's 2026-09-28 fixes): every grid builds; none loses a face the file can hold; of the
+      702 FloPy gets right none changed and none writes a zero-length face. Faces WRITTEN
+      with zero length: FloPy's cells 43 in 37 grids, the repair as bb56668 built it 144 in
+      35, now 17 in 2 -- one spiky star on the "baseline" profile at both offsets, its cells
+      squeezed against a 0.00145 ft segment the GEOS offset left in the background sizing
+      ring (the "clean" profile's 2 ft simplify removes it); those models are refused at
+      build. Before the sizing fix ((2) below) the same run had 679 in 17, most of them in the
+      ~200,000-cell sliver meshes. 220 dual vertices were joined in 41 grids (5 of them grids
+      FloPy gets right, where joining gave FloPy's own rings back). The price: 16 grids miss
+      the triangles by more than 1e-6 ft² -- a joined corner moves by less than one written
+      unit -- the largest 0.11 ft² on a star whose FloPy cells miss by 2,050 ft²; every
+      vertex at state plane is written up to 0.005 ft off in any case.
       **A model whose DISV would be written with a zero-length face is refused at build**
       (``grid_identity.zero_length_faces``, naming the cells), whatever made the grid: one
       rebuilt from a frozen snapshot or a pickle is the grid that ran and is never
