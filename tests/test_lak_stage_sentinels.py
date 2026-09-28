@@ -349,11 +349,11 @@ def test_the_files_pest_reads_agree_row_for_row_and_have_no_empty_field(
 
     model = lak_stage_runs["dry"]
     _raw(model)
-    # With values: a template (no values) dies earlier, in the build, on a
-    # missing ``time`` column (ledger 329, found and not fixed).
-    targets = mf.LakeStageTargets(
-        locations=dict(zip(names, (0, 1), strict=True)),
-        values=pd.DataFrame({"time": range(NPER), names[0]: 100.5, names[1]: 104.0}))
+    # A template (no values): the FILES are what this pins, not which rows a target
+    # names -- and the observation route's rows are MF6 times, which a period key
+    # does not match (the build refuses one, ledger 340). A template used to die in
+    # the build on a missing ``time`` column (ledger 329); it registers now.
+    targets = mf.LakeStageTargets(locations=dict(zip(names, (0, 1), strict=True)))
     series = targets.simulated_series(model)
     project = SimpleNamespace(model=model, template_workspace=tmp_path,
                               pf=SimpleNamespace(add_observations=lambda *a, **k: None))

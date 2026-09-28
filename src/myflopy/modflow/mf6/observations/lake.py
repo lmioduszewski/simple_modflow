@@ -15,9 +15,9 @@ from myflopy.modflow.mf6.observations._shared import (
     _default_compare_stats,
     _default_obs_csv_name,
     _find_named_observation_output,
+    _measured_periods,
     _normalize_compare_time,
     _normalize_lake_stage_values,
-    _numeric_periods,
     _observation_label,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
@@ -100,13 +100,20 @@ class LakeStageTargets:
         is one series and needs exactly one named lake (``ValueError``
         otherwise). Names are NOT checked against ``locations`` and are joined
         to them exactly (case counts): a row naming no target gets no ``lake``
-        and no simulated stage in :meth:`compare`.
-        Default ``None`` makes a template that only captures simulated series.
+        and no simulated stage in :meth:`compare`, and the PEST build refuses
+        it. A blank value (missing, or empty text) is unmeasured; any other
+        entry that is not a number raises ``ValueError`` naming the target and
+        its column (ledger 340).
+        Default ``None`` makes a template that only captures simulated series:
+        observed, its rows register at weight 0; forecast, every row is a
+        forecast.
     time_column : str, optional
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
-        ``times`` is applied. :meth:`compare` reads it as a zero-based integer
-        -- see there for what it is matched against on each route.
+        ``times`` is applied. :meth:`compare` and the PEST build read it as a
+        zero-based stress period, by number (``1.0`` is period 1; a fraction
+        raises) -- see :meth:`compare` for what it is matched against on each
+        route.
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed stage, matched
         ignoring case. Default ``"stage"``.
@@ -168,6 +175,7 @@ class LakeStageTargets:
             time_column=self.time_column,
             value_column=self.value_column,
             times=self.times,
+            owner=type(self).__name__,
         )
         if not self._values.empty and "name" not in self._values.columns:
             if len(self._series) != 1:
@@ -472,8 +480,9 @@ class LakeStageTargets:
         ValueError
             On the stage-file route, when a period the stage file saved lacks its
             final step or a lake's copies in one record disagree (as
-            :meth:`simulated_series`), or when a target's ``time`` is not a
-            number.
+            :meth:`simulated_series`); or when a target's ``time`` is not a
+            whole number, or two rows hold a value for one target in one period
+            (the period rule PEST's build reads too, ledger 340).
         """
 
         definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
@@ -495,7 +504,9 @@ class LakeStageTargets:
             compare["stage_target"] = np.nan
         else:
             targets = self.get().copy()
-            targets["per"] = _numeric_periods(targets, caller="LakeStageTargets.compare(...)")
+            targets["per"] = _measured_periods(
+                targets, value_column="stage", caller="LakeStageTargets.compare(...)"
+            )
             if "stage" in targets.columns and "stage_target" not in targets.columns:
                 targets = targets.rename(columns={"stage": "stage_target"})
             compare = targets.merge(simulated, on=["name", "lake", "per"], how="left")

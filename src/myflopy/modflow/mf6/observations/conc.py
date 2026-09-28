@@ -45,7 +45,9 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
         form (``name`` and ``value_column`` columns), WIDE form (one column per
         location) or as one series when there is a single location. Every name
         must match a location (stripped, ignoring case) or ``ValueError``.
-        Units are the transport model's concentration units.
+        Units are the transport model's concentration units. A blank value (missing, or empty text) is unmeasured; any other
+        entry that is not a number raises ``ValueError`` naming the target and
+        its column (ledger 340).
     name_column : str, optional
         Column of ``locations`` holding each location's name. Default
         ``"name"``; required.
@@ -63,8 +65,10 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
         ``"weight"``; ``None`` or absent leaves ``NaN``.
     time_column : str, optional
         Column of ``values`` holding each row's time label, read as a zero-based
-        stress period by :meth:`compare` and the PEST route. Default ``"time"``;
-        required once ``times`` is applied.
+        stress period, by number, by :meth:`compare` and the PEST build: ``1.0``
+        is period 1, and a fraction, or two values for one location in one
+        period, raises ``ValueError``. Default ``"time"``; required once
+        ``times`` is applied.
     value_column : str, optional
         Column of a LONG ``values`` table holding the concentration, matched
         ignoring case. Default ``"conc"`` -- the one default that differs from

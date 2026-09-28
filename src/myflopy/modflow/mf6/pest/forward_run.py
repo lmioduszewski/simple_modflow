@@ -62,14 +62,21 @@ def apply_pilotpoints_to_array(parameter_csv, points_meta_csv, cells_meta_csv, a
     np.savetxt(array_file, arr.reshape(-1, 1), fmt="%.10E")
 
 
-def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None):
+def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim_ws="."):
     """Write simulated heads at each stress period's END for named target locations.
 
-    Post-model command in the native forward run. A period's head is the one that
-    ENDS it, picked by the one rule every target reads
-    (``myflopy.modflow.mf6.period_end``, ledger 336) on the head file's own clock
-    -- the rule ``HeadTargets.simulated_heads`` applied to the base run this
-    realization is compared with. It kept its own copy of that rule until then.
+    Post-model command in the native forward run, and the ONE writer of this file:
+    the build writes the base run's copy by calling this same function (ledger
+    340). PEST's instruction file reads the CSV by POSITION -- the n-th comma of
+    the m-th line -- and names what it reads after the BASE copy's header, so the
+    two copies must hold the same columns in the same order. They did not: the
+    base copy was a pivot, whose columns pandas SORTS, and this wrote mapping
+    order, so targets named W2, W1, W10 handed PEST W1's head as W10's in every
+    realization while ``compare()`` paired them correctly.
+
+    A period's head is the one that ENDS it, picked by the one rule every target
+    reads (``myflopy.modflow.mf6.period_end``, ledger 336) on the head file's own
+    clock.
 
     Self-contained: pyEMU copies only this function's source into the generated
     forward run, so its imports live inside it.
@@ -77,13 +84,15 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None):
     Parameters
     ----------
     model_name : str
-        The flow model's name; its head file is ``<model_name>.hds`` in the
-        working directory.
-    mapping_csv : str
+        The flow model's name; its head file is ``<model_name>.hds`` in
+        ``sim_ws``.
+    mapping_csv : str or pathlib.Path
         The target map the build wrote: ``obsname``/``name``, ``layer``, ``cell``.
-    output_csv : str
-        The simulated CSV to write, one row per stress period, one column per
-        observation label.
+        Its row order IS the column order written.
+    output_csv : str or pathlib.Path
+        The simulated CSV to write: ``per``, then one column per mapping row
+        (its ``obsname``, else its ``name``) in mapping order; one row per stress
+        period the head file saved.
     perlen : list of float, optional
         Each stress period's length, recorded from the TDIS at build time. With
         it a period whose final step the head file does not hold is REFUSED --
@@ -91,6 +100,9 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None):
         ATS can move a ``STEPS`` save off the end in one realization and not
         another. ``None`` (a forward run generated before ledger 336) takes each
         period's last saved step unchecked.
+    sim_ws : str or pathlib.Path, default "."
+        The directory holding the head file: the forward run's working
+        directory, or the model workspace when the build writes the base copy.
 
     Raises
     ------
@@ -98,12 +110,15 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None):
         With ``perlen``, when a period the head file saved lacks its final step.
     """
 
+    # Imported here, not hoisted: pyEMU copies only this function's source.
+    from pathlib import Path
+
     import flopy
 
     from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
 
     mapping = pd.read_csv(mapping_csv)
-    hds = flopy.utils.HeadFile(f"{model_name}.hds")
+    hds = flopy.utils.HeadFile(str(Path(sim_ws) / f"{model_name}.hds"))
     try:
         ends = period_end_steps(
             saved_steps(hds), perlen=perlen, file=f"{model_name}.hds", saves="HEAD"
@@ -126,7 +141,7 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None):
         hds.close()
 
 
-def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None):
+def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim_ws="."):
     """Write simulated concentrations at each stress period's END for named target locations.
 
     The concentration twin of ``_write_head_target_csv``, and deliberately the
@@ -134,22 +149,30 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None):
     period-end rule picks (ledger 336). The named-series helper would instead
     reload the whole simulation on every forward run, and its ``all_conc`` read
     is kind-gated, so it would have to resolve to the GWT model rather than the
-    flow model it loads by default.
+    flow model it loads by default. Like it, this is the ONE writer of its file:
+    the build writes the base run's copy through it (ledger 340), so the columns
+    PEST's positional instruction file names and the ones every realization
+    writes are one list in one order.
 
     Parameters
     ----------
     model_name : str
         The TRANSPORT model's name -- the ``.ucn`` sits beside the flow model's
-        ``.hds`` at the workspace root because the simulation is flat.
-    mapping_csv : str
+        ``.hds`` in ``sim_ws`` because the simulation is flat.
+    mapping_csv : str or pathlib.Path
         The target map the build wrote: ``obsname``/``name``, ``layer``, ``cell``.
-    output_csv : str
-        The simulated CSV to write, one row per stress period.
+        Its row order IS the column order written.
+    output_csv : str or pathlib.Path
+        The simulated CSV to write: ``per``, then one column per mapping row in
+        mapping order; one row per stress period the file saved.
     perlen : list of float, optional
         Each stress period's length, recorded from the TDIS at build time; with
         it a period whose final step the file does not hold is refused (see
         ``_write_head_target_csv``). ``None`` takes each period's last saved step
         unchecked.
+    sim_ws : str or pathlib.Path, default "."
+        The directory holding the ``.ucn``: the forward run's working directory,
+        or the model workspace when the build writes the base copy.
 
     Raises
     ------
@@ -158,12 +181,17 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None):
         final step.
     """
 
+    # Imported here, not hoisted: pyEMU copies only this function's source.
+    from pathlib import Path
+
     import flopy
 
     from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
 
     mapping = pd.read_csv(mapping_csv)
-    ucn = flopy.utils.HeadFile(f"{model_name}.ucn", text="concentration")
+    ucn = flopy.utils.HeadFile(
+        str(Path(sim_ws) / f"{model_name}.ucn"), text="concentration"
+    )
     try:
         ends = period_end_steps(
             saved_steps(ucn), perlen=perlen, file=f"{model_name}.ucn", saves="CONCENTRATION"
@@ -186,7 +214,7 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None):
         ucn.close()
 
 
-def write_named_series_targets(kind, locations_file, output_csv, sim_ws="."):
+def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", model_name=None):
     """Regenerate one lake/SFR/DRN simulated-target CSV in the native forward run.
 
     Post-model command for named-series observations (lake stage, SFR stage/flow,
@@ -223,6 +251,12 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws="."):
         The simulated CSV to write, the file pyEMU's instruction file reads.
     sim_ws : str or pathlib.Path, default "."
         The just-run MF6 workspace to reload.
+    model_name : str or None, optional
+        The CALIBRATED model's name, which the build records. ``None`` (a
+        forward run generated before ledger 340) reloads the simulation's first
+        GWF model -- which, in a simulation of several, handed PEST another
+        model's lake, reach or zone every realization while the base run's
+        values came from the calibrated one.
 
     Raises
     ------
@@ -250,7 +284,7 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws="."):
                 lambda text: [int(v) for v in str(text).split(",") if str(v).strip() != ""]
             )
 
-    model = mf.load_mf6_run(Path(sim_ws), verbosity_level=0)
+    model = mf.load_mf6_run(Path(sim_ws), model_name=model_name, verbosity_level=0)
     model.load_all()
 
     builders = {

@@ -18,11 +18,6 @@ HeadTargets``.
 
 from __future__ import annotations
 
-# Redundant alias: private but part of the package-root contract — the pest
-# package reuses pyEMU's row-labeling rule through it (plan 4.1 note).
-from myflopy.modflow.mf6.observations._shared import (
-    _normalize_row_labels as _normalize_row_labels,
-)
 from myflopy.modflow.mf6.observations.conc import (
     ConcTargets,
 )

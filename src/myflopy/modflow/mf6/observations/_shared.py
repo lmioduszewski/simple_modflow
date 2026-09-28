@@ -46,26 +46,100 @@ def _normalize_identifier_series(values: pd.Series) -> pd.Series:
     return values.astype(str).str.strip().str.lower()
 
 
-def _normalize_row_labels(values: pd.Series) -> pd.Series:
-    """Normalize time/per labels using pyEMU-compatible row naming rules.
+def _shown(value) -> str:
+    """A value for a message as the user wrote it -- ``1.5``, not ``np.float64(1.5)``."""
 
-    pyEMU lower-cases row labels, trims whitespace, and appends a suffix such as
-    ``_2`` when the same row label appears multiple times. Reusing that rule
-    lets :class:`HeadTargets` assign target values to the exact observation
-    names constructed by ``pyemu.utils.PstFrom.add_observations(...)``.
+    if isinstance(value, np.generic):
+        value = value.item()
+    return repr(value)
+
+
+def _is_blank(value) -> bool:
+    """True for an entry that means "not measured": missing, or empty or blank text."""
+
+    if isinstance(value, str):
+        return not value.strip()
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        # ``pd.isna`` of a list or an array answers elementwise, which ``bool``
+        # refuses; such an entry is not a blank, and the numeric conversion that
+        # follows refuses it by name.
+        return False
+
+
+def _coerce_target_values(
+    long: pd.DataFrame,
+    column: str,
+    *,
+    owner: str,
+    source: pd.Series | str,
+) -> pd.Series:
+    """A target table's measured values as floats: a BLANK is unmeasured, anything else a number.
+
+    ``pd.to_numeric(errors="coerce")`` read both the same way -- a blank cell and a
+    typo like ``"12,5"`` or ``"dry"`` each became ``NaN`` -- so a value that failed
+    to parse was quietly unmeasured (ledger 340). The two are told apart BEFORE the
+    conversion: an entry that is missing, or text that is empty or blank, is
+    ``NaN``; one that parses as a number is that number; anything else is refused.
+
+    Parameters
+    ----------
+    long : pandas.DataFrame
+        The normalized long table: ``column`` plus, for the message, ``name`` and
+        ``time`` where it has them.
+    column : str
+        The column of ``long`` holding the raw values.
+    owner : str
+        The target class, named in the error (``"HeadTargets"``).
+    source : pandas.Series or str
+        Where each value came from in the caller's own table -- the value column
+        of a LONG table, or the target's own column of a WIDE one -- as a Series
+        aligned with ``long``, or one name for every row.
+
+    Returns
+    -------
+    pandas.Series
+        ``column`` as float, ``NaN`` exactly where the entry was blank.
+
+    Raises
+    ------
+    ValueError
+        When any entry is neither blank nor a number, naming up to five by target,
+        time, the entry and its column.
     """
 
-    labels = values.astype(str).str.strip().str.lower().tolist()
-    visit: dict[str, int] = {}
-    normalized: list[str] = []
-    for label in labels:
-        if label in visit:
-            visit[label] += 1
-            normalized.append(f"{label}_{visit[label]}")
-        else:
-            visit[label] = 1
-            normalized.append(label)
-    return pd.Series(normalized, index=values.index, name="row_label")
+    raw = long[column]
+    blank = raw.map(_is_blank).astype(bool)
+    numbers = pd.to_numeric(raw.where(~blank), errors="coerce").astype(float)
+    failed = pd.Series(False, index=long.index)
+    for index in (~blank & numbers.isna())[lambda held: held].index:
+        # What pandas would not read, Python may (``"1_000"``); text that says
+        # "nan" is a number that is missing, which is a blank written out.
+        try:
+            numbers.at[index] = float(str(raw.at[index]).strip())
+        except ValueError:
+            failed.at[index] = True
+    if failed.any():
+        sources = source if isinstance(source, pd.Series) else pd.Series(source, index=long.index)
+        offenders = [
+            f"{_shown(long.at[index, 'name'])} at time {_shown(long.at[index, 'time'])} "
+            f"holds {_shown(raw.at[index])} (column {_shown(sources.at[index])})"
+            if {"name", "time"} <= set(long.columns)
+            else f"{_shown(raw.at[index])} (column {_shown(sources.at[index])})"
+            for index in failed[failed].index[:5]
+        ]
+        more = int(failed.sum()) - len(offenders)
+        raise ValueError(
+            f"{owner} values must be numbers, or blank where a target was not "
+            f"measured, and {int(failed.sum())} are neither: "
+            + "; ".join(offenders)
+            + (f"; and {more} more" if more else "")
+            + ". A blank is read as unmeasured; an entry that is not a number is "
+            "not read as one, because a typo would then silently drop the "
+            "measurement from PEST."
+        )
+    return numbers
 
 
 def _observation_label(value: str) -> str:
@@ -297,8 +371,13 @@ def _normalize_values_frame(
     time_column: str,
     value_column: str,
     times=None,
+    owner: str = "HeadTargets",
 ) -> pd.DataFrame:
-    """Normalize long or wide target tables to a consistent long format."""
+    """Normalize long or wide target tables to a consistent long format.
+
+    A blank value is ``NaN`` (unmeasured) and any other value must be a number
+    (:func:`_coerce_target_values`, which names ``owner`` when it refuses one).
+    """
 
     if isinstance(values, pd.Series):
         index_name = values.index.name or time_column
@@ -341,10 +420,12 @@ def _normalize_values_frame(
                 explicit_value_column: "head_target",
             }
         ).loc[:, ["time", "name", "head_target"]]
+        source = explicit_value_column
     elif name_column is None and explicit_value_column is not None and len(frame.columns) == 2:
         long = frame.rename(columns={time_column: "time", explicit_value_column: "head_target"}).loc[
             :, ["time", "head_target"]
         ]
+        source = explicit_value_column
     else:
         value_columns = [column for column in frame.columns if column != time_column]
         long = frame.melt(
@@ -353,12 +434,12 @@ def _normalize_values_frame(
             var_name="name",
             value_name="head_target",
         ).rename(columns={time_column: "time"})
+        source = long["name"]
 
     if "name" in long.columns:
         long["name"] = long["name"].astype(str)
         long["name_key"] = _normalize_identifier_series(long["name"])
-    long["row_label"] = _normalize_row_labels(long["time"])
-    long["head_target"] = pd.to_numeric(long["head_target"], errors="coerce")
+    long["head_target"] = _coerce_target_values(long, "head_target", owner=owner, source=source)
     return _copy_frame(long)
 
 
@@ -533,8 +614,13 @@ def _normalize_lake_stage_values(
     time_column: str,
     value_column: str,
     times=None,
+    owner: str = "LakeStageTargets",
 ) -> pd.DataFrame:
-    """Normalize lake-stage target values to a long format."""
+    """Normalize lake-stage target values to a long format.
+
+    A blank stage is ``NaN`` (unmeasured) and any other entry must be a number
+    (:func:`_coerce_target_values`).
+    """
 
     if values is None:
         return pd.DataFrame(columns=["time", "name", "stage"])
@@ -575,10 +661,12 @@ def _normalize_lake_stage_values(
                 explicit_value_column: "stage",
             }
         ).loc[:, ["time", "name", "stage"]]
+        source = explicit_value_column
     elif name_column is None and explicit_value_column is not None and len(frame.columns) == 2:
         long = frame.rename(columns={time_column: "time", explicit_value_column: "stage"}).loc[
             :, ["time", "stage"]
         ]
+        source = explicit_value_column
     else:
         value_columns = [column for column in frame.columns if column != time_column]
         long = frame.melt(
@@ -587,9 +675,10 @@ def _normalize_lake_stage_values(
             var_name="name",
             value_name="stage",
         ).rename(columns={time_column: "time"})
+        source = long["name"]
     if "name" in long.columns:
         long["name"] = long["name"].astype(str)
-    long["stage"] = pd.to_numeric(long["stage"], errors="coerce")
+    long["stage"] = _coerce_target_values(long, "stage", owner=owner, source=source)
     return _copy_frame(long)
 
 
@@ -637,8 +726,13 @@ def _normalize_named_series_values(
     value_column: str,
     output_column: str,
     times=None,
+    owner: str = "target",
 ) -> pd.DataFrame:
-    """Normalize long or wide named-series targets to one long table."""
+    """Normalize long or wide named-series targets to one long table.
+
+    A blank value is ``NaN`` (unmeasured) and any other entry must be a number
+    (:func:`_coerce_target_values`, which names ``owner`` when it refuses one).
+    """
 
     if values is None:
         return pd.DataFrame(columns=["time", "name", output_column])
@@ -681,10 +775,12 @@ def _normalize_named_series_values(
                 explicit_value_column: output_column,
             }
         ).loc[:, ["time", "name", output_column]]
+        source = explicit_value_column
     elif name_column is None and explicit_value_column is not None and len(frame.columns) == 2:
         long = frame.rename(columns={time_column: "time", explicit_value_column: output_column}).loc[
             :, ["time", output_column]
         ]
+        source = explicit_value_column
     else:
         value_columns = [column for column in frame.columns if column != time_column]
         long = frame.melt(
@@ -693,24 +789,141 @@ def _normalize_named_series_values(
             var_name="name",
             value_name=output_column,
         ).rename(columns={time_column: "time"})
+        source = long["name"]
     if "name" in long.columns:
         long["name"] = long["name"].astype(str)
-    long[output_column] = pd.to_numeric(long[output_column], errors="coerce")
+    long[output_column] = _coerce_target_values(long, output_column, owner=owner, source=source)
     return _copy_frame(long)
 
 
 def _numeric_periods(frame: pd.DataFrame, *, caller: str) -> pd.Series:
-    """Return zero-based stress periods parsed from a target/result frame."""
+    """Zero-based stress periods read from a table's ``per`` (else ``time``) column.
+
+    The ONE reading of a target's key as a period, for every family and route and
+    for PEST's build (ledger 340). A period is a whole number: ``1.0`` is period 1,
+    and a key with a fraction is REFUSED. It used to be truncated, so a target at
+    ``10.9`` read period 10's value, and one at ``3.3333`` period 3's, with nothing
+    said -- while the PEST build, matching by the key's spelling, dropped both.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        A target or result table with a ``per`` or ``time`` column (``per``
+        wins when it has both).
+    caller : str
+        What is reading it, named in the error (``"HeadTargets.compare(...)"``).
+
+    Returns
+    -------
+    pandas.Series
+        The periods as ``int``, aligned with ``frame``.
+
+    Raises
+    ------
+    ValueError
+        When the table has neither column; or when a key is not a finite number,
+        or has a fraction -- naming up to five such keys.
+    """
 
     if "per" in frame.columns:
-        per = pd.to_numeric(frame["per"], errors="coerce")
+        column = "per"
     elif "time" in frame.columns:
-        per = pd.to_numeric(frame["time"], errors="coerce")
+        column = "time"
     else:
         raise ValueError(f"{caller} requires a 'per' or 'time' column.")
-    if per.isna().any():
-        raise ValueError(f"{caller} currently expects numeric zero-based stress periods.")
+    raw = frame[column]
+    per = pd.to_numeric(raw, errors="coerce").astype(float)
+    finite = np.isfinite(per.to_numpy())
+    if not finite.all():
+        labels = ", ".join(_shown(value) for value in pd.unique(raw[~finite])[:5])
+        raise ValueError(
+            f"{caller} reads `{column}` as a zero-based stress period, and "
+            f"{labels} {'is' if (~finite).sum() == 1 else 'are'} not a number."
+        )
+    whole = per.to_numpy() == np.floor(per.to_numpy())
+    if not whole.all():
+        labels = ", ".join(_shown(value) for value in pd.unique(raw[~whole])[:5])
+        raise ValueError(
+            f"{caller} reads `{column}` as a zero-based stress period, and {labels} "
+            f"{'is' if (~whole).sum() == 1 else 'are'} not a whole number: a period "
+            "has no fraction, so there is no period to read for it. Key each target "
+            "by its stress period, 0, 1, 2, ... (1.0 is period 1)."
+        )
     return per.astype(int)
+
+
+def _measured_periods(
+    values: pd.DataFrame,
+    *,
+    value_column: str,
+    caller: str,
+    name_column: str = "name",
+) -> pd.Series:
+    """Each target row's period, refusing two measurements of one target in one period.
+
+    PEST holds ONE observation per target per period, and the build assigned each
+    row in turn, so the LAST of two readings in one period silently won there while
+    ``compare()`` and ``stats()`` counted both (ledger 340). Which one a period's
+    observation should be -- a mean, the last reading -- is a choice about the data,
+    so it is the caller's: two rows HOLDING a value for one (target, period) are
+    refused, naming them. A blank row is not a measurement and never collides.
+
+    Parameters
+    ----------
+    values : pandas.DataFrame
+        A target set's normalized values table (``time``, ``name_column`` and
+        ``value_column``), one row per target per time as given -- NOT a table
+        already joined to the locations, which repeats a row for each location
+        row sharing the name (two screens of one well).
+    value_column : str
+        The measured value's column (``"head_target"``, ``"stage"``, ...).
+    caller : str
+        What is reading it, named in the errors.
+    name_column : str, default "name"
+        The column identifying the target; compared stripped and lower-cased.
+
+    Returns
+    -------
+    pandas.Series
+        The zero-based periods as ``int``, aligned with ``values``
+        (:func:`_numeric_periods`, whose refusals apply).
+
+    Raises
+    ------
+    ValueError
+        As :func:`_numeric_periods`; or when two rows hold a value for one target
+        in one period, naming up to five such keys.
+    """
+
+    per = _numeric_periods(values, caller=caller)
+    if value_column in values.columns:
+        held = values[value_column].notna()
+    else:
+        held = pd.Series(True, index=values.index)
+    keys = pd.DataFrame(
+        {
+            "key": _normalize_identifier_series(values[name_column]),
+            "name": values["name"] if "name" in values.columns else values[name_column],
+            "per": per,
+        }
+    )[held.to_numpy()]
+    repeated = keys.duplicated(subset=["key", "per"], keep=False)
+    if repeated.any():
+        groups = keys[repeated].groupby(["key", "per"], sort=True)
+        listing = [
+            f"{_shown(group['name'].iloc[0])} at period {period}: {len(group)} values"
+            for (_key, period), group in list(groups)[:5]
+        ]
+        more = groups.ngroups - len(listing)
+        raise ValueError(
+            f"{caller}: two or more measurements of one target in one stress period -- "
+            + "; ".join(listing)
+            + (f"; and {more} more" if more else "")
+            + ". PEST holds ONE observation per target per period, so it would keep "
+            "whichever row came last. Reduce them to one value per period first (a "
+            "mean, the last reading): which one is a choice about your data."
+        )
+    return per
 
 
 def _aggregate_named_series(

@@ -8,6 +8,7 @@ simulated file pyEMU's instruction file expects.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 
@@ -79,14 +80,23 @@ def test_a_concentration_calibration_builds_and_its_forward_run_works(tmp_path):
       concentration on ``plot_obs_residuals`` (ledger 105). ``match_to_model``
       already computed the coordinates; before this they were discarded and a
       concentration-only calibration reviewed as a blank map.
+    * PEST reads each well's OWN concentration from the forward run's file. The
+      wells are declared in REVERSE of sorted order: the base table was a pivot,
+      whose columns pandas sorts, and the forward run wrote mapping order, so the
+      positional instruction file read cw_00's value as cw_11's (ledger 340).
     """
 
     demo = build_canonical_transport_calibration_demo(
         tmp_path / "model", config=CanonicalModelConfig.testing()
     )
+    source = demo.conc_targets
+    wells = ConcTargets(
+        locations=source.locations_gdf.loc[::-1, ["name", "layer", "cell"]],
+        values=source.to_wide(),
+    )
     cal = demo.model.pest("transport_pest", start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.05, 2.0), physical=(0.01, 300.0))
-    cal.observe(demo.conc_targets)
+    cal.observe(wells)
     cal.forecast(demo.forecast_targets)
     pst = cal.build("transport_pest.pst", noptmax=0)
 
@@ -117,10 +127,19 @@ def test_a_concentration_calibration_builds_and_its_forward_run_works(tmp_path):
     regenerated = template / "conc_simulated_conc.csv"
     assert regenerated.exists()
     frame = pd.read_csv(regenerated)
-    assert list(frame.columns)[0] == "per"
+    assert list(frame.columns) == ["per", *sorted(source.locations_gdf["name"], reverse=True)]
     assert (frame.drop(columns=["per"]).abs().to_numpy() > 1e-9).any(), (
         "every regenerated concentration is zero -- the wrong binary was read"
     )
+    import pyemu
+
+    read = pyemu.pst_utils.InstructionFile(
+        str(template / "conc_simulated_conc.csv.ins")
+    ).read_output_file(str(regenerated))["obsval"]
+    assert len(read) == frame.shape[0] * (frame.shape[1] - 1)
+    for name, value in read.items():
+        label, per = re.search(r"usecol:(.+)_per:(\d+)$", name).groups()
+        assert value == pytest.approx(frame.loc[int(per), label], rel=1e-12), name
 
     # --- the residual map's inputs (ledger 105) ---
     metadata = json.loads((template / METADATA_FILENAME).read_text())

@@ -1965,14 +1965,17 @@ def test_build_forward_run_command_is_pestpp_compatible(tmp_path):
 def _stub_ies_results(tmp_path, *, heads=True, zones=False, forecast=False,
                       conc=False, unmeasured_periods=0, zone_cells="0,1",
                       zone_residual=-6.0, head_residuals=(2.0, -1.0),
-                      conc_residual=0.02):
+                      conc_residual=0.02, snapshot_names=False):
     """A minimal completed-run stand-in for the residual-map surface.
 
     Writes the same snapshot files a real build leaves beside the control file,
     so the join logic under test is the real one. ``unmeasured_periods`` adds
     the rows pyEMU creates for output times that were never measured — weight
     1.0, ``obsval`` equal to the model's own simulated value — which is what a
-    real run looks like when targets cover only some stress periods.
+    run built before ledger 340 looks like when targets cover only some stress
+    periods. ``snapshot_names`` writes the head snapshot as a build since ledger
+    340 does: each target's OBSERVATION named, its time as the user keyed it
+    (``1.0``, where pyEMU's name says ``per:1``).
     """
 
     from myflopy.modflow.mf6.pest.ies import IesResults
@@ -2007,7 +2010,11 @@ def _stub_ies_results(tmp_path, *, heads=True, zones=False, forecast=False,
                 name = f"oname:hds_otype:lst_usecol:{location}_per:{period}"
                 names.append((name, measured, 1.0))
                 values[name] = measured + offset
-                measured_rows.append({"time": period, "name": location, "head": measured})
+                measured_rows.append(
+                    {"time": float(period), "name": location, "head": measured, "obsnme": name}
+                    if snapshot_names
+                    else {"time": period, "name": location, "head": measured}
+                )
             for period in range(2, 2 + unmeasured_periods):
                 # pyEMU's phantom row: obsval IS the simulated value, weight 1.0,
                 # and it is absent from the target-values snapshot.
@@ -2454,6 +2461,20 @@ def test_phantom_observations_never_reach_a_residual(tmp_path):
 
     assert list(padded["residual"]) == pytest.approx(list(honest["residual"]))
     assert list(padded["n"]) == [2, 2]  # not 6: the four phantoms are not data
+
+
+def test_a_snapshot_naming_its_observations_joins_on_the_name(tmp_path):
+    """A target keyed ``1.0`` reaches pyEMU's ``per:1`` since ledger 340, and its
+    snapshot names that observation. Joined on ``str(time)`` instead, "1.0" met
+    "1" nowhere and every measured head fell off the residual map."""
+
+    honest = _stub_ies_results(tmp_path / "a").obs_residuals()
+    named = _stub_ies_results(
+        tmp_path / "b", unmeasured_periods=4, snapshot_names=True
+    ).obs_residuals()
+
+    assert list(named["n"]) == [2, 2]
+    assert list(named["residual"]) == pytest.approx(list(honest["residual"]))
 
 
 def test_forecasts_are_not_drawn_as_calibration_misfit(tmp_path):

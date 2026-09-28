@@ -144,11 +144,15 @@ class HeadTargetObservationSpec:
     simulated_values : str or pathlib.Path or pandas.DataFrame or None, optional
         The base-run simulated-head table the build writes as
         ``<prefix>_simulated_heads.csv`` and builds pyEMU's instruction file
-        from: first column the time index, one column per observation. Default
-        ``None`` computes it with ``targets.simulated_heads(cal.model)``, from
-        the model's current head output. A path is read with
-        ``pandas.read_csv``; a DataFrame is copied. The forward run rewrites the
-        file on every model run, so this only seeds the build.
+        from. Default ``None`` has the forward run's own writer
+        (``forward_run._write_head_target_csv``) write it from the model's
+        current head file, so the base run and every forward run are one table
+        in one order (ledger 340). A path is read with ``pandas.read_csv``; a
+        DataFrame is copied -- and either must hold the forward run's columns in
+        its order, ``per`` then each observation label in the order of the
+        target map, or the build raises ``ValueError``: PEST reads the file by
+        position. The forward run rewrites the file on every model run, so this
+        only seeds the build.
     prefix : str, optional
         pyEMU observation-name prefix, default ``"hds"``. It also names the
         files the build writes into the template workspace
@@ -181,11 +185,12 @@ class ConcObservationSpec:
     simulated_values : str or pathlib.Path or pandas.DataFrame or None, optional
         The base-run simulated-concentration table the build writes as
         ``<prefix>_simulated_conc.csv`` and builds pyEMU's instruction file
-        from: first column the time index, one column per observation. Default
-        ``None`` reads the transport model's current output
-        (``load_mf6_run`` on the model workspace, then
-        ``targets.simulated_heads(...)`` on that view). A path is read with
-        ``pandas.read_csv``; a DataFrame is copied. The forward run rewrites the
+        from. Default ``None`` has the forward run's own writer
+        (``forward_run._write_conc_target_csv``) write it from the transport
+        model's ``.ucn`` in the model workspace (ledger 340). A path is read with
+        ``pandas.read_csv``; a DataFrame is copied -- and either must hold the
+        forward run's columns in its order (``per``, then each label in target-map
+        order), or the build raises ``ValueError``. The forward run rewrites the
         file on every model run, so this only seeds the build.
     prefix : str, optional
         pyEMU observation-name prefix, default ``"conc"``. It also names the
@@ -236,11 +241,11 @@ class LakeStageObservationSpec:
     value_column : str, optional
         Ignored (see above). Default ``"stage"``.
     weight : float or None, optional
-        Uniform observation weight. When not ``None`` every target row gets it
-        (cast with ``float``). Default ``None`` sets no weight: a
-        ``LakeStageTargets`` carries none, so the rows keep the control file's
-        default weight (pyEMU's ``1.0``). A forecast's weights are zeroed
-        afterwards regardless.
+        Uniform observation weight. When not ``None`` every target row holding a
+        value gets it (cast with ``float``). Default ``None``: a
+        ``LakeStageTargets`` carries none, so those rows get weight ``1.0``.
+        Every row no target measures gets weight 0 either way (ledger 340), and a
+        forecast's weights are zero regardless.
     prefix : str, optional
         pyEMU observation-name prefix, default ``"stage"``. It also names the
         files the build writes (``<prefix>_simulated_lake_stage.csv``,

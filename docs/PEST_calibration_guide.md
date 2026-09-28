@@ -156,6 +156,16 @@ Observations are first-class myflopy objects; you hand them to the project:
 cal.observe(head_targets)          # history-matching targets (measured values + weights)
 ```
 
+**What the control file holds is exactly your targets** (ledger 340). Each target is
+matched to the simulated row whose index equals its `time` read as a zero-based stress
+period — `1.0` is period 1 — and `build()` REFUSES, naming the target, a key with a
+fraction (`1.5`), two readings of one target in one period, a value that is not a
+number, and a target at a period (or a name) the simulated table does not hold. A blank
+value is unmeasured. Every simulated row no target measures stays in the control file
+at weight 0, holding the base run's own value: reported in every ensemble, never
+history-matched. (Until then each such row carried weight 1, pulling the calibration
+back toward the uncalibrated model at every period nobody measured.)
+
 > Weighting matters *a lot* and there is no one-size-fits-all. Pre-process data
 > for information content, use more groups rather than fewer, and aim weights at
 > the model's purpose.
@@ -189,7 +199,10 @@ cal.forecast(prediction_targets)   # same target objects as observe(), but zero-
 ```
 
 myflopy registers these as zero-weight PEST++ forecasts, so every uncertainty
-method reports their prior→posterior distribution for free.
+method reports their prior→posterior distribution for free. A forecast is the rows its
+targets name (a blank value is fine; a number is written as a placeholder); the set's
+other periods are zero-weighted and are not forecasts. A set given no values at all
+forecasts every row: its locations at every period.
 
 ---
 
@@ -391,9 +404,11 @@ an ordinary observation set at weight 0 and nothing in the saved metadata distin
 — a forecast's apparent "residual" is often the largest number in the run and would set
 the whole map's color scale. And **unmeasured times**: pyEMU creates one observation per
 row of the simulated output, so a target measured in one stress period out of six leaves
-five rows carrying the model's own output at weight 1.0. Averaging those in drags every
-residual toward zero and can flip its sign, so they are excluded by joining back to the
-`*_target_values.csv` snapshot of what was actually measured.
+five rows carrying the model's own output -- at weight 0 in a run built since ledger 340,
+at weight 1.0 in one built before it. Averaging those in drags every residual toward zero
+and can flip its sign, so they are excluded by joining back to the
+`*_target_values.csv` snapshot of what was actually measured (which, since ledger 340,
+names each target's observation).
 
 What you're checking for:
 - **Phi**: should drop fast at first. If it collapses to near-zero, you're

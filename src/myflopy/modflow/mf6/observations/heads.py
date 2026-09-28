@@ -24,8 +24,10 @@ from myflopy.modflow.mf6.observations._shared import (
     _ensure_unique_observation_names,
     _in_grid_crs,
     _load_locations,
+    _measured_periods,
     _normalize_identifier_series,
     _normalize_values_frame,
+    _numeric_periods,
     _placement_note,
     _report_missed_features,
     _simulated_field_by_period,
@@ -103,8 +105,12 @@ class HeadTargets:
 
         A ``Series`` is one target's values indexed by time (so it also needs
         exactly one location). Every name must match a location name, compared
-        stripped and lower-cased, or ``ValueError`` is raised; values are read
-        as floats, anything unreadable becoming ``NaN``.
+        stripped and lower-cased, or ``ValueError`` is raised. Values are read
+        as floats: a BLANK entry (missing, or empty text) is ``NaN`` and means
+        unmeasured -- the PEST build leaves that row out of the targets, at
+        weight 0 -- and any other entry that is not a number raises
+        ``ValueError`` naming the target and its column (ledger 340; it used to
+        become ``NaN`` silently).
     name_column : str, optional
         Column of ``locations`` holding each target's name. Default ``"name"``.
         Required: ``ValueError`` when absent. For a ``Series`` or a
@@ -127,15 +133,17 @@ class HeadTargets:
         Column of ``locations`` holding a per-location observation weight,
         carried as ``weight``. When ``cal.observe(...)`` builds the PEST control
         file, a weight that is not ``NaN`` becomes the weight of each
-        observation at that location that has a target value; a period with no
-        target keeps the build's own weight. Default ``"weight"``; ``None`` or
-        an absent column leaves it ``NaN``.
+        observation at that location that has a target value, and ``NaN``
+        gives those observations weight 1; a period with no target value
+        carries weight 0 (ledger 340). Default ``"weight"``; ``None`` or an
+        absent column leaves it ``NaN``.
     time_column : str, optional
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``. Required once ``times`` has been applied
         (``ValueError`` otherwise); :meth:`get` calls it ``time``.
-        :meth:`compare` and the PEST route read it as a ZERO-BASED STRESS
-        PERIOD, and :meth:`compare` raises on a label that is not a number.
+        :meth:`compare` and the PEST build read it as a ZERO-BASED STRESS
+        PERIOD, by number (``1.0`` is period 1), and both raise on a label that
+        is not a whole number, and on two values for one target in one period.
     value_column : str, optional
         Column of a LONG ``values`` table holding the target value, matched
         ignoring case. Default ``"head"`` (``"conc"`` on
@@ -192,6 +200,7 @@ class HeadTargets:
             time_column=self.time_column,
             value_column=self.value_column,
             times=self.times,
+            owner=type(self).__name__,
         )
         if "name" not in self._values.columns:
             if len(self._locations["name_key"].unique()) != 1:
@@ -742,11 +751,12 @@ class HeadTargets:
     def compare(self, model) -> pd.DataFrame:
         """Compare target heads against simulated heads by stress period.
 
-        The first implementation assumes the target table's ``time_column`` can
-        be interpreted directly as a zero-based stress period integer. This
-        matches the initial Cumberland calibration use case where targets are
-        defined per stress period. ``sim_head`` is the head at each period's END
-        (ledger 336), as :meth:`simulated_heads` reads it.
+        A target's ``time`` is read as a ZERO-BASED STRESS PERIOD -- the one
+        reading every target family and PEST's build share (ledger 340): ``1.0``
+        is period 1, and a key with a fraction is refused rather than truncated
+        (``10.9`` used to read period 10). ``sim_head`` is the head at each
+        period's END (ledger 336), as :meth:`simulated_heads` reads it. A blank
+        target value is a row with ``NaN`` ``head_target`` and ``residual``.
 
         Parameters
         ----------
@@ -763,19 +773,18 @@ class HeadTargets:
         Raises
         ------
         ValueError
-            When a target's ``time`` is not a zero-based stress-period integer,
-            or a period the file saved lacks its final step (as
-            :meth:`simulated_heads`).
+            When a target's ``time`` is not a number or not a whole number; when
+            two rows hold a value for one target in one period (PEST keeps one
+            observation per target per period); or when a period the file saved
+            lacks its final step (as :meth:`simulated_heads`).
         """
 
+        caller = f"{type(self).__name__}.compare(...)"
+        _measured_periods(
+            self._values, value_column="head_target", name_column="name_key", caller=caller
+        )
         targets = self.get().copy()
-        per = pd.to_numeric(targets["time"], errors="coerce")
-        if per.isna().any():
-            raise ValueError(
-                "HeadTargets.compare(...) currently expects the time column to "
-                "contain zero-based stress period integers."
-            )
-        targets["per"] = per.astype(int)
+        targets["per"] = _numeric_periods(targets, caller=caller)
         sim = _simulated_field_by_period(
             model,
             table_attribute=self._TABLE_ATTRIBUTE,

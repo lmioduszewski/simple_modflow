@@ -574,10 +574,11 @@ record and ONE per reach or zone per stress period, at the period's end (ledgers
 two routes label `time` differently -- MF6's simulated time, one row per time step,
 against the record index (LAK) or the stress period (SFR, DRN) -- and targets must be
 keyed by the route's label: on the observation route a target keyed by period matches
-nothing, and the PEST build puts the STARTING model's own simulated flow in its place,
-every time step at weight 1 -- so the measurement is dropped and phi pulls the
-calibration back toward the uncalibrated model. Key flow targets by simulated time
-there (`10, 20, 30` for three 10-day periods). The
+nothing, which `compare()` shows as `NaN` and the PEST build REFUSES, naming the target
+and the rows the table holds (ledger 340; it used to drop the target silently and leave
+the STARTING model's own flow in its place at weight 1). Key flow targets by simulated
+time there (`10, 20, 30` for three 10-day periods) until that route is keyed by period.
+The
 observation route's SFR flow also keeps MF6's sign (`DOWNSTREAM-FLOW` is negative)
 where the file route reports the magnitude. On the LAK stage-file route the record
 index IS the period only when output control saves one step per period, the step that
@@ -585,6 +586,24 @@ ends it. Saving several (`SAVE HEAD ALL` at `nstp=3`), a lake target keyed by pe
 silently reads a step inside an EARLIER period, while the SFR and head targets beside
 it read period end -- key it by saved-record index there, until
 `build_lak_stage_result_table` carries the stage file's own `kstpkper` (ledger 301).
+
+**A target's `time` is a zero-based stress period, read by NUMBER, one rule for
+`compare()` and the PEST build** (`_shared._numeric_periods`, ledger 340): `1.0` is
+period 1, and a key with a fraction (`1.5`, which was truncated to 1) is refused. Two
+values for one target in one period are refused in both, naming them -- the build kept
+the last. A blank value is unmeasured; a value that is not a number (`"12,5"`) is
+refused when the targets are built, naming the target and its column.
+
+**What PEST is handed is exactly the targets** (ledger 340). `cal.build()` matches each
+target to the simulated row whose index EQUALS its period and to its column by name,
+and takes the observation pyEMU's instruction file reads there -- never a name rebuilt
+from the key's spelling, which missed `per:1` for a key of `1.0`. A target nothing
+holds is refused. Every simulated row no target measures stays at weight 0 with the base
+run's value (a forecast set's other periods too), so nothing unmeasured is
+history-matched. A set given no values registers: observed, it only captures; forecast,
+it forecasts every row. The head and concentration tables are written by ONE writer for
+the base run and every forward run, and two sets under one prefix are refused. A PEST
+template built before this bakes the old forward run and must be rebuilt.
 
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
 `mf.LakeStageTargets`, `mf.DrnFlowTargets`. Calibration: `model.pest(name,

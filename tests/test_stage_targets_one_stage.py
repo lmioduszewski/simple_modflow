@@ -284,9 +284,9 @@ def test_the_files_pest_reads_carry_each_lake_once(lake_runs, tmp_path, names):
     """What PEST calibrated against: the base run's CSV and every forward run's."""
 
     stage = _lake_stage_file(lake_runs)
-    targets = mf.LakeStageTargets(
-        locations=dict(zip(names, (0, 1), strict=True)),
-        values=pd.DataFrame({"time": range(NPER), names[0]: 100.5, names[1]: 108.0}))
+    # A template (no values): the files are the point, and the observation route's
+    # rows are MF6 times, which a period key does not match (refused, ledger 340).
+    targets = mf.LakeStageTargets(locations=dict(zip(names, (0, 1), strict=True)))
     project = SimpleNamespace(model=lake_runs, template_workspace=tmp_path,
                               pf=SimpleNamespace(add_observations=lambda *a, **k: None))
     prepared = prepare_lake_stage_observations(

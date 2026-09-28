@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 339 entries (344 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 340 entries (345 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 340 | What PEST is handed matches the targets: each target is matched to the row PEST's instruction file reads by... | 2026-09-27 |
 | 339 | One package is `model.<pkg>`, and FloPy's package object is `model.fl.<pkg>`; `model.packages` keeps only t... | 2026-09-27 |
 | 338 | Every public parameter has a `name : type` entry with a description, and a test holds it: 1,968 missing ent... | 2026-09-27 |
 | 337 | `per=N` is the last SAVED step of stress period N on every picture and group table, through ONE function; b... | 2026-09-27 |
@@ -1764,10 +1765,15 @@ same day, which is the useful part of the result.
     - Why that degradation: dropping every observation would be worse than the bias,
       and a run old enough to lack the snapshot is exactly the run whose metadata we
       cannot reason about. A run built by current myflopy always writes it.
-    - Note the underlying oddity is upstream and NOT fixed here: those phantom rows
+    - ~~Note the underlying oddity is upstream and NOT fixed here: those phantom rows
       carry weight 1.0, so PESTPP is history-matching the base model's own output at
       times nobody measured. That is a build-side question (`observations.py`), with
-      its own tests, and is out of scope for a review-layer change.
+      its own tests, and is out of scope for a review-layer change.~~ **FIXED on the
+      build side by ledger 340**: every row no target names carries weight 0, so this
+      join matters only for runs built before it; and a snapshot written since names
+      each target's observation (`obsnme`), which the join reads instead of
+      `str(time)` -- which missed a key pyEMU spelled differently (`1.0` against
+      `per:1`).
 
 82. **`run.pest_runs` attaches its model lazily, and gives up silently on a
     multi-model run.**
@@ -14097,10 +14103,12 @@ same day, which is the useful part of the result.
         0.0, and nothing was measured for them. NOT built: failing a realization on
         purpose where a WEIGHTED target is dry. 1e30 keeps it in the ensemble with a phi
         of order 1e60; what PESTPP-IES then does with it (`ies_bad_phi`) was not measured.
-      - **Found alongside, not fixed:** `prepare_lake_stage_observations` on a TEMPLATE --
+      - ~~**Found alongside, not fixed:** `prepare_lake_stage_observations` on a TEMPLATE --
         `LakeStageTargets` with no `values`, which the class documents -- dies with
         `KeyError: 'time'` in `_prepare_named_series_observations`, because
-        `to_long()` then returns the definitions with no `time` column (measured).
+        `to_long()` then returns the definitions with no `time` column (measured).~~
+        **FIXED by ledger 340**: the build reads the values table, and a set given no
+        values registers every row at weight 0 (a forecast of one forecasts every row).
       Tests: `tests/test_lak_stage_sentinels.py`, 26 (21 on two real MF6 runs, marked slow
       through the `lak_stage_runs` fixture). Reverting the mask fails 11 by name; the
       stage-change drop, the diff's `both` mask, its tolerance rule, the observation
@@ -14673,11 +14681,14 @@ same day, which is the useful part of the result.
         build: the observation route's `time` is MF6's simulated time (10.0 .. 60.0), the
         stage-file route's the saved record's index (LAK) or the stress period (SFR). A
         target keyed by PERIOD on the observation route matches 0 of 6 rows in
-        `compare()`, and in the PEST build every observation keeps the base run's
+        `compare()`, ~~and in the PEST build every observation keeps the base run's
         SIMULATED value as its `obsval`, weight 1 -- the targets silently dropped
         (`_assign_target_values` `continue`s on a name it cannot find). Keyed by MF6's
         time as integers it matches both; as FLOATS (10.0) `compare()` matches and PEST
-        does not (`time:10.0` against pyEMU's `time:10`), silently again. Keyed by period
+        does not (`time:10.0` against pyEMU's `time:10`), silently again.~~ **and the
+        PEST build REFUSES it by name since ledger 340**, which matches a target to its
+        row by NUMBER, so `10` and `10.0` both match both, and gives every row no target
+        names weight 0. Keyed by period
         on the stage-file route both work -- **at ONE saved step per period only.** When
         output control saves several, a LAK stage-file target must be keyed by
         SAVED-RECORD index: keyed by stress period it silently reads a step inside an
@@ -14687,8 +14698,8 @@ same day, which is the useful part of the result.
         targets at `time` 0, 1, 2 read 102.7025, 101.8236, 101.2282 -- steps 1-3 of
         period 0 -- where the period ends are 101.2282, 100.3666, 100.0987 (records 2, 5,
         8), and `HeadTargets` on that run reads each period's step 3. The PEST build puts
-        the three targets on `time:0..2` and keeps the SIMULATED value, weight 1, as the
-        `obsval` of `time:3..8`. Nothing warns. The open fix is
+        the three targets on `time:0..2` and keeps the SIMULATED value as the `obsval`
+        of `time:3..8`, at ~~weight 1~~ weight 0 since ledger 340. Nothing warns. The open fix is
         `build_lak_stage_result_table` carrying the stage file's own `kstpkper` (ledger
         301), after which this helper's period-end reduction applies to LAK as it does to
         SFR. Not fixed here: that table is `packages.lak.results.stage`, so the fix moves
@@ -15045,12 +15056,16 @@ same day, which is the useful part of the result.
       and its period-end rows equal the file route -- the DRN zone to the bit, the SFR reach
       with MF6's NEGATIVE sign where the file route reports the magnitude, so a positive
       gauged flow Q matched exactly there reads a residual of -2Q. A target keyed by
-      PERIOD matches nothing: `compare()` gives `NaN`, and a PEST build keeps all nine
+      PERIOD matches nothing: `compare()` gives `NaN`, ~~and a PEST build keeps all nine
       simulated rows (`time:3.333333333333` .. `time:30.0`) as `obsval`, weight 1 -- the
       targets silently dropped (ledger 331's finding, for flows too), and not inertly:
       each row enters phi with the BASE run's value as its observation, so every
       realization is pulled back toward the uncalibrated model's flows. Keyed by time
-      10/20/30 it matches. Both are open.
+      10/20/30 it matches.~~ and a PEST build REFUSES it, naming it and the rows the
+      table holds, and carries every row no target names at weight 0 (ledger 340).
+      Keyed by time 10/20/30 it matches in `compare()` -- and in the build only since
+      ledger 340 matches by NUMBER: at `nstp=3` the integer keys had matched none of
+      pyEMU's `time:10.0` rows. Both route defects are open.
       **Not built:** a time-weighted mean over the period (the user chose the end); the LAK
       period clock.
       Reproducer: `docs/reproducers/flow_targets_period_end.py` (the toy under five OC
@@ -15203,3 +15218,99 @@ same day, which is the useful part of the result.
       hand-written namespaces now, each held complete by
       `test_every_namespace_exposes_every_registry_package` and listed in the payoff test's
       `MANUAL_SURFACES`.
+
+340. **What PEST is handed matches the targets: each target is matched to the row PEST's instruction file reads by NUMBER, a target nothing holds is refused, every row no target names carries weight 0, and heads and concentrations reach PEST through ONE writer (2026-09-27).**
+      The first commit of the PEST-targets series (scoping F1 options C and W1, G1-G4, G6,
+      G9, doc bug 51), on the user's rule that a period's value is its END-of-period value,
+      keyed by zero-based period, on every route.
+      **Matched by POSITION, never by name** -- judgment call. The build rebuilt each
+      target's pst name as `<index>:str(time)` and skipped any name the control file did not
+      hold; pyEMU spells one row `per:1` or `time:10.0` depending on the WHOLE column
+      (`_try_pdcol_numeric(downcast='integer')`), so a float key on the file route, and an
+      integer MF6 time at `nstp > 1`, reached nothing, silently. `finalize_observations` now
+      reads which observation the instruction file takes from each cell of the table
+      (`_instruction_names`: one bare `l1` for the header, then one line per row naming its
+      observations in column order; a file that does not line up is refused), and
+      `_locate_targets` finds a target's row by the index value EQUAL to its period and its
+      column by name, stripped and lower-cased as pyEMU names it. **Considered and not
+      taken:** copying pyEMU's downcast rule -- a second copy of another library's
+      spelling is the defect itself.
+      **One reading of a key: `_shared._numeric_periods`**, called by every family's
+      `compare()`, the build and `_aggregate_named_series` (`HeadTargets.compare` kept its
+      own copy; gone). `1.0` is period 1; a fraction is REFUSED where it was truncated
+      (`10.9` read period 10's value); so is a non-finite key. **Two values for one (target,
+      period) are refused** (`_measured_periods`), in `compare()` and the build alike --
+      the pst kept the LAST row. Judgment call, the house default: which value a period's
+      observation is (a mean, the last reading) is a choice about the data, and whether to
+      offer an opt-in average was not asked. A blank row is not a measurement and collides
+      with nothing. Checked on the VALUES table, never one joined to the locations, which
+      repeats a value per location row (a DRN zone given as two rows, a two-screen well).
+      **A target nothing holds is REFUSED at build**, forecasts included, naming it, its key
+      and the table's rows and columns. **Deliberately NOT refused:** a HEAD target whose
+      location lands on no active cell stays out with ledger 211's warning -- 211 decided a
+      partial miss warns (one target file for several grids), and this does not overrule
+      it. That warning reaches nobody in a default session (`log.warning` only, doc bug 55);
+      found, not fixed here.
+      **Every row no target names carries weight 0** -- every family and route, its
+      `obsval` left at the base run's value so ensembles still report it; a target's weight
+      is its own, else 1.0. That is F1-W1 and G2, and it closes ledger 81's build-side note.
+      **Not done** -- scope cut, the user's call left open: moving those rows into a sibling
+      obs group; `IesResults`' `weight > 0` filter already tells them apart.
+      **Forecasts** -- judgment calls. A forecast is the rows its targets NAME, all at
+      weight 0 and listed in `forecasts`; a placeholder value is written as the `obsval`
+      and a blank keeps the base run's -- for a forecast the KEY says what to predict, so a
+      blank there is not "unmeasured". The set's other rows are zero-weighted and NOT
+      listed; they were weighted history-matching data. A forecast set given NO values
+      forecasts every row of its table: the only reading under which declaring it does
+      anything, where listing nothing would make `cal.forecast()` a silent no-op.
+      **A blank is unmeasured; an entry that is not a number is REFUSED** when the targets
+      are built (`_coerce_target_values`, in every family's normalizer), naming the target,
+      time, entry and column -- the two are told apart before `pd.to_numeric(errors=
+      "coerce")` could merge them. Text `read_csv` already reads as missing (`NA`, `n/a`,
+      `nan`) arrives as a blank. A set given no values registers (doc bug 51, G9): the
+      named-series build reads the values table, where `to_long()` handed it the location
+      table, which has no `time`.
+      **One writer for heads and concentrations.** `forward_run._write_head_target_csv` /
+      `_write_conc_target_csv` (new `sim_ws=`) write the BASE copy at build exactly as they
+      write every realization's, and the build asserts the base header is `per` plus the
+      mapping's labels in mapping order. The base copy was `simulated_heads`' pivot, whose
+      columns pandas SORTS: with wells W2, W1, W10, `pestpp-glm` read 9 of 9 heads from
+      another well's column (reproducer). A `simulated_values` table in another order is
+      REFUSED, not reordered -- judgment call: the one writer vouches for its own file only;
+      that table's ROWS are not checked. `simulated_heads()` keeps its sorted columns: a
+      public table that nothing positional reads any more.
+      **`write_named_series_targets(model_name=)`**: the build passes the calibrated model;
+      the forward run reloaded the simulation's FIRST GWF model (G6: model m's -16.619 where
+      the calibrated n's base run held -804.167).
+      **A PEST template built before this commit must be REBUILT.** pyEMU copies each
+      post-processor's SOURCE into `forward_run.py`, so an old template keeps the sorted
+      base header, the named-series call without `model_name` and the old weights; nothing
+      migrates one.
+      **Found and fixed in passing:** two sets under one prefix are refused -- the prefix
+      names every file a set writes, the second overwrote the first and PEST++ refused the
+      control file at start, and the positional match needs one instruction file per set.
+      The values snapshot names each target's observation (`obsnme`), which
+      `IesResults._measured_observation_keys` joins on; an older snapshot joins on
+      `str(time)` as before. The unused `_load_values_table` and `_normalize_row_labels` --
+      the copy of pyEMU's row-label rule -- are deleted, with the package re-export.
+      **Interim, until the observation route is keyed by period** (the next commit of the
+      series): its rows are still MF6 simulated times, so a PERIOD key there is refused at
+      build where it was dropped; a whole MF6 time (`10`, `10.0`) matches in `compare()` and
+      the build alike; a fractional MF6 time (`3.3333`) is refused on every route.
+      Reproducer: `docs/reproducers/pest_handed_targets.py`, run against this tree and the
+      parent's `src`. Tests: `tests/test_pest_handed_targets.py`, 11 on real MF6 runs; the
+      two-layer column test and the concentration end-to-end now use names out of sorted
+      order; `test_mf6_pest::test_a_snapshot_naming_its_observations_joins_on_the_name`.
+      Revert checks, each failing by name: rows matched by spelling (`test_a_period_key_
+      written_as_a_float_reaches_its_row_in_every_family`); no refusal (`test_a_target_
+      nothing_holds_is_refused_by_the_build_naming_it`); truncation (`test_a_fractional_
+      period_is_refused_by_compare_and_by_the_build`); duplicates allowed (`test_two_
+      measurements_of_one_target_in_one_period_are_refused`); no zero weights (that file's
+      weight-zero, blank and no-values tests); a forecast listing every row (the weight-zero
+      test); `to_numeric` coercion and a NaN `obsval` (the blank test, each); the build via
+      `to_long()` (the no-values test); the sorted base (`test_pest_reads_each_well_its_own_
+      head...`, the two-layer and concentration tests); the header check alone
+      (`test_a_supplied_simulated_table_in_another_order_is_refused`); no `model_name`
+      (`test_the_named_series_forward_run_reads_the_calibrated_model_not_the_first`); no
+      prefix check (`test_two_sets_under_one_prefix_are_refused`); the review ignoring
+      `obsnme` (`test_a_snapshot_naming_its_observations_joins_on_the_name`).

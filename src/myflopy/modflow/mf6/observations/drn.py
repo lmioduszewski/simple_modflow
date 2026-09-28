@@ -20,9 +20,9 @@ from myflopy.modflow.mf6.observations._shared import (
     _default_obs_csv_name,
     _find_named_observation_output,
     _in_grid_crs,
+    _measured_periods,
     _normalize_compare_time,
     _normalize_named_series_values,
-    _numeric_periods,
     _observation_label,
     _placement_note,
     _report_missed_features,
@@ -253,8 +253,12 @@ class DrnFlowTargets:
         ``value_column``, or a ``Series`` indexed by time, is one series and
         needs exactly one zone (``ValueError`` otherwise). Names are NOT checked
         against ``locations`` and are joined to them exactly (case counts): a
-        row naming no zone gets no cells and no simulated flow. Default
-        ``None`` makes a capture template.
+        row naming no zone gets no cells and no simulated flow, and the PEST
+        build refuses it. A blank value (missing, or empty text) is unmeasured; any other
+        entry that is not a number raises ``ValueError`` naming the target and
+        its column (ledger 340). Default ``None`` makes a
+        capture template: observed, its rows register at weight 0; forecast,
+        every row is a forecast.
     name_column : str, optional
         Column of ``locations`` holding each zone's name, matched exactly and
         renamed ``name``. Default ``"name"``. For the ``{name: cells}`` dict and
@@ -268,13 +272,15 @@ class DrnFlowTargets:
         Column of ``locations`` holding each zone's observation weight, renamed
         ``weight``. Default ``"weight"``; ``None`` or an absent column leaves it
         ``NaN``. A PEST build sets a zone's non-``NaN`` weight on each
-        observation of that zone that has a target value, and leaves the
-        existing weight where it is ``NaN``.
+        observation of that zone that has a target value, and weight 1 where it
+        is ``NaN``; a zone given as rows with DIFFERENT weights is refused, and
+        every period without a target value gets weight 0 (ledger 340).
     time_column : str, optional
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
-        ``times`` is applied. :meth:`compare` reads it as a zero-based stress
-        period on the budget-file route.
+        ``times`` is applied. :meth:`compare` and the PEST build read it as a
+        zero-based stress period, by number (``1.0`` is period 1; a fraction
+        raises), matched on the budget-file route against the period.
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed flow, matched
         ignoring case. Default ``"flow"``.
@@ -318,6 +324,7 @@ class DrnFlowTargets:
             value_column=self.value_column,
             output_column="flow_target",
             times=self.times,
+            owner=type(self).__name__,
         )
         if not self._values.empty and "name" not in self._values.columns:
             if len(self._locations["name"].unique()) != 1:
@@ -589,7 +596,9 @@ class DrnFlowTargets:
             compare["flow_target"] = np.nan
         else:
             targets = self._values.copy()
-            targets["per"] = _numeric_periods(targets, caller="DrnFlowTargets.compare(...)")
+            targets["per"] = _measured_periods(
+                targets, value_column="flow_target", caller="DrnFlowTargets.compare(...)"
+            )
             compare = targets.merge(simulated, on=["name", "per"], how="left")
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_flow"] - compare["flow_target"]
@@ -683,8 +692,10 @@ class DrnFlowTargets:
         ------
         ValueError
             On the budget-file route, when a period the budget file saved lacks
-            its final step (as :meth:`simulated_series`), or when a target's
-            ``time`` is not a number.
+            its final step (as :meth:`simulated_series`); or when a target's
+            ``time`` is not a whole number, or two rows hold a value for one
+            target in one period (the period rule PEST's build reads too, ledger
+            340).
         """
 
         observed = self._compare_from_obs(model)
@@ -711,7 +722,9 @@ class DrnFlowTargets:
             compare["flow_target"] = np.nan
         else:
             targets = self._values.copy()
-            targets["per"] = _numeric_periods(targets, caller="DrnFlowTargets.compare(...)")
+            targets["per"] = _measured_periods(
+                targets, value_column="flow_target", caller="DrnFlowTargets.compare(...)"
+            )
             compare = targets.merge(simulated, on=["name", "per"], how="left")
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_flow"] - compare["flow_target"]

@@ -16,10 +16,10 @@ from myflopy.modflow.mf6.observations._shared import (
     _default_compare_stats,
     _default_obs_csv_name,
     _find_named_observation_output,
+    _measured_periods,
     _normalize_compare_time,
     _normalize_named_integer_locations,
     _normalize_named_series_values,
-    _numeric_periods,
     _observation_label,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
@@ -117,13 +117,19 @@ class SfrStageTargets:
         is one series and needs exactly one target reach (``ValueError``
         otherwise). Names are NOT checked against ``locations`` and are joined
         to them exactly (case counts): a row naming no target gets no ``reach``
-        and no simulated stage in :meth:`compare`.
-        Default ``None`` makes a template that only captures simulated series.
+        and no simulated stage in :meth:`compare`, and the PEST build refuses
+        it. A blank value (missing, or empty text) is unmeasured; any other
+        entry that is not a number raises ``ValueError`` naming the target and
+        its column (ledger 340).
+        Default ``None`` makes a template that only captures simulated series:
+        observed, its rows register at weight 0; forecast, every row is a
+        forecast.
     time_column : str, optional
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
-        ``times`` is applied. :meth:`compare` reads it as a zero-based stress
-        period on the stage-file route.
+        ``times`` is applied. :meth:`compare` and the PEST build read it as a
+        zero-based stress period, by number (``1.0`` is period 1; a fraction
+        raises), matched on the stage-file route against the period.
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed stage, matched
         ignoring case. Default ``"stage"``.
@@ -160,6 +166,7 @@ class SfrStageTargets:
             value_column=self.value_column,
             output_column="stage_target",
             times=self.times,
+            owner=type(self).__name__,
         )
         if not self._values.empty and "name" not in self._values.columns:
             if len(self._locations) != 1:
@@ -294,8 +301,9 @@ class SfrStageTargets:
         ValueError
             On the stage-file route, when a period the stage file saved lacks
             its final step or a reach's copies in one record disagree (as
-            :meth:`simulated_series`), or when a target's ``time`` is not a
-            number.
+            :meth:`simulated_series`); or when a target's ``time`` is not a
+            whole number, or two rows hold a value for one target in one period
+            (the period rule PEST's build reads too, ledger 340).
         """
 
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
@@ -311,7 +319,9 @@ class SfrStageTargets:
             compare["stage_target"] = np.nan
         else:
             targets = self.get().copy()
-            targets["per"] = _numeric_periods(targets, caller="SfrStageTargets.compare(...)")
+            targets["per"] = _measured_periods(
+                targets, value_column="stage_target", caller="SfrStageTargets.compare(...)"
+            )
             compare = targets.merge(simulated, on=["name", "reach", "per"], how="left")
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_stage"] - compare["stage_target"]
@@ -491,13 +501,18 @@ class SfrFlowTargets:
         or a ``Series`` indexed by time, is one series and needs exactly one
         target reach (``ValueError`` otherwise). Names are NOT checked against
         ``locations`` and are joined to them exactly (case counts): a row
-        naming no target gets no ``reach`` and no simulated flow. Default
-        ``None`` makes a capture template.
+        naming no target gets no ``reach`` and no simulated flow, and the PEST
+        build refuses it. A blank value (missing, or empty text) is unmeasured; any other
+        entry that is not a number raises ``ValueError`` naming the target and
+        its column (ledger 340). Default ``None`` makes a
+        capture template: observed, its rows register at weight 0; forecast,
+        every row is a forecast.
     time_column : str, optional
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
-        ``times`` is applied. :meth:`compare` reads it as a zero-based stress
-        period on the budget-file route.
+        ``times`` is applied. :meth:`compare` and the PEST build read it as a
+        zero-based stress period, by number (``1.0`` is period 1; a fraction
+        raises), matched on the budget-file route against the period.
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed flow, matched
         ignoring case. Default ``"flow"``.
@@ -533,6 +548,7 @@ class SfrFlowTargets:
             value_column=self.value_column,
             output_column="flow_target",
             times=self.times,
+            owner=type(self).__name__,
         )
         if not self._values.empty and "name" not in self._values.columns:
             if len(self._locations) != 1:
@@ -785,8 +801,10 @@ class SfrFlowTargets:
         ------
         ValueError
             On the budget-file route, when a period the SFR budget file saved
-            lacks its final step (as :meth:`simulated_series`), or when a
-            target's ``time`` is not a number.
+            lacks its final step (as :meth:`simulated_series`); or when a
+            target's ``time`` is not a whole number, or two rows hold a value
+            for one target in one period (the period rule PEST's build reads too,
+            ledger 340).
         """
 
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
@@ -802,7 +820,9 @@ class SfrFlowTargets:
             compare["flow_target"] = np.nan
         else:
             targets = self.get().copy()
-            targets["per"] = _numeric_periods(targets, caller="SfrFlowTargets.compare(...)")
+            targets["per"] = _measured_periods(
+                targets, value_column="flow_target", caller="SfrFlowTargets.compare(...)"
+            )
             compare = targets.merge(simulated, on=["name", "reach", "per"], how="left")
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_flow"] - compare["flow_target"]

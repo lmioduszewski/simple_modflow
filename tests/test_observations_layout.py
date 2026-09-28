@@ -1,9 +1,12 @@
 """The observations/ package layout (implementation plan 4.1).
 
 Both import paths must resolve to the same objects: the historical module
-path (``myflopy.modflow.mf6.observations``) and the split submodules. The
-pest package's private cross-import (``_normalize_row_labels``) is part of
-the contract.
+path (``myflopy.modflow.mf6.observations``) and the split submodules.
+
+The pest package used to import ``_normalize_row_labels`` from here to rebuild
+pyEMU's observation names by SPELLING. It matches a target to the row PEST reads
+by number and position now (ledger 340), so that private cross-import is gone,
+and the test below holds it gone.
 """
 
 from __future__ import annotations
@@ -45,10 +48,11 @@ def test_submodule_and_root_paths_are_the_same_objects():
         assert getattr(obs_pkg, name).__module__ == submodule.__name__, name
 
 
-def test_pest_private_cross_import_stays_alive():
-    from myflopy.modflow.mf6.observations import _normalize_row_labels
-    from myflopy.modflow.mf6.observations._shared import (
-        _normalize_row_labels as shared_fn,
-    )
+def test_no_copy_of_pyemus_row_label_rule_survives():
+    """Matching a target by the spelling of its pst name dropped every target
+    whose key pyEMU spelled differently (``per:1`` against ``per:1.0``)."""
 
-    assert _normalize_row_labels is shared_fn
+    import myflopy.modflow.mf6.observations._shared as shared
+
+    assert not hasattr(obs_pkg, "_normalize_row_labels")
+    assert not hasattr(shared, "_normalize_row_labels")

@@ -1,0 +1,427 @@
+"""What PEST is handed matches the targets (ledger 340).
+
+The PEST build rebuilt each target's observation NAME from the spelling of its key
+and skipped any name the control file did not hold, and it left every simulated row
+no target named at pyEMU's defaults -- weight 1, the BASE run's own value. So:
+
+* a target keyed ``1.0`` (pyEMU wrote ``per:1``) reached nothing, while
+  ``compare()`` paired it; a key of ``1.5`` was truncated to period 1 in
+  ``compare()`` and dropped in the build;
+* a target at a period the table does not hold vanished without a word;
+* two readings of one well in one period: the pst kept the LAST;
+* every unmeasured period -- and every period of a forecast set but the forecast
+  one -- history-matched the calibration back to the uncalibrated model;
+* a blank in a wide table wrote a NaN ``obsval`` and pyEMU refused the file, while
+  a typo such as ``"12,5"`` became that same NaN; a set given no values died on
+  ``KeyError: 'time'``;
+* heads were written by two writers -- the base copy a pivot, whose columns pandas
+  sorts, every forward run in mapping order -- so PEST's positional instruction
+  file read W1's head as W10's in every realization;
+* the lake/SFR/DRN forward run reloaded the simulation's FIRST GWF model, not the
+  calibrated one.
+
+Every test here builds a real control file on a real MF6 run of one small model --
+the 6 x 6 irregular Voronoi grid of ``test_flow_targets_period_end.py``, one confined
+layer, CHD at 102 ft on the west and east edges, heads filling from 90 ft, a
+four-reach stream, a three-cell DRN zone and a two-cell lake; three 10-day periods
+of three steps, ``SAVE HEAD LAST`` and ``SAVE BUDGET LAST``. It carries no MF6 OBS
+package, so every family reads its FILE route, keyed by stress period. Which
+observation holds which cell of a simulated table is found the way PEST finds it:
+by reading a probe copy of the table through pyEMU's own ``InstructionFile``.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+import warnings
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+import myflopy as mf
+from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+
+pyemu = pytest.importorskip("pyemu")
+
+NPER, NSTP, PERLEN = 3, 3, 10.0
+REACHES = [13, 14, 15, 16]
+DRN_CELLS = [20, 21, 27]
+LAKE_CELLS = [8, 9]
+#: A value no simulated table holds, written into one cell of a probe copy.
+PROBE = 123456.789
+
+
+def _grid_and_edges():
+    grid = irregular_voronoi_grid(nrow=6, ncol=6, cell_size=100.0, refined=False)
+    props = grid.get_disv_gridprops()
+    xy = np.array([(c[1], c[2]) for c in props["cell2d"]])
+    xmin, _, xmax, _ = grid.gdf_vorPolys.total_bounds
+    edge = np.flatnonzero((xy[:, 0] < xmin + 100) | (xy[:, 0] > xmax - 100))
+    return grid, props, edge
+
+
+def _disv(grid, props):
+    return mf.disv(nlay=1, ncpl=grid.ncpl, nvert=len(props["vertices"]),
+                   vertices=props["vertices"], cell2d=props["cell2d"], top=110.0, botm=[0.0])
+
+
+def _run(root: Path, simulation):
+    with warnings.catch_warnings():
+        # A built grid object cannot be frozen into the run's snapshot, and this run
+        # is never reopened.
+        warnings.filterwarnings("ignore", "Run 'r' built but its frozen snapshot", UserWarning)
+        run = mf.Project(root / "p", name="p").run("r", simulation)
+    assert run.success, "\n".join(run.report[-20:])
+    return run
+
+
+@pytest.fixture(scope="module")
+def toy(tmp_path_factory):
+    """The model in the module docstring, run."""
+
+    grid, props, edge = _grid_and_edges()
+    last = len(REACHES) - 1
+    stream = mf.sfr.flopy(
+        packagedata=[[i, (0, c), 100.0, 5.0, 0.001, 95.0 - 0.1 * i, 1.0, 1.0, 0.03,
+                      1 if i in (0, last) else 2, 1.0, 0] for i, c in enumerate(REACHES)],
+        connectiondata=[[i, *([i - 1] if i > 0 else []), *([-(i + 1)] if i < last else [])]
+                        for i in range(len(REACHES))],
+        perioddata={0: [[0, "INFLOW", 50.0]], 1: [[0, "INFLOW", 200.0]],
+                    2: [[0, "INFLOW", 20.0]]},
+        stage_filerecord="m.sfr.stg", budget_filerecord="m.sfr.bud",
+    )
+    lake = mf.lak.flopy(
+        nlakes=1, packagedata=[[0, 104.0, len(LAKE_CELLS), "pond"]],
+        connectiondata=[[0, i, (0, c), "VERTICAL", 0.5, 0.0, 0.0, 0.0, 0.0]
+                        for i, c in enumerate(LAKE_CELLS)],
+        perioddata={0: [[0, "WITHDRAWAL", 10.0]]}, boundnames=True,
+        stage_filerecord="m.lak.stg",
+    )
+    model = mf.gwf("m", grid=grid, packages=[
+        _disv(grid, props),
+        mf.npf(k=10.0, icelltype=0),
+        mf.sto(ss=1e-3, sy=0.2, iconvert=0, transient={0: True}),
+        mf.ic(strt=90.0),
+        mf.chd(stress_period_data={0: [[(0, int(c)), 102.0] for c in edge]}),
+        stream,
+        mf.drn(stress_period_data={0: [[(0, c), 96.0, 50.0] for c in DRN_CELLS]}),
+        lake,
+        mf.oc(head_filerecord="m.hds", budget_filerecord="m.cbc",
+              saverecord=[("HEAD", "LAST"), ("BUDGET", "LAST")]),
+    ])
+    simulation = mf.simulation(model, name="s", packages=[
+        mf.tdis(nper=NPER, perioddata=[(PERLEN, NSTP, 1.0)] * NPER)])
+    return _run(tmp_path_factory.mktemp("pest_handed"), simulation).model()
+
+
+def _build(model, workspace: Path, *, observe=(), forecast=()):
+    """A calibration of ``k`` against ``observe``, forecasting ``forecast``, built."""
+
+    cal = model.pest("handed", workspace=workspace, start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
+    for targets in observe:
+        cal.observe(targets)
+    for targets in forecast:
+        cal.forecast(targets)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        pst = cal.build("handed.pst", noptmax=0)
+    return cal, pst
+
+
+def _read_by_pest(template: Path, table: str, output: Path | None = None) -> pd.Series:
+    """What PEST's instruction file reads from ``output`` (default: the table itself)."""
+
+    ins = pyemu.pst_utils.InstructionFile(str(template / f"{table}.ins"))
+    return ins.read_output_file(str(output or template / table))["obsval"]
+
+
+def _observation_at(template: Path, table: str, period: int, column: str) -> str:
+    """The observation PEST reads from one cell of a simulated table, found by what it reads."""
+
+    frame = pd.read_csv(template / table)
+    probe = frame.astype({column: float})
+    probe.loc[frame.iloc[:, 0].astype(float) == period, column] = PROBE
+    path = template / f"probe_{table}"
+    probe.to_csv(path, index=False)
+    read = _read_by_pest(template, table, path)
+    hits = read.index[np.isclose(read.to_numpy(dtype=float), PROBE)]
+    assert len(hits) == 1, (table, period, column, list(hits))
+    return hits[0]
+
+
+def _base_value(template: Path, table: str, period: int, column: str) -> float:
+    frame = pd.read_csv(template / table)
+    return float(frame.loc[frame.iloc[:, 0].astype(float) == period, column].iloc[0])
+
+
+def _head_targets(names_cells, values, **kwargs):
+    locations = pd.DataFrame({"name": [n for n, _ in names_cells],
+                              "cell": [c for _, c in names_cells], "layer": 0})
+    return mf.HeadTargets(locations=locations, values=values, **kwargs)
+
+
+# -- (a) and (b): matched by number; refused when nothing holds a target --------
+
+
+def test_a_period_key_written_as_a_float_reaches_its_row_in_every_family(toy, tmp_path):
+    """``1.0`` is period 1: ``compare()`` always read it so, the build dropped it --
+    pyEMU wrote ``per:1``, the build looked for ``per:1.0`` and skipped it."""
+
+    heads = _head_targets([("W", 22)], pd.DataFrame({"time": [0.0, 1.0], "W": [50.0, 51.0]}))
+    flow = mf.SfrFlowTargets(locations={"a": 0}, values=pd.DataFrame({"time": [1.0], "a": [7.0]}))
+    seep = mf.DrnFlowTargets(locations={"zone": DRN_CELLS},
+                             values=pd.DataFrame({"time": [2.0], "zone": [-3.0]}))
+    pond = mf.LakeStageTargets(locations={"pond": 0},
+                               values=pd.DataFrame({"time": [1.0], "pond": [99.0]}))
+    cal, pst = _build(toy, tmp_path / "pest", observe=(heads, flow, seep, pond))
+    template = cal.template_workspace
+    obs = pst.observation_data
+
+    for table, period, column, value in (
+        ("hds_simulated_heads.csv", 0, "W", 50.0),
+        ("hds_simulated_heads.csv", 1, "W", 51.0),
+        ("sfr_flow_simulated_sfr_flow.csv", 1, "a", 7.0),
+        ("drn_flow_simulated_drn_flow.csv", 2, "zone", -3.0),
+        ("stage_simulated_lake_stage.csv", 1, "pond", 99.0),
+    ):
+        name = _observation_at(template, table, period, column)
+        assert obs.loc[name, "obsval"] == value, (table, period)
+        assert obs.loc[name, "weight"] == 1.0, (table, period)
+    # compare() and the build agree on what 1.0 means.
+    assert heads.compare(toy).set_index("per")["head_target"].to_dict() == {0: 50.0, 1: 51.0}
+
+
+def test_a_target_nothing_holds_is_refused_by_the_build_naming_it(toy, tmp_path):
+    """A period the table does not hold, and a lake the model does not have: both
+    vanished from the pst without a word, leaving the base run's value weighted."""
+
+    late = _head_targets([("W", 22)], pd.DataFrame({"time": [5], "W": [50.0]}))
+    with pytest.raises(ValueError, match=(
+        r"HeadTargets \(PEST build, prefix 'hds'\): 1 target\(s\) match nothing in the "
+        r"table PEST reads, hds_simulated_heads\.csv.*'W' at time 5 \(period 5\): no row "
+        r"with per = 5.*Its rows are per = 0, 1, 2")):
+        _build(toy, tmp_path / "late", observe=(late,))
+
+    ghost = mf.LakeStageTargets(locations={"pond": 0, "ghost": 7},
+                                values=pd.DataFrame({"time": [0], "ghost": [99.0]}))
+    with pytest.raises(ValueError, match=r"'ghost' at time 0 \(period 0\): no column 'ghost'"):
+        _build(toy, tmp_path / "ghost", observe=(ghost,))
+
+
+def test_a_fractional_period_is_refused_by_compare_and_by_the_build(toy, tmp_path):
+    """``1.5`` was truncated to period 1 by ``compare()`` and dropped by the build."""
+
+    heads = _head_targets([("W", 22)], pd.DataFrame({"time": [1.5], "W": [50.0]}))
+    flow = mf.SfrFlowTargets(locations={"a": 0}, values=pd.DataFrame({"time": [10.9], "a": [7.0]}))
+    refusal = r"reads `time` as a zero-based stress period, and {} is not a whole number"
+    with pytest.raises(ValueError, match=refusal.format(r"1\.5")):
+        heads.compare(toy)
+    with pytest.raises(ValueError, match=refusal.format(r"10\.9")):
+        flow.compare(toy)
+    with pytest.raises(ValueError, match=refusal.format(r"1\.5")):
+        _build(toy, tmp_path / "pest", observe=(heads,))
+
+
+def test_two_measurements_of_one_target_in_one_period_are_refused(toy, tmp_path):
+    """The pst kept the LAST of two readings while ``compare()`` counted both."""
+
+    heads = mf.HeadTargets(
+        locations=pd.DataFrame({"name": ["A"], "cell": [22], "layer": [0]}),
+        values=pd.DataFrame({"time": [0, 0, 1], "name": ["A", "A", "A"],
+                             "head": [99.0, 95.0, 97.0]}))
+    flow = mf.SfrFlowTargets(
+        locations={"r": 3},
+        values=pd.DataFrame({"time": [0, 0], "name": ["r", "r"], "flow": [100.0, 140.0]}))
+    refusal = r"two or more measurements of one target in one stress period -- {} at period 0: 2 values"
+    with pytest.raises(ValueError, match=refusal.format("'A'")):
+        heads.compare(toy)
+    with pytest.raises(ValueError, match=refusal.format("'r'")):
+        flow.compare(toy)
+    with pytest.raises(ValueError, match=refusal.format("'A'")):
+        _build(toy, tmp_path / "pest", observe=(heads,))
+    # A blank is not a measurement, so it collides with nothing.
+    blank = mf.HeadTargets(
+        locations=pd.DataFrame({"name": ["A"], "cell": [22], "layer": [0]}),
+        values=pd.DataFrame({"time": [0, 0], "name": ["A", "A"], "head": [99.0, None]}))
+    assert blank.compare(toy)["head_target"].notna().sum() == 1
+
+
+# -- (d): nothing is history-matched that nobody measured -----------------------
+
+
+def test_every_row_no_target_names_carries_weight_zero_forecasts_included(toy, tmp_path):
+    """Measured at period 1 only; forecast at period 2 only. Every other row kept
+    pyEMU's weight 1 and the BASE run's value -- anchoring the calibration to the
+    uncalibrated model -- and the forecast's other periods were history-matched."""
+
+    heads = _head_targets([("W", 22)], pd.DataFrame({"time": [1], "W": [51.0]}))
+    predicted = _head_targets([("P", 23)], pd.DataFrame({"time": [2], "P": [0.0]}))
+    cal, pst = _build(toy, tmp_path / "pest", observe=(heads,), forecast=(predicted,))
+    template = cal.template_workspace
+    obs = pst.observation_data
+
+    measured = _observation_at(template, "hds_simulated_heads.csv", 1, "W")
+    assert (obs.loc[measured, "obsval"], obs.loc[measured, "weight"]) == (51.0, 1.0)
+    for period in (0, 2):
+        name = _observation_at(template, "hds_simulated_heads.csv", period, "W")
+        assert obs.loc[name, "weight"] == 0.0
+        assert obs.loc[name, "obsval"] == pytest.approx(
+            _base_value(template, "hds_simulated_heads.csv", period, "W"), rel=1e-12)
+
+    forecast = _observation_at(template, "fore1_simulated_heads.csv", 2, "P")
+    assert pst.pestpp_options["forecasts"] == forecast
+    for period in (0, 1):
+        name = _observation_at(template, "fore1_simulated_heads.csv", period, "P")
+        assert obs.loc[name, "weight"] == 0.0
+    assert pst.nnz_obs == 1
+
+
+# -- (e): a blank is unmeasured; a typo is refused; no values still registers ---
+
+
+def test_a_blank_is_unmeasured_and_a_value_that_is_not_a_number_is_refused(toy, tmp_path):
+    """A wide table with a gap -- real well data -- could not be built: its blank
+    became a NaN ``obsval`` and pyEMU refused the control file. And a typo became
+    the same NaN, so a measurement could vanish unnoticed."""
+
+    gappy = _head_targets(
+        [("W1", 22), ("W2", 23)],
+        pd.DataFrame({"time": [0, 1], "W1": [50.0, None], "W2": [52.0, 53.0]}))
+    cal, pst = _build(toy, tmp_path / "pest", observe=(gappy,))
+    obs = pst.observation_data
+    assert obs["obsval"].notna().all()
+    gap = _observation_at(cal.template_workspace, "hds_simulated_heads.csv", 1, "W1")
+    assert obs.loc[gap, "weight"] == 0.0
+    assert pst.nnz_obs == 3
+
+    with pytest.raises(ValueError, match=(
+            r"HeadTargets values must be numbers, or blank where a target was not "
+            r"measured, and 1 are neither: 'W1' at time 1 holds '12,5' \(column 'W1'\)")):
+        _head_targets([("W1", 22)], pd.DataFrame({"time": [0, 1], "W1": ["50", "12,5"]}))
+    with pytest.raises(ValueError, match=r"'r' at time 0 holds 'dry' \(column 'flow'\)"):
+        mf.SfrFlowTargets(locations={"r": 3}, values=pd.DataFrame(
+            {"time": [0], "name": ["r"], "flow": ["dry"]}))
+
+
+def test_a_set_given_no_values_registers_and_a_forecast_of_one_names_every_row(
+    toy, tmp_path
+):
+    """A capture template or a forecast placeholder died on ``KeyError: 'time'``."""
+
+    captured = mf.DrnFlowTargets(locations={"zone": DRN_CELLS})
+    outlet = mf.SfrFlowTargets(locations={"out": len(REACHES) - 1})
+    cal, pst = _build(toy, tmp_path / "pest", observe=(captured,), forecast=(outlet,))
+    template = cal.template_workspace
+    obs = pst.observation_data
+
+    zone = [_observation_at(template, "drn_flow_simulated_drn_flow.csv", p, "zone")
+            for p in range(NPER)]
+    out = [_observation_at(template, "fore1_simulated_sfr_flow.csv", p, "out")
+           for p in range(NPER)]
+    assert (obs.loc[zone + out, "weight"] == 0.0).all()
+    assert pst.pestpp_options["forecasts"].split(",") == out
+
+
+# -- (f): one writer, one order -------------------------------------------------
+
+
+@pytest.mark.slow
+def test_pest_reads_each_well_its_own_head_whatever_order_the_names_are_in(toy, tmp_path):
+    """Names out of sorted order -- W2, W1, W10. The base table was a pivot, whose
+    columns pandas sorts, and the forward run wrote mapping order; PEST's instruction
+    file reads by position, so every realization read W1's head as W10's."""
+
+    wells = _head_targets([("W2", 1), ("W1", 2), ("W10", 34)],
+                          pd.DataFrame({"time": [0], "W2": [1.0], "W1": [2.0], "W10": [3.0]}))
+    cal, _pst = _build(toy, tmp_path / "pest", observe=(wells,))
+    template = cal.template_workspace
+    table = "hds_simulated_heads.csv"
+    assert (template / table).read_text().splitlines()[0] == "per,W2,W1,W10"
+
+    subprocess.run([sys.executable, "forward_run.py"], cwd=template, check=True,
+                   capture_output=True, text=True)
+    written = pd.read_csv(template / table)
+    assert list(written.columns) == ["per", "W2", "W1", "W10"]
+    read = _read_by_pest(template, table)
+    assert len(read) == 3 * NPER
+    for name, value in read.items():
+        label, per = re.search(r"usecol:(.+)_per:(\d+)$", name).groups()
+        assert value == pytest.approx(written.loc[int(per), label.upper()], rel=1e-12), name
+
+
+def test_a_supplied_simulated_table_in_another_order_is_refused(toy, tmp_path):
+    """The one writer cannot vouch for a table the caller supplies, so its header is
+    checked against what every forward run writes."""
+
+    wells = _head_targets([("W2", 1), ("W1", 2)],
+                          pd.DataFrame({"time": [0], "W2": [1.0], "W1": [2.0]}))
+    sorted_table = pd.DataFrame({"per": range(NPER), "W1": 1.0, "W2": 2.0})
+    spec = mf.HeadTargetObservationSpec(targets=wells, simulated_values=sorted_table)
+    with pytest.raises(ValueError, match=(
+            r"has columns \['per', 'W1', 'W2'\], and every forward run writes "
+            r"\['per', 'W2', 'W1'\]")):
+        _build(toy, tmp_path / "pest", observe=(spec,))
+
+
+def test_two_sets_under_one_prefix_are_refused(toy, tmp_path):
+    """The prefix names every file a set writes: the second set overwrote the
+    first's table, instruction file and map, and PEST++ refused the control file."""
+
+    first = _head_targets([("W1", 22)], pd.DataFrame({"time": [0], "W1": [1.0]}))
+    second = _head_targets([("W2", 23)], pd.DataFrame({"time": [0], "W2": [1.0]}))
+    with pytest.raises(ValueError, match="Two observation or forecast sets share the prefix 'hds'"):
+        _build(toy, tmp_path / "pest", observe=(first, second))
+
+
+# -- (g): the forward run reloads the calibrated model --------------------------
+
+
+@pytest.mark.slow
+def test_the_named_series_forward_run_reads_the_calibrated_model_not_the_first(tmp_path):
+    """Two GWF models, calibrating the SECOND. The forward run reloaded the first
+    one: its DRN zone's flow in every realization, the second's in the base run."""
+
+    grid, props, edge = _grid_and_edges()
+
+    def flow_model(name, cond):
+        return mf.gwf(name, grid=grid, packages=[
+            _disv(grid, props),
+            mf.npf(k=10.0, icelltype=0),
+            mf.sto(ss=1e-3, sy=0.2, iconvert=0, transient={0: True}),
+            mf.ic(strt=100.0),
+            mf.chd(stress_period_data={0: [[(0, int(c)), 102.0] for c in edge]}),
+            mf.drn(stress_period_data={0: [[(0, c), 96.0, cond] for c in DRN_CELLS]}),
+            mf.oc(head_filerecord=f"{name}.hds", budget_filerecord=f"{name}.cbc",
+                  saverecord=[("HEAD", "LAST"), ("BUDGET", "LAST")]),
+        ])
+
+    simulation = mf.simulation(
+        flow_model("m", 1.0), flow_model("n", 50.0), name="s",
+        packages=[mf.tdis(nper=2, perioddata=[(PERLEN, 1, 1.0)] * 2), mf.ims()])
+    run = _run(tmp_path, simulation)
+    first, second = run.model("m"), run.model("n")
+    targets = mf.DrnFlowTargets(locations={"seep": DRN_CELLS},
+                                values=pd.DataFrame({"time": [0, 1], "seep": [-500.0, -500.0]}))
+    wanted = targets.simulated_series(second)["seep"].to_numpy()
+    other = targets.simulated_series(first)["seep"].to_numpy()
+    assert not np.allclose(wanted, other)
+
+    cal = second.pest("two", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("drn.cond", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 1000.0))
+    cal.observe(targets)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("two.pst", noptmax=0)
+    template = cal.template_workspace
+    table = template / "drn_flow_simulated_drn_flow.csv"
+    base = table.read_text()
+    np.testing.assert_allclose(pd.read_csv(table)["seep"], wanted, rtol=1e-12)
+
+    subprocess.run([sys.executable, "forward_run.py"], cwd=template, check=True,
+                   capture_output=True, text=True)
+    assert table.read_text() == base

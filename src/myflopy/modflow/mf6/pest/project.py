@@ -28,7 +28,6 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     relayer_array_target,
 )
 from myflopy.modflow.mf6.pest.observations import (
-    _observation_name,
     finalize_observations,
     prepare_conc_observations,
     prepare_drn_flow_observations,
@@ -496,6 +495,18 @@ class PestProject:
         into the control file, and a post-processor is added to the forward run
         so simulated equivalents are regenerated on every model run.
 
+        What the control file holds is exactly the targets (ledger 340). Each is
+        matched to the simulated row whose index EQUALS its ``time`` read as a
+        zero-based stress period (``1.0`` is period 1, ``1.5`` is refused), and a
+        target no row holds -- a period the output did not save, a name with no
+        simulated column -- makes :meth:`build` raise, naming it. A blank value
+        is unmeasured. Every simulated row no target measures stays in the
+        control file at weight 0, its ``obsval`` the base run's own value, so it
+        is reported but never history-matched; it used to carry weight 1, which
+        pulled the calibration toward the uncalibrated model at every period
+        nobody measured. A set given no values at all registers every row at
+        weight 0: its simulated values are captured, nothing is fitted.
+
         Parameters
         ----------
         targets : target set or observation spec
@@ -537,6 +548,14 @@ class PestProject:
         quantities, so declare here whatever model output you ultimately care
         about predicting (a future head, a stream flux, a seepage rate).
 
+        A forecast is the rows its targets NAME, matched as :meth:`observe`
+        matches them (a target no row holds makes :meth:`build` raise); its value
+        may be blank. The set's other rows -- the periods nobody forecast -- are
+        zero-weighted too and are not forecasts; they used to stay at weight 1,
+        history-matched to the base run's own values (ledger 340). A set given
+        NO values forecasts every row of its table: its locations at every
+        period.
+
         Parameters
         ----------
         targets : target set or observation spec
@@ -545,7 +564,8 @@ class PestProject:
             :class:`SfrStageTargets`, :class:`SfrFlowTargets`,
             :class:`DrnFlowTargets`) or a pre-built observation spec,
             describing *where* and *when* the prediction is taken. Any values
-            supplied are placeholders (e.g. an expected value); the weight is
+            supplied are placeholders (e.g. an expected value), written as the
+            observation's value; a blank keeps the base run's. The weight is
             forced to zero regardless. Anything else raises ``TypeError``.
         prefix : str or None, optional
             Observation-name prefix. ``None`` (default, and an empty string
@@ -722,9 +742,33 @@ class PestProject:
             return prepare_drn_flow_observations(self, spec)
         raise TypeError(f"Unsupported observation spec type: {type(spec).__name__}")
 
+    def _refuse_shared_prefixes(self):
+        """Refuse two observation or forecast sets under one prefix, before anything is written.
+
+        The prefix names every file a set writes, so the second overwrote the
+        first's table, instruction file and map, and the control file the build
+        handed back could not run -- nor could its targets be told apart by the
+        positional matching of ledger 340.
+        """
+
+        prefixes = [
+            str(spec.prefix).strip().lower()
+            for spec in [*self._observation_specs, *self._forecast_specs]
+        ]
+        repeated = sorted({prefix for prefix in prefixes if prefixes.count(prefix) > 1})
+        if repeated:
+            raise ValueError(
+                f"Two observation or forecast sets share the prefix {repeated[0]!r}"
+                + (f" (and {', '.join(map(repr, repeated[1:]))})" if len(repeated) > 1 else "")
+                + ". The prefix names every file a set writes, so the second would "
+                "overwrite the first. Pass observe(targets, prefix=...) a distinct "
+                "prefix per set."
+            )
+
     def _prepare_observation_specs(self):
         """Create simulated observation files and register them with pyEMU."""
 
+        self._refuse_shared_prefixes()
         prepared: list[dict] = []
         for spec in self._observation_specs:
             prepared.append(self._prepare_one_observation_spec(spec))
@@ -960,12 +1004,16 @@ class PestProject:
                         f"Named-series observation set {item.get('prefix')!r} has no "
                         "saved location definition to regenerate simulated values from."
                     )
+                # The calibrated model by NAME: without it the forward run reloads
+                # the simulation's first GWF model, another model's lake or zone
+                # in a simulation of several (ledger 340).
                 self.pf.add_py_function(
                     str(helper_path),
                     "write_named_series_targets("
                     f"kind='{series_config['kind']}', "
                     f"locations_file='{locations_file}', "
-                    f"output_csv='{series_config['output_csv']}')",
+                    f"output_csv='{series_config['output_csv']}', "
+                    f"model_name='{self.model.name}')",
                     is_pre_cmd=False,
                 )
                 continue
@@ -976,18 +1024,18 @@ class PestProject:
             )
 
     def _forecast_observation_names(self) -> list[str]:
-        """Return the pyEMU observation names registered as forecasts."""
+        """The observations the forecast sets name, as ``finalize_observations`` read them.
+
+        Each forecast target's observation is the one the instruction file reads at
+        its row and column -- not a name rebuilt from its key's spelling, which
+        dropped a forecast keyed ``1.0`` where pyEMU wrote ``per:1`` (ledger 340).
+        """
 
         names: list[str] = []
         for item in self._prepared_observations:
-            if not item.get("is_forecast"):
-                continue
-            target_frame = item.get("target_frame")
-            if target_frame is None:
-                continue
-            for row in target_frame.itertuples(index=False):
-                names.append(_observation_name(item["prefix"], row.col_label, row.row_label))
-        return names
+            if item.get("is_forecast"):
+                names.extend(item.get("forecast_names", []))
+        return list(dict.fromkeys(names))
 
     def _apply_forecasts(self):
         """Zero forecast weights and register them as PEST++ forecasts."""
@@ -1084,9 +1132,20 @@ class PestProject:
         pyemu.Pst
             The built control object (also available as ``cal.pst``). The
             underlying ``PstFrom`` is ``cal.pf`` for advanced edits.
+
+        Raises
+        ------
+        ValueError
+            When an observation or forecast target matches no row of its
+            simulated table (naming it and the rows the table has); when a
+            target's ``time`` is not a whole number, or two values name one
+            target in one period; when two sets share a prefix; or when a head
+            or concentration ``simulated_values`` table's columns are not the
+            forward run's, in its order (ledger 340).
         """
 
         target_name = Path(filename).name if filename else f"{self.name}.pst"
+        self._refuse_shared_prefixes()
         self._ensure_external_model()
         self._build_pstfrom()
         self._prepare_observation_specs()

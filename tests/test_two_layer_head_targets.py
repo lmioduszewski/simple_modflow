@@ -117,20 +117,38 @@ def test_each_layer_gets_its_own_simulated_column(grid):
 
 
 def test_the_build_and_the_forward_run_agree_on_the_columns(grid, tmp_path, monkeypatch):
-    """The forward run writes what the build registered, for every layer."""
+    """The forward run writes what the build registered, for every layer, IN ORDER.
 
-    targets = _targets([("W1", 0, Point(37.5, 37.5)), ("W1", 1, Point(37.5, 37.5))])
+    Names deliberately out of sorted order: PEST reads the file by position and
+    names each value after the BASE copy's header, and the base copy was a pivot,
+    whose columns pandas sorts -- ``W1_lay0, W1_lay1, W2`` against the forward
+    run's ``W2, W1_lay0, W1_lay1``, so every realization handed PEST W2's head
+    as W1's. Names already in sorted order could not see it (ledger 340)."""
+
+    from myflopy.modflow.mf6.pest.observations import prepare_head_target_observations
+    from myflopy.modflow.mf6.pest.specs import HeadTargetObservationSpec
+
+    targets = _targets([
+        ("W2", 0, Point(62.5, 62.5)),
+        ("W1", 0, Point(37.5, 37.5)),
+        ("W1", 1, Point(37.5, 37.5)),
+    ])
     model = _model(grid)
-    mapping = tmp_path / "map.csv"
-    targets.observation_labels(model).loc[:, ["obsname", "name", "layer", "cell"]].to_csv(
-        mapping, index=False
+    model.name, model.workspace = "flow", tmp_path
+    _stub_head_file(monkeypatch)
+    prepare_head_target_observations(
+        SimpleNamespace(model=model, template_workspace=tmp_path,
+                        pf=SimpleNamespace(add_observations=lambda *args, **kwargs: None)),
+        HeadTargetObservationSpec(targets=targets, prefix="hds"),
     )
+    base = pd.read_csv(tmp_path / "hds_simulated_heads.csv")
 
-    written = _run_forward(tmp_path, monkeypatch, mapping)
+    written = _run_forward(tmp_path, monkeypatch, tmp_path / "hds_head_target_map.csv")
 
-    assert list(written.columns) == list(targets.simulated_heads(model).columns)
+    assert list(written.columns) == list(base.columns) == ["per", "W2", "W1_lay0", "W1_lay1"]
     assert written.loc[0, "W1_lay0"] == 1005.0      # layer 0 of the fake head file
     assert written.loc[0, "W1_lay1"] == 2005.0
+    assert written.loc[0, "W2"] == 1010.0
 
 
 def test_a_mapping_written_before_the_label_still_works(tmp_path, monkeypatch):
@@ -144,8 +162,8 @@ def test_a_mapping_written_before_the_label_still_works(tmp_path, monkeypatch):
     assert list(written.columns) == ["per", "W1"]
 
 
-def _run_forward(tmp_path, monkeypatch, mapping) -> pd.DataFrame:
-    """Run the injected forward-run writer against a stub head file."""
+def _stub_head_file(monkeypatch):
+    """Stand a two-layer, 16-cell fake in for FloPy's head file (layer 0 = 1000 + cell)."""
 
     import flopy
 
@@ -170,22 +188,34 @@ def _run_forward(tmp_path, monkeypatch, mapping) -> pd.DataFrame:
             pass
 
     monkeypatch.setattr(flopy.utils, "HeadFile", _FakeHeadFile)
+
+
+def _run_forward(tmp_path, monkeypatch, mapping) -> pd.DataFrame:
+    """Run the injected forward-run writer against a stub head file."""
+
+    _stub_head_file(monkeypatch)
     monkeypatch.chdir(tmp_path)
     output = tmp_path / "simulated.csv"
     _write_head_target_csv("flow", str(mapping), str(output))
     return pd.read_csv(output)
 
 
-def test_the_mapping_and_the_pst_rows_carry_the_label(grid, tmp_path):
+def test_the_mapping_and_the_pst_rows_carry_the_label(grid, tmp_path, monkeypatch):
     """pyEMU names an observation after the simulated CSV's COLUMN, so the mapping
-    the forward run reads and the pst rows must carry the same label it does."""
+    the forward run reads and the pst rows must carry the same label it does.
+
+    The build writes that CSV with the forward run's own writer (ledger 340), so
+    the model double needs a head file: a stub, carrying MF6's clock."""
 
     from myflopy.modflow.mf6.pest.observations import prepare_head_target_observations
     from myflopy.modflow.mf6.pest.specs import HeadTargetObservationSpec
 
+    _stub_head_file(monkeypatch)
     targets = _targets([("W1", 0, Point(37.5, 37.5)), ("W1", 1, Point(37.5, 37.5))])
+    model = _model(grid)
+    model.name, model.workspace = "flow", tmp_path
     project = SimpleNamespace(
-        model=_model(grid),
+        model=model,
         template_workspace=tmp_path,
         pf=SimpleNamespace(add_observations=lambda *args, **kwargs: None),
     )
@@ -197,5 +227,5 @@ def test_the_mapping_and_the_pst_rows_carry_the_label(grid, tmp_path):
     mapping = pd.read_csv(tmp_path / "hds_head_target_map.csv")
     simulated = pd.read_csv(tmp_path / "hds_simulated_heads.csv")
     assert mapping["obsname"].tolist() == ["W1_lay0", "W1_lay1"]
-    assert sorted(set(prepared["target_frame"]["col_label"])) == ["w1_lay0", "w1_lay1"]
+    assert sorted(set(prepared["target_frame"]["column"])) == ["W1_lay0", "W1_lay1"]
     assert set(simulated.columns) - {"per"} == set(mapping["obsname"])

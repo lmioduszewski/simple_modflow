@@ -1,14 +1,47 @@
-"""Observation builders for the first ``myflopy`` PEST slice."""
+"""Observation builders for the ``myflopy`` PEST build: what PEST is handed matches the targets.
+
+Each target set becomes a simulated CSV that pyEMU turns into one observation per
+cell of the table, read back on every forward run by an instruction file that finds
+each value by POSITION -- the n-th comma of the m-th line. The build holds three
+rules about that table (ledger 340):
+
+* **A target is matched to its row by NUMBER and to its column by name**, and its
+  observation is whichever one the instruction file reads at that row and column.
+  The key is read as a stress period by the one rule every target family uses
+  (:func:`~myflopy.modflow.mf6.observations._shared._numeric_periods`), so ``1.0``
+  is period 1 in the build as in ``compare()``. The build used to rebuild pyEMU's
+  observation NAME from the key's spelling -- ``per:1.0`` where pyEMU wrote
+  ``per:1``, ``time:10`` where it wrote ``time:10.0`` -- and skip any name it did
+  not find, so those targets reached nothing, silently.
+* **A target no row holds is REFUSED**, naming it and the keys the table has.
+* **Every row no target names carries weight 0.** pyEMU gives each row weight 1
+  and the BASE run's own value, so every unmeasured period -- and every period of a
+  forecast set but the ones forecast -- history-matched the calibration back to
+  the uncalibrated model (ledger 81's build-side note). Its value stays the base
+  run's, so ensembles still report it.
+
+Head and concentration tables are written, base run and every forward run alike,
+by ONE writer (``forward_run._write_head_target_csv`` / ``_write_conc_target_csv``),
+and the build asserts the base header is the order the forward run writes: the base
+copy used to be a pivot, whose columns pandas sorts, so a well named W1 read W10's
+head in every realization when names were not already in sorted order.
+"""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 
-from myflopy.modflow.mf6.observations import _normalize_row_labels
+from myflopy.modflow.mf6.observations._shared import _measured_periods, _shown
+from myflopy.modflow.mf6.period_end import period_lengths
+from myflopy.modflow.mf6.pest.forward_run import (
+    _write_conc_target_csv,
+    _write_head_target_csv,
+)
 from myflopy.modflow.mf6.pest.model_lookup import resolve_transport_model_name
 from myflopy.modflow.mf6.pest.specs import (
     ConcObservationSpec,
@@ -19,67 +52,13 @@ from myflopy.modflow.mf6.pest.specs import (
     SfrStageObservationSpec,
 )
 
+#: The columns of a prepared set's ``target_frame``: who the target is, the column
+#: of the simulated table it reads, its key as given and as a period, its value
+#: (``NaN`` = blank: unmeasured, or a forecast without a placeholder) and weight.
+_TARGET_COLUMNS = ["name", "column", "time", "per", "value", "weight"]
 
-def _load_values_table(values, *, time_column: str, value_column: str) -> pd.DataFrame:
-    """Normalize a long or wide table of target values."""
-
-    if values is None:
-        return pd.DataFrame(columns=["time", "name", value_column])
-    if isinstance(values, pd.DataFrame):
-        frame = values.copy()
-    else:
-        frame = pd.read_csv(values)
-
-    if time_column not in frame.columns:
-        raise ValueError(f"Target values must include {time_column!r}.")
-    if "name" in frame.columns and value_column in frame.columns:
-        long = frame.rename(columns={time_column: "time", value_column: "value"}).loc[
-            :, ["time", "name", "value"]
-        ]
-    else:
-        value_columns = [column for column in frame.columns if column != time_column]
-        long = frame.melt(
-            id_vars=[time_column],
-            value_vars=value_columns,
-            var_name="name",
-            value_name="value",
-        ).rename(columns={time_column: "time"})
-    long["name"] = long["name"].astype(str)
-    long["value"] = pd.to_numeric(long["value"], errors="coerce")
-    long["row_label"] = _normalize_row_labels(long["time"])
-    long["col_label"] = long["name"].astype(str).str.strip().str.lower()
-    return long
-
-
-def _observation_name(prefix: str, column_label: str, row_label: str) -> str:
-    """Reproduce pyEMU's list-style observation naming convention."""
-
-    return f"oname:{prefix.lower()}_otype:lst_usecol:{column_label}_{row_label}"
-
-
-def _build_index_row_labels(values: pd.Series, index_name: str) -> pd.Series:
-    """Build pyEMU-style row labels for a list-style output index column."""
-
-    normalized_index_name = str(index_name).strip().lower()
-    return values.astype(str).str.strip().str.lower().map(lambda value: f"{normalized_index_name}:{value}")
-
-
-def _assign_target_values(pst, target_frame: pd.DataFrame, *, prefix: str, weight_column: str | None = None):
-    """Assign target values and weights to a built ``pyemu.Pst`` object."""
-
-    if target_frame.empty:
-        return
-    obs = pst.observation_data
-    for row in target_frame.itertuples(index=False):
-        obsnme = _observation_name(prefix, row.col_label, row.row_label)
-        if obsnme not in obs.index:
-            continue
-        value = getattr(row, "value", getattr(row, "head_target", np.nan))
-        obs.loc[obsnme, "obsval"] = float(value)
-        if weight_column is not None and hasattr(row, weight_column):
-            weight = getattr(row, weight_column)
-            if pd.notna(weight):
-                obs.loc[obsnme, "weight"] = float(weight)
+#: An observation name in a PEST instruction line: ``!name!``.
+_INSTRUCTION_NAME = re.compile(r"!([^!]+)!")
 
 
 def _write_frame(frame: pd.DataFrame, path: Path):
@@ -130,6 +109,218 @@ def _point_locations_snapshot(project, targets) -> gpd.GeoDataFrame:
     )
 
 
+def _column_key(label) -> str:
+    """How a target's name meets a simulated column's: stripped and lower-cased, as pyEMU names it."""
+
+    return str(label).strip().lower()
+
+
+def _format_keys(values) -> str:
+    """A table's row keys, briefly: whole numbers as integers, the rest to 10 figures."""
+
+    keys = []
+    for value in pd.unique(pd.Series(values, dtype=object)):
+        number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+        if pd.notna(number) and float(number).is_integer():
+            keys.append(str(int(number)))
+        elif pd.notna(number):
+            keys.append(f"{float(number):.10g}")
+        else:
+            keys.append(repr(value))
+    if len(keys) > 12:
+        keys = [*keys[:6], "...", *keys[-3:]]
+    return ", ".join(keys) if keys else "none"
+
+
+def _caller(owner: str, prefix: str) -> str:
+    """How a refusal names the set being built."""
+
+    return f"{owner} (PEST build, prefix {prefix!r})"
+
+
+def _named_series_targets(targets, *, value_column: str, prefix: str) -> pd.DataFrame:
+    """A lake, reach or zone target set's values, one row per (target, time), in the build's shape.
+
+    Read from the VALUES the set was given -- ``to_long()`` joins them to the
+    location rows, so a DRN zone given as two rows repeated each value, and a set
+    with no values returned its location table, which has no ``time`` (the
+    ``KeyError: 'time'`` a value-less forecast or capture template died on).
+    """
+
+    values = targets._values
+    if values.empty:
+        return pd.DataFrame(columns=_TARGET_COLUMNS)
+    per = _measured_periods(
+        values, value_column=value_column, caller=_caller(type(targets).__name__, prefix)
+    )
+    names = values["name"].astype(str)
+    return pd.DataFrame(
+        {
+            "name": names,
+            "column": names,
+            "time": values["time"],
+            "per": per,
+            "value": values[value_column].astype(float),
+            "weight": np.nan,
+        }
+    ).reset_index(drop=True)
+
+
+def _zone_weights(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
+    """Each DRN zone's observation weight, from its location rows; refuse a zone given two."""
+
+    locations = targets.locations_gdf
+    if "weight" not in locations.columns or frame.empty:
+        return frame["weight"]
+    table = pd.DataFrame(
+        {
+            "name": locations["name"].astype(str),
+            "weight": pd.to_numeric(locations["weight"], errors="coerce"),
+        }
+    ).dropna(subset=["weight"])
+    spread = table.groupby("name")["weight"].nunique()
+    if (spread > 1).any():
+        zones = ", ".join(repr(name) for name in spread[spread > 1].index[:5])
+        raise ValueError(
+            f"{_caller(type(targets).__name__, prefix)}: zone(s) {zones} are given as "
+            "several rows carrying DIFFERENT weights, and one zone is one observation "
+            "per period with one weight. Give each zone's rows the same weight."
+        )
+    return frame["name"].map(table.groupby("name")["weight"].first())
+
+
+def _locate_targets(
+    frame: pd.DataFrame, simulated: pd.DataFrame, *, owner: str, prefix: str, table: str
+) -> pd.DataFrame:
+    """Each target's row and column in the table PEST reads, found by NUMBER and name.
+
+    The row is the one whose index value (``per``, or ``time``) EQUALS the
+    target's period; the column the one whose header is the target's column,
+    compared stripped and lower-cased as pyEMU names it.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        The set's targets (``_TARGET_COLUMNS``).
+    simulated : pandas.DataFrame
+        The base-run table exactly as written: its first column the row index,
+        every other column one observation per row.
+    owner : str
+        The target class, for the error.
+    prefix : str
+        The set's observation prefix, for the error.
+    table : str
+        The table's file name, for the error.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``frame`` plus ``row`` (the data row, from 0) and ``col`` (the position
+        among the observation columns, from 0).
+
+    Raises
+    ------
+    ValueError
+        When a target matches no row or no column -- naming each such target,
+        its key and the table's rows and columns -- or when the table holds two
+        rows or two columns a target could mean.
+    """
+
+    index_column = simulated.columns[0]
+    use_cols = list(simulated.columns[1:])
+    keys = pd.to_numeric(simulated[index_column], errors="coerce").to_numpy(dtype=float)
+    by_column: dict[str, list[int]] = {}
+    for position, label in enumerate(use_cols):
+        by_column.setdefault(_column_key(label), []).append(position)
+
+    rows: list[int] = []
+    cols: list[int] = []
+    missing: list[str] = []
+    ambiguous: list[str] = []
+    for target in frame.itertuples(index=False):
+        found_cols = by_column.get(_column_key(target.column), [])
+        found_rows = np.flatnonzero(keys == float(target.per))
+        where = f"{_shown(target.name)} at time {_shown(target.time)} (period {int(target.per)})"
+        if len(found_cols) > 1 or len(found_rows) > 1:
+            ambiguous.append(where)
+        elif not found_cols:
+            missing.append(f"{where}: no column {target.column!r}")
+        elif not len(found_rows):
+            missing.append(f"{where}: no row with {index_column} = {int(target.per)}")
+        rows.append(int(found_rows[0]) if len(found_rows) == 1 else -1)
+        cols.append(found_cols[0] if len(found_cols) == 1 else -1)
+
+    if ambiguous:
+        raise ValueError(
+            f"{_caller(owner, prefix)}: the simulated table {table} holds two rows with "
+            f"one {index_column}, or two columns under one name, so these targets could "
+            "each be read from either: " + "; ".join(ambiguous[:5]) + "."
+        )
+    if missing:
+        more = len(missing) - 5
+        raise ValueError(
+            f"{_caller(owner, prefix)}: {len(missing)} target(s) match nothing in the "
+            f"table PEST reads, {table}, so PEST would never see them: "
+            + "; ".join(missing[:5])
+            + (f"; and {more} more" if more > 0 else "")
+            + f". Its rows are {index_column} = {_format_keys(simulated[index_column])}; "
+            f"its columns are {', '.join(repr(str(c)) for c in use_cols[:12])}"
+            + (" ..." if len(use_cols) > 12 else "")
+            + ". A target reads the row whose index EQUALS its time read as a zero-based "
+            "stress period. The build used to skip such a target silently and leave "
+            "the base run's own value in its place (ledger 340)."
+        )
+    return frame.assign(row=rows, col=cols).reset_index(drop=True)
+
+
+def _register_table(project, simulated: pd.DataFrame, simulated_path: Path, *, prefix: str):
+    """Hand pyEMU the base copy of a simulated table: one observation per cell of it."""
+
+    project.pf.add_observations(
+        simulated_path.name,
+        insfile=f"{simulated_path.name}.ins",
+        index_cols=simulated.columns[0],
+        use_cols=[column for column in simulated.columns[1:]],
+        prefix=prefix,
+    )
+
+
+def _prepared_item(
+    *,
+    prefix: str,
+    owner: str,
+    located: pd.DataFrame,
+    valueless: bool,
+    simulated: pd.DataFrame,
+    simulated_path: Path,
+    values_path: Path | None,
+    value_label: str,
+) -> dict:
+    """The fields every prepared set carries into :func:`finalize_observations`."""
+
+    return {
+        "prefix": prefix,
+        "owner": owner,
+        "target_frame": located,
+        "valueless": bool(valueless),
+        "instruction_file": f"{simulated_path.name}.ins",
+        "shape": (int(len(simulated)), int(len(simulated.columns) - 1)),
+        "values_path": values_path,
+        "value_label": value_label,
+    }
+
+
+def _write_values_snapshot(located: pd.DataFrame, path: Path, *, value_label: str) -> Path:
+    """The ``<prefix>_target_values.csv`` review reads: each target's key, value and period."""
+
+    snapshot = located.loc[:, ["time", "name", "value", "per"]].rename(
+        columns={"value": value_label}
+    )
+    if "obsnme" in located.columns:
+        snapshot["obsnme"] = located["obsnme"].to_numpy()
+    return _write_frame(snapshot, path)
+
+
 def _prepare_named_series_observations(
     project,
     *,
@@ -140,40 +331,40 @@ def _prepare_named_series_observations(
     metadata_kind: str,
     locations_snapshot: pd.DataFrame | gpd.GeoDataFrame | None = None,
     geometry: str | None = None,
+    weight: float | None = None,
 ):
     """Create one pyEMU list-style observation source from a named-series target set."""
 
+    owner = type(targets).__name__
     simulated_path = project.template_workspace / f"{prefix}_simulated_{metadata_kind}.csv"
     _write_frame(simulated_wide, simulated_path)
-    use_cols = [column for column in simulated_wide.columns if column != simulated_wide.columns[0]]
-    project.pf.add_observations(
-        simulated_path.name,
-        insfile=f"{simulated_path.name}.ins",
-        index_cols=simulated_wide.columns[0],
-        use_cols=use_cols,
-        prefix=prefix,
+    _register_table(project, simulated_wide, simulated_path, prefix=prefix)
+
+    frame = _named_series_targets(targets, value_column=value_column, prefix=prefix)
+    if metadata_kind == "drn_flow":
+        frame["weight"] = _zone_weights(targets, frame, prefix=prefix)
+    if weight is not None and not frame.empty:
+        frame["weight"] = float(weight)
+    located = _locate_targets(
+        frame, simulated_wide, owner=owner, prefix=prefix, table=simulated_path.name
     )
-
-    target_frame = targets.to_long().copy()
-    if not target_frame.empty:
-        target_frame["col_label"] = target_frame["name"].astype(str).str.strip().str.lower()
-        target_frame["row_label"] = _build_index_row_labels(target_frame["time"], simulated_wide.columns[0])
+    values_path = None
+    if not located.empty:
         values_path = project.template_workspace / f"{prefix}_target_values.csv"
-        values_snapshot = target_frame.loc[:, ["time", "name", value_column]].rename(columns={value_column: "value"})
-        _write_frame(values_snapshot.rename(columns={"value": value_column}), values_path)
-    else:
-        values_path = None
+        _write_values_snapshot(located, values_path, value_label=value_column)
 
+    use_cols = list(simulated_wide.columns[1:])
     metadata = {
         "kind": metadata_kind,
         "prefix": prefix,
         "time_column": "time",
         "value_column": value_column,
         "n_locations": int(len(use_cols)),
-        "n_rows": int(len(target_frame)),
+        "n_rows": int(len(located)),
     }
     if values_path is not None:
         metadata["values_file"] = values_path.name
+    locations_path = None
     if locations_snapshot is not None:
         if isinstance(locations_snapshot, gpd.GeoDataFrame):
             locations_path = project.template_workspace / f"{prefix}_target_locations.gpkg"
@@ -188,170 +379,272 @@ def _prepare_named_series_observations(
         if geometry is not None:
             metadata["geometry"] = geometry
 
-    return {
-        "prefix": prefix,
-        "target_frame": target_frame.rename(columns={value_column: "value"}),
+    return _prepared_item(
+        prefix=prefix,
+        owner=owner,
+        located=located,
+        valueless=targets._values.empty,
+        simulated=simulated_wide,
+        simulated_path=simulated_path,
+        values_path=values_path,
+        value_label=value_column,
+    ) | {
         "named_series_forward_run_config": {
             "kind": metadata_kind,
-            "locations_file": locations_path.name if locations_snapshot is not None else None,
+            "locations_file": locations_path.name if locations_path is not None else None,
             "output_csv": simulated_path.name,
         },
         "metadata": metadata,
     }
 
 
-def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
-    """Create simulated-head CSVs and register pyEMU observations."""
+def _one_writer_table(
+    project,
+    spec,
+    *,
+    writer,
+    model_name: str,
+    mapping: pd.DataFrame,
+    mapping_path: Path,
+    simulated_path: Path,
+) -> pd.DataFrame:
+    """The base copy of a head or concentration table, written by the forward run's own writer.
+
+    PEST's instruction file reads each realization's copy by POSITION and names what
+    it reads after the base copy's header, so the two must list the same columns in
+    the same order. Writing both with one function makes that true by construction;
+    a ``simulated_values`` table the caller supplies cannot be, so the header check
+    after it refuses one in any other order.
+    """
 
     if spec.simulated_values is None:
-        simulated = spec.targets.simulated_heads(project.model)
-    elif isinstance(spec.simulated_values, pd.DataFrame):
-        simulated = spec.simulated_values.copy()
+        writer(
+            model_name,
+            mapping_path,
+            simulated_path,
+            perlen=period_lengths(project.model),
+            sim_ws=Path(project.model.workspace),
+        )
+        simulated = pd.read_csv(simulated_path)
     else:
-        simulated = pd.read_csv(spec.simulated_values)
+        simulated = (
+            spec.simulated_values.copy()
+            if isinstance(spec.simulated_values, pd.DataFrame)
+            else pd.read_csv(spec.simulated_values)
+        )
+        _write_frame(simulated, simulated_path)
 
-    simulated_path = project.template_workspace / f"{spec.prefix}_simulated_heads.csv"
-    _write_frame(simulated, simulated_path)
-    use_cols = [column for column in simulated.columns if column != simulated.columns[0]]
-    project.pf.add_observations(
-        simulated_path.name,
-        insfile=f"{simulated_path.name}.ins",
-        index_cols=simulated.columns[0],
-        use_cols=use_cols,
-        prefix=spec.prefix,
+    labels = mapping["obsname"] if "obsname" in mapping.columns else mapping["name"]
+    expected = ["per", *[str(label) for label in labels]]
+    header = [str(column) for column in simulated.columns]
+    if header != expected:
+        raise ValueError(
+            f"{_caller(type(spec.targets).__name__, spec.prefix)}: the base simulated "
+            f"table {simulated_path.name} has columns {header}, and every forward run "
+            f"writes {expected}. PEST reads that file by POSITION and names each value "
+            "after the base table's header, so a different order hands every "
+            "realization one location's value under another's name. Give "
+            "`simulated_values` the forward run's columns in its order, or leave it "
+            "None to have the build write it."
+        )
+    return simulated
+
+
+def _point_target_frame(targets, labels: pd.DataFrame, *, prefix: str) -> pd.DataFrame:
+    """A head or concentration target set's values, one row per (screen, time), in the build's shape.
+
+    Joined from the VALUES table to the matched locations' labels, so a name
+    screened in two layers is two targets -- one per label -- and a location that
+    matched no active cell (warned about when matched, ledger 211) reads none.
+    """
+
+    values = targets._values
+    per = _measured_periods(
+        values,
+        value_column="head_target",
+        name_column="name_key",
+        caller=_caller(type(targets).__name__, prefix),
     )
+    joined = (
+        values.drop(columns=["name"], errors="ignore")
+        .assign(per=per.to_numpy())
+        .merge(labels.loc[:, ["name_key", "name", "obsname", "weight"]], on="name_key", how="inner")
+    )
+    return pd.DataFrame(
+        {
+            "name": joined["name"].astype(str),
+            "column": joined["obsname"].astype(str),
+            "time": joined["time"],
+            "per": joined["per"].astype(int),
+            "value": joined["head_target"].astype(float),
+            "weight": pd.to_numeric(joined["weight"]).astype(float),
+        }
+    ).reset_index(drop=True)
+
+
+def _prepare_point_observations(
+    project,
+    spec,
+    *,
+    writer,
+    model_name: str,
+    kind: str,
+    value_label: str,
+    mapping_name: str,
+    simulated_name: str,
+):
+    """Heads or concentrations: map, base table (one writer), locations, targets."""
+
+    owner = type(spec.targets).__name__
     labels = spec.targets.observation_labels(project.model)
     mapping = labels.loc[:, ["obsname", "name", "layer", "cell"]]
-    mapping_path = project.template_workspace / f"{spec.prefix}_head_target_map.csv"
-    mapping.to_csv(mapping_path, index=False)
+    mapping_path = project.template_workspace / f"{spec.prefix}_{mapping_name}"
+    _write_frame(mapping, mapping_path)
+    simulated_path = project.template_workspace / f"{spec.prefix}_{simulated_name}"
+    simulated = _one_writer_table(
+        project,
+        spec,
+        writer=writer,
+        model_name=model_name,
+        mapping=mapping,
+        mapping_path=mapping_path,
+        simulated_path=simulated_path,
+    )
+    _register_table(project, simulated, simulated_path, prefix=spec.prefix)
+
     locations_snapshot = _point_locations_snapshot(project, spec.targets)
     locations_path = project.template_workspace / f"{spec.prefix}_target_locations.gpkg"
     _write_locations_snapshot(locations_snapshot, locations_path)
-    values_snapshot = spec.targets.to_long().loc[:, ["time", "name", "head_target"]].rename(
-        columns={"head_target": "head"}
+
+    frame = _point_target_frame(spec.targets, labels, prefix=spec.prefix)
+    located = _locate_targets(
+        frame, simulated, owner=owner, prefix=spec.prefix, table=simulated_path.name
     )
     values_path = project.template_workspace / f"{spec.prefix}_target_values.csv"
-    _write_frame(values_snapshot, values_path)
-    # One row per (observation, time). pyEMU names an observation after the
-    # simulated CSV's COLUMN, so the pst rows must carry the label those columns
-    # do; an observed row whose target matched no cell drops out here instead of
-    # becoming a pst row for a column that does not exist.
-    target_frame = spec.targets.get().copy().merge(
-        labels.loc[:, ["name", "obsname"]], on="name", how="inner"
+    _write_values_snapshot(located, values_path, value_label=value_label)
+
+    item = _prepared_item(
+        prefix=spec.prefix,
+        owner=owner,
+        located=located,
+        valueless=spec.targets._values.empty,
+        simulated=simulated,
+        simulated_path=simulated_path,
+        values_path=values_path,
+        value_label=value_label,
     )
-    target_frame["col_label"] = target_frame["obsname"].astype(str).str.strip().str.lower()
-    target_frame["row_label"] = _build_index_row_labels(
-        target_frame["time"],
-        simulated.columns[0],
-    )
-    return {
+    item["metadata"] = {
+        "kind": kind,
         "prefix": spec.prefix,
-        "target_frame": target_frame,
-        "forward_run_config": {
-            "mapping_csv": mapping_path.name,
-            "output_csv": simulated_path.name,
-        },
-        "metadata": {
-            "kind": "head_targets",
-            "prefix": spec.prefix,
-            "geometry": "points",
-            "locations_file": locations_path.name,
-            "mapping_file": mapping_path.name,
-            "values_file": values_path.name,
-            "name_column": "name",
-            "layer_column": "layer",
-            "group_column": "group",
-            "weight_column": "weight",
-            "time_column": "time",
-            "value_column": "head",
-            "n_locations": int(locations_snapshot["name"].nunique()),
-            "n_rows": int(len(values_snapshot)),
-        },
+        "geometry": "points",
+        "locations_file": locations_path.name,
+        "mapping_file": mapping_path.name,
+        "values_file": values_path.name,
+        "name_column": "name",
+        "layer_column": "layer",
+        "group_column": "group",
+        "weight_column": "weight",
+        "time_column": "time",
+        "value_column": value_label,
+        "n_locations": int(mapping["name"].nunique()),
+        "n_rows": int(len(located)),
     }
+    item["mapping_csv"] = mapping_path.name
+    item["output_csv"] = simulated_path.name
+    return item
+
+
+def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
+    """Create simulated-head CSVs and register pyEMU observations.
+
+    The base table is written by the forward run's own writer
+    (``forward_run._write_head_target_csv``) from the model's head file, so its
+    columns are the forward run's in the forward run's order (ledger 340).
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built (its ``model``, ``pf`` and
+        ``template_workspace``).
+    spec : HeadTargetObservationSpec
+        The head targets and their prefix.
+
+    Returns
+    -------
+    dict
+        The prepared set :func:`finalize_observations` completes.
+
+    Raises
+    ------
+    ValueError
+        When a target's key is not a whole number, two values name one target
+        in one period, or a target matches no row or column of the table; or when
+        a ``simulated_values`` table's columns are not the forward run's, in its
+        order.
+    """
+
+    item = _prepare_point_observations(
+        project,
+        spec,
+        writer=_write_head_target_csv,
+        model_name=project.model.name,
+        kind="head_targets",
+        value_label="head",
+        mapping_name="head_target_map.csv",
+        simulated_name="simulated_heads.csv",
+    )
+    item["forward_run_config"] = {
+        "mapping_csv": item.pop("mapping_csv"),
+        "output_csv": item.pop("output_csv"),
+    }
+    return item
 
 
 def prepare_conc_observations(project, spec: ConcObservationSpec):
-    """Create simulated-concentration CSVs and register pyEMU observations."""
+    """Create simulated-concentration CSVs and register pyEMU observations.
+
+    The concentration twin of :func:`prepare_head_target_observations`: the base
+    table is written by ``forward_run._write_conc_target_csv`` from the TRANSPORT
+    model's ``.ucn`` beside the flow model's head file.
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built; its ``model`` is the FLOW model.
+    spec : ConcObservationSpec
+        The concentration targets, their prefix and, optionally, the GWT model's
+        name (found from the simulation when ``None``).
+
+    Returns
+    -------
+    dict
+        The prepared set :func:`finalize_observations` completes.
+
+    Raises
+    ------
+    ValueError
+        As :func:`prepare_head_target_observations`; or when the simulation holds
+        no GWT model, or several and none is named.
+    """
 
     transport_name = spec.transport_model_name or resolve_transport_model_name(project)
-
-    if spec.simulated_values is None:
-        from myflopy.project.run_model import load_mf6_run
-
-        # The concentrations live on the GWT sibling; `project.model` is the flow
-        # model, whose `all_conc` is kind-gated and would refuse.
-        view = load_mf6_run(
-            Path(project.model.workspace), model_name=transport_name, verbosity_level=0
-        )
-        simulated = spec.targets.simulated_heads(view)
-    elif isinstance(spec.simulated_values, pd.DataFrame):
-        simulated = spec.simulated_values.copy()
-    else:
-        simulated = pd.read_csv(spec.simulated_values)
-
-    simulated_path = project.template_workspace / f"{spec.prefix}_simulated_conc.csv"
-    _write_frame(simulated, simulated_path)
-    use_cols = [column for column in simulated.columns if column != simulated.columns[0]]
-    project.pf.add_observations(
-        simulated_path.name,
-        insfile=f"{simulated_path.name}.ins",
-        index_cols=simulated.columns[0],
-        use_cols=use_cols,
-        prefix=spec.prefix,
+    item = _prepare_point_observations(
+        project,
+        spec,
+        writer=_write_conc_target_csv,
+        model_name=transport_name,
+        kind="conc_targets",
+        value_label="conc",
+        mapping_name="conc_target_map.csv",
+        simulated_name="simulated_conc.csv",
     )
-
-    labels = spec.targets.observation_labels(project.model)
-    mapping = labels.loc[:, ["obsname", "name", "layer", "cell"]]
-    mapping_path = project.template_workspace / f"{spec.prefix}_conc_target_map.csv"
-    mapping.to_csv(mapping_path, index=False)
-
-    # Concentration is sampled at a point, exactly like head, so it snapshots
-    # the same point geometry and reaches the residual map the same way
-    # (ledger 105). The coordinates come out of `match_to_model` above; before
-    # this they were computed and then dropped on the floor.
-    locations_snapshot = _point_locations_snapshot(project, spec.targets)
-    locations_path = project.template_workspace / f"{spec.prefix}_target_locations.gpkg"
-    _write_locations_snapshot(locations_snapshot, locations_path)
-
-    values_snapshot = spec.targets.to_long().loc[:, ["time", "name", "head_target"]].rename(
-        columns={"head_target": "conc"}
-    )
-    values_path = project.template_workspace / f"{spec.prefix}_target_values.csv"
-    _write_frame(values_snapshot, values_path)
-
-    target_frame = spec.targets.get().copy().merge(
-        labels.loc[:, ["name", "obsname"]], on="name", how="inner"
-    )
-    target_frame["col_label"] = target_frame["obsname"].astype(str).str.strip().str.lower()
-    target_frame["row_label"] = _build_index_row_labels(
-        target_frame["time"], simulated.columns[0]
-    )
-    return {
-        "prefix": spec.prefix,
-        "target_frame": target_frame,
-        "conc_forward_run_config": {
-            "model_name": transport_name,
-            "mapping_csv": mapping_path.name,
-            "output_csv": simulated_path.name,
-        },
-        "metadata": {
-            "kind": "conc_targets",
-            "prefix": spec.prefix,
-            "geometry": "points",
-            "transport_model": transport_name,
-            "locations_file": locations_path.name,
-            "mapping_file": mapping_path.name,
-            "values_file": values_path.name,
-            "name_column": "name",
-            "layer_column": "layer",
-            "group_column": "group",
-            "weight_column": "weight",
-            "time_column": "time",
-            "value_column": "conc",
-            "n_locations": int(mapping["name"].nunique()),
-            "n_rows": int(len(values_snapshot)),
-        },
+    item["metadata"]["transport_model"] = transport_name
+    item["conc_forward_run_config"] = {
+        "model_name": transport_name,
+        "mapping_csv": item.pop("mapping_csv"),
+        "output_csv": item.pop("output_csv"),
     }
+    return item
 
 
 def prepare_lake_stage_observations(project, spec: LakeStageObservationSpec):
@@ -369,7 +662,7 @@ def prepare_lake_stage_observations(project, spec: LakeStageObservationSpec):
     # (ledger 329), and the two files must agree row for row.
     pivot = targets.simulated_series(project.model).fillna(targets._PEST_NO_STAGE)
     locations_snapshot = targets.get().loc[:, ["name", "lake"]].drop_duplicates()
-    prepared = _prepare_named_series_observations(
+    return _prepare_named_series_observations(
         project,
         targets=targets,
         prefix=spec.prefix,
@@ -377,10 +670,8 @@ def prepare_lake_stage_observations(project, spec: LakeStageObservationSpec):
         simulated_wide=pivot,
         metadata_kind="lake_stage",
         locations_snapshot=locations_snapshot,
+        weight=spec.weight,
     )
-    if spec.weight is not None and not prepared["target_frame"].empty:
-        prepared["target_frame"]["weight"] = float(spec.weight)
-    return prepared
 
 
 def prepare_sfr_stage_observations(project, spec: SfrStageObservationSpec):
@@ -441,23 +732,124 @@ def prepare_drn_flow_observations(project, spec: DrnFlowObservationSpec):
     )
 
 
-def finalize_observations(project, prepared: list[dict]):
-    """Assign observation values and weights after ``pst`` has been built."""
+def _instruction_names(path: Path, *, shape: tuple[int, int]) -> list[list[str]]:
+    """The observation each cell of a simulated table is read into, by POSITION.
 
+    pyEMU writes one instruction line per line of the CSV -- a bare ``l1`` for the
+    header, then one line per data row naming, in column order, the observation
+    read at each comma -- and PEST++ reads the file exactly so. That is the
+    ground truth of which observation holds which number; the observation's NAME
+    is pyEMU's business and is never rebuilt here.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The instruction file pyEMU wrote beside the table.
+    shape : tuple of (int, int)
+        The table's data rows and observation columns.
+
+    Returns
+    -------
+    list of list of str
+        ``names[row][col]``, lower-cased as the control file holds them.
+
+    Raises
+    ------
+    ValueError
+        When the file's lines do not line up with the table: another number of
+        data lines, a header line reading an observation, or a line reading
+        another number of columns.
+    """
+
+    lines = path.read_text().splitlines()
+    rows = [
+        [name.strip().lower() for name in _INSTRUCTION_NAME.findall(line)]
+        for line in lines[1:]
+    ]
+    nrows, ncols = shape
+    if (
+        not lines
+        or not lines[0].lower().startswith("pif")
+        or len(rows) != nrows + 1
+        or rows[0]
+        or any(len(row) != ncols for row in rows[1:])
+    ):
+        read = [len(row) for row in rows]
+        raise ValueError(
+            f"The instruction file {path.name} does not line up with the table it "
+            f"reads ({nrows} data rows of {ncols} observations after one header "
+            f"line); it reads {read[:8]}{' ...' if len(read) > 8 else ''} observations "
+            "per line. Which observation holds which value cannot be told, so none "
+            "is assigned."
+        )
+    return rows[1:]
+
+
+def finalize_observations(project, prepared: list[dict]):
+    """Give each set's observations their targets' values and weights, and every other row weight 0.
+
+    Runs after the control file is built. For each prepared set it reads which
+    observation the instruction file takes from each cell of the set's table
+    (:func:`_instruction_names`), then:
+
+    * every observation of the set gets weight 0 -- a row no target names keeps
+      the base run's value as its ``obsval`` but is never history-matched;
+    * a history-matching target with a value gets that value and its weight (the
+      target's own, else 1.0); a blank one is unmeasured and stays at weight 0;
+    * a forecast target stays at weight 0, takes its placeholder value when it has
+      one, and is recorded in ``item["forecast_names"]`` for
+      ``PestProject._apply_forecasts``. A forecast set given NO values names every
+      row of its table -- its locations at every period, the only reading under
+      which declaring it forecasts anything.
+
+    The ``<prefix>_target_values.csv`` snapshot is rewritten with each target's
+    observation name, which is what the review joins on.
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built, its ``pst`` built.
+    prepared : list of dict
+        The prepared sets (``_prepare_observation_specs``), each carrying
+        ``is_forecast`` when it came from ``forecast()``.
+
+    Raises
+    ------
+    ValueError
+        When an instruction file does not line up with its table, or names an
+        observation the control file does not hold.
+    """
+
+    obs = project.pst.observation_data
     for item in prepared:
-        target_frame = item.get("target_frame")
-        if target_frame is None or target_frame.empty:
-            continue
-        if "weight" in target_frame.columns:
-            _assign_target_values(project.pst, target_frame, prefix=item["prefix"], weight_column="weight")
-            continue
-        _assign_target_values(project.pst, target_frame, prefix=item["prefix"])
-        weight = item.get("weight")
-        if weight is None:
-            continue
-        names = [
-            _observation_name(item["prefix"], row.col_label, row.row_label)
-            for row in target_frame.itertuples(index=False)
-        ]
-        existing = [name for name in names if name in project.pst.observation_data.index]
-        project.pst.observation_data.loc[existing, "weight"] = float(weight)
+        names = _instruction_names(
+            project.template_workspace / item["instruction_file"], shape=item["shape"]
+        )
+        every = [name for row in names for name in row]
+        absent = [name for name in every if name not in obs.index]
+        if absent:
+            raise ValueError(
+                f"Observation set {item['prefix']!r}: its instruction file reads "
+                f"{len(absent)} observation(s) the control file does not hold "
+                f"({', '.join(absent[:3])}), so the two were not built together."
+            )
+        obs.loc[every, "weight"] = 0.0
+
+        frame = item["target_frame"]
+        frame["obsnme"] = [names[row][col] for row, col in zip(frame["row"], frame["col"], strict=True)]
+        valued = frame[frame["value"].notna()]
+        if item.get("is_forecast"):
+            obs.loc[valued["obsnme"], "obsval"] = valued["value"].to_numpy(dtype=float)
+            named = every if item.get("valueless") else frame["obsnme"].tolist()
+            item["forecast_names"] = list(dict.fromkeys(named))
+        else:
+            if valued["obsnme"].duplicated().any():
+                twice = sorted(set(valued.loc[valued["obsnme"].duplicated(), "obsnme"]))
+                raise ValueError(
+                    f"Observation set {item['prefix']!r}: two targets carry a value for "
+                    f"one observation ({', '.join(twice[:3])})."
+                )
+            obs.loc[valued["obsnme"], "obsval"] = valued["value"].to_numpy(dtype=float)
+            obs.loc[valued["obsnme"], "weight"] = valued["weight"].fillna(1.0).to_numpy(dtype=float)
+        if item.get("values_path") is not None:
+            _write_values_snapshot(frame, item["values_path"], value_label=item["value_label"])

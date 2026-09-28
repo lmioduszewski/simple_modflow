@@ -1898,24 +1898,37 @@ class IesResults:
         merged = pd.concat(frames, ignore_index=True)
         return merged.reindex(columns=list(self._LOCATION_COLUMNS))
 
-    def _measured_observation_keys(self) -> set[tuple[str, str, str]] | None:
-        """``(prefix, location, time)`` for observations that carry a MEASUREMENT.
+    def _measured_observation_keys(
+        self,
+    ) -> tuple[set[tuple[str, str, str]], set[str]] | None:
+        """The observations that carry a TARGET, by name or by ``(prefix, location, time)``.
 
         pyEMU creates one observation per row of the simulated output, not per
-        row of the target table, and ``_assign_target_values`` only overwrites
-        the ones it has a target for (`observations.py`, ``if obsnme not in
-        obs.index: continue``). Every other row keeps pyEMU's defaults —
-        **weight 1.0 and an ``obsval`` equal to the base model's own simulated
-        head**. Averaging those into a location's residual pulls it toward zero
-        and can flip its sign, so they are excluded here by joining back to the
-        `` <prefix>_target_values.csv`` snapshot of what was actually measured.
+        row of the target table. A run built before ledger 340 left every row no
+        target named at pyEMU's defaults -- **weight 1.0 and an ``obsval`` equal
+        to the base model's own simulated value** -- and averaging those into a
+        location's residual pulls it toward zero and can flip its sign, so they
+        are excluded here by joining back to the ``<prefix>_target_values.csv``
+        snapshot of what was targeted.
 
-        Returns ``None`` when no observation set recorded a values file, meaning
-        "cannot tell" — the caller then does not filter, because dropping
-        everything would be worse than the bias.
+        A run built since carries those rows at weight 0, and its snapshot names
+        each target's OBSERVATION (``obsnme``), which is joined on directly. The
+        older snapshots are joined on ``str(time)`` against the name's trailing
+        token, which misses a key pyEMU spelled differently (``1.0`` against
+        ``per:1``) -- the spelling the build itself used to miss.
+
+        Returns
+        -------
+        tuple of (set, set) or None
+            ``(keys, names)``: ``(prefix, location, time)`` triples from older
+            snapshots and lower-cased observation names from newer ones.
+            ``None`` when no observation set recorded a values file, meaning
+            "cannot tell" -- the caller then does not filter, because dropping
+            everything would be worse than the bias.
         """
 
         keys: set[tuple[str, str, str]] = set()
+        names: set[str] = set()
         found = False
         for entry in self.observation_sets:
             values_file = entry.get("values_file")
@@ -1926,6 +1939,10 @@ class IesResults:
             if not path.exists():
                 continue
             table = pd.read_csv(path)
+            if "obsnme" in table.columns:
+                found = True
+                names.update(table["obsnme"].dropna().astype(str).str.strip().str.lower())
+                continue
             if not {"time", "name"}.issubset(table.columns):
                 continue
             found = True
@@ -1939,7 +1956,7 @@ class IesResults:
                     str(name).strip().lower(),
                     str(time).strip().lower(),
                 ))
-        return keys if found else None
+        return (keys, names) if found else None
 
     def _select_prefixes(self, locations: pd.DataFrame, prefix) -> pd.DataFrame:
         """Filter located observations to the requested set prefix(es)."""
@@ -1975,7 +1992,8 @@ class IesResults:
         Only **measured, history-matched** observations count. pyEMU creates an
         observation for every row of the simulated output, so a target measured
         at one time out of six leaves five rows holding the base model's own
-        output at weight 1.0; those are excluded by joining back to the
+        output -- at weight 0 in a run built since ledger 340, at weight 1.0
+        before it; those are excluded by joining back to the
         ``*_target_values.csv`` snapshot. Zero-weight observations are excluded
         too, which is what keeps ``cal.forecast(...)`` sets — registered as
         ordinary observation sets — off a misfit figure.
@@ -2026,9 +2044,14 @@ class IesResults:
 
         measured = self._measured_observation_keys()
         if measured is not None:
+            keys, names = measured
             obs = obs.loc[[
-                key in measured for key in
-                zip(obs["prefix"], obs["location"], obs["time"], strict=True)
+                str(name).lower() in names or key in keys
+                for name, key in zip(
+                    obs.index,
+                    zip(obs["prefix"], obs["location"], obs["time"], strict=True),
+                    strict=True,
+                )
             ]]
         # Zero weight means PEST did not history-match it: forecasts (which
         # `cal.forecast` registers as ordinary observation sets, so they arrive
