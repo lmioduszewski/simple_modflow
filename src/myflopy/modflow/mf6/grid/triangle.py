@@ -22,6 +22,7 @@ from flopy.utils.triangle import Triangle
 from shapely.geometry import GeometryCollection, MultiPoint, MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.geometry_cleanup import cleanup_polygonal_geometry
 from myflopy.modflow.mf6.grid.helpers import densify_poly
 from myflopy.modflow.mf6.grid.mesh_quality import triangle_quality_report
@@ -30,6 +31,9 @@ from myflopy.modflow.mf6.grid.seed_optimization import (
     get_fixed_and_free_vertex_ids,
 )
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+
+
+logger = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -44,7 +48,12 @@ class DomainSpec:
 
 @dataclass(slots=True)
 class RegionSpec:
-    """Describes a requested refinement region before Triangle inputs are built."""
+    """Describes a requested refinement region before Triangle inputs are built.
+
+    ``segments=False`` hands Triangle the region's POINT only, never its ring: Triangle then
+    floods ``max_area`` through everything no other ring encloses. Set on the background
+    sizing region when ``max_area`` is too large for the domain to hold one (ledger 316).
+    """
 
     geometry: Polygon | MultiPolygon
     max_area: float | int
@@ -53,6 +62,7 @@ class RegionSpec:
     attribute: int | float = 0
     point_hint: tuple[float, float] | None = None
     source: str = "geometry"
+    segments: bool = True
 
 
 @dataclass(slots=True)
@@ -67,6 +77,7 @@ class PreparedRegion:
     priority: int = 0
     attribute: int | float = 0
     source: str = "geometry"
+    segments: bool = True
 
 
 @dataclass(slots=True)
@@ -619,6 +630,22 @@ class TriangleGrid(Triangle):
                 priority=-10,
                 source="domain",
             )
+            if domain_region_geometry is geometry:
+                # No point of the domain is 0.5*sqrt(max_area) from its boundary, so the
+                # inset is empty and the sizing region is the domain itself. Its ring, clipped
+                # to the domain inset by 1e-4 of the diagonal, was a copy of the boundary
+                # 0.14 ft inside it on the L, and Triangle filled that band with ~65,000-
+                # 285,000 cells whatever max_area was (the L at 1e6: 149,385, smallest
+                # 0.00019 ft2). Its point alone floods max_area through the whole domain.
+                self.region_specs[-1].segments = False
+                message = (
+                    f"max_area={max_area:g} is larger than the domain '{label}' can hold: no "
+                    f"point of it lies more than 0.5*sqrt(max_area) = {0.5 * np.sqrt(max_area):g} "
+                    "from its boundary, so the mesh is as coarse as the boundary allows -- a "
+                    "handful of cells. Lower max_area for a finer mesh."
+                )
+                logger.warning(message)
+                warnings.warn(message, UserWarning, stacklevel=3)
         return geometry
 
     @classmethod
@@ -1698,6 +1725,7 @@ class TriangleGrid(Triangle):
                     attribute=region.attribute,
                     point_hint=region.point_hint,
                     source=region.source,
+                    segments=region.segments,
                 )
             )
             vertices_before += stats.vertices_in
@@ -2057,6 +2085,7 @@ class TriangleGrid(Triangle):
                     priority=region.priority,
                     attribute=region.attribute,
                     source=region.source,
+                    segments=region.segments,
                 )
                 prepared.append(prepared_region)
                 occupied_geometries.append(claim_geometry)
@@ -2094,6 +2123,10 @@ class TriangleGrid(Triangle):
                 holes.append(hole)
 
         for region in self._prepared_regions:
+            if not region.segments:
+                Triangle.add_region(self, point=region.point, attribute=region.attribute,
+                                    maximum_area=region.max_area)
+                continue
             super().add_polygon(region.geometry, ignore_holes=True)
             # A region's own ring is a SEGMENT, never a hole: handed to add_hole it carved
             # the region's middle out of the mesh -- an annular refinement lost its whole

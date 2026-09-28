@@ -2967,7 +2967,10 @@ class GridSpec:
         boundary_max_area : float, optional
             Target cell area for the background region, i.e. everywhere no
             refinement applies. In CRS units squared. Aliases
-            ``default_cell_area`` / ``max_area`` reach the same option.
+            ``default_cell_area`` / ``max_area`` reach the same option. One
+            larger than the domain can hold -- no point of it more than
+            ``0.5 * sqrt(max_area)`` from the boundary, e.g. ``>= H**2`` for a
+            rectangle H wide -- gives a handful of cells and warns.
         boundary_label : str, default "domain"
             Name for the background region in diagnostics.
         boundary_buffer : float, default 0

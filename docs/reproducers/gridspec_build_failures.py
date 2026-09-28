@@ -14,6 +14,13 @@ see the failures.
      (its corner on the background sizing ring's corner) and two adjacent refinement zones
      raised FloPy's bare "duplicate points" Exception on every profile. The working
      neighbour, box(60, 60, 300, 300), keeps pin b8a48a446b0910ad on the default profile.
+  2. A max_area the domain cannot hold (no point 0.5*sqrt(max_area) from the boundary; for a
+     W x H rectangle, max_area >= H**2): the sizing region was the domain itself, clipped to
+     a ring 1e-4 of the diagonal inside it, and Triangle filled that band -- the L at 1e6
+     gave 149,385 cells, smallest 0.00019 ft2, the same at 1e7. Now 8 cells and a warning.
+     The L at 1e5 (207 cells, pin 4394bb5bf7eefb22) and just below the threshold at 1.58e5
+     (2,851 cells, pin 84a3746283f05e8d -- a thin inset, fine-grained, unchanged on
+     purpose) keep their pins.
 """
 
 from __future__ import annotations
@@ -61,10 +68,20 @@ def section_1(root):
             print(f"1. {profile:8s} {name}: {out}")
 
 
+def section_2(root):
+    for max_area in (1e5, 1.58e5, 1e6):
+        print(f"2. L at max_area {max_area:g}: {build(root / f'2-L-{max_area:g}', L_SHAPE, max_area=max_area)}")
+    rectangle = box(0, 0, 2000, 1000)
+    for max_area in (0.9e6, 1e6):
+        out = build(root / f"2-rect-{max_area:g}", rectangle, max_area=max_area)
+        print(f"2. 2000 x 1000 rectangle at max_area {max_area:g}: {out}")
+
+
 def main():
     warnings.simplefilter("ignore")
     with tempfile.TemporaryDirectory() as root:
         section_1(Path(root))
+        section_2(Path(root))
 
 
 if __name__ == "__main__":

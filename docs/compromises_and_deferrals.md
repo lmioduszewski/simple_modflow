@@ -14428,6 +14428,20 @@ same day, which is the useful part of the result.
       1,783 grid tests were FloPy's own. Not covered: zones digitised 1e-12 to 1e-6 ft apart
       still make Triangle run out of memory, and adjacent zones that cross the boundary now
       build into the clip-inset sliver below instead of failing.
+      (2) **A ``max_area`` the domain cannot hold** -- no point of it farther than
+      0.5*sqrt(max_area) from the boundary, i.e. max_area >= (2 x inscribed radius)^2, which
+      for a W x H rectangle is H^2 (half the area of a 2:1 one, so not only absurd values):
+      the background sizing region fell back to the domain itself, ``prepare()`` clipped it
+      to a ring 1e-4 of the diagonal inside the boundary, and ``-q``/``-D`` filled that band
+      with ~65,000-285,000 nodes whatever max_area was (the L at 1e6: 149,385 cells, smallest
+      0.00019 ft2). The region is now handed to Triangle as its POINT only
+      (``RegionSpec.segments=False``) and a warning names the limit: 8 cells. **This one
+      moves grids that build today** -- every such recipe re-pins (the user's call: those
+      grids hold ~1e5 sliver cells and are not what was asked; at (5e6, 5e6) they were
+      already refused for zero-length faces; 650 of the sweep's 679 such faces were theirs).
+      Just below the threshold the inset is a thin or tiny sliver and the mesh stays
+      fine-grained (the L at 1.58e5: 2,851 cells; a square at 9.999e5: smallest cell 0.0023
+      ft2) -- deliberately unchanged, since any fix moves grids that are not broken.
       Tests: ``tests/test_voronoi_tiling.py`` (16 then, 21 after the fuzz pass), where each
       of ten single-piece mutations of the fix fails a named test. The reproducers now show FloPy's cells
       (``tessellation="flopy"``) beside the repaired grid, and ``surface_domain_mask.py``

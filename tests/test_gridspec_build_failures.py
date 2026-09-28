@@ -95,3 +95,29 @@ def test_input_with_nothing_shared_is_flopys_own_bytes(tmp_path):
     assert ours == int((tmp_path / "flopys").read_text().split()[0]) - 1
     shared.additional_args = ["-j"]  # Triangle already drops the copy under -j: keep its numbering
     assert shared._shared_nodes() is None
+
+
+# --------------------------------------------------------------------------------------------
+# 2. A max_area the domain cannot hold: the sizing region is a point, not a 0.14 ft band.
+
+
+def test_a_max_area_too_large_for_the_domain_gives_a_coarse_mesh_and_warns(tmp_path):
+    """No point of the L is 500 ft from its boundary, so its sizing region was the whole L,
+    clipped to a ring 0.14 ft inside it -- and Triangle filled that band with 149,385 cells
+    (smallest 0.00019 ft2) whatever max_area was. Its point alone gives what was asked."""
+
+    with pytest.warns(UserWarning, match="larger than the domain 'domain' can hold"):
+        vor, tri = _voronoi(tmp_path, L_SHAPE, max_area=1e6)
+    assert vor.ncpl < 50
+    assert [r.segments for r in tri._prepared_regions if r.source == "domain"] == [False]
+
+
+def test_a_max_area_the_domain_holds_keeps_its_sizing_ring(tmp_path):
+    """Just below the threshold the inset is a thin sliver and the mesh is fine-grained
+    (2,851 cells) -- unchanged on purpose: it builds today, and this pin is its pin."""
+
+    from myflopy.grid_identity import grid_pin
+
+    vor, tri = _voronoi(tmp_path, L_SHAPE, max_area=1.58e5)
+    assert all(r.segments for r in tri._prepared_regions)
+    assert (vor.ncpl, grid_pin(vor)) == (2851, "84a3746283f05e8d")
