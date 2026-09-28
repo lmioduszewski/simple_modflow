@@ -156,7 +156,85 @@ class Surface:
 
     Build one with a constructor rather than the raw fields: :meth:`raster`,
     :meth:`flat`, :meth:`offset_below`, :meth:`constant_thickness`,
-    :meth:`from_contours`, or :meth:`from_points`.
+    :meth:`from_contours`, or :meth:`from_points` -- or combine surfaces with
+    :meth:`minimum`, :meth:`maximum`, :meth:`clamp`, :meth:`where`, :meth:`isopach`,
+    :meth:`shift`, :meth:`toward` and their fluent forms. Frozen: a constructor or an
+    operation returns a NEW surface. Declaring one samples nothing; :meth:`values`
+    does, normally called by a ``LayerStack``.
+
+    Attributes
+    ----------
+    kind : str
+        What the surface is, and so which other fields it reads: ``"flat"``,
+        ``"raster"``, ``"contours"``, ``"points"``, ``"array"``, ``"offset_below"``,
+        ``"constant_thickness"``, or one of the algebra kinds ``"min"``, ``"max"``,
+        ``"clamp"``, ``"where"``, ``"isopach"``, ``"shift"``, ``"toward"``. Not
+        validated when set: an unknown kind raises ``TypeError`` when the surface is
+        sampled.
+    value : float, optional
+        The number the kind needs: the elevation of a ``"flat"`` surface, the distance
+        below the surface above for ``"offset_below"``/``"constant_thickness"``, the
+        vertical displacement of a ``"shift"``, the fraction of a ``"toward"``.
+        Unused by the other kinds.
+    path : pathlib.Path, optional
+        The raster file of a ``"raster"`` surface (set by :meth:`raster`).
+    fill : {'propagate'}, optional
+        For a raster or contour surface: ``"propagate"`` copies the surface above into
+        cells the raster has no data for. ``None`` (the default) leaves them ``NaN``.
+        Another value raises ``ValueError`` when sampled.
+    nodata : float, optional
+        For a raster or contour surface: a pixel value to treat as no-data,
+        overriding the raster's own (see :meth:`raster`).
+    units : str, optional
+        The length unit the surface's elevations are in (``"meters"``, ``"feet"``,
+        ``"ft"``, ``"m"``, ``"cm"``...). Converted by a single factor when sampled
+        through something that declares the model's length unit (a ``LayerStack``
+        with ``length_units=``, :meth:`LayerSurfaces.sample`, :func:`sample_bed`);
+        ignored otherwise. Only the surface being sampled is read: the ``units`` of an
+        operand inside an algebra surface (``minimum``, ``shift``, ...) is ignored.
+        On a relative surface it raises ``ValueError`` there, and an unknown name
+        raises ``ValueError`` listing the known ones.
+    contours : pathlib.Path, optional
+        The contour-line vector file of a ``"contours"`` surface. This and the next
+        nine fields are set by :meth:`from_contours`, which documents them.
+    z : str, default "Elev"
+        The contours' elevation attribute.
+    region_raster : pathlib.Path, optional
+        Raster whose extent is the GRASS region.
+    region_vector : pathlib.Path, optional
+        Polygon whose extent (and shape, with ``clip``) is the GRASS region.
+    clip : bool, default True
+        Null the interpolation outside the region.
+    resolution : float, default 4
+        Cell size of the interpolated raster, in the CRS's units.
+    out : pathlib.Path, optional
+        Where the interpolated GeoTIFF (the cache) is written.
+    epsg : str, default "2927"
+        EPSG code of the GRASS location.
+    grass_kwargs : dict, optional
+        Extra keywords for the GRASS interpolator; part of the cache signature.
+    progress : bool, default False
+        Show GRASS's own progress while interpolating; NOT part of the cache
+        signature.
+    points : tuple of three array_like, optional
+        ``(xs, ys, zs)`` of a ``"points"`` surface (set by :meth:`from_points`).
+    method : str, default "linear"
+        The :func:`scipy.interpolate.griddata` method of a ``"points"`` surface. Not
+        the raster sampling method, which is :meth:`values`' own ``method=``.
+    array : numpy.ndarray, optional
+        The per-cell elevations of an ``"array"`` surface (set by :meth:`from_array`).
+    operands : tuple of Surface, optional
+        The surfaces an algebra kind combines: two or more for ``"min"``/``"max"``;
+        ``(surface, lower, upper)`` with ``None`` for an absent bound for ``"clamp"``;
+        ``(inside, outside)`` for ``"where"``; one for ``"isopach"``, ``"shift"`` and
+        ``"toward"``. Empty for every other kind.
+    zone : shapely geometry, str or pathlib.Path, optional
+        The zone of a ``"where"`` surface (see :meth:`where`).
+    source_shas : dict, optional
+        ``{field name: 16-character content hash}`` for the files this surface reads,
+        stamped when it becomes part of a LAZY package (``mf.disv`` on a gridless
+        stack, a lazy ``mf.evt``); empty otherwise. The digest reads it in place of the
+        paths (:meth:`digest_payload`).
     """
 
     kind: str
@@ -231,7 +309,26 @@ class Surface:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Surface:
-        """Rebuild a surface from :meth:`to_dict`'s payload."""
+        """Rebuild a surface from :meth:`to_dict`'s payload.
+
+        Parameters
+        ----------
+        data : dict
+            A payload as :meth:`to_dict` writes it: field name to value, with
+            ``"kind"`` required and every omitted field taking its default. The path
+            fields (``path``, ``contours``, ``region_raster``, ``region_vector``,
+            ``out``) are revived as :class:`~pathlib.Path` and each ``operands`` entry
+            is rebuilt recursively.
+
+        Returns
+        -------
+        Surface
+
+        Raises
+        ------
+        ValueError
+            ``data`` holds a key that is not a :class:`Surface` field.
+        """
 
         known = {item.name for item in fields(cls)}
         unknown = set(data) - known
@@ -341,13 +438,42 @@ class Surface:
 
     @classmethod
     def flat(cls, value: float, *, units: str | None = None) -> Surface:
-        """A flat, constant-elevation surface (replaces the magic integer)."""
+        """A flat, constant-elevation surface (replaces the magic integer).
+
+        Parameters
+        ----------
+        value : float
+            The elevation, the same at every cell. Anything ``float()`` accepts,
+            numpy scalars included.
+        units : str, optional
+            Length unit of ``value`` (``"meters"``, ``"feet"``, ...), converted to the
+            model's when sampled through a stack that declares ``length_units``.
+            ``None`` (the default) takes ``value`` as already in model units.
+
+        Returns
+        -------
+        Surface
+            A ``kind="flat"`` surface.
+        """
 
         return cls(kind="flat", value=float(value), units=units)
 
     @classmethod
     def offset_below(cls, distance: float) -> Surface:
-        """A surface a fixed vertical distance below the surface above it."""
+        """A surface a fixed vertical distance below the surface above it.
+
+        Parameters
+        ----------
+        distance : float
+            How far below the surface immediately above, in model length units, per
+            cell: the result is ``previous - distance``. Relative, so it cannot be the
+            model top (``ValueError`` when sampled) and takes no ``units=``.
+
+        Returns
+        -------
+        Surface
+            A ``kind="offset_below"`` surface.
+        """
 
         return cls(kind="offset_below", value=float(distance))
 
@@ -357,6 +483,18 @@ class Surface:
 
         Numerically identical to :meth:`offset_below`, but named for the common
         "this layer is N units thick" intent.
+
+        Parameters
+        ----------
+        thickness : float
+            The layer's thickness in model length units: the result is
+            ``previous - thickness`` per cell. Relative, so it cannot be the model top
+            (``ValueError`` when sampled).
+
+        Returns
+        -------
+        Surface
+            A ``kind="constant_thickness"`` surface.
         """
 
         return cls(kind="constant_thickness", value=float(thickness))
@@ -510,7 +648,32 @@ class Surface:
     def from_points(
         cls, xs, ys, zs, *, method: str = "linear", units: str | None = None
     ) -> Surface:
-        """A surface interpolated from scattered (x, y, z) points (SciPy)."""
+        """A surface interpolated from scattered (x, y, z) points (SciPy).
+
+        Interpolated at each cell CENTROID with :func:`scipy.interpolate.griddata`
+        when sampled. Holds arrays, so :meth:`to_dict` refuses it: a stack using one
+        cannot be saved in a project spec.
+
+        Parameters
+        ----------
+        xs, ys : array_like of float
+            The points' coordinates, in the grid's own coordinate frame (nothing is
+            reprojected). Converted with ``numpy.asarray``.
+        zs : array_like of float
+            The elevation at each point, one per ``(xs, ys)`` pair.
+        method : {'linear', 'nearest', 'cubic'}, default 'linear'
+            The ``griddata`` method. ``'linear'`` and ``'cubic'`` give ``NaN`` for a
+            cell centroid outside the points' convex hull; ``'nearest'`` fills every
+            cell.
+        units : str, optional
+            Length unit of ``zs``, converted to the model's when sampled through a
+            stack that declares ``length_units``.
+
+        Returns
+        -------
+        Surface
+            A ``kind="points"`` surface.
+        """
 
         return cls(
             kind="points",
@@ -527,6 +690,22 @@ class Surface:
         to reuse an existing model's top/botm arrays on the *same* grid. To move
         an existing model's surfaces onto a *different* grid, interpolate instead
         (:meth:`from_points`, or :meth:`LayerStack.from_modflow`).
+
+        Parameters
+        ----------
+        values : array_like of float
+            One elevation per cell, in cell order. Stored as a float array and
+            flattened when sampled, so a ``(1, ncpl)`` array works too; any other
+            total size raises ``ValueError`` when sampled. Holds an array, so
+            :meth:`to_dict` refuses it.
+        units : str, optional
+            Length unit of ``values``, converted to the model's when sampled through a
+            stack that declares ``length_units``.
+
+        Returns
+        -------
+        Surface
+            A ``kind="array"`` surface.
         """
 
         return cls(kind="array", array=np.asarray(values, dtype=float), units=units)
@@ -572,6 +751,25 @@ class Surface:
         A classmethod: call it as ``Surface.minimum(a, b)``, or reach for the
         instance-bound :meth:`capped_at`. One surface raises :class:`TypeError`,
         because that is what a misbound ``a.minimum(b)`` looks like from here.
+
+        Parameters
+        ----------
+        *surfaces : Surface, str, pathlib.Path, int or float
+            Two or more operands, each a :class:`Surface`, a raster path (``str`` or
+            :class:`~pathlib.Path`, read as :meth:`raster`), or a python ``int``/``float`` (read as
+            :meth:`flat`). Anything else -- a ``numpy.int64`` included -- raises ``TypeError``.
+            Sampled with ``numpy.nanmin``, so a cell where one operand is ``NaN`` takes the others'
+            minimum.
+
+        Returns
+        -------
+        Surface
+            A ``kind="min"`` surface.
+
+        Raises
+        ------
+        TypeError
+            Fewer than two operands, or an operand of another type.
         """
         cls._reject_lone_envelope("minimum", "capped_at", surfaces)
         return cls(kind="min", operands=tuple(cls._coerce(s) for s in surfaces))
@@ -583,6 +781,25 @@ class Surface:
         A classmethod: call it as ``Surface.maximum(a, b)``, or reach for the
         instance-bound :meth:`floored_at`. One surface raises :class:`TypeError`,
         because that is what a misbound ``a.maximum(b)`` looks like from here.
+
+        Parameters
+        ----------
+        *surfaces : Surface, str, pathlib.Path, int or float
+            Two or more operands, each a :class:`Surface`, a raster path (``str`` or
+            :class:`~pathlib.Path`, read as :meth:`raster`), or a python ``int``/``float`` (read as
+            :meth:`flat`). Anything else -- a ``numpy.int64`` included -- raises ``TypeError``.
+            Sampled with ``numpy.nanmax``, so a cell where one operand is ``NaN`` takes the others'
+            maximum.
+
+        Returns
+        -------
+        Surface
+            A ``kind="max"`` surface.
+
+        Raises
+        ------
+        TypeError
+            Fewer than two operands, or an operand of another type.
         """
         cls._reject_lone_envelope("maximum", "floored_at", surfaces)
         return cls(kind="max", operands=tuple(cls._coerce(s) for s in surfaces))
@@ -596,6 +813,30 @@ class Surface:
         surface at least 5 below the one above). At least one is required: with
         neither, the result is ``surface`` unchanged, which is also exactly what
         a misbound ``a.clamp(b)`` produces, so both raise :class:`TypeError`.
+
+        Parameters
+        ----------
+        surface : Surface, str, pathlib.Path, int or float
+            The surface to constrain: a :class:`Surface`, a raster path (``str`` or
+            :class:`~pathlib.Path`, read as :meth:`raster`), or a python ``int``/``float`` (read as
+            :meth:`flat`).
+        lower : Surface, str, pathlib.Path, int or float, optional
+            The floor, per cell (``numpy.maximum`` with it). ``None`` (the default)
+            sets no floor.
+        upper : Surface, str, pathlib.Path, int or float, optional
+            The ceiling, per cell (``numpy.minimum`` with it), applied after
+            ``lower`` -- so where the two cross, ``upper`` wins. ``None`` (the
+            default) sets no ceiling.
+
+        Returns
+        -------
+        Surface
+            A ``kind="clamp"`` surface.
+
+        Raises
+        ------
+        TypeError
+            Neither ``lower`` nor ``upper`` given, or an operand of another type.
         """
         if lower is None and upper is None:
             raise TypeError(
@@ -620,6 +861,29 @@ class Surface:
 
         ``zone`` is a shapely geometry or a path to a vector file. A centroid
         exactly ON the zone's edge counts as inside it (ledger 243).
+
+        Parameters
+        ----------
+        zone : shapely geometry, str or pathlib.Path
+            The area that selects ``inside``. A geometry is taken to be in the grid's
+            CRS. A path is read when the surface is sampled, reprojected to the grid's
+            CRS when both declare one, and all its features are unioned into one zone.
+        inside : Surface, str, pathlib.Path, int or float
+            The surface for cells whose centroid is in ``zone``: a :class:`Surface`, a raster path
+            (``str`` or :class:`~pathlib.Path`, read as :meth:`raster`), or a python
+            ``int``/``float`` (read as :meth:`flat`).
+        outside : Surface, str, pathlib.Path, int or float
+            The surface everywhere else, coerced the same way.
+
+        Returns
+        -------
+        Surface
+            A ``kind="where"`` surface.
+
+        Raises
+        ------
+        TypeError
+            ``inside`` or ``outside`` is of another type.
         """
         return cls(
             kind="where", zone=zone, operands=(cls._coerce(inside), cls._coerce(outside))
@@ -627,12 +891,42 @@ class Surface:
 
     @classmethod
     def isopach(cls, source) -> Surface:
-        """A layer bottom defined by a *thickness* map subtracted from above."""
+        """A layer bottom defined by a *thickness* map subtracted from above.
+
+        Parameters
+        ----------
+        source : Surface, str, pathlib.Path, int or float
+            The THICKNESS map, in model length units: a :class:`Surface`, a raster path (``str`` or
+            :class:`~pathlib.Path`, read as :meth:`raster`), or a python ``int``/``float`` (read as
+            :meth:`flat`). The result is ``previous - thickness`` per cell, so it cannot be the
+            model top (``ValueError`` when sampled).
+
+        Returns
+        -------
+        Surface
+            A ``kind="isopach"`` surface.
+        """
         return cls(kind="isopach", operands=(cls._coerce(source),))
 
     @classmethod
     def shift(cls, source, distance: float) -> Surface:
-        """``source`` displaced vertically by ``distance`` (negative = downward)."""
+        """``source`` displaced vertically by ``distance`` (negative = downward).
+
+        Parameters
+        ----------
+        source : Surface, str, pathlib.Path, int or float
+            The surface to move: a :class:`Surface`, a raster path (``str`` or
+            :class:`~pathlib.Path`, read as :meth:`raster`), or a python ``int``/``float`` (read as
+            :meth:`flat`).
+        distance : float
+            The vertical displacement in model length units, added to every cell;
+            negative moves it down.
+
+        Returns
+        -------
+        Surface
+            A ``kind="shift"`` surface.
+        """
         return cls(kind="shift", value=float(distance), operands=(cls._coerce(source),))
 
     @classmethod
@@ -661,6 +955,23 @@ class Surface:
         the unit top, which yields plausible, wrong, monotonically drifting
         elevations -- ``toward(constant_thickness(60), f)`` at thirds gives
         ``[80, 50, -10]`` where the answer is ``[80, 60, 40]``.
+
+        Parameters
+        ----------
+        target : Surface, str, pathlib.Path, int or float
+            The ABSOLUTE surface to descend toward: a :class:`Surface`, a raster path (``str`` or
+            :class:`~pathlib.Path`, read as :meth:`raster`), or a python ``int``/``float`` (read as
+            :meth:`flat`). A target containing a relative, ``isopach`` or ``toward``
+            surface, at any depth of an algebra tree, is refused.
+        fraction : float
+            The share of the remaining interval to descend, in ``(0, 1]``: ``1.0``
+            lands exactly on ``target``. Needs a surface above it, so it cannot be the
+            model top (``ValueError`` when sampled).
+
+        Returns
+        -------
+        Surface
+            A ``kind="toward"`` surface.
 
         Raises
         ------
@@ -698,32 +1009,112 @@ class Surface:
         """This surface, but never *above* ``other`` (per cell) -- a ceiling.
 
         The fluent form of :meth:`minimum` (lower envelope); e.g. a layer top
-        ``capped_at`` an eroding valley floor."""
+        ``capped_at`` an eroding valley floor.
+
+        Parameters
+        ----------
+        other : Surface, str, pathlib.Path, int or float
+            The ceiling: a :class:`Surface`, a raster path (read as :meth:`raster`),
+            or a python ``int``/``float`` (read as :meth:`flat`). Another type raises
+            ``TypeError``.
+
+        Returns
+        -------
+        Surface
+            ``Surface.minimum(self, other)``.
+        """
         return Surface.minimum(self, other)
 
     def floored_at(self, other) -> Surface:
         """This surface, but never *below* ``other`` (per cell) -- a floor.
 
-        The fluent form of :meth:`maximum` (upper envelope)."""
+        The fluent form of :meth:`maximum` (upper envelope).
+
+        Parameters
+        ----------
+        other : Surface, str, pathlib.Path, int or float
+            The floor: a :class:`Surface`, a raster path (read as :meth:`raster`), or
+            a python ``int``/``float`` (read as :meth:`flat`). Another type raises
+            ``TypeError``.
+
+        Returns
+        -------
+        Surface
+            ``Surface.maximum(self, other)``.
+        """
         return Surface.maximum(self, other)
 
     def between(self, *, lower=None, upper=None) -> Surface:
-        """This surface constrained to ``[lower, upper]`` per cell (fluent :meth:`clamp`)."""
+        """This surface constrained to ``[lower, upper]`` per cell (fluent :meth:`clamp`).
+
+        Parameters
+        ----------
+        lower : Surface, str, pathlib.Path, int or float, optional
+            The floor, coerced as in :meth:`clamp`; may be relative, e.g.
+            ``Surface.offset_below(5)``. ``None`` (the default) sets none.
+        upper : Surface, str, pathlib.Path, int or float, optional
+            The ceiling, applied after ``lower`` (it wins where they cross). ``None``
+            (the default) sets none. Giving neither raises ``TypeError``.
+
+        Returns
+        -------
+        Surface
+            ``Surface.clamp(self, lower=lower, upper=upper)``.
+        """
         return Surface.clamp(self, lower=lower, upper=upper)
 
     def below(self, distance: float) -> Surface:
-        """A surface ``distance`` units *below* this one (same as ``self - distance``)."""
+        """A surface ``distance`` units *below* this one (same as ``self - distance``).
+
+        Parameters
+        ----------
+        distance : float
+            How far down, in model length units; a negative value moves it up.
+
+        Returns
+        -------
+        Surface
+            A ``kind="shift"`` surface over this one.
+        """
         return Surface.shift(self, -float(distance))
 
     def above(self, distance: float) -> Surface:
-        """A surface ``distance`` units *above* this one (same as ``self + distance``)."""
+        """A surface ``distance`` units *above* this one (same as ``self + distance``).
+
+        Parameters
+        ----------
+        distance : float
+            How far up, in model length units; a negative value moves it down.
+
+        Returns
+        -------
+        Surface
+            A ``kind="shift"`` surface over this one.
+        """
         return Surface.shift(self, float(distance))
 
     def within(self, zone, *, outside) -> Surface:
         """Use this surface for cells inside ``zone``, ``outside`` elsewhere.
 
         The fluent form of :meth:`where`; e.g.
-        ``Flat(15).within(channel, outside=Flat(2))``."""
+        ``Flat(15).within(channel, outside=Flat(2))``.
+
+        Parameters
+        ----------
+        zone : shapely geometry, str or pathlib.Path
+            The area where this surface applies, judged by cell centroid (an edge
+            counts as inside); a geometry is taken to be in the grid's CRS, a vector
+            file is reprojected to it (when both declare one) and its features
+            unioned. See :meth:`where`.
+        outside : Surface, str, pathlib.Path, int or float
+            The surface for every other cell: a :class:`Surface`, a raster path, or a
+            python ``int``/``float``. Required, keyword-only.
+
+        Returns
+        -------
+        Surface
+            ``Surface.where(zone, self, outside)``.
+        """
         return Surface.where(zone, self, outside)
 
     def thickness(self) -> Surface:
@@ -814,6 +1205,29 @@ class Surface:
 
         Derived surfaces (contours) interpolate to a cached raster on first use;
         a stale cache is reused with a warning unless ``refresh=True``.
+
+        Parameters
+        ----------
+        refresh : bool, default False
+            For a contour surface, re-run the GRASS interpolation even when the cached
+            raster is fresh. A missing cache is always built. Ignored by the other
+            kinds.
+        warn : bool, default True
+            For a contour surface, warn when a STALE cache (its contours, region or
+            parameters changed) is reused without ``refresh``. ``False`` reuses it
+            silently. Ignored by the other kinds.
+
+        Returns
+        -------
+        pathlib.Path or float
+            ``value`` for a ``"flat"`` surface, ``path`` for a ``"raster"`` one, the
+            cached GeoTIFF's path for a ``"contours"`` one.
+
+        Raises
+        ------
+        TypeError
+            Any other kind -- relative, points, array or algebra surfaces have no
+            single raster or constant.
         """
 
         if self.kind == "flat":
@@ -839,6 +1253,41 @@ class Surface:
         and raster ``fill="propagate"`` require it. ``method`` controls raster
         sampling: ``"area"`` (area-weighted, default) or ``"centroid"``.
         ``refresh`` rebuilds a derived (contour) surface's cached raster.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus
+            The grid to sample onto: its cell polygons (``gdf_vorPolys``), centroids
+            and CRS are read.
+        previous : numpy.ndarray of float, shape (ncpl,), optional
+            The surface immediately above, already sampled on ``vor``. Required by the
+            kinds that consult it -- ``offset_below``, ``constant_thickness``,
+            ``isopach``, ``toward``, and a raster or contour surface with
+            ``fill="propagate"`` that has gaps -- which raise ``ValueError`` without
+            it. ``None`` (the default) means this is the model top. Algebra kinds pass
+            it to every operand.
+        method : {'area', 'centroid'}, default 'area'
+            How a raster or contour surface is sampled: the area-weighted mean of the
+            pixels in each cell, or the single pixel under its centroid. Another value
+            raises ``ValueError`` there; the other kinds ignore it.
+        refresh : bool, default False
+            Rebuild a contour surface's cached raster before sampling (see
+            :meth:`resolve_source`). Passed down to every operand.
+
+        Returns
+        -------
+        numpy.ndarray of float, shape (ncpl,)
+            One elevation per cell, in the surface's own units (NOT converted --
+            ``units`` is applied by the caller). ``NaN`` where a raster has no data
+            and nothing filled it, and where a ``"points"`` interpolation has none.
+
+        Raises
+        ------
+        ValueError
+            A relative kind with no ``previous``; a ``from_array`` surface of the
+            wrong size; an unknown ``fill``; an unknown ``method`` on a raster.
+        TypeError
+            An unknown ``kind``.
         """
 
         def _op(operand):
@@ -1428,8 +1877,27 @@ class LayerSurfaces:
     def __init__(self, surfaces: Sequence[Surface], labels: Sequence | None = None):
         """Wrap an ordered surface stack (top first) with matching column ``labels``.
 
-        ``labels`` default to integer positions; their count must match
-        ``surfaces``.
+        Nothing is sampled here; :meth:`sample` and the methods built on it do that.
+        ``LayerStack`` compiles to this class (its labels are ``"top"`` plus each
+        layer's name) and is the facade to build with.
+
+        Parameters
+        ----------
+        surfaces : sequence of Surface
+            The stack, top first: the first surface is the model top and every later
+            one is the bottom of one layer, so ``n`` surfaces make ``n - 1`` layers.
+            Copied into a list; the surfaces themselves are not copied or checked.
+        labels : sequence of hashable, optional
+            One column name per surface, in the same order, for the frame
+            :meth:`sample` returns. ``None`` (the default) uses the integer positions
+            ``0 .. n-1``, the integer columns ``gdf_topbtm`` has always carried. Not
+            checked for repeats: a label given twice keeps only the LAST of its
+            surfaces' values, under every position that names it.
+
+        Raises
+        ------
+        ValueError
+            ``labels`` has a different length from ``surfaces``.
         """
 
         self.surfaces = list(surfaces)
@@ -1530,7 +1998,24 @@ class LayerSurfaces:
         return gdf
 
     def attach(self, vor, **kwargs) -> gpd.GeoDataFrame:
-        """Sample and store the result on ``vor.gdf_topbtm`` for downstream use."""
+        """Sample and store the result on ``vor.gdf_topbtm`` for downstream use.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus
+            The grid to sample onto (see :meth:`sample`) and to store the result on.
+            Writing ``gdf_topbtm`` also CLEARS ``vor.excavations``: the grid's setter
+            drops excavation records with the elevations they came with.
+        **kwargs
+            Forwarded to :meth:`sample` -- ``reconcile``, ``min_sep``,
+            ``trigger_sep``, ``which``, ``method``, ``length_units``, ``refresh``. Any
+            other keyword raises ``TypeError`` there, before ``vor`` is written.
+
+        Returns
+        -------
+        geopandas.GeoDataFrame
+            The sampled frame, as :meth:`sample` returns it.
+        """
 
         gdf = self.sample(vor, **kwargs)
         vor.gdf_topbtm = gdf
@@ -1617,7 +2102,24 @@ class LayerSurfaces:
                 )
 
     def top_botm(self, vor, **kwargs) -> tuple[np.ndarray, np.ndarray]:
-        """Return ``(top, botm)`` elevation arrays ready for ``mf.disv``."""
+        """Return ``(top, botm)`` elevation arrays ready for ``mf.disv``.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus
+            The grid to sample onto (see :meth:`sample`). Its ``gdf_topbtm`` is not
+            written; :meth:`attach` does that.
+        **kwargs
+            Forwarded to :meth:`sample` -- ``reconcile``, ``min_sep``,
+            ``trigger_sep``, ``which``, ``method``, ``length_units``, ``refresh``.
+
+        Returns
+        -------
+        top : numpy.ndarray of float, shape (ncpl,)
+            The first surface, sampled (and reconciled unless ``reconcile=False``).
+        botm : numpy.ndarray of float, shape (nlay, ncpl)
+            Every later surface, one row per layer, top layer first.
+        """
 
         return self._split_top_botm(self.sample(vor, **kwargs))
 
@@ -1634,6 +2136,51 @@ class LayerSurfaces:
         ``minimum_thickness`` and ``pinch`` may be scalars (every layer) or
         per-layer sequences. Default policy ``"passthrough"`` gives thin cells
         ``idomain = -1`` (MODFLOW 6 vertical pass-through).
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus
+            The grid to sample onto (see :meth:`sample`). Its ``gdf_topbtm`` is not
+            written.
+        minimum_thickness : float or sequence of float, default 1.0
+            The thickness, in the sampled (converted) length units, below which a
+            cell is thin -- strictly below, so a cell exactly this thick stays
+            active. A scalar applies to every layer; a sequence gives one value per
+            layer and must have one entry per bottom surface, or ``ValueError``.
+        pinch : {'passthrough', 'inactive', 'floor'} or sequence of those, default 'passthrough'
+            What a thin cell becomes: ``'passthrough'`` -> ``idomain = -1`` (removed,
+            vertical flow passes through it), ``'inactive'`` -> ``0`` (removed, blocks
+            flow), ``'floor'`` -> stays ``1`` at its sampled thickness. A scalar
+            applies to every layer, a sequence gives one per layer (same length rule
+            as ``minimum_thickness``). Any other value raises ``ValueError``. A
+            ``'passthrough'`` or ``'inactive'`` layer is also checked against the
+            reconcile separation (see ``**sample_kwargs``).
+        **sample_kwargs
+            Forwarded to :meth:`sample` -- ``reconcile``, ``min_sep``,
+            ``trigger_sep``, ``which``, ``method``, ``length_units``, ``refresh``.
+            ``reconcile`` and ``min_sep`` are read here too: while reconcile is on
+            (the default), every ``'passthrough'``/``'inactive'`` layer needs
+            ``min_sep`` (default 0.1) strictly below its ``minimum_thickness``,
+            because reconcile would otherwise open every thin contact past the
+            threshold and the policy could never fire -- that raises ``ValueError``.
+            That check takes ``min_sep`` as a scalar: a per-layer list, which the
+            reconcile step itself accepts, raises ``TypeError`` here.
+
+        Returns
+        -------
+        top : numpy.ndarray of float, shape (ncpl,)
+            The sampled model top.
+        botm : numpy.ndarray of float, shape (nlay, ncpl)
+            The sampled layer bottoms, top layer first.
+        idomain : numpy.ndarray of int, shape (nlay, ncpl)
+            ``1`` active, ``0`` or ``-1`` for a thin cell as ``pinch`` says.
+
+        Raises
+        ------
+        ValueError
+            A per-layer ``minimum_thickness`` or ``pinch`` of the wrong length, an
+            unknown ``pinch``, or ``min_sep`` not below a pinching layer's
+            ``minimum_thickness``.
         """
 
         gdf = self.sample(vor, **sample_kwargs)
@@ -1648,7 +2195,30 @@ class LayerSurfaces:
     def thickness_report(
         self, vor, *, minimum_thickness: float = 1.0, **sample_kwargs
     ) -> str:
-        """Per-layer thickness summary and thin-cell counts (for diagnostics)."""
+        """Per-layer thickness summary and thin-cell counts (for diagnostics).
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus
+            The grid to sample onto (see :meth:`sample`). Its ``gdf_topbtm`` is not
+            written.
+        minimum_thickness : float or sequence of float, default 1.0
+            The threshold a cell is counted as thin below (strictly), in the sampled
+            (converted) length units. Only counted and printed -- nothing is pinched.
+            A scalar applies to every layer; a sequence gives one value per layer
+            and must have one entry per bottom surface, or ``ValueError``.
+        **sample_kwargs
+            Forwarded to :meth:`sample` -- ``reconcile``, ``min_sep``,
+            ``trigger_sep``, ``which``, ``method``, ``length_units``, ``refresh`` --
+            so the report describes the reconciled thicknesses unless
+            ``reconcile=False`` is passed.
+
+        Returns
+        -------
+        str
+            A header line (layer and cell counts) and one line per layer with its
+            min/mean/max thickness and its thin-cell count. Returned, not printed.
+        """
 
         thickness = self._thickness(self.sample(vor, **sample_kwargs))
         nlay, ncell = thickness.shape
@@ -1686,6 +2256,78 @@ class LayerSurfaces:
         pass-through). With ``attach=True`` (default) the sampled elevations are
         also written to ``vor.gdf_topbtm`` so choropleth/mapping code keeps
         working.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus
+            The grid to sample onto (see :meth:`sample`); its
+            ``get_disv_gridprops()`` supplies ``ncpl``, ``vertices`` and ``cell2d``
+            (``nvert`` is the vertex count). Written to only with ``attach=True``.
+        nlay : int, optional
+            The layer count written. ``None`` (the default) writes
+            ``len(surfaces) - 1``, one layer per bottom surface. A given value is
+            passed to ``mf.disv(nlay=)`` as it is: nothing is resampled, so ``botm``
+            (and a derived ``idomain``) still has one row per bottom surface.
+        idomain : array_like of int, shape (nlay, ncpl), optional
+            An explicit IDOMAIN, forwarded to ``mf.disv(idomain=)``: ``1`` active,
+            ``0`` inactive, ``-1`` vertical pass-through. ``None`` (the default)
+            with ``pinch_out=False`` writes none, and MF6 treats every cell as
+            active. Refused together with ``pinch_out=True`` (``ValueError``).
+        pinch_out : bool, default False
+            Derive IDOMAIN from each layer's sampled thickness, with
+            ``minimum_thickness`` and ``pinch``, exactly as
+            :meth:`top_botm_idomain` does. ``False`` ignores both of them.
+        minimum_thickness : float or sequence of float, default 1.0
+            With ``pinch_out=True`` only: the thickness, in the sampled (converted)
+            length units, strictly below which a cell is thin. A scalar applies to
+            every layer; a sequence gives one per layer and must have one entry per
+            bottom surface, or ``ValueError``.
+        pinch : {'passthrough', 'inactive', 'floor'} or sequence of those, default 'passthrough'
+            With ``pinch_out=True`` only: what a thin cell becomes.
+            ``'passthrough'`` writes ``idomain = -1``; ``'inactive'`` writes ``0``;
+            ``'floor'`` leaves it ``1`` at its sampled thickness. Scalar or per
+            layer, as ``minimum_thickness``; any other value raises ``ValueError``.
+        length_units : str, optional
+            The model length unit, which does two things. It is passed to
+            :meth:`sample`, converting every surface of the stack that declares its
+            own ``units`` (not an operand inside an algebra surface; once a surface
+            declares ``units``, an unknown name raises ``ValueError`` there, as does a
+            relative surface declaring them). And it is written as DISV
+            ``LENGTH_UNITS``: ``'feet'``, ``'meters'`` or ``'centimeters'`` (any
+            case) become ``FEET``/``METERS``/``CENTIMETERS``, and any other name is
+            passed on upper-cased as given -- so the abbreviations the conversion
+            accepts (``'ft'``, ``'m'``, ``'cm'``) write ``FT``/``M``/``CM``, which
+            MF6 does not recognise (measured: ``FT`` is read as length unit 0,
+            undefined, with no error). Use the full names. ``None`` (the default)
+            converts nothing and writes no ``LENGTH_UNITS``.
+        name : str, default "disv"
+            Forwarded to ``mf.disv(name=)``: the returned spec's name, the key
+            ``with_packages(slot=)`` and ``without_packages`` use.
+        attach : bool, default True
+            Also write the sampled frame to ``vor.gdf_topbtm`` (which clears
+            ``vor.excavations``). It is written straight after sampling, BEFORE the
+            ``pinch_out`` checks, so a call those checks refuse has already replaced
+            it. ``False`` leaves ``vor`` untouched.
+        **sample_kwargs
+            Forwarded to :meth:`sample` -- ``reconcile``, ``min_sep``,
+            ``trigger_sep``, ``which``, ``method``, ``refresh`` (``length_units`` is
+            this method's own). With ``pinch_out=True``, ``reconcile`` and
+            ``min_sep`` are also read by the separation check that
+            :meth:`top_botm_idomain` describes. Any other keyword raises
+            ``TypeError`` in :meth:`sample`.
+
+        Returns
+        -------
+        PackageSpec
+            The hand-written ``mf.disv`` form: the mesh, ``top``, ``botm``, the
+            ``idomain`` when there is one, and ``length_units`` when given.
+
+        Raises
+        ------
+        ValueError
+            ``pinch_out=True`` together with an ``idomain``; with ``pinch_out=True``,
+            a ``minimum_thickness``/``pinch`` of the wrong length, an unknown
+            ``pinch``, or ``min_sep`` not below a pinching layer's threshold.
         """
 
         from myflopy.package_api import disv  # lazy: avoid an import cycle

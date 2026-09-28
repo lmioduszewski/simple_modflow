@@ -267,15 +267,22 @@ class PRTReleasePoints:
     Holds the PRP (particle release point) ``packagedata`` -- one record per
     released particle, giving its id and starting cell/coordinates -- in the form
     MF6's PRT model expects. Build it with the :meth:`from_cells` constructor
-    (release particles at given cells) rather than assembling records by hand, then
-    hand it to :class:`PRTProject` / ``ParticleTracking.prt(...)``.
+    (release particles at given cells) or :meth:`from_points` (release them at
+    given coordinates) rather than assembling records by hand, combine sets with
+    :meth:`merge`, then hand it to :class:`PRTProject` / ``ParticleTracking.prt(...)``.
 
     Attributes
     ----------
-    packagedata
+    packagedata : tuple of tuple
         Normalized PRP release records, one tuple per particle. Records are
         5-tuples ``(irpt, cellid, x, y, local_z)``, or 6-tuples ending in a
-        release-group boundname when ``group=`` was given.
+        release-group boundname when ``group=`` was given. ``irpt`` is ZERO-based
+        (FloPy adds one when it writes the PRP file); ``cellid`` is ``(layer, cell)``
+        on a DISV grid or ``(layer, row, col)`` on a DIS grid, zero-based; ``x``/``y``
+        are in the model's OWN frame (what a PRP record is written in, which on an
+        offset grid differs from the world frame); the fifth value is MF6's ``zrpt``,
+        read as a local z within the cell when :class:`PRTProject` is built with
+        ``local_z=True`` (its default) and as an elevation otherwise.
     """
 
     packagedata: tuple[tuple[Any, ...], ...]
@@ -324,6 +331,20 @@ class PRTReleasePoints:
         capture zone with :meth:`from_cells`, then merge them into the single PRP
         package MF6 wants. Group labels ride along untouched.
 
+        Parameters
+        ----------
+        *sets : PRTReleasePoints
+            The release-point sets to combine, in order. Every record keeps its
+            cellid, coordinates, ``local_z`` value and group label; only ``irpt`` is
+            rewritten, numbering the combined records ``0, 1, 2, ...`` in the order
+            the sets (and their records) were given. Called with no sets it returns
+            an empty set, which :class:`PRTProject` refuses.
+
+        Returns
+        -------
+        PRTReleasePoints
+            One set holding every record of ``sets``.
+
         Examples
         --------
         >>> west = mf.PRTReleasePoints.from_cells(model, [10, 11], group="west_wells")
@@ -352,18 +373,29 @@ class PRTReleasePoints:
         Parameters
         ----------
         model : SimulationBase
-            The flow model whose grid supplies the cell centers.
+            The flow model whose grid (``model.gwf.modelgrid``) supplies the cell
+            centers. Each particle starts at its cell's FloPy cell center, converted
+            to the model's own frame.
         cells : Sequence[int or tuple]
-            Cell ids to release from -- zero-based DISV cell numbers, or structured
-            ``(row, col)`` / ``(layer, row, col)`` tuples.
+            Cell ids to release from, one particle each, in order -- zero-based DISV
+            cell numbers, or structured ``(row, col)`` / ``(layer, row, col)`` tuples.
+            A tuple of any other length raises ``ValueError``.
         layer : int, default 0
-            Layer to place the particles in when ``cells`` are bare cell/``(row, col)``.
+            Zero-based layer to place the particles in when ``cells`` are bare cell
+            numbers or ``(row, col)`` tuples; ignored for a ``(layer, row, col)``
+            tuple, which names its own layer.
         local_z : float, default 0.5
-            Vertical position within the cell (0 = bottom, 1 = top).
+            The vertical position written as every record's ``zrpt``. Under
+            :class:`PRTProject`'s default ``local_z=True`` it is a local coordinate
+            within the cell: 0 = bottom, 1 = effective top (the water table in a
+            partially saturated convertible cell). Built with ``local_z=False``, MF6
+            reads it as an elevation in model length units instead.
         group : str or Sequence[str], optional
             Release-group label(s) written as PRP boundnames -- one label for every
-            point, or one per cell. MF6 echoes them (uppercased) into the track CSV,
-            which is what ``results.capture.map()`` groups particles by.
+            point, or one per cell (a sequence of another length raises
+            ``ValueError``). MF6 echoes them (uppercased) into the track CSV, which
+            is what ``results.capture.map()`` groups particles by. ``None`` (the
+            default) writes ungrouped 5-tuple records.
 
         Returns
         -------
@@ -436,6 +468,47 @@ class PRTReleasePoints:
         see :meth:`from_cells`. Points are WORLD coordinates, in the grid's CRS (a
         frame in another one is reprojected to it); they are written in the model's
         own frame, which on an offset grid differs.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            The flow model whose grid the points are located on. On a DISV model
+            carrying a ``vor``, its cell polygons and ``idomain`` decide the cell
+            (see Notes); on a structured model, or a vertex model with no ``vor``,
+            FloPy's ``model.gwf.modelgrid.intersect`` does.
+        points : iterable of shapely.Point or (x, y) pairs, GeoSeries, or GeoDataFrame
+            The release locations, one particle each, in WORLD coordinates. Anything
+            with ``.x``/``.y`` is read as a point, anything else as an ``(x, y)``
+            pair; a GeoDataFrame is read through its ``geometry`` column. A
+            GeoSeries or GeoDataFrame whose CRS differs from the grid polygons' is
+            reprojected to it first (DISV models with a ``vor`` only, and only when
+            both carry a CRS); bare pairs carry no CRS and are taken as the grid's.
+        layer : int, default 0
+            Zero-based layer every point is released in. On a DISV model with a
+            ``vor``, only cells active (``idomain > 0``) in this layer can take a
+            point.
+        local_z : float, default 0.5
+            The vertical position written as every record's ``zrpt`` -- a local z
+            within the cell (0 = bottom, 1 = effective top) under :class:`PRTProject`'s
+            default ``local_z=True``, an elevation otherwise. See :meth:`from_cells`.
+        group : str or Sequence[str], optional
+            Release-group label(s) written as PRP boundnames -- one label for every
+            point, or one per point in input order (a sequence of another length
+            raises ``ValueError``). A point left out as a miss drops its label with
+            it. ``None`` (the default) writes ungrouped records.
+
+        Returns
+        -------
+        PRTReleasePoints
+            One record per point that landed, ``irpt`` numbered over those only.
+
+        Raises
+        ------
+        ValueError
+            On a DISV model with a ``vor``, when no point lands on a cell active in
+            ``layer``; the message names both extents and both CRSs. Also when
+            ``group`` has the wrong length, and (same models) when ``layer`` is past
+            the last layer of a layered ``(nlay, ncpl)`` idomain.
 
         Notes
         -----
@@ -525,14 +598,29 @@ class PRTRunResults:
 
     Attributes
     ----------
-    flow_model
-        The flow model the particles were tracked through.
-    workspace
+    flow_model : SimulationBase
+        The flow model the particles were tracked through; its grid is what the
+        pathlines are drawn and aggregated on.
+    workspace : pathlib.Path
         Directory holding the PRT output files.
-    name
-        PRT model name.
-    track_csv_path, budget_path
-        Paths to the particle-track CSV and (optional) budget output.
+    name : str
+        PRT model name (the stem of its output files).
+    track_csv_path : pathlib.Path
+        The particle-track CSV MF6 wrote (``<name>.trk.csv`` in ``workspace``).
+        Nothing checks it exists until :attr:`track_records` reads it, which raises
+        ``FileNotFoundError`` when it does not.
+    budget_path : pathlib.Path or None, optional
+        The PRT budget file. :class:`PRTProject` and :func:`open_prt_run` both set
+        ``<name>.bud`` in ``workspace`` without checking it exists; ``None`` by
+        default when the dataclass is built directly.
+    success : bool or None, optional
+        MF6's run verdict, set by :meth:`PRTProject.run` (always ``True`` there,
+        because a failed run raises instead of returning). ``None`` (the default)
+        when the handle was reopened with :func:`open_prt_run` or built by
+        :meth:`PRTProject.results` without one.
+    report : tuple of str, optional
+        The MF6 screen output captured by :meth:`PRTProject.run` with
+        ``report=True``; empty (the default) otherwise.
     """
 
     flow_model: SimulationBase
@@ -619,6 +707,26 @@ class PRTRunResults:
         The same picture as ``flow_model.plot.grid(pathlines=..., backend="vtk")``
         -- this is the spelling you reach for when you already have the run
         results in hand. Display it, ``.show()`` it, or ``.html(path)`` it.
+        Requires ``pyvista``.
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded unchanged to
+            :func:`~myflopy.modflow.mf6.interactive_plotting.build_particle_tracking_scene`,
+            which accepts ``vertical_exaggeration`` (float, default 1.0),
+            ``model_style`` (PyVista mesh style for the grid, default
+            ``"wireframe"``), ``model_opacity`` (default 0.25), ``show_edges``
+            (default ``True``), ``pathline_cmap`` (colormap for the time-colored
+            tubes, default ``"viridis"``), ``pathline_width`` (default 4.0) and
+            ``off_screen`` (default ``True``). Any other keyword raises
+            ``TypeError``. The flow model and the raw :attr:`track_records` are
+            passed for you.
+
+        Returns
+        -------
+        VtkScene
+            The grid and pathline tubes, as a :class:`~myflopy.viz.Picture`.
         """
 
         from myflopy.modflow.mf6.interactive_plotting import build_particle_tracking_scene
@@ -626,7 +734,33 @@ class PRTRunResults:
         return build_particle_tracking_scene(self.flow_model, self.track_records, **kwargs)
 
     def plot_map(self, **kwargs):
-        """Plot the particle pathlines on a plan-view map of the flow model."""
+        """Plot the particle pathlines on a plan-view map of the flow model.
+
+        A static Matplotlib map drawn by FloPy's ``PlotMapView``. For the
+        interactive picture over the head map, use ``pathlines.map()``.
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded unchanged to
+            :func:`~myflopy.modflow.mf6.interactive_plotting.plot_particle_pathlines`,
+            which accepts ``layer`` (``"all"``, the default, draws every track
+            point; an int keeps the points whose layer column equals it, compared as
+            given with no base conversion), ``ax`` (an existing Matplotlib Axes; a
+            new figure when ``None``), ``head_data`` / ``head_layer`` (an optional
+            head array
+            shaded beneath the tracks, and the layer of it to draw, default 0),
+            ``pathline_color``, ``pathline_alpha`` (default 0.7),
+            ``pathline_linewidth`` (default 1.0), ``show_grid`` (default ``True``),
+            ``grid_alpha`` (default 0.25) and ``title``. Any other keyword raises
+            ``TypeError``. The flow model and the raw :attr:`track_records` are
+            passed for you.
+
+        Returns
+        -------
+        tuple
+            ``(fig, ax)``.
+        """
 
         from myflopy.modflow.mf6.interactive_plotting import plot_particle_pathlines
 
@@ -638,6 +772,21 @@ class PRTRunResults:
         Kept as a named convenience because "give me a file I can send" is a
         distinct intent; it is exactly ``self.scene(**kwargs).html(output_path)``,
         and closes the plotter afterwards.
+
+        Parameters
+        ----------
+        output_path : str or pathlib.Path
+            The HTML file to write. Missing parent directories are created, and an
+            existing file is overwritten.
+        **kwargs
+            Forwarded to :meth:`scene`, and from there to
+            ``build_particle_tracking_scene`` -- the same keywords :meth:`scene`
+            lists; any other raises ``TypeError``.
+
+        Returns
+        -------
+        pathlib.Path
+            The path written.
         """
 
         scene = self.scene(**kwargs)
@@ -658,22 +807,88 @@ class PRTProject:
     ``model.particle_tracking.prt(...)`` (the :class:`ParticleTracking` front door)
     or directly. For the declarative spec API, see ``mf.prt(...)``.
 
+    Building one only assembles the FloPy objects (and creates ``workspace``); call
+    :meth:`write` and :meth:`run` to produce output. The PRT simulation reads the
+    flow model's head, budget and binary-grid files through FMI, by paths relative
+    to ``workspace``, so the flow model must have been run first.
+
     Parameters
     ----------
-    model
-        The flow model to track particles through.
-    workspace
-        Directory to write/run the PRT simulation in.
-    release_points
-        A :class:`PRTReleasePoints` (or raw PRP records) defining where particles start.
-    porosity
-        Aquifer porosity used to convert flow to seepage velocity.
-    perioddata, time_units, release_perioddata, extend_tracking, stoptime, stoptraveltime, track_times
-        Tracking time-discretization and termination controls.
-    drape, local_z, stop_at_weak_sink
-        Particle placement/termination options.
-    name, exe_name
-        PRT model name (<=16 chars) and the MODFLOW executable.
+    model : SimulationBase
+        The flow model to track particles through. Its DIS or DISV discretization
+        is copied onto the PRT model (any other grid raises
+        ``NotImplementedError``), its TDIS supplies the defaults for
+        ``perioddata``/``time_units``, and its OC records name the head and budget
+        files FMI reads (``<name>.hds``/``<name>.cbc`` when OC names none).
+    workspace : str or pathlib.Path
+        Directory the PRT simulation is written to and run in; created (with its
+        parents) at construction.
+    name : str, optional
+        PRT model and simulation name, also the stem of the output files
+        (``<name>.trk.csv``, ``<name>.bud``). ``None`` (the default) derives it from
+        the flow model's name: non-alphanumerics become ``_``, the first 12
+        characters are kept and ``_prt`` is appended. More than 16 characters
+        raises ``ValueError`` (MF6's limit).
+    release_points : PRTReleasePoints or Sequence of tuple
+        Where particles start: a :class:`PRTReleasePoints`, or raw PRP
+        ``packagedata`` records in the same layout (each converted to a tuple).
+        Required, and an empty set raises ``ValueError``. Records carrying a sixth
+        (group) field switch the PRP ``BOUNDNAMES`` option on.
+    porosity : float or Sequence[float] or array_like, default 0.2
+        Aquifer porosity used to convert flow to seepage velocity, passed unchanged
+        to FloPy's ``ModflowPrtmip`` ``porosity``: one value for every cell, a
+        per-layer list (one value per layer), or a per-cell array.
+    perioddata : Sequence of (float, int, float), optional
+        The PRT simulation's own TDIS ``(perlen, nstp, tsmult)`` rows. ``None`` (or
+        an empty sequence) copies the flow model's TDIS periods, or one period
+        ``(1.0, 1, 1.0)`` when it has no TDIS period data. PRT tracks through the flow
+        model's saved flows, so these should match the flow run's periods.
+    time_units : str, optional
+        TDIS time units for the PRT simulation (e.g. ``"DAYS"``). ``None`` (the
+        default) copies the flow simulation's TDIS ``TIME_UNITS``, and uses
+        ``"DAYS"`` only when the flow simulation has no TDIS package at all. A flow
+        TDIS that declares no units is NOT defaulted -- the PRT TDIS is then
+        written ``TIME_UNITS none``, which MF6 refuses -- so pass ``time_units``
+        for such a model.
+    release_perioddata : dict, optional
+        PRP ``perioddata``: zero-based stress period -> that period's MF6 release
+        settings (``ALL``, ``FIRST``, ``LAST``, ``FREQUENCY``, ``STEPS``), in the
+        form FloPy's ``ModflowPrtprp`` takes and passed to it unchanged. ``None``
+        (the default) passes ``{0: ["FIRST"]}``: release at the start of the first
+        time step of stress period 0.
+    extend_tracking : bool, default False
+        PRP ``EXTEND_TRACKING``: keep tracking past the end of the simulation's
+        final time step, on that step's flows, until particles terminate or reach
+        ``stoptime``/``stoptraveltime``. By default MF6 terminates particles at the
+        end of the final time step.
+    stoptime : float, optional
+        PRP ``STOPTIME``: the simulation time (model time units) at which every
+        particle still moving terminates. ``None`` (the default) sets none.
+    stoptraveltime : float, optional
+        PRP ``STOPTRAVELTIME``: the travel time (model time units) after which a
+        particle terminates. ``None`` (the default) sets none. When both stop
+        options are given, whichever is reached first stops the particle.
+    drape : bool, default True
+        PRP ``DRAPE``: a particle whose release cell is inactive at release time is
+        moved to the topmost active cell below it, if any. With ``False`` MF6 does
+        not release such a particle. It does not apply to a cell with
+        ``idomain <= 0``, which MF6 treats as an error.
+    local_z : bool, default True
+        PRP ``LOCAL_Z``: read each record's z (``zrpt``) as a local coordinate in
+        the cell, 0 at the bottom and 1 at the effective top (the water table in a
+        partially saturated convertible cell). ``False`` reads it as an elevation
+        in model length units. :meth:`PRTReleasePoints.from_cells` and
+        :meth:`~PRTReleasePoints.from_points` write a local value (0.5 by default),
+        so they expect the default.
+    stop_at_weak_sink : bool, default False
+        PRP ``STOP_AT_WEAK_SINK``: terminate a particle when it enters a weak-sink
+        cell. By default particles pass through weak sinks.
+    track_times : Sequence[float], optional
+        Times from the simulation start (model time units) written to the PRT OC
+        ``TRACKTIMES`` block, at which MF6 adds a track record (``ireason`` 5) for
+        each particle still being tracked. ``None`` (the default) writes no block.
+    exe_name : str, default "mf6"
+        The MODFLOW 6 executable FloPy runs (a name on ``PATH`` or a path).
     """
 
     def __init__(
@@ -788,13 +1003,42 @@ class PRTProject:
         self.ems = flopy.mf6.ModflowEms(self.sim, pname="ems", filename=f"{self.name}.ems")
 
     def write(self, *, silent: bool = True) -> Path:
-        """Write the PRT simulation files to the workspace and return its path."""
+        """Write the PRT simulation files to the workspace and return its path.
+
+        Parameters
+        ----------
+        silent : bool, default True
+            Passed to FloPy's ``MFSimulation.write_simulation``; ``False`` lets
+            FloPy print its progress as it writes each file.
+
+        Returns
+        -------
+        pathlib.Path
+            :attr:`workspace`.
+        """
 
         self.sim.write_simulation(silent=silent)
         return self.workspace
 
     def results(self, *, success: bool | None = None, report: Sequence[str] = ()) -> PRTRunResults:
-        """Build a :class:`PRTRunResults` handle over this project's output files."""
+        """Build a :class:`PRTRunResults` handle over this project's output files.
+
+        Nothing is read or checked here: the handle points at ``<name>.trk.csv`` and
+        ``<name>.bud`` in the workspace, and the track CSV is read on first access.
+
+        Parameters
+        ----------
+        success : bool or None, optional
+            Stored as :attr:`PRTRunResults.success`. :meth:`run` passes MF6's
+            verdict; ``None`` (the default) means no run was observed.
+        report : Sequence[str], default ()
+            MF6 screen-output lines, stored as :attr:`PRTRunResults.report` (as a
+            tuple). :meth:`run` passes the lines it captured.
+
+        Returns
+        -------
+        PRTRunResults
+        """
 
         return PRTRunResults(
             flow_model=self.flow_model,
@@ -811,6 +1055,33 @@ class PRTProject:
 
         Requires the GWF head/budget/grid outputs to already exist (raises with the
         missing paths otherwise); raises ``RuntimeError`` if the MF6 run fails.
+
+        Parameters
+        ----------
+        write : bool, default True
+            Write the simulation files first (:meth:`write`, with the same
+            ``silent``). ``False`` runs whatever is already in the workspace.
+        silent : bool, default True
+            Passed to FloPy's ``write_simulation`` and ``run_simulation``; ``False``
+            echoes FloPy's and MF6's screen output as they run.
+        report : bool, default True
+            Passed to FloPy's ``run_simulation``: capture MF6's screen output. The
+            captured lines become :attr:`PRTRunResults.report`, and on a failed run
+            their last 20 lines are quoted in the ``RuntimeError``. ``False``
+            captures nothing, so both are empty.
+
+        Returns
+        -------
+        PRTRunResults
+            A handle over this run's output, with ``success=True``.
+
+        Raises
+        ------
+        FileNotFoundError
+            When the flow model's head, budget or binary-grid file is missing from
+            its output folder (checked before anything is written).
+        RuntimeError
+            When MF6 does not report normal termination.
         """
 
         missing = [
@@ -852,17 +1123,27 @@ def open_prt_run(
 
     Parameters
     ----------
-    model
-        The flow model the particles were tracked through.
-    workspace
+    model : SimulationBase
+        The flow model the particles were tracked through; stored as
+        :attr:`PRTRunResults.flow_model` and used for every map and scene.
+    workspace : str or pathlib.Path
         Directory containing the completed PRT output.
-    name
-        PRT model name; inferred from ``workspace`` when ``None``.
+    name : str, optional
+        PRT model name: the handle points at ``<name>.trk.csv`` and ``<name>.bud``
+        in ``workspace``, neither checked here. ``None`` (the default) infers it
+        from the one ``*.trk.csv`` file in ``workspace``.
 
     Returns
     -------
     PRTRunResults
-        A handle to the existing run's pathline output.
+        A handle to the existing run's pathline output (``success`` is ``None``
+        and ``report`` empty -- the run was not observed).
+
+    Raises
+    ------
+    FileNotFoundError
+        With ``name=None``, when ``workspace`` holds no ``*.trk.csv`` file or more
+        than one.
     """
 
     workspace = Path(workspace)
@@ -890,14 +1171,16 @@ class ParticleTracking:
 
     The small accessor exposed as ``model.particle_tracking``: it bundles the
     particle-tracking workflows available for a flow ``model`` so you do not have to
-    import the project classes yourself. :meth:`prt` builds and runs a native MF6
-    PRT simulation (returning a :class:`PRTProject`), while the MP3DU helpers cover
-    the older MODPATH-style workflow.
+    import the project classes yourself. :meth:`prt` builds a native MF6 PRT
+    simulation (returning a :class:`PRTProject`, which you then ``.run()``),
+    :meth:`open_prt` reopens a finished one, and :meth:`mp3du` covers the older
+    mod-PATH3DU workflow.
 
     Parameters
     ----------
-    model
-        The flow model these particle-tracking workflows operate on.
+    model : SimulationBase
+        The flow model these particle-tracking workflows operate on; every method
+        passes it as the flow model.
     """
 
     def __init__(self, model: SimulationBase):
@@ -906,7 +1189,31 @@ class ParticleTracking:
         self.model = model
 
     def prt(self, *, workspace: str | Path, release_points, **kwargs) -> PRTProject:
-        """Build a native MF6 PRT project for this model (see :class:`PRTProject`)."""
+        """Build a native MF6 PRT project for this model (see :class:`PRTProject`).
+
+        Nothing is written or run: call ``.run()`` on the returned project.
+
+        Parameters
+        ----------
+        workspace : str or pathlib.Path
+            Directory the PRT simulation is written to and run in (created now).
+            See :class:`PRTProject`.
+        release_points : PRTReleasePoints or Sequence of tuple
+            Where particles start -- a :class:`PRTReleasePoints` (from
+            :meth:`PRTReleasePoints.from_cells` / ``from_points`` / ``merge``) or raw
+            PRP records. See :class:`PRTProject`.
+        **kwargs
+            Forwarded to :class:`PRTProject`: ``name``, ``porosity``,
+            ``perioddata``, ``time_units``, ``release_perioddata``,
+            ``extend_tracking``, ``stoptime``, ``stoptraveltime``, ``drape``,
+            ``local_z``, ``stop_at_weak_sink``, ``track_times`` and ``exe_name``,
+            with the defaults and meanings documented there. Any other keyword
+            raises ``TypeError``.
+
+        Returns
+        -------
+        PRTProject
+        """
 
         return PRTProject(
             self.model,
@@ -916,12 +1223,50 @@ class ParticleTracking:
         )
 
     def open_prt(self, workspace: str | Path, *, name: str | None = None) -> PRTRunResults:
-        """Reopen a completed PRT run in ``workspace`` (see :func:`open_prt_run`)."""
+        """Reopen a completed PRT run in ``workspace`` (see :func:`open_prt_run`).
+
+        Parameters
+        ----------
+        workspace : str or pathlib.Path
+            Directory containing the completed PRT output.
+        name : str, optional
+            PRT model name, the stem of ``<name>.trk.csv``. ``None`` (the default)
+            infers it from the one ``*.trk.csv`` file in ``workspace`` and raises
+            ``FileNotFoundError`` when there is none or more than one.
+
+        Returns
+        -------
+        PRTRunResults
+        """
 
         return open_prt_run(self.model, workspace, name=name)
 
     def mp3du(self, particles, **kwargs):
-        """Prepare a legacy MP3DU (MODPATH-style) particle-tracking run for this model."""
+        """Prepare a legacy MP3DU (MODPATH-style) particle-tracking run for this model.
+
+        Exactly :func:`~myflopy.modflow.mp3du.prepare_particle_tracking` with
+        ``model`` bound, so by default it writes the mod-PATH3DU inputs and does NOT
+        execute them (``execute=False``).
+
+        Parameters
+        ----------
+        particles : str, pathlib.Path, or Sequence[int]
+            The release source: a shapefile/GeoPackage path, or zero-based cell ids
+            (one particle at each cell's centroid). See
+            :func:`~myflopy.modflow.mp3du.prepare_particle_tracking`.
+        **kwargs
+            Forwarded to ``prepare_particle_tracking`` -- its ``porosity``,
+            ``output_path``, ``execute``, ``convert_output`` and
+            ``write_diagnostics``, and through it any
+            :class:`~myflopy.modflow.mp3du.ParticleTrackingInput` keyword
+            (``direction``, ``simulation_end_time``, ``iface_overrides``, ...). A
+            keyword neither accepts raises ``TypeError``.
+
+        Returns
+        -------
+        tuple of (ParticleTrackingInput, ParticleTrackingResult)
+            The configured tracker and the result of its ``run()``.
+        """
 
         from myflopy.modflow.mp3du import prepare_particle_tracking
 

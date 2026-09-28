@@ -22,22 +22,45 @@ from myflopy.modflow.mf6.observations import (
 class VectorParameterSource:
     """Describe a GIS vector source used to define calibration parameters.
 
+    A leftover of the retired ``add_parameter``/``build_pst`` path (deleted
+    2026-06-22). No calibration route takes one today: ``cal.parameterize``
+    has no ``source=`` argument, and the only reader of this record,
+    ``myflopy.modflow.mf6.pest.gis.load_vector_parameter_source``, is called
+    by nothing in the library. It is still exported, so it is documented here
+    as it stands; to calibrate from polygons use
+    ``cal.parameterize(..., style="zone", zones=ZoneSpec.from_polygons(...))``.
+
     Parameters
     ----------
-    path
-        Path to a shapefile/geopackage layer.
-    value_column
+    path : str or pathlib.Path
+        Vector file (shapefile, GeoPackage, ...) opened with
+        ``geopandas.read_file``, which reads its first layer.
+        ``load_vector_parameter_source`` refuses a file holding an empty
+        geometry.
+    value_column : str
         Base-value column such as ``"k"``, ``"elev"``, or ``"cond"``.
-    feature_id_column
-        Unique feature identifier column used for feature-based parameters.
-    zone_column
-        Optional spatial zone column.
-    group_column
-        Optional logical group column for grouping parameters or observations.
-    layer_column
-        Optional layer column.
-    lower_bound_column, upper_bound_column
-        Optional GIS-defined bound columns.
+        ``load_vector_parameter_source`` raises ``ValueError`` when the file has
+        no such column.
+    feature_id_column : str or None, optional
+        Unique feature-identifier column. Default ``"name"``; when not
+        ``None`` it must exist in the file (same check as ``value_column``).
+        ``None`` skips that check.
+    zone_column : str or None, optional
+        Spatial zone column. Default ``None``. Stored only; nothing reads it.
+    group_column : str or None, optional
+        Logical group column. Default ``None``. Stored only; nothing reads it.
+    layer_column : str or None, optional
+        Layer column. Default ``None``. Stored only; nothing reads it.
+    crs : int or None, optional
+        EPSG code of the features. Default ``myflopy._defaults.DEFAULT_EPSG``
+        (2927). Stored only: ``load_vector_parameter_source`` neither checks it
+        nor reprojects.
+    lower_bound_column : str or None, optional
+        Column of per-feature lower bounds. Default ``None``. Stored only;
+        nothing reads it.
+    upper_bound_column : str or None, optional
+        Column of per-feature upper bounds. Default ``None``. Stored only;
+        nothing reads it.
     """
 
     path: str | Path
@@ -57,7 +80,40 @@ class ExpGeoStruct:
 
     This wrapper stores values in a ``myflopy``-friendly form and can be
     converted to a real ``pyemu.geostats.GeoStruct`` lazily when pyEMU is
-    available.
+    available, by :func:`myflopy.modflow.mf6.pest.geostats.build_geostruct`.
+    Nothing is validated here; pyEMU asserts ``range``, ``contribution`` and
+    ``anisotropy`` are positive and ``transform`` is ``"none"`` or ``"log"``
+    when that conversion runs (an ``AssertionError``).
+
+    For each ``grid``/``pilotpoints`` parameter given a ``correlation=``, the
+    project builds one of these from what ``cal.parameterize(...,
+    correlation=, anisotropy=, bearing=, nugget=)`` recorded (at ``build()``
+    and when drawing the prior), with ``contribution`` left at ``1.0`` and
+    the parameter's transform; you only construct one yourself to call
+    ``build_geostruct`` directly.
+
+    Parameters
+    ----------
+    range : float
+        Variogram range in model length units, passed to pyEMU as
+        ``ExpVario(a=range)``. pyEMU's exponential covariance is
+        ``contribution * exp(-h / range)`` at separation ``h``.
+    contribution : float, optional
+        Sill (variance contribution) of the exponential variogram, pyEMU's
+        ``ExpVario(contribution=...)``. Default ``1.0``.
+    anisotropy : float, optional
+        Ratio of the correlation length along ``bearing`` to that across it,
+        pyEMU's ``ExpVario(anisotropy=...)``. Default ``1.0`` (isotropic).
+    bearing : float, optional
+        Direction of the long axis, in degrees east of north, pyEMU's
+        ``ExpVario(bearing=...)``. Default ``0.0``. No effect while
+        ``anisotropy`` is ``1.0``.
+    nugget : float, optional
+        Nugget variance added to the covariance diagonal, pyEMU's
+        ``GeoStruct(nugget=...)``. Default ``0.0``.
+    transform : str, optional
+        ``"none"`` (default) or ``"log"``: the transform of the property the
+        structure describes, pyEMU's ``GeoStruct(transform=...)``.
     """
 
     range: float
@@ -81,13 +137,24 @@ class HeadTargetObservationSpec:
 
     Parameters
     ----------
-    targets
-        The head observation locations + target heads to expose.
-    simulated_values
-        Optional pre-computed simulated-head table; normally regenerated by the
-        forward run, so leave ``None``.
-    prefix
-        pyEMU observation-name prefix (default ``"hds"``).
+    targets : HeadTargets
+        The head observation locations and target heads. Its rows are matched
+        to model cells at build time; a row whose target matched no cell gets
+        no PEST observation.
+    simulated_values : str or pathlib.Path or pandas.DataFrame or None, optional
+        The base-run simulated-head table the build writes as
+        ``<prefix>_simulated_heads.csv`` and builds pyEMU's instruction file
+        from: first column the time index, one column per observation. Default
+        ``None`` computes it with ``targets.simulated_heads(cal.model)``, from
+        the model's current head output. A path is read with
+        ``pandas.read_csv``; a DataFrame is copied. The forward run rewrites the
+        file on every model run, so this only seeds the build.
+    prefix : str, optional
+        pyEMU observation-name prefix, default ``"hds"``. It also names the
+        files the build writes into the template workspace
+        (``<prefix>_simulated_heads.csv``, ``<prefix>_head_target_map.csv``,
+        ``<prefix>_target_locations.gpkg``, ``<prefix>_target_values.csv``), so
+        two sets need two prefixes.
 
     See Also
     --------
@@ -108,18 +175,30 @@ class ConcObservationSpec:
 
     Parameters
     ----------
-    targets
-        Concentration observation locations + measured concentrations.
-    simulated_values
-        Optional pre-computed simulated-concentration table. Normally left
-        ``None`` so the forward run regenerates it every iteration.
-    prefix
-        pyEMU observation-name prefix (default ``"conc"``).
-    transport_model_name
+    targets : ConcTargets
+        Concentration observation locations and measured concentrations,
+        matched to model cells at build time.
+    simulated_values : str or pathlib.Path or pandas.DataFrame or None, optional
+        The base-run simulated-concentration table the build writes as
+        ``<prefix>_simulated_conc.csv`` and builds pyEMU's instruction file
+        from: first column the time index, one column per observation. Default
+        ``None`` reads the transport model's current output
+        (``load_mf6_run`` on the model workspace, then
+        ``targets.simulated_heads(...)`` on that view). A path is read with
+        ``pandas.read_csv``; a DataFrame is copied. The forward run rewrites the
+        file on every model run, so this only seeds the build.
+    prefix : str, optional
+        pyEMU observation-name prefix, default ``"conc"``. It also names the
+        files the build writes (``<prefix>_simulated_conc.csv``,
+        ``<prefix>_conc_target_map.csv``, ``<prefix>_target_locations.gpkg``,
+        ``<prefix>_target_values.csv``), so two sets need two prefixes.
+    transport_model_name : str or None, optional
         Name of the GWT model whose ``.ucn`` holds the simulated field. Left
         ``None`` it is discovered from the simulation -- the calibration hangs
         off the FLOW model (that is where ``k``/``recharge`` live), so the
-        transport sibling has to be found rather than assumed.
+        transport sibling has to be found rather than assumed. The discovery
+        raises ``ValueError`` at build when the simulation holds no GWT model or
+        more than one; name it here in the second case.
 
     See Also
     --------
@@ -134,24 +213,42 @@ class ConcObservationSpec:
 
 @dataclass
 class LakeStageObservationSpec:
-    """Lake-stage observation specification.
+    """Pre-built lake-stage observations, wrapping :class:`LakeStageTargets`.
+
+    ``cal.observe(...)`` / ``cal.forecast(...)`` accept a bare
+    ``LakeStageTargets`` and wrap it; build this spec explicitly to pin a
+    non-default ``prefix`` or a uniform ``weight``. Although ``targets`` has a
+    default, the build REQUIRES it: a spec without one raises ``ValueError``
+    when ``cal.build()`` prepares the observations.
+
+    The first four fields predate ``targets=`` and are read by nothing: the
+    build takes names, values and times from ``targets`` alone. They are kept
+    only so old call sites still construct.
 
     Parameters
     ----------
-    lake_names
-        Names of lake-stage series to expose as observations.
-    values
-        Optional target-value table in the same wide/long conventions used by
-        :class:`HeadTargets`.
-    time_column
-        Time/per identifier column when ``values`` is long-form.
-    value_column
-        Stage-value column when ``values`` is long-form.
-    weight
-        Optional uniform observation weight to apply when target values are
-        supplied.
-    prefix
-        pyEMU observation-name prefix.
+    lake_names : list of str or None, optional
+        Ignored (see above). Default ``None``.
+    values : str or pathlib.Path or pandas.DataFrame or None, optional
+        Ignored (see above). Default ``None``.
+    time_column : str, optional
+        Ignored (see above). Default ``"time"``.
+    value_column : str, optional
+        Ignored (see above). Default ``"stage"``.
+    weight : float or None, optional
+        Uniform observation weight. When not ``None`` every target row gets it
+        (cast with ``float``). Default ``None`` sets no weight: a
+        ``LakeStageTargets`` carries none, so the rows keep the control file's
+        default weight (pyEMU's ``1.0``). A forecast's weights are zeroed
+        afterwards regardless.
+    prefix : str, optional
+        pyEMU observation-name prefix, default ``"stage"``. It also names the
+        files the build writes (``<prefix>_simulated_lake_stage.csv``,
+        ``<prefix>_target_values.csv``, ``<prefix>_target_locations.csv``), so
+        two sets need two prefixes.
+    targets : LakeStageTargets or None, optional
+        The named lake-stage targets. Required in practice: the default
+        ``None`` constructs, and ``cal.build()`` then raises ``ValueError``.
     """
 
     lake_names: list[str] | None = None
@@ -175,10 +272,14 @@ class SfrStageObservationSpec:
 
     Parameters
     ----------
-    targets
-        The named-reach stage targets to expose.
-    prefix
-        pyEMU observation-name prefix (default ``"sfr_stage"``).
+    targets : SfrStageTargets
+        The named-reach stage targets. Their simulated series is read from the
+        model's output at build time and regenerated by the forward run.
+    prefix : str, optional
+        pyEMU observation-name prefix, default ``"sfr_stage"``. It also names
+        the files the build writes (``<prefix>_simulated_sfr_stage.csv``,
+        ``<prefix>_target_values.csv``, ``<prefix>_target_locations.csv``), so
+        two sets need two prefixes.
     """
 
     targets: SfrStageTargets
@@ -196,10 +297,14 @@ class SfrFlowObservationSpec:
 
     Parameters
     ----------
-    targets
-        The named-reach flow targets to expose.
-    prefix
-        pyEMU observation-name prefix (default ``"sfr_flow"``).
+    targets : SfrFlowTargets
+        The named-reach flow targets. Their simulated series is read from the
+        model's output at build time and regenerated by the forward run.
+    prefix : str, optional
+        pyEMU observation-name prefix, default ``"sfr_flow"``. It also names
+        the files the build writes (``<prefix>_simulated_sfr_flow.csv``,
+        ``<prefix>_target_values.csv``, ``<prefix>_target_locations.csv``), so
+        two sets need two prefixes.
     """
 
     targets: SfrFlowTargets
@@ -218,10 +323,15 @@ class DrnFlowObservationSpec:
 
     Parameters
     ----------
-    targets
-        The seepage-zone flow targets to expose.
-    prefix
-        pyEMU observation-name prefix (default ``"drn_flow"``).
+    targets : DrnFlowTargets
+        The seepage-zone flow targets, each aggregating a group of drain
+        cells. Their simulated series is read from the model's output at build
+        time and regenerated by the forward run.
+    prefix : str, optional
+        pyEMU observation-name prefix, default ``"drn_flow"``. It also names
+        the files the build writes (``<prefix>_simulated_drn_flow.csv``,
+        ``<prefix>_target_values.csv``, ``<prefix>_target_locations.*``), so
+        two sets need two prefixes.
     """
 
     targets: DrnFlowTargets

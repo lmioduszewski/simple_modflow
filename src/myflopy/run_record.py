@@ -58,8 +58,8 @@ class ListingOutcome:
 
     Attributes
     ----------
-    outcome
-        ``"normal"`` -- MF6 reported normal termination.
+    outcome : str
+        One of five words. ``"normal"`` -- MF6 reported normal termination.
         ``"failed"`` -- MF6 reported premature termination.
         ``"incomplete"`` -- a listing exists but reports neither, so the run was
         killed, crashed, or is still going. This is what a real interrupted run
@@ -70,15 +70,19 @@ class ListingOutcome:
         directory. ``prepare_run(overwrite=True)`` leaves the old listing and
         results in place, so without this a re-prepared, never-executed run
         reported the previous execution's outcome and elapsed time.
-    finished_at
-        MF6's own run-end stamp, verbatim, or ``None``.
-    elapsed
+    finished_at : str or None, optional
+        MF6's own run-end stamp (``yyyy/mm/dd hh:mm:ss``), verbatim, or ``None``
+        (the default) when the listing's tail carries no ``Run end date and time``
+        line -- always so for ``"absent"``, ``"superseded"`` and an unreadable file.
+    elapsed : str or None, optional
         MF6's own elapsed-time line, verbatim (e.g. ``"3 Hours, 53 Minutes,  1
-        Seconds"``), or ``None``.
-    stale
+        Seconds"``), or ``None`` (the default) when the tail carries none.
+    stale : bool, optional
         Whether any MF6 input file is NEWER than the listing. A listing that
         predates its inputs describes a superseded run -- its verdict is real but
-        no longer about what is on disk now.
+        no longer about what is on disk now. The inputs are the files the
+        workspace's own name files declare, so with no ``mfsim.nam`` this reads
+        ``False`` ("cannot tell"). Default ``False``.
     """
 
     outcome: str
@@ -220,15 +224,30 @@ def read_listing_outcome(
 ) -> ListingOutcome:
     """Read what MF6 reported in ``workspace/mfsim.lst``.
 
-    ``since`` is a POSIX timestamp for when the run in this directory was
-    prepared. A listing older than that describes a PREVIOUS run --
-    ``prepare_run(overwrite=True)`` reuses the directory and leaves the old
-    listing and results behind -- so its verdict is reported as ``superseded``
-    rather than attributed to a run that has not executed.
+    Parameters
+    ----------
+    workspace : str or pathlib.Path
+        The MF6 run directory; the listing read is ``workspace / "mfsim.lst"``
+        (the name is fixed, not taken from ``mfsim.nam``). Only the last 8192
+        bytes of the listing are read.
+    since : float or None, optional
+        A POSIX timestamp (seconds since the epoch, as ``os.stat().st_mtime``) for
+        when the run in this directory was prepared. A listing whose modification
+        time is older than that describes a PREVIOUS run --
+        ``prepare_run(overwrite=True)`` reuses the directory and leaves the old
+        listing and results behind -- so its verdict is reported as
+        ``"superseded"`` rather than attributed to a run that has not executed.
+        ``None`` (the default) skips that comparison.
 
-    Never raises: an unreadable or truncated listing is reported as
-    ``"incomplete"``, because a run you cannot classify must still be listable
-    beside the ones you can.
+    Returns
+    -------
+    ListingOutcome
+
+    Notes
+    -----
+    It does not raise on the listing: a missing file is ``"absent"``, and an
+    unreadable or truncated one is ``"incomplete"``, because a run you cannot
+    classify must still be listable beside the ones you can.
     """
 
     listing = Path(workspace) / _LISTING_NAME

@@ -68,19 +68,33 @@ def find_model_pest_runs(model_workspace, **kwargs) -> list[PestRunHandle]:
 class PestRunHandle:
     """A discovered PEST run: its template build plus any IES/prior executions.
 
+    Handed out by :func:`find_pest_runs`, ``model.pest_runs`` and
+    ``run.pest_runs``, which fill every field from what is on disk; you do not
+    normally construct one.
+
     Attributes
     ----------
-    name
-        The PEST run (project) name.
-    model_name
-        Name of the model this run calibrates (from the build metadata).
-    template_dir
-        The ``PstFrom`` template directory (holds the ``.pst`` and metadata).
-    masters
-        Discovered execution directories keyed by kind -- e.g. ``{"ies": ...,
-        "prior": ...}``.
-    case
-        The control-file stem (``<case>.pst``).
+    name : str
+        The PEST run (project) name: the metadata's ``project_name``, else the
+        template directory's name.
+    model_name : str or None
+        Name of the model this run calibrates, from the build metadata's
+        ``model_name``; ``None`` when the metadata records none.
+    template_dir : pathlib.Path
+        The ``PstFrom`` template directory (holds the ``.pst`` and
+        ``myflopy_pest_metadata.json``). A SERIAL ``run_ies``/``prior`` writes
+        its results here too.
+    masters : dict of str to pathlib.Path, optional
+        Parallel-execution master directories found beside the template (a
+        sibling directory named ``<name>_*master*`` holding a ``.pst``), keyed
+        by kind: ``"prior"`` when the directory name contains ``prior``,
+        ``"ies"`` when it contains ``ies``, else ``"run"``. Two directories of
+        one kind keep the later name in sort order. Default: empty.
+    case : str, optional
+        The control-file stem ``review`` opens (``<case>.pst``): the stem of
+        the build metadata's ``pst_file`` -- the file ``cal.build(filename)``
+        wrote -- else ``name``. Default ``""``, which lets ``review`` discover
+        the case from the ``.pst`` files it finds.
     """
 
     name: str
@@ -107,15 +121,28 @@ class PestRunHandle:
 
         Parameters
         ----------
-        kind
-            Which execution to open: ``"ies"`` (history match, default) or
-            ``"prior"`` (prior Monte Carlo). Falls back to whatever is available.
-        model
+        kind : str, optional
+            Which execution to open, a key of :attr:`masters`: ``"ies"``
+            (history match, default), ``"prior"`` (prior Monte Carlo) or
+            ``"run"``. When there is no master of that kind it falls back,
+            SILENTLY, to the first master in ``masters`` order, and to
+            :attr:`template_dir` when there is none. Only a PARALLEL run gets a
+            master, so ``"ies"`` after a serial ``run_ies`` plus a parallel
+            ``prior`` opens the prior's directory, not the template holding the
+            IES results.
+        model : SimulationBase or None, optional
             A myflopy model carrying the grid, enabling spatial parameter maps
-            (:meth:`IesResults.plot_field`). Defaults to the model the handle was
-            discovered from -- ``model.pest_runs`` attaches it directly,
-            ``run.pest_runs`` resolves it here on first use. A run holding
-            several models cannot pick one, so pass ``model=`` yourself there.
+            (:meth:`IesResults.plot_field`). Default ``None`` uses the model the
+            handle was discovered with -- ``model.pest_runs`` attaches it
+            directly, ``run.pest_runs`` resolves it here on first use. A run
+            holding several models cannot pick one, so pass ``model=`` yourself
+            there.
+
+        Returns
+        -------
+        IesResults
+            Opened on the chosen directory with ``case_name=`` :attr:`case`
+            (discovered from the directory's ``.pst`` files when empty).
         """
 
         from myflopy.modflow.mf6.pest.ies import open_ies_run
@@ -169,24 +196,30 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None,
 
     Parameters
     ----------
-    root
-        Directory to scan (recursively). ``model.pest_runs`` calls
+    root : str or pathlib.Path
+        Directory to scan (recursively). A root that does not exist gives an
+        empty list. A metadata file inside a ``*_master`` directory, or nested
+        inside another build's directory, is a copy and is skipped; an
+        unreadable one is skipped silently. ``model.pest_runs`` calls
         :func:`find_model_pest_runs` instead, which scans every root in
         :func:`pest_run_roots`.
-    model_name
-        When given, keep only runs whose build metadata calibrates this model.
-    model
-        Optional model attached to each handle so ``handle.review()`` enables
-        spatial maps without re-passing it.
-    model_factory
+    model_name : str or None, optional
+        When given, keep only runs whose build metadata's ``model_name``
+        equals it. Default ``None`` keeps every run.
+    model : SimulationBase or None, optional
+        Model attached to each handle so ``handle.review()`` enables spatial
+        maps without re-passing it. Default ``None``.
+    model_factory : callable or None, optional
         Zero-argument callable resolving that model on demand, for callers whose
         model cannot be resolved side-effect free while merely listing runs (see
-        ``Run.pest_runs``). Ignored when ``model`` is given.
+        ``Run.pest_runs``). Called by ``review()`` only when neither
+        ``model`` here nor ``review(model=)`` supplied one. Default ``None``.
 
     Returns
     -------
     list[PestRunHandle]
-        One handle per discovered build, sorted by name.
+        One handle per discovered build, in the sorted order of their metadata
+        file paths (:func:`find_model_pest_runs` sorts by name).
     """
 
     root = Path(root)

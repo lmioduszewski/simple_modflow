@@ -31,6 +31,144 @@ class UZFBuilder:
     By default, every vertically connected active cell beneath land surface is
     represented by a UZF cell. Only the uppermost UZF cell in each column is a
     land-surface cell and receives period inputs such as infiltration and PET.
+
+    This is the engine under ``mf.uzf(...)``, declared with or without
+    ``context=``. The builder is frozen and resolves lazily: cells and records
+    are computed from the stored fields each time ``.packagedata``,
+    ``.perioddata`` or :meth:`build` asks for them (nothing is cached), and
+    :meth:`build` runs :meth:`validate` first. Lengths are model length units and times model time
+    units throughout. A UZF cell's number (MF6 ``IFNO``) is its position in
+    :attr:`uzf_cells`.
+
+    Parameters
+    ----------
+    context : ModelContext
+        Supplies ``context.domain`` (the IDOMAIN, ``(nlay, ncpl)`` or a
+        one-dimensional single layer), which picks the cells when ``cells`` is a
+        keyword -- then it is required, ``ValueError`` at construction -- and
+        checks explicit cells when present. The grid is not read except to pin
+        the built package to it; without one the package is marked as
+        addressing cells instead.
+    nper : int
+        Number of stress periods; ``perioddata`` gets every period
+        ``0 .. nper - 1``. Less than 1 raises ``ValueError``.
+    vks : float or array_like or Mapping
+        Vertical saturated hydraulic conductivity of the unsaturated zone, MF6
+        ``VKS`` (model length per model time), per UZF cell -- any of the
+        per-cell shapes in the Notes. :meth:`validate` requires it positive.
+    thtr : float or array_like or Mapping
+        Residual water content, MF6 ``THTR`` (dimensionless), per UZF cell.
+        :meth:`validate` requires ``thtr < thts``.
+    thts : float or array_like or Mapping
+        Saturated water content, MF6 ``THTS`` (dimensionless), per UZF cell.
+    thti : float or array_like or Mapping
+        Initial water content, MF6 ``THTI`` (dimensionless), per UZF cell.
+        :meth:`validate` requires ``thtr <= thti <= thts``.
+    cells : str or sequence of (int, int), optional
+        Which cells get a UZF object. ``"all_active"`` (default): in each column,
+        the top cell with ``idomain > 0`` and each cell below it, stopping
+        before the first with ``idomain <= 0``. ``"surface_only"``: just that top
+        cell. Or explicit zero-based ``(layer, cell)`` ids, in the order that
+        numbers them; they must be unique, and in range and active when the
+        context has a domain (``ValueError`` otherwise). Any other string raises
+        ``ValueError`` at construction. In every form the uppermost UZF cell of a
+        column is its land-surface cell, and each cell connects vertically to
+        the UZF cell directly below it when there is one.
+    eps : float or array_like or Mapping, optional
+        Brooks-Corey epsilon exponent, MF6 ``EPS``, per UZF cell; default 4.0.
+        :meth:`validate` requires it positive.
+    surfdep : float or array_like or Mapping, optional
+        Surface depression depth, MF6 ``SURFDEP`` (model length units), per UZF
+        cell; default 0.001. :meth:`validate` refuses a negative value.
+    finf : float, str, array_like or Mapping, optional
+        Applied infiltration rate, MF6 ``FINF`` (model length per model time),
+        on the land-surface cells -- any of the period shapes in the Notes.
+        Default 0.0. :meth:`validate` refuses a negative number.
+    pet : float, str, array_like, Mapping or None, optional
+        Potential evapotranspiration rate, MF6 ``PET`` (model length per model
+        time), on the land-surface cells; used by MF6 only with ET simulated.
+        Default ``None``, written as 0.0. :meth:`validate` refuses a negative
+        number.
+    extdp : float, str, array_like, Mapping or None, optional
+        Evapotranspiration extinction depth, MF6 ``EXTDP`` (model length units),
+        on the land-surface cells. Default ``None``, written as 0.0.
+        :meth:`validate` refuses a negative number.
+    extwc : float, str, array_like, Mapping or None, optional
+        Extinction water content, MF6 ``EXTWC`` (dimensionless), on the
+        land-surface cells; MF6 uses it only with ``unsat_etwc``. Default
+        ``None``, written as 0.0.
+    ha : float, str, array_like, Mapping or None, optional
+        Air-entry potential (head), MF6 ``HA`` (model length units), on the
+        land-surface cells; MF6 uses it only with ``unsat_etae``. Default
+        ``None``, written as 0.0.
+    hroot : float, str, array_like, Mapping or None, optional
+        Root potential (head), MF6 ``HROOT`` (model length units), on the
+        land-surface cells; MF6 uses it only with ``unsat_etae``. Default
+        ``None``, written as 0.0.
+    rootact : float, str, array_like, Mapping or None, optional
+        Root activity function, MF6 ``ROOTACT``, on the land-surface cells; MF6
+        uses it only with ``unsat_etae``. Default ``None``, written as 0.0.
+    name : str, optional
+        Package name, default ``"uzf"``: FloPy's ``pname``, the input file
+        ``<model>.<name>`` and the output files ``<model>_<name>_*``.
+    boundnames : bool, optional
+        Write MF6's ``BOUNDNAMES`` option and name every UZF cell
+        ``"uzf_<layer>_<cell>"`` (zero-based). Default ``False``.
+    mover : bool, optional
+        Write MF6's ``MOVER`` option, which the package needs before an MVR
+        package (``mf.mvr``) can move water to or from it. Default ``False``.
+    simulate_et : bool or None, optional
+        MF6 ``SIMULATE_ET``. Default ``None``: on when any of ``pet``, ``extdp``
+        or ``extwc`` is given (``ha``/``hroot``/``rootact`` do not turn it on).
+    linear_gwet : bool, optional
+        MF6 ``LINEAR_GWET``: groundwater ET by MODFLOW-2005's original ET
+        formulation. Default ``False``.
+    square_gwet : bool, optional
+        MF6 ``SQUARE_GWET``: groundwater ET at a constant rate for heads between
+        land surface and ``extdp`` below it, reduced smoothly to zero there.
+        Default ``False``.
+    simulate_gwseep : bool, optional
+        MF6 ``SIMULATE_GWSEEP``: simulate groundwater discharge to land surface.
+        Default ``False``.
+    unsat_etwc : bool, optional
+        MF6 ``UNSAT_ETWC``: unsaturated-zone ET limited by ``extwc``. Default
+        ``False``.
+    unsat_etae : bool, optional
+        MF6 ``UNSAT_ETAE``: unsaturated-zone ET by the capillary-pressure
+        (``ha``/``hroot``/``rootact``) formulation. Default ``False``.
+    ntrailwaves : int, optional
+        MF6 ``NTRAILWAVES``, the number of trailing waves. Default 7.
+    nwavesets : int, optional
+        MF6 ``NWAVESETS``, the number of wave sets. Default 40.
+    options : Mapping[str, Any], optional
+        Extra keyword arguments for :class:`flopy.mf6.ModflowGwfuzf`, passed
+        through :func:`myflopy.advanced.uzf_spec`; they override the defaults
+        that function sets (``save_flows=True``, the output file records). A key
+        :meth:`build` already passes -- ``packagedata``, ``perioddata``,
+        ``name``, ``mover``, ``simulate_et``, ``boundnames``, the five ET/seepage
+        flags from ``linear_gwet`` to ``unsat_etae``, ``ntrailwaves`` or
+        ``nwavesets`` -- raises ``TypeError`` at build. Default empty.
+
+    Notes
+    -----
+    **Per-cell inputs** (``vks``, ``thtr``, ``thts``, ``thti``, ``eps``,
+    ``surfdep``) take a number (every UZF cell); a mapping ``{(layer, cell):
+    value}`` covering every UZF cell (a missing one raises ``ValueError``); an
+    array shaped like the domain (``(nlay, ncpl)``; a one-dimensional domain
+    counts as ``(1, ncpl)``), read at each cell; or a flat sequence of one
+    value per UZF cell, in :attr:`uzf_cells` order. Any other shape raises
+    ``ValueError``. A string is written
+    unchanged, and :meth:`validate` then fails unless it reads as a number.
+
+    **Period inputs** (``finf``, ``pet``, ``extdp``, ``extwc``, ``ha``,
+    ``hroot``, ``rootact``) are written for the land-surface cells only. A
+    mapping whose keys are ALL integers is ``{period: value}``: a key outside
+    ``0 .. nper - 1`` raises ``ValueError``, and a period left out is written as
+    0.0 -- it does NOT carry the previous period forward. Any other value is
+    used for every period. Each period's value takes the per-cell shapes above
+    against the land-surface cells (a flat sequence is one value per
+    :attr:`surface_cells` entry), and a string, such as a time-series name, is
+    written unchanged.
     """
 
     context: ModelContext
@@ -73,7 +211,21 @@ class UZFBuilder:
             raise ValueError("ModelContext.domain is required for automatic UZF cell selection.")
 
     def with_updates(self, **updates: Any) -> UZFBuilder:
-        """Return a changed builder without modifying the original."""
+        """Return a changed builder without modifying the original.
+
+        Parameters
+        ----------
+        **updates
+            Constructor fields to replace, by name (``finf=1e-4``,
+            ``cells="surface_only"``), passed to :func:`dataclasses.replace`.
+            Every other field is carried over. The construction checks run
+            again, and a name that is not a constructor field raises
+            ``TypeError``.
+
+        Returns
+        -------
+        UZFBuilder
+        """
 
         return replace(self, **updates)
 

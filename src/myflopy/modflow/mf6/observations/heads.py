@@ -67,25 +67,88 @@ class HeadTargets:
 
     Parameters
     ----------
-    locations
-        Path to a vector dataset or an in-memory ``GeoDataFrame`` describing
-        observation locations.
-    values
-        CSV path or DataFrame containing target heads. Both long and wide forms
-        are supported.
-    name_column
-        Name of the observation identifier column in ``locations``.
-    layer_column
-        Optional layer column in ``locations``. Defaults to layer 0 when absent.
-    group_column
-        Optional observation-group column in ``locations``.
-    weight_column
-        Optional observation-weight column in ``locations``.
-    time_column
-        Column in ``values`` representing stress period, time stamp, or another
-        row identifier shared with simulated results.
-    value_column
-        Value column name used when ``values`` is supplied in long form.
+    locations : str, pathlib.Path, GeoDataFrame, DataFrame, Series, dict, or list or tuple of dict
+        Where each target is, one row per target, read at construction:
+
+        - a path (``str`` or ``Path``) is read with ``geopandas.read_file``;
+        - a ``GeoDataFrame`` locates each target by its POINT geometry, matched
+          to the one cell holding it by :meth:`match_to_model` (reprojected to
+          the grid's CRS first when both carry one). An empty geometry raises
+          here; a line or polygon raises at matching;
+        - a ``DataFrame`` or a list or tuple of record dicts must carry a ``cell`` (or
+          ``node``) column: the zero-based cell index WITHIN a layer (the DISV
+          ``cell2d`` number, ``0 .. ncpl-1``). ``node`` is read as that same
+          index, not as MF6's layered node number;
+        - a ``Series`` maps each name (its index) to a cell index;
+        - a ``dict`` is read as columns when one of its keys is ``name``,
+          ``cell`` or ``node`` (any case), and otherwise as ``{name: cell}``.
+
+        A ``cell``/``node`` column wins over a geometry when both are present.
+        Only the ``name_column``, ``cell``/``node``, ``layer_column``,
+        ``group_column`` and ``weight_column`` columns (and the geometry) are
+        kept. Raises ``ValueError`` when ``name_column`` is missing, when a
+        table with no geometry has no ``cell``/``node`` column, or when a cell
+        value is not numeric.
+    values : str, pathlib.Path, pandas.DataFrame, pandas.Series, dict, list or tuple
+        Target values through time. A path is read with ``pandas.read_csv``; a
+        ``dict`` is read as columns and a list/tuple as rows (``times`` can
+        supply the time column for either). Three table shapes are recognised:
+
+        - LONG: a ``name`` column plus a ``value_column`` column, one row per
+          target per time (both names matched ignoring case);
+        - one series: only ``time_column`` and ``value_column`` and no ``name``,
+          which is allowed only when there is exactly one location;
+        - WIDE: every column other than ``time_column`` is one target, named by
+          its header.
+
+        A ``Series`` is one target's values indexed by time (so it also needs
+        exactly one location). Every name must match a location name, compared
+        stripped and lower-cased, or ``ValueError`` is raised; values are read
+        as floats, anything unreadable becoming ``NaN``.
+    name_column : str, optional
+        Column of ``locations`` holding each target's name. Default ``"name"``.
+        Required: ``ValueError`` when absent. For a ``Series`` or a
+        ``{name: cell}`` dict it is the name given to the index or the keys.
+        It applies to ``locations`` only -- a LONG ``values`` table always names
+        its targets in a column called ``name``.
+    layer_column : str or None, optional
+        Column of ``locations`` holding each target's zero-based model layer.
+        Default ``"layer"``. ``None``, or a column that is not there, puts
+        every target in layer 0, and a blank or non-numeric entry is read as 0.
+        A target only matches a cell that is ACTIVE in its own layer
+        (:meth:`match_to_model`).
+    group_column : str or None, optional
+        Column of ``locations`` holding an observation-group label, carried as
+        ``group`` into :meth:`get`, :meth:`residuals`, :meth:`summary`'s
+        ``n_groups`` and the PEST locations snapshot. It is a label only: it
+        does not set PEST's observation group. Default ``"group"``; ``None`` or
+        an absent column leaves ``group`` as ``<NA>``.
+    weight_column : str or None, optional
+        Column of ``locations`` holding a per-location observation weight,
+        carried as ``weight``. When ``cal.observe(...)`` builds the PEST control
+        file, a weight that is not ``NaN`` becomes the weight of each
+        observation at that location that has a target value; a period with no
+        target keeps the build's own weight. Default ``"weight"``; ``None`` or
+        an absent column leaves it ``NaN``.
+    time_column : str, optional
+        Column of ``values`` holding each row's time label, matched exactly.
+        Default ``"time"``. Required once ``times`` has been applied
+        (``ValueError`` otherwise); :meth:`get` calls it ``time``.
+        :meth:`compare` and the PEST route read it as a ZERO-BASED STRESS
+        PERIOD, and :meth:`compare` raises on a label that is not a number.
+    value_column : str, optional
+        Column of a LONG ``values`` table holding the target value, matched
+        ignoring case. Default ``"head"`` (``"conc"`` on
+        :class:`~myflopy.modflow.mf6.observations.conc.ConcTargets`). Unused
+        by a WIDE table; for a one-column list given with ``times`` it names
+        that column.
+    times : list, tuple, pandas.Index, pandas.Series or None, optional
+        Time labels, one per row, for ``values`` given as a ``dict`` or a
+        list/tuple with no ``time_column`` column; they are inserted as that
+        column. A list/tuple of another length raises ``ValueError``, and so
+        does a dict (from pandas). Ignored for a ``DataFrame``, a ``Series`` or
+        a CSV path, and whenever ``values`` already has the column. Default
+        ``None``.
 
     Notes
     -----
@@ -161,7 +224,70 @@ class HeadTargets:
         time_column: str = "time",
         value_column: str = "head",
     ):
-        """Create head targets directly from explicit model cell ids."""
+        """Create head targets directly from explicit model cell ids.
+
+        Parameters
+        ----------
+        cells : sequence of int
+            One zero-based cell index per target, WITHIN its layer (the DISV
+            ``cell2d`` number, ``0 .. ncpl-1``); each is passed through ``int``.
+            At least one is required (``ValueError``). The ids are checked
+            against the grid when the targets are matched (:meth:`match_to_model`):
+            an id the grid does not have, or one inactive in its layer, raises.
+        values : array-like, dict, pandas.DataFrame or pandas.Series
+            The target values:
+
+            - a 2-D array-like of shape ``(n_times, len(cells))``: column ``j``
+              is target ``j`` (another column count raises ``ValueError``);
+            - a 1-D array-like: one target's values through time, allowed only
+              with ONE cell;
+            - a ``Series``: one target (ONE cell only), indexed by time;
+            - a ``dict`` or ``DataFrame``: a table in any shape the constructor's
+              ``values`` accepts -- columns named by target (``names``), or LONG
+              with ``name`` and ``value_column`` columns. A ``DataFrame`` whose
+              non-time columns are labelled ``0 .. n-1`` has them renamed to
+              ``names`` in order.
+
+            Anything with more than two dimensions raises ``ValueError``.
+        times : sequence or None, optional
+            Time labels, one per row of ``values``, becoming ``time_column``.
+            Default ``None``: ``0, 1, 2, ...`` for array input, so each row is
+            read as that zero-based stress period. Required for a ``dict`` or
+            ``DataFrame`` that has no ``time_column`` column (``ValueError``);
+            ignored for a ``Series`` (its index is the time) and for a table
+            that already has the column.
+        names : str, sequence of str or None, optional
+            One name per cell, in the order of ``cells``. Default ``None`` names
+            them ``OBS_001``, ``OBS_002``, ... A single string is allowed only
+            for one cell; a sequence of another length raises ``ValueError``.
+        layers : int, sequence of int or None, optional
+            Zero-based model layer of each target. Default ``0``. A scalar
+            applies to every cell and ``None`` means 0; a list, tuple, array or
+            ``Series`` must have one entry per cell (``ValueError``).
+        groups : object, sequence or None, optional
+            Observation-group label per target (see the constructor's
+            ``group_column``). A scalar, a string included, applies to every
+            cell; a sequence must have one entry per cell. Default ``None``
+            leaves ``group`` as ``<NA>``.
+        weights : float, sequence of float or None, optional
+            PEST observation weight per target (see the constructor's
+            ``weight_column``). A scalar applies to every cell; a sequence must
+            have one entry per cell. Default ``None`` leaves ``weight`` as
+            ``NaN``.
+        time_column : str, optional
+            Name of the time column in the table built here, and stored on the
+            result. Default ``"time"``.
+        value_column : str, optional
+            Value column of a LONG ``dict``/``DataFrame`` given as ``values``,
+            stored on the result. Default ``"head"`` -- also when called on
+            :class:`~myflopy.modflow.mf6.observations.conc.ConcTargets`, whose
+            class default is ``"conc"``. Unused by array and wide input.
+
+        Returns
+        -------
+        HeadTargets
+            An instance of the class it is called on (``ConcTargets`` included).
+        """
 
         cell_list = [int(value) for value in list(cells)]
         count = len(cell_list)
@@ -206,7 +332,36 @@ class HeadTargets:
         time_column: str = "time",
         value_column: str = "head",
     ):
-        """Create head targets from long-format record dictionaries/dataframes."""
+        """Create head targets from long-format record dictionaries/dataframes.
+
+        Parameters
+        ----------
+        records : list of dict, pandas.DataFrame or GeoDataFrame
+            One row per target per time, as ``pandas.DataFrame(records)`` reads
+            it. Required columns, matched exactly: ``name``, ``time_column``,
+            ``value_column``, and a location given as ``cell`` or ``node`` (the
+            zero-based cell index within a layer) or as a point ``geometry``.
+            Optional: ``layer`` (zero-based, default 0), ``group``, ``weight``.
+            A target's location is taken from its FIRST row. A ``geometry``
+            column of plain shapely points (record dicts, a ``DataFrame``)
+            carries no CRS, so its coordinates are read in the grid's own
+            frame; a ``GeoDataFrame``'s CRS is kept, and reprojected to the
+            grid's at matching when the grid has one. ``cell``/``node`` wins
+            over a geometry when
+            both are given. ``ValueError`` when there are no records or a
+            required column is missing.
+        time_column : str, optional
+            Column holding each record's time label, read by :meth:`compare` as
+            a zero-based stress period. Default ``"time"``.
+        value_column : str, optional
+            Column holding each record's target value. Default ``"head"``
+            (also on ``ConcTargets``).
+
+        Returns
+        -------
+        HeadTargets
+            An instance of the class it is called on.
+        """
 
         frame = pd.DataFrame(records).copy()
         if frame.empty:
@@ -292,7 +447,26 @@ class HeadTargets:
         return pd.DataFrame([summary])
 
     def plot_locations(self, *, ax=None, **kwargs):
-        """Plot target locations and return the matplotlib axis."""
+        """Plot target locations and return the matplotlib axis.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes or None, optional
+            Axes to draw on. Default ``None`` makes a new figure and axes.
+        **kwargs
+            Forwarded unchanged to ``geopandas.GeoDataFrame.plot`` (for example
+            ``color=``, ``markersize=``).
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes, titled "Head Target Locations" (on ``ConcTargets`` too).
+
+        Raises
+        ------
+        ValueError
+            When the locations carry no geometry -- targets given as cell ids.
+        """
 
         if not isinstance(self._locations, gpd.GeoDataFrame):
             raise ValueError("plot_locations() requires geospatial target locations.")
@@ -307,9 +481,12 @@ class HeadTargets:
 
         Parameters
         ----------
-        model
-            ``SimulationBase`` or another model-like object exposing
-            ``vor.gdf_vorPolys``.
+        model : SimulationBase
+            The model to match against -- a run (``run.model()``,
+            ``mf.load_mf6_run(ws)``) or any model-like object exposing
+            ``vor.gdf_vorPolys``, the grid's cell polygons. Which cells are
+            active comes from its discretization's ``idomain``, else its
+            ``myflopy_context.domain``; with neither, every cell is active.
 
         Returns
         -------
@@ -496,6 +673,18 @@ class HeadTargets:
         layers was one column: the build pivoted ``first`` and read layer 0, the
         forward run wrote each mapping row in turn and left layer 1, and the two
         disagreed by whatever the layers differ by (5.0 against 1005.0 measured).
+
+        Parameters
+        ----------
+        model : SimulationBase
+            The model the targets are matched against, as in
+            :meth:`match_to_model` (a target on no active cell is left out and
+            warned about; none landing raises).
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`match_to_model`'s table plus ``obsname``, the label.
         """
 
         matches = self.match_to_model(model).copy()
@@ -612,7 +801,23 @@ class HeadTargets:
         return _copy_frame(merged)
 
     def residuals(self, model) -> pd.DataFrame:
-        """Return a compact residual table."""
+        """Return a compact residual table.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model holding the head (or, for ``ConcTargets``, the
+            concentration) file; passed to :meth:`compare`, whose ``Raises``
+            apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`compare`'s rows, reduced to ``name``, ``group``, ``time``,
+            ``per``, ``layer``, ``cell``, ``head_target``, ``sim_head``,
+            ``residual`` (simulated minus target), ``abs_residual`` and
+            ``weight``.
+        """
 
         frame = self.compare(model)
         return frame.loc[
@@ -633,7 +838,21 @@ class HeadTargets:
         ]
 
     def stats(self, model) -> pd.DataFrame:
-        """Return aggregate residual statistics for the target set."""
+        """Return aggregate residual statistics for the target set.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model holding the head (or concentration) file; passed to
+            :meth:`compare`, whose ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n`` (rows with a residual), ``mean_error``, ``mae`` and
+            ``rmse`` of simulated minus target, in the field's units. ``n`` is 0
+            and the rest ``NaN`` when no row has a residual.
+        """
 
         frame = self.compare(model).dropna(subset=["residual"])
         if frame.empty:
@@ -656,7 +875,31 @@ class HeadTargets:
         csv_name: str = "head_targets.csv",
         kind: str = "HEAD",
     ) -> dict[str, list[tuple[str, str, tuple[int, int]]]]:
-        """Return a FloPy ``continuous`` dict for MF6 head observations."""
+        """Return a FloPy ``continuous`` dict for MF6 head observations.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            The model the targets are matched against (:meth:`observation_labels`):
+            one record per matched target, a target on no active cell left out
+            with a warning, and none landing raises ``ValueError``.
+        csv_name : str, optional
+            The CSV file MF6 writes these observations to -- the dict's one key.
+            Default ``"head_targets.csv"``.
+        kind : str, optional
+            The MF6 observation type written on every record, upper-cased.
+            Default ``"HEAD"``. ``ConcTargets`` inherits this default, which a
+            GWT model's OBS file refuses ("Observation type not found: HEAD",
+            measured): pass ``kind="CONCENTRATION"`` there.
+
+        Returns
+        -------
+        dict of str to list of tuple
+            ``{csv_name: [(obsname, kind, (layer, cell)), ...]}``, the cell id
+            zero-based (FloPy writes it one-based), ``obsname`` the label from
+            :meth:`observation_labels`. The shape ``ModflowUtlobs(continuous=)``
+            and a package's ``observations=`` take.
+        """
 
         matches = self.observation_labels(model)
         records = [
@@ -675,7 +918,40 @@ class HeadTargets:
         kind: str = "HEAD",
         package=None,
     ):
-        """Attach an MF6 utility observation package for these head targets."""
+        """Attach an MF6 utility observation package for these head targets.
+
+        The package is added to the FloPy objects in memory; writing and running
+        the simulation afterwards is the caller's.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            The model whose targets are matched (:meth:`to_flopy_obs`), and whose
+            FloPy model object, ``model.gwf``, receives the package unless
+            ``package`` is given. On a transport model that object is the GWT
+            model.
+        pname : str, optional
+            FloPy package name. Default ``"gwf_obs"``.
+        filename : str, optional
+            The OBS input file name FloPy writes, relative to the owning model's
+            directory. Default ``"head_targets.obs"``.
+        csv_name : str or None, optional
+            The CSV file MF6 writes the observations to. Default ``None`` takes
+            ``filename``'s stem plus ``.csv`` (``"head_targets.csv"`` for the
+            default ``filename``).
+        kind : str, optional
+            The MF6 observation type, as in :meth:`to_flopy_obs`. Default
+            ``"HEAD"`` -- on ``ConcTargets`` too, where MF6 refuses it: pass
+            ``kind="CONCENTRATION"``.
+        package : flopy object or None, optional
+            The FloPy model or package to attach the OBS package to instead of
+            ``model.gwf``. Default ``None``.
+
+        Returns
+        -------
+        flopy.mf6.modflow.mfutlobs.ModflowUtlobs
+            The observation package.
+        """
 
         import flopy
 
@@ -690,7 +966,30 @@ class HeadTargets:
         )
 
     def calibration_plot(self, model, *, type: str = "calibration"):
-        """Build a calibration plot directly from these targets and one model."""
+        """Build a calibration plot directly from these targets and one model.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model holding the head (or concentration) file; the plot is
+            drawn from :meth:`compare`, whose ``Raises`` apply.
+        type : str, optional
+            Which plot:
+
+            - ``"calibration"`` (default): target against simulated, one point
+              per row, with fit statistics;
+            - ``"obs_vs_sim"``: the same cross plot without the statistics;
+            - ``"heads"``: target and simulated values through time, one pair of
+              lines per location and layer;
+            - ``"residuals_by_period"``: mean absolute residual per ``time``.
+
+            Any other string draws the ``"calibration"`` plot.
+
+        Returns
+        -------
+        myflopy.modflow.calcs.calibration.CalibrationPlot
+            A Plotly figure (a ``viz.Fig``).
+        """
 
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 

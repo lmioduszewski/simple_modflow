@@ -21,23 +21,42 @@ class ModelGroup:
 
     Parameters
     ----------
-    models
+    models : Mapping or Sequence
         Mapping of names to models/workspace directories, or a sequence of
-        model objects/workspace directories. When workspace directories are
-        provided, they are opened lazily as :class:`LoadedMf6Run` objects.
-        When a sequence is provided, each loaded model's ``name`` attribute is
-        used as the group key.
-    reference
-        Optional reference model name. If omitted, the first model is used as
-        the comparison baseline for ``compare()`` methods.
-    crs
-        CRS passed through when opening file-backed workspaces.
-    verbosity_level
-        Verbosity passed through when opening file-backed workspaces.
-    shared_grid
-        If ``True``, confirm all models have the same discretization and reuse
-        the reference model's lazily built Voronoi/grid view for the whole
-        group. This avoids rebuilding identical grids repeatedly.
+        model objects/workspace directories. An entry that is a ``str`` or
+        :class:`~pathlib.Path` is opened with :func:`load_mf6_run` as a lazy,
+        file-backed :class:`LoadedMf6Run`; any other entry is used as given (a
+        built or loaded model). A mapping's keys become the group keys through
+        ``str()``, in the mapping's order. For a sequence, each loaded model's
+        ``name`` attribute is the group key, so two models of the same ``name``
+        keep only the LAST. A bare ``str``/``bytes`` or any other type raises
+        ``TypeError``; an empty mapping or sequence raises ``ValueError``.
+    reference : str or None, optional
+        Group key of the reference model: the baseline for the ``compare()``
+        methods and for :meth:`diff`, the ``is_reference`` column of
+        :meth:`summary`, and the anchor for ``shared_grid``. ``None`` (the
+        default) takes the first model. A key not in the group raises
+        ``KeyError``.
+    crs : str, optional
+        CRS (any string pyproj accepts, e.g. ``"EPSG:2927"``) given to
+        :func:`load_mf6_run` for the workspace-path entries; model objects are
+        not touched. Default :data:`~myflopy._defaults.DEFAULT_CRS`
+        (``"EPSG:2927"``). It is always passed explicitly, so the CRS a myflopy
+        run recorded in its ``run.json`` is NOT read here, unlike
+        ``load_mf6_run(ws)`` with its own ``crs=None`` default.
+    verbosity_level : int, optional
+        Given to :func:`load_mf6_run` for the workspace-path entries. ``0`` (the
+        default) is silent; above 0 prints the loader's progress messages and is
+        passed to FloPy's ``MFSimulation.load`` when the files are read.
+    shared_grid : bool, optional
+        If ``True``, confirm every model has the same discretization and reuse
+        the reference model's lazily built Voronoi/grid view (``.vor``) for the
+        whole group, which avoids rebuilding identical grids. A model's grid is
+        compared by its ``grid_signature()`` (the SHA-256 of a
+        :class:`LoadedMf6Run`'s ``.dis``/``.disv``/``.disu`` file), else by a
+        hash of the ``<name>.<grid_type>`` file in its workspace with blank and
+        ``#`` comment lines dropped. A model with neither, or one whose signature
+        differs from the reference's, raises ``ValueError``. Default ``False``.
     """
 
     def __init__(
@@ -125,8 +144,12 @@ class ModelGroup:
 
         Parameters
         ----------
-        package
-            Optional default package name such as ``"rch"`` or ``"drn"``.
+        package : str or None, optional
+            Default package for the accessor's ``get()``/``compare()``, as each
+            member model's ``bud(package)`` takes it (e.g. ``"rch"`` or
+            ``"drn"``); lower-cased. ``package=`` on those calls overrides it.
+            ``None`` (the default) sets none, and ``get()``/``compare()`` then
+            raise ``ValueError`` unless they are given ``package=``.
         """
 
         return GroupBudget(self, package=package)

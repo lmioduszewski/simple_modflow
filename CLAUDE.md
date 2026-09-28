@@ -446,6 +446,19 @@ sweep reads **git-tracked files only** -- an `rglob` walk also reads the stale r
 under `.claude/worktrees/`, which were 62% of the occurrences and made the count differ
 per machine.
 
+## Writing a public function or class? Document EVERY parameter (ledger 338, 2026-09-27)
+The user's rule, asked for repeatedly: one numpydoc entry per signature parameter, in
+order, head `name : type` (what the code ACCEPTS -- run a check when the code is
+ambiguous, never copy the annotation), a body giving the default, units, which
+mode/branch it belongs to and how it interacts with the others, plus a `**options` entry
+saying where a tail goes. `tests/test_public_parameters_documented.py` discovers
+`__all__`, `__engine__`, the helper methods and every public method on an exported class
+(715 callables) and fails naming the callable -- no allowlist. `python
+tests/test_public_parameters_documented.py <file>` lists what a file still lacks. It
+checks that a type is WRITTEN, not that it is TRUE: the 2,004 entries written for it were
+read against the code by a second pass, which corrected 175. A dataclass users RECEIVE may
+use `Attributes`. Not covered: the read-grammar views (not exported).
+
 ## Printing? Only if a human asked for it (plan 7.2, 2026-08-01)
 Library code logs; it does not print. Use `myflopy._logging.get_logger(__name__)` —
 `logger.info` for progress on slow work, `logger.warning` for a degraded or ignored
@@ -495,7 +508,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**4608 passed / 4 skipped**, 2026-09-27, ledger 337): serial (`-n0`) **6m57s**
+- Full suite (**5325 passed / 4 skipped**, 2026-09-27, ledger 338 -- the docstring guard adds
+  717 cases): serial (`-n0`) **7m08s** and `-n 10` **1m38s**, both in a detached checkout
+  outside `.claude`, the serial one starting at a load average of ~11 as the parallel run
+  ended. Before it, 4608 passed / 4 skipped (ledger 337): serial (`-n0`) **6m57s**
   in a detached checkout outside `.claude` at a load average of ~0.9. Before it, 4575 passed /
   4 skipped (2026-09-26, ledger 316's revision on top of 336):
   `-n 10` **2m08s** in a detached checkout outside `.claude` at a load average of ~10.7;

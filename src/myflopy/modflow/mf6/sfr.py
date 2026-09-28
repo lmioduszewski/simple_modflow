@@ -40,14 +40,37 @@ class StreamConnection:
     tributaries meeting a main stem. Water leaves ``source`` (by default at its
     downstream end) and enters ``receiver`` (by default at its nearest reach).
 
-    Attributes
+    An explicit connection replaces whatever connection the builder would have
+    inferred for the same ``source``, in every ``connection_mode``. Both
+    stream ids must exist in the builder's stream table, or
+    :attr:`SFRBuilder.network` raises ``ValueError``; so does a set of
+    connections that routes water in a cycle.
+
+    Parameters
     ----------
-    source, receiver
-        Stream ids (the ``stream_id`` attribute values). ``receiver=None`` marks
-        ``source`` as a terminal outflow.
-    source_location, receiver_location
-        Where on each stream to connect: ``"downstream"``/``"upstream"``,
-        ``"nearest"``, ``"intersection"``, or a shapely ``Point``.
+    source : str
+        Stream id of the stream the water leaves -- a value of the builder's
+        ``stream_id`` column, or the id it generated (the file stem, or
+        ``"stream_<n>"``).
+    receiver : str or None
+        Stream id of the stream the water enters. ``None`` marks ``source`` as a
+        terminal outflow: no reach connection is written for it, and it is not
+        reported as ``unresolved``.
+    source_location : str or shapely.geometry.Point, optional
+        Where on ``source`` the water leaves. Default ``"downstream"`` -- the
+        end of the line (``"end"`` is the same). ``"upstream"``/``"start"`` is
+        the first vertex; ``"nearest"``/``"automatic"`` is the point of
+        ``source`` nearest ``receiver``; ``"intersection"`` is a point where the
+        two lines cross (``ValueError`` if they do not); a ``Point`` is used as
+        given. The source reach is the reach of ``source`` nearest that point.
+        Any other string raises ``ValueError`` when the connection is resolved.
+    receiver_location : str or shapely.geometry.Point, optional
+        Where on ``receiver`` the water enters, with the same vocabulary.
+        Default ``"nearest"``: the point ``source_location`` resolved to,
+        projected onto the receiver's line -- so a tributary joins the main stem
+        where it actually meets it. The receiving reach is the reach of
+        ``receiver`` nearest the resolved point; a point on the boundary between
+        two reaches goes to the downstream one.
 
     Examples
     --------
@@ -68,17 +91,41 @@ class StreamDiversion:
     Like :class:`StreamConnection` but moves only a portion of the flow (a
     fraction, an excess, or an up-to amount) -- a canal headgate, a bypass.
 
-    Attributes
+    Each diversion becomes one MF6 ``DIVERSIONS`` record on the source reach
+    (numbered in the order the diversions are given, per source reach), and one
+    ``DIVERSION`` period setting per stress period that has an amount. The
+    receiving reach is written with ``USTRF`` 0.0 (MF6's fraction of upstream
+    flow a reach takes). Both stream ids must exist in the builder's stream
+    table, or :attr:`SFRBuilder.network` raises ``ValueError``.
+
+    The builder does NOT add a reach connection from the source reach to the
+    receiving reach, and MF6 requires one: with the two streams otherwise
+    unconnected, MF6 refuses the package ("Reach 3 is not a upstream reach for
+    reach 5 ... diversion 1 from reach 3 to reach 5 is not possible").
+
+    Parameters
     ----------
-    source, receiver
-        Stream ids for the donor and the diversion channel.
-    amount
-        How much to divert, interpreted per ``priority``.
-    source_location, receiver_location
-        Connection points (see :class:`StreamConnection`).
-    priority
-        Diversion rule: ``"FRACTION"`` (default), ``"EXCESS"``, ``"THRESHOLD"`` or
-        ``"UPTO"`` -- the MF6 SFR CPRIOR options.
+    source : str
+        Stream id of the donor stream.
+    receiver : str
+        Stream id of the diversion channel.
+    amount : float, str or Mapping[int, float or str]
+        MF6's ``DIVFLOW``: how much to divert, read according to ``priority`` --
+        a fraction of the reach's outflow for ``"FRACTION"``, a volumetric rate
+        (model length cubed per model time) for the other three. A mapping is
+        ``{period: amount}`` with zero-based periods, and a period missing from
+        it gets no ``DIVERSION`` setting; anything else is written unchanged for
+        every period. Not checked here.
+    source_location : str or shapely.geometry.Point, optional
+        Where on ``source`` the diversion leaves; default ``"downstream"``. Same
+        vocabulary and resolution as :class:`StreamConnection`.
+    receiver_location : str or shapely.geometry.Point, optional
+        Where on ``receiver`` the diverted water enters; default ``"nearest"``.
+        Same vocabulary and resolution as :class:`StreamConnection`.
+    priority : str, optional
+        MF6 SFR ``CPRIOR``: ``"FRACTION"`` (default), ``"EXCESS"``,
+        ``"THRESHOLD"`` or ``"UPTO"``, case-insensitive and written upper-case.
+        Any other value makes :attr:`SFRBuilder.network` raise ``ValueError``.
     """
 
     source: str
@@ -103,15 +150,19 @@ class StreamNetwork:
 
     Attributes
     ----------
-    stream_ids
-        Names of all streams in the network.
-    connections
-        Resolved confluences as :class:`StreamConnection` records.
-    diversions
-        Resolved splits as :class:`StreamDiversion` records.
-    unresolved
-        Stream ids whose downstream link could not be inferred and need an
-        explicit connection.
+    stream_ids : tuple of str
+        Ids of all streams in the network, in stream-table order.
+    connections : tuple of StreamConnection
+        At most one connection per source stream: the ones the builder
+        inferred, with any explicit ``connections=`` entry replacing the
+        inferred one for the same source.
+    diversions : tuple of StreamDiversion
+        The builder's ``diversions=``, unchanged.
+    unresolved : tuple of str
+        Stream ids whose downstream link could not be inferred (no stream end
+        within tolerance, or no matching ``from_node``) and that no explicit
+        connection covers. Such a stream ends the network; give it an explicit
+        connection -- ``receiver=None`` for a true outlet -- to say so.
     """
 
     stream_ids: tuple[str, ...]
@@ -135,6 +186,209 @@ class SFRBuilder:
     builder object (e.g. to read ``.reaches`` / ``.stream_cells`` mid-build).
     Construct it with a :class:`~myflopy.specs.ModelContext` carrying the grid, then
     call :meth:`build`.
+
+    The builder is frozen and resolves lazily: the stream table, network and
+    reaches are computed on first access and cached (the MF6 records are
+    recomputed from them on each access), so a construction error in a field
+    (a missing column, an unknown stream) surfaces when ``.reaches``,
+    ``.network``, ``.packagedata`` or :meth:`build` first needs it. Lengths are
+    model length units and times model time units throughout.
+
+    Parameters
+    ----------
+    context : ModelContext
+        Carries the grid the reaches are cut on (``context.grid``, required --
+        ``ValueError`` at construction without one), the ``domain`` read by
+        ``reach_layer="top_active"``, the layer elevations read by the default
+        ``reach_top`` (``context.surfaces``, else ``grid.gdf_topbtm``), and the
+        ``length_units``/``time_units`` the default unit conversions come from.
+        The grid's pin is stamped on the built package.
+    nper : int
+        Number of stress periods; ``perioddata`` gets one entry per period
+        ``0 .. nper - 1``. Less than 1 raises ``ValueError``. Period keys at or
+        beyond ``nper`` in a period input are ignored.
+    streams : str, pathlib.Path, sequence of str or Path, or geopandas.GeoDataFrame
+        Stream centerlines, one ``LineString`` per stream (anything else, a
+        ``MultiLineString`` included, raises ``ValueError``). A path or a list of
+        paths is read with :func:`geopandas.read_file` and concatenated; the
+        files must share one CRS (geopandas refuses to concatenate otherwise).
+        The lines are reprojected to the grid's CRS when both carry one. A line
+        runs upstream to downstream: its first vertex is the headwater and its
+        last the outlet (see ``reverse_streams``).
+    stream_id : str or None, optional
+        Column holding each stream's id; values are turned into strings and must
+        be unique (``ValueError`` otherwise, and when the column is missing).
+        Default ``None``: each file's stem when ``streams`` is paths that each
+        hold one feature, else ``"stream_0"``, ``"stream_1"``, ... by row.
+    from_node : str or None, optional
+        Column naming each stream's upstream node, read only by
+        ``connection_mode="nodes"`` (where it is required). Default ``None``.
+    to_node : str or None, optional
+        Column naming each stream's downstream node, read only by
+        ``connection_mode="nodes"``: a stream flows into the stream whose
+        ``from_node`` equals its ``to_node``. No match leaves it unresolved; more
+        than one raises ``ValueError``. Default ``None``.
+    connection_mode : str, optional
+        How the stream-to-stream topology is inferred. ``"automatic"`` (default)
+        connects each stream's downstream end to the nearest other stream within
+        ``connection_tolerance`` of it (a tie for nearest raises ``ValueError``;
+        none leaves it unresolved). ``"nodes"`` reads ``from_node``/``to_node``.
+        ``"explicit"`` infers nothing, so only ``connections`` link streams. Any
+        other value raises ``ValueError`` at construction.
+    connections : sequence of StreamConnection, optional
+        Explicit links, stored as a tuple. Each replaces the inferred connection
+        for its ``source`` in every mode; for two with the same source the
+        later wins. Default ``()``.
+    diversions : sequence of StreamDiversion, optional
+        Explicit partial splits, written as MF6 ``DIVERSIONS`` records and
+        ``DIVERSION`` period settings. Default ``()``. See
+        :class:`StreamDiversion` for a limitation MF6 refuses.
+    connection_tolerance : float or None, optional
+        Largest distance, in model length units, between a stream's downstream
+        end and another stream for ``connection_mode="automatic"`` to connect
+        them. Default ``None``: 5% of the square root of the median cell area,
+        and never below 1e-9. Unused by the other modes.
+    reverse_streams : sequence of str, optional
+        Stream ids whose line is reversed when the stream table is built, for
+        lines digitized mouth-first. Ids are compared as strings. Default ``()``.
+    reach_layer : int, str or Mapping[str, int], optional
+        Zero-based layer each reach sits in. An ``int`` is every reach's layer;
+        a mapping is ``{stream_id: layer}`` (a stream missing from it raises
+        ``KeyError``); a string other than ``"top_active"`` names a stream-table
+        column holding each stream's layer. Default ``"top_active"``: the top
+        layer with ``idomain > 0`` in the reach's column of ``context.domain``
+        -- a column with none raises ``ValueError`` -- or layer 0 when the
+        context has no domain or a one-dimensional one.
+    width : float, str, Mapping, or sequence, optional
+        Reach width, MF6 ``RWID``, in model length units; default 10.0. Any of
+        the per-reach shapes in the Notes. :meth:`validate` refuses a width
+        that is not positive.
+    gradient : float, str, Mapping, or sequence, optional
+        Streambed slope, MF6 ``RGRD`` (dimensionless); default 0.001. Per-reach
+        shapes as in the Notes. :meth:`validate` refuses a negative gradient.
+    reach_top : float, str, Mapping, sequence, or None, optional
+        Streambed-top elevation, MF6 ``RTP``, in model length units. Per-reach
+        shapes as in the Notes. Default ``None``: the top of each reach's layer
+        in its cell -- read from ``context.surfaces``, else
+        ``grid.gdf_topbtm`` (``ValueError`` when neither is available) -- then
+        lowered where needed so no reach is higher than the reach above it in
+        the same stream.
+    roughness : float, str, Mapping, or sequence, optional
+        Manning's roughness coefficient, MF6 ``MAN``; default 0.03. Per-reach
+        shapes as in the Notes. :meth:`validate` refuses a value that is not
+        positive.
+    streambed_k : float, str, Mapping, or sequence, optional
+        Streambed hydraulic conductivity, MF6 ``RHK``, in model length per model
+        time; default 1.0. Per-reach shapes as in the Notes. :meth:`validate`
+        refuses a negative value.
+    streambed_thickness : float, str, Mapping, or sequence, optional
+        Streambed thickness, MF6 ``RBTH``, in model length units; default 1.0.
+        Per-reach shapes as in the Notes. :meth:`validate` refuses a value that
+        is not positive.
+    inflow : float, str, Mapping, sequence, or None, optional
+        Volumetric inflow, MF6 ``INFLOW`` (model length cubed per model time).
+        Period shapes as in the Notes; per period, a number or a time-series
+        name enters at the FIRST reach of the reach table only -- the headwater
+        of the first stream -- not at every stream's headwater, while
+        ``{stream_id: q}`` enters at that stream's first reach. Default
+        ``None``, no inflow.
+    rainfall : float, str, Mapping, sequence, or None, optional
+        Rainfall rate on the reach surface, MF6 ``RAINFALL`` (model length per
+        model time). Per period, a number or time-series name applies to EVERY
+        reach; ``{stream_id: rate}`` is written to that stream's FIRST reach
+        only, not along it. Other period shapes as in the Notes. Default
+        ``None``.
+    evaporation : float, str, Mapping, sequence, or None, optional
+        Evaporation rate from the reach surface, MF6 ``EVAPORATION`` (model
+        length per model time). Placed exactly like ``rainfall``: a scalar on
+        every reach, ``{stream_id: rate}`` on that stream's first reach only.
+        Default ``None``.
+    runoff : float, Mapping, sequence, or None, optional
+        Overland runoff, MF6 ``RUNOFF`` (model length cubed per model time). Per
+        period, a number is EACH stream's total and ``{stream_id: total}`` names
+        one stream's (an unknown stream raises ``KeyError``); either is split
+        over the stream's reaches in proportion to reach length, so refining the
+        grid does not multiply it. An integer key names a reach and takes its
+        amount as given, as do explicit rows. A time-series name cannot be split
+        and raises ``ValueError`` unless given as rows. Default ``None``.
+    status : str, Mapping, sequence, or None, optional
+        MF6 reach ``STATUS``: ``"ACTIVE"``, ``"INACTIVE"`` or ``"SIMPLE"``. Per
+        period, a string applies to every reach; ``{stream_id: status}`` to that
+        stream's first reach only. Other period shapes as in the Notes. Default
+        ``None``, no status setting (MF6's default, active).
+    name : str, optional
+        Package name, default ``"sfr"``: FloPy's ``pname``, the input file
+        ``<model>.<name>``, the output files ``<model>_<name>_*``, and the
+        package name :meth:`connection` puts in each mover endpoint.
+    mover : bool, optional
+        Write MF6's ``MOVER`` option so MVR can take water from and give water
+        to these reaches. Default ``False``.
+    length_conversion : float or None, optional
+        MF6 ``LENGTH_CONVERSION`` for Manning's equation (meters to model length
+        units). Default ``None``: from ``context.length_units``, read
+        case-insensitively -- ``"feet"`` 3.28081, ``"meters"`` 1.0,
+        ``"centimeters"`` 100.0 (singulars and ``"ft"``/``"m"``/``"cm"`` too),
+        ``None``, ``""`` or ``"unknown"`` 1.0; any other unit raises
+        ``ValueError`` at build.
+    time_conversion : float or None, optional
+        MF6 ``TIME_CONVERSION`` (seconds to model time units). Default ``None``:
+        from ``context.time_units``, read case-insensitively -- ``"days"``
+        86400, ``"hours"`` 3600, ``"minutes"`` 60, ``"seconds"`` 1, ``"years"``
+        31557600 (singulars and the short forms ``"d"``, ``"hr"``, ``"min"``,
+        ``"s"``, ``"yr"``, ... too), ``None``, ``""`` or ``"unknown"`` 1.0; any
+        other unit raises ``ValueError`` at build.
+    min_reach_length : float, optional
+        Shortest piece of a stream, in model length units, that becomes a
+        reach. A piece in one cell no longer than ``max(0.01, min_reach_length)``
+        is dropped -- MF6 divides by reach length, and a sliver reach can crash
+        it while reading the package -- and the stream stays connected through
+        its other reaches. A stream left with no reach raises ``ValueError``.
+        Default 0.0, which drops only pieces of 0.01 or less.
+    maximum_picard_iterations : int, optional
+        MF6 SFR ``MAXIMUM_PICARD_ITERATIONS``, written as given. Default 1.
+    maximum_iterations : int, optional
+        MF6 SFR ``MAXIMUM_ITERATIONS`` (reach-solution iterations), written as
+        given. Default 1000.
+    maximum_depth_change : float, optional
+        MF6 SFR ``MAXIMUM_DEPTH_CHANGE`` (model length units), written as given.
+        Default 0.01.
+    options : Mapping[str, Any], optional
+        Extra keyword arguments for :class:`flopy.mf6.ModflowGwfsfr`, passed
+        through :func:`myflopy.advanced.sfr_spec`. They override the defaults
+        that function sets (``save_flows=True``, the stage/budget output file
+        records). A key :meth:`build` already passes -- ``packagedata``,
+        ``connectiondata``, ``perioddata``, ``name``, ``mover``, ``diversions``,
+        the unit conversions or the three iteration options -- raises
+        ``TypeError`` at build. Default empty.
+
+    Notes
+    -----
+    **Per-reach inputs** (``width``, ``gradient``, ``reach_top``, ``roughness``,
+    ``streambed_k``, ``streambed_thickness``) take:
+
+    - a number, applied to every reach;
+    - a string naming a stream-table column, read per stream (any other string
+      is passed through unchanged to every reach, where :meth:`validate` then
+      raises ``TypeError`` for every input but ``reach_top``, which it does not
+      check);
+    - a mapping keyed by reach number, stream id or ``(layer, cell)`` cellid,
+      looked up in that order for each reach -- a reach none of them matches is
+      left ``None``, which :meth:`validate` rejects with ``TypeError`` for every
+      input but ``reach_top``;
+    - a sequence of one value per reach (in reach order), or one per stream in
+      :attr:`stream_ids` order, which puts source streams before the streams
+      they flow into and can differ from the file's order. Any other length
+      raises ``ValueError``.
+
+    **Period inputs** (``inflow``, ``rainfall``, ``evaporation``, ``runoff``,
+    ``status``) take ``None`` (no setting), or a mapping whose keys are ALL
+    integers, read as ``{period: value}`` with zero-based periods -- a period
+    left out gets no setting -- or any other value, used for every period. So
+    ``{3: 100.0}`` means period 3, not reach 3: key a reach inside a period,
+    ``{0: {3: 100.0}}``. Each period's value is a number or a string (placed as
+    each parameter says), a mapping ``{stream_id or reach number: value}`` (a
+    stream id means that stream's first reach), or an iterable of explicit rows
+    ``(reach, value, ...)`` written as given.
     """
 
     context: ModelContext
@@ -187,7 +441,22 @@ class SFRBuilder:
         object.__setattr__(self, "reverse_streams", tuple(str(value) for value in self.reverse_streams))
 
     def with_updates(self, **updates: Any) -> SFRBuilder:
-        """Return a changed builder without modifying the original."""
+        """Return a changed builder without modifying the original.
+
+        Parameters
+        ----------
+        **updates
+            Constructor fields to replace, by name (``width=20.0``,
+            ``streams=other``), passed to :func:`dataclasses.replace`. Every other
+            field is carried over; the cached stream table, network and reaches
+            are not, so the new builder resolves afresh. The construction checks
+            run again, and a name that is not a constructor field raises
+            ``TypeError``.
+
+        Returns
+        -------
+        SFRBuilder
+        """
 
         return replace(self, **updates)
 
@@ -519,12 +788,44 @@ class SFRBuilder:
         }
 
     def outlet_reach(self, stream_id: str) -> int:
-        """Return the final generated reach for one stream."""
+        """Return the final generated reach for one stream.
+
+        Parameters
+        ----------
+        stream_id : str
+            The stream's id (compared as a string). An id with no reaches raises
+            ``KeyError``.
+
+        Returns
+        -------
+        int
+            Zero-based reach number of the stream's last (most downstream) reach.
+        """
 
         return self.stream_reaches[str(stream_id)][-1]
 
     def connection(self, stream_id: str, location: StreamLocation = "downstream") -> MoverConnection:
-        """Return an MVR endpoint for a stream by stable stream ID and location."""
+        """Return an MVR endpoint for a stream by stable stream ID and location.
+
+        Parameters
+        ----------
+        stream_id : str
+            The stream's id (compared as a string). An unknown id raises
+            ``KeyError``.
+        location : str or shapely.geometry.Point, optional
+            Which reach of the stream. Default ``"downstream"`` (or ``"end"``): the
+            reach nearest the line's last vertex. ``"upstream"``/``"start"``: the
+            reach nearest its first vertex. A ``Point``: the reach nearest it, the
+            downstream one when it sits on the boundary between two. The
+            two-stream words ``"nearest"``, ``"automatic"`` and ``"intersection"``
+            need a second stream and raise ``ValueError`` here, as does any other
+            string.
+
+        Returns
+        -------
+        MoverConnection
+            ``MoverConnection(<builder name>, <reach number>)``, for ``mf.mvr``.
+        """
 
         from myflopy.modflow.mf6.mvr import MoverConnection
 

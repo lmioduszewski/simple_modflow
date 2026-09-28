@@ -56,7 +56,26 @@ class _ArealBuilder:
             raise ValueError("cells must be 'top_active', 'surface_only', 'all_active', or explicit cells.")
 
     def with_updates(self, **updates: Any) -> _ArealBuilder:
-        """Return a changed builder without modifying the original."""
+        """Return a changed builder without modifying the original.
+
+        Parameters
+        ----------
+        **updates
+            New values for the builder's own fields, passed to
+            :func:`dataclasses.replace`: the shared ``context``, ``nper``, ``cells``,
+            ``layer``, ``name_by_cell``, ``boundnames``, ``name`` and ``options``,
+            plus the concrete builder's value fields (``recharge`` on
+            :class:`RCHBuilder`; ``rate``, ``depth`` and ``surface`` on
+            :class:`EVTBuilder`). A name that is not a field raises ``TypeError``
+            from the constructor. The copy is built through the constructor, so its
+            validation runs again: ``nper < 1`` or an unknown ``cells`` keyword
+            raises ``ValueError`` here, not at :meth:`build`.
+
+        Returns
+        -------
+        _ArealBuilder
+            A new builder of the same concrete class; ``self`` is unchanged.
+        """
 
         return replace(self, **updates)
 

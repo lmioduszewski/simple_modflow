@@ -86,9 +86,67 @@ class PackageArtifact:
     """Reusable package definition captured from a source run or in-memory model.
 
     The artifact stores enough information to:
+
     - trace where the package originally came from
     - validate whether it can be reused on a new model
     - recreate supported package types on a compatible target model
+
+    Built by ``build_package_artifact(model, artifact_id=, package_name=)`` and
+    ``derive_package_artifact(artifact, artifact_id=, ...)`` in
+    :mod:`myflopy.project.components`, and restored onto a model by
+    ``apply_package_artifact``.
+
+    Attributes
+    ----------
+    artifact_id : str
+        Stable id the artifact is stored and referenced by.
+    package_type : str
+        MF6 package type, e.g. ``"chd"``, ``"npf"``, ``"lak"``; lower-cased on
+        construction. It selects how ``package_data`` is restored.
+    source_workspace : pathlib.Path
+        Workspace of the model it was captured from; a ``str`` is converted to a
+        ``Path`` on construction.
+    source_model_name : str
+        Name of the model it was captured from.
+    source_package_name : str
+        The package name or type it was captured by, upper-cased (the
+        ``package_name`` given to ``build_package_artifact``).
+    compatibility : dict
+        The source grid's fingerprint, from ``build_grid_compatibility_snapshot``:
+        ``grid_type``, ``nlay``, ``ncpl_array``, ``node_count``,
+        ``xcellcenters``/``ycellcenters`` (rounded to 6 decimals), ``iverts`` when
+        the grid has them, and ``grid_hash`` (SHA-1 of the rest). A restore with
+        ``validate=True`` refuses a target whose ``grid_type``, ``nlay``,
+        ``node_count`` or ``grid_hash`` differs.
+    package_data : dict
+        The package's data as plain Python values (lists, not NumPy arrays), with
+        keys that depend on ``package_type`` -- ``stress_period_data`` keyed by the
+        period as a string for a list BC, ``strt`` for IC, ``k``/``k33``/
+        ``icelltype`` for NPF, ``packagedata``/``perioddata`` for UZF, LAK and SFR
+        (plus ``connectiondata`` for LAK and SFR), ``packages``/``perioddata`` for
+        MVR.
+    source_run_id : str or None, optional
+        Id of the run it was captured from, or ``None`` (the default;
+        ``build_package_artifact`` always records ``None``).
+    source_file : str or None, optional
+        The source package's FloPy ``filename``, or ``None`` (the default).
+    description : str or None, optional
+        Free-text description, or ``None`` (the default).
+    tags : list of str, optional
+        Free-form labels. Default an empty list.
+    metadata : dict, optional
+        Free-form provenance; ``derive_package_artifact`` deep-merges its
+        ``metadata_updates`` into a copy. Default an empty dict.
+    storage_mode : str, optional
+        How the package is held. Default ``"snapshot"`` (an exact-grid copy of
+        the data), the only mode the capture functions write; a derived artifact
+        copies its parent's.
+    derived_from_artifact_id : str or None, optional
+        ``artifact_id`` of the artifact this one was derived from, or ``None``
+        (the default) for a direct capture.
+    derived_from_run_id : str or None, optional
+        The parent's ``source_run_id`` (else its own ``derived_from_run_id``) for
+        a derived artifact, or ``None`` (the default).
     """
 
     artifact_id: str

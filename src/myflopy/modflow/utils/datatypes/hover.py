@@ -86,7 +86,47 @@ def _pad_right(strings: Sequence[str]) -> list[str]:
 
 @dataclass(frozen=True)
 class HoverStyle:
-    """The look of a hover box (figs house style by default)."""
+    """The look of a hover box (figs house style by default).
+
+    Frozen: derive a variant with :meth:`HoverSpec.with_style` or
+    :func:`dataclasses.replace`. ``font_family``, ``font_size``, ``font_color``,
+    ``bgcolor``, ``bordercolor`` and ``align`` become Plotly's ``hoverlabel``
+    (:meth:`to_hoverlabel`); ``accent`` and ``muted`` colour the text inside it.
+    Colors are any CSS/Plotly color string.
+
+    Parameters
+    ----------
+    font_family : str, optional
+        Font of the hover text, Plotly's ``hoverlabel.font.family`` (a CSS font
+        list). Default ``"Calibri, sans-serif"``.
+    font_size : float, optional
+        Base size of the hover text, Plotly's ``hoverlabel.font.size``. Default
+        ``11.5``. The header (12.5px), the primary value (15px), section headings
+        and a layer table's column header and unit line (10px), the other-layer
+        strip and the footer (10.5px) carry their own fixed sizes in the template
+        and do not follow it.
+    font_color : str, optional
+        Color of the plain hover text, Plotly's ``hoverlabel.font.color``.
+        Default ``"#222222"``.
+    bgcolor : str, optional
+        Background of the hover box, Plotly's ``hoverlabel.bgcolor``. Default
+        ``"rgba(255,255,255,0.96)"``.
+    bordercolor : str, optional
+        Border of the hover box, Plotly's ``hoverlabel.bordercolor``. Default
+        ``"#b5b5b5"``.
+    accent : str, optional
+        Color of the bold primary value and of the active layer's row in a layer
+        table. Default ``"#0f6e56"`` (teal, result maps); :meth:`input` swaps in
+        the blue used for input maps.
+    muted : str, optional
+        Color of the secondary text: field labels, section headings, the
+        other-layer strip, the elevation column, the unit line under a layer
+        table, and the footer. Default ``"#888780"``.
+    align : str, optional
+        Horizontal text alignment in the box, Plotly's ``hoverlabel.align``:
+        ``"left"`` (default), ``"right"`` or ``"auto"``. Plotly refuses any other
+        value (``ValueError``) when the map trace is built, not here.
+    """
 
     font_family: str = "Calibri, sans-serif"
     font_size: float = 11.5
@@ -368,7 +408,83 @@ class LayerTable(HoverBlock):
 
 @dataclass(frozen=True)
 class HoverSpec:
-    """A complete hover: header primary value, body blocks, and a footer."""
+    """A complete hover: header primary value, body blocks, and a footer.
+
+    Pass one to a map as ``hover=`` to replace its default hover outright.
+    Fields are named by their keys in the :class:`HoverContext` the map builds
+    -- a flat per-cell ``payload`` entry, or a ``layer_fields`` entry holding one
+    array per layer. A named field the context does not carry is skipped, never
+    an error. Frozen: :meth:`with_style`, :meth:`with_fields` and
+    :func:`dataclasses.replace` return modified copies.
+
+    Parameters
+    ----------
+    primary : str, optional
+        The field shown as the large, bold, ``style.accent`` value under the
+        header. A per-layer field shows the active layer's value, labelled
+        ``Layer N`` (one-based), and is what ``layers`` and ``surfaces`` expand; a
+        flat field is labelled with its ``labels`` entry. Default ``None`` shows no
+        primary line.
+    title : str, optional
+        Bold header text, inserted as-is (it is not HTML-escaped, so Plotly's
+        hover markup such as ``<i>`` works). Default ``None`` uses the label of
+        ``primary``, or no header text when ``primary`` is also ``None``.
+    id_field : str or None, optional
+        ``"cell"`` (default) appends ``cell <id>`` to the header from the
+        context's ``cells``, when it carries them. Any other value, ``None``
+        included, omits it.
+    layers : str, optional
+        How a per-layer ``primary`` shows its layers: ``"active"`` (default) the
+        active layer only; ``"active+strip"`` adds one muted line with the other
+        layers' values; ``"all"`` adds a table with one row per layer, the active
+        row accented. Not validated: any other string (``"none"`` included)
+        behaves as ``"active"``. No effect on a flat ``primary``.
+    surfaces : bool or str, optional
+        Add the grid's layer elevations from the context's ``top``/``botm``. With
+        a per-layer ``primary`` it forces the layer table (as ``layers="all"``
+        does) and, when the context has ``botm``, gives it a bottom column (plus a
+        ``Top`` row when it also has ``top``); then, when ``primary`` is
+        ``"head"``, a head below its cell bottom gets a dagger. With a flat or
+        missing ``primary`` it appends an elevations-only table AFTER ``blocks``,
+        drawn only when the context has ``botm``. Default ``False``. Read by
+        truthiness: a string has no meaning of its own, and any non-empty one
+        turns it on as ``True`` does.
+    blocks : tuple of HoverBlock, optional
+        Extra sections drawn after the primary line, in order: :class:`Fields`
+        (labelled flat fields, stacked or ``inline``) and :class:`LayerTable`. A
+        table ``layers``/``surfaces`` add for a per-layer ``primary`` is drawn
+        BEFORE these. Default ``()``.
+    footer : tuple of str, optional
+        What the muted last line shows, joined by a minus sign. Recognized keys:
+        ``"period"`` (``Period N``), ``"step"`` (``step N``), ``"date"``,
+        ``"model"`` (the context's ``model_name``) and ``"area"`` (each cell's area,
+        written ``cell <area> ft²``, at ``max(precision, 5)`` significant
+        digits). The scalar items come first in the order given, then the area.
+        A key the context has no value for, and any unrecognized key, is
+        silently dropped. Default ``("period", "date")``; ``()`` for no footer.
+    precision : int, optional
+        Significant digits for the field values and elevations written,
+        including a value below 1 in a ``"thousands"`` field (the footer's area
+        uses at least 5). Default ``4``.
+    units : mapping of str to str, optional
+        Unit written after a field's values, by field name -- e.g.
+        ``{"head": "ft"}``. On a per-layer ``primary`` it follows the primary
+        value and appears once under the layer table, not in its cells or the
+        strip. Default ``{}``: no units.
+    labels : mapping of str to str, optional
+        Display name by field name, for the header fallback, a flat primary's
+        line and each :class:`Fields` entry. A field without one shows its own
+        name. Default ``{}``.
+    style : HoverStyle, optional
+        Colors, font and box of the hover. Default ``HoverStyle()``.
+    formats : mapping of str to str, optional
+        Number style by field name, one of :data:`NUMBER_STYLES`: ``"sig"``
+        (``precision`` significant digits, the default for an unnamed field) or
+        ``"thousands"`` (a whole number with separators, ``112,000``; below 1 it
+        keeps significant digits). Applies to the field's values, not to the
+        elevations. Any other value raises ``ValueError`` when the field is
+        rendered, not at construction. Default ``{}``.
+    """
 
     primary: str | None = None
     title: str | None = None
@@ -385,27 +501,72 @@ class HoverSpec:
     formats: Mapping[str, str] = field(default_factory=dict)
 
     def unit(self, name: str) -> str | None:
-        """The display unit configured for field ``name`` (or None)."""
+        """The display unit configured for field ``name`` (or None).
+
+        Parameters
+        ----------
+        name : str
+            The field name, looked up in :attr:`units`. A field with no entry
+            returns ``None``.
+        """
 
         return self.units.get(name)
 
     def number_style(self, name: str) -> str:
-        """How field ``name``'s numbers are written (:data:`NUMBER_STYLES`)."""
+        """How field ``name``'s numbers are written (:data:`NUMBER_STYLES`).
+
+        Parameters
+        ----------
+        name : str
+            The field name, looked up in :attr:`formats`. A field with no entry
+            returns ``"sig"``. The value is returned as stored, unvalidated.
+        """
 
         return self.formats.get(name, "sig")
 
     def label(self, name: str) -> str:
-        """The display label for field ``name`` (falls back to the name itself)."""
+        """The display label for field ``name`` (falls back to the name itself).
+
+        Parameters
+        ----------
+        name : str
+            The field name, looked up in :attr:`labels`. A field with no entry
+            returns ``name`` unchanged.
+        """
 
         return self.labels.get(name, name)
 
     def with_style(self, **overrides: Any) -> HoverSpec:
-        """A copy of this spec with the given :class:`HoverStyle` fields overridden."""
+        """A copy of this spec with the given :class:`HoverStyle` fields overridden.
+
+        Parameters
+        ----------
+        **overrides
+            :class:`HoverStyle` field names and their new values (``accent=``,
+            ``font_size=``, ``bgcolor=``, ...), applied to a copy of
+            :attr:`style` with :func:`dataclasses.replace`. A name that is not a
+            :class:`HoverStyle` field raises ``TypeError``. This spec is not
+            modified.
+        """
 
         return replace(self, style=replace(self.style, **overrides))
 
     def with_fields(self, *names: str, title: str | None = None) -> HoverSpec:
-        """Append an extra inline :class:`Fields` block (call-site ``hover_fields=``)."""
+        """Append an extra inline :class:`Fields` block (call-site ``hover_fields=``).
+
+        Returns a copy with one :class:`Fields` block, ``inline=True``, added after
+        the existing :attr:`blocks`; this spec is not modified.
+
+        Parameters
+        ----------
+        *names : str
+            Field names from the hover context to show on one line, in order,
+            each as ``label value``. A name the context does not carry is
+            skipped; with none present the block draws nothing.
+        title : str, optional
+            A small upper-cased section heading drawn above the line. Default
+            ``None`` draws none.
+        """
 
         return replace(self, blocks=self.blocks + (Fields(title=title, fields=tuple(names), inline=True),))
 
@@ -448,7 +609,34 @@ class HoverSpec:
         return blocks
 
     def render(self, ctx: HoverContext) -> tuple[list, str, dict]:
-        """Render to ``(customdata, hovertemplate, hoverlabel)`` for a map trace."""
+        """Render to ``(customdata, hovertemplate, hoverlabel)`` for a map trace.
+
+        Every per-cell value is formatted here, in Python, so the template is a
+        fixed skeleton of markup and ``%{customdata[i]}`` placeholders.
+
+        Parameters
+        ----------
+        ctx : HoverContext
+            The per-cell data to write: ``ncpl`` cells, the ``active_layer``, flat
+            ``payload`` fields, per-layer ``layer_fields``, the ``top``/``botm``
+            elevations, and the ``cells``/``area``/``period``/``step``/``date``/
+            ``model_name`` the header and footer read. Every per-cell sequence it
+            draws from must hold ``ncpl`` values.
+
+        Returns
+        -------
+        tuple
+            ``(customdata, hovertemplate, hoverlabel)``: one list of strings per
+            cell, the Plotly ``hovertemplate`` string (ending in
+            ``<extra></extra>``), and :meth:`HoverStyle.to_hoverlabel`'s mapping.
+
+        Raises
+        ------
+        ValueError
+            When a per-cell sequence drawn from ``ctx`` does not hold ``ncpl``
+            values, or a :attr:`formats` entry for a rendered field is not one of
+            :data:`NUMBER_STYLES`.
+        """
 
         asm = _HoverAssembler(ctx.ncpl, self.style)
 

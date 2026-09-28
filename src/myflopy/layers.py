@@ -434,6 +434,22 @@ def modflow_surfaces(source, *, resample: bool = True):
     ``resample=True`` (default) each surface is interpolated from the source cell
     centres, so it transfers onto a *different* grid; with ``resample=False`` the
     arrays are used verbatim (the target grid must match cell-for-cell).
+
+    Parameters
+    ----------
+    source : flopy model or flopy modelgrid
+        Anything with a ``.modelgrid`` attribute (a FloPy model), or a FloPy
+        modelgrid itself. Its ``top`` is flattened to one value per column and its
+        ``botm`` to ``(nlay, ncpl)``, which fits a structured (DIS) or vertex (DISV)
+        grid; its ``xcellcenters``/``ycellcenters`` are read when ``resample``.
+    resample : bool, optional
+        Default True: each surface is a :meth:`Surface.from_points` over the source
+        cell centres, interpolated linearly (``scipy.interpolate.griddata``) at the
+        target grid's centroids when sampled -- a target cell outside the convex
+        hull of those centres samples NaN. False: each is a
+        :meth:`Surface.from_array` of the raw per-cell values, valid only on a grid
+        with exactly the source's cells. Both kinds hold per-cell data, so a stack
+        built from them cannot be written by :meth:`LayerStack.to_dict`.
     """
     mg = getattr(source, "modelgrid", source)
     top = np.asarray(mg.top, dtype=float).ravel()
@@ -3286,16 +3302,34 @@ class LayerStack:
 
     Parameters
     ----------
-    vor
-        The grid (a ``VoronoiGridPlus``/vertex grid) whose cells the surfaces are
-        sampled onto.
-    top
-        The model-top surface -- a :class:`Surface` or any value the aliases accept
-        (a raster path via :class:`Raster`, an array via :class:`Array`, a constant
-        via :class:`Flat`, ...).
-    length_units, time_units
-        Model units (default feet / days); ``length_units`` flows to DISV and is
-        used to convert any surface declaring different ``units=``.
+    vor : VoronoiGridPlus or None, optional
+        The grid whose cells the surfaces are sampled onto, used by :meth:`build`,
+        :meth:`qc`, :meth:`to_disv` and :attr:`plot` whenever they are not given
+        one. Default None: the DEFERRED form -- declare the layering now and pass
+        the grid to those methods later, or bind it with :meth:`for_grid`
+        (:attr:`plot` then draws on a coarse :meth:`draft_grid`). A
+        :class:`~myflopy.surfaces.Surface` here raises ``TypeError``: it is the
+        first positional argument, so ``LayerStack(ground)`` would bind the top as
+        the grid.
+    top : Surface, str, pathlib.Path, int or float
+        The model-top surface. Required (the ``None`` default raises
+        ``TypeError``). A :class:`~myflopy.surfaces.Surface` is used as given; a
+        ``str``/``Path`` is read as a :class:`Raster`; an ``int``/``float`` is a
+        :class:`Flat` elevation. Anything else -- a bare ``numpy`` array included
+        -- raises ``TypeError``; wrap per-cell values in :class:`Array`.
+    length_units : str, optional
+        The model length unit. Default ``"feet"``. At :meth:`build` every surface
+        declaring its own ``units=`` is converted into it (known spellings:
+        ``feet``/``ft``/``foot``/``us-ft``/``usft``, ``meters``/``meter``/
+        ``metres``/``m``, ``centimeters``/``cm``; any other raises ``ValueError``
+        there). :meth:`to_disv` writes it as DISV ``LENGTH_UNITS``: ``"feet"``,
+        ``"meters"`` and ``"centimeters"`` become ``FEET``/``METERS``/
+        ``CENTIMETERS``, and any other spelling is written upper-cased as given.
+        Also labels the plot axes.
+    time_units : str, optional
+        The model time unit. Default ``"days"``. Carried onto the built
+        :class:`LayerBuildResult` (its report prints it) and saved by
+        :meth:`to_dict`; nothing in the stack converts with it.
 
     Examples
     --------
@@ -3309,7 +3343,7 @@ class LayerStack:
     ... )
     >>> layers = stack.build()          # -> layers.top, layers.botm, layers.idomain, layers.nlay
     >>> print(stack.qc())               # NaN/thickness/connectivity report
-    >>> layers.cross_section(x=500)     # quick W-E section to eyeball it
+    >>> layers.plot.section(x=500)      # quick section to eyeball it
 
     Feed the result straight into ``mf.disv`` and the model context::
 
@@ -3753,6 +3787,16 @@ class LayerStack:
 
         Also what makes ``.plot`` reachable on a deferred stack, since a property
         cannot take a grid argument.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus or None
+            The grid the copy is bound to -- what its :meth:`build`, :meth:`qc`,
+            :meth:`to_disv` and :attr:`plot` use when not given one. It REPLACES any
+            grid this stack holds; ``None`` gives an unbound (deferred) copy. The
+            copy shares this stack's top, unit declarations, excavations and units;
+            this stack is not changed. A :class:`~myflopy.surfaces.Surface` raises
+            ``TypeError``, as in the constructor.
         """
 
         bound = LayerStack(
@@ -3786,6 +3830,43 @@ class LayerStack:
         ``resample=True``, used verbatim when ``False``). Name the layers with
         ``names`` (defaults to ``layer1..N``). Edit the returned stack like any
         other -- e.g. ``.replace(...)`` a bottom, then ``.build()`` / ``.to_disv()``.
+
+        Parameters
+        ----------
+        vor : VoronoiGridPlus or None
+            The grid the new stack is bound to (the constructor's ``vor``); ``None``
+            gives a deferred stack whose grid is supplied at :meth:`build`. With
+            ``resample=False`` it must be the SAME grid, cell for cell, as
+            ``source``.
+        source : flopy model or flopy modelgrid
+            Where the surfaces come from: anything with a ``.modelgrid`` (a FloPy
+            model), or a FloPy modelgrid itself. Its ``top`` becomes the stack's top
+            and each layer of its ``botm`` one unit's bottom, read through
+            :func:`modflow_surfaces` -- so a structured or vertex (DISV) grid, one
+            ``top`` value per column.
+        names : list of str, optional
+            One unit name per source layer, top to bottom. Default None:
+            ``"layer1"``, ``"layer2"``, ... A list of the wrong length raises
+            ``ValueError``.
+        resample : bool, optional
+            Default True: each surface is interpolated from the source's CELL
+            CENTRES onto ``vor``'s centroids (``scipy.interpolate.griddata``,
+            linear), so it transfers onto a DIFFERENT grid; a target cell outside
+            the convex hull of the source centres samples NaN. False: the arrays are
+            used verbatim as per-cell values, so ``vor`` must have exactly the
+            source's cells. Either way the surfaces hold per-cell data, which
+            :meth:`to_dict` refuses -- a stack from here cannot be saved as a recipe.
+        length_units : str, optional
+            The stack's length unit; see the class ``length_units``. Default
+            ``"feet"``. The source's elevations are taken as already in it -- no
+            conversion is applied to them.
+        time_units : str, optional
+            The stack's time unit; see the class ``time_units``. Default ``"days"``.
+
+        Raises
+        ------
+        ValueError
+            ``names`` does not have one entry per source layer.
         """
         top_s, botm_s = modflow_surfaces(source, resample=resample)
         if names is None:
@@ -4073,7 +4154,23 @@ class LayerStack:
         return self
 
     def remove(self, name: str) -> LayerStack:
-        """Remove a layer by name."""
+        """Remove a layer by name.
+
+        Edits this stack IN PLACE and returns it, so calls chain. Excavations are
+        not touched.
+
+        Parameters
+        ----------
+        name : str
+            The UNIT name as declared by :meth:`add` (one of :attr:`names`) -- a
+            split unit is removed whole, by its unit name; a slice name such as
+            ``"sand_2"`` is not accepted.
+
+        Raises
+        ------
+        KeyError
+            No unit is named ``name``; the message lists the names there are.
+        """
         del self._layers[self._index(name)]
         return self
 

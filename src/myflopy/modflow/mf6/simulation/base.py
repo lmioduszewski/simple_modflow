@@ -169,7 +169,35 @@ class SimulationBase:
 
     @classmethod
     def from_built_run(cls, run: Any, model_name: str) -> SimulationBase:
-        """Create a myflopy model view over a model in a live built run."""
+        """Create a myflopy model view over a model in a live built run.
+
+        Skips ``__init__`` (no new FloPy simulation is created): the view shares
+        the run's in-memory ``MFSimulation`` and the built FloPy model, takes its
+        grid and idomain from that model's ``ModelContext``, its model kind from the
+        FloPy model's ``model_type``, and its workspace from ``run.workspace``.
+
+        Parameters
+        ----------
+        run : Run
+            A :class:`~myflopy.workspace.Run` (anything with ``built`` and
+            ``workspace`` attributes) that has been built; ``run.built`` being
+            ``None`` raises ``ValueError``.
+        model_name : str
+            Name of a model in the built simulation; a name it does not hold
+            raises ``KeyError``.
+
+        Returns
+        -------
+        SimulationBase
+            A view of ``cls`` bound to that model.
+
+        Raises
+        ------
+        ValueError
+            If ``run.built`` is ``None``.
+        KeyError
+            If the built simulation has no model named ``model_name``.
+        """
 
         view = cls.__new__(cls)
         view._initialize_from_built_run(run, model_name)
@@ -252,7 +280,54 @@ class SimulationBase:
         newton: bool = True,
         complexity: str = 'MODERATE',
     ):
-        """Create a legacy single-GWF model helper."""
+        """Create a legacy single-GWF model helper.
+
+        Builds an in-memory FloPy ``MFSimulation`` (``exe_name="mf6"``), one
+        ``ModflowGwf`` named ``name`` (``save_flows=True``) and one IMS solution
+        registered to it. Nothing is written to disk and no TDIS or discretization
+        is added here: the caller adds them, as
+        :func:`~myflopy.modflow.mf6.canonical_example.build_transient_model` does.
+
+        Parameters
+        ----------
+        name : str, optional
+            Simulation and model name (``sim_name``, ``modelname``, and the
+            ``<name>.nam`` name file); also the leaf of the workspace. Default
+            ``"mf6_model"``.
+        mf_folder_path : pathlib.Path, optional
+            Parent folder; the workspace is ``mf_folder_path / name``. Must be a
+            ``Path`` (``joinpath`` is called on it; a ``str`` raises
+            ``AttributeError``). Default ``~/mf6``, evaluated once when the module
+            is imported.
+        nper : int, optional
+            Number of stress periods, stored as ``self.nper``. Default 1. This
+            constructor writes no TDIS from it.
+        vor : VoronoiGridPlus or None, optional
+            The model's Voronoi grid, stored as ``self.vor``; the grid-based
+            helpers (idomain, plotting, regions) read it. Default ``None``.
+        per_dates : list or pandas.DatetimeIndex or None, optional
+            Stress-period date labels, stored as :attr:`per_dates`. A list is
+            parsed with ``pandas.to_datetime``; if that raises ``ValueError`` a
+            warning is logged and the list is kept as given. A
+            ``DatetimeIndex`` is kept as is; any other type fails an ``assert``.
+            Default ``None``.
+        idomain_path : pathlib.Path or None, optional
+            Layer-tagged polygon file used to build :attr:`idomain` lazily, the
+            first time it is read, when no idomain array was supplied: each
+            feature's ``layer`` tag says which layers it switches OFF. A non-``Path``
+            value fails an ``assert``. Default ``None``.
+        newton : bool, optional
+            Default ``True`` writes the GWF name-file option ``NEWTON
+            UNDER_RELAXATION`` (``newtonoptions="under_relaxation"``); ``False``
+            writes no Newton option.
+        complexity : str, optional
+            IMS ``complexity`` passed to FloPy's ``ModflowIms`` (MF6 accepts
+            ``"SIMPLE"``, ``"MODERATE"``, ``"COMPLEX"``). Default ``"MODERATE"``.
+            The constructor also passes explicit IMS settings beside it (DBD
+            under-relaxation, backtracking, ``outer_maximum=800``,
+            ``inner_maximum=300``, ``outer_dvclose=1e-5``, ``inner_dvclose=1e-6``,
+            BICGSTAB with RCM reordering and L2NORM scaling).
+        """
         self._initialize_model_state(
             name=name,
             vor=vor,
@@ -349,14 +424,18 @@ class SimulationBase:
 
         Parameters
         ----------
-        name
-            Calibration name; used as the ``.pst`` stem and the default
-            ``<workspace>.pest/<name>`` template directory.
-        start_datetime
+        name : str
+            Calibration name (stored as ``str(name)``); the default ``.pst`` file is
+            ``<name>.pst``. The default template directory is
+            ``<workspace>.pest/<slug>``, where the slug is ``name`` with every run of
+            characters outside ``[A-Za-z0-9_.-]`` replaced by ``_`` and leading and
+            trailing ``_`` stripped (``"pest_run"`` if nothing is left).
+        start_datetime : str or None, optional
             Simulation start date (e.g. ``"2020-01-01"``) that pyEMU uses to place
-            time-varying parameters/observations on the time axis. When omitted it
-            is read from the model's TDIS ``start_date_time``; pass it explicitly if
-            the model has none.
+            time-varying parameters/observations on the time axis. Default ``None``
+            reads it from the model's TDIS ``start_date_time``; when that is unset
+            too, ``ValueError`` is raised, so pass it explicitly for a model without
+            one.
         **kwargs
             Forwarded to :class:`~myflopy.modflow.mf6.pest.PestProject`
             (``workspace``, ``spatial_reference``, ``zero_based``, ``longnames``).
@@ -552,7 +631,28 @@ class SimulationBase:
         return build_offsets(self._ncpl_arr)
 
     def node_from_lni(self, layer: int, idx_in_layer: int) -> int:
-        """Convert ``(layer, index_in_layer)`` back to a flattened node id."""
+        """Convert ``(layer, index_in_layer)`` back to a flattened node id.
+
+        The node is ``offsets[layer] + idx_in_layer``, where ``offsets`` is the
+        cumulative per-layer cell count of the model grid with a leading 0. The
+        inverse is :attr:`node_to_lni`.
+
+        Parameters
+        ----------
+        layer : int
+            Zero-based layer index; it indexes the offsets array directly, so a
+            negative value counts from the end of that array (which has
+            ``nlay + 1`` entries) rather than being refused.
+        idx_in_layer : int
+            Zero-based cell index within ``layer``. Added as-is: it is not checked
+            against the layer's cell count, so an out-of-range value returns a
+            node in another layer (or past the grid) without an error.
+
+        Returns
+        -------
+        int
+            The zero-based flattened node number.
+        """
 
         return int(self._offsets[layer] + idx_in_layer)
 
@@ -650,13 +750,44 @@ class SimulationBase:
         -- so you never assemble a ``(nlay, ncpl)`` array by hand. The result
         plugs into xarray slicing, native unstructured plotting, and UGRID-NetCDF
         sharing (QGIS/ParaView). Delegates to
-        :meth:`~myflopy.modflow.mf6.headsplus.HeadsPlus.to_xugrid`; see it for the
-        full parameter list.
+        :meth:`~myflopy.modflow.mf6.headsplus.HeadsPlus.to_xugrid` on :attr:`hds`,
+        so it is available on a GWF model only (``hds`` raises ``AttributeError``
+        on a GWT/GWE model).
+
+        Parameters
+        ----------
+        layers : iterable of int or None, optional
+            Zero-based layers to include, in the order given (each is passed
+            through ``int``). Default ``None`` includes all ``nlay`` layers.
+        times : iterable of (int, int) or None, optional
+            ``(kstp, kper)`` keys to include, in the order given, spelled as the
+            heads reader's own ``kstpkper`` lists them. Default ``None`` includes
+            every saved time. A key that is not a saved time raises ``ValueError``.
+        name : str, optional
+            Variable name for the field. Default ``"head"``; an empty string falls
+            back to the reader's own ``value_name``.
+        masked : bool, optional
+            Default ``True`` replaces MODFLOW's no-value sentinels (``|value| >=
+            1e29``: +1e30 inactive, -1e30 dry) with ``NaN``; ``False`` keeps the
+            raw file values.
+        surfaces : bool, optional
+            Default ``False``. ``True`` also attaches the grid's layer frame --
+            ``top`` and ``botm_1`` ... ``botm_n``, one flat variable per layer --
+            and returns a ``UgridDataset`` instead of a ``UgridDataArray``.
 
         Returns
         -------
-        xugrid.UgridDataArray
-            Dims ``("time", "layer", <face_dim>)`` with ``kstp``/``kper`` coords.
+        xugrid.UgridDataArray or xugrid.UgridDataset
+            Dims ``("time", "layer", <face_dim>)`` with ``kstp``/``kper`` coords; a
+            ``UgridDataset`` carrying the field plus the flat elevation variables
+            when ``surfaces=True``.
+
+        Raises
+        ------
+        ImportError
+            If the optional ``xugrid`` / ``xarray`` packages are not installed.
+        ValueError
+            If a ``times`` key is not a saved output time.
 
         Notes
         -----
@@ -771,8 +902,23 @@ class SimulationBase:
 
         Parameters
         ----------
-        package_names
-            One package name such as ``"rch"`` or a list of package names.
+        package_names : str or list of str or tuple of str or set of str
+            One package name or type such as ``"rch"``, or a list/tuple/set of
+            them. Each is lower-cased (through ``str``) and looked up with FloPy's
+            ``get_package`` on the model first, then on the simulation (so ``"tdis"``
+            or ``"ims"`` resolve too). A collection returns a ``dict`` keyed by the
+            lower-cased names, each value looked up the same way.
+
+        Returns
+        -------
+        flopy.mf6.mfpackage.MFPackage or list or dict
+            The package; FloPy's list when the name matches several (see Notes);
+            a ``dict`` of those when ``package_names`` is a collection.
+
+        Raises
+        ------
+        AttributeError
+            If a name resolves to no package on the model or the simulation.
 
         Notes
         -----
@@ -890,7 +1036,30 @@ class SimulationBase:
         return self.package("evt")
 
     def bud(self, package: str = None):
-        """Return budget information, optionally filtered to one package."""
+        """Return budget information, optionally filtered to one package.
+
+        Parameters
+        ----------
+        package : str or None, optional
+            A budget record to filter to, such as ``"drn"``, ``"ghb"`` or
+            ``"rch"``. Matched case-insensitively as a SUBSTRING of the record
+            names in this model's cell-budget file; ``"ssm"`` also reaches the
+            ``SOURCE-SINK MIX`` record MF6 writes for it. A name matching no record
+            raises ``ValueError`` listing the records present. Default ``None``
+            returns the unfiltered helper, whose ``budget`` is the raw budget-file
+            reader.
+
+        Returns
+        -------
+        myflopy.modflow.mf6.budget.Budget
+            The budget helper; with ``package`` set, its ``df`` is that record's
+            per-cell table.
+
+        Raises
+        ------
+        ValueError
+            If ``package`` matches no record in the budget file.
+        """
 
         return get_budget(self, package)
 
@@ -1010,6 +1179,42 @@ class SimulationBase:
         grid's frame. See :attr:`aoi` for where it is kept. Refuses an existing
         name unless ``overwrite=True``; ``model.aoi[name] = ...`` replaces.
 
+        Parameters
+        ----------
+        name : str
+            The area's name (converted with ``str()``): the key in
+            :attr:`aoi` and what ``extent=``/``select=`` accept.
+        geometry : tuple, sequence of points, shapely geometry, GeoDataFrame, str or Path
+            Four numbers ``(xmin, ymin, xmax, ymax)`` in shapely's order (a box),
+            an ``(N, 2)`` run of ``(x, y)`` points (the box bounding them), a
+            shapely geometry, a GeoDataFrame/GeoSeries (its rows unioned), an
+            :class:`~myflopy.areas.Area`, or a path to a vector file (read with
+            ``geopandas.read_file`` and unioned). Coerced by
+            :meth:`~myflopy.areas.Area.coerce`, which raises ``TypeError`` for
+            anything else and ``ValueError`` for an empty frame or an inverted
+            box.
+        crs : str, int, pyproj.CRS or None, optional
+            The CRS ``geometry`` is in. Default ``None`` means the grid's frame for
+            numbers, points and a bare geometry, or the CRS a file or frame
+            carries. A ``crs`` that disagrees with the CRS a file, frame or
+            :class:`~myflopy.areas.Area` already carries raises ``ValueError``.
+        layer : str or None, optional
+            Layer to read when ``geometry`` is a path to a multi-layer file (a
+            GeoPackage); ignored for every other form. Default ``None`` reads the
+            file's first layer.
+        note : str or None, optional
+            Free text stored on the area and shown in ``model.aoi.summary()``.
+            Default ``None``.
+        overwrite : bool, optional
+            Default ``False`` raises ``KeyError`` when ``name`` is already an area
+            in :attr:`aoi` (the project's library when the project is live);
+            ``True`` replaces it.
+
+        Returns
+        -------
+        Area
+            The stored area.
+
         Examples
         --------
         >>> model.add_aoi("site", (500, 600, 1000, 1100))
@@ -1038,18 +1243,57 @@ class SimulationBase:
     ):
         """Register a named region from explicit cell ids.
 
+        The region is kept in this model's in-memory :attr:`regions` registry
+        (not saved with a project). Regions and region groups share one
+        namespace.
+
         Parameters
         ----------
-        name
-            Region name.
-        cellids
-            Cell ids to include in the region.
-        layer
-            Optional layer restriction or layer list.
-        category, package, tags, geometry, metadata
-            Optional descriptive metadata stored with the region.
-        overwrite
-            Whether an existing region of the same name may be replaced.
+        name : str
+            Region name. A name already used by a region GROUP raises
+            ``ValueError`` whatever ``overwrite`` says.
+        cellids : iterable of int or tuple
+            The cells. An ``int`` is taken as the cell number as given; a tuple
+            of two or more items is read as ``(layer, cell, ...)`` -- its first
+            item a layer, its SECOND the cell number, anything after ignored; a
+            one-item tuple is ``(cell,)``; an empty tuple is dropped. The region
+            stores the sorted unique cell numbers, plus the raw ids as given.
+            :meth:`region_heads` matches them against the heads table's in-layer
+            ``cell`` column, so give in-layer (per-layer) cell indices.
+        layer : int or list of int or None, optional
+            Zero-based layer (or layers) the region applies to; :meth:`region_heads`
+            filters to it when called without its own ``layer``. Default ``None``
+            takes the layers named by tuple ``cellids`` (one layer as an ``int``,
+            several as a sorted list), else leaves the region layer-free.
+        category : str, optional
+            Free label stored on the region and shown in :meth:`list_regions`.
+            Default ``"selection"``.
+        package : str or None, optional
+            Package name stored on the region as a label and shown in
+            :meth:`list_regions`; nothing is looked up. Default ``None``.
+        tags : list of str or None, optional
+            Labels stored (copied into a list) on the region. Default ``None``
+            stores none.
+        geometry : object, optional
+            Any geometry to keep on the region for reference; not used to select
+            cells. Default ``None``.
+        metadata : dict or None, optional
+            Free key/values stored (copied into a dict) on the region. Default
+            ``None`` stores an empty dict.
+        overwrite : bool, optional
+            Default ``False`` raises ``ValueError`` when a region called ``name``
+            exists; ``True`` replaces it (group memberships naming it are kept).
+
+        Returns
+        -------
+        ModelRegion
+            The registered region.
+
+        Raises
+        ------
+        ValueError
+            If ``name`` is a group's name, or an existing region's without
+            ``overwrite=True``.
         """
 
         return self.regions.add_from_cells(
@@ -1065,7 +1309,24 @@ class SimulationBase:
         )
 
     def add_region_from_cells(self, name: str, cellids, **kwargs):
-        """Alias for :meth:`add_region` with explicit cell ids."""
+        """Alias for :meth:`add_region` with explicit cell ids.
+
+        Parameters
+        ----------
+        name : str
+            Region name, as in :meth:`add_region`.
+        cellids : iterable of int or tuple
+            The cells, as in :meth:`add_region` (here positional).
+        **kwargs
+            Forwarded to :meth:`add_region`: ``layer``, ``category``,
+            ``package``, ``tags``, ``geometry``, ``metadata``, ``overwrite``.
+            Anything else raises ``TypeError``.
+
+        Returns
+        -------
+        ModelRegion
+            The registered region.
+        """
 
         return self.add_region(name, cellids=cellids, **kwargs)
 
@@ -1082,7 +1343,57 @@ class SimulationBase:
         metadata: dict | None = None,
         overwrite: bool = False,
     ):
-        """Register a named region by selecting cells from a geometry."""
+        """Register a named region by selecting cells from a geometry.
+
+        The cells are selected on this model's grid (``self.vor.gdf_vorPolys``),
+        flattened into one list, and registered through :meth:`add_region`, so
+        every rule there applies. The cells are the grid's in-layer cell indices.
+
+        Parameters
+        ----------
+        name : str
+            Region name, as in :meth:`add_region`.
+        geometry : shapely geometry, GeoDataFrame, GeoSeries, str or pathlib.Path
+            What selects the cells: any shapely geometry, a GeoDataFrame or
+            GeoSeries, or a path to a vector file (its first layer is read). A
+            geometry carrying a CRS is reprojected to the grid's; one carrying
+            none is read in the grid's frame. Any other type raises
+            ``ValueError``. It is also stored on the region.
+        predicate : str or None, optional
+            Default ``None`` selects by MEASURE: a polygon reaches the cells it
+            covers by area, a line those it runs through, a point the one cell
+            holding it (a feature reaching no cell is left out and named in a
+            logged warning). A
+            geopandas predicate (``"intersects"``, ``"contains"``, ...) uses the
+            raw spatial join instead, which counts any touch, a shared face or a
+            single vertex included.
+        layer : int or list of int or None, optional
+            Zero-based layer (or layers) stored on the region, as in
+            :meth:`add_region`. Default ``None``.
+        category : str, optional
+            Free label stored on the region. Default ``"selection"``.
+        package : str or None, optional
+            Package name stored on the region as a label. Default ``None``.
+        tags : list of str or None, optional
+            Labels stored on the region. Default ``None`` stores none.
+        metadata : dict or None, optional
+            Free key/values stored on the region. Default ``None`` stores an
+            empty dict.
+        overwrite : bool, optional
+            Default ``False`` raises ``ValueError`` when a region called ``name``
+            exists; ``True`` replaces it.
+
+        Returns
+        -------
+        ModelRegion
+            The registered region.
+
+        Raises
+        ------
+        ValueError
+            If ``geometry`` is of an unsupported type or reaches no cell, or for
+            a name collision as in :meth:`add_region`.
+        """
 
         return self.regions.add_from_geometry(
             name,
@@ -1097,7 +1408,19 @@ class SimulationBase:
         )
 
     def get_region(self, name: str):
-        """Return one registered region object by name."""
+        """Return one registered region object by name.
+
+        Parameters
+        ----------
+        name : str
+            A region's name; a group's name, or an unknown one, raises
+            ``KeyError`` (use :meth:`get_group` for a group).
+
+        Returns
+        -------
+        ModelRegion
+            The registered region.
+        """
 
         return self.regions.get_region(name)
 
@@ -1110,7 +1433,47 @@ class SimulationBase:
         metadata: dict | None = None,
         overwrite: bool = False,
     ) -> RegionGroup:
-        """Create a named region group from region/group members."""
+        """Create a named region group from region/group members.
+
+        A group holds region and group NAMES, resolved to cells only when read
+        (:meth:`resolve_region_cells`), so a later change to a member region shows
+        through.
+
+        Parameters
+        ----------
+        name : str
+            Group name. A name already used by a REGION raises ``ValueError``
+            whatever ``overwrite`` says.
+        members : iterable of str or None, optional
+            Region or group names to add, in order, each through
+            :meth:`add_to_group`: an unknown name raises ``KeyError`` and one
+            that would make a cycle raises ``ValueError``. The group is
+            registered BEFORE its members are added, so a refused member leaves
+            the group registered with the members before it. Default ``None``
+            creates an empty group.
+        tags : list of str or None, optional
+            Labels stored (copied into a list) on the group. Default ``None``
+            stores none.
+        metadata : dict or None, optional
+            Free key/values stored (copied into a dict) on the group. Default
+            ``None`` stores an empty dict.
+        overwrite : bool, optional
+            Default ``False`` raises ``ValueError`` when a group called ``name``
+            exists; ``True`` replaces it with the new, empty-then-filled group.
+
+        Returns
+        -------
+        RegionGroup
+            The registered group.
+
+        Raises
+        ------
+        ValueError
+            If ``name`` is a region's name, an existing group's without
+            ``overwrite=True``, or a member would create a cycle.
+        KeyError
+            If a ``members`` name is neither a region nor a group.
+        """
 
         return self.regions.add_group(
             name,
@@ -1121,22 +1484,81 @@ class SimulationBase:
         )
 
     def add_to_group(self, group_name: str, member_name: str):
-        """Add one region or group to an existing region group."""
+        """Add one region or group to an existing region group.
+
+        Parameters
+        ----------
+        group_name : str
+            The group to add to; an unknown group raises ``KeyError``.
+        member_name : str
+            A registered region or group name; an unknown name raises
+            ``KeyError``, ``group_name`` itself or a group that already contains
+            ``group_name`` (a cycle) raises ``ValueError``. Adding a member already
+            present changes nothing.
+
+        Returns
+        -------
+        RegionGroup
+            The updated group.
+        """
 
         return self.regions.add_to_group(group_name, member_name)
 
     def remove_from_group(self, group_name: str, member_name: str):
-        """Remove one member from an existing region group."""
+        """Remove one member from an existing region group.
+
+        Only the membership is removed; the member region or group itself stays
+        registered (see :meth:`remove_region` to delete it).
+
+        Parameters
+        ----------
+        group_name : str
+            The group to remove from; an unknown group raises ``KeyError``.
+        member_name : str
+            The member to drop. A name that is not a member is ignored without
+            an error.
+
+        Returns
+        -------
+        RegionGroup
+            The updated group.
+        """
 
         return self.regions.remove_from_group(group_name, member_name)
 
     def get_group(self, name: str):
-        """Return one registered region group by name."""
+        """Return one registered region group by name.
+
+        Parameters
+        ----------
+        name : str
+            A group's name; a region's name, or an unknown one, raises
+            ``KeyError`` (use :meth:`get_region` for a region).
+
+        Returns
+        -------
+        RegionGroup
+            The registered group.
+        """
 
         return self.regions.get_group(name)
 
     def get_region_cells(self, name: str) -> list[int]:
-        """Return the resolved cell ids for a named region or group."""
+        """Return the resolved cell ids for a named region or group.
+
+        The same answer as :meth:`resolve_region_cells`.
+
+        Parameters
+        ----------
+        name : str
+            A region or group name; a group is resolved through its members,
+            recursively. An unknown name raises ``KeyError``.
+
+        Returns
+        -------
+        list of int
+            The sorted unique cell numbers the regions store.
+        """
 
         return get_region_cells(self, name)
 
@@ -1151,17 +1573,58 @@ class SimulationBase:
         return list_model_groups(self)
 
     def resolve_region_cells(self, name: str) -> list[int]:
-        """Resolve a region/group to its unique flattened cell ids."""
+        """Resolve a region/group to its unique cell ids.
+
+        Parameters
+        ----------
+        name : str
+            A region or group name; a group is resolved through its members,
+            recursively (a cycle raises ``ValueError``). An unknown name raises
+            ``KeyError``.
+
+        Returns
+        -------
+        list of int
+            The sorted union of the cell numbers the reached regions store --
+            in-layer indices for a region built from geometry or from
+            ``(layer, cell)`` tuples, the numbers as given otherwise.
+        """
 
         return self.regions.resolve_cells(name)
 
     def resolve_region_cells_with_trace(self, name: str):
-        """Resolve a region/group and return overlap/contribution trace data."""
+        """Resolve a region/group and return overlap/contribution trace data.
+
+        Parameters
+        ----------
+        name : str
+            A region or group name, resolved as in :meth:`resolve_region_cells`;
+            an unknown name raises ``KeyError``, a cycle ``ValueError``.
+
+        Returns
+        -------
+        tuple of (list of int, dict of int to list of str)
+            The sorted unique cells, and for each cell the sorted names of the
+            REGIONS that contributed it (a cell in several regions lists each).
+        """
 
         return self.regions.resolve_cells_with_trace(name)
 
     def remove_region(self, name: str):
-        """Remove a registered region or region group by name."""
+        """Remove a registered region or region group by name.
+
+        The name is also dropped from every group's members.
+
+        Parameters
+        ----------
+        name : str
+            A region or group name; an unknown name raises ``KeyError``.
+
+        Returns
+        -------
+        ModelRegion or RegionGroup
+            The removed object.
+        """
 
         return self.regions.remove(name)
 
@@ -1173,7 +1636,38 @@ class SimulationBase:
         kstpkper: tuple | None = None,
         layer: int | list[int] | None = None,
     ):
-        """Return head results filtered to a named region or region group."""
+        """Return head results filtered to a named region or region group.
+
+        Reads :attr:`all_heads` (every saved time, layer and cell), keeps the rows
+        whose in-layer ``cell`` is one of the region's resolved cells, and attaches
+        each cell's polygon. It opens ``<workspace>/<name>.hds`` with no
+        model-kind check (unlike :attr:`hds`), so it is meaningful on a GWF model
+        only.
+
+        Parameters
+        ----------
+        name : str
+            A region or group name; an unknown name raises ``KeyError``.
+        per : int or None, optional
+            Zero-based stress period: keeps EVERY saved time step of that period
+            (rows whose ``kstpkper[1] == per``), not only its last. Ignored when
+            ``kstpkper`` is given. Default ``None`` keeps all periods.
+        kstpkper : tuple of (int, int) or None, optional
+            One zero-based ``(kstp, kper)`` saved time to keep; takes precedence
+            over ``per``. A time not in the file gives an empty frame, not an
+            error. Default ``None``.
+        layer : int or list of int or None, optional
+            Zero-based layer (or list of layers) to keep. Default ``None`` uses the
+            layer stored on the region (a GROUP carries none, so every layer is
+            kept), and keeps every layer when that is ``None`` too.
+
+        Returns
+        -------
+        geopandas.GeoDataFrame
+            One row per kept ``(kstpkper, layer, cell)``, with the head column, the
+            cell ``geometry`` in the grid's CRS, and a ``region`` column holding
+            ``name``.
+        """
 
         return filter_region_heads(
             self,
@@ -1199,17 +1693,63 @@ class SimulationBase:
     ) -> SurfaceWaterValidationReport:
         """Validate coupled LAK/SFR/MVR inputs against the current model.
 
+        A thin wrapper over
+        :func:`~myflopy.modflow.mf6.surface_water_validation.validate_surface_water_configuration`
+        with this model as ``model``; that function states every rule checked.
+        Each of the three checks runs only when its inputs are given: LAK when any
+        of ``nlakes``/``lak_packagedata``/``lak_connectiondata``/``lak_perioddata``
+        is not ``None``, SFR when ``sfr`` is, MVR when ``mvr_packages`` or
+        ``mvr_perioddata`` is. Cell ids, lake ids, reach numbers and mover ids are
+        zero-based.
+
         Parameters
         ----------
-        nlakes, lak_packagedata, lak_connectiondata, lak_perioddata
-            Optional LAK package inputs to validate.
-        sfr
-            Optional SFR builder instance to validate.
-        maxmvr, maxpackages, mvr_packages, mvr_perioddata
-            Optional MVR package sizing and period-data inputs to validate.
-        raise_on_error
-            Whether to raise ``ValueError`` immediately when any error-level
-            findings are present in the validation report.
+        nlakes : int or None, optional
+            Number of lakes the LAK package declares. Default ``None`` is read as
+            ONE lake whenever another LAK input is given, so pass it for a
+            multi-lake package.
+        lak_packagedata : list or None, optional
+            LAK ``packagedata`` rows ``[lakeno, strt, nlakeconn, ...]``. Default
+            ``None``.
+        lak_connectiondata : list or None, optional
+            LAK ``connectiondata`` rows ``[lakeno, iconn, cellid, claktype,
+            bedleak, belev, telev, connlen, connwidth]``, ``cellid`` a
+            ``(layer, cell)`` tuple. Default ``None``.
+        lak_perioddata : dict or None, optional
+            LAK ``perioddata`` as ``{period: [[lakeno, keyword, value, ...], ...]}``.
+            Default ``None``.
+        sfr : SFRBuilder or None, optional
+            An :class:`~myflopy.modflow.mf6.sfr.SFRBuilder` checked through its
+            derived package, connection and period data; reading those resolves
+            the builder, which can raise. Default ``None`` skips the SFR check.
+        maxmvr : int or None, optional
+            MVR ``MAXMVR``. ``None`` (the default) is checked as 0, so give it
+            whenever ``mvr_perioddata`` holds records.
+        maxpackages : int or None, optional
+            MVR ``MAXPACKAGES``. ``None`` (the default) is checked as 0, so give
+            it whenever ``mvr_packages`` declares packages.
+        mvr_packages : list or None, optional
+            The MVR ``packages`` block as a list of rows whose first item is a
+            package name, e.g. ``[["sfr"], ["lak"]]``. Default ``None``.
+        mvr_perioddata : dict or None, optional
+            MVR ``perioddata`` as ``{period: [(pname1, id1, pname2, id2, mvrtype,
+            value), ...]}``. Default ``None``.
+        raise_on_error : bool, optional
+            Default ``False`` returns the report with its findings collected.
+            ``True`` calls ``report.raise_for_errors()``, which raises
+            ``ValueError`` listing every error-level finding; warnings alone never
+            raise.
+
+        Returns
+        -------
+        SurfaceWaterValidationReport
+            Every finding; empty when nothing was given to check.
+
+        Raises
+        ------
+        ValueError
+            With ``raise_on_error=True``, when the report holds an error-level
+            finding.
         """
 
         report = validate_surface_water_configuration(
@@ -1282,6 +1822,39 @@ class SimulationBase:
         model; every other model is compared against it (reference-star). For
         explicit reference control or a reusable, named comparison, build a
         :class:`~myflopy.project.model_group.ModelGroup` and call its ``.diff()``.
+
+        Parameters
+        ----------
+        other : SimulationBase, str, pathlib.Path, list or tuple
+            The first model to compare: a model object (used as given), or a
+            workspace path opened lazily with :func:`load_mf6_run` as a
+            file-backed :class:`LoadedMf6Run`. A ``list``/``tuple`` is flattened
+            one level into its items.
+        *others : SimulationBase, str, pathlib.Path, list or tuple
+            More models, in the same forms as ``other`` and flattened the same way;
+            together with ``other`` they become the non-reference members of the
+            :class:`~myflopy.project.model_group.ModelGroup` built for the diff.
+            Every model is keyed in that group by its ``name``, and one sharing a
+            key keeps only the LAST: a model named like this one replaces it, so
+            give the group names explicitly with ``ModelGroup({...})`` when two
+            runs share a model name.
+        crs : str, optional
+            CRS (any string pyproj accepts) given to :func:`load_mf6_run` for the
+            workspace-path entries; model objects are not touched. Default
+            :data:`~myflopy._defaults.DEFAULT_CRS` (``"EPSG:2927"``).
+        shared_grid : bool, optional
+            Default ``False``. ``True`` requires every model to carry the same
+            discretization (compared by grid signature, ``ValueError`` otherwise)
+            and reuses this model's grid view for all of them.
+        verbosity_level : int, optional
+            Given to :func:`load_mf6_run` for the workspace-path entries. Default
+            ``0`` is silent; above 0 prints the loader's progress.
+
+        Returns
+        -------
+        ModelDiff
+            A :class:`~myflopy.project.model_diff.ModelDiff` whose reference is
+            this model's ``name``.
         """
 
         from myflopy.project.model_group import ModelGroup

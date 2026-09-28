@@ -32,17 +32,24 @@ _VALID_MVR_TYPES = {"FACTOR", "EXCESS", "THRESHOLD", "UPTO"}
 class SurfaceWaterValidationIssue:
     """One validation finding from a surface-water configuration check.
 
+    Usually created by :meth:`SurfaceWaterValidationReport.add_error` /
+    :meth:`~SurfaceWaterValidationReport.add_warning` rather than directly.
+
     Parameters
     ----------
-    level
-        Either ``"error"`` or ``"warning"``.
-    code
-        Stable short code for the finding type.
-    message
+    level : str
+        ``"error"`` or ``"warning"``. Not checked here, but the report's
+        :attr:`~SurfaceWaterValidationReport.errors` and
+        :attr:`~SurfaceWaterValidationReport.warnings` match these two exact
+        strings, so any other value is counted by neither.
+    code : str
+        Stable short code for the finding type, e.g. ``"lak_leakance"`` or
+        ``"mvr_maxmvr"``.
+    message : str
         Human-readable description of the issue.
-    context
-        Optional structured details such as package names, lake ids, or reach
-        numbers that help pinpoint the issue.
+    context : dict[str, Any], optional
+        Structured details such as package names, lake ids, or reach numbers
+        that help pinpoint the issue. Default empty.
     """
 
     level: str
@@ -62,6 +69,12 @@ class SurfaceWaterValidationReport:
     - call :meth:`raise_for_errors` to fail fast with a concise message
     - call :meth:`to_frame` or :meth:`summary_frame` for notebook-friendly
       inspection
+
+    Parameters
+    ----------
+    issues : list of SurfaceWaterValidationIssue, optional
+        Findings to start from. Default a new empty list. The report appends to
+        this list in place, so a list passed in is the one that grows.
     """
 
     issues: list[SurfaceWaterValidationIssue] = field(default_factory=list)
@@ -85,7 +98,18 @@ class SurfaceWaterValidationReport:
         return len(self.errors) == 0
 
     def add_error(self, code: str, message: str, **context: Any) -> None:
-        """Record one error-level finding."""
+        """Record one error-level finding.
+
+        Parameters
+        ----------
+        code : str
+            Stable short code for the finding type.
+        message : str
+            Human-readable description of the issue.
+        **context
+            Structured details (``lake_no=0``, ``period=2``, ...), stored as the
+            finding's ``context`` dict.
+        """
 
         self.issues.append(
             SurfaceWaterValidationIssue(
@@ -97,7 +121,18 @@ class SurfaceWaterValidationReport:
         )
 
     def add_warning(self, code: str, message: str, **context: Any) -> None:
-        """Record one warning-level finding."""
+        """Record one warning-level finding.
+
+        Parameters
+        ----------
+        code : str
+            Stable short code for the finding type.
+        message : str
+            Human-readable description of the issue.
+        **context
+            Structured details (``lake_no=0``, ``period=2``, ...), stored as the
+            finding's ``context`` dict.
+        """
 
         self.issues.append(
             SurfaceWaterValidationIssue(
@@ -109,7 +144,14 @@ class SurfaceWaterValidationReport:
         )
 
     def extend(self, other: SurfaceWaterValidationReport) -> None:
-        """Append findings from another report."""
+        """Append findings from another report.
+
+        Parameters
+        ----------
+        other : SurfaceWaterValidationReport
+            Report whose ``issues`` are appended, in order, to this one's. The
+            issue objects are shared, not copied; ``other`` is left unchanged.
+        """
 
         self.issues.extend(other.issues)
 
@@ -152,7 +194,21 @@ class SurfaceWaterValidationReport:
         )
 
     def raise_for_errors(self, prefix: str = "Surface-water validation failed.") -> None:
-        """Raise ``ValueError`` when any error-level findings are present."""
+        """Raise ``ValueError`` when any error-level findings are present.
+
+        Warnings alone do not raise.
+
+        Parameters
+        ----------
+        prefix : str, optional
+            First line of the error message; one ``- [code] message`` line per
+            error follows it. Default ``"Surface-water validation failed."``.
+
+        Raises
+        ------
+        ValueError
+            When :attr:`errors` is not empty.
+        """
 
         if self.ok:
             return
@@ -1019,16 +1075,85 @@ def validate_surface_water_configuration(
 ) -> SurfaceWaterValidationReport:
     """Validate a coupled ``LAK``/``SFR``/``MVR`` configuration together.
 
+    Each of the three checks runs only when its inputs are given: LAK when any
+    of the four ``lak``/``nlakes`` arguments is not ``None``, SFR when ``sfr``
+    is, MVR when ``mvr_packages`` or ``mvr_perioddata`` is. Findings are
+    collected, not raised; call
+    :meth:`SurfaceWaterValidationReport.raise_for_errors` to fail on them.
+    Cell ids, lake ids, reach numbers and mover ids are all zero-based.
+
     Parameters
     ----------
-    model
-        Model providing grid, layer, and attached-package context.
-    nlakes, lak_packagedata, lak_connectiondata, lak_perioddata
-        Optional LAK inputs to validate.
-    sfr
-        Optional :class:`~myflopy.modflow.mf6.sfr.SFRBuilder` instance.
-    maxmvr, maxpackages, mvr_packages, mvr_perioddata
-        Optional MVR inputs to validate.
+    model : SimulationBase
+        The model the inputs are checked against, usually a legacy simulation
+        object (this is what ``model.validate_surface_water(...)`` passes). It is
+        read duck-typed: the cell count from ``model.vor.ncpl`` or
+        ``model.modelgrid``, ``model.nlay``, ``model.nper`` for period keys, cell
+        elevations from ``model.vor.gdf_topbtm`` or ``model.modelgrid``, and the
+        attached packages from ``model.gwf``. A check whose attribute is missing
+        is skipped -- except the MVR one, which reports every mover record's
+        packages as not attached when ``model.gwf`` is absent.
+    nlakes : int or None, optional
+        Number of lakes the LAK package declares; lake ids must lie in
+        ``0 .. nlakes - 1`` and ``lak_packagedata`` must have ``nlakes`` rows.
+        Default ``None``, read as ONE lake when other LAK inputs are given, so
+        pass it for a multi-lake package or every lake past the first is
+        reported as an invalid id.
+    lak_packagedata : list or None, optional
+        LAK ``packagedata`` rows ``[lakeno, strt, nlakeconn, ...]``: unique
+        lake ids, and ``nlakeconn`` equal to the number of
+        ``lak_connectiondata`` rows for that lake. ``None`` alongside other LAK
+        inputs is reported as a row-count error.
+    lak_connectiondata : list or None, optional
+        LAK ``connectiondata`` rows ``[lakeno, iconn, cellid, claktype,
+        bedleak, belev, telev, connlen, connwidth]`` (at least nine values), as a
+        flat list or the legacy form nested one level deeper. ``cellid`` must be
+        a ``(layer, cell)`` tuple inside the model; ``iconn`` unique per lake;
+        ``bedleak`` positive; ``belev <= telev``; a ``HORIZONTAL`` connection
+        needs positive ``connlen`` and ``connwidth``. A ``claktype`` other than
+        ``VERTICAL``, ``HORIZONTAL``, ``EMBEDDEDH`` or ``EMBEDDEDV`` is a
+        warning. Empty or ``None`` is an error.
+    lak_perioddata : dict or None, optional
+        LAK ``perioddata`` ``{period: [[lakeno, keyword, value, ...], ...]}``
+        (a row may also start ``[keyword, lakeno, ...]``). Period keys are
+        checked against ``model.nper``; a ``STAGE`` above the highest connected
+        cell top or below the lowest connected cell bottom is a warning.
+    sfr : SFRBuilder or None, optional
+        An :class:`~myflopy.modflow.mf6.sfr.SFRBuilder`, checked through its
+        derived ``packagedata``, ``connectiondata`` and ``perioddata``: reach
+        numbering, cell ids against the model, positive length, width,
+        thickness and roughness, non-negative gradient and streambed K,
+        ``ncon`` against the connection rows, and period keys against
+        ``model.nper``. A reach top above its cell top, a streambed bottom below
+        its cell bottom, two reaches in one cell and a negative inflow are
+        warnings. Reading those properties resolves the builder, which can
+        raise.
+    maxmvr : int or None, optional
+        MVR ``MAXMVR``; an error when it is smaller than the most mover records
+        in one period. ``None`` counts as 0, so give it whenever
+        ``mvr_perioddata`` has records or that error is reported.
+    maxpackages : int or None, optional
+        MVR ``MAXPACKAGES``; an error when it is smaller than the number of
+        ``mvr_packages`` rows. ``None`` counts as 0, so give it whenever
+        packages are declared or that error is reported.
+    mvr_packages : list or None, optional
+        The MVR ``packages`` block as a LIST of rows whose first item is a
+        package name, e.g. ``[["sfr"], ["lak"]]``, compared case-insensitively.
+        Anything but a non-empty list -- a tuple included -- is reported as
+        ``mvr_packages_empty`` and ends the MVR checks.
+    mvr_perioddata : dict or None, optional
+        MVR ``perioddata`` ``{period: [(pname1, id1, pname2, id2, mvrtype,
+        value), ...]}``. Each record needs exactly six values; both packages
+        must be in ``mvr_packages`` and attached to ``model.gwf``; ``mvrtype``
+        one of ``FACTOR``, ``EXCESS``, ``THRESHOLD``, ``UPTO``; ids non-negative
+        and, where the attached package's ``packagedata`` can be read, below its
+        row count; ``value`` a non-negative number (a ``FACTOR`` above 1 is a
+        warning). Period keys are not checked.
+
+    Returns
+    -------
+    SurfaceWaterValidationReport
+        Every finding, empty when nothing was given to check.
     """
 
     report = SurfaceWaterValidationReport()

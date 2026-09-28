@@ -255,7 +255,16 @@ class PackageLibrary(SpecLibrary[PackageSpec]):
         super().__delitem__(key)
 
     def pop(self, *args: Any) -> Any:
-        """Remove and return a package, dropping any cached fingerprints."""
+        """Remove and return a package, dropping any cached fingerprints.
+
+        Parameters
+        ----------
+        *args
+            Forwarded to ``dict.pop``: the library key, optionally followed by a
+            default returned when the key is absent. Without a default a missing
+            key raises ``dict.pop``'s plain ``KeyError(key)`` -- ``dict.pop``
+            never calls ``__missing__``, so there is no did-you-mean here.
+        """
 
         self._invalidate()
         return super().pop(*args)
@@ -267,13 +276,39 @@ class PackageLibrary(SpecLibrary[PackageSpec]):
         return super().popitem()
 
     def update(self, *args: Any, **kwargs: Any) -> None:
-        """Merge packages in, dropping any cached fingerprints."""
+        """Merge packages in, dropping any cached fingerprints.
+
+        Parameters
+        ----------
+        *args
+            Forwarded to ``dict.update``: at most one mapping of library key to
+            :class:`~myflopy.specs.PackageSpec`, or an iterable of ``(key, spec)``
+            pairs. Entries replace existing keys without the ``overwrite=`` guard
+            :meth:`Project.add_package` has, and are not type-checked.
+        **kwargs
+            Forwarded to ``dict.update``: ``key=spec`` pairs, for keys that are
+            identifiers (a key holding ``/`` must go through ``*args``).
+        """
 
         self._invalidate()
         super().update(*args, **kwargs)
 
     def setdefault(self, key: str, default: Any = None) -> Any:
-        """Fetch or insert a package, dropping any cached fingerprints."""
+        """Fetch or insert a package, dropping any cached fingerprints.
+
+        Parameters
+        ----------
+        key : str
+            Library key to look up.
+        default : PackageSpec or None, optional
+            Stored under ``key`` and returned when ``key`` is absent (as
+            ``dict.setdefault``; not type-checked). Default ``None``.
+
+        Returns
+        -------
+        PackageSpec or None
+            The entry at ``key`` after the call.
+        """
 
         self._invalidate()
         return super().setdefault(key, default)
@@ -319,6 +354,43 @@ class PackageLibrary(SpecLibrary[PackageSpec]):
         Mutates the library and returns the new spec. Refuses an existing ``key``
         unless ``overwrite=True``: silently replacing a package that other
         simulations reference is the accident this verb exists to avoid.
+
+        Parameters
+        ----------
+        source : str
+            Library key of the package to copy. A key not in the library raises
+            ``KeyError`` naming the near miss.
+        key : str
+            Library key the copy is registered under.
+        name : str or None, optional
+            New package name for the copy (``PackageSpec.name``, the MF6 package
+            name). The rename is carried into ``pname`` and a
+            ``"{model_name}.<old>"`` ``filename`` option when they still hold the
+            old name; any ``*_filerecord`` option still naming the old package
+            raises ``ValueError`` unless ``overrides`` supplies it. ``None`` (the
+            default) keeps the source's name.
+        deep : bool, optional
+            ``True`` (the default) deep-copies the source's options, inputs and
+            metadata, so editing the fork cannot write through into the
+            original's arrays; ``False`` copies only the dicts and shares their
+            values.
+        note : str or None, optional
+            Free text recorded in the copy's ``metadata["forked_from"]`` beside the
+            source key and a UTC timestamp. Default ``None`` records none.
+        overwrite : bool, optional
+            ``False`` (the default) raises ``KeyError`` when ``key`` is already in
+            the library; ``True`` replaces it.
+        **overrides
+            Package options merged over the copy's options, then validated by
+            rebuilding the spec through :func:`dataclasses.replace` -- an option
+            the package's builder does not accept raises ``TypeError``, as it
+            would in ``mf.npf(...)``. An override naming an option the source's
+            grid pin certifies voids that pin.
+
+        Returns
+        -------
+        PackageSpec
+            The copy, also registered under ``key``.
         """
 
         if key in self and not overwrite:
@@ -351,6 +423,31 @@ class PackageLibrary(SpecLibrary[PackageSpec]):
 
         Editing is never refused. It is your library, and revising ``npf/base``
         is the normal case; the point is that the consequence stops being silent.
+
+        Parameters
+        ----------
+        key : str
+            Library key of the package to replace. A key not in the library
+            raises ``KeyError`` naming the near miss.
+        name : str or None, optional
+            New package name, carried into ``pname``/``filename`` exactly as in
+            :meth:`fork`. ``None`` (the default) keeps the current name.
+        deep : bool, optional
+            ``True`` (the default) deep-copies the current options, inputs and
+            metadata before editing; ``False`` shares their values.
+        note : str or None, optional
+            Free text recorded in the new spec's ``metadata["edited"]`` beside the
+            key and a UTC timestamp. Default ``None`` records none.
+        **overrides
+            Package options merged over the current ones and validated by
+            rebuilding the spec, as in :meth:`fork` -- an unknown option raises
+            ``TypeError``, and an override of a pin-certified option voids the
+            pin.
+
+        Returns
+        -------
+        PackageSpec
+            The edited spec, now registered under ``key``.
         """
 
         edited = fork_package(
@@ -539,7 +636,7 @@ class SimulationLibrary(SpecLibrary[SimulationSpec]):
 
         Wraps :meth:`~myflopy.specs.SimulationSpec.derive`, which already records
         ``derived_from`` and appends to ``lineage``; each swap adds its own
-        ``replace_package`` entry, so the fork carries an auditable trail.
+        ``with_packages`` entry, so the fork carries an auditable trail.
 
         ``swap`` maps an existing package label to the library key that should
         take its slot, in either of two forms::
@@ -558,6 +655,39 @@ class SimulationLibrary(SpecLibrary[SimulationSpec]):
         whose ``derived_from`` names a simulation NOT in the library makes
         :meth:`Project.save` refuse it, so an unregistered parent is a save-time
         error rather than a fork-time one.
+
+        Parameters
+        ----------
+        source : str
+            Name of the simulation in this library to derive from. A name not in
+            the library raises ``KeyError`` naming the near miss.
+        name : str
+            Name of the variant; it becomes the new spec's ``name`` and
+            ``run_name``, and its ``derived_from`` is the source spec's own
+            ``name`` (the same as ``source`` for a simulation registered through
+            ``add_simulation``, which keys by that name).
+        swap : Mapping or None, optional
+            Package label to replacement library key, flat or keyed by model name
+            (the two forms above). Each replacement is inserted as
+            ``mf.ref(<key>)`` in the slot of the package it replaces; the key is
+            NOT checked against the package library here, so a missing one fails
+            when the variant is built. A label no model carries, an unknown model
+            name, or a simulation-level package (``tdis``/``ims``) raises
+            ``KeyError``; a replacement that is not a ``str`` raises
+            ``TypeError``; one model and label targeted twice with different keys
+            raises ``ValueError``. ``None`` (the default) swaps nothing.
+        register : bool, optional
+            ``True`` (the default) stores the variant under ``name`` in this
+            library; ``False`` only returns it.
+        overwrite : bool, optional
+            ``False`` (the default) raises ``KeyError`` when ``name`` is already in
+            the library -- checked even with ``register=False``; ``True`` allows
+            replacing it.
+
+        Returns
+        -------
+        SimulationSpec
+            The variant.
         """
 
         if name in self and not overwrite:

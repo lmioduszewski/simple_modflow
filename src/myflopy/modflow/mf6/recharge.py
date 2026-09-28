@@ -43,6 +43,64 @@ class RCHBuilder(_ArealBuilder):
     Cell selection, value broadcasting, boundnames and validation come from
     :class:`~myflopy.modflow.mf6.areal._ArealBuilder`; this class only supplies
     the single-value RCH record shape and its spec factory.
+
+    All parameters are keyword-only. Nothing is resolved until :meth:`build`, which
+    validates, writes one record per selected cell for every period, and returns
+    the ``PackageSpec``, stamped with the pin of ``context``'s grid when it has one.
+
+    Parameters
+    ----------
+    context : ModelContext
+        Where the cells come from: ``context.domain`` (the idomain, ``(ncpl,)`` or
+        ``(nlay, ncpl)``) selects and checks them, and with no domain every cell of
+        ``context.grid.ncpl`` is used. Also the grid the built spec is pinned to.
+        Required; a context with neither a domain nor a grid raises ``ValueError``
+        at :meth:`build` for a generated selection.
+    nper : int
+        Number of stress periods; every period ``0 .. nper - 1`` gets a record for
+        every selected cell. A value below 1 raises ``ValueError``.
+    cells : {"top_active", "all_active", "surface_only"} or sequence, default "top_active"
+        Which cells receive recharge. ``"top_active"`` takes, per column, the
+        highest layer with ``idomain > 0`` and skips a column with none;
+        ``"all_active"`` takes every active ``(layer, cell)``; ``"surface_only"`` is
+        accepted and currently behaves exactly like ``"top_active"``. With no
+        domain all three take every column of the grid, and with a
+        one-dimensional domain its active columns, all on ``layer``. A sequence
+        names the cells itself: ``(layer, cell)`` pairs, or bare zero-based cell
+        numbers placed on ``layer``; at :meth:`build` each is checked against the
+        domain (when there is one), and an inactive cell or one past the domain's
+        extent raises ``ValueError``. Any other string raises ``ValueError``.
+    layer : int, default 0
+        Zero-based layer for bare cell numbers in ``cells``, and for every
+        generated cell when the domain is missing or one-dimensional. Ignored by
+        the string selectors on an ``(nlay, ncpl)`` domain.
+    name_by_cell : Mapping, optional
+        Boundary names, keyed by ``(layer, cell)`` or by bare cell number (the
+        pair is tried first). Read only with ``boundnames=True``; a cell it does not
+        name falls back to ``"<name>_<layer>_<cell>"``.
+    boundnames : bool, default False
+        Append a boundary name to every record and write MF6's ``BOUNDNAMES``
+        option.
+    name : str, default "rch"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>``, the
+        built spec's name, and the prefix of generated boundary names.
+    options : Mapping[str, Any], optional
+        Extra keywords for :class:`flopy.mf6.ModflowGwfrch` (``fixed_cell``,
+        ``print_input``, ``timeseries``, ...), passed through
+        :func:`~myflopy.advanced.rch_spec` and checked against that class's
+        signature at :meth:`build`, where an unknown name raises ``TypeError``. They
+        may override ``save_flows=True``. A ``name`` or ``boundnames`` here collides
+        with the builder's own and raises ``TypeError``. Defaults to none.
+    recharge : float, str, sequence, or Mapping
+        The recharge flux, in model length/time -- one of the shapes listed above.
+        A number is applied to every selected cell; a ``str`` is passed through
+        unchanged, as an MF6 time-series name; a sequence must hold exactly one
+        value per selected cell, in selection order; a cell mapping is looked up by
+        ``(layer, cell)`` and then by bare cell number. A mapping whose keys are ALL
+        integers in ``range(nper)`` is read as per-period (each value any of the
+        other shapes), and a period it leaves out raises ``ValueError``. A missing
+        cell, a wrong-length sequence, or a negative number raises ``ValueError``
+        at :meth:`build`.
     """
 
     recharge: Any

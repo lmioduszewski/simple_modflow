@@ -94,16 +94,34 @@ class CanonicalModelConfig:
     (``nrow``/``ncol`` of the irregular Voronoi grid, ``cell_size``), ``nlay``, and
     the stress-period schedule (``nper``/``period_length``/``steps_per_period``).
     The defaults are the full demonstration profile; use the smaller
-    :meth:`validation` profile (50x50) for fast automated tests.
+    :meth:`validation` profile (50x50) or :meth:`testing` profile (21x21) for
+    fast automated tests.
 
-    Attributes
+    Parameters
     ----------
-    nrow, ncol, cell_size
-        Grid resolution and cell size used to generate the Voronoi mesh.
-    nlay
-        Number of layers (the canonical contract expects 4).
-    nper, period_length, steps_per_period
-        Stress-period count, length, and sub-stepping.
+    nrow, ncol : int, optional
+        Seed rows and columns of the irregular Voronoi grid, which has
+        ``nrow * ncol`` cells per layer over a ``ncol * cell_size`` by
+        ``nrow * cell_size`` valley. Default 100 each. The build places its
+        boundaries by row and column (the CHD column on the west edge, the GHB
+        column on the east). :meth:`testing`'s 21x21 is the coarsest profile
+        the build is meant for: 15x15, 18x18 and 20x20 raise ``IndexError``
+        part-way through it (measured).
+    nlay : int, optional
+        Number of layers. Default 4, and 4 is the only value that builds: the
+        valley's layer surfaces are written for exactly four layers, so 3 fails
+        inside FloPy's DISV and 5 raises ``IndexError`` (both measured).
+    nper : int, optional
+        Number of stress periods; period 0 is steady state and the rest
+        transient. Default 6, which is also the contract's minimum -- fewer
+        raises ``AssertionError`` at the end of the build.
+    cell_size : float, optional
+        Nominal seed spacing in feet (the model's length unit). Default 100.0.
+    period_length : float, optional
+        Length of every stress period in days (the model's time unit).
+        Default 30.0.
+    steps_per_period : int, optional
+        Time steps per stress period, with a step multiplier of 1.0. Default 2.
     """
 
     nrow: int = 100
@@ -124,7 +142,7 @@ class CanonicalModelConfig:
     def testing(cls) -> CanonicalModelConfig:
         """Return the smallest contract-complete profile, for the test suite.
 
-        Feature-complete but small: every canonical package (13) and
+        Feature-complete but small: every canonical package (the contract's 15) and
         observation family (5) is still built and the full
         ``CANONICAL_MODEL_CONTRACT`` still validates — the grid is simply as
         coarse as the contract floors allow (SFR reaches >= 40, pond/spring
@@ -144,7 +162,15 @@ class CanonicalModelConfig:
 
 
 def rectangular_voronoi(config: CanonicalModelConfig) -> VoronoiGridPlus:
-    """Build the deterministic irregular Voronoi grid shared by all profiles."""
+    """Build the deterministic irregular Voronoi grid shared by all profiles.
+
+    Parameters
+    ----------
+    config : CanonicalModelConfig
+        Supplies ``nrow``, ``ncol`` and ``cell_size``; the grid is
+        :func:`~myflopy.modflow.mf6.canonical.irregular_voronoi_grid` with its
+        default seed, jitter and refinement.
+    """
 
     return irregular_voronoi_grid(
         nrow=config.nrow,
@@ -175,17 +201,33 @@ def build_transient_model(
 
     Parameters
     ----------
-    workspace
-        Directory to build the model in.
-    config
-        Size/timing controls; defaults to the full :class:`CanonicalModelConfig`.
-    name
-        Model name (must satisfy MF6 length limits).
+    workspace : str or pathlib.Path
+        Parent directory. The model's files go in ``<workspace>/<name>`` (its
+        ``model.workspace``), and the stream and lake GeoPackages the build
+        derives are WRITTEN to ``<workspace>/inputs/`` during the call. Nothing
+        is run.
+    config : CanonicalModelConfig or None, optional
+        Size and timing profile. Default None: the full
+        :class:`CanonicalModelConfig` (100x100 cells, 6 periods). Pass
+        :meth:`CanonicalModelConfig.validation` or
+        :meth:`CanonicalModelConfig.testing` for a smaller model.
+    name : str, optional
+        The MF6 simulation and model name, also the stem of every file. Default
+        ``"viz_prt_master"``. MODFLOW 6 limits model names to 16 characters; the
+        build does not check it.
 
     Returns
     -------
     SimulationBase
-        The assembled (unrun) canonical model.
+        The assembled (unrun) canonical model, with ``model.canonical_contract``
+        set to :data:`~myflopy.modflow.mf6.canonical.CANONICAL_MODEL_CONTRACT`.
+
+    Raises
+    ------
+    AssertionError
+        The built model violates the contract (it is validated at the end, with
+        ``full_profile`` when the grid has at least 10,000 cells per layer) --
+        for example ``config.nper`` below 6.
     """
 
     config = CanonicalModelConfig() if config is None else config
@@ -980,7 +1022,24 @@ def _attach_canonical_targets(
 
 
 def representative_cells(config: CanonicalModelConfig) -> dict[str, int | list[int]]:
-    """Return stable cells used by map, cross-section, and PRT examples."""
+    """Return stable cells used by map, cross-section, and PRT examples.
+
+    Parameters
+    ----------
+    config : CanonicalModelConfig
+        The profile the model was built with; the cells are computed from its
+        ``nrow``/``ncol`` by the grid's row-major numbering, so they match only a
+        model built from the same profile.
+
+    Returns
+    -------
+    dict
+        ``center`` (int, the cell in the middle row and column),
+        ``cross_section`` (list of int, the whole middle row, west to east) and
+        ``releases`` (list of int, three cells in zero-based column 2, the third
+        from the west, at rows ``nrow // 5``, ``nrow // 2`` and
+        ``4 * nrow // 5``). Cell indices are zero-based within a layer.
+    """
 
     center_row = config.nrow // 2
     center = center_row * config.ncol + config.ncol // 2

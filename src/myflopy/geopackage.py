@@ -189,7 +189,27 @@ class CellSurfaceOffset:
 
     @classmethod
     def from_dict(cls, data: Any) -> CellSurfaceOffset:
-        """Rebuild an offset from :meth:`to_dict`'s payload."""
+        """Rebuild an offset from :meth:`to_dict`'s payload.
+
+        Parameters
+        ----------
+        data : dict
+            Field name to value: ``reference`` (required), and ``offset`` /
+            ``minimum``, each of which takes the class default when omitted --
+            :meth:`to_dict` leaves defaults out. It goes through the constructor, so
+            ``reference`` is lowercased and validated exactly as it is there.
+
+        Returns
+        -------
+        CellSurfaceOffset
+
+        Raises
+        ------
+        ValueError
+            ``data`` is not a ``dict``; it names a key that is not a field or lacks
+            ``reference`` (the constructor's ``TypeError``, reworded); or
+            ``reference`` is not ``model_top``, ``cell_top`` or ``cell_bottom``.
+        """
 
         return _from_spec_payload(cls, data)
 
@@ -245,6 +265,38 @@ class CellSurfaceOffset:
 
         ``source`` is anything exposing ``surface_value`` -- a :class:`GeoPackageSource`
         (the file path) or a :class:`SurfaceResolver` (the file-less areal-builder path).
+
+        Parameters
+        ----------
+        source : GeoPackageSource or SurfaceResolver
+            Any object with a ``surface_value(reference, *, layer, cell)`` method; it
+            answers the surface this offset is measured from. When it has a ``path``
+            (a :class:`GeoPackageSource`), that file's name appears in errors.
+        row : pandas.Series or dict
+            The feature's attribute row (the file-less
+            :class:`~myflopy.modflow.mf6.evapotranspiration.EVTBuilder` passes an
+            empty ``dict``). Read only where ``offset`` or ``minimum``
+            names a column (``row[column]``); its ``"name"`` entry, else a Series's
+            index label, identifies the feature in an error.
+        layer : int
+            Zero-based model layer of the record. It picks the cell for
+            ``"cell_top"`` and ``"cell_bottom"``; ``"model_top"`` ignores it.
+        cell : int
+            Zero-based cell (CELL2D) number within the layer.
+
+        Returns
+        -------
+        float
+            ``surface + offset``, raised to ``minimum`` when that is larger.
+
+        Raises
+        ------
+        ValueError
+            A column named by ``offset`` or ``minimum`` holds a NULL or a non-number
+            in ``row``; or ``source`` cannot resolve the surface -- it has no layer
+            elevations, or none for ``reference`` at ``layer``.
+        KeyError
+            ``offset`` or ``minimum`` names a column ``row`` does not have.
         """
 
         surface = source.surface_value(self.reference, layer=layer, cell=cell)
@@ -404,6 +456,37 @@ class Spread:
     clips holding 0.90% of the conductance between them, none above 0.37%
     individually. Dropped shares are removed before ``mode`` is applied, so
     ``"retained"`` still preserves the total exactly.
+
+    Parameters
+    ----------
+    field : str
+        Attribute column holding each feature's TOTAL -- a conductance or a flux for
+        the whole feature, in the package's own units. Each covered cell is written
+        ``value * share``. A NULL or a non-number raises ``ValueError`` naming the
+        feature; a column the file lacks raises a bare ``KeyError`` (it is left out of
+        the up-front column check). Refused with ``TypeError`` on an elevation
+        argument (``chd``/``ghb`` ``head``, ``drn`` ``elevation``, ``riv``
+        ``stage``/``rbot``, ``evt`` ``surface``), where there is no total to divide.
+    mode : {"clip", "retained"}, default "clip"
+        What becomes of the part of a feature outside the active grid (above):
+        ``"clip"`` keeps shares as fractions of the whole feature, so that part is
+        not written; ``"retained"`` divides each kept share by the fraction covered,
+        so the written cells still sum to the total. Anything else raises
+        ``ValueError``. When one call wraps several fields, the FIRST wrapped
+        field's ``mode`` applies to all of them.
+    min_share : float, default 0.01
+        Cells holding less than this fraction of the feature are dropped before
+        ``mode`` is applied -- dropped from the feature's records altogether, every
+        field included, not only this one. When every cell falls below it none is
+        dropped. Must be in ``[0, 1)`` (``ValueError`` otherwise); ``0`` keeps every
+        cell. When one call wraps several fields, the largest applies.
+    warn_below : float, default 0.99
+        A feature whose kept cells hold less than this fraction of it is logged at
+        WARNING through the ``myflopy`` logger, as a log line only; otherwise its
+        coverage is logged at DEBUG. Separately, whatever this is, a feature lying
+        only partly on usable cells is reported under the source's ``gaps`` (a
+        ``UserWarning`` by default). Not validated. When one call wraps several
+        fields, the smallest applies.
     """
 
     field: str
@@ -425,7 +508,27 @@ class Spread:
 
     @classmethod
     def from_dict(cls, data: Any) -> Spread:
-        """Rebuild a split from :meth:`to_dict`'s payload."""
+        """Rebuild a split from :meth:`to_dict`'s payload.
+
+        Parameters
+        ----------
+        data : dict
+            Field name to value: ``field`` (required), and ``mode`` / ``min_share``
+            / ``warn_below``, each of which takes the class default when omitted --
+            :meth:`to_dict` leaves defaults out. It goes through the constructor, so
+            ``mode`` and ``min_share`` are validated exactly as they are there.
+
+        Returns
+        -------
+        Spread
+
+        Raises
+        ------
+        ValueError
+            ``data`` is not a ``dict``; it names a key that is not a field or lacks
+            ``field`` (the constructor's ``TypeError``, reworded); or ``mode`` or
+            ``min_share`` is out of range.
+        """
 
         return _from_spec_payload(cls, data)
 
@@ -838,6 +941,77 @@ class GeoPackageSource:
     Layer values are assumed to be one-based by default because that is the
     usual convention in external GIS inputs. Stress-period values are assumed
     to be zero-based.
+
+    Parameters
+    ----------
+    path : Path or str
+        The GeoPackage, or any file ``geopandas.read_file`` opens. Must exist when the
+        source is created (``FileNotFoundError``). It is read on first use and cached
+        on this object. Its features are reprojected to ``grid.crs`` when the file and
+        the grid both declare a CRS and the two differ, and used as they are otherwise.
+    context : ModelContext
+        What the features are mapped onto. ``context.grid`` is required (``ValueError``
+        without it) and supplies the cell polygons. ``context.domain`` decides which
+        cells can take a record -- ``idomain > 0``; every cell when it is ``None`` --
+        and where the active edge lies for ``edges_only``. The layer elevations
+        (``context.surfaces``, else ``grid.gdf_topbtm``) serve
+        :class:`CellSurfaceOffset` and ``min_above_bottom``.
+    nper : int
+        Number of stress periods. The boundary builders return one record list for
+        each period ``0 .. nper - 1``, and with ``period_field`` unset every feature
+        appears in every one. Must be at least 1 (``ValueError``).
+    layer : str, optional
+        The layer (table) to read, passed to ``geopandas.read_file(layer=)``. ``None``
+        (the default) reads the file's default layer.
+    name_field : str or None, default "name"
+        Attribute column naming each feature. Its value identifies the feature in
+        warnings and errors (the row index does when the column is absent or this is
+        ``None``), and it becomes the record's boundname under ``boundnames=True``,
+        which then requires the column (``ValueError`` naming it). ``None`` with
+        ``boundnames=True`` writes the row index as the boundname.
+    layer_field : str or None, default "layer"
+        Attribute column giving each feature's model layer, read as
+        ``int(value) - layer_base``; a result below 0 raises ``ValueError``. The
+        boundary builders require the column when this is set. ``None`` puts every
+        feature in the top layer.
+    period_field : str, optional
+        Attribute column giving the ONE stress period a feature applies to, read as
+        ``int(value) - period_base``; a period outside ``0 .. nper - 1`` raises
+        ``ValueError``. ``None`` (the default) applies every feature to every period.
+        :meth:`k_array` does not read it.
+    layer_base : int, default 1
+        Subtracted from each ``layer_field`` value: ``1`` reads one-based (GIS-style)
+        layers, ``0`` zero-based ones.
+    period_base : int, default 0
+        Subtracted from each ``period_field`` value: ``0`` reads zero-based periods.
+    gaps : {"warn", "nearest", "raise", "ignore"}, default "warn"
+        What a feature reaching no usable cell means to the boundary builders.
+        ``"warn"`` leaves it out and reports it -- a ``UserWarning`` and a log
+        WARNING, in one message that also reports features clipped at the grid's
+        edge, elevations below their own cell bottom and records lifted by
+        ``min_above_bottom``. ``"nearest"`` moves a missed POINT onto the nearest
+        usable cell within ``snap_within`` and reports the move; a line or polygon is
+        never moved, and what cannot be moved is reported as under ``"warn"``.
+        ``"raise"`` raises ``ValueError`` wherever ``"warn"`` would
+        report. ``"ignore"`` says nothing. In every mode a source with no feature on
+        a usable cell raises ``ValueError`` naming both extents and both CRSs. An
+        unknown word raises ``ValueError`` here. :meth:`k_array` does not read it.
+    snap_within : float, optional
+        ``gaps="nearest"`` only: the farthest a missed point may be moved, in the
+        grid's coordinate units, measured to the cell POLYGON rather than its
+        centroid. ``None`` (the default) is ``sqrt(area)`` of the cell it would move
+        to. Must be positive (``ValueError``).
+    min_above_bottom : float, optional
+        Lift each elevation of a record to at least this far above its own cell
+        bottom -- ``chd`` and ``ghb`` ``head``, ``drn`` ``elevation``, ``evt``
+        ``surface``, and ``riv`` ``rbot``, whose ``stage`` is raised by the same
+        amount only where it is itself below the new floor. The clearance is never
+        less than ``max(|bottom| * 1e-6, 1e-6)``, so ``0.0`` means as close to the
+        bottom as the written file can hold. ``None`` (the default) lifts nothing,
+        but a record below its cell bottom is still reported (see ``gaps``). Both the
+        report and the lift need layer elevations; with neither ``context.surfaces``
+        nor ``grid.gdf_topbtm`` they are skipped without a word. Negative raises
+        ``ValueError``.
     """
 
     path: Path | str
@@ -1064,6 +1238,33 @@ class GeoPackageSource:
 
         Delegates to the shared :class:`SurfaceResolver` so the ``gdf_topbtm``
         column layout lives in exactly one place (also used by ``mf.evt(context=...)``).
+
+        Parameters
+        ----------
+        reference : {"model_top", "cell_top", "cell_bottom"}
+            Which surface to read: the ground surface, or the top or bottom of the
+            cell in ``layer``. Spelled exactly so, lowercase -- it is not validated
+            here (:class:`CellSurfaceOffset` validates its own), and any other string
+            is read as ``"cell_bottom"``.
+        layer : int
+            Zero-based model layer. ``"cell_top"`` of layer ``n > 0`` is the bottom of
+            layer ``n - 1``; ``"model_top"`` ignores it.
+        cell : int
+            Zero-based cell (CELL2D) number.
+
+        Returns
+        -------
+        float
+            The elevation, read from ``context.surfaces`` or, when that is ``None``,
+            ``grid.gdf_topbtm``.
+
+        Raises
+        ------
+        ValueError
+            Neither table is available, or the table has no column for ``reference``
+            at ``layer``. A ``cell`` outside the table (or, in a dict table, a
+            ``layer`` past its bottoms) is not checked: the lookup's own
+            ``KeyError``/``IndexError`` propagates.
         """
 
         return SurfaceResolver(self.context).surface_value(reference, layer=layer, cell=cell)
@@ -1698,7 +1899,49 @@ class GeoPackageSource:
         boundnames: bool = True,
         **options,
     ) -> PackageSpec:
-        """Return a CHD package spec from GeoPackage features."""
+        """Return a CHD package spec from GeoPackage features.
+
+        Each feature becomes one ``[(layer, cell), head(, boundname)]`` record per
+        stress period it applies to, in every usable cell it covers.
+
+        Parameters
+        ----------
+        head : str, float, list of str, or CellSurfaceOffset, default "head"
+            The specified head, in model length units: a column name; a number used
+            for every feature; a list of column names indexed by stress period
+            (periods past its end read the last one); or a :class:`CellSurfaceOffset`,
+            resolved per cell. Copied to every cell a feature covers, and lifted by
+            ``min_above_bottom`` when that is set. A NULL or a non-number raises
+            ``ValueError`` naming the feature.
+        name : str, default "chd"
+            Package name, passed to :func:`~myflopy.advanced.chd_spec`; it also
+            names the package in this source's warnings.
+        edges_only : bool, default False
+            Keep only cells on the edge of the ACTIVE domain in each feature's layer
+            -- those bordering the outside of the mesh or an inactive cell.
+        boundnames : bool, default True
+            End each record with a boundname (see ``name_field``) and write MF6's
+            ``BOUNDNAMES`` option. ``False`` writes neither.
+        **options
+            Forwarded to :func:`~myflopy.advanced.chd_spec` and on to
+            :class:`flopy.mf6.ModflowGwfchd`; an unknown name raises ``TypeError``.
+
+        Returns
+        -------
+        PackageSpec
+            Records keyed by period ``0 .. nper - 1``. Its ``metadata`` carries the
+            grid pin, the file's path, content hash and this source's settings, a
+            coverage summary, and the recipe ``with_grid`` re-declares it from.
+
+        Raises
+        ------
+        ValueError
+            A column this call reads is missing; a value is NULL or non-numeric; no
+            feature reaches a usable cell; or ``gaps="raise"`` found something to
+            report.
+        TypeError
+            ``head`` is a :class:`Spread` -- a head has no total to divide.
+        """
 
         return self._bc_from_features(
             "chd", name=name, boundnames=boundnames, edges_only=edges_only,
@@ -1715,7 +1958,56 @@ class GeoPackageSource:
         boundnames: bool = True,
         **options,
     ) -> PackageSpec:
-        """Return a GHB package spec from GeoPackage features."""
+        """Return a GHB package spec from GeoPackage features.
+
+        Each feature becomes one ``[(layer, cell), head, conductance(, boundname)]``
+        record per stress period it applies to, in every usable cell it covers.
+
+        Parameters
+        ----------
+        head : str, float, list of str, or CellSurfaceOffset, default "head"
+            The boundary head (MF6's ``bhead``), in model length units: a column
+            name; a number used for every feature; a list of column names indexed by
+            stress period (periods past its end read the last one); or a
+            :class:`CellSurfaceOffset`, resolved per cell. Copied to every cell a
+            feature covers, and lifted by ``min_above_bottom`` when that is set.
+        conductance : str, float, list of str, or Spread, default "conductance"
+            The conductance (MF6's ``cond``), in length^2/time, as the same value
+            forms. A plain value is copied WHOLE to every cell a feature covers;
+            wrap the column in :class:`Spread` to divide a feature's total among its
+            cells instead.
+        name : str, default "ghb"
+            Package name, passed to :func:`~myflopy.advanced.ghb_spec`; it also
+            names the package in this source's warnings.
+        edges_only : bool, default False
+            Keep only cells on the edge of the ACTIVE domain in each feature's layer
+            -- those bordering the outside of the mesh or an inactive cell.
+        boundnames : bool, default True
+            End each record with a boundname (see ``name_field``) and write MF6's
+            ``BOUNDNAMES`` option. ``False`` writes neither.
+        **options
+            Forwarded to :func:`~myflopy.advanced.ghb_spec` and on to
+            :class:`flopy.mf6.ModflowGwfghb`; an unknown name raises ``TypeError``.
+
+        Returns
+        -------
+        PackageSpec
+            Records keyed by period ``0 .. nper - 1``. Its ``metadata`` carries the
+            grid pin, the file's path, content hash and this source's settings, a
+            coverage summary, and the recipe ``with_grid`` re-declares it from.
+
+        Raises
+        ------
+        ValueError
+            A column this call reads is missing; a value is NULL or non-numeric; no
+            feature reaches a usable cell; or ``gaps="raise"`` found something to
+            report.
+        KeyError
+            A column named only by a :class:`Spread` is missing (it is left out of
+            the up-front column check).
+        TypeError
+            ``head`` is a :class:`Spread` -- a head has no total to divide.
+        """
 
         return self._bc_from_features(
             "ghb", name=name, boundnames=boundnames, edges_only=edges_only,
@@ -1732,7 +2024,57 @@ class GeoPackageSource:
         boundnames: bool = True,
         **options,
     ) -> PackageSpec:
-        """Return a DRN package spec from GeoPackage features."""
+        """Return a DRN package spec from GeoPackage features.
+
+        Each feature becomes one ``[(layer, cell), elevation, conductance(,
+        boundname)]`` record per stress period it applies to, in every usable cell it
+        covers.
+
+        Parameters
+        ----------
+        elevation : str, float, list of str, or CellSurfaceOffset, default "elevation"
+            The drain elevation (MF6's ``elev``), in model length units: a column
+            name; a number used for every feature; a list of column names indexed by
+            stress period (periods past its end read the last one); or a
+            :class:`CellSurfaceOffset`, resolved per cell. Copied to every cell a
+            feature covers, and lifted by ``min_above_bottom`` when that is set.
+        conductance : str, float, list of str, or Spread, default "conductance"
+            The conductance (MF6's ``cond``), in length^2/time, as the same value
+            forms. A plain value is copied WHOLE to every cell a feature covers;
+            wrap the column in :class:`Spread` to divide a feature's total among its
+            cells instead.
+        name : str, default "drn"
+            Package name, passed to :func:`~myflopy.advanced.drn_spec`; it also
+            names the package in this source's warnings.
+        edges_only : bool, default False
+            Keep only cells on the edge of the ACTIVE domain in each feature's layer
+            -- those bordering the outside of the mesh or an inactive cell.
+        boundnames : bool, default True
+            End each record with a boundname (see ``name_field``) and write MF6's
+            ``BOUNDNAMES`` option. ``False`` writes neither.
+        **options
+            Forwarded to :func:`~myflopy.advanced.drn_spec` and on to
+            :class:`flopy.mf6.ModflowGwfdrn`; an unknown name raises ``TypeError``.
+
+        Returns
+        -------
+        PackageSpec
+            Records keyed by period ``0 .. nper - 1``. Its ``metadata`` carries the
+            grid pin, the file's path, content hash and this source's settings, a
+            coverage summary, and the recipe ``with_grid`` re-declares it from.
+
+        Raises
+        ------
+        ValueError
+            A column this call reads is missing; a value is NULL or non-numeric; no
+            feature reaches a usable cell; or ``gaps="raise"`` found something to
+            report.
+        KeyError
+            A column named only by a :class:`Spread` is missing (it is left out of
+            the up-front column check).
+        TypeError
+            ``elevation`` is a :class:`Spread` -- an elevation has no total to divide.
+        """
 
         return self._bc_from_features(
             "drn", name=name, boundnames=boundnames, edges_only=edges_only,
@@ -1750,7 +2092,64 @@ class GeoPackageSource:
         boundnames: bool = True,
         **options,
     ) -> PackageSpec:
-        """Return a RIV package spec from GeoPackage features."""
+        """Return a RIV package spec from GeoPackage features.
+
+        Each feature becomes one ``[(layer, cell), stage, conductance, rbot(,
+        boundname)]`` record per stress period it applies to, in every usable cell it
+        covers.
+
+        Parameters
+        ----------
+        stage : str, float, list of str, or CellSurfaceOffset, default "stage"
+            The river stage, in model length units: a column name; a number used for
+            every feature; a list of column names indexed by stress period (periods
+            past its end read the last one); or a :class:`CellSurfaceOffset`,
+            resolved per cell. Copied to every cell a feature covers. When the model
+            carries layer elevations, a stage below its record's ``rbot`` raises
+            ``ValueError``.
+        conductance : str, float, list of str, or Spread, default "conductance"
+            The riverbed conductance (MF6's ``cond``), in length^2/time, as the same
+            value forms. A plain value is copied WHOLE to every cell a feature
+            covers; wrap the column in :class:`Spread` to divide a feature's total
+            among its cells instead.
+        rbot : str, float, list of str, or CellSurfaceOffset, default "rbot"
+            The river bottom elevation, in model length units, as the same value
+            forms as ``stage``. ``min_above_bottom`` lifts it, carrying ``stage`` up
+            by the same amount only where the stage is itself below the new floor.
+        name : str, default "riv"
+            Package name, passed to :func:`~myflopy.advanced.riv_spec`; it also
+            names the package in this source's warnings.
+        edges_only : bool, default False
+            Keep only cells on the edge of the ACTIVE domain in each feature's layer
+            -- those bordering the outside of the mesh or an inactive cell.
+        boundnames : bool, default True
+            End each record with a boundname (see ``name_field``) and write MF6's
+            ``BOUNDNAMES`` option. ``False`` writes neither.
+        **options
+            Forwarded to :func:`~myflopy.advanced.riv_spec` and on to
+            :class:`flopy.mf6.ModflowGwfriv`; an unknown name raises ``TypeError``.
+
+        Returns
+        -------
+        PackageSpec
+            Records keyed by period ``0 .. nper - 1``. Its ``metadata`` carries the
+            grid pin, the file's path, content hash and this source's settings, a
+            coverage summary, and the recipe ``with_grid`` re-declares it from.
+
+        Raises
+        ------
+        ValueError
+            A column this call reads is missing; a value is NULL or non-numeric; a
+            stage lies below its rbot (checked only with layer elevations); no
+            feature reaches a usable cell; or ``gaps="raise"`` found something to
+            report.
+        KeyError
+            A column named only by a :class:`Spread` is missing (it is left out of
+            the up-front column check).
+        TypeError
+            ``stage`` or ``rbot`` is a :class:`Spread` -- an elevation has no total
+            to divide.
+        """
 
         return self._bc_from_features(
             "riv", name=name, boundnames=boundnames, edges_only=edges_only,
@@ -1765,7 +2164,50 @@ class GeoPackageSource:
         boundnames: bool = True,
         **options,
     ) -> PackageSpec:
-        """Return a WEL package spec from GeoPackage features."""
+        """Return a WEL package spec from GeoPackage features.
+
+        Each feature becomes one ``[(layer, cell), rate(, boundname)]`` record per
+        stress period it applies to, in every usable cell it covers.
+
+        Parameters
+        ----------
+        rate : str, float, list of str, or Spread, default "rate"
+            The well rate (MF6's ``q``), in length^3/time, negative for extraction:
+            a column name; a number used for every feature; a list of column names
+            indexed by stress period (periods past its end read the last one); or a
+            :class:`Spread`, which divides a feature's rate among its cells. A plain
+            value is copied WHOLE to every cell a feature covers, so a line or
+            polygon feature pumps its rate once per cell. For a single column (plain,
+            or a ``Spread`` in ``"clip"`` mode), a feature lying wholly or partly off
+            the usable cells reports ``rate * (1 - fraction on them)`` as not
+            written.
+        name : str, default "wel"
+            Package name, passed to :func:`~myflopy.advanced.wel_spec`; it also
+            names the package in this source's warnings.
+        boundnames : bool, default True
+            End each record with a boundname (see ``name_field``) and write MF6's
+            ``BOUNDNAMES`` option. ``False`` writes neither.
+        **options
+            Forwarded to :func:`~myflopy.advanced.wel_spec` and on to
+            :class:`flopy.mf6.ModflowGwfwel`; an unknown name raises ``TypeError``.
+
+        Returns
+        -------
+        PackageSpec
+            Records keyed by period ``0 .. nper - 1``. Its ``metadata`` carries the
+            grid pin, the file's path, content hash and this source's settings, a
+            coverage summary, and the recipe ``with_grid`` re-declares it from.
+
+        Raises
+        ------
+        ValueError
+            A column this call reads is missing; a value is NULL or non-numeric; no
+            feature reaches a usable cell; or ``gaps="raise"`` found something to
+            report.
+        KeyError
+            A column named only by a :class:`Spread` is missing (it is left out of
+            the up-front column check).
+        """
 
         return self._bc_from_features(
             "wel", name=name, boundnames=boundnames, options=options, rate=rate,
@@ -1779,7 +2221,46 @@ class GeoPackageSource:
         boundnames: bool = True,
         **options,
     ) -> PackageSpec:
-        """Return a list-based RCH package spec from GeoPackage features."""
+        """Return a list-based RCH package spec from GeoPackage features.
+
+        Each feature becomes one ``[(layer, cell), recharge(, boundname)]`` record per
+        stress period it applies to, in every usable cell it covers.
+
+        Parameters
+        ----------
+        recharge : str, float, list of str, or Spread, default "recharge"
+            The recharge flux, in length/time: a column name; a number used for
+            every feature; a list of column names indexed by stress period (periods
+            past its end read the last one); or a :class:`Spread`, for a column that
+            holds a feature's total rather than a rate. A plain value is copied to
+            every cell a feature covers.
+        name : str, default "rch"
+            Package name, passed to :func:`~myflopy.advanced.rch_spec`; it also
+            names the package in this source's warnings.
+        boundnames : bool, default True
+            End each record with a boundname (see ``name_field``) and write MF6's
+            ``BOUNDNAMES`` option. ``False`` writes neither.
+        **options
+            Forwarded to :func:`~myflopy.advanced.rch_spec` and on to
+            :class:`flopy.mf6.ModflowGwfrch`; an unknown name raises ``TypeError``.
+
+        Returns
+        -------
+        PackageSpec
+            Records keyed by period ``0 .. nper - 1``. Its ``metadata`` carries the
+            grid pin, the file's path, content hash and this source's settings, a
+            coverage summary, and the recipe ``with_grid`` re-declares it from.
+
+        Raises
+        ------
+        ValueError
+            A column this call reads is missing; a value is NULL or non-numeric; no
+            feature reaches a usable cell; or ``gaps="raise"`` found something to
+            report.
+        KeyError
+            A column named only by a :class:`Spread` is missing (it is left out of
+            the up-front column check).
+        """
 
         return self._bc_from_features(
             "rch", name=name, boundnames=boundnames, options=options,
@@ -1803,6 +2284,53 @@ class GeoPackageSource:
         ``nseg=1`` record shape. Segmented ET needs ``nseg - 1`` extra
         ``pxdp``/``petm`` values per record that no feature mapping supplies,
         so it is rejected here rather than failing later inside FloPy.
+
+        Parameters
+        ----------
+        surface : str, float, list of str, or CellSurfaceOffset, default "surface"
+            The ET surface elevation, in model length units: a column name; a number
+            used for every feature; a list of column names indexed by stress period
+            (periods past its end read the last one); or a
+            :class:`CellSurfaceOffset`, resolved per cell (``"model_top"`` for land
+            surface). Copied to every cell a feature covers, and lifted by
+            ``min_above_bottom`` when that is set.
+        rate : str, float, list of str, or Spread, default "rate"
+            The maximum ET flux, in length/time, as the same value forms. A plain
+            value is copied to every cell a feature covers.
+        depth : str, float, or list of str, default "depth"
+            The extinction depth below ``surface``, in model length units: a column
+            name, a number used for every feature, or per-period column names.
+            Copied to every cell a feature covers.
+        name : str, default "evt"
+            Package name, passed to :func:`~myflopy.advanced.evt_spec`; it also
+            names the package in this source's warnings.
+        boundnames : bool, default True
+            End each record with a boundname (see ``name_field``) and write MF6's
+            ``BOUNDNAMES`` option. ``False`` writes neither.
+        **options
+            Forwarded to :func:`~myflopy.advanced.evt_spec` and on to
+            :class:`flopy.mf6.ModflowGwfevt`; an unknown name raises ``TypeError``.
+            ``nseg`` other than 1 raises ``ValueError``, as above.
+
+        Returns
+        -------
+        PackageSpec
+            ``[(layer, cell), surface, rate, depth(, boundname)]`` records keyed by
+            period ``0 .. nper - 1``. Its ``metadata`` carries the grid pin, the
+            file's path, content hash and this source's settings, a coverage
+            summary, and the recipe ``with_grid`` re-declares it from.
+
+        Raises
+        ------
+        ValueError
+            ``nseg`` is not 1; a column this call reads is missing; a value is NULL or
+            non-numeric; no feature reaches a usable cell; or ``gaps="raise"`` found
+            something to report.
+        KeyError
+            A column named only by a :class:`Spread` is missing (it is left out of
+            the up-front column check).
+        TypeError
+            ``surface`` is a :class:`Spread` -- an elevation has no total to divide.
         """
 
         if int(options.get("nseg", 1)) != 1:
@@ -1825,7 +2353,42 @@ class GeoPackageSource:
         nlay: int,
         defaults: float | list[float],
     ) -> np.ndarray:
-        """Return an ``(nlay, ncpl)`` K array from GeoPackage polygons."""
+        """Return an ``(nlay, ncpl)`` K array from GeoPackage polygons.
+
+        Each feature paints its value into every ACTIVE cell of its own layer
+        (``layer_field``) that it covers, by the same cell rule the boundary builders
+        use; where features overlap, the later row wins. Resolved now, against this
+        source's context -- for a K map that resolves at build and survives
+        ``Project.save()``, see :class:`~myflopy.sources.Polygons`.
+
+        Parameters
+        ----------
+        value : str, default "k"
+            Attribute column holding each feature's K, in length/time. A NULL or a
+            non-number raises ``ValueError`` naming the feature; it is read only for
+            features that reach a cell.
+        nlay : int
+            Number of model layers: the array's first dimension. A feature whose layer
+            (``layer_field`` value less ``layer_base``) is ``nlay`` or more raises
+            ``ValueError``.
+        defaults : float or list of float
+            K for every cell no feature paints: one value for every layer, or one per
+            layer (any other length raises ``ValueError``).
+
+        Returns
+        -------
+        numpy.ndarray
+            Float array of shape ``(nlay, ncpl)``.
+
+        Raises
+        ------
+        ValueError
+            As above, or when no feature reaches an active cell (naming both extents
+            and CRSs). A PARTIAL miss is only logged at WARNING; ``gaps`` is not read.
+        KeyError
+            The file lacks the ``value`` column or the ``layer_field`` column -- there
+            is no up-front column check here.
+        """
 
         fallback = [defaults] * nlay if np.isscalar(defaults) else list(defaults)
         if len(fallback) != nlay:

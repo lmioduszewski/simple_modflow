@@ -47,8 +47,38 @@ class CanonicalModelContract:
     :meth:`validate` raises ``AssertionError`` listing every violation on a built
     model. The shared instance is :data:`CANONICAL_MODEL_CONTRACT`.
 
-    Attributes are the thresholds/role lists above; see the field defaults for the
-    canonical values.
+    Parameters
+    ----------
+    nlay : int, optional
+        The layer count the built grid must have. Default 4. :meth:`validate` also
+        uses it to read ``icelltype`` and to check that ``k`` carries one row per
+        layer.
+    minimum_full_ncpl : int, optional
+        The fewest cells per layer a model may have when :meth:`validate` is called
+        with ``full_profile=True``; not checked otherwise. Default 10,000.
+    minimum_nper : int, optional
+        The fewest stress periods ``model.nper`` may report. Default 6.
+    minimum_sfr_reaches : int, optional
+        The fewest SFR reaches (rows of the SFR ``packagedata``), checked on every
+        call. Default 40.
+    minimum_full_sfr_reaches : int, optional
+        The fewest SFR reaches when ``full_profile=True``; not checked otherwise.
+        Default 150.
+    icelltype : tuple of int, optional
+        The NPF ``icelltype`` each layer must carry, top layer first (1 =
+        convertible, 0 = confined). Default ``(1, 1, 0, 0)``.
+    layer_roles : tuple of str, optional
+        One description per layer, top first. Descriptive only: :meth:`validate`
+        does not read it. Default the four canonical roles (upper unconfined,
+        lower unconfined, aquitard, confined).
+    required_packages : frozenset of str, optional
+        Lower-case package TYPES the model must carry (compared against
+        ``model.package_types``). Default :data:`CANONICAL_PACKAGE_NAMES`, the 15
+        canonical types.
+    required_targets : frozenset of str, optional
+        Names that must be registered in ``model.targets``. Default
+        :data:`CANONICAL_TARGET_NAMES` (``heads``, ``lake_stage``, ``sfr_stage``,
+        ``sfr_flow``, ``drn_flow``).
     """
 
     nlay: int = 4
@@ -67,7 +97,35 @@ class CanonicalModelContract:
     required_targets: frozenset[str] = CANONICAL_TARGET_NAMES
 
     def validate(self, model, *, full_profile: bool = False) -> None:
-        """Raise ``AssertionError`` when a built model violates the contract."""
+        """Raise ``AssertionError`` when a built model violates the contract.
+
+        Checks the fields of this contract, plus rules fixed to the canonical
+        layout that no field controls: layer 3's median ``k`` must be below 5% of
+        layer 2's, WEL must pump layers 2 and 4 (zero-based 1 and 3), the cells
+        must not all have the same area, the ``all_lakes``/``all_streams``
+        regions must be refined (median cell area below 90% of the grid's;
+        checked only when the region has cells), and
+        the ``north_seepage_springs``, ``south_seepage_springs`` and
+        ``infiltration_pond`` regions must be non-empty. Every violation is
+        collected and reported in one error.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A BUILT model (it need not have run). It must carry SFR, NPF and WEL
+            packages and a Voronoi grid (``model.vor``), because those are read
+            directly: a model without an SFR package raises ``AttributeError``
+            from that read rather than the contract's ``AssertionError``.
+        full_profile : bool, optional
+            Also enforce ``minimum_full_ncpl`` and ``minimum_full_sfr_reaches``.
+            Default False. :func:`build_canonical_model` passes True when the
+            profile has at least 10,000 cells per layer.
+
+        Raises
+        ------
+        AssertionError
+            One or more contract checks failed; the message lists all of them.
+        """
 
         grid = model.gwf.modelgrid
         errors: list[str] = []
@@ -164,14 +222,22 @@ def canonical_head_signals(model) -> dict[str, object]:
 
     Parameters
     ----------
-    model
-        A built and *run* canonical model (exposing ``gwf.output.head()``).
+    model : SimulationBase
+        A built and *run* model on a DIS or DISV grid; its head file is read
+        through ``model.gwf.output.head()``, every saved ``(kstp, kper)``, and
+        reshaped to ``(nlay, ncpl)`` per frame from ``model.gwf.modelgrid``.
+        Values with ``|h| >= 1e29`` (MF6's inactive and dry markers) are treated
+        as missing.
 
     Returns
     -------
     dict
-        ``frame_count`` plus per-layer ``spatial_range_by_layer``,
-        ``temporal_range_by_layer``, and ``maximum_drawdown_by_layer`` arrays.
+        ``frame_count`` (int, saved head records) plus three ``(nlay,)`` arrays
+        in model length units: ``spatial_range_by_layer`` (max minus min head at
+        the LAST saved record), ``temporal_range_by_layer`` (range, over every
+        cell and record, of the head change from the FIRST saved record), and
+        ``maximum_drawdown_by_layer`` (the largest head decline from the first
+        record).
     """
 
     reader = model.gwf.output.head()
@@ -201,13 +267,18 @@ def canonical_feature_signals(model) -> dict[str, object]:
 
     Parameters
     ----------
-    model
-        A built and *run* canonical model with the canonical target set attached.
+    model : SimulationBase
+        A built and *run* model with ``heads`` and ``drn_flow`` target sets
+        registered in ``model.targets`` (as :func:`build_canonical_model`
+        registers them); their simulated series are read from the run's outputs.
 
     Returns
     -------
     dict
-        ``head_change`` (per head target) and ``seepage_peak`` (per DRN series).
+        ``head_change``: ``{target name: max minus min simulated head}`` in model
+        length units, one entry per head-target column. ``seepage_peak``:
+        ``{series name: largest |flow|}`` over the DRN flow series, in model
+        volume per time.
     """
 
     heads = model.targets.heads.targets.simulated_heads(model)
@@ -237,16 +308,29 @@ def canonical_sfr_signals(model, *, per: int = 0) -> dict[str, object]:
 
     Parameters
     ----------
-    model
-        A built and *run* canonical model with an SFR package.
-    per
-        Stress period to summarize (default 0).
+    model : SimulationBase
+        A built and *run* model with an SFR package, read through
+        ``model.packages.sfr.results.profile`` and
+        ``model.packages.sfr.budget.flow_ja_face``.
+    per : int, optional
+        Zero-based stress period to summarize. Default 0. The stage and the
+        routed flows come from the last saved time step of that period; the
+        exchange ``q_gwf`` is the profile table's, which SUMS the period's saved
+        budget steps (measured: at ``nstp=2`` with ``SAVE BUDGET ALL`` it is the
+        two steps added). A period the run does not have is not refused: every
+        reach then reads dry and the depth and flow entries are NaN.
 
     Returns
     -------
     dict
-        Reach counts, min/max wetted depth, losing/gaining reach counts, and
-        min/max routed flow for the period.
+        ``reach_count``, ``wet_reach_count``, ``dry_reach_count`` (a reach is
+        wet when its stage is finite and above -1e20); ``minimum_depth`` /
+        ``maximum_depth`` (stage minus streambed top over wet reaches, model
+        length units, NaN if none is wet); ``losing_reach_count`` /
+        ``gaining_reach_count`` (reach-to-aquifer exchange ``q_gwf`` above
+        +1e-6 / below -1e-6); ``minimum_routed_flow`` / ``maximum_routed_flow``
+        (magnitudes of the reach-to-reach flows, model volume per time, NaN if
+        none).
     """
 
     profile = model.packages.sfr.results.profile.get(per=per)
@@ -293,15 +377,21 @@ def canonical_partition_mask(model, nparts: int) -> np.ndarray:
 
     Parameters
     ----------
-    model
-        The canonical model to partition.
-    nparts
-        Number of subdomains (must be >= 2).
+    model : SimulationBase
+        A built model to partition (it need not have run). Cells are ordered by
+        ``model.gwf.modelgrid.xcellcenters``; each lake of a LAK package, and
+        each set of SFR/LAK features an MVR package connects, is kept in one
+        subdomain.
+    nparts : int
+        Number of subdomains, at least 2. The first cut is ``nparts`` west-to-east
+        bands holding equal numbers of cells; moving lakes and repairing
+        contiguity can then change the counts.
 
     Returns
     -------
     numpy.ndarray
-        Per-cell integer subdomain ids.
+        One integer subdomain id (``0 .. nparts - 1``) per cell of a layer, shape
+        ``(ncpl,)``.
 
     Raises
     ------
@@ -338,6 +428,34 @@ def irregular_voronoi_grid(
 
     Seeds retain row-major ordering so stable feature and boundary selections can
     be shared by the full and validation profiles.
+
+    Parameters
+    ----------
+    nrow, ncol : int
+        Seed rows and columns. The grid has ``nrow * ncol`` cells, numbered
+        row-major from the south-west corner (cell ``row * ncol + col``), and
+        the domain is the box ``(0, 0, ncol * cell_size, nrow * cell_size)``.
+    cell_size : float
+        Nominal seed spacing in model length units; with ``nrow``/``ncol`` it
+        fixes the domain extent.
+    seed : int, optional
+        Seed for :func:`numpy.random.default_rng`; the same seed gives the same
+        grid. Default 2026.
+    jitter_fraction : float, optional
+        Each seed moves by a uniform random offset of up to this fraction of the
+        median seed spacing, independently in x and y. Default 0.32.
+    refined : bool, optional
+        Squeeze the seed columns between 45% and 90% of the width into 60-90%
+        (smaller cells down-valley) and pull seeds near the canonical stream
+        corridor -- two tributaries meeting the valley axis at 40% of the width,
+        then a main stem east along it -- toward it, so those cells come out
+        smaller too. Default True; False keeps a jittered regular lattice.
+
+    Returns
+    -------
+    VoronoiGridPlus
+        The grid, built from explicit vertices and cells with the seeds as its
+        cell centres.
     """
 
     rng = np.random.default_rng(seed)

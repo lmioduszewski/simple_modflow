@@ -43,6 +43,64 @@ class UsgModel:
 
     Build one with :func:`~myflopy.modflow.usg.reader.read_usg` rather than
     directly.
+
+    Attributes
+    ----------
+    name_file : NameFile
+        The parsed name file: its path, its directory (every relative path
+        resolves against it), and its package rows and unit-number map.
+    disu : DisuData
+        ``DISU`` as read: node and layer counts, per-node ``top``/``bot``/
+        ``area``, the connectivity (``iac``/``ja``), the stress-period timing
+        (``perlen``/``nstp``/``tsmult``/``steady``) and the unit codes.
+    bas : BasData
+        ``BAS6`` as read: per-node ``ibound`` and ``strt``, and ``hnoflo``.
+    lpf : LpfData
+        ``LPF`` as read: per-layer flags (``laytyp``, ``layvka``, ...) and
+        per-node ``hk``/``vka``/``ss``/``sy``.
+    sms : SmsData or None
+        ``SMS`` solver settings; ``None`` when the name file has no SMS.
+    grid : VoronoiGridPlus or None
+        The plan grid built from the ``.gsf``, with the layer elevations
+        published onto ``grid.gdf_topbtm``. ``None`` when no ``.gsf`` was found
+        or given; everything needing geometry (:meth:`surfaces`,
+        :meth:`boundary_frame`, :meth:`export_gis`, :meth:`to_mf6`, ...) then
+        raises ``ValueError``.
+    boundaries : dict[str, PeriodRecords]
+        The list boundary conditions read, keyed by upper-case file type --
+        ``"CHD"``, ``"DRN"``, ``"GHB"``, ``"RIV"``, ``"WEL"`` -- with records
+        in 1-based node numbering, GWF and CLN nodes kept apart. Empty when read
+        with ``read_boundaries=False``.
+    rch : RchData or None
+        ``RCH`` as read: one recharge array per period that defines one.
+        ``None`` when absent or not read.
+    ets : EtsData or None
+        ``ETS`` (segmented evapotranspiration) as read. ``None`` when absent or
+        not read.
+    hfb : numpy.ndarray
+        ``HFB6`` barriers, shape ``(n, 3)``: 1-based ``node1``, ``node2`` and
+        ``hydchr``, as read, as floats. Empty, shape ``(0, 3)``, when the name
+        file lists no ``HFB6``/``HFB`` package or boundaries were not read (an
+        HFB file declaring zero barriers gives an empty array too).
+    cln : ClnData or None
+        The CLN (connected linear network) as read; it has no MODFLOW 6
+        counterpart and is not converted. ``None`` when the model has no CLN.
+    oc_words : tuple of str
+        The distinct output-control phrases the ``OC`` file uses, e.g.
+        ``"SAVE HEAD"``. Empty without an OC file.
+    length_units : str
+        DISU ``LENUNI`` as MODFLOW 6's word: ``"feet"``, ``"meters"``,
+        ``"centimeters"``, or ``"unknown"``.
+    time_units : str
+        DISU ``ITMUNI`` as MODFLOW 6's word: ``"seconds"``, ``"minutes"``,
+        ``"hours"``, ``"days"``, ``"years"``, or ``"unknown"``.
+    start_date_time : str or None
+        ``"YYYY-MM-DD HH:MM:SS"`` inferred from the first ``NPER`` ``m/d/yyyy``
+        dates in the DISU file (written on its stress-period lines): the first
+        is read as the end of period 1, so the start is that date less the
+        first period's length. Trusted only when there are at least two and
+        they strictly increase; ``None`` otherwise. :meth:`to_mf6` uses it when
+        not given one.
     """
 
     name_file: NameFile
@@ -207,6 +265,19 @@ class UsgModel:
 
         Nodes above :attr:`nodes` belong to the CLN grid and have no MODFLOW 6
         cell; they come back as ``(-1, -1)`` and must be filtered by the caller.
+
+        Parameters
+        ----------
+        node : int or array_like of int
+            One or more 1-based USG node numbers, converted to ``int64``. The
+            layered numbering is assumed: layer ``(node - 1) // ncpl``, cell
+            ``(node - 1) % ncpl``. Values below 1 are not checked.
+
+        Returns
+        -------
+        numpy.ndarray of int64, shape (n, 2)
+            One ``(layer, cell)`` row per node -- a 2-D array even for a single
+            node.
         """
 
         node = np.asarray(node, dtype=np.int64)
@@ -226,21 +297,27 @@ class UsgModel:
 
         Parameters
         ----------
-        interpolate
-            Build each surface from the cell centres as scattered points, so it
-            can be evaluated on **any** grid. That is what makes an imported
-            model a starting point for a model on a different mesh -- which is
-            usually the reason to import one. ``False`` builds from the raw
-            per-cell arrays instead, which is cheaper and exact but only valid
-            on *this* grid: ``Surface.from_array`` is a same-grid constructor.
-        method
+        interpolate : bool, optional
+            Default ``True``: build each surface from the cell-polygon centroids
+            as scattered points, so it can be evaluated on **any** grid. That is
+            what makes an imported model a starting point for a model on a
+            different mesh -- which is usually the reason to import one.
+            ``False`` builds from the raw per-cell arrays instead, which is
+            cheaper and exact but only valid on *this* grid:
+            ``Surface.from_array`` is a same-grid constructor.
+        method : str, optional
             Interpolation method passed to :meth:`Surface.from_points`
-            (``"linear"``, ``"nearest"``, ``"cubic"``). Ignored when
-            ``interpolate`` is ``False``.
+            (``"linear"``, the default, ``"nearest"`` or ``"cubic"``). Ignored
+            when ``interpolate`` is ``False``.
 
         Returns
         -------
         list[Surface]
+
+        Raises
+        ------
+        ValueError
+            When the model has no grid (it was read without a ``.gsf``).
         """
 
         from myflopy.surfaces import Surface
@@ -296,6 +373,32 @@ class UsgModel:
         other grid by intersection -- unlike the node numbers it came from.
         Only the periods that define their own records appear; a reused period
         carries the previous period's values by definition.
+
+        Parameters
+        ----------
+        ftype : str
+            The package's file type, case-insensitive: one of the keys of
+            :attr:`boundaries` -- ``"CHD"``, ``"DRN"``, ``"GHB"``, ``"RIV"`` or
+            ``"WEL"``, whichever the model has.
+
+        Returns
+        -------
+        geopandas.GeoDataFrame
+            One row per groundwater record: ``period`` (zero-based), ``layer``
+            and ``cell`` (zero-based), the package's value columns in USG's
+            names (``shead``/``ehead``, ``elev``/``cond``, ``bhead``/``cond``,
+            ``stage``/``cond``/``rbot``, or ``q``) and the cell polygon as
+            ``geometry``, in the CRS of ``grid.gdf_vorPolys``. Records on CLN
+            nodes are not in it.
+            A package with no groundwater records gives an empty frame with the
+            ``period``/``layer``/``cell``/``geometry`` columns only.
+
+        Raises
+        ------
+        ValueError
+            When the model has no grid (it was read without a ``.gsf``).
+        KeyError
+            When the model has no package of type ``ftype``.
         """
 
         import geopandas as gpd
@@ -342,13 +445,67 @@ class UsgModel:
         """Write this model's inputs as grid-independent vector and raster files.
 
         A converted model is bound to the grid it was converted on; this is the
-        form that survives changing it. See
-        :func:`~myflopy.modflow.usg.export.export_gis` for the parameters and for
-        what each written file means.
+        form that survives changing it. Delegates to
+        :func:`~myflopy.modflow.usg.export.export_gis`, whose module docstring
+        explains what each written file means.
+
+        Parameters
+        ----------
+        directory : str or pathlib.Path
+            Where to write; created, with an ``arrays/`` subdirectory, if absent.
+        crs : str, optional
+            Coordinate reference system every vector and raster is written in;
+            the data are reprojected into it from the grid's. Default ``None``
+            uses the CRS of ``grid.gdf_vorPolys``. A ``.gsf`` carries no CRS, so
+            check the grid's before relying on it -- the wrong one is silent and
+            puts the export nowhere near the model it is meant to rebuild.
+        stream_lines : dict of str to (str or pathlib.Path), optional
+            ``{CLN stream name: vector file}``, mapping a CLN stream onto a
+            centerline you would rather use. Each file is read, reprojected into
+            the grid's CRS (assumed to be in it when it declares none), merged,
+            and its longest piece kept; each stream node's ``station`` is then
+            measured along *your* line, so interpolating onto your own reaches
+            needs no reprojection. A name matching no CLN stream is ignored. The
+            CLN's own centerline and ``station_cln`` are written either way.
+            Default ``None`` measures along the CLN's own line.
+        clip_to : str or pathlib.Path, optional
+            A polygon file that each ``stream_lines`` file is clipped to before
+            use (reprojected into the grid's CRS, or assumed to be in it when it
+            declares none). A line empty after clipping is ignored with a
+            warning. Ignored when ``stream_lines`` is not given.
+        resolution : float, optional
+            Pixel size of the per-cell array rasters under ``arrays/``, in the
+            units of the written ``crs`` (the cells are reprojected before the
+            raster is laid out). Default ``None`` takes a quarter of the median
+            cell width, computed in the grid's own units, which resolves a
+            typical cell and absorbs the smallest ones. The lakebed raster
+            ``arrays/lakebed_bottom.tif`` is always written at that default,
+            whatever this says.
+        bed_thickness : float, optional
+            Lakebed thickness, in model length units, assumed when deriving each
+            lake's ``bedleak = fskin / bed_thickness`` in ``lakes.gpkg`` (both
+            the per-lake and per-node layers); default ``1.0``. CLN has no bed
+            thickness, so this is a choice, and ``fskin`` is written unmodified
+            beside it. It does not reach ``streams.gpkg``, whose ``rbth`` column
+            is always ``1.0``.
+        overwrite : bool, optional
+            Default ``False``: a ``directory`` that exists and is not empty is
+            refused. ``True`` writes into it anyway; files of the same name are
+            written over and nothing else there is removed.
 
         Returns
         -------
         ExportManifest
+            What was written, file by file; the same content is saved as
+            ``manifest.json`` beside a ``README.md``.
+
+        Raises
+        ------
+        ValueError
+            When the model has no grid, or when ``crs`` is not given and
+            ``grid.gdf_vorPolys`` has no CRS.
+        FileExistsError
+            When ``directory`` is not empty and ``overwrite`` is ``False``.
 
         Examples
         --------
@@ -411,57 +568,100 @@ class UsgModel:
 
         Parameters
         ----------
-        name
-            Model and simulation name.
-        crs
-            Coordinate reference system to stamp on the grid, e.g. ``"EPSG:2927"``.
-        newton
-            Force the Newton formulation on or off. ``None`` follows the SMS
-            package: a non-Picard ``NONLINMETH`` becomes ``NEWTON``.
-        under_relaxation
-            Add ``UNDER_RELAXATION`` to the Newton options.
-        start_date_time
-            ISO datetime for TDIS; defaults to what the DISU period labels say.
-        save_budget
-            Write a cell-by-cell budget file as well as heads.
-        complexity
-            IMS complexity preset. Defaults to ``"COMPLEX"``: a converted USG
-            model is a hard nonlinear problem, and ``"MODERATE"`` makes MODFLOW 6
-            die with SIGFPE on this class of model rather than converge slowly.
-        include
-            Restrict the converted boundary packages, e.g. ``("chd", "drn")``.
-            ``None`` converts everything that mapped.
-        fix_for_mf6
-            Apply the smallest edits that make MODFLOW 6 accept the model --
-            today, lifting a GHB head, a DRN invert or a RIV **bed** that sits
-            below its own cell bottom back inside the cell. A river is lifted as
-            a PAIR: ``rbot`` goes to the floor and ``stage`` rises by the same
-            delta, because MODFLOW 6 checks ``rbot`` against the cell bottom and
-            ``stage >= rbot`` separately, and clamping both collapses the
-            declared river depth to zero (ledger 291).
+        name : str, optional
+            Name of the GWF model and of the simulation (default ``"usg"``). It
+            also names the head file ``<name>.hds``, the budget file
+            ``<name>.cbc`` and the model the IMS solution claims.
+        crs : str, optional
+            Coordinate reference system to stamp on the grid, e.g.
+            ``"EPSG:2927"``. It is assigned to ``self.grid.crs`` -- the same grid
+            object the returned spec's ``ModelContext`` holds, so this model's
+            grid changes too -- and nothing is reprojected. Only that attribute
+            moves: ``grid.gdf_vorPolys`` and ``grid.gdf_topbtm``, already built
+            by :func:`read_usg`, keep the CRS they were built with. Default
+            ``None`` leaves the grid's CRS as :func:`read_usg` set it.
+        newton : bool, optional
+            ``True``/``False`` forces the Newton formulation on or off in the
+            model's ``NEWTONOPTIONS``. Default ``None`` follows the SMS package:
+            a non-Picard ``NONLINMETH`` means Newton, and a model with no SMS
+            gets none. The IMS under-relaxation and backtracking carried over
+            from SMS follow SMS's own ``NONLINMETH``, not this.
+        under_relaxation : bool, optional
+            Default ``True`` writes ``NEWTON UNDER_RELAXATION``; ``False`` writes
+            plain ``NEWTON``. Ignored when Newton is off.
+        start_date_time : str, optional
+            TDIS ``START_DATE_TIME``, e.g. ``"2020-01-01 00:00:00"``. Default
+            ``None`` (or an empty string) uses :attr:`start_date_time`, which
+            :func:`read_usg` infers from the DISU period labels and leaves
+            ``None`` when they do not increase.
+        save_budget : bool, optional
+            Default ``True`` saves the cell-by-cell budget every time step to
+            ``<name>.cbc`` as well as the heads to ``<name>.hds``. ``False``
+            saves heads only.
+        complexity : str, optional
+            IMS complexity preset, ``"SIMPLE"``/``"MODERATE"``/``"COMPLEX"``,
+            passed to :func:`myflopy.ims`. Defaults to ``"COMPLEX"``: a
+            converted USG model is a hard nonlinear problem, and ``"MODERATE"``
+            makes MODFLOW 6 die with SIGFPE on this class of model rather than
+            converge slowly. SMS's outer closure, iteration caps and linear
+            acceleration (and, for a Newton SMS that sets them, its
+            delta-bar-delta under-relaxation and backtracking) are passed
+            beside the preset and override its values.
+        include : iterable of str, optional
+            Restrict the optional packages to these names, case-insensitive:
+            any of ``"chd"``, ``"drn"``, ``"ghb"``, ``"riv"``, ``"wel"``,
+            ``"rch"``, ``"evt"`` and ``"hfb"``, e.g. ``("chd", "drn")``. A name
+            outside that list is ignored without a message, and so a bare string
+            (``"chd"``, read letter by letter) keeps none of them. DISV, NPF, IC, STO
+            and OC are always written. Default ``None`` converts everything that
+            mapped.
+        fix_for_mf6 : bool, optional
+            Apply the smallest edits that make MODFLOW 6 accept the model. Per
+            period, a GHB head, a DRN invert or a RIV **bed** (``rbot``) below a
+            floor just above its cell bottom -- the bottom plus
+            ``max(|bottom| * 1e-6, 1e-6)``, so the written text cannot round
+            below the bottom -- is raised to that floor. A river is lifted as a PAIR:
+            ``rbot`` goes to the floor, and ``stage`` rises by the same delta
+            only where the stage was below the floor too, because MODFLOW 6
+            checks ``rbot`` against the cell bottom and ``stage >= rbot``
+            separately, while a stage already inside its cell is left where it
+            was drawn (ledger 291). A CHD record whose head (``ehead``) is not
+            above that floor is omitted for that period, in confined and
+            convertible layers alike. Each kind of edit is counted in one logged
+            warning per package.
 
             MODFLOW-USG tolerates such a boundary. Whether MODFLOW 6 refuses one
             depends on the layer -- see :meth:`validate` -- but the edits are
             applied wherever the elevation is outside its cell, not only where
             MODFLOW 6 would object, so the option means the same thing on every
-            model. Off by default, because a boundary elevation is not something
-            to change without being told; :meth:`validate` names every case
-            first, and each edit is logged when it is made.
+            model. Default ``False``, because a boundary elevation is not
+            something to change without being told: the model is converted as
+            read, and every finding :meth:`validate` makes is logged as a
+            warning instead.
 
             What it does NOT touch: a river whose stage is below its own bed.
             MODFLOW 6 refuses that at any ``icelltype``, and which of the two
             numbers is the wrong one is not something a converter can know.
-        local_origin
-            Write the mesh relative to its own lower-left corner and declare
-            that corner as the DISV ``xorigin``/``yorigin``. Leave this on:
-            MODFLOW 6 derives conductances from the raw vertex coordinates, and
-            on a State Plane grid (~1.34 million feet here) that arithmetic
-            loses enough precision to produce a NaN budget while still reporting
-            "Normal termination". The model stays georeferenced either way.
+        local_origin : bool, optional
+            Default ``True`` writes the mesh relative to its own lower-left
+            corner (the smallest vertex x and y) and declares that corner as the
+            DISV ``xorigin``/``yorigin``. Leave this on: MODFLOW 6 derives
+            conductances from the raw vertex coordinates, and on a State Plane
+            grid (~1.34 million feet here) that arithmetic loses enough precision
+            to produce a NaN budget while still reporting "Normal termination".
+            The model stays georeferenced either way. ``False`` writes the raw
+            coordinates with an origin of ``(0, 0)``.
 
         Returns
         -------
         SimulationSpec
+            One GWF model on DISV with its TDIS (the DISU's period lengths,
+            step counts and multipliers) and IMS.
+
+        Raises
+        ------
+        ValueError
+            When the model has no grid (it was read without a ``.gsf``).
         """
 
         from myflopy.modflow.usg.convert import to_mf6

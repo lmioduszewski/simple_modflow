@@ -178,33 +178,67 @@ def gwf(
     name : str
         Model name -- the FloPy model name, and the key that IMS solvers
         (``mf.ims(models=(name,))``) and inter-model exchanges reference.
-    packages : Iterable[PackageSpec]
+    packages : Iterable[PackageSpec or PackageRef or str], optional
         Package specs to attach, e.g. ``[mf.disv(...), mf.npf(...), mf.ic(...),
-        mf.oc(...)]``. Built in order after the model; ``requires`` ordering is
-        validated.
+        mf.oc(...)]``; an ``mf.ref(key)`` or a bare key string (turned into a
+        ``PackageRef``) names a package in the project's library. Built in this
+        order after the model. Names must be unique (``ValueError`` otherwise),
+        and when every entry is a concrete ``PackageSpec`` each one's ``requires``
+        must be present and declared before it. Default ``()``: no packages.
     context : ModelContext, optional
         Geometry/dates for this model -- ``grid``, ``domain`` (idomain),
         ``surfaces``, ``dates``. Reachable afterward as ``model.myflopy_context``;
         GIS-aware helpers (``mf.rch``, ``mf.sfr``, ``mf.lak``, ``mf.X.gpkg``) read it.
-    hooks : Iterable[PostBuildHook]
-        Post-build callables run against the built model (e.g. attaching
-        observations).
-    grid : GridSpec or grid object, optional
-        A deferred ``mf.GridSpec.voronoi(...)`` resolved at run time, or an
-        already-built grid. Composes with ``mf.disv`` + simple BCs (see the deferred
-        vs eager grid seam in the project docs).
+        Default ``None`` stores an empty ``ModelContext()``.
+    hooks : Iterable[PostBuildHook], optional
+        Post-build callbacks, each called as ``callback(model, packages, context)``
+        after every package is built; results land in ``BuiltModel.hook_results``
+        under the hook's name. Hook names must be unique. Default ``()``.
+    grid : GridSpec or GridRef or grid object, optional
+        A deferred ``mf.GridSpec.voronoi(...)``, an ``mf.grid_ref(key)`` into the
+        project's grid library, or an already-built grid (wrapped with
+        ``GridSpec.from_object``). Resolved at build time, before any package
+        builds, and it REPLACES ``context.grid`` on the built model. Default
+        ``None``: the grid, if any, is ``context.grid``.
+    model_nam_file : str, optional
+        Name-file name for the model, forwarded to ``ModflowGwf``; omitted when
+        ``None``, so FloPy names it after the model.
+    version : str, optional
+        FloPy's model ``version`` string. Default ``"mf6"``.
+    exe_name : str, optional
+        Executable name recorded on the FloPy model object. Default ``"mf6"``.
+    model_rel_path : str or Path, optional
+        The model's folder relative to the simulation workspace. Default ``"."``
+        (the workspace itself).
+    list : str, optional
+        Listing-file name; omitted when ``None``, so MF6 uses the name file's
+        base name with ``.lst``.
+    print_input : bool, optional
+        MF6 ``PRINT_INPUT``: echo package input to the listing file. Omitted
+        when ``None`` (MF6's default, off).
+    print_flows : bool, optional
+        MF6 ``PRINT_FLOWS``: print package flow rates to the listing file.
+        Omitted when ``None`` (off).
+    save_flows : bool, optional
+        MF6 ``SAVE_FLOWS``: write package flow terms to the budget file named
+        by output control. Omitted when ``None`` (off).
     newtonoptions : str or Sequence[str], optional
         MF6 Newton-Raphson formulation, e.g. ``"NEWTON"`` or
         ``"NEWTON UNDER_RELAXATION"`` -- strongly recommended for water-table /
-        wetting-and-drying models.
-    print_input, print_flows, save_flows : bool, optional
-        Listing/output flags forwarded to ``ModflowGwf``.
-    model_nam_file, version, exe_name, model_rel_path, list : optional
-        FloPy model bookkeeping (defaults ``version="mf6"``, ``exe_name="mf6"``).
-    nc_mesh2d_filerecord, nc_structured_filerecord, nc_filerecord : optional
-        NetCDF output file records passed through to FloPy.
+        wetting-and-drying models. Omitted when ``None``. A NEWTON model gets a
+        BICGSTAB solver when ``mf.simulation`` generates the IMS.
+    nc_mesh2d_filerecord : Any, optional
+        FloPy's NetCDF layered-mesh output record, passed through when not
+        ``None``.
+    nc_structured_filerecord : Any, optional
+        FloPy's NetCDF structured-grid output record, passed through when not
+        ``None``.
+    nc_filerecord : Any, optional
+        FloPy's NetCDF file record, passed through when not ``None``.
     **kwargs
-        Any additional ``flopy.mf6.ModflowGwf`` constructor option.
+        Any additional ``flopy.mf6.ModflowGwf`` constructor option, stored on the
+        spec and passed to ``ModflowGwf`` at build time. Not checked at the call:
+        a name FloPy does not accept fails when the model is built.
 
     Returns
     -------
@@ -284,22 +318,55 @@ def gwt(
     ----------
     name : str
         Model name (the FloPy model name; referenced by IMS and the GWF-GWT exchange).
-    packages : Iterable[PackageSpec]
-        Transport package specs to attach (discretization + MST/ADV/DSP/SSM/IC/OC).
+    packages : Iterable[PackageSpec or PackageRef or str], optional
+        Transport package specs to attach (discretization + MST/ADV/DSP/SSM/IC/OC),
+        built in this order; an ``mf.ref(key)`` or bare key string names a library
+        package. Names must be unique. Default ``()``.
     context : ModelContext, optional
-        Geometry/dates, typically the same grid as the paired flow model.
-    hooks : Iterable[PostBuildHook]
-        Post-build callables run against the built model.
-    grid : GridSpec or grid object, optional
-        Optional deferred/explicit grid (usually shared with the flow model).
+        Geometry/dates, typically the same grid as the paired flow model. Default
+        ``None`` stores an empty ``ModelContext()``.
+    hooks : Iterable[PostBuildHook], optional
+        Post-build callbacks, each called as ``callback(model, packages, context)``
+        after every package is built; results land in ``BuiltModel.hook_results``.
+        Default ``()``.
+    grid : GridSpec or GridRef or grid object, optional
+        A deferred ``GridSpec``, an ``mf.grid_ref(key)``, or a built grid (wrapped
+        with ``GridSpec.from_object``), resolved at build time and replacing
+        ``context.grid``. It must be the paired flow model's mesh: two DISV models
+        joined by an exchange on different meshes are refused at build. Default
+        ``None``.
+    model_nam_file : str, optional
+        Name-file name, forwarded to ``ModflowGwt``; omitted when ``None``.
+    version : str, optional
+        FloPy's model ``version`` string. Default ``"mf6"``.
+    exe_name : str, optional
+        Executable name recorded on the FloPy model object. Default ``"mf6"``.
+    model_rel_path : str or Path, optional
+        The model's folder relative to the simulation workspace. Default ``"."``.
+    list : str, optional
+        Listing-file name; omitted when ``None`` (MF6 names it after the name file).
+    print_input : bool, optional
+        MF6 ``PRINT_INPUT``: echo package input to the listing file. Omitted when
+        ``None`` (off).
+    print_flows : bool, optional
+        MF6 ``PRINT_FLOWS``: print package flow rates to the listing file. Omitted
+        when ``None`` (off).
+    save_flows : bool, optional
+        MF6 ``SAVE_FLOWS``: write package flow terms to the budget file. Default
+        ``True`` here (unlike :func:`gwf`); ``None`` omits it.
     dependent_variable_scaling : bool, optional
-        Scale the transport dependent variable (concentration) for the solver.
-    print_input, print_flows, save_flows : bool, optional
-        Listing/output flags forwarded to ``ModflowGwt``.
-    model_nam_file, version, exe_name, model_rel_path, list, nc_*_filerecord : optional
-        FloPy model bookkeeping / NetCDF output records.
+        MF6 ``DEPENDENT_VARIABLE_SCALING``: scale the solution and right-hand side
+        to avoid very large concentration values. Omitted when ``None``.
+    nc_mesh2d_filerecord : Any, optional
+        FloPy's NetCDF layered-mesh output record, passed through when not ``None``.
+    nc_structured_filerecord : Any, optional
+        FloPy's NetCDF structured-grid output record, passed through when not
+        ``None``.
+    nc_filerecord : Any, optional
+        FloPy's NetCDF file record, passed through when not ``None``.
     **kwargs
-        Any additional ``flopy.mf6.ModflowGwt`` constructor option.
+        Any additional ``flopy.mf6.ModflowGwt`` constructor option, passed to it at
+        build time; an unknown name fails there, not at the call.
 
     Returns
     -------
@@ -308,10 +375,7 @@ def gwt(
     Examples
     --------
     >>> transport = mf.gwt("transport", packages=[...])
-    >>> mf.SimulationSpec("sim", models=(flow, transport),
-    ...                   packages=[mf.tdis(...), mf.ims(models=("flow",)),
-    ...                             mf.ims(models=("transport",)),
-    ...                             mf.exchange(flow, transport)])
+    >>> mf.simulation(flow, transport, exchanges=[mf.exchange(flow, transport)])
     """
 
     options = _model_options(
@@ -375,22 +439,55 @@ def gwe(
     ----------
     name : str
         Model name (the FloPy model name; referenced by IMS and the GWF-GWE exchange).
-    packages : Iterable[PackageSpec]
-        Energy-transport package specs to attach (discretization + EST/ADV/CND/SSM/IC/OC).
+    packages : Iterable[PackageSpec or PackageRef or str], optional
+        Energy-transport package specs to attach (discretization +
+        EST/ADV/CND/SSM/IC/OC), built in this order; an ``mf.ref(key)`` or bare key
+        string names a library package. Names must be unique. Default ``()``.
     context : ModelContext, optional
-        Geometry/dates, typically the same grid as the paired flow model.
-    hooks : Iterable[PostBuildHook]
-        Post-build callables run against the built model.
-    grid : GridSpec or grid object, optional
-        Optional deferred/explicit grid (usually shared with the flow model).
+        Geometry/dates, typically the same grid as the paired flow model. Default
+        ``None`` stores an empty ``ModelContext()``.
+    hooks : Iterable[PostBuildHook], optional
+        Post-build callbacks, each called as ``callback(model, packages, context)``
+        after every package is built; results land in ``BuiltModel.hook_results``.
+        Default ``()``.
+    grid : GridSpec or GridRef or grid object, optional
+        A deferred ``GridSpec``, an ``mf.grid_ref(key)``, or a built grid (wrapped
+        with ``GridSpec.from_object``), resolved at build time and replacing
+        ``context.grid``. It must be the paired flow model's mesh: two DISV models
+        joined by an exchange on different meshes are refused at build. Default
+        ``None``.
+    model_nam_file : str, optional
+        Name-file name, forwarded to ``ModflowGwe``; omitted when ``None``.
+    version : str, optional
+        FloPy's model ``version`` string. Default ``"mf6"``.
+    exe_name : str, optional
+        Executable name recorded on the FloPy model object. Default ``"mf6"``.
+    model_rel_path : str or Path, optional
+        The model's folder relative to the simulation workspace. Default ``"."``.
+    list : str, optional
+        Listing-file name; omitted when ``None`` (MF6 names it after the name file).
+    print_input : bool, optional
+        MF6 ``PRINT_INPUT``: echo package input to the listing file. Omitted when
+        ``None`` (off).
+    print_flows : bool, optional
+        MF6 ``PRINT_FLOWS``: print package flow rates to the listing file. Omitted
+        when ``None`` (off).
+    save_flows : bool, optional
+        MF6 ``SAVE_FLOWS``: write package flow terms to the budget file. Default
+        ``True`` here (unlike :func:`gwf`); ``None`` omits it.
     dependent_variable_scaling : bool, optional
-        Scale the transport dependent variable (temperature) for the solver.
-    print_input, print_flows, save_flows : bool, optional
-        Listing/output flags forwarded to ``ModflowGwe``.
-    model_nam_file, version, exe_name, model_rel_path, list, nc_*_filerecord : optional
-        FloPy model bookkeeping / NetCDF output records.
+        MF6 ``DEPENDENT_VARIABLE_SCALING``: scale the solution and right-hand side
+        to avoid very large temperature values. Omitted when ``None``.
+    nc_mesh2d_filerecord : Any, optional
+        FloPy's NetCDF layered-mesh output record, passed through when not ``None``.
+    nc_structured_filerecord : Any, optional
+        FloPy's NetCDF structured-grid output record, passed through when not
+        ``None``.
+    nc_filerecord : Any, optional
+        FloPy's NetCDF file record, passed through when not ``None``.
     **kwargs
-        Any additional ``flopy.mf6.ModflowGwe`` constructor option.
+        Any additional ``flopy.mf6.ModflowGwe`` constructor option, passed to it at
+        build time; an unknown name fails there, not at the call.
 
     Returns
     -------
@@ -399,10 +496,7 @@ def gwe(
     Examples
     --------
     >>> energy = mf.gwe("heat", context=ctx, packages=[...])
-    >>> mf.SimulationSpec("sim", models=(flow, energy),
-    ...                   packages=[mf.tdis(...), mf.ims(models=("flow",)),
-    ...                             mf.ims(models=("heat",)),
-    ...                             mf.exchange(flow, heat)])
+    >>> mf.simulation(flow, energy, exchanges=[mf.exchange(flow, energy)])
     """
 
     options = _model_options(
@@ -456,7 +550,7 @@ def prt(
     ``flopy.mf6.ModflowPrt`` and takes the PRT packages through ``packages`` --
     ``mf.disv``/``mf.dis`` (they dispatch on the PRT model kind), :func:`mip`,
     :func:`prp`, and ``mf.oc``. Couple it to a flow model with a GWF-PRT exchange
-    (:func:`build_gwf_prt_exchange`) in the same :class:`SimulationSpec` -- flows
+    (``mf.exchange(flow, particles)``) in the same :class:`SimulationSpec` -- flows
     pass through the exchange, so no FMI package is needed -- and give the PRT
     model an :func:`ems` solver (PRT is explicit; IMS is rejected). Use it for
     advective pathlines, capture zones, and travel-time analysis. ``context``
@@ -467,17 +561,48 @@ def prt(
 
     Parameters
     ----------
-    name
-        Model name (also the FloPy model name).
-    packages
+    name : str
+        Model name (also the FloPy model name), referenced by the EMS solver and the
+        GWF-PRT exchange.
+    packages : Iterable[PackageSpec or PackageRef or str], optional
         PRT package specs to attach (``mf.disv(...)``, ``mf.mip(...)``,
-        ``mf.prp(...)``, ``mf.oc(...)``).
-    context
+        ``mf.prp(...)``, ``mf.oc(...)``), built in this order; an ``mf.ref(key)``
+        or bare key string names a library package. Names must be unique.
+        Default ``()``.
+    context : ModelContext, optional
         Geometry/dates :class:`ModelContext` shared with the paired flow model.
-    grid
-        Optional deferred grid (e.g. ``mf.GridSpec.voronoi(...)``).
+        Default ``None`` stores an empty ``ModelContext()``.
+    hooks : Iterable[PostBuildHook], optional
+        Post-build callbacks, each called as ``callback(model, packages, context)``
+        after every package is built; results land in ``BuiltModel.hook_results``.
+        Default ``()``.
+    grid : GridSpec or GridRef or grid object, optional
+        A deferred grid (e.g. ``mf.GridSpec.voronoi(...)``), an
+        ``mf.grid_ref(key)``, or a built grid (wrapped with
+        ``GridSpec.from_object``), resolved at build time and replacing
+        ``context.grid``. Default ``None``.
+    model_nam_file : str, optional
+        Name-file name, forwarded to ``ModflowPrt``; omitted when ``None``.
+    version : str, optional
+        FloPy's model ``version`` string. Default ``"mf6"``.
+    exe_name : str, optional
+        Executable name recorded on the FloPy model object. Default ``"mf6"``.
+    model_rel_path : str or Path, optional
+        The model's folder relative to the simulation workspace. Default ``"."``.
+    list : str, optional
+        Listing-file name; omitted when ``None`` (MF6 names it after the name file).
+    print_input : bool, optional
+        MF6 ``PRINT_INPUT``: echo package input to the listing file. Omitted when
+        ``None`` (off).
+    print_flows : bool, optional
+        MF6 ``PRINT_FLOWS``: print package flow rates to the listing file. Omitted
+        when ``None`` (off).
+    save_flows : bool, optional
+        MF6 ``SAVE_FLOWS``: write package flow terms to the budget file. Omitted
+        when ``None`` (off).
     **kwargs
-        Additional ``ModflowPrt`` options.
+        Additional ``flopy.mf6.ModflowPrt`` constructor options, passed to it at
+        build time; an unknown name fails there, not at the call.
     """
 
     return ModelSpec(
@@ -1473,30 +1598,113 @@ def ims(
 
     Parameters
     ----------
-    models : Iterable[str]
-        Names of the models this solver solves (registered to each).
-    name : str, default "ims"
-        Solver package name (also its ``pname``).
+    models : Iterable[str], optional
+        Names of the models this solver solves; the IMS is registered to each at
+        build time. Default ``None`` leaves it unset so :func:`simulation` can
+        assign every model no other solver claims; an IMS whose ``models`` is
+        still unset at build raises ``ValueError`` there.
+    name : str, optional
+        Spec name, unique among the simulation's packages, and the default
+        ``pname``. Default ``"ims"`` -- two solvers in one simulation need
+        distinct names.
+    print_option : str, optional
+        MF6 ``PRINT_OPTION``: ``"NONE"`` / ``"SUMMARY"`` / ``"ALL"`` solver
+        convergence printing. MF6's default is ``"NONE"``.
     complexity : str, optional
-        Tolerance preset: ``"SIMPLE"`` / ``"MODERATE"`` / ``"COMPLEX"``.
-    outer_maximum, inner_maximum : int, optional
-        Maximum outer (nonlinear) and inner (linear) iterations -- raise for stiff
+        Tolerance preset: ``"SIMPLE"`` / ``"MODERATE"`` / ``"COMPLEX"``; the other
+        solver arguments override individual values. MF6 uses ``"SIMPLE"`` when
+        it is omitted.
+    csv_output_filerecord : Any, optional
+        FloPy record naming a CSV file for solver convergence information.
+    csv_outer_output_filerecord : Any, optional
+        FloPy record naming a CSV file for outer-iteration convergence.
+    csv_inner_output_filerecord : Any, optional
+        FloPy record naming a CSV file for inner-iteration convergence.
+    no_ptcrecord : Any, optional
+        FloPy record for MF6 ``NO_PTC`` (``"FIRST"``/``"ALL"``), disabling
+        pseudo-transient continuation in steady-state Newton periods.
+    ats_outer_maximum_fraction : float, optional
+        Fraction (0-0.5) of ``outer_maximum`` that adaptive time stepping uses to
+        grow or shrink the step; MF6's default is one third.
+    outer_hclose : float, optional
+        Outer (nonlinear) head-change criterion, model length units; MF6's
+        deprecated spelling of ``outer_dvclose``.
+    outer_dvclose : float, optional
+        Outer (nonlinear) dependent-variable change criterion, in the dependent
+        variable's units (length for head).
+    outer_rclosebnd : float, optional
+        MF6's deprecated package-residual tolerance; no effect since MF6 6.1.1.
+    outer_maximum : int, optional
+        Maximum outer (nonlinear) iterations per time step -- raise for stiff
         models.
-    outer_dvclose, inner_dvclose, outer_hclose, inner_hclose : float, optional
-        Outer/inner dependent-variable (or head) convergence tolerances.
+    under_relaxation : str, optional
+        Nonlinear under-relaxation scheme: ``"NONE"`` / ``"SIMPLE"`` /
+        ``"COOLEY"`` / ``"DBD"``. MF6 applies none when omitted.
+    under_relaxation_gamma : float, optional
+        Relaxation factor for ``"SIMPLE"``, or the memory term for
+        ``"COOLEY"``/``"DBD"``.
+    under_relaxation_theta : float, optional
+        Delta-bar-delta learning-rate reduction factor (0-1); ``"DBD"`` only.
+    under_relaxation_kappa : float, optional
+        Delta-bar-delta learning-rate increment (0-1); ``"DBD"`` only.
+    under_relaxation_momentum : float, optional
+        Delta-bar-delta momentum fraction (0-1); ``"DBD"`` only.
+    backtracking_number : int, optional
+        Maximum backtracking iterations for residual reduction; ``0`` disables
+        backtracking.
+    backtracking_tolerance : float, optional
+        Allowed residual increase factor before backtracking (>= 1).
+    backtracking_reduction_factor : float, optional
+        Step-size reduction per backtracking iteration (0-1).
+    backtracking_residual_limit : float, optional
+        Residual below which no further backtracking is done.
+    inner_maximum : int, optional
+        Maximum inner (linear) iterations per outer iteration.
+    inner_hclose : float, optional
+        Inner (linear) head-change criterion, model length units; MF6's deprecated
+        spelling of ``inner_dvclose``.
+    inner_dvclose : float, optional
+        Inner (linear) dependent-variable change criterion.
+    rcloserecord : Any, optional
+        FloPy record ``(inner_rclose, rclose_option)``: the linear flow-residual
+        tolerance (volume per time, model units) and optionally ``"STRICT"`` /
+        ``"L2NORM_RCLOSE"`` / ``"RELATIVE_RCLOSE"``.
     linear_acceleration : str, optional
-        Linear solver, e.g. ``"CG"`` or ``"BICGSTAB"``.
-    under_relaxation, under_relaxation_gamma, ... : optional
-        Under-relaxation and backtracking controls (see FloPy).
+        Linear solver, ``"CG"`` or ``"BICGSTAB"``. An asymmetric matrix
+        (transport, Newton, an implicit lake) needs ``"BICGSTAB"``; MF6 stops
+        on CG.
+    relaxation_factor : float, optional
+        Relaxation factor (0-1) for the MILU(0)/MILUT preconditioners; MF6's
+        default is 0.
+    preconditioner_levels : int, optional
+        ILUT/MILUT level of fill; above 0 selects ILUT. MF6's default is 0.
+    preconditioner_drop_tolerance : float, optional
+        ILUT/MILUT drop tolerance. MF6's default is 0.
+    number_orthogonalizations : int, optional
+        Interval at which the residual is recomputed explicitly. MF6's default
+        is 0 (never).
+    scaling_method : str, optional
+        Matrix scaling: ``"NONE"`` / ``"DIAGONAL"`` / ``"L2NORM"``.
+    reordering_method : str, optional
+        Matrix reordering: ``"NONE"`` / ``"RCM"`` / ``"MD"``.
+    filename : str, optional
+        File the IMS is written to. Default ``None`` writes ``"<pname>.ims"``,
+        which keeps two solvers in one simulation in separate files.
+    pname : str, optional
+        FloPy package name. Default ``None`` uses ``name``.
     **kwargs
-        Any other ``flopy.mf6.ModflowIms`` option.
-
-    All remaining named arguments mirror ``flopy.mf6.ModflowIms`` one-to-one and
-    are only forwarded when not ``None``.
+        Any other ``flopy.mf6.ModflowIms`` option, passed to it at build time. A
+        name ``ModflowIms`` does not accept raises ``TypeError`` at the call.
 
     Returns
     -------
     PackageSpec
+
+    Notes
+    -----
+    Every solver argument mirrors ``flopy.mf6.ModflowIms`` one-to-one and is
+    only forwarded when not ``None``, so MF6's own default (or the
+    ``complexity`` preset) applies to anything left out.
 
     Examples
     --------
@@ -1572,12 +1780,21 @@ def ems(
 
     Parameters
     ----------
-    models : Iterable[str]
-        Names of the (PRT) models this EMS solves (registered to each).
-    name : str, default "ems"
-        Solver package name (also its ``pname``).
+    models : Iterable[str], optional
+        Names of the (PRT) models this EMS solves; it is registered to each at
+        build time. Default ``None`` leaves it unset for :func:`simulation` to
+        fill; an EMS whose ``models`` is still unset at build raises
+        ``ValueError``.
+    name : str, optional
+        Spec name, unique among the simulation's packages, and the default
+        ``pname``. Default ``"ems"``.
+    filename : str, optional
+        File the EMS is written to. Default ``None`` writes ``"<pname>.ems"``.
+    pname : str, optional
+        FloPy package name. Default ``None`` uses ``name``.
     **kwargs
-        Any other ``flopy.mf6.ModflowEms`` option.
+        Any other ``flopy.mf6.ModflowEms`` option, passed to it at build time. A
+        name ``ModflowEms`` does not accept raises ``TypeError`` at the call.
 
     Returns
     -------
@@ -1878,6 +2095,31 @@ class _ExchangeHelper:
         Both must be :class:`ModelSpec` objects -- the kinds are what select the
         MF6 class, so a pair of names cannot be resolved. Use an explicit
         spelling (:meth:`gwfgwt` and friends) if all you have are names.
+
+        Parameters
+        ----------
+        source : ModelSpec
+            One model of the pair. Whichever of the two is the GWF model is
+            written first (``exgmnamea``), so the order does not matter. A plain
+            name string raises ``TypeError``.
+        target : ModelSpec
+            The other model. The pair must be GWF with GWT, GWE, PRT or GWF;
+            any other pairing raises ``ValueError``.
+        name : str, optional
+            The exchange's name in ``SimulationSpec.exchanges``, which must be
+            unique there. Default ``None`` uses ``"<first>-<second>"`` from the
+            model names, GWF first.
+        **options
+            Passed to the chosen FloPy exchange class (``ModflowGwfgwt``,
+            ``ModflowGwfgwe``, ``ModflowGwfprt`` or ``ModflowGwfgwf``) at build
+            time; not checked at the call. A GWF-GWF pair needs ``nexg`` and
+            ``exchangedata`` here (MF6 rejects the file without them), and this
+            form does not check for them -- :meth:`gwfgwf` does.
+
+        Returns
+        -------
+        ExchangeSpec
+            Pass it to ``mf.simulation(..., exchanges=[...])``.
         """
 
         pair = tuple(_exchange_kind(model, "mf.exchange") for model in (source, target))
@@ -1894,17 +2136,74 @@ class _ExchangeHelper:
         return self._spec(builder, models, name=name, **options)
 
     def gwfgwt(self, flow, transport, *, name=None, **options) -> ExchangeSpec:
-        """Couple a flow model to a solute-transport model (``ModflowGwfgwt``)."""
+        """Couple a flow model to a solute-transport model (``ModflowGwfgwt``).
+
+        Parameters
+        ----------
+        flow : ModelSpec or str
+            The GWF model, or its name. Written first (``exgmnamea``); the order
+            is taken as given, not inferred.
+        transport : ModelSpec or str
+            The GWT model, or its name (``exgmnameb``).
+        name : str, optional
+            The exchange's name in ``SimulationSpec.exchanges``, unique there.
+            Default ``None`` uses ``"<flow>-<transport>"``.
+        **options
+            Passed to ``flopy.mf6.ModflowGwfgwt`` at build time (e.g.
+            ``filename``, ``pname``); not checked at the call.
+
+        Returns
+        -------
+        ExchangeSpec
+        """
 
         return self._spec(build_gwf_gwt_exchange, (flow, transport), name=name, **options)
 
     def gwfgwe(self, flow, energy, *, name=None, **options) -> ExchangeSpec:
-        """Couple a flow model to an energy-transport model (``ModflowGwfgwe``)."""
+        """Couple a flow model to an energy-transport model (``ModflowGwfgwe``).
+
+        Parameters
+        ----------
+        flow : ModelSpec or str
+            The GWF model, or its name. Written first (``exgmnamea``); the order
+            is taken as given, not inferred.
+        energy : ModelSpec or str
+            The GWE model, or its name (``exgmnameb``).
+        name : str, optional
+            The exchange's name in ``SimulationSpec.exchanges``, unique there.
+            Default ``None`` uses ``"<flow>-<energy>"``.
+        **options
+            Passed to ``flopy.mf6.ModflowGwfgwe`` at build time (e.g.
+            ``filename``, ``pname``); not checked at the call.
+
+        Returns
+        -------
+        ExchangeSpec
+        """
 
         return self._spec(build_gwf_gwe_exchange, (flow, energy), name=name, **options)
 
     def gwfprt(self, flow, particles, *, name=None, **options) -> ExchangeSpec:
-        """Couple a flow model to a particle-tracking model (``ModflowGwfprt``)."""
+        """Couple a flow model to a particle-tracking model (``ModflowGwfprt``).
+
+        Parameters
+        ----------
+        flow : ModelSpec or str
+            The GWF model, or its name. Written first (``exgmnamea``); the order
+            is taken as given, not inferred.
+        particles : ModelSpec or str
+            The PRT model, or its name (``exgmnameb``).
+        name : str, optional
+            The exchange's name in ``SimulationSpec.exchanges``, unique there.
+            Default ``None`` uses ``"<flow>-<particles>"``.
+        **options
+            Passed to ``flopy.mf6.ModflowGwfprt`` at build time (e.g.
+            ``filename``, ``pname``); not checked at the call.
+
+        Returns
+        -------
+        ExchangeSpec
+        """
 
         return self._spec(build_gwf_prt_exchange, (flow, particles), name=name, **options)
 
@@ -1915,6 +2214,26 @@ class _ExchangeHelper:
         exchange written without it: ``nexg`` and ``exchangedata`` describe the
         connected cell pairs, and a file holding only an empty options block
         fails with *Required block "DIMENSIONS" not found*.
+
+        Parameters
+        ----------
+        first : ModelSpec or str
+            One GWF model, or its name (``exgmnamea``); ``exchangedata``'s first
+            cellid in each row is in this model.
+        second : ModelSpec or str
+            The other GWF model, or its name (``exgmnameb``).
+        name : str, optional
+            The exchange's name in ``SimulationSpec.exchanges``, unique there.
+            Default ``None`` uses ``"<first>-<second>"``.
+        **options
+            Passed to ``flopy.mf6.ModflowGwfgwf`` at build time. ``nexg`` and
+            ``exchangedata`` are REQUIRED -- either missing raises ``ValueError``
+            at the call; the rest (``auxiliary``, ``xt3d``, ``newton``,
+            ``perioddata``, ...) are optional and not checked at the call.
+
+        Returns
+        -------
+        ExchangeSpec
         """
 
         missing = [key for key in ("nexg", "exchangedata") if key not in options]
@@ -2412,18 +2731,33 @@ def dis(
 
     Parameters
     ----------
-    nlay, nrow, ncol
-        Number of layers, rows, and columns.
-    delr, delc
-        Column widths (ncol,) and row heights (nrow,); scalars broadcast.
-    top, botm
-        Model-top (nrow, ncol) and layer bottoms (nlay, nrow, ncol); scalars broadcast.
-    idomain
-        Optional active-domain array (0 = inactive).
-    name : str, default "dis"
-        Package name.
+    nlay : int
+        Number of layers.
+    nrow : int
+        Number of rows.
+    ncol : int
+        Number of columns.
+    delr : float or array_like of shape (ncol,)
+        Column widths along a row, model length units; a scalar is one width for
+        every column.
+    delc : float or array_like of shape (nrow,)
+        Row heights along a column, model length units; a scalar is one height for
+        every row.
+    top : float or array_like of shape (nrow, ncol)
+        Model-top elevation, length units; a scalar is a flat top.
+    botm : float or array_like of shape (nlay, nrow, ncol)
+        Layer bottom elevations, length units, top layer first; a scalar or a
+        per-layer list is constant within each layer (FloPy's array input).
+    idomain : array_like of int, shape (nlay, nrow, ncol), optional
+        ``1`` active, ``0`` inactive, ``-1`` vertical pass-through. Default
+        ``None`` writes nothing, and MF6 treats every cell as active.
+    name : str, optional
+        The spec's name in the model's package list. It is not passed to FloPy.
+        Default ``"dis"``.
     **options
-        Extra ``flopy.mf6.Modflow<Kind>dis`` options (e.g. ``xorigin``/``angrot``).
+        Extra ``flopy.mf6.Modflow<Kind>dis`` options (e.g. ``length_units``,
+        ``xorigin``/``yorigin``/``angrot``), passed at build time; one the DIS
+        class does not accept raises ``TypeError`` at the call.
 
     Returns
     -------
@@ -2470,20 +2804,36 @@ def disu(
 
     Parameters
     ----------
-    nodes, nja
-        Number of cells and total connectivity entries (``len(ja)``).
-    top, bot, area
-        Per-node cell top, bottom, and horizontal area (nodes,).
-    iac, ja
-        Connectivity: per-node connection counts (nodes,) and the flattened neighbour
-        list (nja,). Optional ``ihc``/``cl12``/``hwva`` go via ``**options``.
-    idomain
-        Optional active-domain array (0 = inactive).
-    name : str, default "disu"
-        Package name.
+    nodes : int
+        Number of cells.
+    nja : int
+        Length of ``ja``: every cell's connections counted from both sides, plus
+        one entry per cell for the cell itself.
+    top : float or array_like of shape (nodes,)
+        Top elevation of each cell, model length units.
+    bot : float or array_like of shape (nodes,)
+        Bottom elevation of each cell, length units.
+    area : float or array_like of shape (nodes,)
+        Plan-view area of each cell, length units squared.
+    iac : array_like of int, shape (nodes,)
+        Number of connections of each cell PLUS ONE (the cell itself); sums to
+        ``nja``.
+    ja : array_like of int, shape (nja,)
+        For each cell in turn: the cell's own number followed by the cells it
+        connects to. Zero-based -- FloPy adds one on write.
+    idomain : array_like of int, shape (nodes,), optional
+        ``1`` active, ``0`` inactive. Default ``None`` writes nothing, and MF6
+        treats every cell as active.
+    name : str, optional
+        The spec's name in the model's package list. It is not passed to FloPy.
+        Default ``"disu"``.
     **options
-        Extra ``flopy.mf6.Modflow<Kind>disu`` options (``nvert``/``vertices``/``cell2d``,
-        ``ihc``/``cl12``/``hwva``, ``xorigin``/``angrot``, ...).
+        Extra ``flopy.mf6.Modflow<Kind>disu`` options, passed at build time. MF6
+        also REQUIRES ``ihc``/``cl12``/``hwva`` (connection direction, per-side
+        connection length, width or area), and they go here; this helper does not
+        check for them. Also ``nvert``/``vertices``/``cell2d``, ``length_units``,
+        ``xorigin``/``angrot``, .... One the DISU class does not accept raises
+        ``TypeError`` at the call.
 
     Returns
     -------
@@ -3188,8 +3538,14 @@ class _CHDPackage:
         ----------
         path : Path or str
             GeoPackage/shapefile of boundary features (auto-reprojected to the grid CRS).
-        context : ModelContext
-            Carries the grid/domain the features are mapped onto.
+        context : ModelContext, optional
+            The grid/domain the features are mapped onto. Given, the records resolve
+            NOW, against ``context.grid`` (``ValueError`` when it carries none) and
+            ``context.domain``, and ``with_grid`` re-declares them from the recorded
+            recipe. Default ``None`` makes the spec LAZY: it holds the recipe and
+            resolves at build against the model's own grid, which the model's
+            context must then carry; the model's discretization must be declared
+            before this package.
         nper : int
             Number of stress periods the boundary spans.
         head : str, float, list of str, or CellSurfaceOffset, default "head"
@@ -3210,6 +3566,25 @@ class _CHDPackage:
             Index base of ``layer_field`` values (1 = one-based GIS convention).
         period_base : int, default 0
             Index base of ``period_field`` values (0 = zero-based).
+        gaps : {"warn", "nearest", "raise", "ignore"}, optional
+            What a feature that lands on no active cell means. ``"warn"`` (the
+            default) leaves it out and says so -- a ``UserWarning`` as well as the
+            log, naming each feature -- in the same message that reports features
+            clipped at the grid's edge and elevations below their cell bottom.
+            ``"nearest"`` moves a missed POINT onto the nearest usable cell when it
+            is within ``snap_within`` and reports the move; a line or polygon is
+            never moved, and is reported as under ``"warn"``. ``"raise"`` raises
+            ``ValueError`` wherever ``"warn"`` would warn. ``"ignore"`` says
+            nothing. In every mode a source with NO feature landing raises
+            ``ValueError`` naming both extents and CRSs; an unknown word raises
+            ``ValueError`` at the call.
+        snap_within : float, optional
+            ``gaps="nearest"`` only (ignored otherwise): how far a missed point may
+            be moved, in the grid's coordinate units, measured to the cell POLYGON
+            rather than its centroid. Must be positive (``ValueError`` at the
+            call). Default ``None`` is one cell width -- ``sqrt(area)`` of the cell
+            it would move to -- resolved when the records resolve, so on the lazy
+            form it follows the mesh across ``with_grid``.
         min_above_bottom : float, optional
             Keep every resolved elevation at least this far above ITS OWN cell bottom,
             per cell. ``None`` (the default) changes nothing but still REPORTS a record
@@ -3413,8 +3788,14 @@ class _GHBPackage:
         ----------
         path : Path or str
             GeoPackage/shapefile of boundary features (auto-reprojected to the grid CRS).
-        context : ModelContext
-            Carries the grid/domain the features are mapped onto.
+        context : ModelContext, optional
+            The grid/domain the features are mapped onto. Given, the records resolve
+            NOW, against ``context.grid`` (``ValueError`` when it carries none) and
+            ``context.domain``, and ``with_grid`` re-declares them from the recorded
+            recipe. Default ``None`` makes the spec LAZY: it holds the recipe and
+            resolves at build against the model's own grid, which the model's
+            context must then carry; the model's discretization must be declared
+            before this package.
         nper : int
             Number of stress periods the boundary spans.
         head : str, float, list of str, or CellSurfaceOffset, default "head"
@@ -3449,6 +3830,25 @@ class _GHBPackage:
         period_base : int, default 0
             Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
             periods as myflopy counts them.
+        gaps : {"warn", "nearest", "raise", "ignore"}, optional
+            What a feature that lands on no active cell means. ``"warn"`` (the
+            default) leaves it out and says so -- a ``UserWarning`` as well as the
+            log, naming each feature -- in the same message that reports features
+            clipped at the grid's edge and elevations below their cell bottom.
+            ``"nearest"`` moves a missed POINT onto the nearest usable cell when it
+            is within ``snap_within`` and reports the move; a line or polygon is
+            never moved, and is reported as under ``"warn"``. ``"raise"`` raises
+            ``ValueError`` wherever ``"warn"`` would warn. ``"ignore"`` says
+            nothing. In every mode a source with NO feature landing raises
+            ``ValueError`` naming both extents and CRSs; an unknown word raises
+            ``ValueError`` at the call.
+        snap_within : float, optional
+            ``gaps="nearest"`` only (ignored otherwise): how far a missed point may
+            be moved, in the grid's coordinate units, measured to the cell POLYGON
+            rather than its centroid. Must be positive (``ValueError`` at the
+            call). Default ``None`` is one cell width -- ``sqrt(area)`` of the cell
+            it would move to -- resolved when the records resolve, so on the lazy
+            form it follows the mesh across ``with_grid``.
         min_above_bottom : float, optional
             Keep every resolved elevation at least this far above ITS OWN cell bottom,
             per cell. ``None`` (the default) changes nothing but still REPORTS a record
@@ -3633,8 +4033,14 @@ class _DRNPackage:
         ----------
         path : Path or str
             GeoPackage/shapefile of drain features (auto-reprojected to the grid CRS).
-        context : ModelContext
-            Carries the grid/domain the features are mapped onto.
+        context : ModelContext, optional
+            The grid/domain the features are mapped onto. Given, the records resolve
+            NOW, against ``context.grid`` (``ValueError`` when it carries none) and
+            ``context.domain``, and ``with_grid`` re-declares them from the recorded
+            recipe. Default ``None`` makes the spec LAZY: it holds the recipe and
+            resolves at build against the model's own grid, which the model's
+            context must then carry; the model's discretization must be declared
+            before this package.
         nper : int
             Number of stress periods.
         elevation : str, float, list of str, or CellSurfaceOffset, default "elevation"
@@ -3675,6 +4081,25 @@ class _DRNPackage:
         period_base : int, default 0
             Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
             periods as myflopy counts them.
+        gaps : {"warn", "nearest", "raise", "ignore"}, optional
+            What a feature that lands on no active cell means. ``"warn"`` (the
+            default) leaves it out and says so -- a ``UserWarning`` as well as the
+            log, naming each feature -- in the same message that reports features
+            clipped at the grid's edge and elevations below their cell bottom.
+            ``"nearest"`` moves a missed POINT onto the nearest usable cell when it
+            is within ``snap_within`` and reports the move; a line or polygon is
+            never moved, and is reported as under ``"warn"``. ``"raise"`` raises
+            ``ValueError`` wherever ``"warn"`` would warn. ``"ignore"`` says
+            nothing. In every mode a source with NO feature landing raises
+            ``ValueError`` naming both extents and CRSs; an unknown word raises
+            ``ValueError`` at the call.
+        snap_within : float, optional
+            ``gaps="nearest"`` only (ignored otherwise): how far a missed point may
+            be moved, in the grid's coordinate units, measured to the cell POLYGON
+            rather than its centroid. Must be positive (``ValueError`` at the
+            call). Default ``None`` is one cell width -- ``sqrt(area)`` of the cell
+            it would move to -- resolved when the records resolve, so on the lazy
+            form it follows the mesh across ``with_grid``.
         min_above_bottom : float, optional
             Keep every resolved elevation at least this far above ITS OWN cell bottom,
             per cell. ``None`` (the default) changes nothing but still REPORTS a record
@@ -3880,8 +4305,14 @@ class _RIVPackage:
         ----------
         path : Path or str
             GeoPackage/shapefile of river features (auto-reprojected to the grid CRS).
-        context : ModelContext
-            Carries the grid/domain the features are mapped onto.
+        context : ModelContext, optional
+            The grid/domain the features are mapped onto. Given, the records resolve
+            NOW, against ``context.grid`` (``ValueError`` when it carries none) and
+            ``context.domain``, and ``with_grid`` re-declares them from the recorded
+            recipe. Default ``None`` makes the spec LAZY: it holds the recipe and
+            resolves at build against the model's own grid, which the model's
+            context must then carry; the model's discretization must be declared
+            before this package.
         nper : int
             Number of stress periods.
         stage : str, float, list of str, or CellSurfaceOffset, default "stage"
@@ -3920,6 +4351,25 @@ class _RIVPackage:
         period_base : int, default 0
             Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
             periods as myflopy counts them.
+        gaps : {"warn", "nearest", "raise", "ignore"}, optional
+            What a feature that lands on no active cell means. ``"warn"`` (the
+            default) leaves it out and says so -- a ``UserWarning`` as well as the
+            log, naming each feature -- in the same message that reports features
+            clipped at the grid's edge and elevations below their cell bottom.
+            ``"nearest"`` moves a missed POINT onto the nearest usable cell when it
+            is within ``snap_within`` and reports the move; a line or polygon is
+            never moved, and is reported as under ``"warn"``. ``"raise"`` raises
+            ``ValueError`` wherever ``"warn"`` would warn. ``"ignore"`` says
+            nothing. In every mode a source with NO feature landing raises
+            ``ValueError`` naming both extents and CRSs; an unknown word raises
+            ``ValueError`` at the call.
+        snap_within : float, optional
+            ``gaps="nearest"`` only (ignored otherwise): how far a missed point may
+            be moved, in the grid's coordinate units, measured to the cell POLYGON
+            rather than its centroid. Must be positive (``ValueError`` at the
+            call). Default ``None`` is one cell width -- ``sqrt(area)`` of the cell
+            it would move to -- resolved when the records resolve, so on the lazy
+            form it follows the mesh across ``with_grid``.
         min_above_bottom : float, optional
             Keep every resolved elevation at least this far above ITS OWN cell bottom,
             per cell. ``None`` (the default) changes nothing but still REPORTS a record
@@ -4119,8 +4569,14 @@ class _WELPackage:
         ----------
         path : Path or str
             GeoPackage/shapefile of well point features (auto-reprojected to the grid CRS).
-        context : ModelContext
-            Carries the grid/domain the wells are mapped onto.
+        context : ModelContext, optional
+            The grid/domain the wells are mapped onto. Given, the records resolve
+            NOW, against ``context.grid`` (``ValueError`` when it carries none) and
+            ``context.domain``, and ``with_grid`` re-declares them from the recorded
+            recipe. Default ``None`` makes the spec LAZY: it holds the recipe and
+            resolves at build against the model's own grid, which the model's
+            context must then carry; the model's discretization must be declared
+            before this package.
         nper : int
             Number of stress periods.
         rate : str, float, list of str, or Spread, default "rate"
@@ -4154,6 +4610,25 @@ class _WELPackage:
         period_base : int, default 0
             Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
             periods as myflopy counts them.
+        gaps : {"warn", "nearest", "raise", "ignore"}, optional
+            What a feature that lands on no active cell means. ``"warn"`` (the
+            default) leaves it out and says so -- a ``UserWarning`` as well as the
+            log, naming each feature -- in the same message that reports features
+            clipped at the grid's edge and elevations below their cell bottom.
+            ``"nearest"`` moves a missed POINT onto the nearest usable cell when it
+            is within ``snap_within`` and reports the move; a line or polygon is
+            never moved, and is reported as under ``"warn"``. ``"raise"`` raises
+            ``ValueError`` wherever ``"warn"`` would warn. ``"ignore"`` says
+            nothing. In every mode a source with NO feature landing raises
+            ``ValueError`` naming both extents and CRSs; an unknown word raises
+            ``ValueError`` at the call.
+        snap_within : float, optional
+            ``gaps="nearest"`` only (ignored otherwise): how far a missed point may
+            be moved, in the grid's coordinate units, measured to the cell POLYGON
+            rather than its centroid. Must be positive (``ValueError`` at the
+            call). Default ``None`` is one cell width -- ``sqrt(area)`` of the cell
+            it would move to -- resolved when the records resolve, so on the lazy
+            form it follows the mesh across ``with_grid``.
         name : str, default "wel"
             Package name.
         boundnames : bool, default True
@@ -4564,8 +5039,14 @@ class _RCHPackage:
         ----------
         path : Path or str
             GeoPackage/shapefile of recharge-zone features (auto-reprojected to the grid CRS).
-        context : ModelContext
-            Carries the grid/domain the features are mapped onto.
+        context : ModelContext, optional
+            The grid/domain the features are mapped onto. Given, the records resolve
+            NOW, against ``context.grid`` (``ValueError`` when it carries none) and
+            ``context.domain``, and ``with_grid`` re-declares them from the recorded
+            recipe. Default ``None`` makes the spec LAZY: it holds the recipe and
+            resolves at build against the model's own grid, which the model's
+            context must then carry; the model's discretization must be declared
+            before this package.
         nper : int
             Number of stress periods.
         recharge : str, float, list of str, or Spread, default "recharge"
@@ -4598,6 +5079,25 @@ class _RCHPackage:
         period_base : int, default 0
             Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
             periods as myflopy counts them.
+        gaps : {"warn", "nearest", "raise", "ignore"}, optional
+            What a feature that lands on no active cell means. ``"warn"`` (the
+            default) leaves it out and says so -- a ``UserWarning`` as well as the
+            log, naming each feature -- in the same message that reports features
+            clipped at the grid's edge and elevations below their cell bottom.
+            ``"nearest"`` moves a missed POINT onto the nearest usable cell when it
+            is within ``snap_within`` and reports the move; a line or polygon is
+            never moved, and is reported as under ``"warn"``. ``"raise"`` raises
+            ``ValueError`` wherever ``"warn"`` would warn. ``"ignore"`` says
+            nothing. In every mode a source with NO feature landing raises
+            ``ValueError`` naming both extents and CRSs; an unknown word raises
+            ``ValueError`` at the call.
+        snap_within : float, optional
+            ``gaps="nearest"`` only (ignored otherwise): how far a missed point may
+            be moved, in the grid's coordinate units, measured to the cell POLYGON
+            rather than its centroid. Must be positive (``ValueError`` at the
+            call). Default ``None`` is one cell width -- ``sqrt(area)`` of the cell
+            it would move to -- resolved when the records resolve, so on the lazy
+            form it follows the mesh across ``with_grid``.
         name : str, default "rch"
             Package name.
         boundnames : bool, default True
@@ -5069,8 +5569,14 @@ class _EVTPackage:
         ----------
         path : Path or str
             GeoPackage/shapefile of ET-zone features (auto-reprojected to the grid CRS).
-        context : ModelContext
-            Carries the grid/domain the features are mapped onto.
+        context : ModelContext, optional
+            The grid/domain the features are mapped onto. Given, the records resolve
+            NOW, against ``context.grid`` (``ValueError`` when it carries none) and
+            ``context.domain``, and ``with_grid`` re-declares them from the recorded
+            recipe. Default ``None`` makes the spec LAZY: it holds the recipe and
+            resolves at build against the model's own grid, which the model's
+            context must then carry; the model's discretization must be declared
+            before this package.
         nper : int
             Number of stress periods.
         surface : str, float, list of str, or CellSurfaceOffset, default "surface"
@@ -5109,6 +5615,25 @@ class _EVTPackage:
         period_base : int, default 0
             Index base of ``period_field``. ``0`` matches MODFLOW's zero-based
             periods as myflopy counts them.
+        gaps : {"warn", "nearest", "raise", "ignore"}, optional
+            What a feature that lands on no active cell means. ``"warn"`` (the
+            default) leaves it out and says so -- a ``UserWarning`` as well as the
+            log, naming each feature -- in the same message that reports features
+            clipped at the grid's edge and elevations below their cell bottom.
+            ``"nearest"`` moves a missed POINT onto the nearest usable cell when it
+            is within ``snap_within`` and reports the move; a line or polygon is
+            never moved, and is reported as under ``"warn"``. ``"raise"`` raises
+            ``ValueError`` wherever ``"warn"`` would warn. ``"ignore"`` says
+            nothing. In every mode a source with NO feature landing raises
+            ``ValueError`` naming both extents and CRSs; an unknown word raises
+            ``ValueError`` at the call.
+        snap_within : float, optional
+            ``gaps="nearest"`` only (ignored otherwise): how far a missed point may
+            be moved, in the grid's coordinate units, measured to the cell POLYGON
+            rather than its centroid. Must be positive (``ValueError`` at the
+            call). Default ``None`` is one cell width -- ``sqrt(area)`` of the cell
+            it would move to -- resolved when the records resolve, so on the lazy
+            form it follows the mesh across ``with_grid``.
         name : str, default "evt"
             Package name.
         boundnames : bool, default True
@@ -5222,30 +5747,132 @@ class _UZFPackage:
 
         Cells are selected automatically from the model domain (one UZF column per
         vertically-connected active cell beneath land surface); pass an explicit
-        ``cells`` list to override. Soil-hydraulic inputs (``vks``/``thtr``/``thts``/
-        ``thti``/``eps``) and the stress inputs (``finf``/``pet``/``extdp``...) accept
-        a scalar (applied everywhere), a per-cell sequence, or a ``{period: ...}``
-        mapping for transient values.
+        ``cells`` list to override. The soil properties (``surfdep``/``vks``/``thtr``/
+        ``thts``/``thti``/``eps``) are set once per UZF cell; the stress inputs
+        (``finf``/``pet``/``extdp``/``extwc``/``ha``/``hroot``/``rootact``) are set
+        per period on the land-surface cell of each column.
+
+        A per-cell value (the non-scalar forms below) takes one of three shapes: a
+        ``{(layer, cell): value}`` mapping that covers every cell it applies to, an
+        array shaped like the domain ``(nlay, ncpl)`` read at each cell, or a 1-D
+        sequence with one value per cell it applies to (every UZF cell for a soil
+        property, every land-surface cell for a stress input), in feature order.
+        Any other shape, or a mapping missing a cell, raises ``ValueError``.
 
         Parameters
         ----------
-        context
-            :class:`ModelContext` carrying the grid + domain (idomain) used to pick
-            and order UZF cells. Required for ``cells="all_active"/"surface_only"``.
-        nper
-            Number of stress periods.
-        vks, thtr, thts, thti, eps
-            Saturated K of the unsaturated zone, residual / saturated / initial water
-            content, and the Brooks-Corey exponent.
-        cells
-            ``"all_active"`` (default), ``"surface_only"``, or an explicit list of
-            ``(layer, cell)`` ids.
-        finf, pet, extdp, extwc
-            Infiltration rate, PET, ET extinction depth, and extinction water content
-            (scalar / per-cell / ``{period: ...}``).
-        mover
-            Enable MVR so rejected infiltration / groundwater discharge can be moved
-            to another package.
+        context : ModelContext, optional
+            Carries the domain (idomain) the UZF cells are picked and ordered from,
+            and the grid the records are pinned to. Given, the package resolves
+            NOW; automatic ``cells`` then need ``context.domain`` (``ValueError``
+            without it). Default ``None`` makes the spec LAZY: it resolves at build
+            from the model's domain -- the context's, else the built
+            discretization's ``idomain`` -- and needs no grid. With neither, every
+            cell is active only when the model's context carries no grid either;
+            a context holding a grid but no domain raises ``ValueError`` at build.
+            The lazy form refuses (``TypeError``) an explicit ``cells`` list, a
+            per-cell list, tuple or cell mapping for any value, and
+            ``mover=True``; each of those works with ``context=``.
+        nper : int
+            Number of stress periods; must be at least 1 (``ValueError``).
+        vks : float or per-cell value
+            Saturated vertical hydraulic conductivity of the unsaturated zone,
+            length/time (model units), per UZF cell. Must be positive.
+        thtr : float or per-cell value
+            Residual water content (dimensionless), per UZF cell. Must be less
+            than ``thts``.
+        thts : float or per-cell value
+            Saturated water content (dimensionless), per UZF cell; keep it
+            consistent with the storage package's specific yield.
+        thti : float or per-cell value
+            Initial water content (dimensionless), per UZF cell; must lie between
+            ``thtr`` and ``thts`` inclusive.
+        cells : {"all_active", "surface_only"} or sequence of (int, int), optional
+            ``"all_active"`` (default) makes a UZF cell of each column's top active
+            cell (``idomain > 0``) and of every active cell directly below it down
+            to the first inactive one; ``"surface_only"`` keeps just the top cell.
+            An explicit sequence of zero-based ``(layer, cell)`` ids is used as
+            given, in that order; they must be unique and, when a domain is known,
+            in range and active (``ValueError`` otherwise).
+        eps : float or per-cell value, optional
+            Brooks-Corey exponent (dimensionless), per UZF cell; must be positive.
+            Default ``4.0``.
+        surfdep : float or per-cell value, optional
+            Surface depression depth, length units, per UZF cell; must not be
+            negative. Default ``0.001``.
+        finf : float, str, per-cell value or dict, optional
+            Applied infiltration rate, length/time, per land-surface cell and
+            period. A ``{period: value}`` dict (zero-based int keys) varies it in
+            time: a period it omits gets ``0.0``, and a key outside ``nper`` raises
+            ``ValueError``. Any other value applies to every period. A string is
+            passed to MF6 as a time-series name. A negative number raises
+            ``ValueError``. Default ``0.0``.
+        pet : float, str, per-cell value or dict, optional
+            Potential ET rate, length/time, in the same forms as ``finf``; used
+            only when ET is simulated. Must not be negative. Default ``None``
+            writes ``0.0``.
+        extdp : float, str, per-cell value or dict, optional
+            ET extinction depth below land surface, length units, in the same
+            forms as ``finf``; used only when ET is simulated. Must not be
+            negative. Default ``None`` writes ``0.0``.
+        extwc : float, str, per-cell value or dict, optional
+            ET extinction water content (dimensionless), in the same forms as
+            ``finf``; MF6 uses it only with ``unsat_etwc``. Default ``None``
+            writes ``0.0``.
+        ha : float, str, per-cell value or dict, optional
+            Air-entry potential (head), length units, in the same forms as
+            ``finf``; MF6 uses it only with ``unsat_etae``. Default ``None`` writes
+            ``0.0``.
+        hroot : float, str, per-cell value or dict, optional
+            Root potential (head), length units, in the same forms as ``finf``;
+            MF6 uses it only with ``unsat_etae``. Default ``None`` writes ``0.0``.
+        rootact : float, str, per-cell value or dict, optional
+            Root activity function (root length per soil volume), in the same
+            forms as ``finf``; MF6 uses it only with ``unsat_etae``. Default
+            ``None`` writes ``0.0``.
+        name : str, optional
+            Package name: FloPy's ``pname``, the input file ``<model>.<name>``, the
+            spec's name, and the stem of the UZF budget and convergence output
+            files. Default ``"uzf"``.
+        boundnames : bool, optional
+            Write MF6 ``BOUNDNAMES`` and name every UZF cell
+            ``uzf_<layer>_<cell>``. Default ``False``.
+        mover : bool, optional
+            Write MF6 ``MOVER`` so an ``mf.mvr`` can move rejected infiltration or
+            groundwater discharge to another package. Refused on the lazy form
+            (a UZF mover endpoint is a cell enumeration that changes with the
+            mesh). Default ``False``.
+        simulate_et : bool, optional
+            MF6 ``SIMULATE_ET``. Default ``None`` turns it on exactly when ``pet``,
+            ``extdp`` or ``extwc`` is given; ``True``/``False`` force it.
+        linear_gwet : bool, optional
+            MF6 ``LINEAR_GWET``: also take ET from groundwater, with MODFLOW-2005's
+            linear formulation. Default ``False``.
+        square_gwet : bool, optional
+            MF6 ``SQUARE_GWET``: also take ET from groundwater at a constant rate
+            down to ``extdp``, smoothed to zero there. Default ``False``.
+        simulate_gwseep : bool, optional
+            MF6 ``SIMULATE_GWSEEP``: discharge groundwater above land surface.
+            MF6 no longer recommends it (a DRN is the suggested route). Default
+            ``False``.
+        unsat_etwc : bool, optional
+            MF6 ``UNSAT_ETWC``: unsaturated-zone ET at the PET rate while the water
+            content exceeds ``extwc``. Default ``False``.
+        unsat_etae : bool, optional
+            MF6 ``UNSAT_ETAE``: unsaturated-zone ET from a capillary-pressure
+            (Brooks-Corey) formulation using ``ha``/``hroot``/``rootact``.
+            Default ``False``.
+        ntrailwaves : int, optional
+            MF6 ``NTRAILWAVES``, the number of trailing waves; raise it to lower
+            the unsaturated-zone mass-balance error. Default ``7``.
+        nwavesets : int, optional
+            MF6 ``NWAVESETS``, the number of wave sets. Default ``40``.
+        **options
+            Extra ``flopy.mf6.ModflowGwfuzf`` options (e.g. ``wc_filerecord``,
+            ``observations``), passed at build time. A name that class does not
+            accept raises ``TypeError`` -- at the call with ``context=``, but only
+            at build on the lazy form. Applied last, so they override the
+            ``pname``/``filename`` and output records set from ``name``.
 
         Returns
         -------
@@ -5401,44 +6028,247 @@ class _SFRPackage:
         maximum_depth_change: float = 0.01,
         **options: Any,
     ) -> PackageSpec:
-        """Build an SFR package from stream geometry (delegates to ``SFRBuilder``).
+        """Build an SFR package from stream centerlines (delegates to ``SFRBuilder``).
 
-        Reaches are cut where each stream line crosses grid cells; ``connection_mode
-        ="automatic"`` infers the topology from geometry. When tributaries meet
-        ambiguously, disambiguate with explicit ``connections`` (and ``diversions``).
-        Reach properties (``width``/``gradient``/``roughness``/``streambed_k``/
-        ``min_reach_length`` drops reaches shorter than it. A stream clipping the
-        corner of a cell yields a sliver; MF6 divides by reach length and a 0.005 ft
-        reach crashes it while reading the package. The stream stays connected --
-        topology is rebuilt from the surviving order.
+        Each stream line is cut into reaches where it crosses grid cells, the
+        stream-to-stream topology is resolved (``connection_mode``, overridden by
+        ``connections``), and the packagedata, connectiondata and perioddata are
+        written. Everything is resolved HERE, against ``context``'s grid: every
+        error named below is raised by this call, and the package is bound to that
+        mesh. ``mf.sfr`` has no lazy form, so after ``with_grid`` it reads
+        ``stale`` -- declare it again on the new grid. The returned spec carries an
+        ``sfr_index`` (each stream's reaches and their cells) that
+        :func:`sfr_connection` reads to name a mover endpoint by stream and place.
 
-        ``streambed_thickness``) accept a scalar, one value per reach, or one per
-        stream; ``reach_top`` defaults from the grid surface when available.
+        **Reach numbering.** Reaches are numbered from 0, stream by stream, each
+        stream's reaches running from its first vertex (the headwater) to its last
+        (the outlet). Streams are taken in rounds: first every stream no other
+        stream is connected into, in stream-table order, then every stream whose
+        upstream streams are all placed, and so on -- so a tributary is numbered
+        before the stem it joins. A stretch lying ON a face between two cells goes
+        to the lower-numbered cell. Every reach number below means this numbering;
+        ``SFRBuilder(...).reaches`` shows it.
+
+        **Per-reach values** (``width``, ``gradient``, ``reach_top``,
+        ``roughness``, ``streambed_k``, ``streambed_thickness``) take:
+
+        * a number, for every reach;
+        * a string naming a column of the stream table, read per stream; any other
+          string is written unchanged to every reach, and for every value but
+          ``reach_top`` the checks then raise ``TypeError``;
+        * a mapping keyed by reach number, stream id or ``(layer, cell)`` cellid,
+          looked up in that order per reach. A reach none of them matches is left
+          ``None``: for every value but ``reach_top`` the checks then raise
+          ``TypeError``, and a ``None`` ``reach_top`` is handed to FloPy;
+        * a sequence of one value per reach, in reach order, or one per stream in
+          the stream order above -- NOT the file's order. Any other length raises
+          ``ValueError``.
+
+        **Per-period values** (``inflow``, ``rainfall``, ``evaporation``,
+        ``runoff``, ``status``) take ``None`` (no setting); a mapping whose keys are
+        ALL integers, read as ``{period: value}`` with zero-based periods, where a
+        period left out -- or at or beyond ``nper`` -- gets no setting; or any other
+        value, used for every period. So ``{3: 100.0}`` is period 3, not reach 3:
+        key a reach inside a period, ``{0: {3: 100.0}}``. One period's value is a
+        number or a string (a time-series name), placed as each entry says; a
+        mapping ``{stream_id or reach number: value}``, where a stream id means that
+        stream's FIRST reach; or an iterable of explicit rows ``(reach, value,
+        ...)`` written as given. A flat list of numbers is therefore read as rows
+        and raises ``TypeError``: unlike ``mf.lak``, it is not one value per period.
 
         Parameters
         ----------
-        context
-            :class:`ModelContext` carrying the grid the reaches are placed on.
-        nper
-            Number of stress periods.
-        streams
-            Stream centerlines: a geopackage/shapefile path (or list), or a
-            ``GeoDataFrame`` of ``LineString`` rows. ``stream_id`` names the id column.
-        connection_mode, connections, diversions
-            ``"automatic"`` topology from geometry, plus explicit
-            :class:`StreamConnection`/:class:`StreamDiversion` overrides for
-            confluences/splits.
-        inflow, rainfall, evaporation, runoff, status
-            Per-period boundary inputs, keyed by stream id (e.g.
-            ``inflow={0: {"main": 1.0e4}}``). ``inflow`` enters at each stream's
-            headwater reach; ``rainfall`` and ``evaporation`` are rates applied to
-            every reach. ``runoff`` is each stream's TOTAL volume per time, split
-            across its reaches in proportion to reach length -- a bare number is
-            every stream's total, and it does not grow when the grid is refined.
-        mover
-            Enable MVR so this stream can give/receive water from lakes or UZF.
-        length_conversion, time_conversion
-            Manning's-equation unit conversions (e.g. ``3.28081`` ft/m, ``86400`` s/day).
+        context : ModelContext
+            Required; ``None`` raises ``AttributeError``. Carries the grid the
+            reaches are cut on (``context.grid``; ``None`` raises ``ValueError``),
+            the ``domain`` read by ``reach_layer="top_active"``, the layer
+            elevations read by the default ``reach_top`` (``context.surfaces``,
+            else ``grid.gdf_topbtm``), and the ``length_units``/``time_units`` the
+            default unit conversions come from. The grid's pin is stamped on the
+            package.
+        nper : int
+            Number of stress periods; the perioddata gets one entry per period
+            ``0 .. nper - 1``. Less than 1 raises ``ValueError``.
+        streams : str, pathlib.Path, sequence of str or Path, or geopandas.GeoDataFrame
+            Stream centerlines, one ``LineString`` per stream; any other geometry,
+            a ``MultiLineString`` included, raises ``ValueError``. A path or a list
+            of paths is read with :func:`geopandas.read_file` and the tables
+            concatenated, so the files must share one CRS (geopandas raises
+            ``ValueError`` otherwise). The lines are reprojected to the grid's CRS
+            when both carry one. A line runs from its first vertex, the headwater,
+            to its last, the outlet (see ``reverse_streams``). A stream crossing no
+            grid cell -- or left with no reach by ``min_reach_length`` -- raises
+            ``ValueError``.
+        stream_id : str or None, optional
+            Column holding each stream's id. The values are turned into strings and
+            must be unique (``ValueError`` otherwise, and when the column is
+            missing); they are the ids every stream-keyed input, ``connections``,
+            ``diversions`` and :func:`sfr_connection` use. Default ``None``: each
+            file's stem when ``streams`` is paths and no stem repeats across the
+            rows read (one feature per file, distinct stems), else ``"stream_0"``,
+            ``"stream_1"``, ... by row.
+        from_node : str or None, optional
+            Column naming each stream's upstream node, read only by
+            ``connection_mode="nodes"``, which requires it and ``to_node``
+            (``ValueError`` when either is ``None`` or not a column). Default
+            ``None``.
+        to_node : str or None, optional
+            Column naming each stream's downstream node, read only by
+            ``connection_mode="nodes"``: a stream flows into the stream whose
+            ``from_node`` equals its ``to_node``. No match leaves it unresolved (it
+            ends the network); more than one raises ``ValueError``. Default
+            ``None``.
+        connection_mode : str, optional
+            How the stream-to-stream topology is inferred. ``"automatic"``
+            (default) connects each stream's last vertex to the nearest other
+            stream within ``connection_tolerance`` of it; the two nearest equally
+            near raise ``ValueError``, and none leaves it unresolved. ``"nodes"``
+            reads ``from_node``/``to_node``. ``"explicit"`` infers nothing, so only
+            ``connections`` link streams. Any other value raises ``ValueError``. An
+            unresolved stream ends the network; the returned spec's
+            ``metadata["unresolved"]`` lists them.
+        connections : sequence of StreamConnection, optional
+            Explicit stream-to-stream links (:class:`StreamConnection`). Each
+            replaces the inferred link for its ``source`` in every mode, and of two
+            with the same ``source`` the later wins; ``receiver=None`` marks a true
+            outlet. A stream id not in the stream table, or links that route water
+            in a cycle, raise ``ValueError``. Default ``()``.
+        diversions : sequence of StreamDiversion, optional
+            Partial splits (:class:`StreamDiversion`), each written as an MF6
+            ``DIVERSIONS`` record on its source reach plus a ``DIVERSION`` setting
+            in each period its ``amount`` covers; the receiving reach gets
+            ``USTRF`` 0.0. No reach connection is added between the two reaches,
+            and MF6 refuses a diversion without one -- see
+            :class:`StreamDiversion`. An unknown stream id or ``priority`` raises
+            ``ValueError``. Default ``()``.
+        connection_tolerance : float or None, optional
+            Largest distance, in model length units, from a stream's last vertex to
+            another stream for ``connection_mode="automatic"`` to connect them.
+            Default ``None``: 5% of the square root of the median cell area, and
+            never below 1e-9. Unused by the other modes.
+        reverse_streams : sequence of str, optional
+            Ids of streams whose line is reversed as the stream table is built, for
+            lines digitized mouth-first; compared as strings. A bare string is
+            iterated character by character, so give even one id as a tuple,
+            ``("main",)``. Default ``()``.
+        reach_layer : int, str or Mapping[str, int], optional
+            Zero-based layer each reach sits in. An ``int`` is every reach's layer
+            (a numpy integer is not one and is read as a column name); a mapping is
+            ``{stream_id: layer}``, where a stream missing from it raises
+            ``KeyError``; any other string names a stream-table column holding each
+            stream's layer (``ValueError`` when missing). Default
+            ``"top_active"``: the top layer with ``idomain > 0`` in the reach's
+            column of ``context.domain`` -- a column with none raises
+            ``ValueError`` -- or layer 0 when the context has no domain or a
+            one-dimensional one.
+        width : float, str, Mapping, or sequence, optional
+            Reach width, MF6 ``RWID``, in model length units; any per-reach form
+            above. Default 10.0. A width that is not positive raises
+            ``ValueError``.
+        gradient : float, str, Mapping, or sequence, optional
+            Streambed slope, MF6 ``RGRD`` (dimensionless); any per-reach form
+            above. Default 0.001. A negative gradient raises ``ValueError``.
+        reach_top : float, str, Mapping, sequence, or None, optional
+            Streambed-top elevation, MF6 ``RTP``, in model length units; any
+            per-reach form above, not checked here. Default ``None``: the top of
+            each reach's layer in its cell -- from ``context.surfaces``, else
+            ``grid.gdf_topbtm`` (``ValueError`` when neither is available) --
+            lowered where needed so no reach is higher than the reach above it in
+            the same stream.
+        roughness : float, str, Mapping, or sequence, optional
+            Manning's roughness coefficient, MF6 ``MAN``; any per-reach form above.
+            Default 0.03. A value that is not positive raises ``ValueError``.
+        streambed_k : float, str, Mapping, or sequence, optional
+            Streambed hydraulic conductivity, MF6 ``RHK``, in model length per
+            model time; any per-reach form above. Default 1.0. A negative value
+            raises ``ValueError``.
+        streambed_thickness : float, str, Mapping, or sequence, optional
+            Streambed thickness, MF6 ``RBTH``, in model length units; any per-reach
+            form above. Default 1.0. A value that is not positive raises
+            ``ValueError``.
+        min_reach_length : float, optional
+            Shortest piece of a stream, in model length units, that becomes a
+            reach: a piece in one cell no longer than ``max(0.01,
+            min_reach_length)`` is dropped. A stream clipping the corner of a cell
+            yields such a sliver, MF6 divides by reach length, and a 0.005 ft reach
+            crashed it while reading the package. The stream stays connected
+            through its other reaches, because the topology is rebuilt from the
+            surviving order. Default 0.0, which drops only pieces of 0.01 or less.
+        inflow : float, str, Mapping, sequence, or None, optional
+            Volumetric inflow, MF6 ``INFLOW``, in model length cubed per model
+            time; any per-period form above. In one period a number or a
+            time-series name enters at reach 0 ONLY -- the headwater of the first
+            stream in reach order -- not at every stream's headwater;
+            ``{stream_id: q}`` enters at that stream's first reach. Default
+            ``None``, no inflow.
+        rainfall : float, str, Mapping, sequence, or None, optional
+            Rainfall rate on the reach surface, MF6 ``RAINFALL``, in model length
+            per model time; any per-period form above. In one period a number or a
+            time-series name applies to EVERY reach, while ``{stream_id: rate}`` is
+            written to that stream's FIRST reach only, not along it. Default
+            ``None``.
+        evaporation : float, str, Mapping, sequence, or None, optional
+            Evaporation rate from the reach surface, MF6 ``EVAPORATION``, in model
+            length per model time; placed exactly as ``rainfall`` is -- a number on
+            every reach, ``{stream_id: rate}`` on that stream's first reach only.
+            Default ``None``.
+        runoff : float, Mapping, sequence, or None, optional
+            Overland runoff, MF6 ``RUNOFF``, in model length cubed per model time.
+            In one period a number is EACH stream's total and ``{stream_id:
+            total}`` one stream's (a stream not in the table raises ``KeyError``);
+            either is split over the stream's reaches in proportion to reach
+            length, so refining the grid does not multiply it. An integer key in
+            that mapping names a reach and takes its amount as given, as do
+            explicit rows. A time-series name cannot be split and raises
+            ``ValueError`` unless given per reach -- as rows, ``{period: [(reach,
+            "series"), ...]}``, or under a reach-number key. Default ``None``.
+        status : str, Mapping, sequence, or None, optional
+            MF6 reach ``STATUS`` -- ``"ACTIVE"``, ``"INACTIVE"`` or ``"SIMPLE"`` --
+            written as given, not checked here; any per-period form above. In one
+            period a string applies to every reach, ``{stream_id: status}`` to that
+            stream's first reach only. Default ``None``, no setting (MF6 keeps a
+            reach active).
+        name : str, optional
+            Package name, default ``"sfr"``: FloPy's ``pname``, the input file
+            ``<model>.<name>``, the output files ``<model>_<name>_stage.sfr`` and
+            ``<model>_<name>_budget.sfr``, and the package a mover endpoint from
+            :func:`sfr_connection` names.
+        mover : bool, optional
+            Write MF6's ``MOVER`` option, which an MVR package (``mf.mvr``) needs
+            before it can move water to or from these reaches. Default ``False``.
+        length_conversion : float or None, optional
+            MF6 ``LENGTH_CONVERSION`` for Manning's equation (meters to model
+            length units), written as given. Default ``None``: from
+            ``context.length_units`` -- ``"feet"`` (the context's default) 3.28081,
+            ``"meters"`` 1.0, ``"centimeters"`` 100.0, also as a singular or an
+            abbreviation (``"ft"``, ``"m"``, ``"cm"``) in any case; ``None`` or
+            ``"unknown"`` 1.0. Any other unit raises ``ValueError``.
+        time_conversion : float or None, optional
+            MF6 ``TIME_CONVERSION`` (seconds to model time units), written as
+            given. Default ``None``: from ``context.time_units`` -- ``"days"`` (the
+            context's default) 86400, ``"hours"`` 3600, ``"minutes"`` 60,
+            ``"seconds"`` 1, ``"years"`` 31557600, also as a singular or an
+            abbreviation (``"d"``, ``"h"``, ...) in any case; ``None`` or
+            ``"unknown"`` 1.0. Any other unit raises ``ValueError``.
+        maximum_picard_iterations : int, optional
+            MF6 SFR ``MAXIMUM_PICARD_ITERATIONS``, written as given. Default 1.
+        maximum_iterations : int, optional
+            MF6 SFR ``MAXIMUM_ITERATIONS``, the reach-solution iteration limit,
+            written as given. Default 1000.
+        maximum_depth_change : float, optional
+            MF6 SFR ``MAXIMUM_DEPTH_CHANGE``, in model length units, written as
+            given. Default 0.01.
+        **options
+            Any other keyword of :class:`flopy.mf6.ModflowGwfsfr`
+            (``crosssections``, ``initialstages``, ``observations``, ...), collected
+            into ``SFRBuilder(options=...)`` and passed on to
+            :func:`myflopy.advanced.sfr_spec`, which checks the names against
+            FloPy's signature (an unknown one raises ``TypeError``, suggesting the
+            closest valid one when there is one) and applies them last, so they override
+            ``save_flows=True``, the ``pname``/``filename`` set from ``name`` and
+            the stage/budget output file records. ``packagedata``,
+            ``connectiondata`` or ``perioddata`` here raises ``TypeError``: the
+            builder writes those.
 
         Returns
         -------
@@ -6469,28 +7299,39 @@ class _HFBPackage:
         Parameters
         ----------
         pairs : sequence of pairs
-            Either ``(cell_a, cell_b)`` plan-cell pairs -- written into every
-            layer named by ``layers`` -- or fully qualified
+            Either ``(cell_a, cell_b)`` zero-based plan-cell pairs -- written into
+            every layer named by ``layers`` -- or fully qualified
             ``((lay, cell), (lay, cell))`` pairs, in which case ``layers`` must
-            be ``None``.
-        hydchr : float or sequence
-            Hydraulic characteristic, 1/T. One value, or one per pair.
+            be ``None`` (``ValueError`` otherwise). An empty sequence gives a
+            package with no barriers.
+        hydchr : float or sequence of float
+            Hydraulic characteristic, 1/T (the barrier's K over its thickness;
+            ``0`` is impermeable, a negative value is a conductance multiplier).
+            One value for every pair, or one per pair -- a length that matches
+            neither raises ``ValueError``.
         layers : int or sequence of int, optional
-            Layers each plan pair is written into. ``None`` means layer 0 only;
-            pass a sequence for a barrier that cuts several layers.
+            Zero-based layers each plan pair is written into. ``None`` means layer
+            0 only; pass a sequence for a barrier that cuts several layers.
         context : ModelContext, optional
             Carries the grid. Supplied, every pair is validated against the grid
-            connectivity BEFORE the run; omitted, no validation is possible and
-            a bad pair surfaces only when MODFLOW 6 aborts.
-        first_period : int, default 0
-            Period the barriers first appear in. MODFLOW 6 reuses the set in
-            every later period; use :meth:`flopy` for a schedule that changes.
-        name : str, default "hfb"
-            Package name.
-        print_input : bool, default False
-            Echo the barrier list to the listing file.
+            connectivity BEFORE the run -- a self-pair or two cells that are not
+            connected raises ``ValueError``, and a repeated face is kept once
+            (MF6 would apply it twice) -- and the records are pinned to that
+            mesh. Omitted, no validation is possible and a bad pair surfaces only
+            when MODFLOW 6 aborts.
+        first_period : int, optional
+            Zero-based period the barriers first appear in. MODFLOW 6 reuses the
+            set in every later period; use :meth:`flopy` for a schedule that
+            changes. Default ``0``.
+        name : str, optional
+            The spec's name in the model's package list. It is not passed to
+            FloPy (put ``pname=`` in ``**options`` for that). Default ``"hfb"``.
+        print_input : bool, optional
+            Echo the barrier list to the listing file (MF6 ``PRINT_INPUT``);
+            written only when ``True``. Default ``False``.
         **options
-            Extra ``flopy.mf6.ModflowGwfhfb`` options.
+            Extra ``flopy.mf6.ModflowGwfhfb`` options, passed at build time; a name
+            that class does not accept raises ``TypeError`` at the call.
 
         Returns
         -------
@@ -6522,15 +7363,28 @@ class _HFBPackage:
         Parameters
         ----------
         barrier : LineString, MultiLineString, GeoSeries or GeoDataFrame
-            The trace, reprojected to the grid's CRS when it declares one.
+            The trace, reprojected to the grid's CRS when it declares one. It cuts
+            every connection whose centre-to-centre segment crosses it; a trace
+            that cuts none gives an empty package and a logged warning.
         context : ModelContext
-            Required -- the grid is what a line is resolved against.
-        hydchr : float or sequence
-            Hydraulic characteristic, 1/T.
+            Required -- the grid is what a line is resolved against; a context
+            with no grid raises ``ValueError``. The resolved pairs are validated
+            and pinned as for :meth:`__call__`.
+        hydchr : float or sequence of float
+            Hydraulic characteristic, 1/T: one value, or one per cut connection
+            (in the order the trace resolves them).
         layers : int or sequence of int, optional
-            Layers the barrier cuts. ``None`` means layer 0 only.
-        first_period, name, print_input, **options
-            As for :meth:`__call__`.
+            Zero-based layers the barrier cuts. ``None`` means layer 0 only.
+        first_period : int, optional
+            Zero-based period the barriers first appear in; they persist after
+            it. Default ``0``.
+        name : str, optional
+            The spec's name in the model's package list (not the FloPy
+            ``pname``). Default ``"hfb"``.
+        print_input : bool, optional
+            Echo the barrier list to the listing file. Default ``False``.
+        **options
+            Extra ``flopy.mf6.ModflowGwfhfb`` options, as for :meth:`__call__`.
 
         Returns
         -------
@@ -6570,18 +7424,32 @@ class _HFBPackage:
         Parameters
         ----------
         path : Path or str
-            The GeoPackage.
+            The GeoPackage (any file ``geopandas.read_file`` opens) of barrier
+            traces, reprojected to the grid's CRS when both declare one. Each
+            feature is resolved like :meth:`line`; if no feature cuts a
+            connection the package is empty and a warning is logged.
         context : ModelContext
-            Carries the grid the traces resolve against.
-        hydchr : str or float, default "hydchr"
-            An attribute column giving each feature's hydraulic characteristic,
-            or one value for all of them.
+            Carries the grid the traces resolve against; required (``ValueError``
+            when it carries no grid). Pairs are validated and pinned as for
+            :meth:`__call__`.
+        hydchr : str or float, optional
+            An attribute column giving each feature's hydraulic characteristic
+            (1/T), applied to every connection that feature cuts, or one number for
+            all of them. Default ``"hydchr"``.
         layer : str, optional
-            GeoPackage table name; the only table by default.
+            GeoPackage table name; the first (only) table by default.
         layers : int or sequence of int, optional
-            Model layers the barriers cut. ``None`` means layer 0 only.
-        first_period, name, print_input, **options
-            As for :meth:`line`.
+            Zero-based model layers the barriers cut. ``None`` means layer 0 only.
+        first_period : int, optional
+            Zero-based period the barriers first appear in; they persist after
+            it. Default ``0``.
+        name : str, optional
+            The spec's name in the model's package list (not the FloPy
+            ``pname``). Default ``"hfb"``.
+        print_input : bool, optional
+            Echo the barrier list to the listing file. Default ``False``.
+        **options
+            Extra ``flopy.mf6.ModflowGwfhfb`` options, as for :meth:`__call__`.
 
         Returns
         -------
@@ -6634,16 +7502,43 @@ class _HFBPackage:
         since ledger 216), but only this refuses a cut that leaks. Before 216,
         ``.line`` took the faces the ring crossed: 53 of them, sealing nothing.
 
+        Parameters
+        ----------
+        polygon : Polygon, MultiPolygon, GeoSeries or GeoDataFrame
+            The region to seal, in the grid's coordinates (a GeoSeries/GeoDataFrame
+            is unioned, and reprojected to the grid's CRS when both declare one). A
+            cell is inside when its CENTROID is.
+        context : ModelContext
+            Carries the grid the cut is computed on; required. Pairs are pinned to
+            it as for :meth:`__call__`.
+        hydchr : float
+            Hydraulic characteristic of the wall, 1/T -- the wall's K over its
+            thickness, one value for every face of the cut.
+        layers : int or sequence of int, optional
+            Zero-based layers the wall cuts. ``None`` means layer 0 only.
+        first_period : int, optional
+            Zero-based period the wall first appears in; it persists after it.
+            Default ``0``.
+        name : str, optional
+            The spec's name in the model's package list (not the FloPy
+            ``pname``). Default ``"hfb"``.
+        print_input : bool, optional
+            Echo the barrier list to the listing file. Default ``False``.
+        **options
+            Extra ``flopy.mf6.ModflowGwfhfb`` options, as for :meth:`__call__`.
+
+        Returns
+        -------
+        PackageSpec
+
         Raises
         ------
         ValueError
             If the resulting cut does not in fact disconnect the interior. A
             leaking cutoff wall is always a bug, so this is an error rather than
             a warning -- unlike :meth:`line`, where an open-ENDED barrier is normal.
-
-        Returns
-        -------
-        PackageSpec
+            Also raised when the cut is empty -- no cell centroid inside
+            ``polygon``, or every one -- or when ``context`` carries no grid.
         """
 
         from myflopy.modflow.mf6.grid.barriers import is_watertight
@@ -6687,6 +7582,22 @@ class _HFBPackage:
 
         Nothing is validated here -- this is the escape hatch, and the pairs go
         to MODFLOW 6 as given.
+
+        Parameters
+        ----------
+        stress_period_data : dict
+            FloPy's ``{period: [[cellid1, cellid2, hydchr], ...]}``, zero-based
+            periods and ``(layer, cell)`` cellids, ``hydchr`` in 1/T. Handed to
+            ``ModflowGwfhfb`` unchanged and not pinned to any mesh.
+        name : str, optional
+            The spec's name in the model's package list (not the FloPy
+            ``pname``). Default ``"hfb"``.
+        print_input : bool, optional
+            Echo the barrier list to the listing file; written only when ``True``.
+            Default ``False``.
+        **options
+            Extra ``flopy.mf6.ModflowGwfhfb`` options, passed at build time; a name
+            that class does not accept raises ``TypeError`` at the call.
 
         Returns
         -------
@@ -7169,14 +8080,39 @@ class _MVRPackage:
 
         Parameters
         ----------
-        nper
-            Number of stress periods.
-        moves
+        nper : int
+            Number of stress periods the mover spans; must be at least 1
+            (``ValueError`` otherwise). Every period ``0 .. nper-1`` gets a
+            ``PERIOD`` block.
+        moves : Sequence[Move] or Mapping[int, Sequence[Move]]
             Either a flat sequence of :class:`Move` (applied every period) or a
-            ``{period: [Move, ...]}`` mapping for time-varying routing. Each
-            :class:`Move` connects a provider :class:`MoverConnection` to a receiver
-            one (``MoverConnection(package_name, id)``), optionally with a ``value``
-            (FACTOR fraction by default).
+            ``{period: [Move, ...]}`` mapping (zero-based periods) for time-varying
+            routing; a period the mapping leaves out moves nothing, and a key
+            outside ``nper`` raises ``ValueError``. Each :class:`Move` connects a
+            provider :class:`MoverConnection` to a receiver one
+            (``MoverConnection(package_name, id)``, a zero-based feature number),
+            optionally with a ``value`` (FACTOR fraction by default). No move at
+            all raises ``ValueError``. Every package the moves name becomes a
+            ``requires`` of the spec, so it must be declared earlier in the model.
+        name : str, optional
+            Package name: FloPy's ``pname``, the input file ``<model>.<name>``, the
+            budget outputs ``<model>.<name>.bud``/``.csv``, and the spec's name.
+            Default ``"mvr"``.
+        print_input : bool, optional
+            MF6 ``PRINT_INPUT``: echo the mover records to the listing file.
+            Default ``False``.
+        print_flows : bool, optional
+            MF6 ``PRINT_FLOWS``: print the moved rates to the listing file.
+            Default ``False``.
+        modelnames : bool, optional
+            MF6 ``MODELNAMES``: records name a model before each package, for a
+            mover between models. The records built from :class:`Move` carry
+            package names only, so leave it ``False`` here. Default ``False``.
+        **options
+            Extra ``flopy.mf6.ModflowGwfmvr`` options, passed at build time; a name
+            that class does not accept raises ``TypeError`` at the call. Applied
+            last, so they override the ``pname``, ``filename`` and budget file
+            records set from ``name``.
 
         Returns
         -------
@@ -7370,20 +8306,27 @@ def sfr_connection(sfr_spec: PackageSpec, stream_id: str, at: Any = "downstream"
 
     Parameters
     ----------
-    sfr_spec
-        The spec returned by ``mf.sfr(...)`` (carries the reach index).
-    stream_id
-        The stream's id (its ``stream_id`` attribute, e.g. ``"main_stem"``).
-    at
+    sfr_spec : PackageSpec
+        The spec returned by ``mf.sfr(...)``: it carries the ``sfr_index``
+        metadata this reads. A spec without one (``mf.sfr.flopy(...)``) raises
+        ``ValueError``.
+    stream_id : str
+        The stream's id (its ``stream_id`` attribute, e.g. ``"main_stem"``);
+        converted with ``str()``. An unknown id raises ``KeyError`` listing the
+        ones the spec has.
+    at : str or tuple of (float, float), optional
         Which reach of that stream:
 
-        - ``"downstream"`` / ``"outlet"`` (default) -- the stream's final reach;
-        - ``"upstream"`` / ``"head"`` -- the stream's first reach;
+        - ``"downstream"`` / ``"outlet"`` / ``"end"`` (default
+          ``"downstream"``) -- the stream's final reach;
+        - ``"upstream"`` / ``"head"`` / ``"start"`` -- the stream's first reach;
         - an ``(x, y)`` coordinate -- the reach of that stream in the grid CELL
           that holds the point, in the grid's own CRS. A point on the boundary
           between two of its reaches goes to the DOWNSTREAM one (ledger 215); a
-          point on no cell this stream has a reach in raises, rather than
-          resolving to whichever reach happens to be nearest.
+          point on no cell this stream has a reach in raises ``ValueError``,
+          rather than resolving to whichever reach happens to be nearest.
+
+        The words are case-insensitive; any other string raises ``ValueError``.
 
     Returns
     -------

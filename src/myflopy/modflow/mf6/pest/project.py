@@ -156,25 +156,51 @@ class PestProject:
 
     Parameters
     ----------
-    model
+    model : SimulationBase
         A built ``myflopy`` model (``SimulationBase`` or compatible) exposing
-        ``.sim`` (the FloPy simulation), ``.name``, and ``.workspace``.
-    name
-        Project name; used as the default ``.pst`` filename stem.
-    workspace
-        Directory for the generated PEST template workspace. It is created
-        (and cleared) when the control file is built.
-    start_datetime
-        Simulation start date (e.g. ``"2020-01-01"``). Required by pyEMU to
-        place time-varying parameters and observations on the time axis.
-    spatial_reference
-        Optional cell spatial reference; only needed for spatial array
-        parameters (pilot points / grid geostatistics).
-    zero_based
-        Whether index columns in list files are zero-based (default ``False``,
-        matching pyEMU's convention for the indices pyEMU itself writes).
-    longnames
-        Use long PEST parameter/observation names (default ``True``).
+        ``.sim`` (the FloPy simulation), ``.gwf``, ``.name``,
+        ``.workspace`` and, for ``pp_space=`` pilot points, any ``zones=`` and
+        head or concentration targets given by cell id, ``.vor``. Its workspace
+        is what ``PstFrom``
+        copies: :meth:`build` first REWRITES the simulation there with every
+        array and list stored in external files
+        (``set_all_data_external``), and observation targets read the model's
+        current output at build time.
+    name : str
+        Project name (``str()`` is applied). It names the default template
+        directory (each run of characters outside ``A-Za-z0-9_.-`` becomes one
+        ``_``, leading and trailing ``_`` are stripped), the
+        default ``.pst`` stem, the ``<name>.pst`` that :meth:`run_ies` and
+        :meth:`prior` always write and run, their master directories
+        (``<name>_ies_master`` / ``<name>_prior_master``), and the run as
+        ``model.pest_runs`` lists it.
+    workspace : str or pathlib.Path or None, optional
+        Directory for the generated PEST template workspace. Default ``None``
+        uses ``<model workspace>.pest/<name>``, a sibling of the model
+        directory where ``model.pest_runs`` finds it. It is DELETED and
+        recreated when :meth:`build` runs. A directory inside the model
+        workspace is refused by :meth:`build` (``RuntimeError``) unless its
+        parent directory is empty once it is removed, because ``PstFrom``
+        would copy the workspace into itself.
+    start_datetime : str or pandas.Timestamp
+        Simulation start date (e.g. ``"2020-01-01"``), passed to
+        ``PstFrom(start_datetime=...)``, which parses it to a datetime to place
+        time-varying parameters and observations on the time axis. Required
+        here, keyword-only; ``model.pest(name)`` fills it from the model's
+        TDIS ``start_date_time``.
+    spatial_reference : object, optional
+        Cell spatial reference passed to ``PstFrom(spatial_reference=...)``,
+        which ``grid``-style parameters and ``correlation=`` geostatistics
+        locate cells with. Default ``None`` uses ``model.gwf.modelgrid`` at
+        :meth:`build`.
+    zero_based : bool, optional
+        Passed to ``PstFrom(zero_based=...)``: whether the index columns of the
+        model's list files count from zero. Default ``False``, because MF6
+        writes its ``layer cell`` columns one-based (pyEMU's own default is
+        ``True``).
+    longnames : bool, optional
+        Passed to ``PstFrom(longnames=...)``: allow parameter and observation
+        names longer than classic PEST's limits. Default ``True``.
     """
 
     def __init__(
@@ -266,8 +292,9 @@ class PestProject:
 
         Parameters
         ----------
-        target
-            Friendly name of the model property to calibrate. Supported targets
+        target : str
+            Friendly name of the model property to calibrate (case and
+            surrounding spaces ignored). Supported targets
             (with aliases): ``"k"`` (``"npf.k"``/``"hk"``/``"kh"``),
             ``"k33"`` (``"kv"``), ``"recharge"`` (``"rch"``),
             ``"chd"``, ``"ghb.cond"``/``"ghb.bhead"`` (``"ghb"``),
@@ -276,6 +303,12 @@ class PestProject:
             quantity heads respond to — and ``"porosity"``
             (``"mst.porosity"``/``"n"``), which lives on the GWT sibling of a
             coupled transport simulation and is resolved there automatically.
+            ``k``, ``k33`` and ``porosity`` are ARRAY targets; the rest scale a
+            column of a LIST package's files. An unknown name raises
+            ``KeyError`` here, listing the known ones. Each target scales the
+            external files FloPy writes for it (``recharge``, for instance,
+            reads ``<model>.rch_stress_period_data_*.txt``), and :meth:`build`
+            raises ``FileNotFoundError`` when the model has none.
 
             Porosity is absent from the flow equation, so it is identifiable
             only from CONCENTRATION data — and since transport velocity is
@@ -283,7 +316,7 @@ class PestProject:
             alone (measured cosine 0.98 on the canonical model). Estimate both
             only with heads in the mix: heads pin K, and concentration then pins
             porosity.
-        style
+        style : str or None, optional
             Spatial parameterization style:
 
             - ``"constant"`` -- a single multiplier for the whole target;
@@ -291,63 +324,131 @@ class PestProject:
             - ``"grid"`` -- one multiplier per list entry / cell;
             - ``"pilotpoints"`` -- geostatistical pilot points.
 
-            ``None`` uses the recipe default (``"constant"``). ``"grid"`` on
-            *array* targets (K, K33) builds one geostatistically-correlated
-            multiplier per Voronoi/DISV cell, drawn against the model's spatial
-            reference (the modelgrid is used automatically); pass ``correlation=``
-            for the variogram range and ``layers=`` to restrict which layers.
-            ``"grid"`` also works for list targets. ``"pilotpoints"`` places a
-            geostatistical pilot-point net (``pp_space=`` spacing or explicit
-            ``pp_points=``) and interpolates to cells via IDW -- the supported
-            sparse-field style on Voronoi/DISV grids.
-        bounds
-            ``(lower, upper)`` bounds on the adjustable value. For a multiplier
+            ``None`` uses the recipe default (``"constant"`` for every target).
+            The value is lower-cased and not checked against these four: it
+            reaches pyEMU as ``par_type``, except ``"pilotpoints"`` on an array
+            target, which myflopy builds itself. ``"grid"`` on
+            *array* targets (K, K33) builds one multiplier per Voronoi/DISV
+            cell, and an independent set per layer file, located through the
+            model's spatial reference (the modelgrid is used automatically);
+            pass ``correlation=`` to correlate them and ``layers=`` to restrict
+            which layers. ``"grid"`` also works for list targets.
+            ``"pilotpoints"`` on an array target places a pilot-point net
+            (``pp_space=`` spacing or explicit ``pp_points=``) and interpolates
+            the multipliers to cells by inverse-distance weighting in the
+            forward run -- the supported sparse-field style on Voronoi/DISV
+            grids.
+        bounds : tuple of (float, float), optional
+            ``(lower, upper)`` bounds on the adjustable value, pyEMU's
+            ``lower_bound``/``upper_bound`` (each pilot point's ``parlbnd`` /
+            ``parubnd``). Default ``(0.5, 2.0)``. For a multiplier
             these are factors (e.g. ``(0.2, 5)`` = 5x down to 5x up); for an
             additive parameter they are offsets in model units.
-        physical
+        physical : tuple of (float, float) or None, optional
             ``(ult_lbound, ult_ubound)`` -- hard limits clamped onto the *final*
-            model value after all multipliers are applied. Strongly recommended
+            model value after all multipliers are applied (pyEMU's
+            ``ult_lbound``/``ult_ubound``; the pilot-point interpolation clamps
+            to them itself). Strongly recommended
             for multipliers so calibration cannot push K (etc.) to nonphysical
-            values. ``None`` leaves the input unclamped.
-        transform
+            values. ``None`` (default) leaves the input unclamped.
+        transform : str, optional
             ``"log"`` (default, recommended for strictly positive properties
-            like K and recharge) or ``"none"``. Forced to ``"none"`` for
-            additive parameters.
-        additive
-            Apply the parameter as an additive offset instead of a multiplier.
-            ``None`` uses the recipe default (drain elevation is additive;
-            everything else is multiplicative).
-        zones
-            Zone array for ``style="zone"`` (and to mask inactive cells). Values
-            map one parameter per distinct zone.
-        layers
+            like K and recharge) or ``"none"``; pyEMU also accepts
+            ``"fixed"``, but not together with ``correlation=`` (the variogram
+            conversion asserts ``"none"`` or ``"log"``). Forced to ``"none"``
+            for additive parameters.
+        additive : bool or None, optional
+            Apply the parameter as an additive offset instead of a multiplier
+            (pyEMU ``par_style="a"``). ``None`` (default) uses the recipe
+            default (drain elevation is additive; everything else is
+            multiplicative). Array-target pilot points still MULTIPLY in their
+            forward run; for them it only forces the transform to ``"none"``.
+        zones : ZoneSpec or array_like of int or None, optional
+            Per-cell integer zone labels, normalized to the shape pyEMU wants
+            for the target's family at :meth:`build` (see :class:`ZoneSpec`,
+            which also reads a raster or polygon layer) and passed as pyEMU's
+            ``zone_array``. With ``style="zone"`` each distinct label gets one
+            parameter. With any style, an array target leaves cells labelled
+            ``<= 0`` unparameterized; a list target makes zone ``0`` a real
+            parameter and warns. A length that is not one label per cell raises
+            ``ValueError`` at build. Default ``None`` passes no zones.
+            Array-target pilot points ignore it.
+        layers : iterable of int or None, optional
             For multi-layer *array* targets, restrict the parameter to these
             zero-based model layers (e.g. ``layers=[0, 1]`` for the unconfined
-            aquifers); other layers keep their input value. Defaults to all
-            layers.
-        correlation
-            Variogram range (model length units) for ``grid`` spatial
-            correlation. Ignored for ``constant``/``zone`` (pilot points provide
-            smoothness via IDW, not a kriged variogram).
-        anisotropy
-            Anisotropy ratio of the ``grid`` variogram -- correlated this many
+            aquifers); other layers keep their input value. ``None`` (default)
+            covers all layers. Read only for array targets -- a list target
+            ignores it. :meth:`build` raises ``ValueError`` when no requested
+            layer has its own file, or the target is written as one whole-grid
+            file.
+        pp_space : int or None, optional
+            Pilot-point spacing for ``style="pilotpoints"`` on an array target,
+            in multiples of the median cell width (the square root of the median
+            ``model.vor`` cell area): the grid is binned at that spacing and the
+            cell centre nearest each occupied bin's middle becomes a point.
+            Truncated with ``int``; ``None`` (default) or ``0`` means ``5``.
+            Ignored when ``pp_points`` is given.
+        pp_points : geopandas.GeoDataFrame or array_like or None, optional
+            Explicit pilot-point locations for ``style="pilotpoints"`` on an
+            array target: a GeoDataFrame of Point geometries, or ``(x, y)``
+            pairs (anything reshapable to ``(n, 2)``), in the model grid's own
+            coordinates -- a GeoDataFrame's CRS is not read or reprojected.
+            Takes precedence over ``pp_space``. Default ``None``.
+        correlation : float or None, optional
+            Variogram range (model length units) of an exponential variogram
+            (see :class:`~myflopy.modflow.mf6.pest.specs.ExpGeoStruct`). With
+            ``style="grid"`` it becomes the parameters' pyEMU ``geostruct``, and
+            :meth:`run_ies`/:meth:`prior` draw a spatially correlated prior
+            ensemble from it (``ies_par_en``). With ``style="pilotpoints"`` on an
+            array target it shapes only that prior draw -- the pilot values are
+            drawn correlated, while the interpolation to cells stays
+            inverse-distance. ``None`` (default) builds no variogram; ignored
+            for ``"constant"``/``"zone"``.
+        anisotropy : float, optional
+            Anisotropy ratio of the variogram -- correlated this many
             times farther along the major axis than across it (``1.0`` =
-            isotropic). For an alluvial valley, e.g. ``5`` makes K correlate
-            farther down-valley than across it.
-        bearing
-            Azimuth (degrees) of the anisotropy major axis. Ignored when
-            ``anisotropy`` is ``1.0``.
-        nugget
-            Nugget (unresolved short-scale variance) of the ``grid`` variogram.
-        temporal
+            isotropic, the default). For an alluvial valley, e.g. ``5`` makes K
+            correlate farther down-valley than across it. Acts only when
+            ``correlation`` is given; pyEMU asserts it is positive.
+        bearing : float, optional
+            Azimuth of the anisotropy major axis, in degrees east of north.
+            Default ``0.0``. Ignored when ``anisotropy`` is ``1.0``, and
+            without ``correlation``.
+        nugget : float, optional
+            Nugget (unresolved short-scale variance) of the variogram, added to
+            the covariance diagonal on top of the variogram's contribution,
+            which is fixed at ``1.0`` here (so the total sill is
+            ``1.0 + nugget``). Default ``0.0``. Acts only when ``correlation``
+            is given.
+        temporal : float or None, optional
             Temporal correlation range (days) for time-varying list packages.
-            Recorded now; wired in a later phase.
-        name
-            Parameter group / name base. Defaults to a slug of ``target``
-            (e.g. ``"ghbcond"``). Useful when stacking multiple calls.
+            Recorded on the returned spec and read by nothing yet, so it has no
+            effect on the build. Default ``None``.
+        name : str or None, optional
+            Parameter group / name base (pyEMU's ``par_name_base`` and
+            ``pargp``). Default ``None`` uses the canonical target with dots
+            removed (``"k"``, ``"ghbcond"``, ``"uzfvks"``). A multi-layer
+            array ``"grid"`` parameter appends ``l1``, ``l2``, ... per selected
+            layer file, pilot points append ``l<layer>`` (zero-based), and a
+            captured field is named ``<name>field``. Give each call a distinct
+            name when stacking calls on one target: the project's
+            per-parameter records are keyed by it, so a second call under the
+            same name overwrites the first's.
+        capture : bool, optional
+            Also record the *resolved* model-input field (after multipliers are
+            applied) as zero-weight observations named from ``<name>field``
+            (one prefix per layer file for a layered array), so each
+            realization's per-cell property field is carried in the ensembles.
+            Enables spatial parameter maps via ``IesResults.plot_field`` /
+            ``IesResults.field``. Default ``False``.
         **extra
-            Advanced keyword arguments passed straight through to
-            ``pf.add_parameters`` for cases the facade does not cover.
+            Advanced keyword arguments passed straight through to pyEMU's
+            ``PstFrom.add_parameters`` for cases the facade does not cover.
+            They are applied LAST, so a key here overrides what the facade
+            derived (``par_type``, the bounds, ``transform``, ``zone_array``,
+            ``geostruct``, ...). Not forwarded for array-target pilot points,
+            which do not go through ``add_parameters``. Stored on the returned
+            spec as ``extra``.
 
         Returns
         -------
@@ -397,21 +498,28 @@ class PestProject:
 
         Parameters
         ----------
-        targets
+        targets : target set or observation spec
             A high-level target set -- :class:`HeadTargets`,
-            :class:`LakeStageTargets`, :class:`SfrStageTargets`,
-            :class:`SfrFlowTargets` or :class:`DrnFlowTargets` -- or a pre-built
-            observation spec (e.g. :class:`HeadTargetObservationSpec`). The matching
-            simulated values are regenerated by a post-processor on every run.
-        prefix
-            Observation-name prefix. Defaults to the target kind's own prefix
-            (``"hds"``, ``"stage"``, ``"sfr_stage"``, ``"sfr_flow"``,
-            ``"drn_flow"``). Pass distinct prefixes to register more than one set
-            of the same kind.
+            :class:`ConcTargets`, :class:`LakeStageTargets`,
+            :class:`SfrStageTargets`, :class:`SfrFlowTargets` or
+            :class:`DrnFlowTargets` -- which is wrapped in its matching
+            ``*ObservationSpec``, or a pre-built observation spec (e.g.
+            :class:`HeadTargetObservationSpec`), registered as it is. The
+            matching simulated values are regenerated by a post-processor on
+            every run. Anything else raises ``TypeError``.
+        prefix : str or None, optional
+            Observation-name prefix. ``None`` (default) uses the target kind's
+            own prefix (``"hds"``, ``"conc"``, ``"stage"``, ``"sfr_stage"``,
+            ``"sfr_flow"``, ``"drn_flow"``). Pass distinct prefixes to register
+            more than one set of the same kind. IGNORED when ``targets`` is
+            already a spec: the spec's own ``prefix`` is used.
 
         Returns
         -------
-        The registered observation spec.
+        observation spec
+            The registered spec -- the one passed in, or the
+            ``*ObservationSpec`` (e.g. :class:`HeadTargetObservationSpec`)
+            the target set was wrapped in.
         """
 
         spec = self._coerce_observation_spec(targets, prefix=prefix)
@@ -431,17 +539,27 @@ class PestProject:
 
         Parameters
         ----------
-        targets
-            A :class:`HeadTargets` (or observation spec) describing *where* and
-            *when* the prediction is taken. Any values supplied are placeholders
-            (e.g. an expected value); the weight is forced to zero regardless.
-        prefix
-            Observation-name prefix. Defaults to ``"fore1"``, ``"fore2"``, ...
-            so forecast names never collide with calibration observations.
+        targets : target set or observation spec
+            Any target set :meth:`observe` accepts (:class:`HeadTargets`,
+            :class:`ConcTargets`, :class:`LakeStageTargets`,
+            :class:`SfrStageTargets`, :class:`SfrFlowTargets`,
+            :class:`DrnFlowTargets`) or a pre-built observation spec,
+            describing *where* and *when* the prediction is taken. Any values
+            supplied are placeholders (e.g. an expected value); the weight is
+            forced to zero regardless. Anything else raises ``TypeError``.
+        prefix : str or None, optional
+            Observation-name prefix. ``None`` (default, and an empty string
+            too) gives ``"fore1"``, ``"fore2"``, ... in call order, so forecast
+            names never collide with calibration observations. IGNORED when
+            ``targets`` is already a spec: the spec's own ``prefix`` is used,
+            which for a default-built spec is the same as a calibration set's
+            (``"hds"``, ...).
 
         Returns
         -------
-        The registered forecast spec.
+        observation spec
+            The registered forecast spec -- the one passed in, or the
+            ``*ObservationSpec`` the target set was wrapped in.
         """
 
         default = prefix or f"fore{len(self._forecast_specs) + 1}"
@@ -657,7 +775,32 @@ class PestProject:
         return metadata_path
 
     def write(self, filename: str | Path | None = None):
-        """Write the built control file to disk."""
+        """Write the built control file to disk.
+
+        Writes ``cal.pst`` -- including any edits made to it since
+        :meth:`build` -- in the format pyEMU's ``Pst.write`` picks when given
+        no version: version 2 when there are more than 10,000 parameters or
+        observations or a version-2-only column is present, else version 1.
+        :meth:`build`, :meth:`run_ies` and :meth:`prior` always write
+        version 2.
+
+        Parameters
+        ----------
+        filename : str or pathlib.Path or None, optional
+            Control-file name. Only its final component is used: the file
+            always lands in the template workspace. ``None`` (default) writes
+            ``<name>.pst``, the file :meth:`run_ies`/:meth:`prior` run.
+
+        Returns
+        -------
+        pathlib.Path
+            The file written.
+
+        Raises
+        ------
+        ValueError
+            When :meth:`build` has not run yet.
+        """
 
         if self.pst is None:
             raise ValueError("Call build() before write().")
@@ -666,7 +809,38 @@ class PestProject:
         return target
 
     def draw_prior(self, num_reals: int = 1000, use_specsim: bool = True):
-        """Draw a prior parameter ensemble using the underlying ``PstFrom``."""
+        """Draw a prior parameter ensemble using the underlying ``PstFrom``.
+
+        Calls ``cal.pf.draw(num_reals=..., use_specsim=...)``, which draws every
+        parameter in ``cal.pst`` from its bounds, correlated through any
+        ``correlation=`` geostructs registered with ``PstFrom``. Array-target
+        pilot points are added to ``cal.pst`` after ``PstFrom`` builds and have
+        no geostruct there, so this draw includes them but draws each one
+        independently; their ``correlation=`` is honoured only by the separate
+        draw :meth:`run_ies`/:meth:`prior` make.
+
+        Parameters
+        ----------
+        num_reals : int, optional
+            Number of realizations to draw. Default ``1000``.
+        use_specsim : bool, optional
+            Use pyEMU's spectral simulation for grid-scale parameters. Default
+            ``True`` here, where pyEMU's own default is ``False``;
+            :meth:`run_ies`/:meth:`prior` call this with ``False``. Measured on
+            a DISV (``VertexGrid``) model with a ``grid`` parameter, ``True``
+            raises ``AttributeError`` from inside pyEMU; pass ``False`` there.
+
+        Returns
+        -------
+        pyemu.ParameterEnsemble or None
+            The drawn ensemble, one row per realization; ``None`` (pyEMU's
+            answer) when the control file has no adjustable parameter.
+
+        Raises
+        ------
+        ValueError
+            When :meth:`build` has not run yet.
+        """
 
         if self.pf is None:
             raise ValueError("Call build() before draw_prior().")
@@ -891,13 +1065,19 @@ class PestProject:
 
         Parameters
         ----------
-        filename
-            Output ``.pst`` filename (default ``"<name>.pst"``). Written into
-            the template workspace.
-        noptmax
+        filename : str or pathlib.Path or None, optional
+            Output ``.pst`` filename (default ``"<name>.pst"``). Only its final
+            component is used: it is written into the template workspace and
+            recorded in the run's metadata, whose stem is the case
+            ``model.pest_runs[...].review()`` opens. :meth:`run_ies` and
+            :meth:`prior` always write and run ``<name>.pst`` instead, so a
+            stem other than ``name`` leaves ``review()`` reading the wrong
+            case.
+        noptmax : int, optional
             Initial ``NOPTMAX`` written to the control file. ``0`` (default)
             means "run the model once and compute residuals" -- the standard
             way to sanity-check a fresh setup before launching a real run.
+            :meth:`run_ies`/:meth:`prior` overwrite it.
 
         Returns
         -------
@@ -1078,39 +1258,67 @@ class PestProject:
         Call :meth:`build` first. Reasonable defaults make ``cal.run_ies()`` a
         valid first call; tune from there.
 
+        ``noise``, ``bad_phi_sigma`` and ``**pestpp_options`` are written onto
+        ``cal.pst.pestpp_options`` and STAY there: ``noise=False``, a
+        ``bad_phi_sigma`` or an extra option from an earlier
+        :meth:`run_ies`/:meth:`prior` call is still set on the next one, whose
+        defaults do not clear it.
+
         Parameters
         ----------
-        reals
+        reals : int, optional
             Number of realizations in the ensemble (``ies_num_reals``). More is
-            better for posterior coverage but costs more model runs; 50 is a
-            reasonable starting point, production runs often use 100-300.
-        iterations
-            Number of smoother iterations (``NOPTMAX``). 3 is a common default;
-            PESTPP-IES may stop earlier if it converges.
-        workers
-            Number of parallel agents. ``None``/``1`` runs serially in the
-            template workspace; ``>1`` deploys a master + worker pool.
-        noise
-            Whether to carry measurement noise into the posterior (recommended).
-            Set ``False`` to disable (``ies_no_noise``).
-        bad_phi_sigma
-            Optional adaptive rejection threshold (``ies_bad_phi_sigma``);
+            better for posterior coverage but costs more model runs; 50 (the
+            default) is a reasonable starting point, production runs often use
+            100-300. Also the size of the correlated prior drawn for
+            ``correlation=`` parameters.
+        iterations : int, optional
+            Number of smoother iterations (``NOPTMAX``). Default ``3``, a
+            common choice; PESTPP-IES may stop earlier if it converges.
+        workers : int or None, optional
+            Number of parallel agents. ``None`` (default) or ``1`` runs
+            serially in the template workspace, where the results then are;
+            ``>1`` starts that many workers with pyEMU's ``start_workers``
+            and collects the results in ``master_dir``.
+        noise : bool, optional
+            Whether to carry measurement noise into the posterior (recommended,
+            the default ``True``, which sets nothing). ``False`` sets
+            ``ies_no_noise``.
+        bad_phi_sigma : float or None, optional
+            Adaptive rejection threshold (``ies_bad_phi_sigma``);
             values of 1.5 (aggressive) to 2.5 (tolerant) help highly nonlinear
-            problems by dropping lagging realizations.
-        master_dir
-            Master directory for a parallel run (default ``<name>_ies_master``
-            beside the template workspace).
-        exe
-            PEST++ IES executable name (resolved next to the MF6 binary, then on
-            ``PATH``).
+            problems by dropping lagging realizations. ``None`` (default) sets
+            nothing.
+        master_dir : str or pathlib.Path or None, optional
+            Master directory for a parallel run; ``None`` (default) uses
+            ``<name>_ies_master`` beside the template workspace, which is where
+            ``model.pest_runs`` looks. The workers are created in its parent
+            directory. Unused by a serial run.
+        exe : str, optional
+            PEST++ IES executable name, default ``"pestpp-ies"`` (a trailing
+            ``.exe`` is dropped). When the model's MF6 executable resolves to an
+            absolute path and a file ``<exe>.exe`` sits beside it, that
+            directory is prepended to ``PATH`` for the run (unless ``PATH``
+            already contains it); otherwise the name is resolved on ``PATH`` as
+            it is.
         **pestpp_options
             Any additional ``pst.pestpp_options`` to set (e.g.
-            ``ies_localizer="loc.mat"``), passed straight through.
+            ``ies_localizer="loc.mat"``), passed straight through and applied
+            after the options above, so they override them. ``ies_par_en`` is
+            then replaced by the drawn prior when a ``grid`` parameter, or an
+            array-target ``pilotpoints`` parameter, carries ``correlation=``.
 
         Returns
         -------
         IesResults
-            Reader/visualizer for the completed run.
+            Reader/visualizer for the completed run, opened on the directory
+            holding its results with case ``name``.
+
+        Raises
+        ------
+        ValueError
+            When :meth:`build` has not run, or ``cal.pst`` has been put in
+            ``regularization`` mode, which PESTPP-IES cannot parse.
         """
 
         from myflopy.modflow.mf6.pest.ies import IesResults
@@ -1150,27 +1358,45 @@ class PestProject:
         Mechanically this is PESTPP-IES with ``NOPTMAX=-1`` (evaluate the prior
         ensemble and stop). Call :meth:`build` first.
 
+        Options persist on ``cal.pst`` between calls exactly as in
+        :meth:`run_ies` (a ``bad_phi_sigma`` set there is still set here).
+
         Parameters
         ----------
-        reals
-            Number of prior realizations (``ies_num_reals``). 50 is plenty for a
-            visual bracketing check.
-        workers
-            Parallel agents (``None``/``1`` runs serially).
-        noise
-            Generate the measurement-noise ensemble too (default ``True``).
-        master_dir
-            Master directory for a parallel run (default ``<name>_prior_master``).
-        exe
-            PEST++ IES executable (resolved next to the MF6 binary, then ``PATH``).
+        reals : int, optional
+            Number of prior realizations (``ies_num_reals``). Default ``50``,
+            plenty for a visual bracketing check. Also the size of the
+            correlated prior drawn for ``correlation=`` parameters.
+        workers : int or None, optional
+            Parallel agents. ``None`` (default) or ``1`` runs serially in the
+            template workspace; ``>1`` starts that many workers and collects the
+            results in ``master_dir``.
+        noise : bool, optional
+            Generate the measurement-noise ensemble too (default ``True``,
+            which sets nothing). ``False`` sets ``ies_no_noise``.
+        master_dir : str or pathlib.Path or None, optional
+            Master directory for a parallel run. ``None`` (default) uses
+            ``<name>_prior_master`` beside the template workspace, which is where
+            ``model.pest_runs`` looks. Unused by a serial run.
+        exe : str, optional
+            PEST++ IES executable, default ``"pestpp-ies"``, resolved as in
+            :meth:`run_ies`.
         **pestpp_options
-            Additional ``pst.pestpp_options`` passed straight through.
+            Additional ``pst.pestpp_options``, passed straight through and
+            applied after ``noise``; ``ies_par_en`` is replaced as in
+            :meth:`run_ies`.
 
         Returns
         -------
         IesResults
             Use :meth:`~...ies.IesResults.plot_prior_vs_obs` (grey prior spaghetti
             vs measured) and :meth:`~...ies.IesResults.conflict` to inspect it.
+
+        Raises
+        ------
+        ValueError
+            When :meth:`build` has not run, or ``cal.pst`` has been put in
+            ``regularization`` mode.
         """
 
         from myflopy.modflow.mf6.pest.ies import IesResults

@@ -179,16 +179,34 @@ def wel_spec(
 
     Parameters
     ----------
-    stress_period_data
-        FloPy stress-period mapping ``{per: [(cellid, q, [aux...], [bname]), ...]}``.
-    name
-        Package name used for ``pname`` and the output filename.
-    auxiliary
-        Optional auxiliary variable name(s).
-    boundnames
-        Enable named boundaries (default ``True``).
+    stress_period_data : dict or list
+        FloPy stress-period data, handed to FloPy unchanged: a
+        ``{period: [record, ...]}`` mapping with zero-based period keys, or a bare
+        list of records, which FloPy files under period 0. Each record is
+        ``(cellid, q[, aux...][, boundname])``: ``cellid`` is zero-based --
+        ``(layer, cell)`` on DISV, ``(layer, row, col)`` on DIS -- and ``q`` is the
+        well rate in model length^3/time, negative for extraction. A period mapped
+        to an empty list is written as an empty ``PERIOD`` block. ``maxbound`` is
+        never set here; FloPy computes it from these records at write time.
+    name : str, default "wel"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>`` (the model
+        name is filled in at build), and the returned spec's name.
+    auxiliary : str or list of str, optional
+        Auxiliary variable name(s), written to MF6's ``AUXILIARY`` option. Each
+        record then carries one value per name, after ``q``. ``None`` (the default)
+        declares none.
+    boundnames : bool, default True
+        Write MF6's ``BOUNDNAMES`` option, declaring that records may end with a
+        boundary name. A record with no name is still accepted (FloPy stores an
+        empty one).
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwfwel` (``print_input``,
+        ``auto_flow_reduce``, ``timeseries``, ``observations``, ...), passed to it
+        at build. The names are checked against that class's signature when the
+        spec is created, and an unknown one raises ``TypeError`` naming a close
+        valid one if any. They are applied last, so they override ``save_flows=True`` and
+        the ``pname``/``filename`` set from ``name``. A string value may contain
+        ``{model_name}``, which is replaced by the model's name at build.
     """
 
     return _list_bc_spec(
@@ -215,14 +233,29 @@ def chd_spec(
 
     Parameters
     ----------
-    stress_period_data
-        FloPy mapping ``{per: [(cellid, head, [bname]), ...]}``.
-    name
-        Package name used for ``pname`` and the output filename.
-    boundnames
-        Enable named boundaries (default ``False``).
+    stress_period_data : dict or list
+        FloPy stress-period data, handed to FloPy unchanged: a
+        ``{period: [record, ...]}`` mapping with zero-based period keys, or a bare
+        list of records, which FloPy files under period 0. Each record is
+        ``(cellid, head[, aux...][, boundname])``: ``cellid`` is zero-based --
+        ``(layer, cell)`` on DISV, ``(layer, row, col)`` on DIS -- and ``head`` is
+        the specified head, in model length units. A period mapped to an empty
+        list is written as an empty ``PERIOD`` block. ``maxbound`` is never set
+        here; FloPy computes it from these records at write time.
+    name : str, default "chd"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>`` (the model
+        name is filled in at build), and the returned spec's name.
+    boundnames : bool, default False
+        Write MF6's ``BOUNDNAMES`` option, declaring that records may end with a
+        boundary name. Leave it ``False`` when the records carry none.
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwfchd` (``auxiliary``,
+        ``print_input``, ``timeseries``, ``observations``, ...), passed to it at
+        build. The names are checked against that class's signature when the spec
+        is created, and an unknown one raises ``TypeError`` naming a close valid
+        one if any. They are applied last, so they override ``save_flows=True`` and the
+        ``pname``/``filename`` set from ``name``. A string value may contain
+        ``{model_name}``, which is replaced by the model's name at build.
     """
 
     return _list_bc_spec(
@@ -248,14 +281,31 @@ def drn_spec(
 
     Parameters
     ----------
-    stress_period_data
-        FloPy mapping ``{per: [(cellid, elev, cond, [bname]), ...]}``.
-    name
-        Package name used for ``pname`` and the output filename.
-    boundnames
-        Enable named boundaries (default ``False``).
+    stress_period_data : dict or list
+        FloPy stress-period data, handed to FloPy unchanged: a
+        ``{period: [record, ...]}`` mapping with zero-based period keys, or a bare
+        list of records, which FloPy files under period 0. Each record is
+        ``(cellid, elev, cond[, aux...][, boundname])``: ``cellid`` is zero-based
+        -- ``(layer, cell)`` on DISV, ``(layer, row, col)`` on DIS -- ``elev`` is
+        the drain elevation (length) and ``cond`` its conductance
+        (length^2/time). A period mapped to an empty list is written as an empty
+        ``PERIOD`` block. ``maxbound`` is never set here; FloPy computes it from
+        these records at write time.
+    name : str, default "drn"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>`` (the model
+        name is filled in at build), and the returned spec's name.
+    boundnames : bool, default False
+        Write MF6's ``BOUNDNAMES`` option, declaring that records may end with a
+        boundary name. Leave it ``False`` when the records carry none.
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwfdrn` (``auxiliary``,
+        ``mover``, ``print_input``, ``timeseries``, ``observations``, ...), passed
+        to it at build. The names are checked against that class's signature when
+        the spec is created, and an unknown one raises ``TypeError`` naming a
+        close valid one if any. They are applied last, so they override
+        ``save_flows=True`` and the ``pname``/``filename`` set from ``name``. A
+        string value may contain ``{model_name}``, which is replaced by the model's
+        name at build.
     """
 
     return _list_bc_spec(
@@ -282,16 +332,34 @@ def ghb_spec(
 
     Parameters
     ----------
-    stress_period_data
-        FloPy mapping ``{per: [(cellid, bhead, cond, [aux...], [bname]), ...]}``.
-    name
-        Package name used for ``pname`` and the output filename.
-    auxiliary
-        Optional auxiliary variable name(s).
-    boundnames
-        Enable named boundaries (default ``False``).
+    stress_period_data : dict or list
+        FloPy stress-period data, handed to FloPy unchanged: a
+        ``{period: [record, ...]}`` mapping with zero-based period keys, or a bare
+        list of records, which FloPy files under period 0. Each record is
+        ``(cellid, bhead, cond[, aux...][, boundname])``: ``cellid`` is zero-based
+        -- ``(layer, cell)`` on DISV, ``(layer, row, col)`` on DIS -- ``bhead`` is
+        the boundary head (length) and ``cond`` the conductance (length^2/time). A
+        period mapped to an empty list is written as an empty ``PERIOD`` block.
+        ``maxbound`` is never set here; FloPy computes it from these records at
+        write time.
+    name : str, default "ghb"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>`` (the model
+        name is filled in at build), and the returned spec's name.
+    auxiliary : str or list of str, optional
+        Auxiliary variable name(s), written to MF6's ``AUXILIARY`` option. Each
+        record then carries one value per name, after ``cond``. ``None`` (the
+        default) declares none.
+    boundnames : bool, default False
+        Write MF6's ``BOUNDNAMES`` option, declaring that records may end with a
+        boundary name. Leave it ``False`` when the records carry none.
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwfghb` (``mover``,
+        ``print_input``, ``timeseries``, ``observations``, ...), passed to it at
+        build. The names are checked against that class's signature when the spec
+        is created, and an unknown one raises ``TypeError`` naming a close valid
+        one if any. They are applied last, so they override ``save_flows=True`` and the
+        ``pname``/``filename`` set from ``name``. A string value may contain
+        ``{model_name}``, which is replaced by the model's name at build.
     """
 
     return _list_bc_spec(
@@ -319,16 +387,35 @@ def riv_spec(
 
     Parameters
     ----------
-    stress_period_data
-        FloPy mapping ``{per: [(cellid, stage, cond, rbot, [aux...], [bname]), ...]}``.
-    name
-        Package name used for ``pname`` and the output filename.
-    auxiliary
-        Optional auxiliary variable name(s).
-    boundnames
-        Enable named boundaries (default ``False``).
+    stress_period_data : dict or list
+        FloPy stress-period data, handed to FloPy unchanged: a
+        ``{period: [record, ...]}`` mapping with zero-based period keys, or a bare
+        list of records, which FloPy files under period 0. Each record is
+        ``(cellid, stage, cond, rbot[, aux...][, boundname])``: ``cellid`` is
+        zero-based -- ``(layer, cell)`` on DISV, ``(layer, row, col)`` on DIS --
+        ``stage`` is the river stage (length), ``cond`` the riverbed conductance
+        (length^2/time) and ``rbot`` the river-bottom elevation (length). A period
+        mapped to an empty list is written as an empty ``PERIOD`` block.
+        ``maxbound`` is never set here; FloPy computes it from these records at
+        write time.
+    name : str, default "riv"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>`` (the model
+        name is filled in at build), and the returned spec's name.
+    auxiliary : str or list of str, optional
+        Auxiliary variable name(s), written to MF6's ``AUXILIARY`` option. Each
+        record then carries one value per name, after ``rbot``. ``None`` (the
+        default) declares none.
+    boundnames : bool, default False
+        Write MF6's ``BOUNDNAMES`` option, declaring that records may end with a
+        boundary name. Leave it ``False`` when the records carry none.
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwfriv` (``mover``,
+        ``print_input``, ``timeseries``, ``observations``, ...), passed to it at
+        build. The names are checked against that class's signature when the spec
+        is created, and an unknown one raises ``TypeError`` naming a close valid
+        one if any. They are applied last, so they override ``save_flows=True`` and the
+        ``pname``/``filename`` set from ``name``. A string value may contain
+        ``{model_name}``, which is replaced by the model's name at build.
     """
 
     return _list_bc_spec(
@@ -361,14 +448,29 @@ def rch_spec(
 
     Parameters
     ----------
-    stress_period_data
-        FloPy mapping ``{per: [(cellid, recharge, [bname]), ...]}``.
-    name
-        Package name used for ``pname`` and the output filename.
-    boundnames
-        Enable named boundaries (default ``False``).
+    stress_period_data : dict or list
+        FloPy stress-period data, handed to FloPy unchanged: a
+        ``{period: [record, ...]}`` mapping with zero-based period keys, or a bare
+        list of records, which FloPy files under period 0. Each record is
+        ``(cellid, recharge[, aux...][, boundname])``: ``cellid`` is zero-based --
+        ``(layer, cell)`` on DISV, ``(layer, row, col)`` on DIS -- and ``recharge``
+        is a flux in model length/time. A period mapped to an empty list is written
+        as an empty ``PERIOD`` block.
+    name : str, default "rch"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>`` (the model
+        name is filled in at build), and the returned spec's name.
+    boundnames : bool, default False
+        Write MF6's ``BOUNDNAMES`` option, declaring that records may end with a
+        boundary name. Leave it ``False`` when the records carry none.
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwfrch` (``auxiliary``,
+        ``fixed_cell``, ``print_input``, ``timeseries``, ``observations``, ...),
+        passed to it at build. The names are checked against that class's
+        signature when the spec is created, and an unknown one raises ``TypeError``
+        naming a close valid one if any. They are applied last, so they override
+        ``save_flows=True`` and the ``pname``/``filename`` set from ``name``. A
+        string value may contain ``{model_name}``, which is replaced by the model's
+        name at build.
     """
 
     return _list_bc_spec(
@@ -402,18 +504,40 @@ def evt_spec(
 
     Parameters
     ----------
-    stress_period_data
-        FloPy mapping ``{per: [(cellid, surface, rate, depth, [...], [bname]), ...]}``.
-    name
-        Package name used for ``pname`` and the output filename.
-    nseg
-        Number of ET segments (default 1, the plain linear-decay form).
-    auxiliary
-        Optional auxiliary variable name(s).
-    boundnames
-        Enable named boundaries (default ``False``).
+    stress_period_data : dict or list
+        FloPy stress-period data, handed to FloPy unchanged: a
+        ``{period: [record, ...]}`` mapping with zero-based period keys, or a bare
+        list of records, which FloPy files under period 0. Each record is
+        ``(cellid, surface, rate, depth[, pxdp..., petm...][, petm0][, aux...]
+        [, boundname])``: ``cellid`` is zero-based -- ``(layer, cell)`` on DISV,
+        ``(layer, row, col)`` on DIS -- ``surface`` is the ET surface elevation
+        (length), ``rate`` the maximum ET flux (length/time) and ``depth`` the
+        extinction depth below the surface (length). A period mapped to an empty
+        list is written as an empty ``PERIOD`` block.
+    name : str, default "evt"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>`` (the model
+        name is filled in at build), and the returned spec's name.
+    nseg : int, default 1
+        MF6's ``NSEG``, the number of ET segments, passed to FloPy. ``1`` is the
+        plain linear decay from ``rate`` at the surface to zero at ``depth``, and
+        its records carry no ``pxdp``/``petm`` values; with ``nseg > 1`` every
+        record must carry ``nseg - 1`` of each.
+    auxiliary : str or list of str, optional
+        Auxiliary variable name(s), written to MF6's ``AUXILIARY`` option. Each
+        record then carries one value per name, before any boundary name. ``None``
+        (the default) declares none.
+    boundnames : bool, default False
+        Write MF6's ``BOUNDNAMES`` option, declaring that records may end with a
+        boundary name. Leave it ``False`` when the records carry none.
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwfevt` (``fixed_cell``,
+        ``surf_rate_specified``, ``print_input``, ``timeseries``, ``observations``,
+        ...), passed to it at build. The names are checked against that class's
+        signature when the spec is created, and an unknown one raises ``TypeError``
+        naming a close valid one if any. They are applied last, so they override
+        ``save_flows=True`` and the ``pname``/``filename`` set from ``name``. A
+        string value may contain ``{model_name}``, which is replaced by the model's
+        name at build.
     """
 
     return _list_bc_spec(
@@ -448,20 +572,42 @@ def uzf_spec(
 
     Parameters
     ----------
-    packagedata
-        FloPy UZF packagedata records (one per UZF cell).
-    perioddata
-        FloPy UZF stress-period data (infiltration, PET, extinction depth, ...).
-    nuzfcells
-        Cell count; defaults to ``len(packagedata)``.
-    name
-        Package name used for ``pname`` and the output filenames.
-    mover
-        Enable MVR participation (rejected infiltration as a provider).
-    simulate_et
-        Enable evapotranspiration simulation.
+    packagedata : list
+        FloPy UZF ``packagedata`` records, one per UZF object and handed to FloPy
+        unchanged: ``(ifno, cellid, landflag, ivertcon, surfdep, vks, thtr, thts,
+        thti, eps[, boundname])``, with zero-based ``ifno``, ``cellid`` and
+        ``ivertcon`` (FloPy adds one on write, so an ``ivertcon`` of ``-1`` writes
+        MF6's ``0``, no underlying UZF object). Its length is the default
+        ``nuzfcells``.
+    perioddata : dict
+        FloPy UZF ``perioddata``, handed to FloPy unchanged:
+        ``{period: [(ifno, finf, pet, extdp, extwc, ha, hroot, rootact[, aux...]),
+        ...]}`` with zero-based period keys -- infiltration and potential ET in
+        length/time, extinction depth in length.
+    nuzfcells : int, optional
+        MF6's ``NUZFCELLS``. ``None`` (the default) uses ``len(packagedata)``; it is
+        not checked against ``packagedata`` when given.
+    name : str, default "uzf"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>``, and the
+        returned spec's name. It also names the output files written here:
+        ``<model>_<name>_budget.uzf``, ``<model>_<name>_budget.csv`` and
+        ``<model>_<name>_package_convergence.csv``.
+    mover : bool, default False
+        Write MF6's ``MOVER`` option, which the package needs before an MVR
+        package (``mf.mvr``) can move water to or from it.
+    simulate_et : bool, default False
+        Write MF6's ``SIMULATE_ET`` option, which turns on ET in the unsaturated
+        zone -- and in the GWF cell as well when ``linear_gwet`` or ``square_gwet``
+        is also passed through ``**options``.
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwfuzf` (``simulate_gwseep``,
+        ``linear_gwet``, ``ntrailwaves``, ``nwavesets``, ``wc_filerecord``,
+        ``observations``, ...), passed to it at build. The names are checked
+        against that class's signature when the spec is created, and an unknown one
+        raises ``TypeError`` naming a close valid one if any. They are applied last,
+        so they override ``save_flows=True``, the ``pname``/``filename`` set from
+        ``name`` and the three output file records. A string value may contain
+        ``{model_name}``, which is replaced by the model's name at build.
     """
 
     count = len(packagedata) if nuzfcells is None else nuzfcells
@@ -505,22 +651,49 @@ def lak_spec(
 
     Parameters
     ----------
-    packagedata
-        FloPy LAK packagedata records (one per lake).
-    connectiondata
-        FloPy LAK connection records (lake-to-cell).
-    perioddata
-        FloPy LAK stress-period data (status, stage, withdrawals, ...).
-    nlakes
-        Lake count; defaults to ``len(packagedata)``.
-    name
-        Package name used for ``pname`` and the output filenames.
-    noutlets, ntables
-        Number of lake outlets and lake-bathymetry tables.
-    mover
-        Enable MVR participation (lake outflow as a provider/receiver).
+    packagedata : list
+        FloPy LAK ``packagedata`` records, one per lake and handed to FloPy
+        unchanged: ``(ifno, strt, nlakeconn[, aux...][, boundname])`` -- a
+        zero-based lake number, the starting stage (length) and the number of
+        cells connected to that lake. Its length is the default ``nlakes``.
+    connectiondata : list
+        FloPy LAK ``connectiondata`` records, one per lake-cell connection and
+        handed to FloPy unchanged: ``(ifno, iconn, cellid, claktype, bedleak,
+        belev, telev, connlen, connwidth)``, with zero-based ``ifno``, ``iconn`` and
+        ``cellid``.
+    perioddata : dict
+        FloPy LAK ``perioddata``, handed to FloPy unchanged: ``{period: [(number,
+        laksetting...), ...]}`` with zero-based period keys, where each record
+        starts with a lake (or outlet) number followed by a setting keyword and its
+        value(s) -- ``"status"``, ``"stage"``, ``"rainfall"``, ``"evaporation"``,
+        ``"withdrawal"``, ...
+    nlakes : int, optional
+        MF6's ``NLAKES``. ``None`` (the default) uses ``len(packagedata)``; it is not
+        checked against ``packagedata`` when given.
+    name : str, default "lak"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>``, and the
+        returned spec's name. It also names the output files written here:
+        ``<model>_<name>_stage.lak``, ``<model>_<name>_budget.lak``,
+        ``<model>_<name>_budget.csv`` and ``<model>_<name>_package_convergence.csv``.
+    noutlets : int, default 0
+        MF6's ``NOUTLETS``, the number of lake outlets. With a nonzero value, pass
+        the outlet records through ``outlets=`` in ``**options``.
+    ntables : int, default 0
+        MF6's ``NTABLES``, the number of lakes given a stage-volume-area table. With
+        a nonzero value, pass the table references through ``tables=`` in
+        ``**options``.
+    mover : bool, default False
+        Write MF6's ``MOVER`` option, which the package needs before an MVR
+        package (``mf.mvr``) can move water to or from it.
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwflak` (``outlets``,
+        ``tables``, ``surfdep``, ``length_conversion``, ``time_conversion``,
+        ``observations``, ...), passed to it at build. The names are checked
+        against that class's signature when the spec is created, and an unknown one
+        raises ``TypeError`` naming a close valid one if any. They are applied last,
+        so they override ``save_flows=True``, the ``pname``/``filename`` set from
+        ``name`` and the four output file records. A string value may contain
+        ``{model_name}``, which is replaced by the model's name at build.
     """
 
     count = len(packagedata) if nlakes is None else nlakes
@@ -564,22 +737,46 @@ def sfr_spec(
 
     Parameters
     ----------
-    packagedata
-        FloPy SFR packagedata records (one per reach).
-    connectiondata
-        FloPy SFR reach-to-reach connection records.
-    perioddata
-        FloPy SFR stress-period data (inflow, runoff, status, ...).
-    nreaches
-        Reach count; defaults to ``len(packagedata)``.
-    name
-        Package name used for ``pname`` and the output filenames.
-    mover
-        Enable MVR participation (reach outflow as a provider/receiver).
-    diversions
-        Optional SFR diversion records.
+    packagedata : list
+        FloPy SFR ``packagedata`` records, one per reach and handed to FloPy
+        unchanged: ``(ifno, cellid, rlen, rwid, rgrd, rtp, rbth, rhk, man, ncon,
+        ustrf, ndv[, aux...][, boundname])``, with a zero-based reach number and
+        ``cellid``. Its length is the default ``nreaches``.
+    connectiondata : list
+        FloPy SFR ``connectiondata`` records, handed to FloPy unchanged:
+        ``(ifno, ic...)`` -- a reach followed by the reaches it connects to, as
+        zero-based reach numbers, negative for a downstream connection (FloPy adds
+        one to the magnitude on write, so ``(0, -1)`` writes ``1 -2``).
+    perioddata : dict
+        FloPy SFR ``perioddata``, handed to FloPy unchanged: ``{period: [(ifno,
+        sfrsetting...), ...]}`` with zero-based period keys, where each record
+        starts with a reach number followed by a setting keyword and its value(s)
+        -- ``"status"``, ``"inflow"``, ``"rainfall"``, ``"evaporation"``,
+        ``"runoff"``, ...
+    nreaches : int, optional
+        MF6's ``NREACHES``. ``None`` (the default) uses ``len(packagedata)``; it is
+        not checked against ``packagedata`` when given.
+    name : str, default "sfr"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>``, and the
+        returned spec's name. It also names the output files written here:
+        ``<model>_<name>_stage.sfr`` and ``<model>_<name>_budget.sfr``.
+    mover : bool, default False
+        Write MF6's ``MOVER`` option, which the package needs before an MVR
+        package (``mf.mvr``) can move water to or from it.
+    diversions : list, optional
+        FloPy SFR ``diversions`` records, handed to FloPy unchanged:
+        ``(ifno, idv, iconr, cprior)``. ``None`` (the default) writes none; a reach
+        with diversions must also declare their count as ``ndv`` in
+        ``packagedata``.
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwfsfr` (``crosssections``,
+        ``initialstages``, ``length_conversion``, ``time_conversion``,
+        ``observations``, ...), passed to it at build. The names are checked
+        against that class's signature when the spec is created, and an unknown one
+        raises ``TypeError`` naming a close valid one if any. They are applied last,
+        so they override ``save_flows=True``, the ``pname``/``filename`` set from
+        ``name`` and the two output file records. A string value may contain
+        ``{model_name}``, which is replaced by the model's name at build.
     """
 
     count = len(packagedata) if nreaches is None else nreaches
@@ -632,17 +829,41 @@ def mvr_spec(
 
     Parameters
     ----------
-    packages
-        MVR package declarations, e.g. ``[["sfr"], ["lak"]]``.
-    perioddata
-        Mover records per period: ``{per: [(pname1, id1, pname2, id2, mvrtype,
-        value), ...]}``.
-    name
-        Package name used for ``pname`` and the output filenames.
-    maxmvr, maxpackages
-        Upper bounds; inferred from ``perioddata``/``packages`` when ``None``.
+    packages : list
+        MVR package declarations, one single-item list or tuple per package that
+        provides or receives water: ``[["sfr"], ["lak"]]``. The item is the
+        package name, and it is what the returned spec ``requires=`` -- so it must
+        match a ``PackageSpec`` name declared earlier in the same model -- and what
+        it records as the packages it addresses by index. Names must be unique.
+    perioddata : dict
+        Mover records per period, ``{period: [(pname1, id1, pname2, id2, mvrtype,
+        value), ...]}`` with zero-based period keys (a list is not accepted).
+        ``pname1`` provides and ``pname2`` receives; both must appear in
+        ``packages``. ``id1``/``id2`` are zero-based feature numbers (reach, lake,
+        UZF object; FloPy adds one on write), ``mvrtype`` is ``"FACTOR"``,
+        ``"EXCESS"``, ``"THRESHOLD"`` or ``"UPTO"``, and ``value`` is its factor or
+        rate. A period mapped to an empty list is written as an empty ``PERIOD``
+        block.
+    name : str, default "mvr"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>``, and the
+        returned spec's name. It also names the output files written here:
+        ``<model>.<name>.bud`` and ``<model>.<name>.csv``.
+    maxmvr : int, optional
+        MF6's ``MAXMVR``. ``None`` (the default) uses the largest number of records
+        in any one period of ``perioddata``; a smaller value raises ``ValueError``.
+    maxpackages : int, optional
+        MF6's ``MAXPACKAGES``. ``None`` (the default) uses ``len(packages)``; a
+        smaller value raises ``ValueError``.
     **options
-        Extra keyword options passed straight to the FloPy constructor.
+        Any other keyword of :class:`flopy.mf6.ModflowGwfmvr` (``print_input``,
+        ``print_flows``, ...), passed to it at build. The names are checked against
+        that class's signature when the spec is created, and an unknown one raises
+        ``TypeError`` naming a close valid one if any. They are applied last, so they
+        override the ``pname``/``filename`` set from ``name`` and the two output
+        file records. A string value may contain ``{model_name}``, which is
+        replaced by the model's name at build. ``modelnames=True`` reaches FloPy,
+        but the checks here read the single-model layouts above, so records in
+        MF6's model-name layout (``(mname, pname)`` packages) are refused.
 
     Raises
     ------

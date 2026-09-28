@@ -84,15 +84,37 @@ class LakeStageTargets:
 
     Parameters
     ----------
-    locations
-        ``name -> lake`` definitions: a dict, ``Series``, list of records, or a
-        DataFrame with ``name``/``lake`` columns. Lake ids are zero-based.
-    values
-        Observed lake-stage table (long or wide). Optional (template mode).
-    time_column, value_column
-        Column names in ``values`` for the period/time index and the stage value.
-    times
-        Optional explicit period/time labels when ``values`` carries none.
+    locations : dict, pandas.Series, pandas.DataFrame, list, tuple or None, optional
+        The named lakes: a ``{name: lake}`` dict, a ``Series`` indexed by name,
+        or a ``DataFrame`` / list of record dicts with ``name`` and ``lake``
+        columns (``ValueError`` when either is missing). ``lake`` is MF6's lake
+        number, ZERO-based (:meth:`to_flopy_obs` writes it one-based); each is
+        passed through ``int`` and each name through ``str``. Several names may
+        share a lake. Default ``None``: no targets.
+    values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
+        Observed lake stage through time, in the model's length units. A path is
+        read with ``pandas.read_csv``. LONG form has ``name`` and
+        ``value_column`` columns (headers matched ignoring case); WIDE form has
+        one column per target name beside ``time_column``; a table of only
+        ``time_column`` and ``value_column``, or a ``Series`` indexed by time,
+        is one series and needs exactly one named lake (``ValueError``
+        otherwise). Names are NOT checked against ``locations`` and are joined
+        to them exactly (case counts): a row naming no target gets no ``lake``
+        and no simulated stage in :meth:`compare`.
+        Default ``None`` makes a template that only captures simulated series.
+    time_column : str, optional
+        Column of ``values`` holding each row's time label, matched exactly.
+        Default ``"time"``; ``ValueError`` when ``values`` lacks it after
+        ``times`` is applied. :meth:`compare` reads it as a zero-based integer
+        -- see there for what it is matched against on each route.
+    value_column : str, optional
+        Column of a LONG ``values`` table holding the observed stage, matched
+        ignoring case. Default ``"stage"``.
+    times : list, tuple, pandas.Index, pandas.Series or None, optional
+        Time labels inserted as ``time_column`` when ``values`` is a ``dict`` or
+        list/tuple without that column; a list/tuple of another length raises
+        ``ValueError``. Ignored for a ``DataFrame``, ``Series`` or CSV path.
+        Default ``None``.
 
     Examples
     --------
@@ -166,7 +188,34 @@ class LakeStageTargets:
         time_column: str = "time",
         value_column: str = "stage",
     ):
-        """Create one named lake-stage target from a Series/list-like input."""
+        """Create one named lake-stage target from a Series/list-like input.
+
+        Parameters
+        ----------
+        lake : str
+            The target's name.
+        lake_id : int
+            MF6's lake number for it, ZERO-based (passed through ``int``).
+        values : pandas.Series or sequence of float
+            Observed stages, in the model's length units. A ``Series`` carries
+            its time labels as its index; any other sized sequence is one stage
+            per entry of ``times``.
+        times : sequence or None, optional
+            Time labels for a non-``Series`` ``values``, one per value (another
+            length raises ``ValueError`` from pandas). Default ``None``:
+            ``0, 1, 2, ...``. Ignored for a ``Series``.
+        time_column : str, optional
+            Name of the time column in the table built here, stored on the
+            result. Default ``"time"``.
+        value_column : str, optional
+            Name of the stage column in the table built from a ``Series``,
+            stored on the result. Default ``"stage"``.
+
+        Returns
+        -------
+        LakeStageTargets
+            A target set holding the one lake.
+        """
 
         if isinstance(values, pd.Series):
             series = values.copy()
@@ -192,7 +241,26 @@ class LakeStageTargets:
         time_column: str = "time",
         value_column: str = "stage",
     ):
-        """Create lake-stage targets from long-format records."""
+        """Create lake-stage targets from long-format records.
+
+        Parameters
+        ----------
+        records : list of dict or pandas.DataFrame
+            One row per target per time, as ``pandas.DataFrame(records)`` reads
+            it, with columns ``name``, ``lake`` (MF6's lake number, ZERO-based),
+            ``time_column`` and ``value_column``, all matched exactly.
+            ``ValueError`` when there are no records or a column is missing. A
+            name's lake is taken from its FIRST row.
+        time_column : str, optional
+            Column holding each record's time label. Default ``"time"``.
+        value_column : str, optional
+            Column holding each record's observed stage. Default ``"stage"``.
+
+        Returns
+        -------
+        LakeStageTargets
+            The targets, one per distinct ``name``.
+        """
 
         frame = pd.DataFrame(records).copy()
         if frame.empty:
@@ -437,13 +505,42 @@ class LakeStageTargets:
         return _copy_frame(compare)
 
     def residuals(self, model) -> pd.DataFrame:
-        """Return a compact residual table for lake-stage targets."""
+        """Return a compact residual table for lake-stage targets.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with a LAK package; passed to :meth:`compare`, whose
+            routes and ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`compare`'s rows, reduced to ``name``, ``lake``, ``time``,
+            ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
+            ``abs_residual``.
+        """
 
         frame = self.compare(model)
         return frame.loc[:, ["name", "lake", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]]
 
     def stats(self, model) -> pd.DataFrame:
-        """Return aggregate residual statistics for the lake-stage target set."""
+        """Return aggregate residual statistics for the lake-stage target set.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with a LAK package; passed to :meth:`compare`, whose
+            routes and ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n`` (rows with a residual -- a lake with no stage has
+            none), ``mean_error``, ``mae`` and ``rmse`` of simulated minus
+            target stage, in model length units. ``n`` is 0 and the rest
+            ``NaN`` when no row has a residual.
+        """
 
         return _default_compare_stats(self.compare(model))
 
@@ -453,7 +550,31 @@ class LakeStageTargets:
         csv_name: str = "lake_stage_targets.csv",
         kind: str = "STAGE",
     ) -> dict[str, list[tuple[str, str, int]]]:
-        """Return a FloPy ``continuous`` dict for MF6 lake-stage observations."""
+        """Return a FloPy ``continuous`` dict for MF6 lake-stage observations.
+
+        Parameters
+        ----------
+        csv_name : str, optional
+            The CSV file MF6 writes these observations to -- the dict's one key.
+            Default ``"lake_stage_targets.csv"``. :meth:`simulated_series` reads
+            observations back from a workspace CSV holding every target's
+            column, and skips any file whose name contains ``simulated_`` or
+            ``_target_``.
+        kind : str, optional
+            The MF6 LAK observation type written on every record, upper-cased.
+            Default ``"STAGE"``. The observation route of :meth:`simulated_series`
+            and :meth:`compare` reads whatever that CSV holds as the stage.
+
+        Returns
+        -------
+        dict of str to list of tuple
+            ``{csv_name: [(label, kind, lake + 1), ...]}``, one record per
+            target: its name with every character that is not a letter or digit
+            made ``_`` and leading and trailing ``_`` stripped (``"obs"`` if
+            nothing is left), and its lake number ONE-based. The shape
+            ``ModflowUtlobs(continuous=)`` and a LAK package's ``observations=``
+            take.
+        """
 
         records = [
             (_observation_label(name), str(kind).upper(), int(lake_id) + 1)
@@ -471,7 +592,39 @@ class LakeStageTargets:
         kind: str = "STAGE",
         package=None,
     ):
-        """Attach an MF6 utility observation package for lake-stage targets."""
+        """Attach an MF6 utility observation package for lake-stage targets.
+
+        The package is added to the FloPy objects in memory; writing and running
+        the simulation afterwards is the caller's.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            The model whose FloPy LAK package, ``model.gwf.lak``, receives the
+            OBS package unless ``package`` is given (a model with no LAK raises
+            ``AttributeError`` there). The records themselves need no model.
+        pname : str, optional
+            FloPy package name. Default ``"lak_obs"``.
+        filename : str, optional
+            The OBS input file name FloPy writes, in the owning model's
+            directory. Default ``"lake_stage_targets.obs"``.
+        csv_name : str or None, optional
+            The CSV file MF6 writes the observations to. Default ``None`` takes
+            ``filename``'s stem plus ``.csv`` (``"lake_stage_targets.csv"`` for
+            the default ``filename``).
+        kind : str, optional
+            The MF6 LAK observation type, as in :meth:`to_flopy_obs`. Default
+            ``"STAGE"``.
+        package : flopy object or None, optional
+            The FloPy package (or model) to attach the OBS package to instead of
+            ``model.gwf.lak`` -- for a model with several LAK packages, say.
+            Default ``None``.
+
+        Returns
+        -------
+        flopy.mf6.modflow.mfutlobs.ModflowUtlobs
+            The observation package.
+        """
 
         import flopy
 
@@ -486,7 +639,30 @@ class LakeStageTargets:
         )
 
     def calibration_plot(self, model, *, type: str = "calibration"):
-        """Build a calibration plot directly from these targets and one model."""
+        """Build a calibration plot directly from these targets and one model.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with a LAK package; the plot is drawn from
+            :meth:`compare`, whose ``Raises`` apply.
+        type : str, optional
+            Which plot:
+
+            - ``"calibration"`` (default) or ``"obs_vs_sim"``: target stage
+              against simulated stage, one point per row, titled "Observed vs
+              simulated lake stage", without fit statistics;
+            - ``"residuals_by_period"``: mean absolute residual per ``time``.
+
+            ``"heads"`` RAISES ``ValueError`` (the lake comparison has no
+            ``layer`` column, which that plot requires), and any other string
+            draws the cross plot WITH fit statistics.
+
+        Returns
+        -------
+        myflopy.modflow.calcs.calibration.CalibrationPlot
+            A Plotly figure (a ``viz.Fig``).
+        """
 
         from myflopy.modflow.calcs.calibration import CalibrationPlot
 

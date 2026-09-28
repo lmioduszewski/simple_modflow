@@ -379,24 +379,56 @@ class Wells:
     """Legacy WEL-package wrapper that attaches a well package to a model object.
 
     Part of the legacy OO package layer used with :class:`SimulationBase`:
-    constructing it builds a :class:`flopy.mf6.ModflowGwfwel` package (with
-    myflopy's shared naming/``save_flows`` conventions and the project artifact
-    catalog), attaches it to ``model`` as ``model.wel``, and exposes the wrapped
-    package. For new work prefer the package-first ``mf.wel(...)`` /
-    :func:`~myflopy.advanced.wel_spec` path instead.
+    constructing it builds a :class:`flopy.mf6.ModflowGwfwel` package on
+    ``model.gwf`` -- package name ``"wel"``, file ``<model.name>.wel``,
+    ``SAVE_FLOWS`` on -- so ``model.wel`` finds it, and keeps it as this
+    object's ``.wel``. The package name is fixed, so a second ``Wells`` on the
+    same model REPLACES the first (FloPy prints a warning). For new work prefer
+    the package-first ``mf.wel(...)`` / :func:`~myflopy.advanced.wel_spec` path
+    instead.
 
     Parameters
     ----------
-    model
-        The :class:`SimulationBase` to attach the WEL package to.
-    stress_period_data
-        FloPy WEL stress-period data ``{per: [(cellid, q, ...), ...]}``.
-    auxiliary
-        Optional auxiliary variable name(s).
-    boundnames
-        Enable named boundaries (default ``True``).
-    artifact_id, artifact_catalog, artifact_description, artifact_tags, artifact_metadata, artifact_overwrite
-        Optional project artifact-catalog bookkeeping for the built package.
+    model : SimulationBase
+        The model to attach the WEL package to. It needs a TDIS package first:
+        FloPy reads the stress-period count to accept ``stress_period_data``.
+    stress_period_data : dict or list
+        FloPy WEL ``stress_period_data``, passed unchanged:
+        ``{period: [(cellid, q, [aux...,] [boundname]), ...]}`` with zero-based
+        periods and cellids ``(layer, cell)`` on a DISV grid, ``q`` in model
+        volume per time (negative pumps out).
+    auxiliary : str or list of str, optional
+        WEL ``AUXILIARY`` variable names; each record then carries those values
+        after ``q``. Default None: none.
+    boundnames : bool, optional
+        WEL ``BOUNDNAMES`` option, which lets each record end with a name.
+        Default True; records without a name are accepted too.
+    artifact_id : str, optional
+        Default None: nothing is captured. When given, after the package is
+        built and attached, ``artifact_catalog.create_package_artifact(...)`` is
+        called with it and the other ``artifact_*`` values, and the result kept
+        as ``.package_artifact``. No object in myflopy provides that method
+        today (a ``Project`` raises ``AttributeError``), so this needs a catalog
+        of your own.
+    artifact_catalog : object, optional
+        The catalog ``create_package_artifact`` is called on. Required when
+        ``artifact_id`` is given (``ValueError`` otherwise); ignored when it is
+        not.
+    artifact_description : str, optional
+        Passed as ``description=`` to ``create_package_artifact``; ignored
+        without ``artifact_id``.
+    artifact_tags : list of str, optional
+        Passed as ``tags=``; ignored without ``artifact_id``.
+    artifact_metadata : dict, optional
+        Passed as ``metadata=``; ignored without ``artifact_id``.
+    artifact_overwrite : bool, optional
+        Passed as ``overwrite=``; ignored without ``artifact_id``. Default False.
+
+    Raises
+    ------
+    ValueError
+        ``artifact_id`` is given without ``artifact_catalog`` -- raised AFTER
+        the package has been built and attached to ``model``.
     """
 
     def __init__(

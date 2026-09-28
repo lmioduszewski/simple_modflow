@@ -15,6 +15,15 @@ class PackageBuilder(Protocol):
 
     A package builder receives all configuration when it is created. Its
     ``build`` method only validates that configuration and returns the spec.
+
+    Parameters
+    ----------
+    *args, **kwargs
+        Accepted by nothing: this is a :class:`typing.Protocol`, a structural type
+        for annotations, and calling ``PackageBuilder(...)`` raises ``TypeError:
+        Protocols cannot be instantiated``. A class satisfies it by defining
+        ``build(self) -> PackageSpec``; its own constructor takes the
+        configuration.
     """
 
     def build(self) -> PackageSpec:
@@ -31,18 +40,32 @@ def build_ims(simulation, *, models: Iterable[str] | None = None, **options):
 
     Parameters
     ----------
-    simulation
-        The owning FloPy ``MFSimulation`` to attach the solver to.
-    models : Iterable[str]
-        Names of the models this IMS solves (registered to each).
+    simulation : flopy.mf6.MFSimulation
+        The owning FloPy simulation to attach the solver to. The package is
+        registered on it with ``simulation.register_ims_package(ims, models)``.
+    models : iterable of str, optional
+        Names of the models this IMS solves; each is registered to it. Required in
+        practice: ``None`` (the default) raises, because it means the ``mf.ims(...)``
+        declaration never reached an ``mf.simulation`` that fills in the models the
+        other solvers left unclaimed. An empty iterable is accepted and registers
+        the solver to no model.
     **options
-        ``flopy.mf6.ModflowIms`` options (``complexity``, ``outer_maximum``,
-        ``linear_acceleration``, ...); ``filename`` defaults to ``"<pname>.ims"``.
+        Forwarded to :class:`flopy.mf6.ModflowIms` (``complexity``,
+        ``outer_maximum``, ``linear_acceleration``, ``pname``, ...); a name it does
+        not take raises there. ``filename`` defaults to ``"<base>.ims"``, where
+        ``<base>`` is ``pname`` when given, else the first model's name, else
+        ``"ims"`` -- one file per solution, which is what keeps several IMS
+        packages from collapsing into one.
 
     Returns
     -------
     flopy.mf6.ModflowIms
         The constructed and registered IMS package.
+
+    Raises
+    ------
+    ValueError
+        ``models`` is ``None``.
     """
 
     if models is None:
@@ -72,17 +95,26 @@ def build_ems(simulation, *, models: Iterable[str] | None = None, **options):
 
     Parameters
     ----------
-    simulation
-        The owning FloPy ``MFSimulation`` to attach the solver to.
-    models : Iterable[str]
-        Names of the (PRT) models this EMS solves (registered to each).
+    simulation : flopy.mf6.MFSimulation
+        The owning FloPy simulation to attach the solver to. The package is
+        registered on it with ``simulation.register_solution_package(ems, models)``.
+    models : iterable of str, optional
+        Names of the (PRT) models this EMS solves; each is registered to it.
+        ``None`` (the default) raises, for the same reason as :func:`build_ims`.
     **options
-        ``flopy.mf6.ModflowEms`` options; ``filename`` defaults to ``"<pname>.ems"``.
+        Forwarded to :class:`flopy.mf6.ModflowEms`. ``filename`` defaults to
+        ``"<base>.ems"``, where ``<base>`` is ``pname`` when given, else the first
+        model's name, else ``"ems"``.
 
     Returns
     -------
     flopy.mf6.ModflowEms
         The constructed and registered EMS package.
+
+    Raises
+    ------
+    ValueError
+        ``models`` is ``None``.
     """
 
     if models is None:
@@ -160,31 +192,105 @@ def _dispatch_core_class(table: dict, model, package_label: str):
 
 
 def build_ic(model, **options):
-    """Build the IC package for the model's kind (GWF/GWT/GWE). Engine under ``mf.ic``."""
+    """Build the IC package for the model's kind (GWF/GWT/GWE). Engine under ``mf.ic``.
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        The built FloPy model the package is added to. Its ``model_type``
+        (``"gwf6"``, ...) picks the FloPy class.
+    **options
+        Forwarded to that class (``flopy.mf6.ModflowGwfic``, ``ModflowGwtic`` or ``ModflowGweic``).
+
+    Raises
+    ------
+    ValueError
+        ``model.model_type`` is not one of GWF/GWT/GWE.
+    """
 
     return _dispatch_core_class(_IC_CLASSES, model, "ic")(model, **options)
 
 
 def build_oc(model, **options):
-    """Build the OC package for the model's kind (GWF/GWT/GWE/PRT). Engine under ``mf.oc``."""
+    """Build the OC package for the model's kind (GWF/GWT/GWE/PRT). Engine under ``mf.oc``.
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        The built FloPy model the package is added to. Its ``model_type``
+        (``"gwf6"``, ...) picks the FloPy class.
+    **options
+        Forwarded to that class (``flopy.mf6.ModflowGwfoc``, ``ModflowGwtoc``, ``ModflowGweoc`` or
+        ``ModflowPrtoc``).
+
+    Raises
+    ------
+    ValueError
+        ``model.model_type`` is not one of GWF/GWT/GWE/PRT.
+    """
 
     return _dispatch_core_class(_OC_CLASSES, model, "oc")(model, **options)
 
 
 def build_disv(model, **options):
-    """Build the DISV package for the model's kind (GWF/GWT/GWE/PRT). Engine under ``mf.disv``."""
+    """Build the DISV package for the model's kind (GWF/GWT/GWE/PRT). Engine under ``mf.disv``.
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        The built FloPy model the package is added to. Its ``model_type``
+        (``"gwf6"``, ...) picks the FloPy class.
+    **options
+        Forwarded to that class (``flopy.mf6.ModflowGwfdisv``, ``ModflowGwtdisv``,
+        ``ModflowGwedisv`` or ``ModflowPrtdisv``).
+
+    Raises
+    ------
+    ValueError
+        ``model.model_type`` is not one of GWF/GWT/GWE/PRT.
+    """
 
     return _dispatch_core_class(_DISV_CLASSES, model, "disv")(model, **options)
 
 
 def build_dis(model, **options):
-    """Build the DIS package for the model's kind (GWF/GWT/GWE/PRT). Engine under ``mf.dis``."""
+    """Build the DIS package for the model's kind (GWF/GWT/GWE/PRT). Engine under ``mf.dis``.
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        The built FloPy model the package is added to. Its ``model_type``
+        (``"gwf6"``, ...) picks the FloPy class.
+    **options
+        Forwarded to that class (``flopy.mf6.ModflowGwfdis``, ``ModflowGwtdis``, ``ModflowGwedis``
+        or ``ModflowPrtdis``).
+
+    Raises
+    ------
+    ValueError
+        ``model.model_type`` is not one of GWF/GWT/GWE/PRT.
+    """
 
     return _dispatch_core_class(_DIS_CLASSES, model, "dis")(model, **options)
 
 
 def build_disu(model, **options):
-    """Build the DISU package for the model's kind (GWF/GWT/GWE). Engine under ``mf.disu``."""
+    """Build the DISU package for the model's kind (GWF/GWT/GWE). Engine under ``mf.disu``.
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        The built FloPy model the package is added to. Its ``model_type``
+        (``"gwf6"``, ...) picks the FloPy class.
+    **options
+        Forwarded to that class (``flopy.mf6.ModflowGwfdisu``, ``ModflowGwtdisu`` or
+        ``ModflowGwedisu``).
+
+    Raises
+    ------
+    ValueError
+        ``model.model_type`` is not one of GWF/GWT/GWE.
+    """
 
     return _dispatch_core_class(_DISU_CLASSES, model, "disu")(model, **options)
 
@@ -214,12 +320,21 @@ def build_gwf_gwf_exchange(simulation, models: tuple[Any, ...], **options):
 
     Parameters
     ----------
-    simulation
-        The owning FloPy simulation.
-    models
-        The two flow models to couple, as ``(model_a, model_b)``.
+    simulation : flopy.mf6.MFSimulation
+        The owning FloPy simulation the exchange is added to.
+    models : sequence of two FloPy models
+        The two flow models to couple, as ``(model_a, model_b)``. Any length-2 sequence
+        works; only each model's ``.name`` is read, as ``exgmnamea`` and
+        ``exgmnameb`` in that order. Any other length raises ``ValueError``.
     **options
-        Exchange options forwarded to the FloPy constructor.
+        Forwarded to :class:`flopy.mf6.ModflowGwfgwf` (``filename``, ``pname``, ...).
+        ``exgmnamea``/``exgmnameb`` are set from ``models`` and so cannot be passed
+        here: the call raises ``TypeError`` (got multiple values for keyword argument).
+
+    Raises
+    ------
+    ValueError
+        ``models`` does not hold exactly two models.
     """
 
     return _build_two_model_exchange(flopy.mf6.ModflowGwfgwf, simulation, models, **options)
@@ -235,12 +350,21 @@ def build_gwf_gwt_exchange(simulation, models: tuple[Any, ...], **options):
 
     Parameters
     ----------
-    simulation
-        The owning FloPy simulation.
-    models
-        The flow/transport pair, as ``(gwf_model, gwt_model)``.
+    simulation : flopy.mf6.MFSimulation
+        The owning FloPy simulation the exchange is added to.
+    models : sequence of two FloPy models
+        The flow/transport pair, as ``(gwf_model, gwt_model)``. Any length-2 sequence
+        works; only each model's ``.name`` is read, as ``exgmnamea`` and
+        ``exgmnameb`` in that order. Any other length raises ``ValueError``.
     **options
-        Exchange options forwarded to the FloPy constructor.
+        Forwarded to :class:`flopy.mf6.ModflowGwfgwt` (``filename``, ``pname``, ...).
+        ``exgmnamea``/``exgmnameb`` are set from ``models`` and so cannot be passed
+        here: the call raises ``TypeError`` (got multiple values for keyword argument).
+
+    Raises
+    ------
+    ValueError
+        ``models`` does not hold exactly two models.
     """
 
     return _build_two_model_exchange(flopy.mf6.ModflowGwfgwt, simulation, models, **options)
@@ -256,12 +380,21 @@ def build_gwf_gwe_exchange(simulation, models: tuple[Any, ...], **options):
 
     Parameters
     ----------
-    simulation
-        The owning FloPy simulation.
-    models
-        The flow/energy pair, as ``(gwf_model, gwe_model)``.
+    simulation : flopy.mf6.MFSimulation
+        The owning FloPy simulation the exchange is added to.
+    models : sequence of two FloPy models
+        The flow/energy pair, as ``(gwf_model, gwe_model)``. Any length-2 sequence
+        works; only each model's ``.name`` is read, as ``exgmnamea`` and
+        ``exgmnameb`` in that order. Any other length raises ``ValueError``.
     **options
-        Exchange options forwarded to the FloPy constructor.
+        Forwarded to :class:`flopy.mf6.ModflowGwfgwe` (``filename``, ``pname``, ...).
+        ``exgmnamea``/``exgmnameb`` are set from ``models`` and so cannot be passed
+        here: the call raises ``TypeError`` (got multiple values for keyword argument).
+
+    Raises
+    ------
+    ValueError
+        ``models`` does not hold exactly two models.
     """
 
     return _build_two_model_exchange(flopy.mf6.ModflowGwfgwe, simulation, models, **options)
@@ -277,12 +410,21 @@ def build_gwf_prt_exchange(simulation, models: tuple[Any, ...], **options):
 
     Parameters
     ----------
-    simulation
-        The owning FloPy simulation.
-    models
-        The flow/particle pair, as ``(gwf_model, prt_model)``.
+    simulation : flopy.mf6.MFSimulation
+        The owning FloPy simulation the exchange is added to.
+    models : sequence of two FloPy models
+        The flow/particle pair, as ``(gwf_model, prt_model)``. Any length-2 sequence
+        works; only each model's ``.name`` is read, as ``exgmnamea`` and
+        ``exgmnameb`` in that order. Any other length raises ``ValueError``.
     **options
-        Exchange options forwarded to the FloPy constructor.
+        Forwarded to :class:`flopy.mf6.ModflowGwfprt` (``filename``, ``pname``, ...).
+        ``exgmnamea``/``exgmnameb`` are set from ``models`` and so cannot be passed
+        here: the call raises ``TypeError`` (got multiple values for keyword argument).
+
+    Raises
+    ------
+    ValueError
+        ``models`` does not hold exactly two models.
     """
 
     return _build_two_model_exchange(flopy.mf6.ModflowGwfprt, simulation, models, **options)

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 337 entries (342 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 338 entries (343 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 338 | Every public parameter has a `name : type` entry with a description, and a test holds it: 1,968 missing ent... | 2026-09-27 |
 | 337 | `per=N` is the last SAVED step of stress period N on every picture and group table, through ONE function; b... | 2026-09-27 |
 | 336 | A period's flow is its END-of-period flow: the SFR and DRN flow targets added every step a period saved, an... | 2026-09-26 |
 | 335 | A test session writes its temp files in its OWN root and a leak fails by name; `layers.py` no longer leaves... | 2026-09-26 |
@@ -14924,3 +14925,48 @@ same day, which is the useful part of the result.
       default back to the last time (2); the FloPy reload (5); `.ani`'s still at the last
       frame (1); `lyr` back on `gdf_topbtm` (2); the interpolation check (5); the one-layer
       check (1); the per-row reduction (1).
+
+338. **Every public parameter has a `name : type` entry with a description, and a test holds it: 1,968 missing entries, types or descriptions across 476 callables were written, then checked against the code by a second pass (2026-09-27).**
+      The user's rule, asked for repeatedly ("I've been through this a million times"),
+      made mechanical. `tests/test_public_parameters_documented.py` DISCOVERS the surface
+      -- `__all__`, `__engine__`, the helper objects' methods (`mf.chd.gpkg`,
+      `mf.rch.array`, ...) and every public method myflopy defines on an exported class,
+      each function once however many classes inherit it: 715 callables -- and requires of
+      each: an entry per named parameter whose head reads `name : type` and whose body is
+      not empty; an entry for a `*`/`**` tail saying where it goes; no `Parameters` entry
+      naming something the callable does not accept (unless it has a `**` tail); and no
+      column-0 prose inside the block, which `help()` renders as a parameter (`mf.ims`
+      had one, read as three fake parameters). Before it only the plot verbs were checked.
+      **No allowlist** -- judgment call: the gaps were closed in the same commit, so the
+      test is strict from its first run. **Floors, not an exact count** (`MIN_CALLABLES`)
+      -- judgment call: a discovery that finds nothing must fail, a new public method must
+      not. **Its own parser** -- numpydoc is not a dependency, and `plot._documented_names`
+      reads names only, which passed `LakeTableBuilder` with all 11 parameters untyped.
+      **A dataclass may document its fields under `Attributes`** -- judgment call: for a
+      record users RECEIVE (`Run`, `SaveReport`, `BuiltModel`) that is the idiomatic
+      section; any other class must use `Parameters`.
+      **What the test cannot see is whether an entry is TRUE** -- it checks that a type is
+      written, not that the code accepts it. Every new entry was read against the code by
+      an agent that did not write it: 2,004 entries, 175 corrected -- defaults that did not
+      match the signature, "optional" where `None` raises, a precedence stated backwards,
+      a type the code refuses (`GridSpec.resolve` is keyword-only; `ModelContext.grid` is
+      duck-typed; a module-level lambda serializes but cannot be read back). The test
+      stops the next GAP; review is still what stops the next wrong entry.
+      **Docstrings describe what the code does TODAY**, including where the pass found it
+      wrong -- scope cut: 82 code defects were reported and none fixed here (only
+      docstrings changed; a docstring-stripped AST of every touched module is identical to
+      its parent). The ones that reach PEST are fixed in the entries after this one; the
+      rest were listed for the user. Fixing one means correcting its entry too (e.g.
+      `mf.sfr`'s per-stream `rainfall` mapping, documented as landing on the stream's
+      first reach).
+      **NOT covered** -- scope cut: the read-grammar views reached as
+      `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
+      them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
+      `get`/`summary` are not. Parameters starting with `_` are private and skipped. A
+      class whose `__init__` belongs to another library (`GwfModel` and siblings,
+      `Mf6Simulation`, the five `dict` libraries) is not measured as a constructor; its
+      myflopy methods are.
+      Revert check: deleting `mf.chd.gpkg`'s `snap_within` entry fails
+      `test_every_public_parameter_is_documented[mf.chd.gpkg]`; the rule's six complaints
+      (missing, untyped, bodiless, undocumented tail, not accepted, prose line) are each
+      produced by a synthetic docstring, and an `Attributes`-only non-dataclass is refused.

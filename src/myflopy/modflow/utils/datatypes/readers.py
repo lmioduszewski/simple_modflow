@@ -158,12 +158,35 @@ def read_vector_layer(path: str | Path, layer: str | int | None = None) -> gpd.G
 
 
 def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
-    """
-    Reads a GPKG file, iterates through all features, and returns a geopandas.GeoDataFrame with all found geometries
-    Useful when you have multiple layers and geometries in a file.
+    """Read a GeoPackage's first layer, splitting every MultiPolygon into its parts.
 
-    :param gpkg_path: gpkg file path
-    :return: geopandas.GeoDataFrame with all found geometries
+    Iterates over the features of the file's FIRST (default) layer only -- another
+    layer in the same file is not read; use :func:`read_vector_layer` to name one.
+    ``Polygon``, ``Point``, ``LineString`` and ``MultiLineString`` features are kept
+    as they are, each ``MultiPolygon`` becomes one row per polygon (every part
+    carrying the feature's attributes), and a feature with no geometry is skipped.
+
+    Parameters
+    ----------
+    gpkg_path : pathlib.Path or str
+        The GeoPackage (or any other single-layer vector file ``geopandas.read_file``
+        opens) to read. A ``str`` works too: it is only handed to
+        ``geopandas.read_file``.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        One row per kept feature or part, with a fresh ``0..n-1`` index, in the
+        file's own CRS (not reprojected).
+
+    Raises
+    ------
+    TypeError
+        A feature has any other geometry type (``MultiPoint``,
+        ``GeometryCollection``, ...). It raises rather than returning the features
+        read so far.
+    ValueError
+        The layer holds no usable geometry at all.
     """
     num_features = 0
     layer_num = 0
@@ -208,10 +231,34 @@ def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
 
 
 def read_shp_gpkg(files: list | Path) -> gpd.GeoDataFrame:
-    """
-    return a GeoDataFrame with all found geometries from a provided shapefile, geopackage, or list thereof.
-    :param files: shapefile, geopackage, or list thereof
-    :return: GeoDataFrame with all found geometries
+    """Read one or more shapefiles/GeoPackages into a single GeoDataFrame.
+
+    Parameters
+    ----------
+    files : pathlib.Path or list of pathlib.Path
+        The files to read, concatenated in order. Only ``pathlib.Path`` objects are
+        accepted: a ``str`` or a tuple raises ``TypeError``, and a list holding
+        anything but ``Path`` fails its ``assert`` (``AssertionError``). The suffix
+        decides the reader, case-sensitively: ``.shp`` goes through
+        ``geopandas.read_file``, ``.gpkg`` through :func:`read_gpkg` (so only the
+        FIRST layer is read and each ``MultiPolygon`` is split into its parts); any
+        other suffix, ``.SHP`` included, raises ``ValueError``. All files must share
+        one CRS -- nothing is reprojected, and concatenating two CRSs raises
+        ``ValueError``.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        Every file's rows, re-indexed ``0..n-1``, with ``geometry`` as the active
+        geometry column.
+
+    Raises
+    ------
+    TypeError
+        ``files`` is neither a ``Path`` nor a list.
+    ValueError
+        An unsupported suffix, files in different CRSs, or an empty list (nothing to
+        concatenate).
     """
     if isinstance(files, Path):
         files = [files]

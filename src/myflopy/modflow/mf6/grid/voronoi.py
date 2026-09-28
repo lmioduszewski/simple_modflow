@@ -172,18 +172,8 @@ class VoronoiGridPlus(VoronoiGrid):
     :class:`~myflopy.specs.ModelContext` so the package-first GIS helpers can map
     features onto its cells, and pass ``get_disv_gridprops()`` to ``mf.disv``.
 
-    Parameters
-    ----------
-    tri
-        A built ``Triangle`` triangulation defining the Voronoi tessellation.
-    crs
-        Coordinate reference system (default ``"EPSG:2927"``); the single source of
-        truth for aligning vector/raster inputs.
-    rasters
-        Optional raster(s) sampled for cell elevations/properties.
-    tessellation
-        ``"dual"`` (default) or ``"flopy"``; see :meth:`__init__`. After a build,
-        ``tessellation_report`` says what the repair changed.
+    The constructor's parameters are documented on :meth:`__init__`. After a build
+    from a triangulation, ``tessellation_report`` says what the repair changed.
     """
 
     def __init__(
@@ -203,26 +193,74 @@ class VoronoiGridPlus(VoronoiGrid):
     ):
         """Create a Voronoi view from Triangle output or DISU-style arrays.
 
+        Two forms: from a built triangulation (``tri``), or from explicit vertex-grid
+        arrays (``verts`` + ``iverts`` + ``xcyc``, all three). ``tri`` wins when both
+        are given; neither raises ``ValueError``.
+
         Parameters
         ----------
-        tri
-            Triangle mesh used to generate the Voronoi dual.
-        crs
-            Coordinate reference system string for geometry outputs.
-        rasters
-            Optional list of raster paths used later for top/bottom sampling.
-        name
-            Friendly grid name for diagnostics and exports.
-        qhull_options
-            Optional QHull options passed through to FloPy's Voronoi builder.
-        idomain, idomain_path
-            Optional active-cell selections used by edge-detection helpers.
-        verts, iverts, xcyc
-            Explicit vertex-grid arrays used when reconstructing from DISU data
-            instead of from a Triangle mesh. Taken exactly as given -- never repaired,
-            so a grid rebuilt from a saved run or snapshot is the grid that ran.
-        tessellation
-            How cells are made from ``tri``; ignored for ``verts``/``iverts``/``xcyc``.
+        tri : flopy.utils.triangle.Triangle, optional
+            A BUILT triangulation -- FloPy's ``Triangle`` or myflopy's
+            :class:`~myflopy.modflow.mf6.grid.triangle.TriangleGrid` (a subclass),
+            after ``.build()``. The cells are its Voronoi dual, made by FloPy's
+            ``tri2vor`` and, under ``tessellation="dual"``, repaired against the dual
+            of Triangle's own mesh. FloPy raises ``TypeError`` for any other type.
+            Default None: the array form.
+        crs : str, int or pyproj.CRS, optional
+            The CRS the grid's coordinates are in, stamped on ``gdf_vorPolys`` and
+            every frame derived from it. Vector features in another CRS are
+            reprojected to it; a raster in another CRS is sampled by reprojecting the
+            cells to the raster's. A bare EPSG code (``2927`` or ``"2927"``) is stored as
+            ``"EPSG:2927"``; anything else is stored as given. Default
+            ``"EPSG:2927"`` (the package-wide default, which places a
+            location-agnostic model at that CRS's origin on purpose). ``None`` is
+            not usable: the constructor reprojects the cells to lat/lon for
+            ``grid_centroid``, and geopandas refuses an unreferenced frame
+            (``ValueError``, measured).
+        rasters : list of pathlib.Path or float, optional
+            Surfaces to sample onto the cells the first time :attr:`gdf_topbtm` is
+            read, in order: the model top, then one bottom per layer (column labels
+            ``0``, ``1``, ...; ``nlay`` is their count less one). Each item is a
+            ``pathlib.Path`` to a raster (area-weighted mean of the pixels in each
+            cell, ``gaps="warn"``) or a number (a constant column). It must be a
+            LIST: a bare ``Path`` raises ``TypeError`` at that first read, and a
+            ``str`` item raises ``KeyError`` there (see
+            :meth:`get_raster_vals_at_centroids`). Default None: no surfaces until
+            one is assigned to :attr:`gdf_topbtm`.
+        name : str, optional
+            A label stored as ``grid.name``; nothing in the grid's own methods reads
+            it. Default ``"voronoi_grid"``.
+        qhull_options : str, optional
+            Passed as ``qhull_options`` to ``scipy.spatial.Voronoi`` through FloPy's
+            ``tri2vor``. Only the ``tri`` form uses it; ignored for the array form.
+            Default None: SciPy's own.
+        idomain : list of int, optional
+            Accepted and IGNORED: the constructor never stores it, so the
+            :attr:`idomain` property stays ``None``. To exclude cells from the grid
+            edge, pass their ids to :meth:`get_grid_edge`'s ``idomain=`` (which takes
+            the INACTIVE ids).
+        idomain_path : pathlib.Path, optional
+            A vector file (``.shp`` or ``.gpkg``) whose features cover the INACTIVE
+            cells, by area. Stored as :attr:`idomain_path` and read by
+            :meth:`get_grid_edge` when that call is given neither ``idomain`` nor
+            ``idomain_path`` (so also by the ``edges_only=`` boundary helpers when
+            their context carries no ``domain``). Must be a ``pathlib.Path``: a
+            ``str`` fails an ``assert`` (``AssertionError``). Default None.
+        verts : numpy.ndarray, optional
+            The array form: vertex coordinates, shape ``(nverts, 2)``. Needs
+            ``iverts`` and ``xcyc`` too.
+        iverts : list of list of int, optional
+            The array form: each cell's ring as indices into ``verts``, one list per
+            cell (``ncpl = len(iverts)``).
+        xcyc : numpy.ndarray, optional
+            The array form: each cell's centre, shape ``(ncpl, 2)`` -- the DISV
+            ``cell2d`` ``xc``/``yc`` points MODFLOW 6 connects. Stored as
+            ``grid.points``. The three arrays are taken exactly as given -- never
+            repaired, so a grid rebuilt from a saved run or snapshot is the grid that
+            ran.
+        tessellation : {"dual", "flopy"}, optional
+            How cells are made from ``tri``; ignored for ``verts``/``iverts``/``xcyc``
+            (but validated either way: any other value raises ``ValueError``).
             ``"dual"`` (the default) runs FloPy's ``tri2vor`` and then repairs every cell
             that does not match the dual of Triangle's own mesh -- a reflex corner's
             cell drawn out of order, a vertex on the boundary dropped, a duplicate vertex
@@ -232,6 +270,18 @@ class VoronoiGridPlus(VoronoiGrid):
             are, defects included -- the escape hatch for reproducing a grid made before
             the repair. ``tessellation_report`` records what was changed and the
             pre-repair ``grid_pin`` (``legacy_pin``).
+        **kwargs
+            The ``tri`` form only: forwarded to FloPy's ``VoronoiGrid``/``tri2vor``
+            and on to ``scipy.spatial.Voronoi`` as keyword arguments. Ignored,
+            silently, by the array form.
+
+        Raises
+        ------
+        ValueError
+            ``tessellation`` is not ``"dual"`` or ``"flopy"``; neither ``tri`` nor
+            all three of ``verts``/``iverts``/``xcyc`` was given; or the ``"dual"``
+            repair found a mesh whose dual is not a tiling
+            (:class:`~myflopy.modflow.mf6.grid.tessellation.NotConformingDelaunay`).
         """
         logger.info('building the Voronoi grid')
         if tessellation not in ("dual", "flopy"):
@@ -692,6 +742,46 @@ class VoronoiGridPlus(VoronoiGrid):
         ``overlapping_geometry`` is a path; ``None`` reads the first, as before.
         Passing it alongside an in-memory geometry raises, since there is then no
         file to pick a layer from.
+
+        :func:`~myflopy.modflow.mf6.grid.selection.get_vor_cells_as_series` on this
+        grid's :attr:`gdf_vorPolys`. A query carrying its own CRS is reprojected to
+        the grid's; one carrying none is read in the grid's. A feature that reaches
+        no cell is left out of the answer -- named in a logged warning under the
+        default ``predicate=None``, silently under a geopandas predicate.
+
+        Parameters
+        ----------
+        overlapping_geometry : shapely geometry, GeoDataFrame, GeoSeries, str or Path
+            The features to look up: any shapely geometry (one feature), a
+            GeoDataFrame or GeoSeries (one feature per row), or a path to a vector
+            file. Required -- the ``None`` default, or any other type, raises
+            ``ValueError``.
+        predicate : str, optional
+            Default None: select by MEASURE -- a polygon reaches the cells it
+            covers by area, a line those it runs through, a point the one cell
+            holding it (the lowest-numbered on a shared face or vertex). A geopandas
+            predicate (``"intersects"``, ``"contains"``, ...) instead keeps the raw
+            spatial join of cells to features, which takes any touch; it is asked of
+            the CELL first, so ``"contains"`` means cells containing the feature.
+        return_dict : bool, optional
+            Default False: return a Series. True: the same mapping as a ``dict``.
+        name_field : str, optional
+            The column of a GeoDataFrame or file whose values key the answer.
+            Default ``"ExploName"``. When the column is absent -- and always for a
+            bare geometry or GeoSeries -- each feature is keyed by its own index
+            label (``0`` for a single geometry). A misspelled name therefore falls
+            back to index labels without complaint.
+        layer : str or int, optional
+            The layer to read (name, or zero-based position) when
+            ``overlapping_geometry`` is a path to a multi-layer file. Default None:
+            the file's first layer. Given with anything but a path, raises
+            ``ValueError``.
+
+        Returns
+        -------
+        pandas.Series or dict
+            Feature key -> list of cell ids (a Series named ``"cells"`` unless
+            ``return_dict``).
         """
         return selection_get_vor_cells_as_series(
             self.gdf_vorPolys,
@@ -717,6 +807,41 @@ class VoronoiGridPlus(VoronoiGrid):
         GeoPackage. ``None`` keeps GDAL's default -- the first layer -- so a call
         written before this parameter existed behaves identically. A wrong name
         raises listing the layers the file actually holds.
+
+        The cells are chosen by :meth:`get_vor_cells_as_series`'s rule; a feature
+        reaching no cell is left out (named in a logged warning only under the
+        default ``predicate=None``).
+
+        Parameters
+        ----------
+        locs : str or pathlib.Path
+            A vector file of features to look up.
+        crs : str, int or pyproj.CRS, optional
+            The CRS the file is reprojected to before the lookup, and the CRS of the
+            frame ``return_gdf=True`` returns. The lookup itself is made in the
+            grid's CRS whatever this is. Default None: the grid's :attr:`crs`. The
+            file must carry a CRS: geopandas refuses to reproject one that does not.
+        predicate : str, optional
+            Default None: select by measure; a geopandas predicate keeps the raw
+            any-touch join. See :meth:`get_vor_cells_as_series`.
+        loc_name_field : str, optional
+            The column whose values key the answer. Default None: each feature's
+            row index (``0``, ``1``, ...). A name the file does not carry falls back
+            to the row index without complaint.
+        return_gdf : bool, optional
+            Default False: return the mapping alone. True: return
+            ``(mapping, features)``, the features as read and reprojected to
+            ``crs``.
+        layer : str or int, optional
+            The layer to read (name, or zero-based position) out of a multi-layer
+            file. Default None: the first layer.
+
+        Returns
+        -------
+        dict or tuple
+            Feature key -> ``[[cell, ...]]`` -- a list holding ONE list of cell ids
+            (the shape ledger 192 kept) -- or that and the features, with
+            ``return_gdf``.
         """
         return selection_get_vor_cells_as_dict(
             self,
@@ -740,6 +865,39 @@ class VoronoiGridPlus(VoronoiGrid):
         features cover them, by area. Give one or the other; with neither, the
         grid's own ``idomain_path`` is used when it has one, and otherwise every
         cell is active. ``include_interiors=False`` drops the cells ringing a hole.
+
+        A cell is on the edge when it borders the outside of the mesh or has an
+        inactive face-neighbour. See
+        :func:`~myflopy.modflow.mf6.grid.selection.get_grid_edge_cells`.
+
+        Parameters
+        ----------
+        idomain : list of int, optional
+            The INACTIVE cell ids (any iterable of integers). ``[]`` means none is
+            inactive. Refused with ``ValueError``: a boolean mask, an ``ncpl``-long
+            array of only -1/0/1 (an MF6 idomain -- pass
+            ``np.flatnonzero(domain <= 0)``), and ids outside ``0..ncpl-1``. Not the
+            grid's own :attr:`idomain` property, which is never read here.
+        idomain_path : str or pathlib.Path, optional
+            A ``.shp``/``.gpkg`` whose features cover the inactive cells, by area,
+            reprojected to the grid's CRS; a file covering no cell raises
+            ``ValueError``. Default None.
+        include_interiors : bool, optional
+            Default True: every active cell bordering the outside OR any inactive
+            cell, holes included. False: only each active component's OUTER edge --
+            the cells ringing a hole inside it are dropped, while an island inside a
+            ring keeps its own edge.
+
+        Returns
+        -------
+        list of int
+            The edge cells, ascending, each once.
+
+        Raises
+        ------
+        ValueError
+            Both ``idomain`` and ``idomain_path`` given, or either is refused as
+            above.
         """
         return get_grid_edge_cells(
             self,
@@ -749,7 +907,22 @@ class VoronoiGridPlus(VoronoiGrid):
         )
 
     def generate_grid_coordinates(self, grid_spacing: int) -> list:
-        """Generate regularly spaced coordinates over the grid extent."""
+        """Generate regularly spaced coordinates over the grid extent.
+
+        Parameters
+        ----------
+        grid_spacing : int
+            The step between points in x and in y, in model length units. Must be an
+            ``int`` (it drives ``range``; a float raises ``TypeError``). The points
+            start at the vertex extent's truncated minimum and continue until they
+            reach or pass its truncated maximum, so the last row and column can lie
+            up to one step outside the grid.
+
+        Returns
+        -------
+        tuple of (list of int, list of int)
+            ``(xs, ys)``, one entry per point, x-major.
+        """
         return geometry_generate_grid_coordinates(self, grid_spacing)
 
     @property
@@ -764,11 +937,46 @@ class VoronoiGridPlus(VoronoiGrid):
         return geometry_get_centroids(self)
 
     def find_adjacent_polygons(self, gdf: gpd.GeoDataFrame) -> list:
-        """Return adjacency lists for the polygons in ``gdf``."""
+        """Return adjacency lists for the polygons in ``gdf``.
+
+        Two polygons are adjacent when their intersection is a single
+        ``LineString`` -- a shared edge. A corner touch, and a pair sharing two
+        separate segments (a ``MultiLineString``), are not. The grid itself is not
+        read; :attr:`adjacent_cells_idx` is this over :attr:`gdf_vorPolys`, cached.
+
+        Parameters
+        ----------
+        gdf : geopandas.GeoDataFrame
+            The polygons, e.g. :attr:`gdf_vorPolys`. Must carry a default
+            ``RangeIndex`` (``0..n-1``): index labels are used as list positions.
+
+        Returns
+        -------
+        list of list of int
+            Per polygon (by position), the positions of its neighbours, in
+            spatial-index order rather than sorted.
+        """
         return geometry_find_adjacent_polygons(gdf)
 
     def find_adjacent_cells(self, cell_id):
-        """Return neighboring cell IDs for one Voronoi cell."""
+        """Return neighboring cell IDs for one Voronoi cell.
+
+        Read from the DISU connection table (:attr:`ia`/:attr:`iac`/:attr:`ja`,
+        computed by :meth:`get_disu_connectivity` on first use), so a neighbour is a
+        cell sharing a face of non-zero width -- MF6's rule -- and a corner touch is
+        not one.
+
+        Parameters
+        ----------
+        cell_id : int
+            The zero-based cell. Any integer-valued number is accepted (a numpy
+            integer, or a float id from a spatial join), via ``int()``.
+
+        Returns
+        -------
+        list of int
+            The neighbouring cells, in the connection table's order (ascending).
+        """
         return geometry_find_adjacent_cells(self, cell_id)
 
     def calculate_distance(self, gdf, poly_idx1, poly_idx2):
@@ -820,7 +1028,25 @@ class VoronoiGridPlus(VoronoiGrid):
         return geometry_calculate_distance(gdf, poly_idx1, poly_idx2)
 
     def shared_face_length(self, poly1, poly2):
-        """Return the length of the shared face between two polygons."""
+        """Return the length of the shared face between two polygons.
+
+        Plain geometry on the two polygons given; the grid itself is not read.
+
+        Parameters
+        ----------
+        poly1 : shapely.Polygon
+            One polygon, e.g. ``grid.gdf_vorPolys.geometry[5]``.
+        poly2 : shapely.Polygon
+            The other.
+
+        Returns
+        -------
+        float or int
+            The length of their intersection, in the polygons' length units, when
+            that intersection is a single ``LineString``; the integer ``0``
+            otherwise -- no contact, a corner touch, or two separate shared segments
+            (a ``MultiLineString``).
+        """
         return geometry_shared_face_length(poly1, poly2)
 
     def shared_face(self, cell_a: int, cell_b: int):
@@ -828,6 +1054,21 @@ class VoronoiGridPlus(VoronoiGrid):
 
         The segment itself, where :meth:`shared_face_length` gives only its
         length -- a horizontal flow barrier needs the geometry.
+
+        Parameters
+        ----------
+        cell_a : int
+            One zero-based cell, by position in :attr:`gdf_vorPolys`.
+        cell_b : int
+            The other.
+
+        Returns
+        -------
+        shapely.LineString or None
+            The shared segment (the longest, when the two boundaries meet in
+            several); ``None`` when the cells share no edge longer than 1e-9 model
+            length units -- a corner touch, no contact, or a degenerate ring GEOS
+            refuses.
         """
 
         from myflopy.modflow.mf6.grid.barriers import shared_face_segment
@@ -839,6 +1080,23 @@ class VoronoiGridPlus(VoronoiGrid):
 
         See :func:`myflopy.modflow.mf6.grid.barriers.barrier_faces`. This is what
         turns a digitised fault trace into the pairs MODFLOW 6's HFB wants.
+
+        A connection is cut when the segment joining its two cell centres (the DISV
+        ``cell2d`` points MODFLOW 6 connects) crosses the trace; a centre lying ON
+        the trace counts as on its left, looking along the trace as drawn.
+
+        Parameters
+        ----------
+        barrier : shapely.LineString, shapely.MultiLineString, GeoSeries or GeoDataFrame
+            The trace. A GeoSeries/GeoDataFrame is unioned into one geometry and
+            reprojected to the grid's CRS when both declare one; a bare geometry is
+            read in the grid's CRS. An empty geometry cuts nothing (``[]``, with a
+            logged warning). Not a file path.
+
+        Returns
+        -------
+        list of tuple of (int, int)
+            ``(low, high)`` cell pairs, sorted and unique.
         """
 
         from myflopy.modflow.mf6.grid.barriers import barrier_faces
@@ -850,6 +1108,21 @@ class VoronoiGridPlus(VoronoiGrid):
 
         See :func:`myflopy.modflow.mf6.grid.barriers.enclosed_faces` -- and note
         this is NOT the faces the polygon's ring crosses, which is not watertight.
+
+        Parameters
+        ----------
+        polygon : shapely.Polygon, shapely.MultiPolygon, GeoSeries or GeoDataFrame
+            The region to seal. A cell is inside when its polygon CENTROID lies
+            strictly inside it. A GeoSeries/GeoDataFrame is unioned and reprojected
+            to the grid's CRS when both declare one; a bare geometry is read in the
+            grid's CRS. Not a file path.
+
+        Returns
+        -------
+        tuple of (list of tuple of (int, int), list of int)
+            ``(faces, interior)``: every ``(low, high)`` pair with one cell inside
+            and one outside, sorted; and the enclosed cells, sorted. ``([], [])``,
+            with a logged warning, when no centroid falls inside.
         """
 
         from myflopy.modflow.mf6.grid.barriers import enclosed_faces
@@ -857,11 +1130,37 @@ class VoronoiGridPlus(VoronoiGrid):
         return enclosed_faces(self, polygon)
 
     def get_gdf_vorPolys(self, crs=None):
-        """Build a GeoDataFrame of Voronoi polygons."""
+        """Build a GeoDataFrame of Voronoi polygons.
+
+        One polygon per cell, from ``verts``/``iverts``, with a default
+        ``RangeIndex``. **Side effect:** the frame REPLACES the cached
+        :attr:`gdf_vorPolys` (and ``x_coords_by_node``/``y_coords_by_node``), so a
+        ``crs`` other than the grid's leaves the cache labelled with it.
+
+        Parameters
+        ----------
+        crs : str, int or pyproj.CRS, optional
+            The CRS LABEL to stamp on the frame -- it does not reproject; the
+            coordinates stay the grid's. Default None: the grid's :attr:`crs`. Use
+            ``grid.gdf_vorPolys.to_crs(...)`` to reproject instead.
+
+        Returns
+        -------
+        geopandas.GeoDataFrame
+            A ``geometry`` column of cell polygons, rows in cell order.
+        """
         return geometry_get_gdf_vor_polys(self, crs=crs)
 
     def get_gdf_topbtm(self, rasters: list, labels: list = None):
-        """Backward-compatible alias for ``get_gdf_topbtm_multilyr``."""
+        """Backward-compatible alias for ``get_gdf_topbtm_multilyr``.
+
+        Parameters
+        ----------
+        rasters : list of pathlib.Path or float
+            As for :meth:`get_gdf_topbtm_multilyr`.
+        labels : list of str or int, optional
+            As for :meth:`get_gdf_topbtm_multilyr`.
+        """
         return self.get_gdf_topbtm_multilyr(rasters=rasters, labels=labels)
 
     def get_raster_vals_at_centroids(
@@ -880,6 +1179,42 @@ class VoronoiGridPlus(VoronoiGrid):
         the first two were unreachable from here, which also put ``gaps`` --
         what to do about a cell the raster gave no value for -- out of reach
         of the scope a user samples from.
+
+        Parameters
+        ----------
+        raster_files : pathlib.Path or list of (pathlib.Path or float)
+            What to sample: one raster ``Path``, or a list whose items are raster
+            ``Path`` objects or numbers (a number becomes a constant column). A
+            raster in another CRS is sampled by reprojecting the cells to it. Only
+            ``pathlib.Path`` is read as a file: a ``str`` -- bare or in the list --
+            is neither a path nor a number and ends in ``KeyError``. Default None:
+            logs a warning and returns ``None``.
+        labels : str, or list of str or int, optional
+            Column names, one per item of ``raster_files`` (a bare ``str`` names the
+            one column). Default None: ``0``, ``1``, ... A length mismatch raises
+            ``ValueError``.
+        method : {"area", "centroid"}, optional
+            Default ``"area"``: the mean of the raster pixels inside each cell
+            polygon, a cell holding no valid pixel falling back to the pixel at its
+            centroid (warned as slow above 50,000 cells). ``"centroid"``: the one
+            pixel at each cell centroid. Anything else raises ``ValueError``.
+        nodata : float, optional
+            A value to treat as no-data, overriding each raster's declared one, for
+            files that use a sentinel without recording it; applies to every raster
+            in the call. Default None: each file's own declared value.
+        gaps : {"warn", "nearest", "raise", "ignore"}, optional
+            What a cell the raster gave no value for becomes. ``"warn"`` (default):
+            NaN, with a warning naming the cells. ``"nearest"``: the value of the
+            nearest valued cell, by centroid distance. ``"raise"``: ``ValueError``.
+            ``"ignore"``: NaN, silently. Unless ``"ignore"``, a raster that gives NO
+            cell a value while not overlapping the grid at all raises
+            ``ValueError`` printing both extents and both CRSs.
+
+        Returns
+        -------
+        geopandas.GeoDataFrame or None
+            ``geometry`` (the cell CENTROIDS, as points) then one column per label,
+            one row per cell; ``None`` when ``raster_files`` is None.
         """
         return surface_get_raster_vals_at_centroids(
             self, raster_files=raster_files, labels=labels,
@@ -887,7 +1222,26 @@ class VoronoiGridPlus(VoronoiGrid):
         )
 
     def get_gdf_topbtm_multilyr(self, rasters: list, labels: list = None):
-        """Build top/bottom surfaces for one or more layers from rasters."""
+        """Build top/bottom surfaces for one or more layers from rasters.
+
+        :meth:`get_raster_vals_at_centroids` with its defaults (area-weighted,
+        ``gaps="warn"``). Returns a new frame; it does not set :attr:`gdf_topbtm`.
+
+        Parameters
+        ----------
+        rasters : list of pathlib.Path or float
+            The model top, then one bottom per layer: raster ``Path`` objects or
+            constant numbers. Must be a list (a bare ``Path`` raises ``TypeError``
+            unless ``labels`` is given); a ``str`` item ends in ``KeyError``.
+        labels : list of str or int, optional
+            One column name per item. Default None: ``0``, ``1``, ... -- the same
+            integer labels ``LayerBuildResult.attach_to_grid`` writes.
+
+        Returns
+        -------
+        geopandas.GeoDataFrame
+            ``geometry`` (cell centroids) then one column per surface.
+        """
         return surface_get_gdf_topbtm_multilyr(self, rasters=rasters, labels=labels)
 
     def get_cell_areas(self):
@@ -909,7 +1263,25 @@ class VoronoiGridPlus(VoronoiGrid):
         return geometry_get_latlon(self)
 
     def points_to_latlon(self, x, y):
-        """Reproject model-coordinate points to ``(lon, lat)`` for map overlays."""
+        """Reproject model-coordinate points to ``(lon, lat)`` for map overlays.
+
+        Parameters
+        ----------
+        x : array_like of float
+            The points' x coordinates, in the grid's :attr:`crs`.
+        y : array_like of float
+            Their y coordinates, same length as ``x``.
+
+        Returns
+        -------
+        tuple of (numpy.ndarray, numpy.ndarray)
+            ``(lon, lat)`` in ``grid.crs_latlon`` (EPSG:4326).
+
+        Raises
+        ------
+        ValueError
+            The grid has no CRS, so there is nothing to reproject from.
+        """
         return geometry_points_to_latlon(self, x, y)
 
     def get_grid_centroid(self):
@@ -917,7 +1289,33 @@ class VoronoiGridPlus(VoronoiGrid):
         return geometry_get_grid_centroid(self)
 
     def get_overlapping_area(self, shp_gpkg=None, cell_list=None):
-        """Calculate overlap area between cells and external geometry."""
+        """Area of the WHOLE cells a geometry reaches, or of the cells named.
+
+        Not the area of the geometry's intersection with the cells: every cell the
+        geometry reaches counts in full (a small polygon inside one cell returns
+        that cell's whole area). The cells are unioned, so the result is in model
+        length units squared.
+
+        Parameters
+        ----------
+        shp_gpkg : shapely geometry, GeoDataFrame, GeoSeries, str or Path, optional
+            Features whose cells to measure, chosen by
+            :meth:`get_vor_cells_as_series`'s default rule (by coverage, not any
+            touch). Wins over ``cell_list`` when both are given. A geometry reaching
+            no cell gives ``0.0``.
+        cell_list : list of int, optional
+            Cell ids (index labels of :attr:`gdf_vorPolys`) to measure instead.
+
+        Returns
+        -------
+        float
+            The area of the union of those cells.
+
+        Raises
+        ------
+        ValueError
+            Neither ``shp_gpkg`` nor ``cell_list`` was given.
+        """
         return geometry_get_overlapping_area(self, shp_gpkg=shp_gpkg, cell_list=cell_list)
 
     def get_vor_idx_from_geometry(
@@ -938,6 +1336,40 @@ class VoronoiGridPlus(VoronoiGrid):
         are found in THIS grid's frame -- ``crs`` names only the frame of a query
         that carries none -- and ``crs_latlon`` has no job left; see
         :func:`~myflopy.modflow.mf6.grid.geometry.get_vor_idx_from_geometry`.
+
+        Parameters
+        ----------
+        shp_to_query : pathlib.Path or list of pathlib.Path, optional
+            Vector files to read (``.shp``, or ``.gpkg`` -- first layer only),
+            concatenated; they must share one CRS. Only ``pathlib.Path`` is
+            accepted: a ``str`` raises ``TypeError``. Wins over ``gdf_to_query``.
+        gdf_to_query : geopandas.GeoDataFrame, optional
+            The features, when not read from files. A GeoSeries, or a plain
+            ``pandas.DataFrame`` with a ``geometry`` column, also works. One of the
+            two is required, else ``ValueError``.
+        crs : str, int or pyproj.CRS, optional
+            The CRS to read a query that carries NONE in. Default None: the grid's
+            :attr:`crs`. Ignored, with a logged warning, when the query carries its
+            own CRS (it is then reprojected to the grid's).
+        crs_latlon : str, int or pyproj.CRS, optional
+            Retired; kept so existing calls still run. Any spelling of EPSG:4326 (the
+            default) or ``None`` is accepted and has no effect; any other CRS raises
+            ``ValueError``, and a value pyproj cannot read raises pyproj's
+            ``CRSError`` (a ``RuntimeError``, measured).
+        name_col : str, optional
+            The query column whose values key the answer. Default None: each
+            feature's own index label.
+        predicate : str, optional
+            Default None: select by measure (a polygon reaches the cells it covers by
+            area, a line those it runs through, a point the one cell holding it). A
+            geopandas predicate keeps the raw any-touch answer, asked of the cell
+            first (``"contains"`` = cells containing the feature).
+
+        Returns
+        -------
+        dict
+            Feature key -> sorted list of cell ids. A feature reaching no cell keeps
+            its key with an empty list and is named in a logged warning.
         """
         return geometry_get_vor_idx_from_geometry(
             self,
@@ -959,6 +1391,29 @@ class VoronoiGridPlus(VoronoiGrid):
 
         The same measured rule as :meth:`get_vor_idx_from_geometry`, which this
         asks for that single row; ``idx`` is positional.
+
+        Parameters
+        ----------
+        gdf_to_query : geopandas.GeoDataFrame
+            The features. A GeoSeries, or a plain ``pandas.DataFrame`` with a
+            ``geometry`` column, also works. A query carrying its own CRS is
+            reprojected to the grid's; one carrying none is read in the grid's.
+            Required in practice: the ``None`` default raises ``AttributeError``.
+        idx : int, optional
+            The POSITION of the row to look up (``gdf_to_query.iloc[[idx]]``), not
+            its index label. Default ``0``, the first row. Out of range raises
+            ``IndexError``.
+        predicate : str, optional
+            Default None: select by measure (a polygon reaches the cells it covers by
+            area, a line those it runs through, a point the one cell holding it). A
+            geopandas predicate keeps the raw any-touch answer, asked of the cell
+            first (``"contains"`` = cells containing the feature).
+
+        Returns
+        -------
+        list of int
+            The cells that row reaches, ascending, each once; empty (with a logged
+            warning) when it reaches none.
         """
         return geometry_get_vor_idx_from_geometry_idx(
             self,
@@ -968,7 +1423,30 @@ class VoronoiGridPlus(VoronoiGrid):
         )
 
     def set_k_vor(self, k_dict: dict = None, k_default=100) -> list:
-        """Build a per-cell hydraulic-conductivity list from region mappings."""
+        """Build a per-cell hydraulic-conductivity list from region mappings.
+
+        **Side effect:** writes the values into a ``"Kh"`` column of the cached
+        :attr:`gdf_vorPolys` (replacing one already there), so they also reach
+        anything that frame is written to afterwards, such as :meth:`to_shapefile`.
+
+        Parameters
+        ----------
+        k_dict : dict of float to list of int
+            ``{K value: cell ids}``: every cell id in a value's list (row labels of
+            :attr:`gdf_vorPolys`) gets that key as its K. Each value must be
+            list-like. A cell named under several keys takes the LAST one in the
+            dict's order. Required in practice: the ``None`` default raises
+            ``AttributeError``.
+        k_default : float, optional
+            The K of every cell no list names. Default ``100``. No unit is assumed:
+            use the model's length/time units.
+
+        Returns
+        -------
+        list of float or int
+            One K per cell, in :attr:`gdf_vorPolys` row order (ints when
+            ``k_default`` and every key are ints).
+        """
         return geometry_set_k_vor(self, k_dict=k_dict, k_default=k_default)
 
     def get_raster_from_strike_dip(
@@ -979,7 +1457,48 @@ class VoronoiGridPlus(VoronoiGrid):
         pixel_size: int = 1,
         output_filename: Path = Path.cwd().joinpath('raster.tif'),
     ):
-        """Create a raster surface from strike/dip assumptions."""
+        """Write a sloping-plane raster over the grid, then sample it onto the cells.
+
+        The GeoTIFF covers the grid's domain snapped outward to whole pixels (one
+        float32 band, in the grid's :attr:`crs`) and is then read back by
+        :meth:`get_raster_vals_at_centroids` with its defaults (area-weighted).
+
+        **The plane is not the geological strike/dip plane.** Measured: the
+        elevation falls toward azimuth ``strike`` (degrees clockwise from +y; ``90``
+        falls to the east) by ``sin(2 * dip) / 2`` per unit of horizontal distance,
+        and is level at right angles to it. That is close to ``tan(dip)`` only for
+        shallow dips -- ``dip=45`` gives 0.5 where ``tan`` gives 1.0, and ``dip=80``
+        gives 0.171, the same as ``dip=10``.
+
+        Parameters
+        ----------
+        strike : float
+            Azimuth, in degrees clockwise from +y (north), of the direction the
+            surface falls toward -- not a strike line, along which it would be level.
+        dip : float
+            Angle in degrees setting the fall per unit distance, ``sin(2 * dip) / 2``
+            (see above).
+        known_point : tuple of float
+            ``(x, y, elevation)`` the plane passes through: ``x``/``y`` in the grid's
+            coordinates, ``elevation`` in the units the raster should carry. Must
+            unpack to exactly three values.
+        pixel_size : float, optional
+            The raster's pixel side, in model length units; the domain's bounds are
+            snapped outward to multiples of it. Default ``1``. The plane is evaluated
+            at each pixel's upper-left corner, not its centre.
+        output_filename : pathlib.Path, optional
+            Where the GeoTIFF is written, overwriting any file there. Must be a
+            ``pathlib.Path``: a ``str`` is written, then cannot be sampled (see
+            :meth:`get_raster_vals_at_centroids`). Default ``raster.tif`` in the
+            working directory at the time myflopy was IMPORTED (the default is
+            evaluated once, at import), not at the call.
+
+        Returns
+        -------
+        geopandas.GeoDataFrame
+            ``geometry`` (the cell centroids, as points) and ``elev``, one row per
+            cell.
+        """
         return surface_get_raster_from_strike_dip(
             self,
             strike=strike,
@@ -990,7 +1509,24 @@ class VoronoiGridPlus(VoronoiGrid):
         )
 
     def to_shapefile(self, filepath: str | Path = 'vor_shp.shp'):
-        """Write the Voronoi polygons to a shapefile or other GeoPandas target."""
+        """Write the Voronoi polygons to a shapefile or other GeoPandas target.
+
+        Writes :attr:`gdf_vorPolys` as it stands -- the cell polygons, in the grid's
+        CRS, plus any column added to that cached frame (``"Kh"`` after
+        :meth:`set_k_vor`). For per-cell values or layer surfaces, see
+        :meth:`to_gpkg`.
+
+        Parameters
+        ----------
+        filepath : str or pathlib.Path, optional
+            The destination, passed to ``GeoDataFrame.to_file``, which picks the
+            format from the extension (``.shp``, ``.gpkg``, ...). Default
+            ``"vor_shp.shp"``, relative to the working directory.
+
+        Returns
+        -------
+        None
+        """
         return self.gdf_vorPolys.to_file(filepath)
 
     def to_gpkg(
@@ -1023,17 +1559,27 @@ class VoronoiGridPlus(VoronoiGrid):
 
         Parameters
         ----------
-        path
-            Destination GeoPackage. Created if absent, added to if present.
-        data
-            Optional ``{name: per-cell array}`` written as attribute columns on
-            the ``cells`` layer. Each array must have one value per cell.
-        surfaces
-            Also write ``top`` and ``botm_1`` ... ``botm_n``, one Z-valued layer
-            each, from :meth:`layer_surface_fields`. Raises if the grid carries
-            no layer surfaces.
-        layer
-            Name for the flat cell layer (default ``"cells"``).
+        path : str or pathlib.Path, optional
+            Destination GeoPackage; missing parent directories are created. Created
+            if absent, added to if present: a layer of the same name is replaced
+            and the file's other layers are kept (measured). Default
+            ``"grid.gpkg"``, relative to the working directory.
+        data : dict of str to array-like, optional
+            ``{name: per-cell values}`` written as float attribute columns on the
+            flat cell layer, beside a ``cell`` id column. Each array is flattened
+            and must then hold exactly ``ncpl`` values (so a ``(nlay, ncpl)``
+            array is refused), else ``ValueError``. With ``surfaces=True`` a name
+            matching a surface (``top``, ``botm_1``, ...) is overwritten on that
+            layer by the surface. Default None: the ``cell`` column alone.
+        surfaces : bool, optional
+            Also write ``top`` and ``botm_1`` ... ``botm_n`` as columns of the
+            flat layer AND as one Z-valued layer each, from
+            :meth:`layer_surface_fields`. If the grid carries no layer surfaces
+            that raises ``ValueError`` before the GeoPackage is written. Default
+            False.
+        layer : str, optional
+            Name for the flat cell layer (default ``"cells"``). Converted with
+            ``str()``.
 
         Returns
         -------
@@ -1222,8 +1768,9 @@ class VoronoiGridPlus(VoronoiGrid):
 
         Parameters
         ----------
-        data
-            Optional per-cell values to attach on the face dimension. One of:
+        data : array-like or dict of str to array-like, optional
+            Optional per-cell values to attach on the face dimension, read as
+            floats. One of:
 
             - ``None`` (default) -- return just the mesh topology;
             - a 1-D array of length ``ncpl`` -- one field, e.g. a head layer
@@ -1232,13 +1779,17 @@ class VoronoiGridPlus(VoronoiGrid):
               extra ``layer_dim`` dimension;
             - a ``dict`` of ``{variable_name: array}`` -- several fields at once
               (each 1-D or 2-D as above).
-        name
+
+            Any other shape, or a cell axis other than ``ncpl``, raises
+            ``ValueError``.
+        name : str, optional
             Variable name used when ``data`` is a single array (ignored for a
-            ``dict``). Defaults to ``"data"``.
-        layer_dim
-            Dimension name given to the first axis of 2-D ``(nlay, ncpl)`` inputs.
-        surfaces
-            Also attach this grid's layer frame -- ``top`` and ``botm_1`` ...
+            ``dict`` and for ``data=None``). Defaults to ``"data"``.
+        layer_dim : str, optional
+            Dimension name given to the first axis of 2-D ``(nlay, ncpl)`` inputs;
+            unused when every input is 1-D. Default ``"layer"``.
+        surfaces : bool, optional
+            Default False. True: also attach this grid's layer frame -- ``top`` and ``botm_1`` ...
             ``botm_n``, one FLAT variable per layer
             (:meth:`layer_surface_fields`). This is the form QGIS can read: a
             mesh dataset there is one value per face, so a layered array is
@@ -1345,26 +1896,164 @@ class VoronoiGridPlus(VoronoiGrid):
 
     @staticmethod
     def get_normal_from_strike_and_dip(strike: int, dip: int) -> np.array:
-        """Return a unit normal vector from strike and dip."""
+        """Return a unit vector from an azimuth and an inclination.
+
+        The vector is ``[cos(dip) * sin(strike), cos(dip) * cos(strike), sin(dip)]``
+        (x, y, z): it points toward azimuth ``strike`` and rises ``dip`` degrees
+        above the horizontal. That is the upward normal of a plane dipping
+        ``90 - dip`` degrees toward azimuth ``strike`` -- NOT the normal of a plane
+        with geological strike ``strike`` and dip ``dip``: for ``dip=0`` (a level
+        plane) it is horizontal (measured: ``[0, 1, 0]`` at ``strike=0``).
+
+        Parameters
+        ----------
+        strike : float
+            Azimuth in degrees, clockwise from +y (north).
+        dip : float
+            Inclination in degrees above the horizontal.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(3,)``, unit length.
+        """
         return surface_get_normal_from_strike_and_dip(strike, dip)
 
     @staticmethod
     def generate_grid_around_point(center_point: shp.Point, spacing: float, size: int, crs: str) -> gpd.GeoSeries:
-        """Generate a simple regular grid around a center point."""
+        """Generate a square lattice of points around a center point.
+
+        The x values start at ``int(cx - size / 2 * spacing)`` and step by
+        ``spacing`` for as long as they do not pass ``int(cx + size / 2 * spacing)``
+        (``int`` truncates toward zero), so that end is reached only when the step
+        divides the span; y likewise. One point per (x, y) pair.
+
+        Parameters
+        ----------
+        center_point : shapely.geometry.Point
+            The lattice's centre; only its ``x``/``y`` are read.
+        spacing : int
+            The step between points in x and in y, in the point's length units. Must
+            be an ``int``: it drives ``range``, so a float raises ``TypeError``.
+        size : float
+            The lattice's width in steps: before truncation it spans
+            ``size * spacing`` along each axis, half on either side of the centre.
+        crs : str, int or pyproj.CRS
+            The CRS stamped on the result (``GeoSeries.set_crs``); the coordinates
+            are not reprojected. Required.
+
+        Returns
+        -------
+        geopandas.GeoSeries
+            The points, x-major, with ``crs`` set.
+        """
         return geometry_generate_grid_around_point(center_point, spacing, size, crs)
 
     @staticmethod
     def generate_grid_polygons(center_point, spacing, size, gap):
-        """Generate regular polygons around a center point."""
+        """Generate a square lattice of boxes around a center point.
+
+        The lattice is :meth:`generate_grid_around_point`'s; one box is made per
+        lattice cell, each ``spacing - gap`` wide and inset by ``gap / 2`` from its
+        cell's edges, so neighbouring boxes are ``gap`` apart.
+
+        Parameters
+        ----------
+        center_point : shapely.geometry.Point
+            The lattice's centre; only its ``x``/``y`` are read.
+        spacing : int
+            The lattice step in x and in y, in the point's length units. Must be an
+            ``int`` (it drives ``range``; a float raises ``TypeError``).
+        size : float
+            The lattice's width in steps, as for :meth:`generate_grid_around_point`.
+        gap : float
+            The space left between neighbouring boxes, in the same units. ``0``
+            makes them touch.
+
+        Returns
+        -------
+        shapely.geometry.MultiPolygon
+            The boxes, with no CRS.
+        """
         return geometry_generate_grid_polygons(center_point, spacing, size, gap)
 
     @staticmethod
     def voronoi_refine_by_point(point: shp.Point, spacing: int, tri: Triangle) -> gpd.GeoDataFrame:
-        """Generate local refinement geometry around a point."""
+        """Add a 3x3 pattern of squares around a point to a triangulation.
+
+        Nine squares of side ``spacing``: one with ``point`` at its upper-left
+        corner (it extends +x and -y from it), and eight copies of it shifted by
+        ``2 * spacing`` east, west, north, south and diagonally, so neighbouring
+        squares are ``spacing`` apart. **Side effect:** each is passed to
+        ``tri.add_polygon``.
+
+        Parameters
+        ----------
+        point : shapely.geometry.Point
+            The upper-left corner of the central square; only ``x``/``y`` are read.
+        spacing : float
+            The squares' side, and the gap between them, in model length units.
+        tri : flopy.utils.triangle.Triangle
+            The triangulation to add the squares to. On a
+            :class:`~myflopy.modflow.mf6.grid.triangle.TriangleGrid` with a domain
+            already set, each becomes a refinement region with that method's
+            defaults (maximum triangle area ``1`` square length unit, clipped to the
+            domain); with no domain set, the FIRST square becomes the domain.
+
+        Returns
+        -------
+        geopandas.GeoDataFrame
+            The nine squares, with no CRS: centre, E, W, N, S, NE, NW, SE, SW.
+        """
         return geometry_voronoi_refine_by_point(point, spacing, tri)
 
     def reconcile_surfaces(self, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):
-        """Reconcile top/bottom surfaces so adjacent layers do not overlap."""
+        """Reconcile top/bottom surfaces so adjacent layers do not overlap.
+
+        Surfaces are read POSITIONALLY, top first: column 0 is the model top and
+        each later column the next bottom down. Contacts are handled top-down, each
+        against the already-adjusted surface above it. At a contact, every row whose
+        lower surface is at most ``trigger_sep`` below the upper one -- or above
+        it -- is SET to exactly ``min_sep`` apart. That can THIN a layer as well as
+        open one: measured with the defaults, a bottom 0.5 below the top was moved
+        UP to 0.1 below it. Returns a new frame; neither ``df`` nor the grid's
+        :attr:`gdf_topbtm` is changed.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame or geopandas.GeoDataFrame, optional
+            The surfaces, one column each. A GeoDataFrame's ``geometry`` column is
+            dropped; every other value is coerced to a number, anything that is not
+            one becoming NaN (a NaN is never treated as conflicting). Its index must
+            be ``0..n-1`` in order: row LABELS are used as POSITIONS, so another
+            index raises ``IndexError`` or edits the wrong rows (measured). Default
+            None: a copy of :attr:`gdf_topbtm`.
+        min_sep : float or sequence of float, optional
+            The separation set at a conflicting contact, in elevation units. A
+            scalar applies to every contact; a sequence gives one per bottom surface
+            (one fewer than the frame's columns), else ``ValueError``. ``None``
+            means ``0.1``. Default ``0.1``.
+        trigger_sep : float or sequence of float, optional
+            The separation at or below which a contact counts as conflicting
+            (measured: a bottom exactly ``1`` below the top was moved under the
+            defaults), shaped as ``min_sep`` (``None`` also means ``0.1``). Default
+            ``1``.
+        which : {"bottom", "top"}, optional
+            Which surface of a conflicting pair moves -- to exactly ``min_sep``
+            from the other, which can move it either way (measured with the
+            defaults and a gap of 0.5: ``"bottom"`` moved the bottom UP to 0.1
+            below the top, ``"top"`` moved the top DOWN to 0.1 above the bottom).
+            ``"bottom"`` (default) moves the lower one, so the model top never
+            moves. ``"top"`` moves the upper one, model top included, and does not
+            revisit the contact above it, which can then be left closer than
+            ``min_sep``. Anything else raises ``ValueError`` (when the frame has at
+            least two columns).
+
+        Returns
+        -------
+        pandas.DataFrame
+            The reconciled surfaces, same columns and index, without geometry.
+        """
         return geometry_reconcile_surfaces(
             self,
             df=df,
@@ -1381,7 +2070,36 @@ class VoronoiGridPlus(VoronoiGrid):
         layer: int = 0,
         reconcile: bool = True,
     ):
-        """Adjust elevations for selected cells by a fixed amount."""
+        """Adjust elevations for selected cells by a fixed amount.
+
+        Works on a copy: neither ``df`` nor the grid's :attr:`gdf_topbtm` is
+        changed.
+
+        Parameters
+        ----------
+        cell_ids : list of int
+            The rows to adjust, by index LABEL (cell ids, for :attr:`gdf_topbtm`).
+        adjustment : float
+            Added to each selected value, in elevation units; negative lowers.
+        df : pandas.DataFrame or geopandas.GeoDataFrame, optional
+            The surfaces to adjust, copied first. Default None: a copy of
+            :attr:`gdf_topbtm`.
+        layer : int or str, optional
+            The COLUMN LABEL of the surface to adjust, not a layer position. Under
+            the integer labels ``rasters=`` and ``LayerBuildResult.attach_to_grid``
+            write, ``0`` is the MODEL TOP and ``n`` the bottom of the n-th layer.
+            Default ``0``. A label the frame lacks raises ``KeyError``.
+        reconcile : bool, optional
+            Default True: pass the result through :meth:`reconcile_surfaces` with
+            its defaults (``min_sep=0.1``, ``trigger_sep=1``, ``which="bottom"``),
+            which returns a plain DataFrame without geometry and needs the ``0..n-1``
+            index that method needs. False: return the adjusted copy as it is.
+
+        Returns
+        -------
+        pandas.DataFrame or geopandas.GeoDataFrame
+            The adjusted surfaces.
+        """
         return geometry_adjust_cells_by_id(
             self,
             cell_ids=cell_ids,
@@ -1399,7 +2117,41 @@ class VoronoiGridPlus(VoronoiGrid):
         layer_bottom_name=1,
         min_sep=None,
     ) -> pd.DataFrame:
-        """Adjust overlapping top/bottom surfaces within selected geometry."""
+        """Drop one bottom under selected cells below their neighbours' tops.
+
+        For each cell ``shp`` reaches, the ``layer_bottom_name`` surface is set to
+        the LOWEST model top (column label ``0``) among its face neighbours, less
+        ``buffer``; the frame is then passed through :meth:`reconcile_surfaces`.
+
+        Parameters
+        ----------
+        elev_df : pandas.DataFrame, optional
+            The surfaces, with the model top under column label ``0`` (else
+            ``KeyError``) and a ``0..n-1`` index. A frame you pass is MODIFIED in
+            place (its ``layer_bottom_name`` column is replaced) before the
+            reconciled copy is returned -- passing :attr:`gdf_topbtm` itself edits
+            the grid's table. Default None: :meth:`reconcile_surfaces` of
+            :attr:`gdf_topbtm` with ``min_sep``.
+        shp : shapely geometry, GeoDataFrame, GeoSeries, str or pathlib.Path
+            The features whose cells to lower, chosen by
+            :meth:`get_vor_cells_as_series`'s default rule (by coverage). Required:
+            the ``None`` default raises ``ValueError``.
+        buffer : float, optional
+            How far below the neighbours' lowest top the bottom is set, in elevation
+            units. Default ``1``.
+        layer_bottom_name : int or str, optional
+            The column label of the surface to set. Under integer labels ``1`` is the
+            first layer's bottom (the default).
+        min_sep : float or sequence of float, optional
+            ``min_sep`` for the reconcile that builds the default ``elev_df``
+            (``None``: ``0.1``); unused when ``elev_df`` is given. The final
+            reconcile uses :meth:`reconcile_surfaces`' defaults whatever this is.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The reconciled surfaces, without geometry.
+        """
         return geometry_adjust_top_btm_overlaps(
             self,
             elev_df=elev_df,
@@ -1420,7 +2172,45 @@ class VoronoiGridPlus(VoronoiGrid):
         idomain: list = None,
         idomain_path: Path = None,
     ):
-        """Reconstruct a Voronoi-style grid view from a DISU input file."""
+        """Reconstruct a Voronoi-style grid view from a DISU input file.
+
+        Reads an **MF6** ``DISU`` -- its ``VERTICES`` and ``CELL2D`` blocks, through
+        FloPy -- and builds the grid by :class:`VoronoiGridPlus`'s array form, so the
+        cells are taken exactly as written (never repaired) and each ring is put in
+        clockwise order. A MODFLOW-USG ``DISU`` has no coordinates; use
+        :meth:`from_gsf` for one.
+
+        Parameters
+        ----------
+        disu_path : pathlib.Path
+            The MF6 ``DISU`` file. Must be a ``pathlib.Path`` (its ``parent`` and
+            ``name`` are read): a ``str`` raises ``AttributeError``.
+        crs : str, int or pyproj.CRS, optional
+            The CRS the file's coordinates are in, stamped on the grid. A bare EPSG
+            code (``2927`` or ``"2927"``) is stored as ``"EPSG:2927"``. Default
+            ``"EPSG:2927"``; ``None`` raises ``ValueError`` in the constructor. As
+            for :class:`VoronoiGridPlus`.
+        rasters : list of pathlib.Path or float, optional
+            Surfaces sampled onto the cells the first time :attr:`gdf_topbtm` is read:
+            the model top, then one bottom per layer. Must be a list. Default None.
+            As for :class:`VoronoiGridPlus`.
+        name : str, optional
+            A label stored as ``grid.name``. Default ``"voronoi_grid"``.
+        qhull_options : str, optional
+            Accepted and IGNORED: it acts only on a grid built from a triangulation,
+            and this builds from arrays.
+        idomain : list of int, optional
+            Accepted and IGNORED, as by :class:`VoronoiGridPlus`.
+        idomain_path : pathlib.Path, optional
+            A vector file whose features cover the INACTIVE cells, stored as
+            :attr:`idomain_path` and read by :meth:`get_grid_edge`. Must be a
+            ``pathlib.Path`` (a ``str`` fails an ``assert``). Default None.
+
+        Returns
+        -------
+        VoronoiGridPlus
+            The grid, one cell per ``CELL2D`` row.
+        """
         verts, iverts, xcyc = get_griddata_from_disu(disu_path)
         return cls(
             verts=verts,
@@ -1463,14 +2253,35 @@ class VoronoiGridPlus(VoronoiGrid):
 
         Parameters
         ----------
-        gsf_path
-            Path to the ``.gsf`` file.
-        layer
-            Zero-based layer to take the plan view from. Every layer shares one
-            plan geometry, so this selects the cell centers and the node numbers
-            the cells correspond to.
-        crs, rasters, name, qhull_options, idomain, idomain_path
+        gsf_path : str or pathlib.Path
+            Path to the ``.gsf`` file. A file whose first line is not
+            ``UNSTRUCTURED``, or whose counts disagree with its records, raises
+            ``ValueError``.
+        layer : int, optional
+            Zero-based layer to take the plan view from -- a position among the
+            layer numbers the file uses, sorted. Every layer shares one plan
+            geometry, so this selects the cell centers and the node numbers the
+            cells correspond to. Default ``0``. Out of range raises ``ValueError``.
+        crs : str, int or pyproj.CRS, optional
+            The CRS the file's coordinates are in, stamped on the grid. A bare EPSG
+            code (``2927`` or ``"2927"``) is stored as ``"EPSG:2927"``. Default
+            ``"EPSG:2927"``; ``None`` raises ``ValueError`` in the constructor. As
+            for :class:`VoronoiGridPlus`.
+        rasters : list of pathlib.Path or float, optional
+            Surfaces sampled onto the cells the first time :attr:`gdf_topbtm` is read:
+            the model top, then one bottom per layer. Must be a list. Default None.
             As for :class:`VoronoiGridPlus`.
+        name : str, optional
+            A label stored as ``grid.name``. Default ``"voronoi_grid"``.
+        qhull_options : str, optional
+            Accepted and IGNORED: it acts only on a grid built from a triangulation,
+            and this builds from arrays.
+        idomain : list of int, optional
+            Accepted and IGNORED, as by :class:`VoronoiGridPlus`.
+        idomain_path : pathlib.Path, optional
+            A vector file whose features cover the INACTIVE cells, stored as
+            :attr:`idomain_path` and read by :meth:`get_grid_edge`. Must be a
+            ``pathlib.Path`` (a ``str`` fails an ``assert``). Default None.
 
         Returns
         -------

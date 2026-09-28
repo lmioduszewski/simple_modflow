@@ -438,16 +438,18 @@ class ParallelEnvironment:
 
     Captures whether the toolchain needed to run a (possibly partitioned) model is
     present: the ``mf6`` executable for serial runs and ``mpiexec`` for MPI-parallel
-    runs. ``ParallelModelWorkflow`` discovers these from ``PATH`` and checks
-    ``serial_ready`` / parallel readiness before launching, so a missing binary is
-    reported up front.
+    runs. ``ParallelModelWorkflow.environment`` and ``ParallelSplitRun.environment``
+    discover them, and ``ParallelSplitRun.run`` checks ``parallel_ready`` before an
+    MPI launch, so a missing binary is reported up front.
 
     Attributes
     ----------
-    mf6
-        Path to the MODFLOW 6 executable, or ``None`` if not found.
-    mpiexec
-        Path to the MPI launcher, or ``None`` if not found.
+    mf6 : str or None
+        Path to the MODFLOW 6 executable, or ``None`` if not found. The
+        ``.environment`` properties look beside the running Python interpreter
+        first, then on ``PATH``.
+    mpiexec : str or None
+        Path to the MPI launcher, found the same way, or ``None`` if not found.
     """
 
     mf6: str | None
@@ -478,8 +480,11 @@ class ParallelSplitResults:
 
     Parameters
     ----------
-    run
-        The :class:`ParallelSplitRun` whose outputs are being reconstructed.
+    run : ParallelSplitRun
+        The split run whose outputs are being reconstructed. Its ``simulation``
+        supplies the split models' output files, its ``splitter`` the node mapping
+        back to the source grid, and its ``source`` the default model name and the
+        target grid shape.
     """
 
     def __init__(self, run: ParallelSplitRun):
@@ -495,7 +500,42 @@ class ParallelSplitResults:
         kstpkper: tuple[int, int] | None = None,
         totim: float | None = None,
     ) -> np.ndarray:
-        """Return one reconstructed output array from all partitions."""
+        """Return one reconstructed output array from all partitions.
+
+        Reads the same record from every split model and maps it back onto the
+        source model's grid with FloPy's ``Mf6Splitter.reconstruct_array``.
+
+        Parameters
+        ----------
+        model_name : str, optional
+            The SOURCE (unsplit) model whose output to rebuild; its split parts are
+            ``<model_name>_<partition id>``. ``None`` (the default) uses the source
+            GWF model. Name a GWT or GWE model here to rebuild its output.
+        output : str, default "head"
+            The FloPy ``model.output`` accessor to read from each part -- one whose
+            reader returns a grid array from ``get_data``: ``"head"`` for a GWF
+            model, ``"concentration"`` for GWT, ``"temperature"`` for GWE.
+        kstpkper : tuple of (int, int), optional
+            Zero-based ``(time step, stress period)`` of the record to read. Takes
+            precedence over ``totim``.
+        totim : float, optional
+            Simulation time (model time units) of the record to read, used when
+            ``kstpkper`` is ``None``. With neither given, FloPy returns the LAST
+            record in each file.
+
+        Returns
+        -------
+        numpy.ndarray
+            The reconstructed array, reshaped to the source GWF grid's shape when
+            it has that many values.
+
+        Raises
+        ------
+        KeyError
+            When a split model ``<model_name>_<id>`` is not in the split simulation.
+        AttributeError
+            When a split model has no ``output`` accessor named ``output``.
+        """
 
         base_name = model_name or self.run.source.gwf.name
         arrays = {}
@@ -527,7 +567,27 @@ class ParallelSplitResults:
         kstpkper: tuple[int, int] | None = None,
         totim: float | None = None,
     ) -> np.ndarray:
-        """Return reconstructed groundwater heads."""
+        """Return reconstructed groundwater heads.
+
+        ``array(output="head", ...)``.
+
+        Parameters
+        ----------
+        model_name : str, optional
+            The source GWF model whose heads to rebuild. ``None`` (the default)
+            uses the source's GWF model.
+        kstpkper : tuple of (int, int), optional
+            Zero-based ``(time step, stress period)`` of the head record. Takes
+            precedence over ``totim``.
+        totim : float, optional
+            Simulation time of the head record, used when ``kstpkper`` is ``None``.
+            With neither given, the last record is read.
+
+        Returns
+        -------
+        numpy.ndarray
+            Heads on the source model's grid.
+        """
 
         return self.array(model_name=model_name, output="head", kstpkper=kstpkper, totim=totim)
 
@@ -543,16 +603,26 @@ class ParallelSplitRun:
 
     Parameters
     ----------
-    source
-        The original (unsplit) model/simulation.
-    splitter
-        The FloPy splitter that produced the partition.
-    simulation
-        The partitioned FloPy simulation to run.
-    mask
-        Per-cell subdomain assignment array.
-    workspace
-        Directory for the partitioned input/output files.
+    source : SimulationBase
+        The original (unsplit) model -- anything exposing ``.gwf``, the source
+        FloPy GWF model, whose name, grid and head output the summaries,
+        comparisons and reconstructions read.
+    splitter : flopy.mf6.utils.Mf6Splitter
+        The FloPy splitter that produced the partition; it names the split models
+        and maps their outputs back to the source grid.
+    simulation : flopy.mf6.MFSimulation
+        The partitioned FloPy simulation to write and run.
+    mask : array_like of int
+        The subdomain id of every grid column (one value per cell of a layer, e.g.
+        shape ``(ncpl,)`` on DISV or ``(nrow, ncol)`` on DIS), as given to the
+        splitter. Stored as an integer array; its distinct values are the
+        partition ids.
+    workspace : str or pathlib.Path
+        Directory :meth:`write` puts the partitioned input, the mask and the
+        reconstruction mapping in, pointing the split simulation at it. Until
+        :meth:`write` has run, the simulation keeps its own path -- for one made
+        by :meth:`ParallelModelWorkflow.split_model`, the SOURCE simulation's
+        directory, where FloPy's splitter leaves it.
     """
 
     def __init__(self, source, splitter, simulation, mask, workspace: str | Path):
@@ -584,7 +654,20 @@ class ParallelSplitRun:
         return ParallelEnvironment(mf6=_find_executable("mf6"), mpiexec=_find_executable("mpiexec"))
 
     def partition_model_name(self, base_name: str, partition_id: int) -> str:
-        """The FloPy split-model name for one partition (``<base>_<zero-padded id>``)."""
+        """The FloPy split-model name for one partition (``<base>_<zero-padded id>``).
+
+        Parameters
+        ----------
+        base_name : str
+            The source (unsplit) model's name.
+        partition_id : int
+            The partition id, zero-padded to the splitter's digit count (or, when
+            the splitter records none, to the width of the largest partition id).
+
+        Returns
+        -------
+        str
+        """
 
         digits = int(getattr(self.splitter, "_fdigits", len(str(max(self.partition_ids)))))
         return f"{base_name}_{partition_id:0{digits}d}"
@@ -629,7 +712,24 @@ class ParallelSplitRun:
         return result
 
     def validate(self, *, raise_on_error: bool = True) -> pd.DataFrame:
-        """Validate partition contiguity and return the workload summary."""
+        """Validate partition contiguity and return the workload summary.
+
+        A partition is contiguous when its columns form one connected piece over
+        the source grid's cell neighbours.
+
+        Parameters
+        ----------
+        raise_on_error : bool, default True
+            Raise :class:`ParallelCompatibilityError`, naming the offending
+            partitions, when any partition is not contiguous. ``False`` returns the
+            table with those rows marked ``contiguous == False`` instead.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`summary` plus a boolean ``contiguous`` column (all ``True`` when
+            the source model has no ``modelgrid`` to check against).
+        """
 
         result = self.summary()
         modelgrid = getattr(self.source.gwf, "modelgrid", None)
@@ -664,7 +764,25 @@ class ParallelSplitRun:
         return result
 
     def write(self, *, save_mapping: bool = True) -> Path:
-        """Write the split simulation, partition mask, and reconstruction mapping."""
+        """Write the split simulation, partition mask, and reconstruction mapping.
+
+        Points the split simulation at :attr:`workspace` (creating it) and writes
+        its files there, plus ``partition_mask.npy`` and ``parallel_split.json``.
+
+        Parameters
+        ----------
+        save_mapping : bool, default True
+            Also save FloPy's node mapping to ``node_mapping.hdf5``, which is what
+            lets a later session reconstruct results without this in-memory
+            splitter. Needs ``h5py``; when it is missing, or FloPy's writer fails,
+            a ``RuntimeWarning`` is issued and the write continues without it
+            (``parallel_split.json`` then records ``node_mapping: null``).
+
+        Returns
+        -------
+        pathlib.Path
+            :attr:`workspace`.
+        """
 
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.simulation.set_sim_path(self.workspace)
@@ -716,7 +834,28 @@ class ParallelSplitRun:
         return self.workspace
 
     def run_serial(self, *, write: bool = True, **run_kwargs):
-        """Run the split simulation serially for equivalence validation."""
+        """Run the split simulation serially for equivalence validation.
+
+        One MF6 process solves every partition, so it needs no MPI.
+
+        Parameters
+        ----------
+        write : bool, default True
+            Call :meth:`write` (with its default ``save_mapping=True``) first.
+            ``False`` runs MF6 on whatever is already in the simulation's current
+            path: :attr:`workspace` once :meth:`write` has run, the source
+            simulation's directory before that (see ``workspace``).
+        **run_kwargs
+            Forwarded to FloPy's ``MFSimulation.run_simulation`` (``silent``,
+            ``report``, ``pause``, ``cargs``, ...), with ``silent=False`` and
+            ``report=True`` unless given.
+
+        Returns
+        -------
+        tuple of (bool, list of str)
+            FloPy's ``(success, report lines)``; a failed run is returned, not
+            raised.
+        """
 
         if write:
             self.write()
@@ -725,7 +864,31 @@ class ParallelSplitRun:
         return self.simulation.run_simulation(**run_kwargs)
 
     def run(self, *, processors: int | None = None, write: bool = True, **run_kwargs):
-        """Run serially or through MPI when ``processors`` is greater than one."""
+        """Run serially or through MPI when ``processors`` is greater than one.
+
+        Parameters
+        ----------
+        processors : int, optional
+            Number of MPI processes. ``None`` (the default) or ``<= 1`` runs
+            serially through :meth:`run_serial`. Above one, ``mpiexec`` launches MF6
+            on that many processes, using the ``mf6`` and ``mpiexec`` found beside
+            the running Python or on ``PATH``; both must exist or ``RuntimeError``
+            is raised before anything is written.
+        write : bool, default True
+            Call :meth:`write` (with its default ``save_mapping=True``) first.
+            ``False`` runs whatever is already in the simulation's current path, as
+            in :meth:`run_serial`.
+        **run_kwargs
+            Forwarded to FloPy's ``MFSimulation.run_simulation`` (``silent``,
+            ``report``, ...), with ``silent=False`` and ``report=True`` unless
+            given.
+
+        Returns
+        -------
+        tuple of (bool, list of str)
+            FloPy's ``(success, report lines)``; a failed run is returned, not
+            raised.
+        """
 
         if processors is None or int(processors) <= 1:
             return self.run_serial(write=write, **run_kwargs)
@@ -747,7 +910,35 @@ class ParallelSplitRun:
         kstpkper: tuple[int, int] | None = None,
         totim: float | None = None,
     ) -> pd.DataFrame:
-        """Compare reconstructed split heads with the source model output."""
+        """Compare reconstructed split heads with the source model output.
+
+        Both the source model and the split simulation must have been run. The
+        same record is read from each, and a cell is left out when its difference
+        is not finite or is ``>= 1e29`` in magnitude (a no-value sentinel on one
+        side only). A cell holding the same sentinel on both sides differs by 0
+        and is counted.
+
+        Parameters
+        ----------
+        kstpkper : tuple of (int, int), optional
+            Zero-based ``(time step, stress period)`` of the head record, read from
+            both outputs. Takes precedence over ``totim``.
+        totim : float, optional
+            Simulation time of the head record, used when ``kstpkper`` is ``None``.
+            With neither given, the last record of each file is compared.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``count`` of cells compared, ``mean_error``,
+            ``mean_absolute_error`` and ``max_absolute_error`` of split minus
+            source (NaN when no cell compared).
+
+        Raises
+        ------
+        ParallelCompatibilityError
+            When the two head arrays hold different numbers of values.
+        """
 
         reader = self.source.gwf.output.head()
         kwargs = {}
@@ -778,7 +969,26 @@ class ParallelSplitRun:
         )
 
     def plot_partitions(self, *, ax=None, layer: int = 0, cmap: str = "tab20"):
-        """Plot the partition mask on the original model grid."""
+        """Plot the partition mask on the original model grid.
+
+        A static Matplotlib map through FloPy's ``PlotMapView``: each column colored
+        by its partition id, the grid lines on top, and a colorbar.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            Axes to draw on. ``None`` (the default) creates a new 10 x 8 inch figure.
+        layer : int, default 0
+            Zero-based layer passed to ``PlotMapView``. The mask holds one value per
+            column, so on a DIS or DISV grid every layer draws the same picture.
+        cmap : str, default "tab20"
+            Matplotlib colormap name for the partition ids.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes drawn on.
+        """
 
         from flopy.plot import PlotMapView
 
@@ -804,10 +1014,15 @@ class ParallelModelWorkflow:
     (serial or MPI), and whose results reassemble onto the original grid. Raises
     :class:`ParallelCompatibilityError` for topologies that cannot be split.
 
+    Usually reached as ``model.parallel`` rather than constructed.
+
     Parameters
     ----------
-    model
-        The model (or model-like object exposing ``.sim``) to split.
+    model : SimulationBase
+        The model to split -- anything exposing ``.sim`` (the FloPy
+        ``MFSimulation``, every model of which is split) and ``.gwf`` (its one
+        foundational FloPy GWF model, whose grid is partitioned and whose name,
+        LAK/MVR packages and head output the workflow reads).
     """
 
     def __init__(self, model):
@@ -864,6 +1079,80 @@ class ParallelModelWorkflow:
 
         This method automatically selects FloPy's lower-level ``split_model``
         or ``split_multi_model`` operation based on the simulation topology.
+
+        The split is always checked for contiguity
+        (:meth:`ParallelSplitRun.validate`), and every split LAK package has its
+        connection numbering repaired and keeps the source package's ``IMPLICIT``
+        formulation.
+
+        Parameters
+        ----------
+        workspace : str or pathlib.Path
+            Directory of the returned :class:`ParallelSplitRun`: where the split
+            simulation is written (now, when ``write=True``) and run from.
+        nparts : int, optional
+            Number of subdomains for automatic partitioning with METIS (needs
+            ``pymetis``). Required, and at least 2, when ``mask`` is ``None``;
+            ignored when a ``mask`` is given.
+        mask : array_like of int, optional
+            An explicit partition: the subdomain id of every grid column, shaped
+            as FloPy's splitter takes it -- ``(ncpl,)`` on DISV, ``(nrow, ncol)``
+            on DIS. ``None`` (the default) asks METIS for ``nparts`` balanced
+            parts. Either way ``preserve_lakes`` may move columns between parts.
+        active_only : bool, default True
+            Automatic partitioning only: build METIS's adjacency graph from active
+            cells only (FloPy's ``optimize_splitting_mask(active_only=)``, which
+            imports scikit-learn for it -- so the default needs ``sklearn`` too).
+        seed : int, default 42
+            Automatic partitioning only: the METIS random seed
+            (``pymetis.Options(seed=)``).
+        contiguous : bool, default True
+            Automatic partitioning only: ask METIS for contiguous parts. The result
+            is validated for contiguity either way and a non-contiguous part raises
+            :class:`ParallelCompatibilityError`, so ``False`` only succeeds when
+            METIS happens to return contiguous parts.
+        verbose : bool, default False
+            Automatic partitioning only: let FloPy's ``optimize_splitting_mask``
+            print its progress.
+        write : bool, default True
+            Write the split simulation to ``workspace`` before returning
+            (:meth:`ParallelSplitRun.write`). ``False`` leaves it in memory, its
+            path still the source simulation's directory until it is written.
+        save_mapping : bool, default True
+            With ``write=True``, also save FloPy's node mapping
+            (``node_mapping.hdf5``, needs ``h5py``) so results can be reconstructed
+            in a later session. Ignored when ``write=False``.
+        preserve_source_observations : bool, default True
+            Hide the source GWF model's OBS packages (and any transient period
+            entries holding no data) from FloPy's splitter during the split and
+            restore them afterwards, so the source is left exactly as it was. The
+            split GWF models then carry NO OBS packages (a coupled GWT/GWE model's
+            are not hidden). ``False`` lets FloPy split the GWF OBS packages too
+            (measured on one head observation: it went to the part holding its
+            cell).
+        preserve_lakes : bool, default True
+            Keep each lake's cells, and each group of SFR/LAK features joined by
+            the MVR package, in one partition: the group moves to the partition
+            holding most of its columns (ties to the lower id), and that partition
+            is reconnected along the shortest corridor of cells if the move split
+            it. Applies to an explicit ``mask`` as well as a METIS one.
+
+        Returns
+        -------
+        ParallelSplitRun
+            The partitioned simulation, ready to :meth:`~ParallelSplitRun.run`.
+
+        Raises
+        ------
+        ValueError
+            When neither ``mask`` nor an ``nparts`` of at least 2 is given.
+        ImportError
+            When automatic partitioning is asked for and ``pymetis`` is missing.
+        ParallelCompatibilityError
+            For a topology that cannot be split (not exactly one GWF model, or a
+            model type other than GWF/GWT/GWE), a mask whose size is not the
+            grid's column count (with ``preserve_lakes``), or a non-contiguous
+            partition.
         """
 
         from flopy.mf6.utils import Mf6Splitter
@@ -916,12 +1205,40 @@ class ParallelModelWorkflow:
         return run
 
     def split(self, **kwargs) -> ParallelSplitRun:
-        """Short alias for :meth:`split_model`."""
+        """Short alias for :meth:`split_model`.
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded unchanged to :meth:`split_model`, whose parameters are all
+            keyword-only: ``workspace`` (required), ``nparts``, ``mask``,
+            ``active_only``, ``seed``, ``contiguous``, ``verbose``, ``write``,
+            ``save_mapping``, ``preserve_source_observations`` and
+            ``preserve_lakes``. Any other keyword raises ``TypeError``.
+
+        Returns
+        -------
+        ParallelSplitRun
+        """
 
         return self.split_model(**kwargs)
 
     def prepare(self, **kwargs) -> ParallelSplitRun:
-        """Workflow-oriented alias for :meth:`split_model`."""
+        """Workflow-oriented alias for :meth:`split_model`.
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded unchanged to :meth:`split_model`, whose parameters are all
+            keyword-only: ``workspace`` (required), ``nparts``, ``mask``,
+            ``active_only``, ``seed``, ``contiguous``, ``verbose``, ``write``,
+            ``save_mapping``, ``preserve_source_observations`` and
+            ``preserve_lakes``. Any other keyword raises ``TypeError``.
+
+        Returns
+        -------
+        ParallelSplitRun
+        """
 
         return self.split_model(**kwargs)
 
@@ -936,6 +1253,38 @@ class ParallelModelWorkflow:
 
         When multiple processors are requested, ``validate_serial=True`` first
         runs the split simulation without MPI before launching the parallel run.
+
+        The runs are made with ``write=False``: they use the files
+        :meth:`split_model` wrote (its default ``write=True``). Passing
+        ``write=False`` here writes nothing, and the runs then execute in the source
+        simulation's directory, where FloPy's splitter leaves the split
+        simulation's path. MF6's
+        ``(success, report)`` from each run is neither returned nor checked, so a
+        failed run returns normally; to get the verdict, call :meth:`split_model`
+        and then :meth:`ParallelSplitRun.run`, which return it.
+
+        Parameters
+        ----------
+        processors : int, optional
+            Number of MPI processes. ``None`` (the default) or ``<= 1`` makes one
+            serial run of the split simulation; above one, the split simulation is
+            launched through ``mpiexec`` on that many processes (see
+            :meth:`ParallelSplitRun.run`, which raises ``RuntimeError`` when
+            ``mf6`` or ``mpiexec`` is missing).
+        validate_serial : bool, default True
+            With ``processors > 1``, run the split simulation serially first, then
+            the MPI run. Ignored for a serial run.
+        **split_kwargs
+            Forwarded unchanged to :meth:`split_model`: ``workspace`` (required),
+            ``nparts``, ``mask``, ``active_only``, ``seed``, ``contiguous``,
+            ``verbose``, ``write``, ``save_mapping``,
+            ``preserve_source_observations`` and ``preserve_lakes``. Any other
+            keyword raises ``TypeError``.
+
+        Returns
+        -------
+        ParallelSplitRun
+            The split run, after it was run.
         """
 
         prepared = self.split_model(**split_kwargs)

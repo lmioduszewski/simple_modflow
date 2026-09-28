@@ -222,20 +222,67 @@ class DrnFlowTargets:
 
     Parameters
     ----------
-    locations
-        Seepage-zone definitions mapping ``name`` to its member drain cells --
-        a GeoDataFrame of points/polygons, which reach the cells they COVER and
-        are active in the zone's layer, or a table with a ``name`` column plus
-        ``cell``/``node`` ids, which are taken as given.
-    values
-        Observed discharge table (long or wide). Optional (capture template).
-    name_column, group_column, weight_column
-        Column names in ``locations`` for the zone id, observation group, and
-        observation weight.
-    time_column, value_column
-        Column names in ``values`` for the period/time index and the flow value.
-    times
-        Optional explicit period/time labels when ``values`` carries none.
+    locations : str, pathlib.Path, GeoDataFrame, DataFrame, Series, dict, list or tuple
+        The seepage zones, one name each; rows sharing a name are ONE zone, its
+        cells united. A zone's cells come one of two ways. EXPLICIT: a ``cells``
+        column holding a list of ints, one int or a comma-separated string
+        (``"317, 342"``) -- ZERO-based cell numbers within the zone's layer,
+        taken as given; the ``{name: cells}`` dict and a ``Series`` of cells
+        indexed by name are shorthands for it. GEOMETRY: a ``GeoDataFrame``, or
+        any other value (a vector-file path) read with ``geopandas.read_file``,
+        with no ``cells`` column -- :meth:`zone_definitions` resolves each zone
+        to the cells it COVERS that are active in its layer. A dict with a
+        ``name``, ``cells`` or ``geometry`` key is read as columns, and a list or
+        tuple as record dicts. Kept: ``name_column``, ``cells``,
+        ``group_column``, ``weight_column``, ``layer`` (zero-based, default 0:
+        the layer a geometry zone is resolved in and :meth:`to_flopy_obs`
+        writes each record for) and a ``GeoDataFrame``'s
+        geometry; every other column is DROPPED, a ``node`` or ``cell`` column
+        and a geometry in a plain dict or ``DataFrame`` included. When a
+        ``GeoDataFrame`` carries a ``cells`` column, every row is taken as
+        explicit and a row whose cells are ``NaN`` gets none. ``ValueError``
+        when ``name_column`` is missing.
+    values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
+        Observed discharge through time, in model length cubed per model time
+        unit. :meth:`compare` subtracts it, as given, from the simulated flow,
+        which carries MF6's sign on both routes -- a drain's outflow is NEGATIVE
+        -- so enter a measured discharge negative. A path is read with
+        ``pandas.read_csv``. LONG form has ``name`` and ``value_column`` columns
+        (headers matched ignoring case); WIDE form has one column per zone name
+        beside ``time_column``; a table of only ``time_column`` and
+        ``value_column``, or a ``Series`` indexed by time, is one series and
+        needs exactly one zone (``ValueError`` otherwise). Names are NOT checked
+        against ``locations`` and are joined to them exactly (case counts): a
+        row naming no zone gets no cells and no simulated flow. Default
+        ``None`` makes a capture template.
+    name_column : str, optional
+        Column of ``locations`` holding each zone's name, matched exactly and
+        renamed ``name``. Default ``"name"``. For the ``{name: cells}`` dict and
+        ``Series`` shorthands it is only the column the names are put in.
+    group_column : str or None, optional
+        Column of ``locations`` holding a group label, renamed ``group``.
+        Default ``"group"``; ``None`` or an absent column leaves ``group``
+        ``pandas.NA``. Carried into :meth:`get`, :meth:`compare`,
+        :meth:`residuals` and the zone table a PEST build writes.
+    weight_column : str or None, optional
+        Column of ``locations`` holding each zone's observation weight, renamed
+        ``weight``. Default ``"weight"``; ``None`` or an absent column leaves it
+        ``NaN``. A PEST build sets a zone's non-``NaN`` weight on each
+        observation of that zone that has a target value, and leaves the
+        existing weight where it is ``NaN``.
+    time_column : str, optional
+        Column of ``values`` holding each row's time label, matched exactly.
+        Default ``"time"``; ``ValueError`` when ``values`` lacks it after
+        ``times`` is applied. :meth:`compare` reads it as a zero-based stress
+        period on the budget-file route.
+    value_column : str, optional
+        Column of a LONG ``values`` table holding the observed flow, matched
+        ignoring case. Default ``"flow"``.
+    times : list, tuple, pandas.Index, pandas.Series or None, optional
+        Time labels inserted as ``time_column`` when ``values`` is a ``dict`` or
+        list/tuple without that column; a list/tuple of another length raises
+        ``ValueError``. Ignored for a ``DataFrame``, ``Series`` or CSV path.
+        Default ``None``.
 
     Examples
     --------
@@ -291,12 +338,55 @@ class DrnFlowTargets:
         CRS, whatever the zone file's own was. See
         :func:`_resolve_drn_zone_cells` for what that rule replaced and for what a
         zone landing on nothing does.
+
+        Parameters
+        ----------
+        model : SimulationBase or None
+            The model whose grid (``model.vor``) and active domain geometry zones
+            are resolved against. Not read when the zones carry a ``cells``
+            column, which is returned as given; ``None`` then works.
+
+        Returns
+        -------
+        pandas.DataFrame or geopandas.GeoDataFrame
+            One row per ``locations`` row: ``name``, ``cells`` (zero-based cell
+            numbers in the row's layer; for a geometry zone, the union over
+            every row of that name), ``group``, ``weight``, ``layer``, and for
+            geometry zones their geometry, converted to the grid's CRS when both
+            CRSs are known.
+
+        Raises
+        ------
+        ValueError
+            When zones without a ``cells`` column were not given as a
+            ``GeoDataFrame`` or vector file; or when no zone lands on a cell
+            active in its layer, naming the zones (the first ten) and both
+            extents and CRSs (ledger 211). A PARTIAL miss is logged at WARNING instead, once per
+            missed set on this object.
         """
 
         return _resolve_drn_zone_cells(self._locations, model, owner=self)
 
     def get(self, model=None) -> pd.DataFrame:
-        """Return the zone definitions (cells resolved when ``model`` is given), merged with values."""
+        """Return the zone definitions (cells resolved when ``model`` is given), merged with values.
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            When given, zones are resolved through :meth:`zone_definitions`,
+            whose ``Raises`` apply. Default ``None``: the zones as normalized at
+            construction -- explicit cells only, geometry unresolved and in the
+            zone file's own CRS.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The zone table alone when there are no ``values``; otherwise the
+            observed values -- ``time``, ``name``, ``flow_target`` -- joined on
+            ``name`` to the zone table's columns other than geometry: one row
+            per value and zone ROW, so a zone given as several rows repeats each
+            of its values, and a value naming no zone gets one row of ``NaN``.
+        """
 
         definitions = self._locations.copy()
         if model is not None:
@@ -306,7 +396,19 @@ class DrnFlowTargets:
         return _copy_frame(self._values.merge(definitions.drop(columns="geometry", errors="ignore"), on="name", how="left"))
 
     def to_long(self, model=None) -> pd.DataFrame:
-        """Return the long-format DRN-flow target table."""
+        """Return the long-format DRN-flow target table (the same table as :meth:`get`).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            Passed to :meth:`get`: resolves geometry zones when given. Default
+            ``None``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`get`'s table.
+        """
 
         return self.get(model=model)
 
@@ -320,7 +422,23 @@ class DrnFlowTargets:
         return frame
 
     def summary(self, model=None) -> pd.DataFrame:
-        """Return a compact summary (zone count, resolved cell count, row count)."""
+        """Return a compact summary (zone count, resolved cell count, row count).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            When given, zones are resolved through :meth:`zone_definitions`
+            first, whose ``Raises`` apply. Default ``None``: geometry zones are
+            unresolved and count no cells.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n_zones`` (distinct names), ``n_cells`` (the length of
+            every row's cell list, added over rows -- so a geometry zone given as
+            several rows, each carrying the zone's union, is counted once per
+            row) and ``n_rows`` (observed values).
+        """
 
         definitions = self.zone_definitions(model) if model is not None else self._locations.copy()
         zone_count = int(definitions["name"].nunique())
@@ -557,7 +675,9 @@ class DrnFlowTargets:
             One row per target row (per simulated row when the targets hold no
             values): ``name``, ``time``, ``per``, ``flow_target``, ``sim_flow``,
             ``residual`` (simulated minus target), ``abs_residual``, and the
-            zone's ``group``, ``weight`` and ``cells``.
+            zone's ``group``, ``weight`` and ``cells``. On the budget-file route
+            with no values there is no ``per`` column: the period is ``time``,
+            and ``flow_target`` and the residuals are ``NaN``.
 
         Raises
         ------
@@ -599,7 +719,28 @@ class DrnFlowTargets:
         return _copy_frame(compare)
 
     def residuals(self, model) -> pd.DataFrame:
-        """Return a compact residual table (target/sim/residual, with group/weight) for DRN zones."""
+        """Return a compact residual table (target/sim/residual, with group/weight) for DRN zones.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with a DRN package; passed to :meth:`compare`, whose
+            routes and ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`compare`'s rows, reduced to ``name``, ``group``, ``time``,
+            ``per``, ``flow_target``, ``sim_flow``, ``residual``,
+            ``abs_residual``, ``weight`` and, when present, ``cells``.
+
+        Raises
+        ------
+        KeyError
+            Naming ``per``, when the targets hold no ``values`` and the
+            budget-file route is taken: :meth:`compare` then returns no ``per``
+            column.
+        """
 
         frame = self.compare(model)
         columns = ["name", "group", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual", "weight"]
@@ -608,7 +749,22 @@ class DrnFlowTargets:
         return frame.loc[:, columns]
 
     def stats(self, model) -> pd.DataFrame:
-        """Return aggregate residual statistics for the DRN-flow target set."""
+        """Return aggregate residual statistics for the DRN-flow target set.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with a DRN package; passed to :meth:`compare`, whose
+            routes and ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n`` (rows with a residual), ``mean_error``, ``mae`` and
+            ``rmse`` of simulated minus target, in model flow units (length
+            cubed per time). ``n`` is 0 and the rest ``NaN`` when no row has a
+            residual, as with no ``values``.
+        """
 
         return _default_compare_stats(self.compare(model))
 
@@ -619,7 +775,40 @@ class DrnFlowTargets:
         csv_name: str = "drn_flow_targets.csv",
         kind: str = "DRN",
     ) -> dict[str, list[tuple[str, str, tuple[int, int]]]]:
-        """Return a FloPy ``continuous`` dict with one MF6 DRN observation per member cell."""
+        """Return a FloPy ``continuous`` dict with one MF6 DRN observation per member cell.
+
+        Parameters
+        ----------
+        model : SimulationBase or None
+            Passed to :meth:`zone_definitions`, whose ``Raises`` apply: it
+            resolves geometry zones. ``None`` works when every zone gives explicit
+            ``cells`` -- as when the records go into the ``observations=`` of the
+            DRN being declared, before any model exists.
+        csv_name : str, optional
+            The CSV file MF6 writes these observations to -- the dict's one key.
+            Default ``"drn_flow_targets.csv"``. :meth:`simulated_series` reads
+            observations back from a workspace CSV holding a column for every
+            member cell, and skips any file whose name contains ``simulated_`` or
+            ``_target_``.
+        kind : str, optional
+            The MF6 observation type written on every record, upper-cased.
+            Default ``"DRN"``, MF6's drain-flow observation, which carries MF6's
+            sign (outflow negative); the observation route of
+            :meth:`simulated_series` sums whatever that CSV holds as the flow.
+
+        Returns
+        -------
+        dict of str to list of tuple
+            ``{csv_name: [(label, kind, (layer, cell)), ...]}``: one record per
+            cell of every zone row, labelled ``<name>_c<cell>`` with every
+            character that is not a letter or digit made ``_`` and leading
+            ``_`` stripped, the cellid
+            ZERO-based as FloPy takes it. Records follow the ROWS, so a cell on
+            two rows of one zone -- every cell of a geometry zone given as
+            several rows -- is written once per row under one label. The shape
+            ``ModflowUtlobs(continuous=)`` and a DRN package's
+            ``observations=`` take.
+        """
 
         zones = self.zone_definitions(model)
         records: list[tuple[str, str, tuple[int, int]]] = []
@@ -639,7 +828,39 @@ class DrnFlowTargets:
         kind: str = "DRN",
         package=None,
     ):
-        """Attach an MF6 utility observation package to DRN for these seepage-zone targets."""
+        """Attach an MF6 utility observation package to DRN for these seepage-zone targets.
+
+        The package is added to the FloPy objects in memory; writing and running
+        the simulation afterwards is the caller's.
+
+        Parameters
+        ----------
+        model : SimulationBase or None
+            The model whose FloPy DRN package, ``model.gwf.drn``, receives the
+            OBS package unless ``package`` is given; also passed to
+            :meth:`to_flopy_obs` to resolve the zones. With ``package`` given and
+            every zone's ``cells`` explicit, ``None`` works.
+        pname : str, optional
+            FloPy package name. Default ``"drn_flow_obs"``.
+        filename : str or pathlib.Path, optional
+            The OBS input file name FloPy writes, in the owning model's
+            directory. Default ``"drn_flow_targets.obs"``.
+        csv_name : str or None, optional
+            The CSV file MF6 writes the observations to. Default ``None`` takes
+            ``filename``'s stem plus ``.csv`` (``"drn_flow_targets.csv"`` for
+            the default ``filename``).
+        kind : str, optional
+            The MF6 observation type, as in :meth:`to_flopy_obs`. Default
+            ``"DRN"``.
+        package : flopy object or None, optional
+            The FloPy package (or model) to attach the OBS package to instead of
+            ``model.gwf.drn``. Default ``None``.
+
+        Returns
+        -------
+        flopy.mf6.modflow.mfutlobs.ModflowUtlobs
+            The observation package.
+        """
 
         import flopy
 

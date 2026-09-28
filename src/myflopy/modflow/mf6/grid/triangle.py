@@ -75,24 +75,63 @@ class MeshBuildProfile:
 
     Groups the knobs that control how :meth:`TriangleGrid.build_mesh` cleans input
     geometry and relaxes the triangulation -- snapping/simplifying tolerances,
-    minimum feature area, target segment length, and Laplacian-style optimization
-    (iterations, damping, minimum move). Rather than tuning each by hand, pick a
-    built-in preset with :meth:`from_name` (``"fast"``, ``"balanced"``,
-    ``"smooth"``, ``"clean"``, ``"baseline"``) and override individual fields as
-    needed. Higher quality (more iterations, shorter segments) costs build time.
+    minimum feature area, target segment length, and the constrained CVT/Lloyd
+    relaxation of :meth:`TriangleGrid.optimize_seeds` (iterations, damping, minimum
+    move). Rather than tuning each by hand, pick a built-in preset with
+    :meth:`from_name` (``"fast"``, ``"balanced"``, ``"smooth"``, ``"clean"``,
+    ``"baseline"``) and override individual fields as needed -- either by building
+    your own instance or by passing the field as a keyword to
+    :meth:`TriangleGrid.build_mesh`. Higher quality (more iterations, shorter
+    segments) costs build time.
 
-    Attributes
+    The six cleanup fields are the keywords of :meth:`TriangleGrid.clean_geometry`
+    (see :meth:`cleanup_kwargs`); lengths are in model length units and areas in
+    model length units squared.
+
+    Parameters
     ----------
-    name
-        Profile label.
-    cleanup
-        Run geometry cleanup before triangulating.
-    snap_tolerance, simplify_tolerance, min_feature_area, target_segment_length
-        Geometry-cleanup tolerances applied to the input regions/boundary.
-    resample_domain_boundary, resample_region_sources
-        Whether/which sources to resample to ``target_segment_length``.
-    optimization_iterations, damping, min_move
-        Mesh-smoothing controls applied after triangulation.
+    name : str
+        Profile label. :meth:`TriangleGrid.build_mesh` returns it as the
+        ``"profile"`` entry of its report; it does not change the mesh.
+    cleanup : bool, optional
+        Run :meth:`TriangleGrid.clean_geometry` before triangulating. Default
+        ``True``. ``False`` skips cleanup, so the six cleanup fields below are
+        not used.
+    snap_tolerance : float, optional
+        Distance within which the vertices and segments of the domain and of each
+        region are snapped to that geometry's own vertices (``shapely.snap`` of
+        the geometry to itself). Default ``0.0``; ``0`` or less disables snapping.
+    simplify_tolerance : float or None, optional
+        ``shapely`` simplification tolerance for the domain and every region,
+        with topology preserved. Default ``2.0``; ``None`` or ``0`` disables it.
+    min_feature_area : float, optional
+        Polygon parts smaller than this area are dropped from the domain and
+        from each region -- unless that would drop every part, in which case all
+        are kept. Default ``0.0`` (keep everything).
+    target_segment_length : float or None, optional
+        Spacing to resample boundaries to. The ring is rebuilt from points spaced
+        this far apart along it, so vertices between them (corners included)
+        are not kept, and interior rings (holes) are dropped. Applied only where
+        ``resample_domain_boundary`` / ``resample_region_sources`` select it.
+        Default ``120.0``; ``None`` or ``0`` disables resampling.
+    resample_domain_boundary : bool, optional
+        Resample the domain boundary to ``target_segment_length`` as well.
+        Default ``False``. Resampling drops the domain's holes.
+    resample_region_sources : tuple of str, optional
+        Region ``source`` tags whose boundaries are resampled to
+        ``target_segment_length`` (``"line"`` is the tag
+        :meth:`TriangleGrid.add_line_feature` gives). Default ``("line",)``.
+    optimization_iterations : int, optional
+        Maximum number of relax-and-rebuild rounds of
+        :meth:`TriangleGrid.optimize_seeds`. Default ``3``. With
+        ``build_mesh(optimize=None)``, ``0`` means no optimization pass.
+    damping : float, optional
+        Fraction of the way each free mesh vertex moves toward its Voronoi cell
+        centroid per round; values outside ``[0, 1]`` are clipped. Default
+        ``0.25``.
+    min_move : float, optional
+        A vertex whose proposed move is shorter than this distance stays put.
+        Default ``1e-3``.
     """
 
     name: str
@@ -109,7 +148,39 @@ class MeshBuildProfile:
 
     @classmethod
     def from_name(cls, profile: str):
-        """Return one of the built-in mesh build presets by name."""
+        """Return one of the built-in mesh build presets by name.
+
+        Every preset keeps the field defaults (``simplify_tolerance=2.0``, no
+        snapping, no minimum feature area, only ``"line"`` regions resampled,
+        ``min_move=1e-3``) except:
+
+        ============  ======================  ===========  =======  =======
+        name          target_segment_length   iterations   damping  cleanup
+        ============  ======================  ===========  =======  =======
+        ``fast``      150                     1            0.2      yes
+        ``balanced``  120                     3            0.25     yes
+        ``smooth``    100                     5            0.3      yes
+        ``clean``     120                     0            0.0      yes
+        ``baseline``  None                    0            0.0      no
+        ============  ======================  ===========  =======  =======
+
+        Parameters
+        ----------
+        profile : str
+            Preset name, one of ``"fast"``, ``"balanced"``, ``"smooth"``,
+            ``"clean"`` or ``"baseline"``. Surrounding whitespace and case are
+            ignored.
+
+        Returns
+        -------
+        MeshBuildProfile
+            A new instance holding the preset's settings.
+
+        Raises
+        ------
+        ValueError
+            If ``profile`` names no preset.
+        """
         normalized = profile.strip().lower()
         presets = {
             "fast": cls(
@@ -172,15 +243,60 @@ class TriangleGrid(Triangle):
     Voronoi cells used for DISV/DISU grids. The triangulation is the intermediate
     step; you usually consume its Voronoi dual rather than the triangles directly.
 
+    Lengths are in the units of the input coordinates (model length units) and
+    areas in those units squared.
+
     Parameters
     ----------
-    angle
-        Minimum interior angle constraint passed to Triangle (higher = better
-        shaped, more cells).
-    region_point_tolerance
-        Tolerance for matching region marker points to regions.
-    domain_clip_tolerance
-        Tolerance for clipping geometry to the domain boundary.
+    angle : float or None, optional
+        Minimum interior angle, in degrees, that Triangle enforces by adding
+        vertices (its ``-q`` switch): higher gives better-shaped triangles and
+        more cells. Default ``32`` (FloPy's own default is 20). ``None`` omits
+        ``-q``, so no angle constraint is imposed.
+    region_point_tolerance : float or None, optional
+        Minimum distance between the interior marker points chosen for
+        refinement regions in :meth:`prepare`. The same number sets the gap left
+        between a higher-priority region's claimed area and a lower-priority
+        region's (a quarter of it), and, in :meth:`optimize_seeds`, how close a
+        mesh vertex must be to a protected region's boundary to be held fixed.
+        Default ``None`` scales it from the geometry: the largest of ``1e-6``,
+        ``1e-6`` x the longer side of the domain's bounding box and ``1e-4`` x the
+        longer side of the region's (in :meth:`optimize_seeds`, of the domain's),
+        each side counted as at least ``1``; for the marker points only, also
+        ``0.05 * sqrt(max_area)`` of the region.
+    domain_clip_tolerance : float or None, optional
+        Distance the domain is inset by before each refinement region is clipped
+        to it in :meth:`prepare`, so no region segment coincides with the domain
+        boundary (which makes Triangle abort). Default ``None`` uses ``1e-4`` x
+        the diagonal of the domain's bounding box; ``0`` or less clips to the
+        domain itself. An inset that would empty the domain is not applied.
+    *args
+        Positional values after ``domain_clip_tolerance``, forwarded to
+        ``flopy.utils.triangle.Triangle`` as its first three parameters,
+        ``model_ws``, ``exe_name`` and ``maximum_area``, in that order (so
+        ``TriangleGrid("ws")`` sets ``angle``, not ``model_ws``). A fourth value
+        collides with ``angle`` and raises ``TypeError``; pass these by keyword
+        instead.
+    **kwargs
+        Forwarded to ``flopy.utils.triangle.Triangle``:
+
+        - ``model_ws`` (str or path, default ``"."``): directory the Triangle
+          input and output files are written to; :meth:`build`,
+          :meth:`build_mesh` and :meth:`optimize_seeds` create it.
+        - ``exe_name`` (str, default ``"triangle"``): the Triangle executable,
+          resolved at construction -- ``FileNotFoundError`` if it cannot be found.
+        - ``maximum_area`` (float): a global maximum triangle area. FloPy then
+          passes ``-a<value>`` and never a bare ``-a``, so every per-region
+          ``max_area`` (including the domain's background ``max_area``) is NOT
+          applied -- measured, a 200 x 200 region at ``max_area=100`` inside a
+          1000 x 1000 domain meshed to 1100 triangles without it and to 174
+          with ``maximum_area=1e4``.
+        - ``nodes`` (array of shape ``(n, 2)``): accepted but discarded --
+          :meth:`prepare` rebuilds the node list from :meth:`add_points`, so use
+          that instead.
+        - ``additional_args`` (list of str): extra Triangle command-line switches.
+
+        ``angle`` cannot be passed here; it is a named parameter.
     """
 
     def __init__(
@@ -194,7 +310,8 @@ class TriangleGrid(Triangle):
         """Initialize a TriangleGrid with a minimum ``angle`` and region/domain tolerances.
 
         Starts with no domain or regions declared; ``None`` tolerances auto-scale
-        to the domain extent when the mesh is built.
+        from the geometry when regions are prepared. The parameters are
+        documented on the class.
         """
 
         super().__init__(angle=angle, *args, **kwargs)
@@ -578,17 +695,59 @@ class TriangleGrid(Triangle):
     ):
         """Define the model domain from polygonal geometry.
 
+        The geometry is buffered, simplified and densified, in that order, and
+        stored as :attr:`domain_spec`, replacing any earlier domain. A
+        multi-part geometry gives a multi-part domain; interior rings become
+        holes in the mesh.
+
         Parameters
         ----------
-        polygon
-            Domain geometry as a shapely polygon, multipolygon, or GIS file
-            path.
-        label
-            Name used in previews and diagnostics.
-        max_area
-            Optional background cell area for the whole domain.
-        buffer, simplify_tolerance, densify_dist
-            Preprocessing controls applied before the domain is stored.
+        polygon : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence
+            The domain. A ``Path`` names a ``.shp`` or ``.gpkg`` file (a
+            GeoPackage's first layer) whose features are unioned; a
+            ``GeoDataFrame``/``GeoSeries`` is unioned; a sequence of ``(x, y)``
+            pairs is read as one polygon's exterior ring. Coordinates are used as
+            they are, with no reprojection. A ``str`` is not read as a path --
+            wrap it in ``pathlib.Path``. A point or line needs ``buffer > 0``.
+        label : str, optional
+            Name of the domain, kept as ``domain_spec.label``. When ``max_area``
+            is given it also names the background sizing region
+            ``"<label>_size"`` (``"domain_size"`` for an empty label), the label
+            :meth:`preview_regions` shows. Default ``"domain"``.
+        max_area : float, optional
+            Background maximum triangle area for the whole domain, in model
+            length units squared. When given, a copy of the domain inset by
+            ``max(0.5 * sqrt(max_area), 1e-4 x its longer bounding-box side)``
+            (the domain itself if that inset would empty it) is added as a
+            refinement region with priority ``-10`` and source ``"domain"``, so
+            every region of higher priority (the default ``0`` included) claims
+            its area first. Default ``None`` adds no background region: triangles
+            outside every refinement region then have no area limit, only the
+            ``angle`` constraint.
+        buffer : float, optional
+            Distance to buffer the geometry by (``shapely`` ``buffer``; negative
+            shrinks it). Default ``0``, no buffer.
+        simplify_tolerance : float, optional
+            ``shapely`` simplification tolerance, topology preserved, applied
+            after the buffer. Default ``None``; ``None`` or ``0`` skips it.
+        densify_dist : float, optional
+            Resample each polygon's exterior to points this far apart, applied
+            last. Vertices between the samples (corners included) are not kept,
+            and interior rings (holes) are dropped. Default ``None``; ``None`` or
+            ``0`` skips it.
+
+        Returns
+        -------
+        shapely.geometry.Polygon or shapely.geometry.MultiPolygon
+            The stored domain geometry.
+
+        Raises
+        ------
+        ValueError
+            If no polygonal area remains after preprocessing (a point or line
+            with no ``buffer``, or a buffer that removes everything), or if the
+            boundary touches itself (two parts meeting, or a hole meeting an
+            edge), which a Voronoi cell cannot represent.
         """
         geometry = self._polygonize_geometry(
             polygon,
@@ -607,7 +766,28 @@ class TriangleGrid(Triangle):
         label: str = "domain",
         max_area: float | int | None = None,
     ):
-        """Define the domain as an axis-aligned rectangle."""
+        """Define the domain as an axis-aligned rectangle.
+
+        Parameters
+        ----------
+        x_dist : float, optional
+            Width of the rectangle along x, in model length units. Default ``100``.
+        y_dist : float, optional
+            Height of the rectangle along y, in model length units. Default ``100``.
+        origin : tuple of float, optional
+            ``(x, y)`` of the rectangle's lower-left corner. Default ``(0, 0)``.
+        label : str, optional
+            Name of the domain; as in :meth:`set_domain_polygon`. Default
+            ``"domain"``.
+        max_area : float, optional
+            Background maximum triangle area for the whole domain; as in
+            :meth:`set_domain_polygon`. Default ``None``, no background region.
+
+        Returns
+        -------
+        shapely.geometry.Polygon
+            The stored domain rectangle.
+        """
         polygon = self._rectangle_polygon(x_dist=x_dist, y_dist=y_dist, origin=origin)
         return self._coerce_domain_region(polygon, max_area=max_area, label=label)
 
@@ -620,7 +800,30 @@ class TriangleGrid(Triangle):
         label: str = "domain",
         max_area: float | int | None = None,
     ):
-        """Define the domain as an approximate circular polygon."""
+        """Define the domain as an approximate circular polygon.
+
+        Parameters
+        ----------
+        radius : float, optional
+            Circle radius, in model length units. Default ``100.0``.
+        center_coords : tuple of float, optional
+            ``(x, y)`` of the centre. Default ``(0, 0)``.
+        radians_step : float, optional
+            Angle, in radians, between successive vertices: the polygon has a
+            vertex at every multiple of it below ``2 * pi`` (63 at the default).
+            Default ``0.1``.
+        label : str, optional
+            Name of the domain; as in :meth:`set_domain_polygon`. Default
+            ``"domain"``.
+        max_area : float, optional
+            Background maximum triangle area for the whole domain; as in
+            :meth:`set_domain_polygon`. Default ``None``, no background region.
+
+        Returns
+        -------
+        shapely.geometry.Polygon
+            The stored domain polygon.
+        """
         polygon = self._circle_polygon(radius=radius, center_coords=center_coords, radians_step=radians_step)
         return self._coerce_domain_region(polygon, max_area=max_area, label=label)
 
@@ -634,7 +837,42 @@ class TriangleGrid(Triangle):
         simplify_tolerance=None,
         densify_dist: int | None = None,
     ):
-        """Load the model domain from GIS data and register it."""
+        """Load the model domain from GIS data and register it.
+
+        The same as :meth:`set_domain_polygon`, which it calls with every
+        argument unchanged.
+
+        Parameters
+        ----------
+        shp_gpkg : pathlib.Path
+            A ``.shp`` or ``.gpkg`` file (a GeoPackage's first layer) whose
+            features are unioned into the domain. Any other input
+            :meth:`set_domain_polygon` takes works too; a ``str`` path does not.
+        label : str, optional
+            Name of the domain; as in :meth:`set_domain_polygon`. Default
+            ``"domain"``.
+        max_area : float, optional
+            Background maximum triangle area for the whole domain; as in
+            :meth:`set_domain_polygon`. Default ``None``, no background region.
+        buffer : float, optional
+            Distance to buffer the geometry by; negative shrinks it. Default ``0``.
+        simplify_tolerance : float, optional
+            ``shapely`` simplification tolerance, topology preserved. Default
+            ``None``, no simplification.
+        densify_dist : float, optional
+            Resample each exterior to points this far apart; corners between the
+            samples and holes are lost. Default ``None``, no resampling.
+
+        Returns
+        -------
+        shapely.geometry.Polygon or shapely.geometry.MultiPolygon
+            The stored domain geometry.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`set_domain_polygon`.
+        """
         return self.set_domain_polygon(
             shp_gpkg,
             label=label,
@@ -660,23 +898,72 @@ class TriangleGrid(Triangle):
     ):
         """Add a polygonal refinement region.
 
+        The geometry is clipped to ``domain`` (or the stored domain), then
+        buffered, simplified and densified, and recorded in
+        :attr:`region_specs`. Overlaps with other regions are resolved later, in
+        :meth:`prepare`, which also clips every region to the domain inset by
+        ``domain_clip_tolerance``.
+
         Parameters
         ----------
-        polygon
-            Region geometry or path to polygonal GIS data.
-        max_area
-            Maximum triangle area requested inside the region.
-        label
-            Optional region name used in diagnostics and optimization
-            protection.
-        priority
+        polygon : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence
+            The region, in any form :meth:`set_domain_polygon` takes (a ``Path``
+            to a ``.shp``/``.gpkg`` whose features are unioned, a shapely
+            geometry, a GeoDataFrame/GeoSeries, or a sequence of ``(x, y)`` read
+            as a polygon's exterior ring; not a ``str``). A point or line needs
+            ``buffer > 0``.
+        max_area : float
+            Maximum triangle area requested inside the region, in model length
+            units squared. Required.
+        label : str, optional
+            Region name, shown by :meth:`preview_regions` and matched by
+            ``protected_labels`` in :meth:`optimize_seeds`/:meth:`build_mesh`.
+            Default ``None``: :meth:`prepare` names it ``"region_<i>"``, ``i``
+            being its position in priority order. A region that ends up in
+            several parts gets ``"_<j>"`` appended per part.
+        priority : int, optional
             Higher-priority regions claim overlapping area before lower
-            priority regions during :meth:`prepare`.
-        point_hint
+            priority regions during :meth:`prepare`; at equal priority the
+            smaller region claims first. A region left with no area of its own
+            raises ``ValueError`` there. Default ``0``.
+        point_hint : tuple of float, optional
             Optional interior point to try first when selecting Triangle's
-            region point.
-        source
-            Short source label used by cleanup and feature-protection logic.
+            region point. Used only if it lies inside the area the region claims
+            and clear of the other regions' points; otherwise a point is chosen
+            automatically, without a warning. Default ``None``.
+        source : str, optional
+            Short source label used by cleanup and feature-protection logic:
+            :meth:`clean_geometry`'s ``resample_region_sources`` and
+            :meth:`build_mesh`'s ``protect_sources`` select regions by it, and
+            :meth:`preview_regions` shows it. The helpers set ``"line"``,
+            ``"rectangle"``, ``"circle"``, ``"file"``, ``"polygon"`` and others.
+            Default ``"geometry"``.
+        domain : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence, optional
+            Geometry to clip the region to instead of the stored domain, in the
+            same forms as ``polygon``. Default ``None`` clips to the stored
+            domain, or not at all when none is set yet.
+        buffer : float, optional
+            Distance to buffer the region by AFTER it is clipped (``shapely``
+            ``buffer``); a negative value pulls it back from the clip edge.
+            Default ``0``, no buffer.
+        simplify_tolerance : float, optional
+            ``shapely`` simplification tolerance, topology preserved, applied
+            after the buffer. Default ``None``; ``None`` or ``0`` skips it.
+        densify_dist : float, optional
+            Resample each polygon's exterior to points this far apart, applied
+            last. Vertices between the samples (corners included) are not kept,
+            and interior rings are dropped. Default ``None``; ``None`` or ``0``
+            skips it.
+
+        Returns
+        -------
+        shapely.geometry.Polygon or shapely.geometry.MultiPolygon
+            The region geometry as recorded.
+
+        Raises
+        ------
+        ValueError
+            If no polygonal area remains after clipping and preprocessing.
         """
         clip_domain = self.domain_geometry if domain is None else domain
         geometry = self._polygonize_geometry(
@@ -708,7 +995,36 @@ class TriangleGrid(Triangle):
         priority: int = 0,
         point_hint: tuple[float, float] | None = None,
     ):
-        """Add a rectangular refinement region."""
+        """Add a rectangular refinement region.
+
+        Calls :meth:`add_region_polygon` with source ``"rectangle"``, so the
+        rectangle is clipped to the stored domain.
+
+        Parameters
+        ----------
+        x_dist : float, optional
+            Width of the rectangle along x, in model length units. Default ``100``.
+        y_dist : float, optional
+            Height of the rectangle along y, in model length units. Default ``100``.
+        origin : tuple of float, optional
+            ``(x, y)`` of the rectangle's lower-left corner. Default ``(0, 0)``.
+        max_area : float
+            Maximum triangle area inside the region, in model length units
+            squared. Required.
+        label : str, optional
+            Region name; as in :meth:`add_region_polygon`. Default ``None``,
+            named ``"region_<i>"`` by :meth:`prepare`.
+        priority : int, optional
+            Overlap priority; as in :meth:`add_region_polygon`. Default ``0``.
+        point_hint : tuple of float, optional
+            ``(x, y)`` to try first as Triangle's region point; as in
+            :meth:`add_region_polygon`. Default ``None``.
+
+        Returns
+        -------
+        shapely.geometry.Polygon or shapely.geometry.MultiPolygon
+            The region geometry as recorded (the rectangle clipped to the domain).
+        """
         polygon = self._rectangle_polygon(x_dist=x_dist, y_dist=y_dist, origin=origin)
         return self.add_region_polygon(
             polygon,
@@ -730,7 +1046,37 @@ class TriangleGrid(Triangle):
         point_hint: tuple[float, float] | None = None,
         radians_step: float = 0.1,
     ):
-        """Add a circular refinement region."""
+        """Add a circular refinement region.
+
+        Calls :meth:`add_region_polygon` with source ``"circle"``, so the circle
+        is clipped to the stored domain.
+
+        Parameters
+        ----------
+        radius : float, optional
+            Circle radius, in model length units. Default ``100.0``.
+        center_coords : tuple of float, optional
+            ``(x, y)`` of the centre. Default ``(0, 0)``.
+        max_area : float
+            Maximum triangle area inside the region, in model length units
+            squared. Required.
+        label : str, optional
+            Region name; as in :meth:`add_region_polygon`. Default ``None``,
+            named ``"region_<i>"`` by :meth:`prepare`.
+        priority : int, optional
+            Overlap priority; as in :meth:`add_region_polygon`. Default ``0``.
+        point_hint : tuple of float, optional
+            ``(x, y)`` to try first as Triangle's region point; as in
+            :meth:`add_region_polygon`. Default ``None``.
+        radians_step : float, optional
+            Angle, in radians, between successive vertices of the circle
+            polygon (a vertex at every multiple below ``2 * pi``). Default ``0.1``.
+
+        Returns
+        -------
+        shapely.geometry.Polygon or shapely.geometry.MultiPolygon
+            The region geometry as recorded (the circle clipped to the domain).
+        """
         polygon = self._circle_polygon(radius=radius, center_coords=center_coords, radians_step=radians_step)
         return self.add_region_polygon(
             polygon,
@@ -754,7 +1100,55 @@ class TriangleGrid(Triangle):
         simplify_tolerance=None,
         densify_dist: int | None = None,
     ):
-        """Load one or more refinement regions from GIS data."""
+        """Load one or more refinement regions from GIS data.
+
+        The features are unioned, clipped to the stored domain, buffered,
+        simplified and densified (as in :meth:`add_region_polygon`), and
+        recorded with source ``"file"``.
+
+        Parameters
+        ----------
+        shp_gpkg : pathlib.Path
+            A ``.shp`` or ``.gpkg`` file (a GeoPackage's first layer) whose
+            features are unioned. Any other input :meth:`add_region_polygon`
+            takes works too (a GeoDataFrame, a shapely geometry, ...); a ``str``
+            path and a list of paths do not.
+        max_area : float
+            Maximum triangle area inside the region(s), in model length units
+            squared. Required.
+        label : str, optional
+            Region name; as in :meth:`add_region_polygon`. With ``explode=True``
+            each part is named ``"<label>_<i>"``. Default ``None``, named
+            ``"region_<i>"`` by :meth:`prepare`.
+        priority : int, optional
+            Overlap priority; as in :meth:`add_region_polygon`. Default ``0``.
+        point_hint : tuple of float, optional
+            ``(x, y)`` to try first as Triangle's region point; as in
+            :meth:`add_region_polygon`. With ``explode=True`` every part is given
+            the same hint. Default ``None``.
+        explode : bool, optional
+            ``True`` records each polygon part as its own region. Default
+            ``False`` records the whole geometry as one region, which
+            :meth:`prepare` still splits into one Triangle region per part.
+        buffer : float, optional
+            Distance to buffer by after clipping; negative shrinks. Default ``0``.
+        simplify_tolerance : float, optional
+            ``shapely`` simplification tolerance, topology preserved. Default
+            ``None``, no simplification.
+        densify_dist : float, optional
+            Resample each exterior to points this far apart; corners between the
+            samples and holes are lost. Default ``None``, no resampling.
+
+        Returns
+        -------
+        shapely.geometry.Polygon or shapely.geometry.MultiPolygon
+            The region geometry after preprocessing.
+
+        Raises
+        ------
+        ValueError
+            If no polygonal area remains after clipping and preprocessing.
+        """
         geometry = self._polygonize_geometry(
             shp_gpkg,
             domain=self.domain_geometry,
@@ -799,7 +1193,60 @@ class TriangleGrid(Triangle):
         densify_dist: int | None = None,
         negative_buffer_after_clipping: float | int = 0,
     ):
-        """Add refinement around a linear feature by buffering it into polygons."""
+        """Add refinement around a linear feature by buffering it into polygons.
+
+        The line is buffered by ``buffer``, then handed to
+        :meth:`add_region_polygon` with source ``"line"``: clipped to the stored
+        domain, buffered again by ``negative_buffer_after_clipping``, simplified
+        and densified. Source ``"line"`` is what :meth:`build_mesh` protects and
+        :meth:`clean_geometry` resamples by default.
+
+        Parameters
+        ----------
+        line : shapely geometry, pathlib.Path, GeoDataFrame or GeoSeries
+            The feature: a ``LineString``/``MultiLineString`` (any shapely
+            geometry is buffered as it is), a ``Path`` to a ``.shp``/``.gpkg``
+            whose features are unioned, or a GeoDataFrame/GeoSeries, unioned. A
+            bare sequence of ``(x, y)`` pairs is read as a POLYGON ring, not a
+            line, so the buffer surrounds the filled shape -- pass
+            ``shapely.LineString(coords)`` instead. Not a ``str`` path.
+        buffer : float, optional
+            Half-width of the refinement band around the line, in model length
+            units. Default ``10``.
+        max_area : float
+            Maximum triangle area inside the band, in model length units squared.
+            Required.
+        label : str, optional
+            Region name; as in :meth:`add_region_polygon`. Default ``None``,
+            named ``"region_<i>"`` by :meth:`prepare`.
+        priority : int, optional
+            Overlap priority; as in :meth:`add_region_polygon`. Default ``0``.
+        point_hint : tuple of float, optional
+            ``(x, y)`` to try first as Triangle's region point; as in
+            :meth:`add_region_polygon`. Default ``None``.
+        simplify_tolerance : float, optional
+            ``shapely`` simplification tolerance for the band's outline,
+            topology preserved, applied after clipping. Default ``10``; ``None``
+            or ``0`` skips it.
+        densify_dist : float, optional
+            Resample the band's exterior to points this far apart; corners
+            between the samples and holes are lost. Default ``None``, no
+            resampling.
+        negative_buffer_after_clipping : float, optional
+            A buffer of zero or less applied after the band is clipped to the
+            domain, pulling it back from the domain boundary. Default ``0``, none.
+
+        Returns
+        -------
+        shapely.geometry.Polygon or shapely.geometry.MultiPolygon
+            The band as recorded.
+
+        Raises
+        ------
+        ValueError
+            If ``negative_buffer_after_clipping`` is greater than zero, or if no
+            area remains after clipping and preprocessing.
+        """
         if negative_buffer_after_clipping > 0:
             raise ValueError("negative_buffer_after_clipping must be less than or equal to zero")
         line_geom = self._coerce_geometry(line)
@@ -826,7 +1273,43 @@ class TriangleGrid(Triangle):
         return_only: bool = False,
         radians_step: int = 0.1,
     ):
-        """Backward-compatible helper for adding a circular polygon feature."""
+        """Backward-compatible helper for adding a circular polygon feature.
+
+        Prefer :meth:`set_domain_circle` / :meth:`add_region_circle`. With no
+        domain set, the circle becomes the domain (no background ``max_area``).
+        Otherwise it goes through :meth:`add_polygon`, which records it as a
+        refinement region with ``max_area=1`` -- one square model length unit,
+        which can produce a very large mesh.
+
+        Parameters
+        ----------
+        radius : float, optional
+            Circle radius, in model length units. Default ``100.0``.
+        center_coords : tuple of float, optional
+            ``(x, y)`` of the centre. Default ``(0, 0)``.
+        polygon_to_add : sequence of (x, y), optional
+            Exterior ring of an extra polygon, added after the circle through
+            :meth:`add_polygon` -- so as a refinement region with ``max_area=1``.
+            Default ``None``, none.
+        point_to_add : tuple of float, optional
+            ``(x, y)`` of a raw Triangle region point, added through
+            :meth:`add_region` with ``point_region_size_max`` as its area.
+            Default ``None``, none.
+        point_region_size_max : float, optional
+            Maximum triangle area for the ``point_to_add`` region, in model
+            length units squared. Ignored without ``point_to_add``. Default ``1``.
+        return_only : bool, optional
+            ``True`` returns the circle polygon without adding anything, and
+            ignores ``polygon_to_add``/``point_to_add``. Default ``False``.
+        radians_step : float, optional
+            Angle, in radians, between successive vertices of the circle
+            polygon. Default ``0.1``.
+
+        Returns
+        -------
+        shapely.geometry.Polygon
+            The circle polygon, unclipped.
+        """
         circle_poly = self._circle_polygon(
             radius=radius,
             center_coords=center_coords,
@@ -855,7 +1338,34 @@ class TriangleGrid(Triangle):
         return_only=False,
         max_area=None,
     ):
-        """Backward-compatible helper for adding a rectangular polygon feature."""
+        """Backward-compatible helper for adding a rectangular polygon feature.
+
+        Prefer :meth:`set_domain_rectangle` / :meth:`add_region_rectangle`. With
+        no domain set, the rectangle becomes the domain; otherwise it is recorded
+        as a refinement region with source ``"rectangle"``.
+
+        Parameters
+        ----------
+        x_dist : float, optional
+            Width of the rectangle along x, in model length units. Default ``100``.
+        y_dist : float, optional
+            Height of the rectangle along y, in model length units. Default ``100``.
+        origin : tuple of float, optional
+            ``(x, y)`` of the rectangle's lower-left corner. Default ``(0, 0)``.
+        return_only : bool, optional
+            ``True`` returns the rectangle without adding anything. Default
+            ``False``.
+        max_area : float, optional
+            As the domain, its background maximum triangle area (``None``: no
+            background region, see :meth:`set_domain_polygon`). As a region, its
+            maximum triangle area, with ``None`` meaning ``1`` square model
+            length unit. Default ``None``.
+
+        Returns
+        -------
+        shapely.geometry.Polygon
+            The rectangle, unclipped.
+        """
         polygon = self._rectangle_polygon(x_dist=x_dist, y_dist=y_dist, origin=origin)
         if return_only:
             return polygon
@@ -868,12 +1378,44 @@ class TriangleGrid(Triangle):
         return polygon
 
     def add_region(self, point, attribute=0, maximum_area=None):
-        """Add a raw Triangle region point and optional area constraint."""
+        """Add a raw Triangle region point and optional area constraint.
+
+        Unlike :meth:`add_region_polygon`, this adds no boundary segments and
+        takes no part in :meth:`prepare`'s overlap resolution: the point is
+        passed to Triangle as it is, after the prepared regions, and Triangle
+        applies it to whichever segment-bounded area contains it.
+
+        Parameters
+        ----------
+        point : tuple of float or shapely.geometry.Point
+            ``(x, y)`` of the region point (anything FloPy's ``GeoSpatialUtil``
+            reads as a point).
+        attribute : int or float, optional
+            Regional attribute Triangle assigns to the triangles of that area.
+            Default ``0``.
+        maximum_area : float, optional
+            Maximum triangle area for that area, in model length units squared.
+            Default ``None``, no area constraint from this point.
+        """
         point = GeoSpatialUtil(point, shapetype="point").points
         self._manual_regions.append([point, attribute, maximum_area])
 
     def add_regions(self, points, attributes=None, maximum_areas=None):
-        """Add multiple raw Triangle region points in one call."""
+        """Add multiple raw Triangle region points in one call.
+
+        Each point is recorded as :meth:`add_region` records one. The three
+        sequences are paired by position and stop at the shortest.
+
+        Parameters
+        ----------
+        points : sequence of tuple of float or shapely.geometry.Point
+            ``(x, y)`` of each region point.
+        attributes : sequence of int or float, optional
+            Regional attribute per point. Default ``None``, ``0`` for every point.
+        maximum_areas : sequence of float or None, optional
+            Maximum triangle area per point, in model length units squared.
+            Default ``None``, no area constraint for any point.
+        """
         if attributes is None:
             attributes = [0 for _ in points]
         if maximum_areas is None:
@@ -892,7 +1434,38 @@ class TriangleGrid(Triangle):
         *args,
         **kwargs,
     ):
-        """Legacy helper that adds one or more polygon regions from GIS data."""
+        """Legacy helper that adds one or more polygon regions from GIS data.
+
+        Prefer :meth:`add_region_file`, which this calls once per file.
+
+        Parameters
+        ----------
+        shp_gpkg : pathlib.Path or list of pathlib.Path
+            One ``.shp``/``.gpkg`` file, or a list of them, each becoming its
+            own region (see :meth:`add_region_file`). Not a ``str``.
+        points : tuple of float or list of tuple of float, optional
+            Region-point hints: one ``(x, y)`` for a single file, or one per file
+            for a list. Used only when ``use_representative_point=False``.
+            Default ``None``.
+        use_representative_point : bool, optional
+            ``True`` ignores ``points`` and lets the region point be chosen
+            automatically; ``False`` passes ``points`` as ``point_hint``.
+            Default ``True``.
+        maximum_areas : float or list of float, optional
+            Maximum triangle area, in model length units squared: one value for
+            every file, or a list with one per file. Effectively required: the
+            default ``None`` records regions with no area, which
+            :meth:`prepare` refuses with ``ValueError``.
+        *args
+            Forwarded positionally to :meth:`add_region_file` after the path.
+            That method takes no further positional arguments, so any value here
+            raises ``TypeError``.
+        **kwargs
+            Forwarded to :meth:`add_region_file` for every file: ``label``,
+            ``priority``, ``explode``, ``buffer``, ``simplify_tolerance``,
+            ``densify_dist``. ``max_area`` and ``point_hint`` are set from
+            ``maximum_areas``/``points`` and raise ``TypeError`` if given here.
+        """
         if isinstance(shp_gpkg, list):
             for idx, path in enumerate(shp_gpkg):
                 area = maximum_areas[idx] if isinstance(maximum_areas, list) else maximum_areas
@@ -928,6 +1501,48 @@ class TriangleGrid(Triangle):
 
         If no domain exists yet, the polygon becomes the domain. Otherwise it
         is added as a refinement region.
+
+        Prefer :meth:`set_domain_polygon` / :meth:`add_region_polygon`, which
+        this calls.
+
+        Parameters
+        ----------
+        polygon : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence
+            The geometry, in any form :meth:`set_domain_polygon` takes.
+        domain : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence, optional
+            Geometry to clip the region to. Giving it always adds a refinement
+            region, even when no domain is set (this does not set one). Default
+            ``None``: the polygon becomes the domain if none is set, otherwise a
+            region clipped to the stored domain.
+        buffer : float, optional
+            Distance to buffer the geometry by (after clipping, for a region);
+            negative shrinks. Default ``0``.
+        simplify_tolerance : float, optional
+            ``shapely`` simplification tolerance, topology preserved. Default
+            ``None``, no simplification.
+        ignore_holes : bool, optional
+            Ignored; kept for backward compatibility. Holes in a domain polygon
+            are always meshed as holes, and a region's holes are kept as
+            segments. Default ``True``.
+        max_area : float, optional
+            As the domain, its background maximum triangle area (``None``: no
+            background region, see :meth:`set_domain_polygon`). As a region, its
+            maximum triangle area, with ``None`` meaning ``1`` square model
+            length unit. Default ``None``.
+        densify_dist : float, optional
+            Resample each exterior to points this far apart; corners between the
+            samples and holes are lost. Default ``None``, no resampling.
+
+        Returns
+        -------
+        shapely.geometry.Polygon or shapely.geometry.MultiPolygon
+            The stored domain, or the region geometry as recorded (source
+            ``"polygon"``).
+
+        Raises
+        ------
+        ValueError
+            As :meth:`set_domain_polygon` or :meth:`add_region_polygon`.
         """
         del ignore_holes
         if self.domain_spec is None and domain is None:
@@ -953,7 +1568,25 @@ class TriangleGrid(Triangle):
         )
 
     def add_points(self, points: shp.MultiPoint):
-        """Add fixed point constraints to the Triangle node list."""
+        """Add fixed point constraints to the Triangle node list.
+
+        Each point becomes a mesh vertex, and so the seed of a Voronoi cell.
+        Calls accumulate. At :meth:`prepare`, points that repeat one another or a
+        domain/region vertex (compared at 8 decimal places) are dropped.
+
+        Parameters
+        ----------
+        points : shapely.geometry.MultiPoint or sequence
+            The points: a ``MultiPoint``, or anything ``shapely.MultiPoint``
+            accepts -- a sequence of ``(x, y)`` pairs or of ``Point`` objects.
+
+        Raises
+        ------
+        TypeError
+            If ``points`` cannot be converted to a ``shapely.MultiPoint``
+            (shapely's own ``ValueError`` for malformed coordinates passes
+            through unchanged).
+        """
         if not isinstance(points, shp.MultiPoint):
             try:
                 points = shp.MultiPoint(points)
@@ -977,11 +1610,50 @@ class TriangleGrid(Triangle):
     ):
         """Clean stored domain and region geometry before meshing.
 
+        Rewrites :attr:`domain_spec` and every entry of :attr:`region_specs` in
+        place. Each geometry is repaired (``buffer(0)``), snapped, simplified,
+        stripped of small parts and, where selected, resampled, in that order.
+        Lengths are in model length units, areas in their square.
+
+        Parameters
+        ----------
+        snap_tolerance : float, optional
+            Distance within which each geometry's vertices and segments are
+            snapped to its own vertices (``shapely.snap`` of the geometry to
+            itself). Default ``0.0``; ``0`` or less disables snapping.
+        simplify_tolerance : float, optional
+            ``shapely`` simplification tolerance, topology preserved, for the
+            domain and every region. Default ``None``; ``None`` or ``0`` skips it.
+        min_feature_area : float, optional
+            Polygon parts smaller than this area are dropped from the domain and
+            from each region -- unless every part is smaller, in which case all
+            are kept. Default ``0.0`` (keep everything).
+        target_segment_length : float, optional
+            Spacing to resample boundaries to: the ring is rebuilt from points
+            this far apart along it, so vertices between them (corners included)
+            are not kept, and interior rings (holes) are dropped. Applies to the
+            domain only with ``resample_domain_boundary=True`` and to the regions
+            whose source is in ``resample_region_sources``. Default ``None``;
+            ``None`` or ``0`` disables resampling.
+        resample_domain_boundary : bool, optional
+            Resample the domain boundary too. Default ``False``. Resampling drops
+            the domain's holes.
+        resample_region_sources : tuple of str, optional
+            Region ``source`` tags (see :meth:`add_region_polygon`) whose
+            boundaries are resampled. Default ``("line",)``, the bands
+            :meth:`add_line_feature` adds.
+
         Returns
         -------
         dict
             Small report describing the cleanup settings plus the vertex and
             polygon counts before and after cleanup.
+
+        Raises
+        ------
+        ValueError
+            If no domain is set, a region has no ``max_area``, or cleanup removes
+            all polygonal area from a geometry.
         """
         self.validate_setup()
 
@@ -1058,7 +1730,43 @@ class TriangleGrid(Triangle):
         max_area: int = None,
         negative_buffer_after_clipping: float | int = 0,
     ):
-        """Legacy alias for :meth:`add_line_feature`."""
+        """Legacy alias for :meth:`add_line_feature`.
+
+        Parameters
+        ----------
+        line : shapely geometry, pathlib.Path, GeoDataFrame or GeoSeries
+            The linear feature; as in :meth:`add_line_feature` (a bare sequence
+            of ``(x, y)`` pairs is read as a polygon ring, not a line).
+        buffer : float, optional
+            Half-width of the refinement band around the line, in model length
+            units. Default ``10``.
+        simplify_tolerance : float, optional
+            ``shapely`` simplification tolerance for the band, topology
+            preserved. Default ``10``; ``None`` or ``0`` skips it.
+        densify_dist : float, optional
+            Resample the band's exterior to points this far apart; corners
+            between the samples and holes are lost. Default ``None``, no
+            resampling.
+        domain : shapely.geometry.Polygon or pathlib.Path, optional
+            Ignored; kept for backward compatibility. The band is clipped to the
+            stored domain when one is set. Default ``None``.
+        max_area : float, optional
+            Maximum triangle area inside the band, in model length units squared.
+            Default ``None``, which means ``1``.
+        negative_buffer_after_clipping : float, optional
+            A buffer of zero or less applied after clipping, pulling the band
+            back from the domain boundary. Default ``0``.
+
+        Returns
+        -------
+        shapely.geometry.Polygon or shapely.geometry.MultiPolygon
+            The band as recorded.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`add_line_feature`.
+        """
         del domain
         return self.add_line_feature(
             line,
@@ -1081,7 +1789,57 @@ class TriangleGrid(Triangle):
         method: str = 'power',
         exponent: int | float = 2,
     ):
-        """Generate outward polygons/point clouds with increasing spacing."""
+        """Generate outward polygons/point clouds with increasing spacing.
+
+        Ring ``i`` (of ``num_buffers``) is a polygon drawn through points spaced
+        ``spacing[i]`` apart along the outline of ``polygon`` buffered outward by
+        ``min_spacing + curve[i] * (buffer_dist - min_spacing)``, where
+        ``curve`` runs from 0 to 1 by ``method`` and ``spacing`` runs linearly
+        from ``min_spacing`` to ``max_spacing``. So the first ring sits
+        ``min_spacing`` out with the densest vertices and the last sits
+        ``buffer_dist`` out with the sparsest. Lengths are in model length units.
+
+        Parameters
+        ----------
+        polygon : shapely.geometry.Polygon or pathlib.Path
+            The core polygon, or a ``.shp``/``.gpkg`` whose features union to a
+            single ``Polygon``. Required despite the ``None`` default: anything
+            that is not a ``Polygon`` (a ``MultiPolygon`` included) fails an
+            ``assert``.
+        buffer_dist : float, optional
+            Outward distance of the outermost ring. Default ``1000``.
+        num_buffers : int, optional
+            Number of rings. Default ``5``.
+        min_area : float, optional
+            Used only when ``min_spacing`` is ``None``, which is then
+            ``sqrt(min_area)``. Default ``None``.
+        max_area : float, optional
+            Used only when ``max_spacing`` is ``None``, which is then
+            ``sqrt(max_area)``. Default ``None``.
+        min_spacing : float, optional
+            Vertex spacing along the innermost ring, and its outward offset.
+            Default ``200``.
+        max_spacing : float, optional
+            Vertex spacing along the outermost ring. Default ``1000``.
+        method : {'power', 'exponential'}, optional
+            Shape of ``curve``: ``"power"`` is ``t ** exponent``,
+            ``"exponential"`` is ``(exp(t) - 1) / (e - 1)``, ``t`` running
+            linearly from 0 to 1. Default ``"power"``.
+        exponent : float, optional
+            Exponent of the ``"power"`` curve; ignored by ``"exponential"``.
+            Default ``2``.
+
+        Returns
+        -------
+        list of shapely.geometry.Polygon
+            ``polygon`` itself followed by the ``num_buffers`` rings, innermost
+            first.
+
+        Raises
+        ------
+        ValueError
+            If ``method`` is neither ``"power"`` nor ``"exponential"``.
+        """
         if isinstance(polygon, Path):
             polygon = read_shp_gpkg(polygon).union_all()
         assert isinstance(polygon, shp.Polygon), 'provided argument cannot be converted to a polygon'
@@ -1116,7 +1874,32 @@ class TriangleGrid(Triangle):
         max_area: int | float = 100,
         **kwargs,
     ):
-        """Add several outward buffer zones with progressively lower priority."""
+        """Add several outward buffer zones with progressively lower priority.
+
+        Builds the polygons of :meth:`generate_dissipating_point_cloud` and adds
+        each through :meth:`add_region_polygon` with source
+        ``"dissipating_buffer"``: the core polygon at priority ``0`` and ring
+        ``i`` at priority ``-i``, so each ring claims only the band outside the
+        one before it. Every zone gets the SAME ``max_area``; the grading comes
+        from the rings' vertex spacing, which Triangle keeps as mesh vertices --
+        unless cleanup simplifies them away first: every :meth:`build_mesh`
+        preset but ``"baseline"`` simplifies at ``2.0``, which drops the evenly
+        spaced vertices along a ring's straight runs (measured, a ring around a
+        square went from 48 vertices to 11), so pass ``simplify_tolerance=None``
+        or ``cleanup=False`` to keep them.
+
+        Parameters
+        ----------
+        max_area : float, optional
+            Maximum triangle area for every zone, in model length units squared.
+            Default ``100``.
+        **kwargs
+            Forwarded to :meth:`generate_dissipating_point_cloud`: ``polygon``
+            (required), ``buffer_dist``, ``num_buffers``, ``min_area``,
+            ``min_spacing``, ``max_spacing``, ``method``, ``exponent``. Its own
+            ``max_area`` cannot be passed (the name is taken here), so
+            ``max_spacing=None`` raises ``TypeError``.
+        """
         polys = self.generate_dissipating_point_cloud(**kwargs)
         for i, geom in enumerate(polys):
             if i == 0:
@@ -1132,7 +1915,32 @@ class TriangleGrid(Triangle):
         min_area=50,
         max_area=5_000,
     ):
-        """Legacy helper that adds concentric buffered regions around polygons."""
+        """Legacy helper that adds concentric buffered regions around polygons.
+
+        Adds ``buff_num + 1`` regions through :meth:`add_region_polygon`, with
+        source ``"multiregion"``: the unioned polygons themselves at priority
+        ``0``, then copies buffered outward by ``buff_sep``, ``2 * buff_sep``,
+        ... at priorities ``-1``, ``-2``, ... Their maximum triangle areas run
+        linearly from ``min_area`` (innermost) to ``max_area`` (outermost). Each
+        is simplified at a tolerance of 10 and resampled every 50 model length
+        units (``densify_dist``, so holes are dropped), both fixed.
+
+        Parameters
+        ----------
+        shp_gpkg : pathlib.Path or list of pathlib.Path
+            ``.shp``/``.gpkg`` file(s) whose features are unioned into the core
+            geometry. Not a ``str``.
+        buff_num : int, optional
+            Number of buffered copies around the core. Default ``5``.
+        buff_sep : float, optional
+            Distance between successive buffers, in model length units. Default
+            ``200``.
+        min_area : float, optional
+            Maximum triangle area of the core region, in model length units
+            squared. Default ``50``.
+        max_area : float, optional
+            Maximum triangle area of the outermost buffer. Default ``5_000``.
+        """
         poly = read_shp_gpkg(shp_gpkg).union_all()
         pols = [poly] + [poly.buffer(buff_sep * mult) for mult in range(1, buff_num + 1)]
         buff_areas = np.linspace(min_area, max_area, buff_num + 1)
@@ -1442,11 +2250,62 @@ class TriangleGrid(Triangle):
             return VoronoiGridPlus(mesh)
 
     def build(self, verbose=False):
-        """Prepare Triangle inputs and run a single direct Triangle build."""
+        """Prepare Triangle inputs and run a single direct Triangle build.
+
+        Runs :meth:`prepare`, creates ``model_ws`` if needed, and calls FloPy's
+        ``Triangle.build``, which writes the Triangle input files there, runs the
+        executable and loads the mesh (``node``, ``ele``, ``ncpl``, ``verts``,
+        ...). No cleanup and no optimization: :meth:`build_mesh` is the
+        recommended workflow.
+
+        Parameters
+        ----------
+        verbose : bool, optional
+            Print the Triangle program's own output. Default ``False``.
+
+        Returns
+        -------
+        None
+            The mesh is stored on the instance.
+
+        Raises
+        ------
+        ValueError
+            If no domain is set, a region has no ``max_area``, or overlap
+            resolution leaves a region no area of its own (see :meth:`prepare`).
+        """
         return self._build_triangle_mesh(verbose=verbose)
 
     def quality_report(self, *, include_voronoi: bool = False):
-        """Return triangle quality metrics and optional Voronoi build checks."""
+        """Return triangle quality metrics and optional Voronoi build checks.
+
+        The mesh must already be built (:meth:`build` or :meth:`build_mesh`).
+        The report holds triangle counts, degeneracies (duplicate vertices,
+        zero-area, tiny and sliver triangles) and summary statistics of triangle
+        areas, edge lengths, angles, edge ratios and neighbour-area ratios, plus
+        ``cleanup_vertices_before``/``_after`` once :meth:`clean_geometry` has
+        run. It is also kept on the instance for later reads.
+
+        Parameters
+        ----------
+        include_voronoi : bool, optional
+            Also try to build the Voronoi grid from this mesh
+            (:class:`~myflopy.modflow.mf6.grid.voronoi.VoronoiGridPlus`) and add
+            ``voronoi_status`` (``"built"`` or ``"error"``, with
+            ``voronoi_error``), ``voronoi_cell_count``,
+            ``voronoi_invalid_cell_count`` (cells of area <= 0) and Voronoi
+            cell-area statistics. Default ``False``, triangle metrics only.
+
+        Returns
+        -------
+        dict
+            Metric name to value.
+
+        Raises
+        ------
+        ValueError
+            If the mesh has not been built.
+        """
         report = triangle_quality_report(
             self,
             include_voronoi=include_voronoi,
@@ -1563,6 +2422,54 @@ class TriangleGrid(Triangle):
         The optimizer keeps protected feature vertices fixed, rebuilds the mesh
         after each move, and rejects candidate meshes that would materially
         degrade quality or fail Voronoi conversion.
+
+        Builds the mesh first if it has not been built. Each round moves every
+        free vertex part of the way toward the centroid of its Voronoi cell and
+        re-runs Triangle with the free vertices as fixed input nodes. Every vertex
+        on an input segment is always fixed -- the domain boundary, its holes and
+        every refinement region's ring, the background ``max_area`` region's
+        included -- because FloPy gives each segment a nonzero boundary marker,
+        which Triangle passes on to the vertices along it. A move that would
+        leave the domain's largest part is not made. A rejected round restores
+        the last accepted mesh and ends the loop. Distances are in model length
+        units.
+
+        Parameters
+        ----------
+        iterations : int, optional
+            Maximum number of relax-and-rebuild rounds. The loop also stops early
+            when no vertex would move by at least ``min_move``, or when a round
+            is rejected. Default ``3``; ``0`` builds the Voronoi grid once and
+            moves nothing (status ``"not_attempted"``).
+        damping : float, optional
+            Fraction of the way from a vertex to its cell centroid that it moves
+            per round. Values outside ``[0, 1]`` are clipped when applied (the
+            report records the value passed). Default ``0.35``.
+        min_move : float, optional
+            A vertex whose proposed move is shorter than this stays put. Default
+            ``1e-3``.
+        protected_labels : list of str, optional
+            Labels of prepared regions (as :meth:`preview_regions` shows them,
+            ``"_<j>"`` suffixes included) to protect: every mesh vertex within
+            ``region_point_tolerance`` (or its automatic value) of such a region's
+            boundary is held fixed. The vertices ON every region's ring are fixed
+            whether or not it is protected (see above), so this adds only those
+            near a ring but not on it. A label matching no region protects
+            nothing, silently. Default ``None``, no region protected.
+        max_optimization_points : int, optional
+            Recorded in the returned report only; it does not limit the number of
+            relaxed points. Default ``0``.
+        verbose : bool, optional
+            Print progress for each round, and the Triangle program's output for
+            each rebuild. Default ``False``.
+
+        Returns
+        -------
+        dict
+            The optimization report: ``status`` (for example ``"applied"``,
+            ``"converged_no_move"``, ``"fallback_original_mesh"`` or
+            ``"not_attempted"``), ``iterations_run``, ``max_move``,
+            ``moved_vertex_count``, ``rejection_reasons`` and the settings used.
         """
         if not hasattr(self, "node") or not hasattr(self, "ele"):
             self._build_triangle_mesh(verbose=verbose)
@@ -1773,7 +2680,66 @@ class TriangleGrid(Triangle):
         max_optimization_points: int = 250,
         verbose: bool = False,
     ):
-        """Build the mesh and then run the experimental optimization pass."""
+        """Build the mesh and then run the experimental optimization pass.
+
+        Runs :meth:`clean_geometry` (when ``cleanup``), a fresh Triangle build,
+        :meth:`optimize_seeds`, and a final :meth:`quality_report`-style check
+        that includes the Voronoi build. :meth:`build_mesh` calls this with a
+        profile's settings; the defaults here differ from the profiles' (no
+        simplification, no resampling and ``damping=0.35`` here, against
+        ``simplify_tolerance=2.0``, ``target_segment_length=120.0`` and
+        ``damping=0.25`` in ``"balanced"``).
+
+        Parameters
+        ----------
+        cleanup : bool, optional
+            Run :meth:`clean_geometry` first. Default ``True``. ``False`` makes
+            the six cleanup parameters below inert.
+        snap_tolerance : float, optional
+            Cleanup snapping distance; see :meth:`clean_geometry`. Default
+            ``0.0``, no snapping.
+        simplify_tolerance : float, optional
+            Cleanup simplification tolerance; see :meth:`clean_geometry`.
+            Default ``None``, no simplification.
+        min_feature_area : float, optional
+            Cleanup: drop polygon parts smaller than this area; see
+            :meth:`clean_geometry`. Default ``0.0``.
+        target_segment_length : float, optional
+            Cleanup resampling spacing; see :meth:`clean_geometry`. Default
+            ``None``, no resampling.
+        resample_domain_boundary : bool, optional
+            Cleanup: resample the domain boundary too; see
+            :meth:`clean_geometry`. Default ``False``.
+        resample_region_sources : tuple of str, optional
+            Cleanup: region source tags to resample; see :meth:`clean_geometry`.
+            Default ``("line",)``.
+        optimization_iterations : int, optional
+            Maximum relaxation rounds; :meth:`optimize_seeds`' ``iterations``.
+            Default ``3``.
+        damping : float, optional
+            Fraction of the move toward each cell centroid per round; see
+            :meth:`optimize_seeds`. Default ``0.35``.
+        min_move : float, optional
+            Shortest vertex move made, in model length units; see
+            :meth:`optimize_seeds`. Default ``1e-3``.
+        protected_labels : list of str, optional
+            Prepared-region labels to protect during optimization; see
+            :meth:`optimize_seeds`. Default ``None``.
+        max_optimization_points : int, optional
+            Recorded in the optimization report only; it limits nothing (see
+            :meth:`optimize_seeds`). Default ``250``.
+        verbose : bool, optional
+            Print optimization progress and the Triangle program's output.
+            Default ``False``.
+
+        Returns
+        -------
+        dict
+            ``{"cleanup": ..., "optimization": ..., "quality": ...}``: the
+            :meth:`clean_geometry` report (the previous one, or ``None``, when
+            ``cleanup=False``), the :meth:`optimize_seeds` report and the
+            quality report with Voronoi checks.
+        """
         if cleanup:
             self.clean_geometry(
                 snap_tolerance=snap_tolerance,
@@ -1814,15 +2780,50 @@ class TriangleGrid(Triangle):
     ):
         """Run the recommended high-level mesh workflow.
 
+        Three modes, picked from the profile and ``optimize`` and returned as
+        ``"mode"``: ``"optimized"`` (:meth:`build_optimized`, which cleans first
+        when ``cleanup``), ``"cleanup_only"`` (:meth:`clean_geometry`, then one
+        Triangle build) and ``"baseline"`` (no cleanup: :meth:`prepare`, then one
+        Triangle build). Every mode ends with a quality report that includes the
+        Voronoi build.
+
         Parameters
         ----------
-        profile
+        profile : str or MeshBuildProfile, optional
             Either a preset profile name or a :class:`MeshBuildProfile`
-            instance.
-        protected_labels, protect_sources
-            Labels or source tags that should remain fixed during optimization.
-        verbose
-            When ``True``, print progress updates during cleanup and smoothing.
+            instance. A name goes through :meth:`MeshBuildProfile.from_name`,
+            which raises ``ValueError`` for an unknown one. Default
+            ``"balanced"``.
+        optimize : bool, optional
+            ``True`` always runs the optimization pass (with ``0`` iterations it
+            only reports ``"not_attempted"``); ``False`` never does. Default
+            ``None`` optimizes when the profile's (or the override's)
+            ``optimization_iterations`` is above zero -- so not for ``"clean"``
+            or ``"baseline"``.
+        protected_labels : list of str, optional
+            Prepared-region labels (see :meth:`preview_regions`) to protect
+            during optimization, added to those ``protect_sources`` selects; see
+            :meth:`optimize_seeds` for what protection fixes. Without
+            optimization they are only echoed in the report. Default ``None``.
+        protect_sources : tuple of str, optional
+            Region ``source`` tags (see :meth:`add_region_polygon`) whose
+            regions are protected during optimization, as ``protected_labels``.
+            Default ``("line",)``, the bands :meth:`add_line_feature` adds.
+            ``None`` protects none. Ignored without optimization.
+        verbose : bool, optional
+            When ``True``, print the Triangle program's output for each build
+            and progress for each optimization round. Default ``False``.
+        **overrides
+            Replace individual settings of the profile for this call:
+            ``cleanup``, ``optimization_iterations``, the cleanup fields
+            (``snap_tolerance``, ``simplify_tolerance``, ``min_feature_area``,
+            ``target_segment_length``, ``resample_domain_boundary``,
+            ``resample_region_sources``), ``damping``, ``min_move``, and
+            :meth:`build_optimized`'s ``max_optimization_points``. In the
+            optimized mode they are forwarded to :meth:`build_optimized`, which
+            raises ``TypeError`` on any other name. Without optimization only the
+            cleanup fields and ``cleanup`` act, and every other name -- a typo
+            included -- is ignored without a warning.
 
         Returns
         -------

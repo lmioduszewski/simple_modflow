@@ -155,7 +155,27 @@ def build_edge_drain_stress_period_data(
     config: SimpleModelConfig,
     bottom: list | list[list],
 ) -> list[list]:
-    """Build edge-drain stress-period rows from a :class:`SimpleModelConfig`."""
+    """Build edge-drain stress-period rows from a :class:`SimpleModelConfig`.
+
+    One row per boundary cell per layer, ``[cellid, elevation, conductance]``:
+    the cellid is ``(layer, cell)`` on DISV and the bare cell on DISU, and the
+    elevation is that cell's bottom plus ``config.drain_bottom_addition``.
+
+    Parameters
+    ----------
+    config : SimpleModelConfig
+        Supplies ``boundary_cells`` (default the grid's perimeter),
+        ``boundary_conductance``, ``drain_bottom_addition``, ``nlay`` and
+        ``grid_type``. ``boundary_mode`` is not read.
+    bottom : list
+        Resolved bottom elevations: for DISV a list of ``nlay`` per-cell lists,
+        for DISU one per-cell list (the form :func:`simple_model_spec` resolves).
+
+    Returns
+    -------
+    list of list
+        The rows, one period's worth, layer by layer.
+    """
 
     boundary_cells = _resolve_boundary_cells(config)
     layer_offsets = _coerce_layer_offsets(config.drain_bottom_addition, config.nlay)
@@ -181,7 +201,25 @@ def build_constant_head_stress_period_data(
     config: SimpleModelConfig,
     top: list[float],
 ) -> dict[int, list[list]]:
-    """Build constant-head stress-period data from a :class:`SimpleModelConfig`."""
+    """Build constant-head stress-period data from a :class:`SimpleModelConfig`.
+
+    Parameters
+    ----------
+    config : SimpleModelConfig
+        Supplies ``boundary_cells`` (default the grid's perimeter),
+        ``boundary_head``, ``nlay``, ``nper`` and ``grid_type``.
+        ``boundary_mode`` is not read.
+    top : list of float
+        Resolved model top, one value per cell of a layer; it is the head used
+        when ``config.boundary_head`` is None.
+
+    Returns
+    -------
+    dict of {int: list of list}
+        ``{period: [[cellid, head], ...]}`` for every zero-based period, one row
+        per boundary cell per layer; the cellid is ``(layer, cell)`` on DISV and
+        the bare cell on DISU.
+    """
 
     boundary_cells = _resolve_boundary_cells(config)
     stress_period_data: dict[int, list[list]] = {}
@@ -218,14 +256,139 @@ class SimpleModelConfig:
     flow model in one flat dataclass: the Voronoi grid (``vor``), discretization
     (``nlay``/``grid_type``/``top``/``bottom``/``idomain``), time stepping
     (``nper``/``per_len``/``num_steps``/...), aquifer properties (``k``/``k33_vert``/
-    storage), initial heads, and an optional perimeter boundary (CHD/GHB/DRN via
+    storage), initial heads, and an optional perimeter boundary (CHD or DRN via
     ``boundary_mode``/``boundary_cells``/...). Most fields have sensible defaults,
     so a minimal config is just a grid plus a name. This is a convenience
     front-end; for full multi-package or multi-physics models use the
     package-first API (``mf.gwf(...)`` with explicit package specs).
 
-    The notable fields are grouped above; see :func:`simple_model_spec` for how
-    they are translated into a :class:`~myflopy.specs.SimulationSpec`.
+    The model's length unit is always feet (``length_units="FEET"`` on the
+    discretization) and its time unit is ``time_units``. Every cell is
+    convertible (NPF ``icelltype=1``, STO ``iconvert=1``). See
+    :func:`simple_model_spec` for how the fields become a
+    :class:`~myflopy.specs.SimulationSpec`.
+
+    ``top``, ``bottom``, ``boundary_conductance``, ``boundary_head`` and
+    ``drain_bottom_addition`` must be a scalar or a Python ``list`` / ``tuple``:
+    there a NumPy array is not recognised as a sequence, so it is copied whole
+    into every cell (measured: an ``ndarray`` ``top`` fails inside FloPy's DISV,
+    and an ``ndarray`` ``bottom`` raises ``ValueError``). Call ``.tolist()``
+    first. The fields passed to FloPy unchanged (``k``, ``k33_vert``,
+    ``initial_heads``, ``idomain``, ``specific_storage``, ``specific_yield``)
+    take an array as it is (measured for ``k`` and ``initial_heads``).
+
+    Parameters
+    ----------
+    vor : VoronoiGridPlus
+        The grid. Supplies the cells and vertices, the perimeter cells
+        (``get_grid_edge()``) and, when ``top``/``bottom`` are omitted, the
+        surfaces in ``vor.gdf_topbtm``; for ``grid_type="disu"`` also the
+        connection arrays (``iac``, ``ja``, ``cl12``, ``hwva``, cell areas).
+    name : str, optional
+        Simulation and model name, and the stem of every file written
+        (``<name>.disv``, ``<name>.hds``, ...). At most 16 characters, MODFLOW
+        6's limit; longer raises ``ValueError``. Default ``"simplemodel"``.
+    nper : int, optional
+        Number of stress periods, at least 1 (``ValueError`` otherwise).
+        Default 1.
+    nlay : int, optional
+        Number of layers, at least 1; must be 1 for ``grid_type="disu"``
+        (``ValueError`` otherwise). Default 1.
+    grid_type : str, optional
+        ``"disv"`` (default) or ``"disu"``, case-insensitive (stored lower-case).
+        Anything else raises ``ValueError``.
+    top : float, list or tuple, optional
+        Model top elevation in feet: one value for every cell, or a list/tuple
+        of ``ncpl`` values (another length raises ``ValueError``). Default None:
+        the first surface column of ``vor.gdf_topbtm``; ``ValueError`` if the
+        grid has none.
+    bottom : float, list or tuple, optional
+        Layer bottom elevations in feet. For DISV, a list/tuple of ``nlay``
+        entries, top layer first, each a scalar or a list/tuple of ``ncpl``
+        values (a bare scalar raises ``ValueError``). For DISU, a scalar or a
+        list/tuple of ``ncpl`` values. Default None: the ``nlay`` surface
+        columns after the top in ``vor.gdf_topbtm``; ``ValueError`` if it has
+        fewer than ``nlay + 1``.
+    idomain : array_like, optional
+        Passed to the discretization's ``idomain`` and kept as the model
+        context's ``domain``. Default None: for DISV none is written (MF6 then
+        treats every cell as active); for DISU a list of ``ncpl`` ones.
+    initial_heads : float or array_like, optional
+        Starting heads, passed to IC ``strt`` unchanged. Default None: each
+        cell's bottom plus ``initial_sat_thickness``, listed layer by layer.
+    initial_sat_thickness : float, optional
+        Feet of saturation above each cell bottom for the default starting
+        heads; ignored when ``initial_heads`` is given. Default 1.0.
+    per_len : float, optional
+        Length of EVERY stress period, in ``time_units``. Default 30.
+    num_steps : int, optional
+        Time steps in every stress period. Default 1.
+    multiplier : float, optional
+        Time-step multiplier (TDIS ``tsmult``) in every stress period.
+        Default 1.0.
+    time_units : str, optional
+        TDIS ``time_units`` (``"DAYS"``, ``"SECONDS"``, ...). Default ``"DAYS"``.
+    k : float or array_like, optional
+        Horizontal hydraulic conductivity in feet per ``time_units``, passed to
+        NPF ``k`` unchanged. Default 100.
+    k33_vert : float or array_like, optional
+        Vertical hydraulic conductivity, passed to NPF ``k33`` unchanged.
+        Default None: not written, so MODFLOW 6 sets it equal to ``k``.
+    perched : bool, optional
+        NPF ``PERCHED`` option. Default False.
+    save_specific_discharge : bool, optional
+        NPF ``SAVE_SPECIFIC_DISCHARGE`` option. Default True. (``SAVE_FLOWS`` and
+        ``SAVE_SATURATION`` are always on.)
+    specific_storage : float or array_like, optional
+        STO ``ss``, per foot. Default 0.0001.
+    specific_yield : float or array_like, optional
+        STO ``sy``, dimensionless. Default 0.2.
+    sto_steady : dict of {int: bool}, optional
+        STO ``steady_state``, keyed by zero-based stress period. Default None --
+        and also an EMPTY dict -- gives ``{0: True}``.
+    sto_transient : dict of {int: bool}, optional
+        STO ``transient``, keyed by zero-based stress period. Default None:
+        every period after the first (``{}`` for a single period). Filled
+        independently of ``sto_steady``.
+    boundary_mode : str, optional
+        Perimeter boundary package: ``"drain"`` (DRN) or ``"chd"`` (CHD), placed
+        on ``boundary_cells`` in every layer. Default None: none. The match is
+        exact and unchecked -- ``"ghb"``, ``"drn"`` or ``"CHD"`` build NO
+        boundary package and raise nothing (measured).
+    boundary_cells : list of int, optional
+        Zero-based cell indices within a layer for the boundary. Default None:
+        the grid's perimeter cells, ``vor.get_grid_edge()``.
+    boundary_conductance : float, list or tuple, optional
+        DRN conductance (square feet per ``time_units``): one value, or one per
+        boundary cell, the same in every layer. Used only when
+        ``boundary_mode="drain"``. Default 1000.
+    boundary_head : float, list or tuple, optional
+        CHD head in feet, used only when ``boundary_mode="chd"``, and applied in
+        every stress period. A list/tuple of exactly ``nlay`` entries is read
+        per layer (each a scalar or one head per boundary cell); anything else
+        is one value, or one head per boundary cell, for every layer. Default
+        None: each boundary cell's model top.
+    drain_bottom_addition : float, list or tuple, optional
+        DRN elevation above each boundary cell's bottom, in feet: one value, or
+        one per layer (``nlay`` entries). Used only when
+        ``boundary_mode="drain"``. The drain records are given for period 0
+        only, so MF6 repeats them in later periods. Default 0.1.
+    rch_dict : dict, optional
+        RCH ``stress_period_data`` (``{period: [(cellid, rate), ...]}``, rate in
+        feet per ``time_units``), passed unchanged with ``maxbound`` set to the
+        cell count of one layer. Default None: no RCH package.
+    newton : bool, optional
+        True writes the model's ``NEWTON UNDER_RELAXATION`` option; False writes
+        no Newton option. Default True.
+    complexity : str, optional
+        IMS ``complexity`` (``"SIMPLE"``, ``"MODERATE"`` or ``"COMPLEX"``), passed
+        to :func:`~myflopy.builders.build_ims`. Default ``"MODERATE"``.
+    output_save_record : tuple, optional
+        OC ``saverecord`` (heads go to ``<name>.hds``, budgets to
+        ``<name>.cbc``). Default ``(("HEAD", "LAST"), ("BUDGET", "LAST"))``.
+    output_print_record : tuple, optional
+        OC ``printrecord``. Default None: the OC file carries no ``PRINT``
+        records.
     """
     vor: Vor
     name: str = "simplemodel"
@@ -456,13 +619,24 @@ def simple_model_spec(config: SimpleModelConfig) -> SimulationSpec:
 
     Parameters
     ----------
-    config
-        The compact model description.
+    config : SimpleModelConfig
+        The compact model description. Its grid is attached as the model
+        context's ``grid``, the resolved top and bottoms as its ``surfaces``,
+        and ``idomain`` as its ``domain``. Nothing is written or run here.
 
     Returns
     -------
     SimulationSpec
-        A composable, runnable simulation spec for the configured model.
+        A composable, runnable simulation spec named ``config.name``: TDIS and
+        IMS plus one GWF model with DISV (or DISU), IC, NPF, STO and OC, then
+        DRN or CHD when ``boundary_mode`` asks for one and RCH when
+        ``rch_dict`` is given.
+
+    Raises
+    ------
+    ValueError
+        ``top`` or ``bottom`` is omitted and ``vor.gdf_topbtm`` cannot supply
+        it, or a per-cell or per-layer list has the wrong length.
     """
 
     top, bottom = _resolve_top_and_bottom(config)

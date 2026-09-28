@@ -33,13 +33,28 @@ class DataSourceSpec:
 
     Parameters
     ----------
-    path
-        Filesystem path to the source file. Stored as a :class:`~pathlib.Path`.
-    external
-        ``True`` marks the file as living outside the project tree (it is
-        referenced in place rather than copied into the run workspace).
-    metadata
-        Arbitrary JSON-serializable annotations carried alongside the reference.
+    path : pathlib.Path or str
+        Filesystem path to the source file. Coerced to a :class:`~pathlib.Path`
+        and written with forward slashes by ``to_dict``. A RELATIVE path is
+        anchored to the project root by the code that reads it -- grid resolution
+        (:meth:`~myflopy.specs.GridSpec.resolve`) and, for a lazy package's recipe
+        in ``PackageSpec.inputs``, ``ModelSpec.build`` -- unless ``external`` is
+        set. An absolute path is used as it is.
+    external : bool, default False
+        ``True`` means "never anchor": a relative ``path`` is not joined to the
+        project root (so it resolves against the current working directory),
+        and grid resolution skips its existence check for this source.
+        ``project.save(bundle_sources=True)`` still copies the file into the
+        project and clears the flag, because once the copy is inside the project
+        the path is anchored like any other. Written by ``to_dict`` only when
+        ``True``.
+    metadata : dict, optional
+        Free-form JSON-serializable annotations carried with the reference, and
+        written by ``to_dict`` only when non-empty. Grid resolution reads two
+        kinds of key from it: ``metadata["crs"]`` as a last-resort CRS for a file
+        that declares none, and, for a :class:`TableSource`,
+        ``metadata["x_field"]``/``metadata["y_field"]`` naming the coordinate
+        columns. Anything else is carried, not read.
 
     See Also
     --------
@@ -84,7 +99,29 @@ class DataSourceSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DataSourceSpec:
-        """Rebuild a source spec, dispatching on its ``kind`` tag to the right subclass."""
+        """Rebuild a source spec, dispatching on its ``kind`` tag to the right subclass.
+
+        Parameters
+        ----------
+        data : dict
+            A payload as ``to_dict`` writes it. Its ``"kind"`` value picks the
+            class to rebuild -- ``data``'s kind, not the class this is called on, so
+            ``TableSource.from_dict`` of a ``"ShapeSource"`` payload returns a
+            :class:`ShapeSource` -- and may name any registered source, a
+            :class:`LiteralSource` included. The rest of the keys are that class's
+            fields; ``"path"`` is required by every file-backed kind (``KeyError``
+            without it), and keys a class does not read are ignored.
+
+        Returns
+        -------
+        DataSourceSpec or LiteralSource
+            A new instance of the class the ``kind`` tag names.
+
+        Raises
+        ------
+        ValueError
+            ``data["kind"]`` is missing or names no registered source class.
+        """
 
         kind = str(data.get("kind"))
         try:
@@ -106,19 +143,33 @@ class DataSourceSpec:
 
 @dataclass(frozen=True, slots=True)
 class TableSource(DataSourceSpec):
-    """Reference to a tabular file (CSV/Excel/Parquet) that supplies package records.
+    """Reference to a tabular file, as a serializable recipe entry.
 
-    Use this for stress-period data, well lists, observation tables, and similar
-    row-oriented inputs. ``table`` names the sheet/table within a multi-table
-    workbook (an Excel sheet name, for example) and may be omitted for a single
-    flat file such as a CSV.
+    Meant for row-oriented inputs -- stress-period data, well lists, observation
+    tables. **What reads one today is grid resolution only**: a ``TableSource``
+    passed as a :meth:`~myflopy.specs.GridSpec.voronoi` source is read with
+    :func:`pandas.read_csv` (so it must be a CSV there, whatever the suffix),
+    taking geometry from a WKT ``geometry`` column or from x/y columns.
+    Placed in ``PackageSpec.inputs`` it reaches the package builder unresolved --
+    no myflopy builder reads one.
 
     Parameters
     ----------
-    path
-        Path to the ``.csv`` / ``.xlsx`` / ``.parquet`` file.
-    table
-        Optional sheet or table name inside a multi-table workbook.
+    path : pathlib.Path or str
+        The table file. Coerced to a :class:`~pathlib.Path` and anchored like any
+        :class:`DataSourceSpec` path.
+    external : bool, default False
+        As :class:`DataSourceSpec`: ``True`` leaves a relative path unanchored.
+    metadata : dict, optional
+        As :class:`DataSourceSpec`. For grid resolution of a table with no
+        ``geometry`` column, ``metadata["x_field"]``/``metadata["y_field"]`` name
+        the coordinate columns (default ``"x"``/``"y"``; either missing from the
+        table raises ``ValueError``). With or without that column,
+        ``metadata["crs"]`` is the CRS the rows are taken to be in.
+    table : str, optional
+        A sheet or table name inside a multi-table workbook. Recorded and
+        serialized only: no reader consults it today (grid resolution reads the
+        whole file with ``pandas.read_csv``).
 
     Examples
     --------
@@ -167,18 +218,18 @@ class ShapeSource(DataSourceSpec):
     path : Path or str
         Path to the ``.shp`` / ``.geojson`` file. Relative paths are anchored at
         resolve time to the caller's ``project_root`` unless ``external`` is set.
-    crs : str or int, optional
-        A CRS to **assume when the file declares none** -- a fallback, not an
-        override, and not a reprojection target. A file carrying its own CRS
-        keeps it and this is ignored; grid sources are reprojected to the CRS on
-        the :class:`~myflopy.specs.GridSpec`. Either spelling works:
-        ``"EPSG:2927"`` or ``2927``.
     external : bool, default False
         ``True`` marks the file as outside the project tree: referenced in
         place, and its relative path is not anchored to ``project_root``.
     metadata : dict, optional
         Free-form JSON-serializable annotations. ``metadata["crs"]`` doubles as
         a last-resort CRS fallback.
+    crs : str or int, optional
+        A CRS to **assume when the file declares none** -- a fallback, not an
+        override, and not a reprojection target. A file carrying its own CRS
+        keeps it and this is ignored; grid sources are reprojected to the CRS on
+        the :class:`~myflopy.specs.GridSpec`. Either spelling works:
+        ``"EPSG:2927"`` or ``2927``.
 
     Examples
     --------
@@ -246,6 +297,13 @@ class GeoPackageSourceSpec(DataSourceSpec):
         to the ``project_root`` given to
         :meth:`~myflopy.specs.GridSpec.resolve`, unless ``external`` is set.
         Coerced to a :class:`~pathlib.Path`.
+    external : bool, default False
+        ``True`` marks the file as living outside the project tree: it is
+        referenced in place and its relative path is **not** anchored to
+        ``project_root``.
+    metadata : dict, optional
+        Free-form JSON-serializable annotations carried with the reference.
+        ``metadata["crs"]`` doubles as a last-resort CRS fallback.
     layer : str, optional
         Which layer to read. ``None`` reads the file's first/default layer,
         which is fine for a single-layer GeoPackage and a silent source of
@@ -296,13 +354,6 @@ class GeoPackageSourceSpec(DataSourceSpec):
         global default rather than raising -- check the spelling here first when
         a per-feature value seems not to apply. A row whose mapped column is
         null or missing also falls back.
-    external : bool, default False
-        ``True`` marks the file as living outside the project tree: it is
-        referenced in place and its relative path is **not** anchored to
-        ``project_root``.
-    metadata : dict, optional
-        Free-form JSON-serializable annotations carried with the reference.
-        ``metadata["crs"]`` doubles as a last-resort CRS fallback.
 
     Notes
     -----
@@ -398,30 +449,108 @@ class BoundarySource(DataSourceSpec):
     ``fields`` deliberately: one name meaning two things is how that class's own
     docstring says a recipe goes silently inert.
 
+    Nothing is validated when one is constructed. The ``mf.<pkg>.gpkg`` helpers check
+    the file, ``nper``, ``gaps`` and ``snap_within`` at declaration; everything is
+    checked again when the recipe is resolved at BUILD, where
+    :class:`~myflopy.geopackage.GeoPackageSource` is constructed from these fields and
+    its ``<package>`` method called with ``values``.
+
     Parameters
     ----------
+    path : pathlib.Path or str
+        The GeoPackage (or any vector file ``geopandas.read_file`` opens) holding the
+        features. Coerced to a :class:`~pathlib.Path`. A lazy ``mf.<pkg>.gpkg``
+        declaration (no ``context=``) stores it RESOLVED to an absolute path after
+        checking it exists; the recipe an eager declaration records in its metadata
+        keeps the path as given. A relative one (what
+        ``project.save(bundle_sources=True)`` writes) is anchored to the project root
+        at build unless ``external`` is set. A missing file raises
+        ``FileNotFoundError`` at build.
+    external : bool, default False
+        As :class:`DataSourceSpec`: ``True`` leaves a relative ``path`` unanchored at
+        build. The helpers never set it.
+    metadata : dict, optional
+        As :class:`DataSourceSpec`: free-form annotations, carried not read. (The
+        package's provenance -- ``source_path``, the content hash -- goes in the
+        ``PackageSpec``'s own ``metadata``, not here.)
     package : str
         Which boundary condition -- ``"chd"``, ``"ghb"``, ``"drn"``, ``"riv"``,
         ``"wel"``, ``"rch"``, ``"evt"``. It decides the record SCHEMA (the field names
-        and their MF6 order), which the package registry owns.
+        and their MF6 order), which the package registry owns, and which
+        ``GeoPackageSource`` method resolves the features.
     nper : int
-        Number of stress periods to resolve.
-    values : dict
+        Number of stress periods to resolve; every period ``0..nper-1`` gets records.
+        Below 1 raises ``ValueError`` (at declaration through a helper, else at build).
+    values : dict, optional
         Per-field value specifications, keyed by the helper's own argument names
-        (``head=``, ``conductance=``, ``elevation=``...). A value may be a column name,
+        (``head=``, ``conductance=``, ``elevation=``...) and passed as keyword
+        arguments to that ``GeoPackageSource`` method. A value may be a column name,
         a constant, a list of column names for per-period data, or a live
         :class:`~myflopy.geopackage.Spread` / :class:`~myflopy.geopackage.CellSurfaceOffset`.
-    layer, name_field, layer_field, period_field, layer_base, period_base
-        As :class:`~myflopy.geopackage.GeoPackageSource` reads them.
-    gaps, snap_within
-        What a feature that reaches no cell means, and how far a POINT may be moved to
-        reach one (ledger 288). ``snap_within`` stays ``None`` in the recipe when the
-        caller gave no number: a lazy declaration has no mesh, and a distance resolved
-        at declaration would carry the OLD grid's cell width across ``with_grid``.
-    edges_only : bool
-        Keep only cells on the edge of the ACTIVE domain, per layer (ledger 246).
-    boundnames : bool
-        Whether to write a boundname column.
+        Empty (the default) leaves every field at the method's own default column.
+    layer : str, optional
+        The layer/table inside ``path`` to read. ``None`` (the default) reads the
+        file's first layer.
+    name_field : str or None, default "name"
+        Attribute column naming each feature: its value identifies the feature in
+        warnings and errors (the row index does when the column is absent or this is
+        ``None``), and becomes each record's boundname when ``boundnames`` is
+        ``True`` -- the column is then required, and a file without it raises
+        ``ValueError`` naming it. ``None`` with ``boundnames=True`` writes the row
+        index as the boundname.
+    layer_field : str or None, default "layer"
+        Attribute column giving each feature's model layer, numbered from
+        ``layer_base``; the column is required when set. ``None`` puts every feature
+        in the first model layer. A value resolving below 0 raises ``ValueError``.
+    period_field : str or None, optional
+        Attribute column giving the ONE stress period a feature applies to, numbered
+        from ``period_base``; a period outside ``0..nper-1`` raises ``ValueError``.
+        ``None`` (the default) applies every feature to all ``nper`` periods.
+    layer_base : int, default 1
+        What the first model layer is called in ``layer_field``: ``1`` for the usual
+        GIS numbering, ``0`` for a zero-based column.
+    period_base : int, default 0
+        What the first stress period is called in ``period_field``.
+    gaps : {"warn", "nearest", "raise", "ignore"}, default "warn"
+        What a feature that reaches no active cell means (ledger 288): ``"warn"``
+        leaves it out and names it in a ``UserWarning`` -- the same message also
+        reports features clipped at the grid's edge, elevations below their own cell
+        bottom and records lifted by ``min_above_bottom``; ``"nearest"`` also moves a
+        POINT that missed onto the nearest usable cell when it lies within
+        ``snap_within``; ``"raise"`` raises ``ValueError`` wherever ``"warn"`` would
+        report; ``"ignore"`` says nothing. Whatever the mode, a source with NO
+        feature on an active cell raises ``ValueError``. Another word raises
+        ``ValueError``.
+    snap_within : float, optional
+        How far, in the grid's own coordinate units, ``gaps="nearest"`` may move a
+        point -- measured to the candidate cell's POLYGON. Must be positive. ``None``
+        (the default) means one cell width, ``sqrt(area)`` of the cell the point would
+        snap to, resolved at BUILD: a lazy declaration has no mesh, and a distance
+        resolved at declaration would carry the OLD grid's cell width across
+        ``with_grid``. Only read under ``gaps="nearest"``.
+    min_above_bottom : float, optional
+        Keep each resolved ELEVATION field at least this far above its own cell's
+        bottom, in model length units (ledger 290) -- the head of ``chd``/``ghb``,
+        the elevation of ``drn``, the surface of ``evt``, and on ``riv`` the ``rbot``,
+        with ``stage`` raised by the same amount when it was below the floor too.
+        ``0.0`` still lifts by a tiny nudge, because a value written exactly at the
+        bottom can round below it. ``None`` (the default) changes nothing but still
+        reports records below their cell bottom. Both need layer elevations and are
+        skipped without them. Negative raises ``ValueError`` at build. The
+        ``wel``/``rch``/``evt`` helpers never set it; ``wel`` and ``rch`` have no
+        elevation field.
+    edges_only : bool, default False
+        Keep only cells on the edge of the ACTIVE domain, per layer (ledger 246). Read
+        only for ``chd``/``ghb``/``drn``/``riv``, the packages whose registry entry
+        allows it; for ``wel``/``rch``/``evt`` it is recorded and ignored.
+    boundnames : bool, default True
+        Whether each record carries a boundname (from ``name_field``) and the package
+        is written with ``BOUNDNAMES``.
+    source_sha : str, optional
+        16-character content hash of ``path`` taken at declaration -- the helpers fill
+        it in, ``None`` when the file could not be read. The DIGEST reads it in place
+        of the path (:meth:`digest_payload`); it is not compared with the file when the
+        recipe is built.
 
     Notes
     -----
@@ -596,26 +725,38 @@ class BoundarySource(DataSourceSpec):
 
 @dataclass(frozen=True, slots=True)
 class RasterSource(DataSourceSpec):
-    """Reference to a raster (GeoTIFF/IMG) sampled onto the grid for a surface or array.
+    """Reference to a raster (GeoTIFF/IMG), as a serializable recipe entry.
 
-    Use this for elevation surfaces (top/botm), recharge grids, or any gridded
-    package input that lives in a raster. The raster is sampled at cell
-    locations using ``method`` and, optionally, assigned to a named target via
-    ``map_to``.
+    It records a raster and how it was meant to be sampled -- band, target and
+    method -- and round-trips through ``to_dict``/``from_dict``. **Nothing in
+    myflopy reads its band, target, method or CRS today**: no builder samples it; as a
+    :meth:`~myflopy.specs.GridSpec.voronoi` boundary/refinement source the grid
+    resolver raises ``TypeError`` (it reads GeoPackage, shape and table sources only);
+    in the grid's path-valued ``rasters=``/``idomain_path=`` options only its anchored
+    ``path`` is taken; and in ``PackageSpec.inputs`` it reaches the builder
+    unresolved. To sample a raster onto cells, use
+    :meth:`myflopy.surfaces.Surface.raster` (``mf.Raster``) in a ``LayerStack``, or
+    ``vor.get_raster_vals_at_centroids``.
 
     Parameters
     ----------
-    path
-        Path to the raster file (``.tif`` / ``.img`` ...).
-    band
-        1-based band index to read (default: the first band).
-    map_to
-        Optional name of the package input/surface this raster populates.
-    method
-        Sampling/resampling method (e.g. ``"nearest"``, ``"linear"``). ``None``
-        uses the caller's default.
-    crs
-        Optional CRS override; defaults to the raster's stored CRS.
+    path : pathlib.Path or str
+        The raster file (``.tif`` / ``.img`` ...). Coerced to a
+        :class:`~pathlib.Path`.
+    external : bool, default False
+        As :class:`DataSourceSpec`: ``True`` leaves a relative path unanchored.
+    metadata : dict, optional
+        As :class:`DataSourceSpec`: free-form annotations, carried not read.
+    band : int, optional
+        The band meant to be read, 1-based. Recorded and serialized only.
+    map_to : str, optional
+        The package input or surface this raster is meant to populate. Recorded
+        and serialized only.
+    method : str, optional
+        The sampling method meant for it (``"nearest"``, ``"linear"``, ...).
+        Recorded and serialized only; nothing validates the name.
+    crs : str or int, optional
+        A CRS meant to override the raster's own. Recorded and serialized only.
 
     Examples
     --------
@@ -667,10 +808,16 @@ class LiteralSource:
 
     Parameters
     ----------
-    value
-        The literal payload (must be JSON-serializable to survive ``to_dict``).
-    metadata
-        Arbitrary JSON-serializable annotations.
+    value : object
+        The literal payload, stored as it is. It must be JSON-serializable (after
+        myflopy's numpy/tuple normalization) for a spec holding it to be written.
+        Nothing unwraps it on the way to a build: placed in ``PackageSpec.inputs`` it
+        reaches the builder as the ``LiteralSource`` object, not as ``value`` --
+        ``inputs={"k": LiteralSource(1e-4)}`` on ``ModflowGwfnpf`` fails inside
+        FloPy with an ``MFDataException`` on ``k``.
+    metadata : dict, optional
+        Free-form JSON-serializable annotations, written by ``to_dict`` only when
+        non-empty.
 
     Examples
     --------
@@ -745,16 +892,30 @@ class Polygons(DataSourceSpec):
 
     Parameters
     ----------
-    path
-        Vector file holding the polygons (GeoPackage, shapefile, GeoJSON...).
+    path : pathlib.Path or str
+        Vector file holding the polygons (GeoPackage, shapefile, GeoJSON...), read with
+        ``geopandas.read_file`` at BUILD and reprojected to the grid's CRS when both
+        declare one. Coerced to a :class:`~pathlib.Path`. The array helpers
+        (``mf.npf``/``mf.ic``/``mf.sto``) check it exists and store it RESOLVED to an
+        absolute path at declaration -- a missing file raises ``FileNotFoundError``
+        there.
+    external : bool, default False
+        As :class:`DataSourceSpec`: ``True`` leaves a relative ``path`` unanchored at
+        build. The helpers never set it.
+    metadata : dict, optional
+        As :class:`DataSourceSpec`: free-form annotations, carried not read.
     column : str
         Attribute column holding the value to paint. A NULL in it is REFUSED naming
         the feature, never filled with a default -- substituting a number the user did
-        not give is its own silent guess (ledger 247).
+        not give is its own silent guess (ledger 247). An empty string raises
+        ``ValueError`` here; a column the file lacks raises ``ValueError`` at build,
+        naming the file's columns.
     layer : str, optional
-        Layer/table name inside a multi-layer file. Omit for a single-layer one.
+        Layer/table name inside a multi-layer file. ``None`` (the default) reads the
+        file's first layer, which is right for a single-layer one.
     rule : {"majority", "mean", "centroid"}, default "majority"
-        How a cell overlapping several polygons picks its value.
+        How a cell overlapping several polygons picks its value. Another word raises
+        ``ValueError`` here, at the declaration.
 
         ``majority`` gives the cell the value of whichever polygon covers most of it.
         It is the default because it INVENTS NOTHING: on a geology map an
@@ -777,16 +938,20 @@ class Polygons(DataSourceSpec):
         naming the count: an unfilled cell is a NaN, and MF6 answers a NaN budget while
         reporting normal termination (ledger 247).
     layer_field : str, optional
-        Column naming the MODEL layer a feature paints, ``layer_base``-based. Omitted,
-        the map is areal and is broadcast to EVERY layer -- which is what a geology map
-        digitized in plan view means.
+        Column naming the MODEL layer a feature paints, ``layer_base``-based. ``None``
+        (the default) makes the map areal, broadcast to EVERY layer -- which is what a
+        geology map digitized in plan view means. When set, a file without the column,
+        or a feature naming a layer past the model's last, raises ``ValueError`` at
+        build. A value below ``layer_base`` is not refused: that feature paints no
+        cell.
     layer_base : int, default 1
         What the first model layer is called in ``layer_field``.
     source_sha : str, optional
         16-character content hash of ``path`` when the recipe was declared. It is what
         the DIGEST sees in place of the path (:meth:`digest_payload`), which is why it
         lives here and not in ``metadata``: ``package_digest`` excludes metadata by
-        contract (ledger 293).
+        contract (ledger 293). The array helpers stamp it at declaration, replacing
+        any value passed here.
 
     Notes
     -----
@@ -919,13 +1084,42 @@ def is_source_payload(data: Any) -> bool:
     equivalent and is not: :class:`DataSourceSpec`'s own kind is
     ``"DataSourceSpec"``, which ends in "Spec", so such a test silently passed
     the public base class through as a plain ``dict``.
+
+    Parameters
+    ----------
+    data : object
+        Anything. Only a ``dict`` whose ``"kind"`` value names a registered source
+        class answers ``True``; the rest of its keys are not checked.
+
+    Returns
+    -------
+    bool
     """
 
     return isinstance(data, dict) and str(data.get("kind")) in _SOURCE_TYPES
 
 
 def source_from_dict(data: dict[str, Any]) -> DataSourceSpec | LiteralSource:
-    """Recreate a source specification from its serialized representation."""
+    """Recreate a source specification from its serialized representation.
+
+    The same dispatch as :meth:`DataSourceSpec.from_dict`.
+
+    Parameters
+    ----------
+    data : dict
+        A payload as a source's ``to_dict`` writes it; its ``"kind"`` value picks the
+        class, and ``"path"`` is required by every file-backed kind (``KeyError``
+        without it).
+
+    Returns
+    -------
+    DataSourceSpec or LiteralSource
+
+    Raises
+    ------
+    ValueError
+        ``data["kind"]`` is missing or names no registered source class.
+    """
 
     kind = str(data.get("kind"))
     try:

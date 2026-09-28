@@ -467,16 +467,28 @@ def load_mf6_run(
 
     Parameters
     ----------
-    workspace
-        Directory containing the MF6 simulation files.
-    model_name
-        Which model to load (defaults to the first GWF model).
-    crs
-        CRS to attach to the grid. By default the one a myflopy run recorded in
-        its ``run.json``, else ``"EPSG:2927"``. A reopened run used to take 2927
+    workspace : str or pathlib.Path
+        Directory containing the MF6 simulation files (``mfsim.nam``). A
+        directory that does not exist raises ``FileNotFoundError``.
+    model_name : str or None, optional
+        Which model's files to open, by its MF6 model name. ``None`` (the
+        default) takes the first ``gwf6`` model ``mfsim.nam`` declares; when it
+        declares none (or there is no ``mfsim.nam``), the stem of the
+        alphabetically first model name file in the workspace, else one level
+        down; with no model name file at all it raises ``FileNotFoundError``.
+    crs : str or None, optional
+        CRS to attach to the grid view (any string pyproj accepts). ``None`` (the
+        default) takes the one a myflopy run recorded for this model in its
+        ``run.json``, else ``"EPSG:2927"``. A reopened run used to take 2927
         whatever CRS it had run in.
-    verbosity_level
-        ``0`` silent, higher prints progress.
+    verbosity_level : int, optional
+        ``0`` (the default) is silent; above 0 prints ``[LoadedMf6Run]`` progress
+        messages and is passed to FloPy's ``MFSimulation.load`` when the files
+        are first read.
+
+    Returns
+    -------
+    LoadedMf6Run
 
     Examples
     --------
@@ -520,12 +532,16 @@ def patch_simulation_plot(sim):
 
     Parameters
     ----------
-    sim
-        The FloPy ``MFSimulation`` to patch (mutated in place).
+    sim : flopy.mf6.MFSimulation
+        The FloPy simulation to patch (mutated in place): its ``plot`` attribute
+        is replaced by a method that calls FloPy's
+        ``PlotUtilities._plot_simulation_helper(sim, model_list=,
+        SelPackList=, **kwargs)``.
 
     Returns
     -------
-    The same ``sim``, for chaining.
+    flopy.mf6.MFSimulation
+        The same ``sim``, for chaining.
     """
     sim.plot = MethodType(_simulation_plot_compat, sim)
     return sim
@@ -534,15 +550,31 @@ def patch_simulation_plot(sim):
 class LoadedMf6Run(SimulationBase):
     """File-backed exploration object built from MF6 input and output files.
 
+    Construct it through :func:`load_mf6_run`, which also reads the CRS a
+    myflopy run recorded; constructing the class directly does not.
+
     Parameters
     ----------
-    workspace
-        Path to a standard MF6 run directory.
-    crs
+    workspace : str or pathlib.Path
+        Path to a standard MF6 run directory. A directory that does not exist
+        raises ``FileNotFoundError``.
+    model_name : str or None, optional
+        Which model's files to open, by its MF6 model name. ``None`` (the
+        default) takes the first ``gwf6`` model ``mfsim.nam`` declares; when it
+        declares none (or there is no ``mfsim.nam``), the stem of the
+        alphabetically first model name file in the workspace, else one level
+        down; with no model name file at all it raises ``FileNotFoundError``. A name
+        FloPy cannot find in the simulation raises ``FileNotFoundError`` when the
+        files are first loaded.
+    crs : str, optional
         CRS assigned to the reconstructed ``VoronoiGridPlus`` view if one is
-        built lazily later.
-    verbosity_level
-        FloPy-style verbosity plus simple progress messages from this loader.
+        built lazily later (any string pyproj accepts). Default
+        :data:`~myflopy._defaults.DEFAULT_CRS` (``"EPSG:2927"``); the CRS a run
+        recorded in ``run.json`` is read by :func:`load_mf6_run`, not here.
+    verbosity_level : int, optional
+        ``0`` (the default) is silent; above 0 prints ``[LoadedMf6Run]`` progress
+        messages and is passed to FloPy's ``MFSimulation.load`` as its
+        ``verbosity_level``.
     """
 
     def __init__(
@@ -829,7 +861,31 @@ class LoadedMf6Run(SimulationBase):
         return _file_sha256(grid_path)
 
     def package(self, package_names: str | list[str]):
-        """Load and return one or more MF6 package objects on demand."""
+        """Load and return one or more MF6 package objects on demand.
+
+        The first request for a package not yet loaded loads the WHOLE
+        simulation (once), so a package handed out is one ``run_simulation``
+        will write back with any edits.
+
+        Parameters
+        ----------
+        package_names : str or list, tuple or set of str
+            A package name or type (e.g. ``"chd"``, ``"npf"``), or several;
+            lower-cased and looked up with FloPy's ``get_package`` on the model,
+            then on the simulation (so ``"tdis"`` and ``"ims"`` resolve too).
+
+        Returns
+        -------
+        flopy.mf6.mfpackage.MFPackage or list or dict
+            For one name, what FloPy's ``get_package`` returns for it (a list
+            when the model has several packages of that type). For two or more
+            names, a dict of lower-cased name to that result.
+
+        Raises
+        ------
+        AttributeError
+            When a name matches no package in the model or the simulation.
+        """
 
         normalized = self._normalize_package_names(package_names)
         if len(normalized) > 1:

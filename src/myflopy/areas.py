@@ -76,6 +76,28 @@ class Area:
     ``(x, y)`` points, any shapely geometry, a GeoDataFrame, or a path to a vector
     file. The WHOLE geometry is kept -- ``extent=`` uses its bounds, ``select=`` the
     shape itself.
+
+    Parameters
+    ----------
+    geometry : shapely.geometry.base.BaseGeometry
+        The place itself, in ``crs``. Stored as given; the direct constructor does
+        no conversion or validation (:meth:`coerce` is what turns numbers, points,
+        frames and files into a geometry).
+    crs : str or None, optional
+        The CRS ``geometry`` is in, as a string such as ``"EPSG:2927"``. Default
+        None: the grid's frame, never replaced by a default. :meth:`coerce` stores
+        any pyproj-readable spelling as a string; the direct constructor stores the
+        value unchanged.
+    note : str or None, optional
+        Free text kept with the area and written by :meth:`to_dict`. Default None.
+    name : str or None, optional
+        The name a library holds the area under (``add_aoi`` and
+        ``aoi[name] = ...`` set it). Shown by ``repr``; NOT written by
+        :meth:`to_dict`, because the library key carries it. Default None.
+    source : str or None, optional
+        Provenance: the path of the vector file the geometry was read from, set by
+        :meth:`coerce` for a path. Written by :meth:`to_dict`, never re-read -- the
+        geometry itself is saved inline. Default None.
     """
 
     geometry: BaseGeometry
@@ -90,6 +112,52 @@ class Area:
 
         A file or frame carrying its own CRS keeps it; a ``crs=`` that disagrees
         with it raises rather than silently relabelling the data.
+
+        Parameters
+        ----------
+        value : Area, str, Path, GeoDataFrame, GeoSeries, shapely geometry or sequence
+            What to make an area of:
+
+            - an :class:`Area` -- returned with ``note``/``name`` replaced where
+              given (``crs=`` must name the CRS it already has);
+            - a ``str``/``Path`` to a vector file -- read with
+              ``geopandas.read_file``, its rows unioned into one geometry, and the
+              path kept as ``source``;
+            - a GeoDataFrame/GeoSeries -- its rows unioned into one geometry; an
+              empty frame raises;
+            - any object with a ``geom_type`` (a shapely geometry) -- kept as is;
+            - four numbers ``(xmin, ymin, xmax, ymax)`` in shapely's order, not
+              FloPy's -- a box; ``xmin >= xmax`` or ``ymin >= ymax`` raises;
+            - an ``(N, 2)`` run of ``(x, y)`` points -- the BOX bounding them, not
+              a polygon through them.
+        crs : str, int or pyproj.CRS, optional
+            The CRS ``value`` is in. Default None: the grid's frame for numbers,
+            points and a bare geometry, or the CRS a file/frame carries. Stored as a
+            string. When a file or frame already carries a CRS, a ``crs`` naming a
+            DIFFERENT one raises rather than relabelling it (the same CRS is
+            accepted); a frame without one takes ``crs``. For an :class:`Area`
+            input, ``crs`` must name the area's own CRS -- any ``crs`` raises on an
+            area whose ``crs`` is None.
+        layer : str or int, optional
+            The layer to read (name, or zero-based position) when ``value`` is a
+            path to a multi-layer file (a GeoPackage); passed to
+            ``geopandas.read_file``. Ignored for every other
+            form of ``value``. Default None: the file's first layer.
+        note : str, optional
+            Free text stored on the area. Default None: none, or for an
+            :class:`Area` input its existing note is kept.
+        name : str, optional
+            The name to store on the area (``add_aoi`` passes its key). Default
+            None: none, or for an :class:`Area` input its existing name is kept.
+
+        Raises
+        ------
+        ValueError
+            ``crs`` disagrees with the CRS ``value`` carries; a frame or file is
+            empty; four numbers are not a valid ``(xmin, ymin, xmax, ymax)`` box.
+        TypeError
+            ``value`` is none of the forms above (a ``dict``, a list of three
+            numbers, ...).
         """
 
         if isinstance(value, Area):
@@ -141,7 +209,16 @@ class Area:
         )
 
     def to_geoseries(self, crs=None) -> gpd.GeoSeries:
-        """This area as a one-row GeoSeries, reprojected to ``crs`` when it has one."""
+        """This area as a one-row GeoSeries, reprojected to ``crs`` when it has one.
+
+        Parameters
+        ----------
+        crs : str, int or pyproj.CRS, optional
+            The CRS to return the geometry in. Default None: the area's own CRS.
+            Reprojection happens only when BOTH this and the area's own ``crs`` are
+            set; an area with ``crs=None`` (the grid's frame) comes back unchanged,
+            in its own frame, whatever is asked for.
+        """
 
         series = gpd.GeoSeries([self.geometry], crs=self.crs)
         if crs is not None and self.crs is not None:
@@ -149,7 +226,15 @@ class Area:
         return series
 
     def bounds(self, crs=None) -> tuple[float, float, float, float]:
-        """``(xmin, ymin, xmax, ymax)``, in ``crs`` when both it and the area have one."""
+        """``(xmin, ymin, xmax, ymax)``, in ``crs`` when both it and the area have one.
+
+        Parameters
+        ----------
+        crs : str, int or pyproj.CRS, optional
+            The CRS to report the bounds in (see :meth:`to_geoseries`). Default
+            None: the area's own CRS. An area with ``crs=None`` reports its own
+            coordinates whatever is asked for.
+        """
 
         return tuple(float(v) for v in self.to_geoseries(crs).total_bounds)
 
@@ -174,7 +259,20 @@ class Area:
 
     @classmethod
     def from_dict(cls, doc: dict[str, Any], *, name: str | None = None) -> Area:
-        """The inverse of :meth:`to_dict`."""
+        """The inverse of :meth:`to_dict`.
+
+        Parameters
+        ----------
+        doc : dict
+            A document :meth:`to_dict` wrote: ``"wkt"`` is required (a missing one
+            raises ``KeyError``); ``"crs"``, ``"note"`` and ``"source"`` are read
+            when present and default to None; ``"kind"`` and any other key are
+            ignored.
+        name : str, optional
+            The name to give the area. :meth:`to_dict` does not store one -- the
+            library key is the name -- so a caller restoring a library passes its
+            key here. Default None.
+        """
 
         return cls(
             shp.from_wkt(doc["wkt"]),

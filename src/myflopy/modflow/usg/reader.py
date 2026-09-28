@@ -50,37 +50,57 @@ def read_usg(
 
     Parameters
     ----------
-    nam
-        Path to the MODFLOW-USG name file. Note that a model directory often
-        holds several, differing in their DISU and therefore in how many stress
-        periods they run -- read the one you actually intend to convert.
-    gsf
+    nam : str or pathlib.Path
+        Path to the MODFLOW-USG name file. Relative paths inside it resolve
+        against the name file's own directory. Note that a model directory
+        often holds several name files, differing in their DISU and therefore
+        in how many stress periods they run -- read the one you actually
+        intend to convert.
+    gsf : str or pathlib.Path, optional
         Path to the ``.gsf`` grid specification file. A USG ``DISU`` carries no
-        coordinates, so without this the model has connectivity but no geometry:
-        it can still be inspected, but it cannot be converted, plotted, or
-        re-gridded. Defaults to the only ``.gsf`` beside the name file, if there
-        is exactly one.
-    crs
-        Coordinate reference system for the grid. Defaults to
-        :meth:`VoronoiGridPlus.from_gsf`'s own default.
-    nper
-        Override the number of stress periods to read. Defaults to the DISU's
-        ``NPER``, which is the right answer: boundary-condition files routinely
-        carry more period blocks than the model runs, and MODFLOW reads the
-        first ``NPER`` and ignores the rest.
-    require_layered
-        Raise when the DISU is not layered. A non-layered (nested or
-        ghost-node-refined) USG grid has no MODFLOW 6 DISV equivalent, so a
-        conversion would be wrong rather than merely lossy. Set ``False`` to
-        read such a model anyway for inspection.
-    read_boundaries
-        Read the boundary-condition packages. ``False`` reads only the grid,
-        properties and timing, which is much faster on a model whose stress
-        files run to tens of megabytes.
+        coordinates, so without a grid the model has connectivity but no
+        geometry: it can still be inspected, but it cannot be converted,
+        plotted, or re-gridded. Default ``None`` looks beside the name file:
+        exactly one ``.gsf`` there is used; none, or more than one, logs a
+        warning and leaves :attr:`UsgModel.grid` ``None``.
+    crs : str, optional
+        Coordinate reference system to label the grid with, e.g.
+        ``"EPSG:2926"``. A ``.gsf`` carries no CRS, so this is an assertion
+        about its coordinates, not a reprojection. Default ``None`` (or any
+        empty value) takes :meth:`VoronoiGridPlus.from_gsf`'s default,
+        ``"EPSG:2927"``. Has no effect when no grid is built.
+    nper : int, optional
+        How many stress-period blocks to read from the boundary-condition files
+        (the list packages, ``RCH`` and ``ETS``). Default ``None`` uses the
+        DISU's ``NPER``, which is the right answer: those files routinely carry
+        more period blocks than the model runs, and MODFLOW reads the first
+        ``NPER`` and ignores the rest. The model's own period count and timing
+        (:attr:`UsgModel.nper`, what :meth:`UsgModel.to_mf6` writes to TDIS)
+        stay the DISU's whatever this says.
+    require_layered : bool, optional
+        Default ``True``: raise ``ValueError`` when the DISU is not layered. A
+        non-layered (nested or ghost-node-refined) USG grid has no MODFLOW 6
+        DISV equivalent, so a conversion would be wrong rather than merely
+        lossy. ``False`` logs the same message as a warning and reads the
+        model anyway, for inspection.
+    read_boundaries : bool, optional
+        Default ``True`` reads the ``CHD``/``DRN``/``GHB``/``RIV``/``WEL``,
+        ``RCH``, ``ETS`` and ``HFB6`` packages the name file lists. ``False``
+        skips all of them -- :attr:`UsgModel.boundaries` is empty, ``rch`` and
+        ``ets`` are ``None``, ``hfb`` has no rows -- which is much faster on a
+        model whose stress files run to tens of megabytes. The grid, ``BAS6``,
+        ``LPF``, ``SMS``, ``OC`` and ``CLN`` are read either way.
 
     Returns
     -------
     UsgModel
+
+    Raises
+    ------
+    FileNotFoundError
+        When ``nam`` is not an existing file.
+    ValueError
+        When the DISU is not layered and ``require_layered`` is ``True``.
 
     Examples
     --------

@@ -70,15 +70,28 @@ PROJECT_SPEC_NAME = "project_spec.json"
 
 
 class ModelView(SimulationBase):
-    """Preferred myflopy view over one live built GWF model.
+    """Preferred myflopy view over one live built model.
 
     The view keeps the raw FloPy objects available as ``sim`` and ``gwf`` while
-    exposing the familiar myflopy helpers such as ``cor()``, ``hds``,
-    ``packages``, ``outputs``, and budget accessors.
+    exposing the familiar myflopy helpers such as ``hds``, ``packages``,
+    ``outputs``, ``plot`` and budget accessors. :meth:`Run.model` builds and
+    caches one per model; construct it directly only for a run you hold.
+
+    Parameters
+    ----------
+    run : Run
+        A BUILT run (``run.built`` set, as after :meth:`Project.prepare_run` or
+        :meth:`Run.build`); one that is not built raises ``ValueError``. The view
+        reads its FloPy simulation, the model's context (grid and ``domain``) and
+        its workspace, where the model's output files are read from.
+    model_name : str
+        Name of a model in the run's built simulation (GWF, GWT or GWE -- ``gwf``
+        is the FloPy model whatever its kind). A name the built simulation does
+        not hold raises ``KeyError``.
     """
 
     def __init__(self, *, run: Run, model_name: str):
-        """Build a model view over one model of a completed ``run``."""
+        """Build a model view over one model of a built ``run``."""
 
         self._initialize_from_built_run(run, model_name)
 
@@ -98,12 +111,22 @@ def load_run(
 
     Parameters
     ----------
-    workspace
-        The run directory (``<project>/runs/<name>``).
-    executable
-        MF6 executable name/path (default ``"mf6"``).
-    load
-        Eagerly load the FloPy simulation (default ``True``); ``False`` defers it.
+    workspace : str or pathlib.Path
+        The run directory (``<project>/runs/<name>``). With a ``run.json``
+        manifest it is reopened as :meth:`Run.reopen` does; without one it is
+        opened as a bare MF6 workspace (``status="loaded"``).
+    executable : str, optional
+        MF6 executable name/path (default ``"mf6"``) for a later
+        ``run.execute()``. Used only when the workspace has NO manifest: a
+        manifest-bearing run takes the executable its manifest recorded.
+    load : bool, optional
+        ``True`` (the default) loads the FloPy simulation from the MF6 files now
+        (``run.open()``; no ``mfsim.nam`` then raises ``FileNotFoundError``);
+        ``False`` defers it.
+
+    Returns
+    -------
+    Run
 
     Examples
     --------
@@ -298,6 +321,30 @@ class ProjectLayout:
 
     This is internal infrastructure, but it can be supplied to :class:`Project`
     to customize where specs, package definitions, and inputs are written.
+
+    Parameters
+    ----------
+    root : str or pathlib.Path
+        The project root; converted to a ``Path``. Every other directory is
+        relative to it.
+    specs_dir_name : str, optional
+        Directory under ``root`` holding the project spec
+        (``project_spec.json``) and the per-library spec directories. Default
+        ``"specs"``.
+    simulations_dir_name : str, optional
+        Directory under the specs directory holding one JSON file per simulation.
+        Default ``"simulations"``.
+    inputs_dir_name : str, optional
+        Directory under ``root`` for project-owned input files, where
+        ``Project.save(bundle_sources=True)`` copies sources. Default
+        ``"inputs"``.
+    packages_dir_name : str, optional
+        Directory under the specs directory holding the package library (one JSON
+        document per key, plus a pickle and a versions sidecar for a pickled one,
+        nested by the key's ``/`` segments). Default ``"packages"``.
+    grids_dir_name : str, optional
+        Directory under the specs directory holding the grid library. Default
+        ``"grids"``.
     """
 
     root: Path
@@ -314,7 +361,18 @@ class ProjectLayout:
 
     @classmethod
     def for_project(cls, name: str, root: Path | str | None = None) -> ProjectLayout:
-        """Return the default layout for a project name (defaults under ~/mf6)."""
+        """Return the default layout for a project name (defaults under ~/mf6).
+
+        Parameters
+        ----------
+        name : str
+            Project name. Used only when ``root`` is ``None``, as the directory
+            ``~/mf6/<name>`` with unsafe characters replaced by ``_``; a name with
+            no safe character raises ``ValueError``.
+        root : str, pathlib.Path or None, optional
+            Project root; when given, ``name`` is not used. ``None`` (the
+            default) places the project under ``~/mf6``.
+        """
 
         project_root = Path.home() / "mf6" / _slug(name) if root is None else Path(root)
         return cls(project_root)
@@ -356,24 +414,59 @@ class ProjectLayout:
         return self.root / self.inputs_dir_name
 
     def simulation_spec_path(self, name: str) -> Path:
-        """Return the durable spec path for one simulation name."""
+        """Return the durable spec path for one simulation name.
+
+        Parameters
+        ----------
+        name : str
+            Simulation name; the file is ``<name>.json`` with every run of unsafe
+            characters replaced by ``_`` (so two names can map to one file). A
+            name with no safe character raises ``ValueError``.
+        """
 
         return self.simulation_specs_dir / f"{_slug(name)}.json"
 
     def package_spec_path(self, key: str) -> Path:
-        """Return the durable spec path for one project package key."""
+        """Return the durable spec path for one project package key.
+
+        Parameters
+        ----------
+        key : str
+            Package library key. Each ``/``-separated segment becomes one path
+            segment (a directory, the last one the file stem), with every run of
+            unsafe characters replaced by ``_``; a segment with no safe character
+            raises ``ValueError``.
+        """
 
         *parents, filename = _package_key_parts(key)
         return self.package_specs_dir.joinpath(*parents, f"{filename}.json")
 
     def package_pickle_path(self, key: str) -> Path:
-        """Return the pickle path for one array-bearing project package key."""
+        """Return the pickle path for one array-bearing project package key.
+
+        Parameters
+        ----------
+        key : str
+            Package library key. Each ``/``-separated segment becomes one path
+            segment (a directory, the last one the file stem), with every run of
+            unsafe characters replaced by ``_``; a segment with no safe character
+            raises ``ValueError``.
+        """
 
         *parents, filename = _package_key_parts(key)
         return self.package_specs_dir.joinpath(*parents, f"{filename}.pkl")
 
     def package_sidecar_path(self, key: str) -> Path:
-        """Return the version-sidecar path for one pickled project package key."""
+        """Return the version-sidecar path for one pickled project package key.
+
+        Parameters
+        ----------
+        key : str
+            Package library key. Each ``/``-separated segment becomes one path
+            segment (a directory, the last one the file stem), with every run of
+            unsafe characters replaced by ``_``; a segment with no safe character
+            raises ``ValueError``.
+        """
 
         *parents, filename = _package_key_parts(key)
         return self.package_specs_dir.joinpath(*parents, f"{filename}.versions.json")
@@ -385,17 +478,41 @@ class ProjectLayout:
         return self.specs_dir / self.grids_dir_name
 
     def grid_spec_path(self, key: str) -> Path:
-        """Return the durable spec path for one project grid key."""
+        """Return the durable spec path for one project grid key.
+
+        Parameters
+        ----------
+        key : str
+            Grid library key, slugged WHOLE into one file stem -- every run of
+            unsafe characters, ``/`` included, becomes ``_``. A key with no safe
+            character raises ``ValueError``.
+        """
 
         return self.grid_specs_dir / f"{_slug(key)}.json"
 
     def grid_pickle_path(self, key: str) -> Path:
-        """Return the pickle path for one project grid key."""
+        """Return the pickle path for one project grid key.
+
+        Parameters
+        ----------
+        key : str
+            Grid library key, slugged WHOLE into one file stem -- every run of
+            unsafe characters, ``/`` included, becomes ``_``. A key with no safe
+            character raises ``ValueError``.
+        """
 
         return self.grid_specs_dir / f"{_slug(key)}.pkl"
 
     def grid_sidecar_path(self, key: str) -> Path:
-        """Return the version-sidecar path for one pickled project grid key."""
+        """Return the version-sidecar path for one pickled project grid key.
+
+        Parameters
+        ----------
+        key : str
+            Grid library key, slugged WHOLE into one file stem -- every run of
+            unsafe characters, ``/`` included, becomes ``_``. A key with no safe
+            character raises ``ValueError``.
+        """
 
         return self.grid_specs_dir / f"{_slug(key)}.versions.json"
 
@@ -429,6 +546,16 @@ class ProjectLayout:
 
         The current ``root`` is used (the project may have moved); only the
         directory names are restored.
+
+        Parameters
+        ----------
+        root : str or pathlib.Path
+            Project root for the rebuilt layout; the ``"root"`` saved in ``data``
+            is ignored.
+        data : dict
+            The ``"layout"`` block :meth:`to_dict` wrote: ``specs_dir``,
+            ``simulations_dir``, ``inputs_dir``, ``packages_dir``, ``grids_dir``.
+            A missing key takes that directory's default name.
         """
 
         return cls(
@@ -812,7 +939,30 @@ class RunLibrary(SpecLibrary["Run"]):
     def discover(
         cls, project: Project, *, load: bool = False
     ) -> RunLibrary:
-        """Scan a project for runs. Never raises on a bad manifest."""
+        """Scan a project for runs. Never raises on a bad manifest.
+
+        ``project.runs`` calls this once and caches the result;
+        ``project.refresh_runs()`` calls it again.
+
+        Parameters
+        ----------
+        project : Project
+            The project to scan. Every ``run.json`` under ``project.runs_dir`` is
+            reopened (a manifest that cannot be read is listed with
+            ``status="unreadable"``), and every other ``mfsim.nam`` under
+            ``project.root`` is listed with ``status="discovered"`` -- except
+            workspaces inside a PEST calibration tree, which are counted in
+            :attr:`calibrations` instead. The library is bound to the project's
+            package library and root, which :meth:`drift` compares against.
+        load : bool, optional
+            ``False`` (the default) reads manifests only. ``True`` also loads each
+            run's FloPy simulation from its MF6 files (``Run.reopen(load=True)``
+            for a manifest run, ``run.open()`` for a discovered one), which is
+            slow on a large project. A manifest run whose load fails with an
+            ``OSError``, ``ValueError`` or ``KeyError`` is listed as
+            ``"unreadable"``; any other failure, and any failure opening a
+            discovered workspace, raises.
+        """
 
         library = cls()
         library._project_name = project.name
@@ -952,6 +1102,28 @@ class RunLibrary(SpecLibrary["Run"]):
         rebuilt as it ran: it means preparing it again from the library would
         give a different model. Runs prepared before the copies existed are the
         exception, and warn when they are rebuilt from a changed library.
+
+        Parameters
+        ----------
+        key : str or None, optional
+            One run's key in this library (its path relative to ``runs/`` --
+            usually just its directory name -- or relative to the project root for
+            a workspace elsewhere);
+            an unknown key raises the did-you-mean ``KeyError``. ``None`` (the
+            default) reports every run.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per (run, package) with columns ``run``, ``key``,
+            ``ran_with``, ``library_now``, ``state`` and ``source``; a run with
+            nothing recorded gets one row keyed ``"—"``.
+
+        Raises
+        ------
+        RuntimeError
+            When this library is not bound to a project (built by hand rather
+            than through ``project.runs`` / :meth:`discover`).
         """
 
         import pandas as pd
@@ -1209,6 +1381,40 @@ class SaveReport:
 
     Truthy when anything was written, and usable anywhere a path is (``os.fspath``,
     ``open()``, ``Path(...)``) -- though it is NOT equal to a ``Path``.
+
+    Attributes
+    ----------
+    project_spec : pathlib.Path
+        The project spec file written (``<root>/specs/project_spec.json`` under
+        the default layout); what ``os.fspath(report)`` returns.
+    simulations : int, optional
+        Simulations written, one JSON file each. Default 0.
+    packages : int, optional
+        Library packages written -- every one, as readable JSON or as a pickle.
+        Default 0.
+    grids : int, optional
+        Library grids written -- every one; a built grid object is pickled.
+        Default 0.
+    aoi : int, optional
+        Areas of interest written, inline in the project spec. Default 0.
+    pickled : int, optional
+        How many of ``packages`` plus ``grids`` fell back to a pickle rather than
+        JSON. Default 0.
+    skipped : tuple of (str, str), optional
+        ``(simulation name, reason)`` for each simulation not written: one whose
+        ``to_dict()`` raises ``ValueError`` (such as one embedding a raw array),
+        derives from a simulation not in the library, or references an undefined
+        package or grid. Default empty.
+    bundled : tuple of (str, str), optional
+        ``(from, to)`` paths of the files ``save(bundle_sources=True)`` copied
+        into ``inputs/``. Default empty; always empty without bundling.
+    not_bundled : tuple of (str, str), optional
+        ``(what, why)`` for sources bundling deliberately did not carry, such as
+        a layer stack holding per-cell arrays. Default empty.
+    context_dropped : tuple of (str, str), optional
+        ``("<simulation>.<model>", field)`` for each model-context field (grid,
+        domain, surfaces) a project file cannot hold, which reloads as ``None``.
+        Default empty.
     """
 
     project_spec: Path
@@ -1266,7 +1472,83 @@ class Run:
     """One materialized execution of a :class:`SimulationSpec`.
 
     A run owns its workspace and lifecycle. It can be created from a spec or
-    reopened later from the JSON manifest and native MF6 input files.
+    reopened later from the JSON manifest and native MF6 input files. Get one from
+    :meth:`Project.prepare_run`, :meth:`Project.reopen_run`, :func:`load_run` or
+    ``project.runs[key]`` rather than constructing it.
+
+    Attributes
+    ----------
+    name : str
+        The run's name; for a project-owned run, its directory name under
+        ``<project>/runs``.
+    workspace : pathlib.Path
+        The run directory, where the MF6 files, ``run.json`` and the run's own
+        library copies live; a ``str`` is converted on construction.
+    spec : SimulationSpec or None, optional
+        The simulation :meth:`build` builds. ``None`` (the default) for a run
+        discovered or loaded without a manifest, or reopened from a manifest
+        holding no rebuildable recipe and no frozen snapshot.
+    executable : str, optional
+        MF6 executable name or path that :meth:`execute` runs. Default ``"mf6"``.
+    status : str, optional
+        myflopy's lifecycle verb -- what the library did to the run, not what MF6
+        did (that is :attr:`outcome`): ``"created"`` (the default), ``"built"``,
+        ``"written"``, ``"completed"``, ``"failed"``; ``"loaded"``,
+        ``"discovered"`` and ``"unreadable"`` for runs opened without a usable
+        manifest.
+    created_at : str, optional
+        ISO-8601 UTC timestamp of the run's preparation; default the moment of
+        construction. :attr:`outcome` treats a listing older than this as
+        ``"superseded"``.
+    updated_at : str, optional
+        ISO-8601 UTC timestamp of the last status change; default the moment of
+        construction.
+    completed_at : str or None, optional
+        ISO-8601 UTC timestamp at which :meth:`execute` finished, or at which
+        :meth:`reconcile` adopted a verdict when none was recorded yet. Default
+        ``None``.
+    success : bool or None, optional
+        Whether MF6 reported normal termination, set by :meth:`execute` or
+        :meth:`reconcile`. Default ``None`` (no verdict adopted).
+    report : list of str, optional
+        MF6's captured output lines from the last :meth:`execute`. Default empty.
+    metadata : dict, optional
+        Free-form metadata written to the manifest (``prepare_run(metadata=)``).
+        A build also records ``"built_from"`` and ``"grids"`` here, read back by
+        :attr:`built_from` and :attr:`grids`. Default empty.
+    spec_block : dict or None, optional
+        The manifest's readable summary of the simulation (names only), kept
+        verbatim for a reopened run so a rewrite of the manifest does not erase
+        it. Default ``None``.
+    spec_recipe : dict or None, optional
+        The full ``SimulationSpec.to_dict()`` recipe the manifest holds, when the
+        spec could be serialized. Default ``None``.
+    project_root : pathlib.Path or None, optional
+        Root of the project the run belongs to; a relative source path anchors
+        to it when the run is rebuilt without its :class:`Project`. Default
+        ``None``.
+    package_digests : dict or None, optional
+        Library key to the fingerprint (``str``, or ``None`` when the package
+        could not be fingerprinted) of what that key meant when the run was
+        prepared; ``project.runs.drift()`` compares against it. Default ``None``
+        (a run recorded before digests existed).
+    package_snapshot : dict or None, optional
+        Library key to the run-relative path of the run's own copy of that
+        package under ``_library/``; a rebuild resolves ``mf.ref`` from these
+        first. Default ``None``.
+    model_crs : dict or None, optional
+        Model name to the CRS string its grid was built in, which a reopened
+        run's model views are drawn in. Default ``None``.
+    built : BuiltSimulation or None, optional
+        What :meth:`build` built (per-model FloPy models and contexts). Default
+        ``None``.
+    simulation : flopy.mf6.MFSimulation or None, optional
+        The FloPy simulation, from :meth:`build` or :meth:`open`. Default
+        ``None``.
+    build_context : SpecBuildContext or None, optional
+        What resolves ``mf.ref``/``mf.grid_ref`` and relative paths at build;
+        :meth:`Project.prepare_run` and :meth:`Project.reopen_run` set it.
+        Default ``None``.
     """
 
     name: str
@@ -1777,7 +2059,21 @@ class Run:
 
     def write(self, silent=False) -> Path:
         """Write MF6 input files, building first when necessary.
-        silent defaults to False, so info will print to console"""
+
+        Records ``status="written"`` in the manifest.
+
+        Parameters
+        ----------
+        silent : bool, optional
+            Passed to FloPy's ``MFSimulation.write_simulation``. ``False`` (the
+            default) lets FloPy print its per-package write messages; ``True``
+            suppresses them.
+
+        Returns
+        -------
+        pathlib.Path
+            The run workspace.
+        """
 
         if self.simulation is None:
             self.build()
@@ -1829,7 +2125,26 @@ class Run:
         return self.success, self.report
 
     def open(self, *, verbosity_level: int = 0):
-        """Load this run's native MF6 simulation from disk."""
+        """Load this run's native MF6 simulation from disk.
+
+        Replaces :attr:`simulation` with FloPy's load of the files and clears the
+        cached model views, so later edits and writes act on what is on disk.
+
+        Parameters
+        ----------
+        verbosity_level : int, optional
+            Passed to FloPy's ``MFSimulation.load``: ``0`` (the default) is
+            quiet, higher values print FloPy's load messages.
+
+        Returns
+        -------
+        flopy.mf6.MFSimulation
+
+        Raises
+        ------
+        FileNotFoundError
+            When the workspace has no ``mfsim.nam``.
+        """
 
         if not (self.workspace / "mfsim.nam").exists():
             raise FileNotFoundError(
@@ -1947,7 +2262,18 @@ class Run:
         raise KeyError(f"Run '{self.name}' has no model named '{name}'.")
 
     def flopy_model(self, name: str | None = None) -> Any:
-        """Return a raw FloPy model object by name."""
+        """Return a raw FloPy model object by name.
+
+        Looked up in the built simulation, then in :attr:`simulation`, then --
+        loading it with :meth:`open` -- in the MF6 files on disk.
+
+        Parameters
+        ----------
+        name : str or None, optional
+            Model name. ``None`` (the default) takes the run's only model; with
+            several it raises ``ValueError``, with none ``KeyError``. A name found
+            nowhere raises ``KeyError``.
+        """
 
         name = self._default_model_name() if name is None else name
         if self.built is not None and name in self.built.models:
@@ -2026,6 +2352,18 @@ class Run:
         A run MF6 never finished -- killed, crashed, still going, never started --
         has no verdict, so nothing is changed: reporting that as failure would be
         the same class of lie as reporting ``status="written"`` as success.
+
+        Parameters
+        ----------
+        write : bool, optional
+            ``True`` (the default) rewrites ``run.json`` with the adopted status
+            (and a new ``updated_at``); ``False`` changes the run in memory only.
+            Nothing is written when there is no verdict to adopt.
+
+        Returns
+        -------
+        ListingOutcome
+            What :attr:`outcome` read.
         """
 
         outcome = self.outcome
@@ -2133,7 +2471,23 @@ class Run:
 
     @classmethod
     def reopen(cls, workspace: Path | str, *, load: bool = True) -> Run:
-        """Reopen a run from its manifest and optionally load the MF6 simulation."""
+        """Reopen a run from its manifest and optionally load the MF6 simulation.
+
+        The spec is revived from the run's frozen snapshot when it has one, else
+        from the manifest's recipe. No :class:`Project` is in scope, so package
+        references resolve from the run's own copies only; use
+        :meth:`Project.reopen_run` to resolve against a library too.
+
+        Parameters
+        ----------
+        workspace : str or pathlib.Path
+            The run directory, holding ``run.json``; none raises
+            ``FileNotFoundError``.
+        load : bool, optional
+            ``True`` (the default) also loads the FloPy simulation from the MF6
+            files (:meth:`open`, which raises ``FileNotFoundError`` without an
+            ``mfsim.nam``); ``False`` reads the manifest only.
+        """
 
         workspace = Path(workspace)
         manifest_path = workspace / RUN_MANIFEST_NAME
@@ -2177,7 +2531,22 @@ class Run:
     def load(
         cls, workspace: Path | str, *, executable: str = "mf6", load: bool = True
     ) -> Run:
-        """Open a native MF6 workspace, with or without a myflopy manifest."""
+        """Open a native MF6 workspace, with or without a myflopy manifest.
+
+        Parameters
+        ----------
+        workspace : str or pathlib.Path
+            The MF6 run directory. With a ``run.json`` it is reopened by
+            :meth:`reopen`; without one it becomes a run named after the
+            directory with ``status="loaded"``.
+        executable : str, optional
+            MF6 executable name/path for a later :meth:`execute`. Default
+            ``"mf6"``. Used only when there is NO manifest; a manifest-bearing
+            run takes the executable it recorded.
+        load : bool, optional
+            ``True`` (the default) loads the FloPy simulation now (:meth:`open`;
+            no ``mfsim.nam`` raises ``FileNotFoundError``); ``False`` defers it.
+        """
 
         workspace = Path(workspace)
         manifest_path = workspace / RUN_MANIFEST_NAME
@@ -2211,10 +2580,14 @@ class Project:
     ----------
     root : Path or str
         Project root directory (created lazily; runs land under ``<root>/runs``).
+        Ignored when ``layout`` is given: the project root is then
+        ``layout.root``.
     name : str, optional
-        Project name (defaults to the root directory name).
+        Project name, shown in reprs and messages and saved in the project spec.
+        Default ``None`` (or an empty string) takes the root directory's name.
     layout : ProjectLayout, optional
-        Custom on-disk directory layout (defaults to one rooted at ``root``).
+        Custom on-disk directory layout. Default ``None``: the default layout
+        rooted at ``root``.
 
     Examples
     --------
@@ -2297,6 +2670,27 @@ class Project:
         ``mf.ref("k/calibrated")``. The package keeps its own ``PackageSpec.name``
         (the MF6 package it builds); the key does not have to match it. Resolved
         packages are checked for name collisions when a run is built.
+
+        Parameters
+        ----------
+        key : str
+            Library key. On :meth:`save` each ``/``-separated segment becomes a
+            directory level under the package specs directory, with unsafe
+            characters replaced by ``_``; two keys that map to the same file make
+            :meth:`save` raise.
+        package : PackageSpec
+            The package spec to register (from a helper such as ``mf.npf(...)``).
+            A model, simulation or grid spec raises ``TypeError`` naming the verb
+            it belongs to.
+        overwrite : bool, optional
+            ``False`` (the default) raises ``KeyError`` when ``key`` is already
+            registered; ``True`` replaces it. ``packages.edit(key, ...)`` is the
+            verb for changing what an existing key means.
+
+        Returns
+        -------
+        PackageSpec
+            ``package``, as registered.
         """
 
         _refuse_wrong_library(package, PackageSpec, "add_package")
@@ -2321,6 +2715,27 @@ class Project:
         library entry is a ``GridSpec``: a ``GridRef`` points INTO this library,
         so storing one here is accepted by ``add_grid`` and rejected later by
         the build (:func:`_library_grid_spec`).
+
+        Parameters
+        ----------
+        key : str
+            Library key models name with ``mf.grid_ref(key)``. On :meth:`save`
+            the whole key, ``/`` included, is flattened into one file name with
+            unsafe characters replaced by ``_``; two keys that map to the same
+            file make :meth:`save` raise.
+        grid : GridSpec, GridRef or grid object
+            A ``GridSpec`` recipe, or an already-built grid (e.g. a
+            ``VoronoiGridPlus``), which is wrapped with ``GridSpec.from_object``
+            and pickled on :meth:`save`. A model, simulation or package spec
+            raises ``TypeError``.
+        overwrite : bool, optional
+            ``False`` (the default) raises ``KeyError`` when ``key`` is already
+            registered; ``True`` replaces it.
+
+        Returns
+        -------
+        GridSpec or GridRef
+            The entry as stored.
         """
 
         _refuse_wrong_library(grid, GridSpec, "add_grid")
@@ -2353,6 +2768,42 @@ class Project:
         project needs no file to restore it. Refuses an existing name unless
         ``overwrite=True`` (ledger 208's rule); ``project.aoi[name] = ...``
         replaces, as a dict does.
+
+        Parameters
+        ----------
+        name : str
+            The area's name (converted with ``str()``): the key in
+            ``project.aoi`` and what ``extent=``/``select=`` accept.
+        geometry : tuple, sequence of points, shapely geometry, GeoDataFrame, str or Path
+            Four numbers ``(xmin, ymin, xmax, ymax)`` in shapely's order (a box),
+            an ``(N, 2)`` run of ``(x, y)`` points (the box bounding them), a
+            shapely geometry, a GeoDataFrame/GeoSeries (its rows unioned), an
+            :class:`~myflopy.areas.Area`, or a path to a vector file (read with
+            ``geopandas.read_file`` and unioned). Coerced by
+            :meth:`~myflopy.areas.Area.coerce`, which raises ``TypeError`` for
+            anything else and ``ValueError`` for an empty frame or an inverted
+            box.
+        crs : str, int, pyproj.CRS or None, optional
+            The CRS ``geometry`` is in. ``None`` (the default) means the grid's
+            frame for numbers, points and a bare geometry, or the CRS a file or
+            frame carries. A ``crs`` that disagrees with the CRS a file, frame or
+            :class:`~myflopy.areas.Area` already carries raises ``ValueError``.
+        layer : str, int or None, optional
+            Layer to read (its name, or zero-based position; passed to
+            ``geopandas.read_file``) when ``geometry`` is a path to a multi-layer
+            file (a GeoPackage); ignored for every other form. ``None`` (the
+            default) reads the file's first layer.
+        note : str or None, optional
+            Free text stored on the area and shown in ``project.aoi.summary()``.
+            Default ``None``.
+        overwrite : bool, optional
+            ``False`` (the default) raises ``KeyError`` when ``name`` is already
+            an area of this project; ``True`` replaces it.
+
+        Returns
+        -------
+        Area
+            The stored area.
         """
 
         return self.aoi._define(
@@ -2363,7 +2814,26 @@ class Project:
     def add_simulation(
         self, simulation: SimulationSpec, *, overwrite: bool = False
     ) -> SimulationSpec:
-        """Add or replace a reusable simulation specification."""
+        """Add or replace a reusable simulation specification.
+
+        A simulation that cannot be serialized (one embedding a raw array) is
+        still registered, with a logged warning that :meth:`save` will skip it.
+
+        Parameters
+        ----------
+        simulation : SimulationSpec
+            The simulation to register, keyed by its own ``simulation.name``. A
+            model spec (wrap it with ``mf.simulation(model)``), package spec or
+            grid spec raises ``TypeError``.
+        overwrite : bool, optional
+            ``False`` (the default) raises ``KeyError`` when a simulation of that
+            name is already registered; ``True`` replaces it.
+
+        Returns
+        -------
+        SimulationSpec
+            ``simulation``, as registered.
+        """
 
         _refuse_wrong_library(simulation, SimulationSpec, "add_simulation")
         _refuse_overwrite(
@@ -2388,8 +2858,20 @@ class Project:
     def add_simulation_from_yaml(self, source: str | Path) -> SimulationSpec:
         """Load a simulation from a YAML file (or text) and register it (plan §5.6).
 
-        Thin wrapper over :meth:`SimulationSpec.from_yaml` + :meth:`add_simulation`;
-        ``source`` is a ``.yaml`` path (``str``/``Path``) or raw YAML text.
+        Thin wrapper over :meth:`SimulationSpec.from_yaml` + :meth:`add_simulation`
+        (with ``overwrite=False``, so a simulation of the same name already
+        registered raises ``KeyError``).
+
+        Parameters
+        ----------
+        source : str or pathlib.Path
+            A ``Path``, or a ``str`` naming an existing file, is read as a YAML
+            file; any other ``str`` is parsed as YAML text.
+
+        Returns
+        -------
+        SimulationSpec
+            The loaded simulation, as registered.
         """
 
         return self.add_simulation(SimulationSpec.from_yaml(source))
@@ -2427,6 +2909,12 @@ class Project:
         did-you-mean ``KeyError``; this spelling exists because the retired
         ``ProjectSpec`` had ``package_spec(key)`` and the 2026-06-17 fold into
         ``Project`` kept ``simulation(name)`` while dropping it.
+
+        Parameters
+        ----------
+        key : str
+            Package library key; one not registered raises ``KeyError`` naming
+            the near miss and every key defined.
         """
 
         return self.packages[key]
@@ -2437,6 +2925,12 @@ class Project:
         Equivalent to ``project.grids[key]``. The union return is deliberate: a
         ``GridRef`` points INTO this library and is rejected at build time, so
         narrowing it is worth something (ledger 171).
+
+        Parameters
+        ----------
+        key : str
+            Grid library key; one not registered raises ``KeyError`` naming the
+            near miss and every key defined.
         """
 
         return self.grids[key]
@@ -2492,7 +2986,14 @@ class Project:
         return "<div>" + "".join(blocks) + "</div>"
 
     def simulation(self, name: str) -> SimulationSpec:
-        """Return one registered simulation specification by name."""
+        """Return one registered simulation specification by name.
+
+        Parameters
+        ----------
+        name : str
+            Name of a simulation registered with :meth:`add_simulation`; one not
+            registered raises ``KeyError``.
+        """
 
         try:
             return self.simulations[name]
@@ -2552,6 +3053,11 @@ class Project:
             Arbitrary metadata recorded in the run manifest.
         overwrite : bool, default False
             Allow reusing/overwriting an existing run workspace of the same name.
+            ``False`` raises ``FileExistsError`` when ``<project>/runs/<name>``
+            exists and is not empty. ``True`` reuses the directory: the previous
+            frozen snapshot is discarded, but earlier MF6 outputs stay until the
+            run is written and executed again (its ``outcome`` reads
+            ``"superseded"`` meanwhile).
         build : bool, default True
             Build the FloPy simulation now; ``False`` defers building (e.g. when
             staging several runs to build/execute selectively later).
@@ -2612,7 +3118,35 @@ class Project:
         overwrite: bool = False,
         silent: bool = True,
     ) -> Run:
-        """Create, build, write, and execute one named simulation run."""
+        """Create, build, write, and execute one named simulation run.
+
+        :meth:`prepare_run` (always building) followed by :meth:`Run.execute`.
+
+        Parameters
+        ----------
+        name : str
+            Run name; its workspace is ``<project>/runs/<name>``.
+        simulation : SimulationSpec or str
+            The simulation spec to run, or the name of one registered via
+            :meth:`add_simulation`.
+        executable : str, optional
+            MF6 executable name/path to run. Default ``"mf6"``.
+        metadata : dict or None, optional
+            Arbitrary metadata recorded in the run manifest. Default ``None``
+            records an empty dict.
+        overwrite : bool, optional
+            ``False`` (the default) raises ``FileExistsError`` when the run
+            workspace already exists and is not empty; ``True`` reuses it.
+        silent : bool, optional
+            Passed to :meth:`Run.execute`: ``True`` (the default) suppresses
+            MF6's console output.
+
+        Returns
+        -------
+        Run
+            The executed run; ``run.success`` and ``run.report`` hold MF6's
+            result.
+        """
 
         run = self.prepare_run(
             name,
@@ -2636,6 +3170,15 @@ class Project:
         recorded. Reopening through :func:`load_run` or :meth:`Run.reopen`
         resolves package references from the run's copies and nothing else --
         there is no library in scope.
+
+        Parameters
+        ----------
+        name : str
+            The run's directory name under ``<project>/runs``; a run without a
+            ``run.json`` there raises ``FileNotFoundError``.
+        load : bool, optional
+            ``True`` (the default) also loads the FloPy simulation from the MF6
+            files; ``False`` reads the manifest only.
         """
 
         run = Run.reopen(self.runs_dir / name, load=load)
@@ -2652,7 +3195,17 @@ class Project:
         return run
 
     def discover_runs(self, *, load: bool = False) -> list[Run]:
-        """Discover project-owned runs that have lifecycle manifests."""
+        """Discover project-owned runs that have lifecycle manifests.
+
+        Only ``<project>/runs/*/run.json`` (one level deep), in path order, each
+        reopened with :meth:`Run.reopen`. ``project.runs`` is the fuller ledger.
+
+        Parameters
+        ----------
+        load : bool, optional
+            ``True`` also loads each run's FloPy simulation from its MF6 files;
+            ``False`` (the default) reads manifests only.
+        """
 
         return [
             Run.reopen(path.parent, load=load)
@@ -2665,7 +3218,22 @@ class Project:
         *,
         load: bool = False,
     ) -> list[Run]:
-        """Discover native MF6 workspaces, including runs without manifests."""
+        """Discover native MF6 workspaces, including runs without manifests.
+
+        Every directory holding an ``mfsim.nam`` at any depth under the search
+        root, in path order: one with a ``run.json`` is reopened with
+        :meth:`Run.reopen`, one without becomes a run with
+        ``status="discovered"``. Unlike ``project.runs``, PEST calibration copies
+        are NOT excluded.
+
+        Parameters
+        ----------
+        search_root : str, pathlib.Path or None, optional
+            Directory to search. ``None`` (the default) searches the project root.
+        load : bool, optional
+            ``True`` also loads each workspace's FloPy simulation; ``False`` (the
+            default) does not.
+        """
 
         root = self.root if search_root is None else Path(search_root)
         runs = []
@@ -2891,6 +3459,30 @@ class Project:
         (ledger 293). An EAGER package resolved at declaration and holds records
         rather than a path, so it names no file to copy. ``SaveReport.bundled`` lists
         what was carried and ``SaveReport.not_bundled`` what was not.
+
+        Parameters
+        ----------
+        strict : bool, optional
+            ``False`` (the default) writes everything persistable and skips the
+            rest (see above). ``True`` raises ``ValueError`` listing every issue
+            :meth:`validate` finds, before bundling or writing anything.
+        bundle_sources : bool, optional
+            ``True`` copies the grid and lazy-package source files into the
+            layout's inputs directory and repoints the saved AND live recipes at
+            the copies; ``False`` (the default) saves the paths as they are.
+
+        Returns
+        -------
+        SaveReport
+
+        Raises
+        ------
+        ValueError
+            With ``strict=True`` when :meth:`validate` reports anything; when two
+            library keys map to the same file (checked before any spec file is
+            written, but AFTER ``bundle_sources=True`` has copied and repointed);
+            and, after writing, when a simulation was skipped for a dangling
+            reference or an unknown ``derived_from``.
         """
 
         dropped = self._report_dropped_contexts()
@@ -3175,6 +3767,27 @@ class Project:
         A saved custom layout round-trips automatically. A listed package, grid,
         or simulation whose file is missing raises rather than loading a broken
         project silently.
+
+        Parameters
+        ----------
+        root : str or pathlib.Path
+            The project root :meth:`save` wrote to (the directory holding
+            ``project.json``). Used to find a saved custom layout; ignored when
+            ``layout`` is given.
+        layout : ProjectLayout or None, optional
+            The layout to read with, whose ``root`` then becomes the project
+            root. ``None`` (the default) restores the layout saved in the
+            project spec, else the default layout rooted at ``root``.
+
+        Returns
+        -------
+        Project
+
+        Raises
+        ------
+        FileNotFoundError
+            When the project spec, or any package, simulation or grid file it
+            lists, is missing.
         """
 
         root = Path(root)

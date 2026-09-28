@@ -20,13 +20,21 @@ class MoverConnection:
     let myflopy resolve it from geometry via ``mf.sfr_connection(...)`` /
     ``mf.lak_connection(...)``.
 
-    Attributes
+    Parameters
     ----------
-    package
-        The advanced package name (e.g. ``"sfr"``, ``"lak"``, ``"uzf"``). The
-        package must be declared with ``mover=True``.
-    index
-        Zero-based feature id within that package (reach / lake / cell number).
+    package : str
+        The name the package was declared under on the model (``name=`` of
+        ``mf.sfr``/``mf.lak``/``mf.uzf``/..., ``"sfr"``/``"lak"``/``"uzf"`` by
+        default). It is lowercased; an empty name raises ``ValueError``. The
+        :class:`MVRBuilder` spec ``requires=`` it, so a name that matches no package
+        declared before the mover is refused (``ValueError``) when the model spec
+        is created, or at build for library references. The package must also be
+        declared with ``mover=True`` for MF6 to move water through it; myflopy
+        does not check that.
+    index : int
+        Zero-based feature number within that package -- an SFR reach, a LAK lake,
+        a UZF object (FloPy adds one on write). Converted with ``int()``; a negative
+        value raises ``ValueError``.
 
     Examples
     --------
@@ -56,16 +64,26 @@ class Move:
     the ``receiver`` -- e.g. a stream's outflow into a lake, or rejected UZF
     infiltration into a stream. Pass moves to ``mf.mvr(moves=(...))``.
 
-    Attributes
+    Parameters
     ----------
-    source, receiver
-        The provider and receiver :class:`MoverConnection` endpoints.
-    method
-        How ``value`` is interpreted: ``"FACTOR"`` (move this fraction of available
-        water, default), ``"EXCESS"`` (water above ``value``), ``"THRESHOLD"``, or
-        ``"UPTO"`` (at most ``value``).
-    value
-        The factor/rate for ``method`` (default ``1.0`` = all available water).
+    source : MoverConnection
+        The provider: the feature whose available water is moved. Anything else
+        raises ``ValueError``.
+    receiver : MoverConnection
+        The feature that receives the moved water. Anything else raises
+        ``ValueError``.
+    method : {"FACTOR", "EXCESS", "THRESHOLD", "UPTO"}, default "FACTOR"
+        MF6's ``MVRTYPE``, how ``value`` is read; case-insensitive (stored
+        uppercased), and any other word raises ``ValueError``. ``"FACTOR"`` moves
+        that fraction of the available water; ``"EXCESS"`` moves the water above
+        ``value``; ``"THRESHOLD"`` moves ``value`` once at least that much is
+        available and nothing below it; ``"UPTO"`` moves ``value``, or all of the
+        available water when there is less (MF6's MVR rules, which mirror SFR's
+        ``cprior``).
+    value : float, default 1.0
+        The factor (dimensionless, for ``"FACTOR"``) or rate (model length^3/time,
+        for the other three) that ``method`` applies. Converted with ``float()``.
+        The default with ``"FACTOR"`` moves all available water.
 
     Examples
     --------
@@ -117,6 +135,40 @@ class MVRBuilder:
     This is the engine under the package-first ``mf.mvr(...)`` facade -- prefer that
     front door for new work. The moved packages must be declared on the model with
     ``mover=True`` and ordered before the mover.
+
+    Parameters
+    ----------
+    nper : int
+        Number of stress periods; a value below 1 raises ``ValueError``. Every
+        period ``0 .. nper - 1`` gets a ``PERIOD`` block, empty when no move is
+        declared for it.
+    moves : sequence of Move, or dict of int to sequence of Move
+        The transfers. A flat sequence is applied in every period. A mapping is
+        keyed by zero-based period, and a period it leaves out gets NO moves (an
+        empty block, not a repeat of the previous one). A key outside
+        ``range(nper)``, an item that is not a :class:`Move`, and no move at all
+        each raise ``ValueError`` at :meth:`build`, not here. The MVR ``packages``
+        block is derived from the moves, in order of first appearance.
+    name : str, default "mvr"
+        Package name: FloPy's ``pname``, the input file ``<model>.<name>``, the
+        output files ``<model>.<name>.bud`` and ``<model>.<name>.csv``, and the
+        built spec's name.
+    print_input : bool, default False
+        Write MF6's ``PRINT_INPUT`` option (echo the mover records to the listing
+        file).
+    print_flows : bool, default False
+        Write MF6's ``PRINT_FLOWS`` option (print the moved flow rates to the
+        listing file on the time steps where Output Control prints the budget).
+    modelnames : bool, default False
+        Passed to FloPy as MF6's ``MODELNAMES`` option. The records this builder
+        writes carry package names only, never model names, so leave it
+        ``False``: with ``True`` the file declares ``MODELNAMES`` while its records
+        do not follow that layout.
+    options : Mapping[str, Any], optional
+        Further keywords for :func:`~myflopy.advanced.mvr_spec`, which passes any
+        it does not take itself (``maxmvr``/``maxpackages`` it does) on to
+        :class:`flopy.mf6.ModflowGwfmvr`. Checked against that class's signature at
+        :meth:`build`; an unknown name raises ``TypeError``. Defaults to none.
     """
 
     nper: int

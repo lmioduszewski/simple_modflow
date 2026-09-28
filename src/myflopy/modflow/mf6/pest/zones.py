@@ -58,6 +58,23 @@ class ZoneSpec:
 
     A bare numpy array still works as ``zones=`` -- this class adds the sources
     that need the grid to resolve, and a place to record provenance.
+
+    Parameters
+    ----------
+    values : array_like of int
+        One integer zone label per cell. Anything ``numpy.asarray`` accepts;
+        it is stored as an ``int`` array, so a float label is truncated toward
+        zero (``1.7`` becomes ``1``). An empty array, or one holding NaN or
+        inf, raises ``ValueError``. A shape of ``(ncpl,)``, ``(1, ncpl)`` or
+        ``(ncpl, 1)`` is one label per cell; ``(nlay, ncpl)`` is accepted only
+        when every layer carries the same labels. The shape is checked against
+        the grid when the parameter is built (``resolve_zone_array``), not
+        here. For array targets a label ``<= 0`` is left unparameterized; for
+        list targets zone ``0`` becomes a real parameter and a warning says so.
+    source : str, optional
+        Human-readable description of where the labels came from, quoted in
+        error and warning messages. Default ``"array"``; the ``from_*``
+        constructors fill it in.
     """
 
     #: One integer label per cell, length ``ncpl`` (2-D input is flattened per
@@ -85,7 +102,18 @@ class ZoneSpec:
 
     @classmethod
     def from_array(cls, values, *, source: str = "array") -> ZoneSpec:
-        """Zones from an array you already have (per-cell or per-layer)."""
+        """Zones from an array you already have (per-cell or per-layer).
+
+        Parameters
+        ----------
+        values : array_like of int
+            One integer label per cell, or one row per layer carrying the same
+            labels; see the class ``values`` entry for the shapes, the int cast
+            and what is refused.
+        source : str, optional
+            Description quoted in error and warning messages. Default
+            ``"array"``.
+        """
 
         return cls(values=np.asarray(values), source=source)
 
@@ -102,6 +130,24 @@ class ZoneSpec:
         A cell too small to hold a pixel CENTRE takes the label under its
         centroid, as the surface sampler does; a cell whose centroid is off the
         raster, or on its no-data, gets ``nodata_zone``.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Categorical raster opened with ``rasterio``; band 1 is read and its
+            values cast to integers. Pixels equal to the file's declared nodata
+            value never vote.
+        model : SimulationBase
+            The myflopy model the calibration is built on (``cal.model``). Its
+            ``model.vor.gdf_vorPolys`` cell polygons are what is sampled,
+            reprojected to the raster's CRS when both declare one; when either
+            lacks a CRS a ``UserWarning`` is issued and the polygons are used
+            as they are. The result has one label per cell of that grid.
+        nodata_zone : int, optional
+            Label for a cell that holds no valid pixel centre AND whose centroid
+            is off the raster or on its nodata (a cell holding no pixel centre
+            otherwise takes the label under its centroid). Default ``0``, which
+            array targets leave unparameterized.
         """
 
         return cls(
@@ -132,6 +178,27 @@ class ZoneSpec:
         A layer reaching NO cell warns, with both extents and both CRSs, since
         array targets skip ``nodata_zone`` entirely and would be parameterizing
         nothing.
+
+        Parameters
+        ----------
+        polygons : geopandas.GeoDataFrame or str or pathlib.Path
+            The zone polygons. A GeoDataFrame is used as given; anything else is
+            opened with ``geopandas.read_file`` (its first layer). Reprojected
+            to the grid's CRS when both declare one and they differ; with
+            either CRS missing the coordinates are compared as they are.
+        model : SimulationBase
+            The myflopy model the calibration is built on (``cal.model``). Its
+            ``model.vor.gdf_vorPolys`` cell polygons supply the centroids, and
+            the result has one label per cell of that grid.
+        column : str or None, optional
+            Column holding each polygon's integer label; its values are cast
+            with ``astype(int)``, so a float label is truncated. A row whose
+            label is missing (NULL) is not a zone. Default ``None`` numbers the
+            polygons ``1..n`` in row order. A name absent from the layer raises
+            ``KeyError`` listing the columns it has.
+        nodata_zone : int, optional
+            Label for a cell whose centroid falls in no labelled polygon.
+            Default ``0``, which array targets leave unparameterized.
         """
 
         import geopandas as gpd

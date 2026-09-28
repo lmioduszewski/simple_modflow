@@ -116,6 +116,126 @@ class ParticleTrackingInput:
     then can invoke the mod-PATH3DU executable. Prefer the native MF6
     :class:`~myflopy.modflow.mf6.prt.PRTProject` (``model.particle_tracking.prt(...)``)
     for new work; use this when you specifically need mod-PATH3DU.
+
+    Construction resolves the executable paths, stores the options and creates
+    ``output_path``; no input file is read, checked or written until a method
+    needs it (:meth:`run`, :meth:`validate_inputs`, ...). The three tools are run
+    as subprocesses with ``output_path`` as the working directory.
+
+    Parameters
+    ----------
+    model : SimulationBase, optional
+        The flow model. Its ``name`` names the default MF6 output files and the
+        MP3DU outputs, its ``model_output_folder_path`` is where the MF6 outputs
+        are copied from (and the default ``output_path``), its ``vor`` locates
+        particles on cells, and its ``gwf.modelgrid``/``gwf.package_dict`` give the
+        layer count, the idomain and the boundary packages. ``None`` (the default)
+        only constructs when ``output_path`` is given (otherwise
+        ``AttributeError``), and :meth:`validate_inputs` and :meth:`run` then raise
+        ``ValueError``.
+    writep3dgsf_path : str or pathlib.Path, optional
+        The writeP3DGSF executable, which turns the MF6 binary grid file into the
+        grid specification (GSF) file mod-PATH3DU reads; every :meth:`run` runs
+        it. ``None`` (the default) resolves ``writep3dgsf.exe`` from the
+        ``MYFLOPY_MP3DU_DIR`` directory, else the repository's ``tools/mp3du/``,
+        else (deprecated, with a warning) the package directory. A missing file
+        raises ``FileNotFoundError`` in :meth:`validate_inputs`.
+    mp3du_path : str or pathlib.Path, optional
+        The mod-PATH3DU executable (``mp3du.exe``), resolved the same way.
+        Required only when :meth:`run` is asked to ``execute``.
+    writep3doutput_path : str or pathlib.Path, optional
+        The writeP3DOutput executable (``writep3doutput.exe``), resolved the same
+        way, which converts mod-PATH3DU's binary pathline output into shapefiles
+        and a DBF table. Required only when :meth:`run` executes AND
+        ``convert_output``.
+    model_output_files : dict of str to str, optional
+        File names of the MF6 files mod-PATH3DU reads, under the keys ``"grb"``,
+        ``"tdis"``, ``"hds"``, ``"cbc"`` and ``"gsf"``. ``None`` (the default)
+        uses ``<model name>.disv.grb``, ``.tdis``, ``.hds``, ``.cbc`` and ``.gsf``
+        -- names derived from the model name, not read from its OC or name file.
+        A dict replaces the defaults wholesale, so give all five keys. Each file
+        but the GSF (which :meth:`run` generates) must be in ``output_path`` or in
+        the model's output folder, whence it is copied; ``FileNotFoundError``
+        otherwise.
+    output_path : str or pathlib.Path, optional
+        Workspace for every MP3DU input and output, created (with its parents) at
+        construction. ``None`` (the default) uses the model's output folder.
+    porosities_by_layer : Sequence[float], optional
+        One porosity per model layer, written as a ``CONSTANT`` ``POROSITY`` line
+        per layer in the PATH file (``mp3du.p3d``). Required: :meth:`validate_inputs`
+        raises ``ValueError`` when it is ``None`` and ``AssertionError`` unless it
+        holds ``int``/``float`` instances, exactly one per layer.
+    particle_shp : str or pathlib.Path, optional
+        A ``.shp`` or ``.gpkg`` (first layer) of release locations. It is passed to
+        mod-PATH3DU as-is when every feature is a point or multipoint and it has
+        cell-id, release-time and z-location columns under one of the default names
+        (``cells``/``Node``/``node``/``P3D_CellID``/``CELLID``/``cellid``;
+        ``TimeRel``/``TREL``/``time``/``Time``/``trel``; ``ZLoc``/``ZLOC``/``zloc``).
+        Otherwise its features are mapped onto model cells
+        (``model.vor.get_vor_cells_as_series``) and a point file with one particle
+        per distinct cell is generated (``mp3du_particles_from_vector.shp``), as
+        for ``particle_cells``. Exactly one of ``particle_shp`` and
+        ``particle_cells`` is required (``ValueError`` otherwise;
+        ``FileNotFoundError`` when the file is missing).
+    particle_cells : list of int, optional
+        Zero-based cell (CELL2D) numbers; one particle is generated at each cell's
+        polygon centroid, into ``mp3du_particle_cells.shp`` in ``output_path``
+        (columns ``P3D_CellID`` = cell + 1, ``TimeRel``, ``ZLoc``, ``LocName`` and
+        ``Cell0``). A number outside ``0 .. ncpl - 1`` raises ``ValueError``.
+    particle_field_map : dict, optional
+        Which columns of the particle file supply mod-PATH3DU's release fields:
+        ``"CELLID_ATTR"``, ``"TIME_ATTR"`` and ``"ZLOC_ATTR"`` (one column name
+        each) and ``"ADDTL_ATTR"`` (a name or list of extra columns, written to the
+        JSON as ``ADDTL_ATTR``). A key left out is found among the default names above
+        (``ADDTL_ATTR`` among ``LocName``/``locname``/``name``/``Name``), and a
+        named or required column that is missing raises ``ValueError``. For a
+        generated particle file an empty map (the default) uses the generated
+        columns. It is NOT consulted when deciding whether a ``particle_shp`` can
+        be used as-is (see above).
+    cellid_index_base : int, default 0
+        The base of the cell ids in the particle file's cell-id column: subtracted
+        to compare them with the cell each geometry falls in, for the start-cell
+        diagnostics only (the file reaches mod-PATH3DU unchanged). Forced to 1
+        whenever the particle file is generated (``particle_cells``, or a
+        ``particle_shp`` that had to be regenerated), whose ``P3D_CellID`` is
+        one-based.
+    iface_overrides : dict of str to int, optional
+        IFACE codes by boundary package type (keys upper-cased), merged over the
+        defaults CHD 2, DRN 7, GHB 2, RCH 6, RIV 6, SFR 6, EVT 6 and WEL 0. Only
+        the types of the model's packages that name cells (in
+        ``stress_period_data``/``packagedata``/``connectiondata``) are written to
+        the JSON's ``IFACE`` list -- all of them when no such package is found or
+        the packages cannot be read.
+    direction : str, default "FORWARD"
+        Tracking direction, upper-cased and written unchecked as the pathline
+        block's ``DIRECTION``.
+    simulation_end_time : float, optional
+        Written as the pathline block's ``SIMULATION_END_TIME`` (model time
+        units). ``None`` (the default) leaves it out.
+    flow_thread_count : int, default 10
+        Written as the flow-model block's ``THREAD_COUNT``.
+    pathline_thread_count : int, default 4
+        Written as the pathline block's ``THREAD_COUNT``.
+    initial_stepsize : float, default 0.1
+        Written as the pathline block's ``INITIAL_STEPSIZE``.
+    euler_dt : float, default 1.0e-4
+        Written as the pathline block's ``EULER_DT``.
+    adaptive_step_error : float, default 1.0e-6
+        Written as the pathline block's ``ADAPTIVE_STEP_ERROR``.
+    capture_radius : float, default 10.0
+        Written as the pathline block's ``CAPTURE_RADIUS``.
+    tracking_options : list of str, optional
+        Written as the pathline block's ``OPTIONS``. ``None`` (the default) writes
+        ``["TRACK_TO_TERMINATION"]``.
+    generated_particle_zloc : float, default 0.95
+        The ``ZLoc`` value (what mod-PATH3DU reads as the z location) stamped on
+        every GENERATED particle; ignored for a particle file used as-is.
+    generated_particle_release_time : float, default 0.0
+        The ``TimeRel`` (release time) stamped on every generated particle.
+    generated_particle_label_prefix : str, default "cell_"
+        Generated particles are labelled ``<prefix><cell>`` in ``LocName``; a
+        regenerated ``particle_shp`` replaces the prefix with
+        ``<file stem>_cell_``.
     """
 
     _DEFAULT_FIELD_ALIASES = {
@@ -686,7 +806,27 @@ class ParticleTrackingInput:
         return dict(sorted(boundary_cells.items()))
 
     def summarize_endpoint_output(self, endpoint_path: Path | None = None) -> dict[str, int]:
-        """Count particle termination reasons (``PTERM``) in the endpoint output shapefile."""
+        """Count particle termination reasons (``PTERM``) in the endpoint output shapefile.
+
+        Parameters
+        ----------
+        endpoint_path : str or pathlib.Path, optional
+            The endpoint shapefile (or GeoPackage) writeP3DOutput produced. ``None``
+            (the default) reads ``<model name>_endpoint.shp`` in ``output_path``.
+
+        Returns
+        -------
+        dict of str to int
+            Particle count per ``PTERM`` value (as text, a missing value counted
+            as ``"None"``), sorted by that text.
+
+        Raises
+        ------
+        FileNotFoundError
+            When the endpoint file does not exist.
+        ValueError
+            When it has no ``PTERM`` column.
+        """
 
         path = self.output_path / self.output_names["ENDPOINT"] if endpoint_path is None else Path(endpoint_path)
         if not path.exists():
@@ -714,7 +854,30 @@ class ParticleTrackingInput:
         """Validate everything needed to build (and optionally run/convert) an MP3DU run.
 
         Checks the model, particle source, porosities, and the required executables
-        exist, and eagerly resolves the particle input path + field map.
+        exist, and eagerly resolves the particle input path + field map (which may
+        write a generated particle file into ``output_path``).
+
+        Parameters
+        ----------
+        execute : bool
+            Whether mod-PATH3DU will be run: ``True`` also requires the
+            ``mp3du_path`` executable to exist. The writeP3DGSF executable is
+            required either way.
+        convert_output : bool
+            Whether its output will be converted: with ``execute``, also requires
+            the ``writep3doutput_path`` executable. Ignored without ``execute``.
+
+        Raises
+        ------
+        ValueError
+            No model, no (or two) particle sources, ``porosities_by_layer`` is
+            ``None``, a ``particle_cells`` number out of range, a ``particle_shp``
+            that has to be regenerated but maps onto no cell, or a particle file
+            that lacks a required field.
+        FileNotFoundError
+            The particle file or a required executable is missing.
+        AssertionError
+            ``porosities_by_layer`` is not one number per model layer.
         """
 
         self._require_model()
@@ -818,7 +981,25 @@ class ParticleTrackingInput:
         return self.path_file_path
 
     def run_mp3du(self, json_file_path: Path):
-        """Run mod-PATH3DU in the configured workspace."""
+        """Run mod-PATH3DU in the configured workspace.
+
+        Parameters
+        ----------
+        json_file_path : str or pathlib.Path
+            The mod-PATH3DU JSON configuration (:meth:`create_json_file` writes
+            ``mp3du_input.json``). Only its file NAME is passed to the tool, which
+            runs in ``output_path``, so the file must be there.
+
+        Returns
+        -------
+        subprocess.CompletedProcess
+            The finished process, with its captured text output.
+
+        Raises
+        ------
+        RuntimeError
+            When the tool exits non-zero; the message carries its stderr.
+        """
 
         cmd = [self.mp3du_path.as_posix(), Path(json_file_path).name, "colorcode"]
         result = subprocess.run(
@@ -907,7 +1088,25 @@ class ParticleTrackingInput:
         return self.create_output_json_file()
 
     def run_output_conversion(self, output_json_path: Path):
-        """Run the ``writep3doutput`` tool to convert the binary pathline output into shapefiles/tables."""
+        """Run the ``writep3doutput`` tool: convert the binary pathline output to shapefiles/tables.
+
+        Parameters
+        ----------
+        output_json_path : str or pathlib.Path
+            The conversion configuration (:meth:`create_output_json_file` writes
+            ``P3DOutput_json.json``). Only its file NAME is passed to the tool,
+            which runs in ``output_path``, so the file must be there.
+
+        Returns
+        -------
+        subprocess.CompletedProcess
+            The finished process, with its captured text output.
+
+        Raises
+        ------
+        RuntimeError
+            When the tool exits non-zero; the message carries its stderr.
+        """
 
         cmd = [self.writep3doutput_path.as_posix(), Path(output_json_path).name, "colorcode"]
         result = subprocess.run(
@@ -926,7 +1125,25 @@ class ParticleTrackingInput:
         start_cells: dict[str, Any] | None = None,
         endpoint_summary: dict[str, int] | None = None,
     ) -> Path:
-        """Write the start-cell and endpoint diagnostics to a JSON file and return its path."""
+        """Write the start-cell and endpoint diagnostics to a JSON file and return its path.
+
+        The file is ``mp3du_diagnostics.json`` in ``output_path``, overwritten.
+
+        Parameters
+        ----------
+        start_cells : dict, optional
+            Written under the ``"start_cells"`` key -- normally
+            :meth:`get_start_cell_diagnostics`' result. Must be JSON-serializable;
+            ``None`` (the default) writes ``null``.
+        endpoint_summary : dict of str to int, optional
+            Written under the ``"endpoint_summary"`` key -- normally
+            :meth:`summarize_endpoint_output`' result. ``None`` (the default)
+            writes ``null``.
+
+        Returns
+        -------
+        pathlib.Path
+        """
 
         diagnostics = {
             "start_cells": start_cells,
@@ -944,7 +1161,41 @@ class ParticleTrackingInput:
         convert_output: bool = True,
         write_diagnostics: bool = True,
     ) -> ParticleTrackingResult:
-        """Create MP3DU inputs and optionally execute the full run."""
+        """Create MP3DU inputs and optionally execute the full run.
+
+        In order: :meth:`validate_inputs`, copy the MF6 output files into
+        ``output_path``, compute the start-cell diagnostics, run writeP3DGSF to make
+        the GSF file (always -- even without ``execute``), write the PATH file and
+        ``mp3du_input.json``, then optionally run and convert.
+
+        Parameters
+        ----------
+        execute : bool, default True
+            Run mod-PATH3DU on the inputs just written. ``False`` stops after
+            writing them.
+        convert_output : bool, default True
+            With ``execute``, write ``P3DOutput_json.json``, run writeP3DOutput to
+            produce the pathline, points-in-time and endpoint shapefiles and the
+            DBF table, and summarize the endpoint file when it exists. Ignored
+            without ``execute``.
+        write_diagnostics : bool, default True
+            Write ``mp3du_diagnostics.json`` (:meth:`write_diagnostics_file`) with
+            the start-cell diagnostics and the endpoint summary.
+
+        Returns
+        -------
+        ParticleTrackingResult
+            The written file paths and diagnostics; ``output_json`` and
+            ``endpoint_summary`` are ``None`` for a step that did not run, and
+            ``diagnostics_file`` is ``None`` without ``write_diagnostics``.
+
+        Raises
+        ------
+        ValueError, FileNotFoundError, AssertionError
+            From :meth:`validate_inputs`, or a missing MF6 output file.
+        RuntimeError
+            When one of the three tools exits non-zero.
+        """
 
         self.validate_inputs(execute=bool(execute), convert_output=bool(convert_output))
         self.create_modflow_input_files()
@@ -994,24 +1245,46 @@ def prepare_particle_tracking(
 ) -> tuple[ParticleTrackingInput, ParticleTrackingResult]:
     """Create and optionally run a MP3DU particle-tracking job from a vector file or cell IDs.
 
+    ``prepare_particle_tracking`` defaults to ``execute=False`` and
+    ``convert_output=False`` so it can be used as a setup-first workflow before the
+    final ``tracker.run(...)`` call. It still runs writeP3DGSF, because
+    :meth:`ParticleTrackingInput.run` always makes the GSF file.
+
     Parameters
     ----------
-    model
-        ``SimulationBase``-like model object.
-    particles
-        Either a shapefile/geopackage path or a list of zero-based cell IDs.
-    porosity
-        Scalar layer porosity or one value per layer.
-    output_path
-        Workspace for MP3DU inputs and outputs. Defaults to ``model.model_output_folder_path``.
-    execute, convert_output, write_diagnostics
-        Passed through to :meth:`ParticleTrackingInput.run`. ``prepare_particle_tracking``
-        defaults to ``execute=False`` and ``convert_output=False`` so it can be used as
-        a setup-first workflow before the final ``tracker.run(...)`` call.
+    model : SimulationBase
+        The flow model (``SimulationBase``-like: ``name``,
+        ``model_output_folder_path``, ``vor`` and ``gwf``). See
+        :class:`ParticleTrackingInput`.
+    particles : str, pathlib.Path, or Sequence[int]
+        The release source. A ``str`` or ``Path`` is a ``.shp``/``.gpkg`` file,
+        passed as ``particle_shp``; anything else is iterated as zero-based cell
+        (CELL2D) numbers, passed as ``particle_cells``.
+    porosity : float or Sequence[float], default 0.2
+        An ``int``/``float`` is repeated for every model layer
+        (``model.gwf.modelgrid.nlay``); anything else is iterated, one value per
+        layer. Becomes ``porosities_by_layer`` (a ``porosities_by_layer`` passed in
+        ``kwargs`` replaces it).
+    output_path : str or pathlib.Path, optional
+        Workspace for MP3DU inputs and outputs. Defaults to
+        ``model.model_output_folder_path``.
+    execute : bool, default False
+        Passed to :meth:`ParticleTrackingInput.run`: run mod-PATH3DU after writing
+        its inputs.
+    convert_output : bool, default False
+        Passed to :meth:`ParticleTrackingInput.run`: with ``execute``, convert the
+        binary output to shapefiles and summarize the endpoints.
+    write_diagnostics : bool, default True
+        Passed to :meth:`ParticleTrackingInput.run`: write
+        ``mp3du_diagnostics.json``.
     **kwargs
-        Additional :class:`ParticleTrackingInput` keyword arguments such as
-        ``direction``, ``simulation_end_time``, ``iface_overrides``,
-        ``generated_particle_zloc``, and threading controls.
+        Forwarded to the :class:`ParticleTrackingInput` constructor -- any of its
+        keywords, such as ``direction``, ``simulation_end_time``,
+        ``iface_overrides``, ``generated_particle_zloc``, the executable paths and
+        the threading controls. A ``particle_shp``/``particle_cells`` here of the
+        same kind as ``particles`` is overwritten by it; one of the other kind is
+        kept beside it, and the run then raises ``ValueError`` for two particle
+        sources. An unknown keyword raises ``TypeError``.
 
     Returns
     -------
@@ -1062,6 +1335,39 @@ def run_particle_tracking(
 
     ``run_particle_tracking(model=model, particles=Path('my.gpkg'))``
     ``run_particle_tracking(model=model, particles=[9151, 9152, 9747])``
+
+    It is :func:`prepare_particle_tracking` with ``execute`` and ``convert_output``
+    defaulting to ``True``, returning only the result.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        The flow model. See :class:`ParticleTrackingInput`.
+    particles : str, pathlib.Path, or Sequence[int]
+        A ``.shp``/``.gpkg`` path of release locations, or zero-based cell (CELL2D)
+        numbers. See :func:`prepare_particle_tracking`.
+    porosity : float or Sequence[float], default 0.2
+        One porosity for every layer, or one per layer.
+    output_path : str or pathlib.Path, optional
+        Workspace for MP3DU inputs and outputs. Defaults to
+        ``model.model_output_folder_path``.
+    execute : bool, default True
+        Run mod-PATH3DU after writing its inputs (requires the ``mp3du``
+        executable).
+    convert_output : bool, default True
+        With ``execute``, convert the binary output to shapefiles with
+        writeP3DOutput and summarize the endpoints.
+    write_diagnostics : bool, default True
+        Write ``mp3du_diagnostics.json``.
+    **kwargs
+        Forwarded through :func:`prepare_particle_tracking` to the
+        :class:`ParticleTrackingInput` constructor; an unknown keyword raises
+        ``TypeError``.
+
+    Returns
+    -------
+    ParticleTrackingResult
+        The structured result of :meth:`ParticleTrackingInput.run`.
     """
 
     _, result = prepare_particle_tracking(

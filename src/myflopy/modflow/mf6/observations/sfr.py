@@ -100,15 +100,38 @@ class SfrStageTargets:
 
     Parameters
     ----------
-    locations
-        ``name -> reach`` definitions: a dict, ``Series``, list of records, or a
-        DataFrame with ``name``/``reach`` columns. Reach numbers are zero-based.
-    values
-        Observed stage table (long or wide). Optional (template mode).
-    time_column, value_column
-        Column names in ``values`` for the period/time index and the stage value.
-    times
-        Optional explicit period/time labels when ``values`` carries none.
+    locations : dict, pandas.Series, pandas.DataFrame, list, tuple or None, optional
+        The named reaches: a ``{name: reach}`` dict, a ``Series`` indexed by
+        name, or a ``DataFrame`` / list of record dicts with ``name`` and
+        ``reach`` columns (``ValueError`` naming whichever is missing; a
+        repeated name keeps its FIRST row). ``reach`` is MF6's reach number,
+        ZERO-based (:meth:`to_flopy_obs` writes it one-based); each is passed
+        through ``int`` and each name through ``str``. Default ``None``: no
+        targets.
+    values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
+        Observed stage through time, in the model's length units. A path is
+        read with ``pandas.read_csv``. LONG form has ``name`` and
+        ``value_column`` columns (headers matched ignoring case); WIDE form has
+        one column per target name beside ``time_column``; a table of only
+        ``time_column`` and ``value_column``, or a ``Series`` indexed by time,
+        is one series and needs exactly one target reach (``ValueError``
+        otherwise). Names are NOT checked against ``locations`` and are joined
+        to them exactly (case counts): a row naming no target gets no ``reach``
+        and no simulated stage in :meth:`compare`.
+        Default ``None`` makes a template that only captures simulated series.
+    time_column : str, optional
+        Column of ``values`` holding each row's time label, matched exactly.
+        Default ``"time"``; ``ValueError`` when ``values`` lacks it after
+        ``times`` is applied. :meth:`compare` reads it as a zero-based stress
+        period on the stage-file route.
+    value_column : str, optional
+        Column of a LONG ``values`` table holding the observed stage, matched
+        ignoring case. Default ``"stage"``.
+    times : list, tuple, pandas.Index, pandas.Series or None, optional
+        Time labels inserted as ``time_column`` when ``values`` is a ``dict`` or
+        list/tuple without that column; a list/tuple of another length raises
+        ``ValueError``. Ignored for a ``DataFrame``, ``Series`` or CSV path.
+        Default ``None``.
 
     Examples
     --------
@@ -296,13 +319,41 @@ class SfrStageTargets:
         return _copy_frame(compare)
 
     def residuals(self, model) -> pd.DataFrame:
-        """Return a compact residual table (target/sim/residual) for SFR-stage targets."""
+        """Return a compact residual table (target/sim/residual) for SFR-stage targets.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with an SFR package; passed to :meth:`compare`, whose
+            routes and ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
+            ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
+            ``abs_residual``.
+        """
 
         frame = self.compare(model)
         return frame.loc[:, ["name", "reach", "time", "per", "stage_target", "sim_stage", "residual", "abs_residual"]]
 
     def stats(self, model) -> pd.DataFrame:
-        """Return aggregate residual statistics for the SFR-stage target set."""
+        """Return aggregate residual statistics for the SFR-stage target set.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with an SFR package; passed to :meth:`compare`, whose
+            routes and ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n`` (rows with a residual), ``mean_error``, ``mae`` and
+            ``rmse`` of simulated minus target, in model length units. ``n`` is 0
+            and the rest ``NaN`` when no row has a residual.
+        """
 
         return _default_compare_stats(self.compare(model))
 
@@ -312,7 +363,31 @@ class SfrStageTargets:
         csv_name: str = "sfr_stage_targets.csv",
         kind: str = "STAGE",
     ) -> dict[str, list[tuple[str, str, int]]]:
-        """Return a FloPy ``continuous`` dict for MF6 SFR-stage observations (one-based reaches)."""
+        """Return a FloPy ``continuous`` dict for MF6 SFR-stage observations (one-based reaches).
+
+        Parameters
+        ----------
+        csv_name : str, optional
+            The CSV file MF6 writes these observations to -- the dict's one key.
+            Default ``"sfr_stage_targets.csv"``. :meth:`simulated_series` reads
+            observations back from a workspace CSV holding every target's
+            column, and skips any file whose name contains ``simulated_`` or
+            ``_target_``.
+        kind : str, optional
+            The MF6 SFR observation type written on every record, upper-cased.
+            Default ``"STAGE"``. The observation route of :meth:`simulated_series`
+            and :meth:`compare` reads whatever that CSV holds as the stage.
+
+        Returns
+        -------
+        dict of str to list of tuple
+            ``{csv_name: [(label, kind, reach + 1), ...]}``, one record per
+            target: its name with every character that is not a letter or digit
+            made ``_`` and leading and trailing ``_`` stripped (``"obs"`` if
+            nothing is left), and its reach ONE-based. The shape
+            ``ModflowUtlobs(continuous=)`` and an SFR package's
+            ``observations=`` take.
+        """
 
         records = [
             (_observation_label(name), str(kind).upper(), int(reach) + 1)
@@ -330,7 +405,38 @@ class SfrStageTargets:
         kind: str = "STAGE",
         package=None,
     ):
-        """Attach an MF6 utility observation package to SFR for these stage targets."""
+        """Attach an MF6 utility observation package to SFR for these stage targets.
+
+        The package is added to the FloPy objects in memory; writing and running
+        the simulation afterwards is the caller's.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            The model whose FloPy SFR package, ``model.gwf.sfr``, receives the
+            OBS package unless ``package`` is given (a model with no SFR raises
+            ``AttributeError`` there). The records themselves need no model.
+        pname : str, optional
+            FloPy package name. Default ``"sfr_stage_obs"``.
+        filename : str, optional
+            The OBS input file name FloPy writes, in the owning model's
+            directory. Default ``"sfr_stage_targets.obs"``.
+        csv_name : str or None, optional
+            The CSV file MF6 writes the observations to. Default ``None`` takes
+            ``filename``'s stem plus ``.csv`` (``"sfr_stage_targets.csv"`` for
+            the default ``filename``).
+        kind : str, optional
+            The MF6 SFR observation type, as in :meth:`to_flopy_obs`. Default
+            ``"STAGE"``.
+        package : flopy object or None, optional
+            The FloPy package (or model) to attach the OBS package to instead of
+            ``model.gwf.sfr``. Default ``None``.
+
+        Returns
+        -------
+        flopy.mf6.modflow.mfutlobs.ModflowUtlobs
+            The observation package.
+        """
 
         import flopy
 
@@ -366,15 +472,40 @@ class SfrFlowTargets:
 
     Parameters
     ----------
-    locations
-        ``name -> reach`` definitions: a dict, ``Series``, list of records, or a
-        DataFrame with ``name``/``reach`` columns. Reach numbers are zero-based.
-    values
-        Observed flow table (long or wide). Optional (template mode).
-    time_column, value_column
-        Column names in ``values`` for the period/time index and the flow value.
-    times
-        Optional explicit period/time labels when ``values`` carries none.
+    locations : dict, pandas.Series, pandas.DataFrame, list, tuple or None, optional
+        The named (gage) reaches: a ``{name: reach}`` dict, a ``Series`` indexed
+        by name, or a ``DataFrame`` / list of record dicts with ``name`` and
+        ``reach`` columns (``ValueError`` naming whichever is missing; a
+        repeated name keeps its FIRST row). ``reach`` is MF6's reach number,
+        ZERO-based (:meth:`to_flopy_obs` writes it one-based); each is passed
+        through ``int`` and each name through ``str``. Default ``None``: no
+        targets.
+    values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
+        Observed streamflow through time, in model length cubed per model time
+        unit. :meth:`compare` subtracts it from the simulated flow, which is a
+        positive MAGNITUDE on the budget-file route and carries MF6's sign on
+        the observation route. A path is read with ``pandas.read_csv``. LONG
+        form has ``name`` and ``value_column`` columns (headers matched
+        ignoring case); WIDE form has one column per target name beside
+        ``time_column``; a table of only ``time_column`` and ``value_column``,
+        or a ``Series`` indexed by time, is one series and needs exactly one
+        target reach (``ValueError`` otherwise). Names are NOT checked against
+        ``locations`` and are joined to them exactly (case counts): a row
+        naming no target gets no ``reach`` and no simulated flow. Default
+        ``None`` makes a capture template.
+    time_column : str, optional
+        Column of ``values`` holding each row's time label, matched exactly.
+        Default ``"time"``; ``ValueError`` when ``values`` lacks it after
+        ``times`` is applied. :meth:`compare` reads it as a zero-based stress
+        period on the budget-file route.
+    value_column : str, optional
+        Column of a LONG ``values`` table holding the observed flow, matched
+        ignoring case. Default ``"flow"``.
+    times : list, tuple, pandas.Index, pandas.Series or None, optional
+        Time labels inserted as ``time_column`` when ``values`` is a ``dict`` or
+        list/tuple without that column; a list/tuple of another length raises
+        ``ValueError``. Ignored for a ``DataFrame``, ``Series`` or CSV path.
+        Default ``None``.
 
     Examples
     --------
@@ -679,13 +810,42 @@ class SfrFlowTargets:
         return _copy_frame(compare)
 
     def residuals(self, model) -> pd.DataFrame:
-        """Return a compact residual table (target/sim/residual) for SFR-flow targets."""
+        """Return a compact residual table (target/sim/residual) for SFR-flow targets.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with an SFR package; passed to :meth:`compare`, whose
+            routes and ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
+            ``per``, ``flow_target``, ``sim_flow``, ``residual`` and
+            ``abs_residual``.
+        """
 
         frame = self.compare(model)
         return frame.loc[:, ["name", "reach", "time", "per", "flow_target", "sim_flow", "residual", "abs_residual"]]
 
     def stats(self, model) -> pd.DataFrame:
-        """Return aggregate residual statistics for the SFR-flow target set."""
+        """Return aggregate residual statistics for the SFR-flow target set.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A run model with an SFR package; passed to :meth:`compare`, whose
+            routes and ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n`` (rows with a residual), ``mean_error``, ``mae`` and
+            ``rmse`` of simulated minus target, in model flow units (length
+            cubed per time). ``n`` is 0 and the rest ``NaN`` when no row has a
+            residual.
+        """
 
         return _default_compare_stats(self.compare(model))
 
@@ -695,7 +855,32 @@ class SfrFlowTargets:
         csv_name: str = "sfr_flow_targets.csv",
         kind: str = "DOWNSTREAM-FLOW",
     ) -> dict[str, list[tuple[str, str, int]]]:
-        """Return a FloPy ``continuous`` dict for MF6 SFR-flow observations (one-based reaches)."""
+        """Return a FloPy ``continuous`` dict for MF6 SFR-flow observations (one-based reaches).
+
+        Parameters
+        ----------
+        csv_name : str, optional
+            The CSV file MF6 writes these observations to -- the dict's one key.
+            Default ``"sfr_flow_targets.csv"``. :meth:`simulated_series` reads
+            observations back from a workspace CSV holding every target's
+            column, and skips any file whose name contains ``simulated_`` or
+            ``_target_``.
+        kind : str, optional
+            The MF6 SFR observation type written on every record, upper-cased.
+            Default ``"DOWNSTREAM-FLOW"``, which MF6 reports NEGATIVE; the
+            observation route of :meth:`simulated_series` and :meth:`compare`
+            reads whatever that CSV holds, sign included, as the flow.
+
+        Returns
+        -------
+        dict of str to list of tuple
+            ``{csv_name: [(label, kind, reach + 1), ...]}``, one record per
+            target: its name with every character that is not a letter or digit
+            made ``_`` and leading and trailing ``_`` stripped (``"obs"`` if
+            nothing is left), and its reach ONE-based. The shape
+            ``ModflowUtlobs(continuous=)`` and an SFR package's
+            ``observations=`` take.
+        """
 
         records = [
             (_observation_label(name), str(kind).upper(), int(reach) + 1)
@@ -713,7 +898,38 @@ class SfrFlowTargets:
         kind: str = "DOWNSTREAM-FLOW",
         package=None,
     ):
-        """Attach an MF6 utility observation package to SFR for these flow targets."""
+        """Attach an MF6 utility observation package to SFR for these flow targets.
+
+        The package is added to the FloPy objects in memory; writing and running
+        the simulation afterwards is the caller's.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            The model whose FloPy SFR package, ``model.gwf.sfr``, receives the
+            OBS package unless ``package`` is given (a model with no SFR raises
+            ``AttributeError`` there). The records themselves need no model.
+        pname : str, optional
+            FloPy package name. Default ``"sfr_flow_obs"``.
+        filename : str, optional
+            The OBS input file name FloPy writes, in the owning model's
+            directory. Default ``"sfr_flow_targets.obs"``.
+        csv_name : str or None, optional
+            The CSV file MF6 writes the observations to. Default ``None`` takes
+            ``filename``'s stem plus ``.csv`` (``"sfr_flow_targets.csv"`` for
+            the default ``filename``).
+        kind : str, optional
+            The MF6 SFR observation type, as in :meth:`to_flopy_obs`. Default
+            ``"DOWNSTREAM-FLOW"``.
+        package : flopy object or None, optional
+            The FloPy package (or model) to attach the OBS package to instead of
+            ``model.gwf.sfr``. Default ``None``.
+
+        Returns
+        -------
+        flopy.mf6.modflow.mfutlobs.ModflowUtlobs
+            The observation package.
+        """
 
         import flopy
 

@@ -101,10 +101,14 @@ class PackageRef:
     Construct one with the :func:`ref` helper rather than directly. It is
     serializable (``to_dict``/``from_dict``) so a recipe carrying refs round-trips.
 
-    Attributes
+    Parameters
     ----------
-    key
-        The project package-library key this reference resolves to.
+    key : str
+        The project package-library key this reference resolves to, as given to
+        ``project.add_package(key, spec)``. Leading and trailing whitespace is
+        stripped; an empty or all-whitespace key raises ``ValueError``. It is
+        not checked against any library here -- an unknown key fails when the
+        run is built and the reference is resolved.
 
     See Also
     --------
@@ -146,7 +150,15 @@ class PackageRef:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PackageRef:
-        """Recreate a package reference from :meth:`to_dict` output."""
+        """Recreate a package reference from :meth:`to_dict` output.
+
+        Parameters
+        ----------
+        data : dict
+            A mapping carrying a ``"key"`` entry, as :meth:`to_dict` writes
+            (``{"kind": "PackageRef", "key": ...}``). Only ``"key"`` is read; a
+            missing one raises ``KeyError``.
+        """
 
         return cls(data["key"])
 
@@ -158,6 +170,19 @@ def ref(key: str) -> PackageRef:
     in a :class:`~myflopy.workspace.Project` package library, for example
     ``mf.gwf("flow", packages=[mf.ref("npf/base"), ...])``. The reference is
     resolved against the project's package library when the run is built.
+
+    Parameters
+    ----------
+    key : str
+        The package-library key, as registered with ``project.add_package(key,
+        spec)``. Whitespace is stripped; an empty key raises ``ValueError``.
+        The key is not looked up here, so an unregistered one fails only when
+        the run is built.
+
+    Returns
+    -------
+    PackageRef
+        A reference whose ``name`` is ``key``.
     """
 
     return PackageRef(key)
@@ -174,10 +199,13 @@ class GridRef:
     project's grid library when the run is built. Construct one with the
     :func:`grid_ref` helper. Serializable so recipes round-trip.
 
-    Attributes
+    Parameters
     ----------
-    key
-        The project grid-library key this reference resolves to.
+    key : str
+        The project grid-library key this reference resolves to, as given to
+        ``project.add_grid(key, ...)``. Leading and trailing whitespace is
+        stripped; an empty or all-whitespace key raises ``ValueError``. It is
+        not checked against any library here.
 
     See Also
     --------
@@ -202,7 +230,15 @@ class GridRef:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GridRef:
-        """Recreate a grid reference from :meth:`to_dict` output."""
+        """Recreate a grid reference from :meth:`to_dict` output.
+
+        Parameters
+        ----------
+        data : dict
+            A mapping carrying a ``"key"`` entry, as :meth:`to_dict` writes
+            (``{"kind": "GridRef", "key": ...}``). Only ``"key"`` is read; a
+            missing one raises ``KeyError``.
+        """
 
         return cls(data["key"])
 
@@ -222,6 +258,25 @@ class GridRef:
         already flagged. A ``GridRef`` points INTO a project's grid library, so
         it cannot build anything on its own; look the key up, or let
         ``prepare_run`` resolve it.
+
+        Parameters
+        ----------
+        project_root : Path or str, optional
+            Accepted only so the signature matches :meth:`GridSpec.resolve`;
+            ignored. Default ``None``.
+        workspace : Path or str, optional
+            Accepted to match :meth:`GridSpec.resolve`; ignored. Default ``None``.
+        build : bool, optional
+            Accepted to match :meth:`GridSpec.resolve`; ignored. Default ``True``.
+        return_triangle : bool, optional
+            Accepted to match :meth:`GridSpec.resolve`; ignored. Default
+            ``False``.
+
+        Raises
+        ------
+        TypeError
+            Always, whatever the arguments, naming ``project.grids[key]`` and
+            ``project.prepare_run(...)`` as the two ways to resolve it.
         """
 
         raise TypeError(
@@ -239,6 +294,19 @@ def grid_ref(key: str) -> GridRef:
     :class:`~myflopy.workspace.Project` grid library, for example
     ``mf.gwf("flow", grid=mf.grid_ref("base"))``. The reference is resolved
     against the project's grid library when the run is built.
+
+    Parameters
+    ----------
+    key : str
+        The grid-library key, as registered with ``project.add_grid(key, ...)``.
+        Whitespace is stripped; an empty key raises ``ValueError``. The key is
+        not looked up here, so an unregistered one fails only when the run is
+        built.
+
+    Returns
+    -------
+    GridRef
+        A by-key reference, serialized on the model by ``ModelSpec.to_dict``.
     """
 
     return GridRef(key)
@@ -1834,6 +1902,71 @@ class PackageSpec:
     Builders receive the target as their first positional argument followed by
     the values in ``options``. A builder can be a FloPy package class or a
     small project-specific function.
+
+    The ``mf.*`` helpers (``mf.npf``, ``mf.chd.gpkg``, ...) construct these for
+    you; build one by hand only for a builder no helper covers.
+
+    Parameters
+    ----------
+    name : str
+        The package's identity inside its model (or simulation): the key
+        :meth:`ModelSpec.package`, ``with_packages(slot=...)`` and
+        ``without_packages`` match on, the key of ``BuiltModel.packages``, and
+        the name ``requires`` entries refer to. It must be unique among the
+        packages of one model. It is NOT passed to the builder, so it is not the
+        FloPy package name: the helpers put that in ``options`` (``pname``), and
+        a bare spec's package is named by FloPy (``chd_0``) unless ``options``
+        says otherwise. A builder that declares a keyword-only ``_spec``
+        parameter receives the whole spec and can read it.
+    builder : callable
+        Called at build time as ``builder(target, **inputs, **options)``, where
+        ``target`` is the FloPy model (or ``MFSimulation`` for a
+        simulation-level package); a builder declaring a keyword-only ``_spec``
+        parameter is also passed ``_spec=self``. Usually a FloPy package class
+        (``flopy.mf6.ModflowGwfnpf``), a ``functools.partial`` over one, or a
+        module-level function. :meth:`to_dict` stores it as an import path, so
+        it must be importable by that path to round-trip: a function (or
+        lambda) defined inside another function builds but raises
+        ``ValueError`` in :meth:`to_dict`, and a module-level lambda is written
+        but cannot be imported back by :meth:`from_dict`.
+    options : dict, optional
+        Keyword arguments for the builder. Checked at construction against what
+        the builder accepts -- the named parameters of a FloPy class, of the
+        classes a wrapper lists in ``mf6_targets`` (plus the wrapper's own), or
+        of the class a ``functools.partial`` binds -- and an unknown name raises
+        ``TypeError``, suggesting the closest valid name when one is close. A
+        plain function with no ``mf6_targets``, or a partial binding no class,
+        is not checked. Default: empty.
+    enabled : bool, optional
+        ``False`` keeps the package declared but skipped: :meth:`build` returns
+        ``None``, and an enabled sibling that ``requires`` it is refused with
+        ``ValueError`` as requiring a missing package, wherever ``requires`` is
+        checked. Default ``True``.
+    requires : sequence of str, optional
+        ``name`` values of packages in the same model that must be present,
+        enabled, and declared EARLIER in the package list; each violation raises
+        ``ValueError`` when the packages are validated -- at ``ModelSpec`` /
+        ``SimulationSpec`` construction when every entry is a concrete spec,
+        else when the refs are resolved at build. Checked only for an enabled
+        package. Stored as a tuple. Default: empty.
+    metadata : dict, optional
+        Provenance and bookkeeping written by the helpers and the grid machinery
+        -- the grid pin (``"grid_pin"``) and the options it certifies, move and
+        remap stamps, ``forked_from``/``edited`` notes, source hashes. It is not
+        passed to the builder as arguments (a builder declaring ``_spec`` can
+        read it off the spec), and :func:`package_digest` excludes it, so
+        stamping a note does not read as a change to the model. Default: empty.
+    inputs : dict, optional
+        The package's unresolved RECIPE, splatted into the builder beside
+        ``options``. Either keyword arguments for a recipe-resolving builder
+        (the lazy ``mf.disv``/``.gpkg``/``rch``/``evt`` forms), or a
+        source spec (``DataSourceSpec``/``LiteralSource``, such as
+        ``mf.Polygons``) standing for the option of the same name. A key in
+        both ``inputs`` and ``options`` raises ``TypeError`` -- at construction,
+        unless the ``inputs`` value is a source spec the builder does not itself
+        require, and then at :meth:`build`. Leaving out a keyword-only argument
+        the builder requires also raises ``TypeError`` at construction.
+        Default: empty.
     """
 
     name: str
@@ -1853,7 +1986,26 @@ class PackageSpec:
         object.__setattr__(self, "requires", tuple(self.requires))
 
     def build(self, target: Any) -> Any | None:
-        """Build the package on ``target``, or return ``None`` when disabled."""
+        """Build the package on ``target``, or return ``None`` when disabled.
+
+        Parameters
+        ----------
+        target : flopy.mf6.MFModel or flopy.mf6.MFSimulation
+            What the package is built on, passed to the builder as its first
+            positional argument: the FloPy model for a model package, the
+            simulation for ``tdis``/``ims``/``ems``.
+
+        Returns
+        -------
+        object or None
+            Whatever the builder returns (normally the FloPy package), or
+            ``None`` when ``enabled`` is ``False``.
+
+        Raises
+        ------
+        TypeError
+            A key present in both ``inputs`` and ``options``.
+        """
 
         if not self.enabled:
             return None
@@ -1889,6 +2041,18 @@ class PackageSpec:
         (ledger 275). Measured safe for the five internal callers: every one of them
         operates on an unpinned spec (`metadata == {}` for `to_disv`, `mf.disv(result)`
         and `mf.ims()`), so nothing in the library voids its own pin here.
+
+        Parameters
+        ----------
+        **overrides
+            Option names and values merged over ``options`` key by key (an
+            override replaces the whole value of its key; others are kept). The
+            copy is re-validated like a new spec, so a name the builder does not
+            accept raises ``TypeError``, and so does one the recipe in ``inputs``
+            already supplies (at :meth:`build` rather than here when that recipe
+            entry is a source spec). Overriding an option the grid pin certifies
+            -- any option, for a pin that names none -- replaces the pin with a
+            ``grid_pin_voided`` record naming the edit.
         """
 
         return replace(
@@ -1898,7 +2062,15 @@ class PackageSpec:
         )
 
     def with_metadata(self, **updates: Any) -> PackageSpec:
-        """Return a copy with selected provenance metadata added or replaced."""
+        """Return a copy with selected provenance metadata added or replaced.
+
+        Parameters
+        ----------
+        **updates
+            Keys and values merged over ``metadata`` (an update replaces its
+            key's value; other keys are kept). The keys are not checked and no
+            pin is voided. Metadata is not passed to the builder as arguments.
+        """
 
         return replace(self, metadata={**self.metadata, **updates})
 
@@ -1922,7 +2094,19 @@ class PackageSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PackageSpec:
-        """Recreate a package specification from :meth:`to_dict` output."""
+        """Recreate a package specification from :meth:`to_dict` output.
+
+        Parameters
+        ----------
+        data : dict
+            A payload as :meth:`to_dict` writes it. ``"name"`` and ``"builder"``
+            (an import-path reference) are required -- a missing one raises
+            ``KeyError``, a malformed reference ``ValueError``, and one that no
+            longer imports ``ImportError``/``AttributeError``.
+            ``"inputs"``, ``"options"``, ``"enabled"``, ``"requires"`` and
+            ``"metadata"`` default to empty/``True``. The rebuilt spec is
+            validated like a new one.
+        """
 
         return cls(
             name=data["name"],
@@ -2235,24 +2419,126 @@ class GridSpec:
     -- from GeoPackage boundary/refinement/breakline layers (``GridSpec.voronoi``),
     a Python builder script (``GridSpec.python``), or a serialized dict
     (``GridSpec.from_dict``). It is resolved into a real grid at run time (or
-    eagerly with ``.resolve(workspace)``).
+    eagerly with ``.resolve(workspace=...)``).
 
     Use it two ways:
 
     - **Deferred** -- ``mf.gwf(...).with_grid(GridSpec.voronoi(...))``; the
       :class:`~myflopy.workspace.Project` builds the grid into
-      ``run.workspace/_grid/<model>`` and populates ``model.context.grid``. Composes
-      with disv + simple BCs.
-    - **Eager** -- ``vor = GridSpec.voronoi(...).resolve(ws)``; then put ``vor`` in a
-      ``ModelContext`` so the GIS package helpers (``mf.uzf``/``mf.sfr``/``.gpkg``)
-      can resolve cells immediately.
+      ``run.workspace/_grid/<model>`` and populates the built model's
+      ``myflopy_context.grid``. Composes with disv + simple BCs.
+    - **Eager** -- ``vor = GridSpec.voronoi(...).resolve(workspace=ws)``; then put
+      ``vor`` in a ``ModelContext`` so the GIS package helpers
+      (``mf.uzf``/``mf.sfr``/``.gpkg``) can resolve cells immediately.
+
+    Build one with a constructor -- :meth:`voronoi`, :meth:`python`,
+    :meth:`from_object`, :meth:`from_pickle` -- rather than directly; each sets
+    ``method`` and the fields its route reads. Fields another route reads are
+    stored but ignored.
+
+    Parameters
+    ----------
+    name : str
+        The grid's name: the label a library, ``with_grid`` lineage and error
+        messages use, the default ``name`` of the built ``VoronoiGridPlus``, and
+        the directory a :meth:`python` builder's default workspace is named after
+        (``<project_root>/_grid/<name>``).
+    grid_type : str
+        A label for the discretization the grid feeds (the constructors default
+        to ``"disv"``, and :meth:`voronoi` always writes it). Shown in the grid
+        library's summary and kept by
+        ``project.save()``; it does not choose how the grid is resolved.
+    method : str
+        The resolution route: ``"voronoi"``, ``"python"``, ``"object"`` or
+        ``"pickle"``. Any other value raises ``NotImplementedError`` at
+        :meth:`resolve`.
+    script : Path or str, optional
+        ``"python"`` route: the builder script, anchored to ``project_root`` at
+        resolve when relative. Default ``None``.
+    function : str, optional
+        ``"python"`` route: the name of the callable in ``script`` to call.
+        Default ``None``.
+    source : DataSourceSpec, optional
+        Serialized and restored by :meth:`to_dict`/:meth:`from_dict`, but set
+        by no constructor and read by no resolution route. Default ``None``.
+    boundary : DataSourceSpec, optional
+        ``"voronoi"`` route: the model-domain polygon source; resolving a
+        Voronoi spec without one raises ``ValueError``. Default ``None``.
+    refinement : DataSourceSpec, optional
+        ``"voronoi"`` route: one polygon source of refinement regions. See
+        :meth:`voronoi`. Default ``None``.
+    breaklines : sequence of DataSourceSpec, optional
+        ``"voronoi"`` route: line sources buffered into refinement corridors.
+        Stored as a tuple. Default: empty.
+    points : sequence of DataSourceSpec, optional
+        ``"voronoi"`` route: point sources pinned as mesh vertices. Stored as a
+        tuple. Default: empty.
+    inputs : sequence, optional
+        ``"python"`` route: files the builder needs. Each ``DataSourceSpec``
+        (unless ``external=True``) or path is checked to exist at resolve,
+        anchored to ``project_root``, and a missing one raises
+        ``FileNotFoundError``. Stored as a tuple. Default: empty.
+    crs : str or int, optional
+        ``"voronoi"`` route: the CRS every source is reprojected to and the
+        grid is built in. When ``None`` no source is reprojected, and the grid
+        takes ``options["crs"]``, else ``"EPSG:2927"``. The ``"python"`` route
+        only stores it, for the builder to read as ``spec.crs``. Default
+        ``None``.
+    engine : str, optional
+        ``"voronoi"`` route: the meshing engine. Only
+        ``"triangle_voronoi_plus"`` (:meth:`voronoi`'s default) resolves;
+        anything else, ``None`` included, raises ``NotImplementedError`` at
+        resolve. Default ``None``.
+    options : dict, optional
+        ``"voronoi"`` route: the named meshing options read by key -- the
+        ``boundary_*``/``refinement_*``/``breakline_*`` settings of
+        :meth:`voronoi`, ``crs``, ``model_ws``/``workspace`` -- and a fallback
+        for the stage keys below when the stage dict does not set them. Not
+        validated when set directly: a misspelled key is never read. The
+        ``"python"`` route stores it for the builder to read as
+        ``spec.options``. Default: empty.
+    triangle_options : dict, optional
+        ``"voronoi"`` route: keyword arguments for ``TriangleGrid(...)``
+        (``angle``, ``maximum_area``, ``nodes``, ``exe_name``,
+        ``additional_args``), plus ``region_point_tolerance`` and
+        ``model_ws``/``workspace`` (Triangle's working directory), which are
+        taken out first. An unknown key raises ``TypeError`` (from FloPy's
+        ``Triangle``) at resolve. Default: empty.
+    mesh_options : dict, optional
+        ``"voronoi"`` route: options for ``TriangleGrid.build_mesh`` --
+        ``profile`` (default ``"balanced"``), ``optimize``, ``verbose`` and the
+        other keys :meth:`voronoi` routes here. Filtered to those keys at
+        resolve, so any other key is silently dropped. Default: empty.
+    voronoi_options : dict, optional
+        ``"voronoi"`` route: keyword arguments for ``VoronoiGridPlus(tri,
+        ...)`` -- ``idomain``, ``idomain_path``, ``rasters``, ``qhull_options``,
+        ``tessellation``. ``crs`` and ``name`` default to the spec's, and
+        ``idomain_path``/``rasters`` are anchored to ``project_root``. Default:
+        empty.
+    metadata : dict, optional
+        Free-form provenance, serialized with the spec; a :meth:`python`
+        builder can read it as ``spec.metadata``. No resolution route reads it.
+        Default: empty.
+    obj : object, optional
+        ``"object"`` route: the already-built grid :meth:`resolve` returns
+        unchanged. Not serializable -- :meth:`to_dict` raises for an
+        ``"object"`` spec; ``project.save()`` pickles ``obj`` for a
+        grid-library entry and skips a simulation holding one inline. Default
+        ``None``.
+    persist : str, optional
+        Stored and read by nothing: ``project.save()`` pickles an ``"object"``
+        grid whatever it says, and :meth:`to_dict` does not write it. Default
+        ``"pickle"``.
+    pickle_path : str, optional
+        ``"pickle"`` route: the pickled grid :meth:`resolve` loads, anchored to
+        ``project_root`` when relative. Default ``None``.
 
     Examples
     --------
     >>> grid = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec("in.gpkg", layer="boundary"),
     ...                            refinement=mf.GeoPackageSourceSpec("in.gpkg", layer="refine"),
     ...                            boundary_max_area=200.0)
-    >>> vor = grid.resolve("runs/_grid")     # eager: a concrete VoronoiGridPlus
+    >>> vor = grid.resolve(workspace="runs/_grid")   # eager: a concrete VoronoiGridPlus
     """
 
     name: str
@@ -2298,6 +2584,28 @@ class GridSpec:
         Build the grid however you like (typically with ``TriangleGrid`` /
         ``VoronoiGridPlus``), look at it, then register it. The object is held
         in memory; persisting it to disk is handled by the project, not here.
+
+        Parameters
+        ----------
+        obj : object
+            The built grid. :meth:`resolve` returns it unchanged (no copy), and
+            ``resolve`` raises ``ValueError`` when it is ``None``. Not checked
+            here. Not serializable: :meth:`to_dict` raises; ``project.save()``
+            pickles it for a grid-library entry and skips a simulation holding
+            one inline.
+        name : str, optional
+            The spec's name (library and lineage label). Default ``"grid"``.
+        grid_type : str, optional
+            A discretization label kept on the spec; it does not change what
+            :meth:`resolve` returns. Default ``"disv"``.
+        persist : str, optional
+            Stored on the spec and read by nothing -- ``project.save()`` pickles
+            the object whatever this says. Default ``"pickle"``.
+
+        Returns
+        -------
+        GridSpec
+            A spec with ``method="object"``.
         """
 
         return cls(name=name, grid_type=grid_type, method="object", obj=obj, persist=persist)
@@ -2314,6 +2622,23 @@ class GridSpec:
 
         The pickle is loaded lazily by :meth:`resolve`. Relative paths are
         resolved against the ``project_root`` supplied at resolve time.
+
+        Parameters
+        ----------
+        path : Path or str
+            The pickle file, stored as a string. Not checked here; each
+            :meth:`resolve` opens and unpickles it (relative to ``project_root``
+            when given, else to the current working directory). Only unpickle a
+            file you trust.
+        name : str, optional
+            The spec's name (library and lineage label). Default ``"grid"``.
+        grid_type : str, optional
+            A discretization label kept on the spec. Default ``"disv"``.
+
+        Returns
+        -------
+        GridSpec
+            A spec with ``method="pickle"``.
         """
 
         return cls(name=name, grid_type=grid_type, method="pickle", pickle_path=str(path))
@@ -2340,21 +2665,36 @@ class GridSpec:
         Parameters
         ----------
         script : Path or str
-            Path to a Python file containing the grid-builder function.
+            Path to a Python file containing the grid-builder function. Anchored
+            to ``project_root`` at resolve when relative (the current working
+            directory when none is given); a missing file raises
+            ``FileNotFoundError`` there.
         function : str
-            Name of the callable in ``script`` that returns the grid (required).
+            Name of the callable in ``script`` that returns the grid (required;
+            an empty name raises ``ValueError`` here). It is called as
+            ``function(project_root=<Path>, workspace=<Path>, spec=<this
+            GridSpec>)`` and must not return ``None``.
         name : str, default "grid"
-            Grid name.
+            Grid name; also names the builder's default workspace,
+            ``<project_root>/_grid/<name>``.
         grid_type : str, default "disv"
-            Discretization type the builder produces.
+            A label for the discretization the builder produces. Not checked
+            against what it returns.
         inputs : Iterable, optional
-            Input files the builder needs (validated to exist at resolve time).
-        crs : str, optional
-            CRS metadata for the produced grid.
+            Input files the builder needs: ``DataSourceSpec`` objects or paths.
+            Each one not marked ``external=True`` is checked to exist at resolve
+            (anchored to ``project_root``), raising ``FileNotFoundError``. The
+            builder reads them itself, as ``spec.inputs``.
+        crs : str or int, optional
+            Stored as ``spec.crs`` for the builder to read. Nothing applies it to
+            the grid the builder returns.
         options : dict, optional
-            Keyword options forwarded to the builder function.
+            Stored as ``spec.options``. NOT passed to the builder as keyword
+            arguments -- the builder receives the whole spec and reads them from
+            it.
         metadata : dict, optional
-            Free-form provenance metadata.
+            Free-form provenance metadata, stored as ``spec.metadata`` and
+            serialized with the spec.
 
         Returns
         -------
@@ -2400,6 +2740,31 @@ class GridSpec:
         This constructor therefore fails fast. To use an existing grid today,
         wrap a built grid object with :meth:`from_object`, or load a pickled
         grid with :meth:`from_pickle`.
+
+        Parameters
+        ----------
+        path : Path or str
+            The GeoPackage holding the grid's cell polygons. Unused: the call
+            raises before reading anything.
+        name : str, optional
+            The planned grid name. Unused. Default ``"grid"``.
+        layer : str, optional
+            The planned GeoPackage layer holding the cells. Unused. Default
+            ``None``.
+        id_column : str, optional
+            The planned column carrying each cell's number. Unused. Default
+            ``None``.
+        grid_type : str, optional
+            The planned discretization label. Unused. Default ``"disv"``.
+        crs : str or int, optional
+            The planned CRS. Unused. Default ``None``.
+        **options
+            Accepted and discarded; the call raises before any is read.
+
+        Raises
+        ------
+        NotImplementedError
+            Always.
         """
 
         raise NotImplementedError(
@@ -2434,6 +2799,38 @@ class GridSpec:
         time, so this constructor fails fast instead. To use a structured grid
         today, build it yourself (e.g. via FloPy) and wrap it with
         :meth:`from_object`, or generate the geometry in a :meth:`python` builder.
+
+        Parameters
+        ----------
+        name : str, optional
+            The planned grid name. Unused. Default ``"grid"``.
+        nlay : int
+            The planned number of layers. Required by the signature, unused.
+        nrow : int
+            The planned number of rows. Required by the signature, unused.
+        ncol : int
+            The planned number of columns. Required by the signature, unused.
+        delr : float
+            The planned column width, in model length units. Required by the
+            signature, unused.
+        delc : float
+            The planned row height, in model length units. Required by the
+            signature, unused.
+        top : float or array_like
+            The planned model top elevation(s). Required by the signature,
+            unused.
+        botm : array_like
+            The planned layer bottom elevations. Required by the signature,
+            unused.
+        crs : str or int, optional
+            The planned CRS. Unused. Default ``None``.
+        **options
+            Accepted and discarded; the call raises before any is read.
+
+        Raises
+        ------
+        NotImplementedError
+            Always.
         """
 
         raise NotImplementedError(
@@ -2525,13 +2922,36 @@ class GridSpec:
             on a node, a gauge, a boundary corner. These are LOCATIONS, not
             sizes: a point contributes no cell-area target and no region. A
             non-point geometry contributes its ``representative_point()``.
-        crs : str, optional
-            Target CRS for the grid (sources are reprojected to it).
+        crs : str or int, optional
+            Target CRS for the grid: every source is reprojected to it. Without
+            it no source is reprojected; ``options["crs"]`` then only labels the
+            grid, and with neither the grid is built as ``"EPSG:2927"`` (see
+            :meth:`resolve`, Notes).
         engine : str, default "triangle_voronoi_plus"
-            Meshing engine identifier.
-        options, triangle_options, mesh_options, voronoi_options : dict, optional
-            Advanced per-stage option dicts forwarded to the Triangle / mesh /
-            Voronoi stages, for anything not named below.
+            Meshing engine identifier. It is the only one :meth:`resolve`
+            supports; any other value raises ``NotImplementedError`` there.
+        options : dict, optional
+            Named meshing options as a dict -- the same keys as the named
+            arguments under Other Parameters (and ``crs``,
+            ``model_ws``/``workspace``). The named arguments are merged over it.
+            Unlike ``**engine_options``, its keys are NOT validated: a
+            misspelled key is stored and never read.
+        triangle_options : dict, optional
+            Keyword arguments for ``TriangleGrid(...)`` -- ``angle``,
+            ``maximum_area``, ``nodes``, ``exe_name``, ``additional_args``, plus
+            ``model_ws``/``workspace`` for Triangle's working directory. A key
+            also given through ``**engine_options`` takes that value. Not
+            validated here; an unknown key raises ``TypeError`` at resolve.
+        mesh_options : dict, optional
+            Options for the mesh-build step (``profile``, ``optimize``,
+            ``verbose``, ...). A key also given through ``**engine_options``
+            takes that value. Not validated here, and at resolve any key the
+            mesh builder does not know is silently dropped.
+        voronoi_options : dict, optional
+            Keyword arguments for ``VoronoiGridPlus(tri, ...)`` -- ``idomain``,
+            ``idomain_path``, ``rasters``, ``qhull_options``, ``tessellation``,
+            ``name``. A key also given through ``**engine_options`` takes that
+            value.
         **engine_options
             Stage options routed by name -- ``min_angle``, ``maximum_area``,
             ``profile``, ``idomain``, ``optimize`` and friends. **An unknown
@@ -2588,7 +3008,7 @@ class GridSpec:
         Returns
         -------
         GridSpec
-            A durable grid recipe; call ``.resolve(workspace)`` for an eager grid,
+            A durable grid recipe; call ``.resolve(workspace=...)`` for an eager grid,
             or pass it to ``mf.gwf(...).with_grid(...)`` / ``project.add_grid(...)``.
 
         Examples
@@ -2789,7 +3209,18 @@ class GridSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GridSpec:
-        """Recreate a grid specification from :meth:`to_dict` output."""
+        """Recreate a grid specification from :meth:`to_dict` output.
+
+        Parameters
+        ----------
+        data : dict
+            A payload as :meth:`to_dict` writes it. ``"name"``, ``"grid_type"``
+            and ``"method"`` are required (a missing one raises ``KeyError``);
+            every other field is optional and defaults as on the constructor.
+            Source entries are rebuilt into their ``DataSourceSpec`` classes.
+            An ``"object"`` spec has no payload to read, since :meth:`to_dict`
+            refuses to write one.
+        """
 
         return cls(
             name=data["name"],
@@ -3162,25 +3593,61 @@ class ModelContext:
 
     The GIS package helpers (``mf.uzf``/``mf.sfr``/``mf.lak`` and the ``.gpkg``
     boundary forms) take ``context=`` so they can map features/cells onto the grid.
-    Because they resolve cells eagerly, build the grid first and put it here.
+    Given one, they resolve cells eagerly, so build the grid first and put it here.
+    ``mf.sfr``/``mf.lak`` always need it; the ``.gpkg`` forms, ``mf.rch``/``mf.evt``
+    and ``mf.uzf`` can instead be declared without ``context=`` and resolve at build
+    against the model's own context.
 
-    Attributes
+    Parameters
     ----------
-    grid
-        The grid object (e.g. a ``VoronoiGridPlus``) features are mapped onto.
-    surfaces
-        Per-cell layer elevations (``vor.gdf_topbtm`` or equivalent) read by
-        surface-aware builders (SFR reach tops, LAK lake-cell layering).
-    domain
-        The active-domain (idomain) array used to pick/validate cells.
-    dates
-        Stress-period datetimes, when time-aware builders need them.
-    metadata
-        Free-form project metadata passed through to hooks.
+    grid : VoronoiGridPlus or grid object, optional
+        The built grid features are mapped onto -- normally a ``VoronoiGridPlus``
+        (from ``GridSpec.voronoi(...).resolve(...)`` or built directly). Read by
+        the eager helpers, the build-time grid checks, :meth:`ModelSpec.coverage_on`
+        and ``with_grid(remap=True)``. A model declared with ``grid=`` (a
+        :class:`GridSpec`/:class:`GridRef`) has this REPLACED by the resolved grid
+        at build. Not serialized: :meth:`ModelSpec.to_dict` keeps only its
+        connectivity fingerprint (``"grid_pin"`` in ``metadata``). Default
+        ``None``.
+    surfaces : pandas.DataFrame or LayerBuildResult, optional
+        Per-cell layer elevations read by the surface-aware builders (SFR reach
+        tops, LAK connections, ``CellSurfaceOffset``): a table shaped like
+        ``vor.gdf_topbtm`` (geometry first, then model top, then each layer
+        bottom), or a ``LayerBuildResult``, which is turned into that table. When
+        ``None`` the grid's live ``gdf_topbtm`` is used; when given it wins over
+        the grid's table, and a disagreement between the two is WARNED about.
+        Not serialized. Default ``None``.
+    dates : object, optional
+        Stress-period datetimes, carried for post-build hooks and user code.
+        Nothing in the library reads it, and neither :meth:`ModelSpec.to_dict`
+        nor a run's frozen snapshot keeps it. Default ``None``.
+    domain : array_like of int, optional
+        The IDOMAIN: shaped ``(nlay, ncpl)``, or a flat ``(ncpl,)`` array meaning
+        the same activity in every layer. Cells ``> 0`` are active. The helpers
+        pick and validate cells against it, and the build refuses a domain whose
+        cell count (or, when 2-D, layer count) disagrees with the built DISV.
+        ``None`` leaves activity to the DISV / grid. Not serialized. Default
+        ``None``.
+    length_units : str, optional
+        The model's length unit, read by ``mf.sfr``/``mf.lak`` to derive MF6's
+        ``LENGTH_CONVERSION`` when none is given (``"feet"``/``"foot"``/``"ft"``
+        -> 3.28081, ``"meters"``/``"m"`` -> 1.0, ``"centimeters"``/``"cm"``
+        -> 100.0, case-insensitive; ``"unknown"`` or empty -> 1.0; any other
+        name raises ``ValueError`` there) and for flux labels in build
+        warnings. It does NOT set the DISV's ``length_units``. Serialized.
+        Default ``"feet"``.
+    time_units : str, optional
+        The model's time unit, read the same way for ``TIME_CONVERSION``
+        (seconds, minutes, hours, days, years and their short forms). It does
+        NOT set TDIS's ``time_units``. Serialized. Default ``"days"``.
+    metadata : dict, optional
+        Free-form metadata, serialized with the model and visible to post-build
+        hooks through the context. :meth:`ModelSpec.to_dict` adds the grid's
+        ``"grid_pin"`` to the copy it writes. Default: empty.
 
     Examples
     --------
-    >>> vor = mf.GridSpec.voronoi(...).resolve("runs/_grid")     # or a VoronoiGridPlus
+    >>> vor = mf.GridSpec.voronoi(...).resolve(workspace="runs/_grid")  # or a VoronoiGridPlus
     >>> layers = stack.build(attach=True)
     >>> ctx = mf.ModelContext(grid=vor, domain=layers.idomain, surfaces=vor.gdf_topbtm)
     >>> flow = mf.gwf("flow", context=ctx, packages=[...])
@@ -3344,16 +3811,35 @@ class SpecBuildContext:
     you rarely build one directly. ``build_grids`` toggles whether deferred grid
     recipes are materialized during the build.
 
-    Attributes
+    Parameters
     ----------
-    project_root, simulation_workspace, grid_workspace
-        Output locations (stored as :class:`~pathlib.Path` when set). When
-        ``grid_workspace`` is unset, per-model grids land under
-        ``<simulation_workspace>/_grid/<model>``.
-    package_specs, grid_specs
-        Resolved project libraries keyed by name, used to resolve refs.
-    build_grids
-        Whether to build deferred :class:`GridSpec` grids during this build.
+    project_root : Path or str, optional
+        The directory relative paths are anchored to: a model's deferred
+        :class:`GridSpec` sources (passed as ``GridSpec.resolve(project_root=)``)
+        and the relative source paths inside every package's ``inputs`` recipe.
+        ``None`` leaves relative paths to the current working directory. Stored
+        as a ``Path``. Default ``None``.
+    simulation_workspace : Path or str, optional
+        The simulation's run directory. When ``grid_workspace`` is unset,
+        deferred grids are built under ``<simulation_workspace>/_grid/<model>``.
+        :meth:`SimulationSpec.build_flopy` fills it from its workspace when
+        unset. Stored as a ``Path``. Default ``None``.
+    grid_workspace : Path or str, optional
+        The directory deferred grids are built under, one subdirectory per
+        model (``<grid_workspace>/<model>``); takes precedence over
+        ``simulation_workspace``. Stored as a ``Path``. Default ``None``.
+    package_specs : dict of str to PackageSpec, optional
+        The project package library, keyed by library key: what each
+        :class:`PackageRef` resolves to. A ref whose key is absent raises
+        ``KeyError`` at build. Copied. Default: empty.
+    grid_specs : dict of str to GridSpec, optional
+        The project grid library, keyed by library key: what each
+        :class:`GridRef` resolves to. A ref whose key is absent raises
+        ``KeyError`` at build. Copied. Default: empty.
+    build_grids : bool, optional
+        Passed to ``GridSpec.resolve(build=...)`` for each model's deferred grid:
+        ``False`` resolves a Voronoi spec to its prepared, UNMESHED
+        ``TriangleGrid`` rather than a built grid. Default ``True``.
     """
 
     project_root: Path | str | None = None
@@ -3377,14 +3863,35 @@ class SpecBuildContext:
         self,
         workspace: Path | str | None,
     ) -> SpecBuildContext:
-        """Return a copy with a simulation workspace when one is known."""
+        """Return a copy with a simulation workspace when one is known.
+
+        Parameters
+        ----------
+        workspace : Path or str or None
+            The simulation workspace to record. Ignored -- ``self`` is returned
+            unchanged -- when it is ``None`` or when this context already has a
+            ``simulation_workspace``, so an explicit one is never overwritten.
+        """
 
         if workspace is None or self.simulation_workspace is not None:
             return self
         return replace(self, simulation_workspace=Path(workspace))
 
     def model_grid_workspace(self, model_name: str) -> Path | None:
-        """Return the generated grid workspace for one model, when available."""
+        """Return the generated grid workspace for one model, when available.
+
+        Parameters
+        ----------
+        model_name : str
+            The model whose deferred grid is being built.
+
+        Returns
+        -------
+        Path or None
+            ``<grid_workspace>/<model_name>`` when ``grid_workspace`` is set,
+            else ``<simulation_workspace>/_grid/<model_name>``, else ``None``.
+            Nothing is created on disk here.
+        """
 
         if self.grid_workspace is not None:
             return Path(self.grid_workspace) / model_name
@@ -3393,7 +3900,15 @@ class SpecBuildContext:
         return None
 
     def package_spec(self, key: str) -> PackageSpec:
-        """Return a resolved project-level package spec by key."""
+        """Return a resolved project-level package spec by key.
+
+        Parameters
+        ----------
+        key : str
+            A package-library key, as a :class:`PackageRef` carries it. Matched
+            exactly against ``package_specs``; an absent key raises
+            ``KeyError``.
+        """
 
         try:
             return self.package_specs[key]
@@ -3403,7 +3918,14 @@ class SpecBuildContext:
             ) from error
 
     def grid_spec(self, key: str) -> GridSpec:
-        """Return a resolved project-level grid spec by key."""
+        """Return a resolved project-level grid spec by key.
+
+        Parameters
+        ----------
+        key : str
+            A grid-library key, as a :class:`GridRef` carries it. Matched exactly
+            against ``grid_specs``; an absent key raises ``KeyError``.
+        """
 
         try:
             return self.grid_specs[key]
@@ -3424,19 +3946,45 @@ class PostBuildHook:
     objects (e.g. an OBS utility package), tweak the assembled model, or compute a
     derived artifact -- without subclassing the builder.
 
-    Attributes
+    Parameters
     ----------
-    name
-        Key under which the hook's result is recorded in ``hook_results``.
-    callback
-        Callable ``(model, packages, context) -> Any`` run after the build.
+    name : str
+        Key under which the hook's result is recorded in
+        ``BuiltModel.hook_results``. Must be unique among one model's hooks
+        (``ModelSpec`` raises ``ValueError`` on a duplicate).
+    callback : callable
+        Called as ``callback(model, packages, context)`` after every package is
+        built and the build-time grid checks have passed; hooks run in
+        declaration order. Its return value is stored under ``name``. Must be an
+        importable module-level function to round-trip: one defined inside
+        another function runs but raises ``ValueError`` in :meth:`to_dict`, and
+        a module-level lambda is written but cannot be imported back by
+        :meth:`from_dict`.
     """
 
     name: str
     callback: Hook
 
     def run(self, model: Any, packages: dict[str, Any], context: ModelContext) -> Any:
-        """Run the callback with the completed FloPy model and its context."""
+        """Run the callback with the completed FloPy model and its context.
+
+        Parameters
+        ----------
+        model : flopy.mf6.MFModel
+            The built FloPy model.
+        packages : dict of str to object
+            The built FloPy packages keyed by ``PackageSpec.name`` (disabled
+            packages absent).
+        context : ModelContext
+            The model's context as the build left it -- after a deferred grid
+            was resolved into it and a lazy DISV published its domain and
+            surfaces.
+
+        Returns
+        -------
+        object
+            Whatever ``callback`` returns.
+        """
 
         return self.callback(model, packages, context)
 
@@ -3454,7 +4002,16 @@ class PostBuildHook:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PostBuildHook:
-        """Recreate a hook from :meth:`to_dict` output."""
+        """Recreate a hook from :meth:`to_dict` output.
+
+        Parameters
+        ----------
+        data : dict
+            ``{"name": ..., "callback": "<module>:<qualname>"}`` as
+            :meth:`to_dict` writes it. Both keys are required (``KeyError``);
+            the callback is imported, so one that no longer imports raises
+            ``ImportError``/``AttributeError``.
+        """
 
         return cls(name=data["name"], callback=_resolve_callable(data["callback"]))
 
@@ -3472,16 +4029,29 @@ class BuiltModel:
 
     Attributes
     ----------
-    model
-        The built FloPy model object.
-    packages
-        Built package objects keyed by package name.
-    context
-        The :class:`ModelContext` (grid/domain/surfaces/dates) for this model.
-    hook_results
+    model : flopy.mf6.ModflowGwf or ModflowGwt or ModflowGwe or ModflowPrt
+        The built FloPy model object. It also carries the context as
+        ``model.myflopy_context``.
+    packages : dict of str to object
+        Built package objects keyed by ``PackageSpec.name`` -- for an ``mf.ref``
+        entry, the resolved spec's name, not the library key. A disabled
+        package is absent.
+    context : ModelContext
+        The :class:`ModelContext` (grid/domain/surfaces/dates) for this model as
+        the build left it: a deferred grid resolved into it, and a lazy DISV's
+        domain and surfaces published on it.
+    hook_results : dict of str to object
         Values returned by post-build hooks, keyed by hook name.
-    simulation
-        The parent FloPy simulation, when known.
+    simulation : flopy.mf6.MFSimulation or None
+        The parent FloPy simulation, when known; :attr:`sim` falls back to the
+        model's own ``sim``.
+    resolved : dict of str to PackageSpec
+        What a LAZY package actually built, as an eager ``PackageSpec``, keyed
+        by package name -- and also by the ``mf.ref`` key it was declared
+        under. Filled only by builders that resolve at build time -- the lazy
+        ``mf.disv``, ``.gpkg``, ``rch``/``evt`` (list and array) and ``uzf``
+        forms and ``mf.Polygons`` arrays; a run freezes these specs rather than
+        the recipe.
     """
 
     model: Mf6Model
@@ -3553,7 +4123,15 @@ class BuiltModel:
         return _require_model_type(self.model, PrtModel, "PRT model")
 
     def package(self, name: str) -> Any:
-        """Return one built package by name."""
+        """Return one built package by name.
+
+        Parameters
+        ----------
+        name : str
+            A key of :attr:`packages` -- the ``PackageSpec.name``, matched
+            exactly (no slot-prefix matching, unlike :meth:`ModelSpec.package`).
+            An absent name raises ``KeyError``.
+        """
 
         try:
             return self.packages[name]
@@ -3589,9 +4167,50 @@ class BuiltModel:
 class ModelSpec:
     """Definition of one GWF, GWT, GWE, or PRT model.
 
-    Package names are unique within the model. Calling :meth:`with_package`
+    Package names are unique within the model. Calling :meth:`with_packages`
     replaces an existing package with the same name, which makes scenario
-    variants explicit and inexpensive to create.
+    variants explicit and inexpensive to create. Build one with ``mf.gwf`` /
+    ``mf.gwt`` / ``mf.gwe`` / ``mf.prt`` rather than directly.
+
+    Parameters
+    ----------
+    name : str
+        The model name: passed to the FloPy model as ``modelname=``, and the
+        name :meth:`SimulationSpec.model`, ``on=`` and an exchange's ``models``
+        refer to. Must be unique within a simulation.
+    model_type : ModelType or str
+        ``"gwf"``, ``"gwt"``, ``"gwe"`` or ``"prt"`` (lowercase; any other value
+        raises ``ValueError``). Coerced to :class:`ModelType`; picks the FloPy
+        model class when ``builder`` is ``None``.
+    packages : sequence of PackageSpec, PackageRef or str, optional
+        The model's packages, built in this order. A bare ``str`` becomes a
+        :class:`PackageRef` to that library key. Names must be unique
+        (``ValueError``); when every entry is a concrete :class:`PackageSpec`,
+        each one's ``requires`` is checked here too. Stored as a tuple.
+        Default: empty.
+    options : dict, optional
+        Keyword arguments for the model constructor, called as
+        ``builder(simulation, modelname=name, **options)`` -- for example
+        ``newtonoptions``. Not checked here; FloPy refuses an unknown one at
+        build (``FlopyException: Extraneous kwargs``). Default: empty.
+    builder : callable, optional
+        The model constructor. ``None`` uses the FloPy class for
+        ``model_type`` (``flopy.mf6.ModflowGwf`` etc.); a custom one must accept
+        ``(simulation, modelname=..., **options)`` and return the FloPy model,
+        and must be importable for :meth:`to_dict`. Default ``None``.
+    context : ModelContext, optional
+        The geometry the model is built against (grid, domain, surfaces).
+        Default: an empty :class:`ModelContext`.
+    hooks : sequence of PostBuildHook, optional
+        Callbacks run after the model and its packages are built, in order.
+        Names must be unique (``ValueError``). Stored as a tuple. Default:
+        empty.
+    grid : GridSpec, GridRef or grid object, optional
+        A DEFERRED grid, resolved at every :meth:`build` (a :class:`GridRef`
+        through the build context's grid library) and put into the built
+        model's context as ``grid``, replacing ``context.grid``. A bare built
+        grid is wrapped with :meth:`GridSpec.from_object`. ``None`` builds on
+        ``context`` as given. Default ``None``.
     """
 
     name: str
@@ -3650,6 +4269,26 @@ class ModelSpec:
         measured at 0.8000 against an intended 0.4000, under normal termination.
         Without ``slot=`` this adds or replaces freely, which is what declaring a
         package means.
+
+        Parameters
+        ----------
+        *packages : PackageSpec, PackageRef, str, or iterables of them
+            The entries to add or replace, applied in order. A list or tuple is
+            flattened one level; a ``str`` is one :class:`PackageRef` key, never
+            split into characters. Each one replaces the entry its slot matches
+            -- by full name first, then by a ref's key prefix -- or is appended
+            when nothing matches. A slot matching several entries raises
+            ``KeyError``.
+        slot : str, optional
+            The existing entry to replace, named by its full name or slot. Only
+            valid with exactly ONE package (``ValueError`` otherwise), and it
+            must match an existing entry (``KeyError`` otherwise). Default
+            ``None``: each entry's own slot.
+
+        Returns
+        -------
+        ModelSpec
+            The copy; this spec is unchanged.
         """
 
         entries = [_package_entry(entry) for entry in _flatten_packages(packages)]
@@ -3683,6 +4322,19 @@ class ModelSpec:
 
         Resolves through the shared lookup, so an ambiguous name raises here
         rather than quietly handing back whichever was declared first.
+
+        Parameters
+        ----------
+        name : str
+            A package's full name (a ref's full key), else a slot: a concrete
+            package's name or the first ``/`` segment of a ref's key. Disabled
+            packages are found too. No match, or several on the slot, raises
+            ``KeyError``.
+
+        Returns
+        -------
+        PackageSpec or PackageRef
+            The entry as declared -- a ref is not resolved.
         """
 
         index = _package_entry_index(
@@ -3707,6 +4359,13 @@ class ModelSpec:
         delete every entry sharing it, so ``"wel"`` on a model carrying
         ``wel/north`` and ``wel/south`` took both; now that names two packages
         and raises.
+
+        Parameters
+        ----------
+        *names : str or iterables of str
+            The packages to remove, each matched as :meth:`package` matches it.
+            Lists are flattened one level. A name matching nothing, or several
+            entries by slot, raises ``KeyError``.
         """
 
         spec = self
@@ -3726,7 +4385,23 @@ class ModelSpec:
         self,
         build_context: SpecBuildContext | None = None,
     ) -> tuple[PackageSpec, ...]:
-        """Return concrete package specs, resolving project package refs."""
+        """Return concrete package specs, resolving project package refs.
+
+        Parameters
+        ----------
+        build_context : SpecBuildContext, optional
+            Supplies the package library each :class:`PackageRef` is looked up
+            in (``package_specs``). Required only when the model holds a ref:
+            without one a ref raises ``ValueError``, and a key missing from the
+            library raises ``KeyError``. Default ``None``.
+
+        Returns
+        -------
+        tuple of PackageSpec
+            In declaration order, disabled ones included, after checking that
+            names are unique and every ``requires`` is present, enabled and
+            declared earlier (``ValueError`` otherwise).
+        """
 
         packages: list[PackageSpec] = []
         for package in self.packages:
@@ -3743,12 +4418,29 @@ class ModelSpec:
         return tuple(packages)
 
     def with_options(self, **overrides: Any) -> ModelSpec:
-        """Return a copy with selected model options added or replaced."""
+        """Return a copy with selected model options added or replaced.
+
+        Parameters
+        ----------
+        **overrides
+            Model-constructor keyword arguments merged over ``options`` key by
+            key (``newtonoptions=...``). Not checked here; FloPy refuses an
+            unknown one at build.
+        """
 
         return replace(self, options={**self.options, **overrides})
 
     def with_context(self, context: ModelContext) -> ModelSpec:
-        """Return a copy carrying the supplied model context."""
+        """Return a copy carrying the supplied model context.
+
+        Parameters
+        ----------
+        context : ModelContext
+            Replaces the whole context -- grid, domain, surfaces, units and
+            metadata together. Packages already declared eagerly against the old
+            context keep what they resolved; nothing is re-resolved or checked
+            until build.
+        """
 
         return replace(self, context=context)
 
@@ -3802,6 +4494,47 @@ class ModelSpec:
         ``uncovered=`` says what a new cell with no old cell under it means:
         ``"nearest"`` fills it from the nearest old cell and says so in detail,
         ``"raise"`` refuses.
+
+        Parameters
+        ----------
+        grid : GridSpec, GridRef or grid object
+            The new mesh, stored as the model's ``grid`` (a bare built grid is
+            wrapped with :meth:`GridSpec.from_object`) and resolved at build.
+            ``remap=True`` needs real cell polygons, so there it must be a built
+            grid or a :class:`GridSpec` (resolved on the spot, without a project
+            root); a :class:`GridRef` raises ``TypeError``.
+        grid_free : sequence of str, optional
+            Package names (a ref's library key) the caller asserts are
+            mesh-independent: they read ``unchanged`` and are not stamped.
+            Default: empty.
+        remap : bool, optional
+            Carry per-cell arrays (``npf`` ``k``/``k22``/``k33``, ``ic.strt``,
+            ``sto.ss``/``sto.sy``) from the model's CURRENT ``context.grid`` onto
+            ``grid`` by area overlay; a pinned or pin-voided package is left
+            alone. Raises ``ValueError`` when the context has no grid, and --
+            once a package has an array to carry -- when the two meshes are in
+            different frames (CRS, or no overlap), or the array is an integer
+            flag or one with no measured rule. Default ``False``.
+        rule : str, optional
+            The averaging rule for the conductivities (``k``/``k22``/``k33``)
+            under ``remap=True``: ``"geometric"``, ``"mean"``, ``"harmonic"`` or
+            ``"majority"``; ``strt``/``ss``/``sy`` always take the area-weighted
+            mean. Any other value raises ``ValueError``, but only once a package
+            has an array to carry. Ignored without ``remap``. Default
+            ``"geometric"``.
+        uncovered : str, optional
+            For ``remap=True``, what a new cell no old cell reaches gets:
+            ``"nearest"`` (the nearest old cell's value, reported) or
+            ``"raise"`` (``ValueError``). Checked, like ``rule``, only once a
+            package has an array to carry. Ignored without ``remap``. Default
+            ``"nearest"``.
+
+        Returns
+        -------
+        ModelSpec
+            The copy, with ``context.grid``, ``domain`` and ``surfaces`` set to
+            ``None`` and the packages re-lazified, remapped or stamped as
+            described above.
         """
 
         free = tuple(grid_free)
@@ -3900,6 +4633,26 @@ class ModelSpec:
         Raises rather than guessing when this model carries no grid to compare against:
         a DEFERRED-grid model has nothing to overlay, and answering "nothing is covered"
         would be indistinguishable from a real total miss.
+
+        Parameters
+        ----------
+        grid : grid object or GridSpec
+            The candidate new mesh: a built grid carrying ``gdf_vorPolys``, or a
+            :class:`GridSpec`, which is resolved here (no project root, so
+            relative sources resolve against the current working directory). A
+            :class:`GridRef` raises ``TypeError`` -- pass ``project.grid(key)``.
+
+        Returns
+        -------
+        CoverageReport
+            ``total_area``, ``uncovered_area`` and per-cell ``uncovered`` areas
+            in the model's units squared, plus ``disjoint`` for two meshes that
+            share no area at all.
+
+        Raises
+        ------
+        ValueError
+            When ``context.grid`` is ``None``.
         """
 
         # DEFERRED, and measured worth it: hoisting this works, but it pushes `specs`
@@ -3922,6 +4675,19 @@ class ModelSpec:
 
         The build is what refuses, so this is how you find out what it will refuse
         without waiting for `prepare_run` to raise.
+
+        Parameters
+        ----------
+        grid_free : sequence of str, optional
+            Package names (a ref's library key) to report as mesh-independent,
+            as :meth:`with_grid` would treat them. Default: empty.
+
+        Returns
+        -------
+        list of dict
+            One ``{"package", "how", "why"}`` row per package, where ``how`` is
+            ``"rebuilt"``, ``"stale"``, ``"unverifiable"``, ``"remapped"`` or
+            ``"unchanged"``.
         """
 
         return move_report(
@@ -3936,7 +4702,39 @@ class ModelSpec:
         *,
         build_context: SpecBuildContext | None = None,
     ) -> BuiltModel:
-        """Build the model and all enabled packages in declaration order."""
+        """Build the model and all enabled packages in declaration order.
+
+        Resolves a deferred ``grid`` first, then constructs the FloPy model,
+        builds each enabled package, checks the result against the grid it was
+        built on, and runs the post-build hooks.
+
+        Parameters
+        ----------
+        simulation : flopy.mf6.MFSimulation
+            The FloPy simulation the model is added to, passed to the model
+            constructor as its first argument.
+        build_context : SpecBuildContext, optional
+            The project libraries and locations: needed to resolve an
+            ``mf.ref``/``mf.grid_ref`` entry, to anchor relative source paths to
+            the project root, and to place a deferred grid's working files.
+            ``None`` uses an empty one, so a ref raises. Default ``None``.
+
+        Returns
+        -------
+        BuiltModel
+
+        Raises
+        ------
+        ValueError
+            When a package or the context disagrees with the grid it was built
+            against (cellids, domain shape, a grid pin, a move stamp), all
+            listed at once; and for a package ref with no ``build_context`` on a
+            model without a deferred ``grid``.
+        KeyError
+            For a ref whose key is not in the build context's library -- which
+            includes every ref when ``build_context`` is ``None`` and the model
+            has a deferred ``grid``, since an empty context is used then.
+        """
 
         context = self.context
         if self.grid is not None:
@@ -4064,7 +4862,18 @@ class ModelSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ModelSpec:
-        """Recreate a model specification from :meth:`to_dict` output."""
+        """Recreate a model specification from :meth:`to_dict` output.
+
+        Parameters
+        ----------
+        data : dict
+            A payload as :meth:`to_dict` writes it. ``"name"`` and
+            ``"model_type"`` are required (``KeyError``). Packages, options,
+            builder, hooks and grid are rebuilt when present. The context comes
+            back with only its ``metadata`` (including the recorded
+            ``"grid_pin"``) and units -- grid, domain and surfaces were never
+            written -- and a payload without units reads as feet/days.
+        """
 
         context_data = data.get("context", {})
         return cls(
@@ -4160,6 +4969,29 @@ class ExchangeSpec:
 
     The exchange builder receives the simulation, a tuple containing the built
     model objects named by ``models``, and then the configured keyword options.
+    Build one with ``mf.exchange(a, b)`` (or its ``.gwfgwt``/``.gwfgwe``/
+    ``.gwfprt``/``.gwfgwf`` forms) rather than directly.
+
+    Parameters
+    ----------
+    name : str
+        The exchange's name, unique among a simulation's exchanges
+        (``ValueError`` otherwise); the key of ``BuiltSimulation.exchanges`` and
+        what :meth:`SimulationSpec.with_exchange` replaces by.
+    builder : callable
+        Called at build as ``builder(simulation, models, **options)``, where
+        ``models`` is the tuple of built FloPy models; normally one of the
+        ``myflopy.builders.build_*_exchange`` functions. The simulation checks
+        that a GWF-GWT/GWE/PRT exchange's models share a mesh by this builder's
+        ``__name__``. Must be importable for :meth:`to_dict`.
+    models : sequence of str
+        Names of the coupled models, in the order the builder expects (for the
+        ``build_*`` functions, the flow model first). At least two, or
+        ``ValueError``; a name no built model carries raises ``KeyError`` at
+        build. Stored as a tuple.
+    options : dict, optional
+        Keyword arguments for the builder, which the ``build_*`` functions pass
+        on to the FloPy exchange class. Not checked here. Default: empty.
     """
 
     name: str
@@ -4175,7 +5007,23 @@ class ExchangeSpec:
             raise ValueError("An exchange must reference at least two models.")
 
     def build(self, simulation: Any, built_models: dict[str, BuiltModel]) -> Any:
-        """Build the exchange after resolving its model names."""
+        """Build the exchange after resolving its model names.
+
+        Parameters
+        ----------
+        simulation : flopy.mf6.MFSimulation
+            The FloPy simulation the exchange is added to, passed to the builder
+            first.
+        built_models : dict of str to BuiltModel
+            The simulation's built models keyed by model name; each name in
+            ``models`` is looked up here (``KeyError`` naming the missing ones)
+            and its FloPy ``model`` passed on.
+
+        Returns
+        -------
+        object
+            Whatever the builder returns -- normally the FloPy exchange package.
+        """
 
         missing = [name for name in self.models if name not in built_models]
         if missing:
@@ -4186,7 +5034,14 @@ class ExchangeSpec:
         return self.builder(simulation, models, **self.options)
 
     def with_options(self, **overrides: Any) -> ExchangeSpec:
-        """Return a copy with selected exchange options added or replaced."""
+        """Return a copy with selected exchange options added or replaced.
+
+        Parameters
+        ----------
+        **overrides
+            Builder keyword arguments merged over ``options`` key by key. Not
+            checked here.
+        """
 
         return replace(self, options={**self.options, **overrides})
 
@@ -4206,7 +5061,15 @@ class ExchangeSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExchangeSpec:
-        """Recreate an exchange from :meth:`to_dict` output."""
+        """Recreate an exchange from :meth:`to_dict` output.
+
+        Parameters
+        ----------
+        data : dict
+            A payload as :meth:`to_dict` writes it. ``"name"`` and ``"builder"``
+            are required (``KeyError``); ``"models"`` and ``"options"`` default
+            to empty, and fewer than two models raises ``ValueError``.
+        """
 
         return cls(
             name=data["name"],
@@ -4242,14 +5105,15 @@ class BuiltSimulation:
 
     Attributes
     ----------
-    simulation
+    simulation : flopy.mf6.MFSimulation
         The built FloPy ``MFSimulation``.
-    models
+    models : dict of str to BuiltModel
         Built models keyed by model name.
-    packages
-        Simulation-level packages (TDIS, IMS) keyed by name.
-    exchanges
-        Inter-model exchange objects keyed by name.
+    packages : dict of str to object
+        Simulation-level FloPy packages (TDIS, IMS/EMS) keyed by their
+        ``PackageSpec.name``; a disabled package is absent.
+    exchanges : dict of str to object
+        Inter-model exchange objects keyed by ``ExchangeSpec.name``.
     """
 
     simulation: Mf6Simulation
@@ -4264,12 +5128,26 @@ class BuiltSimulation:
         return self.simulation
 
     def model(self, name: str) -> Mf6Model:
-        """Return one built FloPy model by name."""
+        """Return one built FloPy model by name.
+
+        Parameters
+        ----------
+        name : str
+            A model name, a key of :attr:`models`; an absent one raises
+            ``KeyError``.
+        """
 
         return self.built_model(name).model
 
     def built_model(self, name: str) -> BuiltModel:
-        """Return one ``BuiltModel`` wrapper by name."""
+        """Return one ``BuiltModel`` wrapper by name.
+
+        Parameters
+        ----------
+        name : str
+            A model name, a key of :attr:`models`; an absent one raises
+            ``KeyError``.
+        """
 
         try:
             return self.models[name]
@@ -4277,27 +5155,62 @@ class BuiltSimulation:
             raise KeyError(f"Built simulation has no model named '{name}'.") from error
 
     def gwf(self, name: str) -> GwfModel:
-        """Return a named model as ``flopy.mf6.ModflowGwf``."""
+        """Return a named model as ``flopy.mf6.ModflowGwf``.
+
+        Parameters
+        ----------
+        name : str
+            A model name, a key of :attr:`models`; an absent one raises
+            ``KeyError``, and a model of another type raises ``TypeError``.
+        """
 
         return self.built_model(name).as_gwf()
 
     def gwt(self, name: str) -> GwtModel:
-        """Return a named model as ``flopy.mf6.ModflowGwt``."""
+        """Return a named model as ``flopy.mf6.ModflowGwt``.
+
+        Parameters
+        ----------
+        name : str
+            A model name, a key of :attr:`models`; an absent one raises
+            ``KeyError``, and a model of another type raises ``TypeError``.
+        """
 
         return self.built_model(name).as_gwt()
 
     def gwe(self, name: str) -> GweModel:
-        """Return a named model as ``flopy.mf6.ModflowGwe``."""
+        """Return a named model as ``flopy.mf6.ModflowGwe``.
+
+        Parameters
+        ----------
+        name : str
+            A model name, a key of :attr:`models`; an absent one raises
+            ``KeyError``, and a model of another type raises ``TypeError``.
+        """
 
         return self.built_model(name).as_gwe()
 
     def prt(self, name: str) -> PrtModel:
-        """Return a named model as ``flopy.mf6.ModflowPrt``."""
+        """Return a named model as ``flopy.mf6.ModflowPrt``.
+
+        Parameters
+        ----------
+        name : str
+            A model name, a key of :attr:`models`; an absent one raises
+            ``KeyError``, and a model of another type raises ``TypeError``.
+        """
 
         return self.built_model(name).as_prt()
 
     def package(self, name: str) -> Any:
-        """Return one built simulation-level package by name."""
+        """Return one built simulation-level package by name.
+
+        Parameters
+        ----------
+        name : str
+            The package's ``PackageSpec.name``, a key of :attr:`packages`,
+            matched exactly; an absent one raises ``KeyError``.
+        """
 
         try:
             return self.packages[name]
@@ -4370,25 +5283,64 @@ class SimulationSpec:
     simulation; or register it on a :class:`~myflopy.workspace.Project` with
     ``project.add_simulation(sim)`` and run it via ``project.prepare_run(...)``.
 
+    ``mf.simulation(*models, packages=[...])`` builds one and fills in a default
+    TDIS and solver; construct ``SimulationSpec`` directly only to control every
+    field.
+
     Parameters
     ----------
-    name
-        Simulation name (and default run name).
-    models
-        The model specs (``mf.gwf(...)`` etc.).
-    packages
-        Simulation-wide packages -- ``mf.tdis(...)`` and ``mf.ims(...)`` solver(s).
-    exchanges
-        Inter-model exchanges (e.g. ``mf.exchange(flow, transport)``).
-    workspace, executable, run_name
-        Optional run location / MF6 executable / run name overrides.
+    name : str
+        Simulation name: passed to the builder as ``sim_name=``, and the default
+        run name and run directory (relative to the current working directory)
+        when neither ``run_name`` nor a workspace is given.
+    models : sequence of ModelSpec
+        The model specs (``mf.gwf(...)`` etc.), built in this order. Names must
+        be unique (``ValueError``). Stored as a tuple.
+    packages : sequence of PackageSpec, PackageRef or str, optional
+        Simulation-wide packages -- ``mf.tdis(...)`` and ``mf.ims(...)``/
+        ``mf.ems(...)`` solver(s); a ``str`` becomes a :class:`PackageRef`. A
+        MODEL package (``chd``, ``npf``, ...) raises ``ValueError``, as do
+        duplicate names. At build TDIS is built first, then the models and
+        exchanges, then every other package. Stored as a tuple. Default: empty.
+    exchanges : sequence of ExchangeSpec, optional
+        Inter-model exchanges (e.g. ``mf.exchange(flow, transport)``). Names
+        must be unique. Nothing is wired automatically: coupled models without
+        one build and run uncoupled. Default: empty.
+    options : dict, optional
+        Keyword arguments for the simulation constructor, called as
+        ``builder(sim_name=name, **options)``. ``sim_ws`` is overwritten by the
+        workspace whenever one is known. Default: empty.
+    builder : callable, optional
+        The simulation constructor. Default ``flopy.mf6.MFSimulation``; must be
+        importable for :meth:`to_dict`.
+    workspace : Path or str, optional
+        The default run directory for :meth:`build` and :meth:`build_flopy`
+        when they are given none (passed to FloPy as ``sim_ws``). Default
+        ``None``.
+    executable : str, optional
+        The MF6 executable a :meth:`build` run is given (set as the FloPy
+        simulation's ``exe_name`` there). :meth:`build_flopy` does not use it.
+        Default ``"mf6"``.
+    run_name : str, optional
+        The run name :meth:`build` uses when not given one, and the default run
+        directory name; :meth:`derive` sets it. ``None`` falls back to
+        ``name``. Default ``None``.
+    derived_from : str, optional
+        Provenance: the name of the simulation this one was derived from, set
+        by :meth:`derive` (and ``with_packages(name=)``). Serialized; nothing
+        builds from it. Default ``None``.
+    lineage : sequence of dict, optional
+        Provenance: one record per recorded edit (``{"operation": "derive" |
+        "with_packages" | "with_grid", ...}``), appended by the verbs that
+        record themselves. Serialized; nothing builds from it. Stored as a
+        tuple. Default: empty.
 
     Examples
     --------
     >>> sim = mf.SimulationSpec("baseline", models=(flow,),
     ...     packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]),
     ...               mf.ims(models=("valley",), complexity="MODERATE")])
-    >>> built = sim.build_flopy("runs/baseline")     # -> FloPy simulation
+    >>> built = sim.build_flopy("runs/baseline")     # -> BuiltSimulation (FloPy objects)
     """
 
     name: str
@@ -4429,7 +5381,14 @@ class SimulationSpec:
             _validate_concrete_packages(concrete_packages)
 
     def with_model(self, model: ModelSpec) -> SimulationSpec:
-        """Return a copy with ``model`` added or replaced by name."""
+        """Return a copy with ``model`` added or replaced by name.
+
+        Parameters
+        ----------
+        model : ModelSpec
+            Replaces the model of the same ``name`` in place (keeping its
+            position), or is appended when no model has that name.
+        """
 
         models = list(self.models)
         for index, existing in enumerate(models):
@@ -4441,7 +5400,14 @@ class SimulationSpec:
         return replace(self, models=tuple(models))
 
     def with_models(self, *models: ModelSpec) -> SimulationSpec:
-        """Return a copy with each supplied model added or replaced by name."""
+        """Return a copy with each supplied model added or replaced by name.
+
+        Parameters
+        ----------
+        *models : ModelSpec
+            Each one applied in order through :meth:`with_model`. Not flattened:
+            pass models as separate arguments (``*my_list``), not a list.
+        """
 
         spec = self
         for model in models:
@@ -4449,7 +5415,14 @@ class SimulationSpec:
         return spec
 
     def model(self, name: str) -> ModelSpec:
-        """Return one model specification by name."""
+        """Return one model specification by name.
+
+        Parameters
+        ----------
+        name : str
+            The ``ModelSpec.name``, matched exactly; an absent one raises
+            ``KeyError``.
+        """
 
         for model in self.models:
             if model.name == name:
@@ -4480,6 +5453,26 @@ class SimulationSpec:
         ``name=`` returns the copy under a new simulation name, routed through
         :meth:`derive` so ``derived_from`` and ``lineage`` are recorded -- one
         step from a simulation to a named variant of it.
+
+        Parameters
+        ----------
+        *packages : PackageSpec, PackageRef, str, or iterables of them
+            The entries to add or replace; lists are flattened one level and a
+            ``str`` is a :class:`PackageRef` key. With ``on=`` they go to
+            :meth:`ModelSpec.with_packages` on that model. Without it each
+            replaces the simulation package of the same full ``name`` (a ref's
+            key) or is appended, and a model package raises ``ValueError``.
+        on : str, optional
+            A model name: edit that model's packages instead of the
+            simulation's, and record a ``with_packages`` lineage entry. An
+            unknown model raises ``KeyError``. Default ``None``.
+        slot : str, optional
+            With ``on=`` only (``ValueError`` without it): the existing model
+            package to replace, as :meth:`ModelSpec.with_packages` takes it.
+            Default ``None``.
+        name : str, optional
+            Return the copy through :meth:`derive` under this simulation name
+            (also the new ``run_name``). Default ``None`` keeps the name.
         """
 
         entries = [_package_entry(entry) for entry in _flatten_packages(packages)]
@@ -4526,6 +5519,17 @@ class SimulationSpec:
         or a solver meant rebuilding the ``packages`` tuple by hand.
 
         Raises when a name matches nothing, at both tiers.
+
+        Parameters
+        ----------
+        *names : str or iterables of str
+            The packages to remove; lists are flattened one level. With ``on=``
+            each is matched as :meth:`ModelSpec.without_packages` matches it;
+            without, against the simulation packages' full names. No match
+            raises ``KeyError``.
+        on : str, optional
+            A model name whose packages to remove from; an unknown model raises
+            ``KeyError``. Default ``None``: the simulation's own packages.
         """
 
         wanted = list(_flatten_packages(names))
@@ -4549,7 +5553,14 @@ class SimulationSpec:
         return replace(self, packages=tuple(current))
 
     def with_exchange(self, exchange: ExchangeSpec) -> SimulationSpec:
-        """Return a copy with ``exchange`` added or replaced by name."""
+        """Return a copy with ``exchange`` added or replaced by name.
+
+        Parameters
+        ----------
+        exchange : ExchangeSpec
+            Replaces the exchange of the same ``name`` in place, or is appended.
+            Its model names are not checked until build.
+        """
 
         exchanges = list(self.exchanges)
         for index, existing in enumerate(exchanges):
@@ -4561,12 +5572,28 @@ class SimulationSpec:
         return replace(self, exchanges=tuple(exchanges))
 
     def with_workspace(self, workspace: Path | str) -> SimulationSpec:
-        """Return a copy with a default run workspace."""
+        """Return a copy with a default run workspace.
+
+        Parameters
+        ----------
+        workspace : Path or str
+            Stored as ``workspace``: the directory :meth:`build` and
+            :meth:`build_flopy` use when called without one. Not created or
+            checked here.
+        """
 
         return replace(self, workspace=workspace)
 
     def derive(self, name: str) -> SimulationSpec:
-        """Return a named version of this fully resolved simulation recipe."""
+        """Return a named version of this fully resolved simulation recipe.
+
+        Parameters
+        ----------
+        name : str
+            The variant's simulation name, also set as its ``run_name``; the
+            current name becomes ``derived_from`` and a ``derive`` record is
+            appended to ``lineage``. Not checked for clashes with anything.
+        """
 
         return replace(
             self,
@@ -4599,8 +5626,7 @@ class SimulationSpec:
         because coupled models must share a mesh -- MF6 requires it for
         ``gwfgwt``/``gwfgwe``/``gwfprt`` and cannot detect a same-size violation
         (ledger 268), so moving one and stranding its sibling is the failure that check
-        exists to catch. ``name`` derives a named variant in one step, like
-        :meth:`with_packages`.
+        exists to catch. ``name`` renames the result in the same step.
 
         ``grid_free`` names packages the caller asserts are mesh-independent, so they
         are not stamped. Everything else that names cells without a pin IS stamped and
@@ -4608,6 +5634,39 @@ class SimulationSpec:
 
         **This reports and stamps; the BUILD refuses.** Read :meth:`move_report` to see
         what will happen before it does.
+
+        Parameters
+        ----------
+        grid : GridSpec, GridRef or grid object
+            The new mesh, handed to :meth:`ModelSpec.with_grid` for each moved
+            model (a bare built grid is wrapped with :meth:`GridSpec.from_object`
+            there). ``remap=True`` needs a built grid or a :class:`GridSpec`.
+        on : str, optional
+            One model to move; an unknown name raises ``KeyError``. Default
+            ``None``: every model that has a ``grid`` or a ``context.grid`` --
+            a model with neither is left alone, so a simulation of gridless
+            models moves nothing (and says so only in ``lineage``).
+        name : str, optional
+            A new simulation name for the result. It only renames: unlike
+            ``with_packages(name=)`` it does not go through :meth:`derive`, so
+            ``run_name`` and ``derived_from`` keep their old values. Default
+            ``None`` keeps the name.
+        grid_free : sequence of str, optional
+            Package names (a ref's library key) asserted mesh-independent in
+            every moved model; recorded in the ``with_grid`` lineage entry.
+            Default: empty.
+        remap : bool, optional
+            Carry per-cell arrays onto the new mesh by area overlay, per
+            :meth:`ModelSpec.with_grid`. Default ``False``.
+        rule : str, optional
+            The averaging rule for the conductivities (``k``/``k22``/``k33``)
+            under ``remap=True``: ``"geometric"``, ``"mean"``, ``"harmonic"`` or
+            ``"majority"``; ``strt``/``ss``/``sy`` always take the area-weighted
+            mean. Ignored without ``remap``. Default ``"geometric"``.
+        uncovered : str, optional
+            For ``remap=True``: ``"nearest"`` or ``"raise"`` for a new cell no old
+            cell reaches, per :meth:`ModelSpec.with_grid`. Ignored without
+            ``remap``. Default ``"nearest"``.
         """
 
         if isinstance(grid, GridRef):
@@ -4660,6 +5719,21 @@ class SimulationSpec:
 
         Readable on the SPEC, before anything is built, because the build is what
         refuses and `prepare_run` is a late place to find out.
+
+        Parameters
+        ----------
+        on : str, optional
+            Report one model only; an unknown name raises ``KeyError``. Default
+            ``None``: every model.
+        grid_free : sequence of str, optional
+            Package names to report as mesh-independent, as :meth:`with_grid`
+            would treat them. Default: empty.
+
+        Returns
+        -------
+        list of dict
+            One ``{"model", "package", "how", "why"}`` row per package per
+            model; see :meth:`ModelSpec.move_report`.
         """
 
         models = [self.model(on)] if on is not None else list(self.models)
@@ -4676,6 +5750,22 @@ class SimulationSpec:
         (ledger 268) but a simulation can hold models that do not. Read it before
         `with_grid`; `move_report` says what happens to each PACKAGE, this says what
         the new mesh would have nothing for.
+
+        Parameters
+        ----------
+        grid : grid object or GridSpec
+            The candidate new mesh, as :meth:`ModelSpec.coverage_on` takes it.
+        on : str, optional
+            Measure one model only; an unknown name raises ``KeyError``. Default
+            ``None``: every model.
+
+        Returns
+        -------
+        dict of str to CoverageReport
+            Keyed by model name. A model whose ``context.grid`` is ``None`` is
+            left out rather than raising (unlike :meth:`ModelSpec.coverage_on`),
+            so a deferred-grid model -- even one named by ``on`` -- yields no
+            entry.
         """
 
         models = [self.model(on)] if on is not None else list(self.models)
@@ -4712,7 +5802,22 @@ class SimulationSpec:
         self,
         build_context: SpecBuildContext | None = None,
     ) -> tuple[PackageSpec, ...]:
-        """Return concrete simulation-level package specs."""
+        """Return concrete simulation-level package specs.
+
+        Parameters
+        ----------
+        build_context : SpecBuildContext, optional
+            Supplies the package library each simulation-level
+            :class:`PackageRef` is looked up in. Required only when one is
+            present: without it a ref raises ``ValueError``, and a key missing
+            from the library raises ``KeyError``. Default ``None``.
+
+        Returns
+        -------
+        tuple of PackageSpec
+            In declaration order, after the same name/``requires`` validation as
+            :meth:`ModelSpec.resolved_packages`.
+        """
 
         packages: list[PackageSpec] = []
         for package in self.packages:
@@ -4739,6 +5844,30 @@ class SimulationSpec:
 
         Use :meth:`build_flopy` when you need only the raw in-memory FloPy
         objects without a run lifecycle wrapper.
+
+        The run builds in memory: its directory is created and its manifest and
+        frozen snapshot are written there, but no MF6 input file is written and
+        MF6 is not run -- ``run.execute()`` does both.
+
+        Parameters
+        ----------
+        workspace : Path or str, optional
+            The run directory. ``None`` falls back to ``self.workspace``, then
+            to ``Path(self.run_name or self.name)`` relative to the current
+            working directory -- the ``run_name`` argument does not move it.
+            Default ``None``.
+        run_name : str, optional
+            The run's name. ``None`` falls back to ``self.run_name``, then
+            ``self.name``. Default ``None``.
+        build_context : SpecBuildContext, optional
+            Project libraries and locations for resolving refs and anchoring
+            relative sources; see :meth:`build_flopy`. Default ``None``.
+
+        Returns
+        -------
+        myflopy.workspace.Run
+            The built run (``status`` ``"built"``), with ``run.built`` holding
+            the :class:`BuiltSimulation`.
         """
 
         from myflopy.workspace import Run
@@ -4762,7 +5891,37 @@ class SimulationSpec:
         *,
         build_context: SpecBuildContext | None = None,
     ) -> BuiltSimulation:
-        """Build and return the raw FloPy simulation objects."""
+        """Build and return the raw FloPy simulation objects.
+
+        Builds TDIS, then each model (resolving deferred grids and refs), checks
+        that coupled models share a mesh, builds the exchanges, then the solvers.
+        No MF6 input file is written; resolving a deferred grid does write its
+        working files under the grid workspace (see ``workspace``).
+
+        Parameters
+        ----------
+        workspace : Path or str, optional
+            The simulation directory, passed to the builder as ``sim_ws`` and
+            recorded as the build context's ``simulation_workspace`` (where
+            deferred grids are built, ``<workspace>/_grid/<model>``). ``None``
+            falls back to ``self.workspace``; with neither, ``options`` decides
+            ``sim_ws``. Default ``None``.
+        build_context : SpecBuildContext, optional
+            Project libraries (for ``mf.ref``/``mf.grid_ref``) and the project
+            root (for relative source paths). ``None`` uses an empty one, so a
+            ref raises. A ``simulation_workspace`` already set on it is kept
+            over ``workspace``. Default ``None``.
+
+        Returns
+        -------
+        BuiltSimulation
+
+        Raises
+        ------
+        ValueError
+            A model that disagrees with its grid, coupled models on different
+            meshes, or an implicit lake with a solver that cannot solve it.
+        """
 
         options = dict(self.options)
         run_workspace = workspace if workspace is not None else self.workspace
@@ -4866,7 +6025,18 @@ class SimulationSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SimulationSpec:
-        """Recreate a simulation specification from :meth:`to_dict` output."""
+        """Recreate a simulation specification from :meth:`to_dict` output.
+
+        Parameters
+        ----------
+        data : dict
+            A payload as :meth:`to_dict` writes it. ``"name"`` is required
+            (``KeyError``); models, packages, exchanges, options and lineage
+            default to empty, ``"builder"`` to ``flopy.mf6.MFSimulation`` and
+            ``"executable"`` to ``"mf6"``. Each model is rebuilt with
+            :meth:`ModelSpec.from_dict`, so its context comes back without its
+            grid, domain and surfaces (a deferred ``grid`` recipe is restored).
+        """
 
         return cls(
             name=data["name"],
@@ -4902,6 +6072,18 @@ class SimulationSpec:
         array baked into a package's options is not -- that raises in
         :meth:`to_dict`). If ``path`` is given the YAML is also written there.
         See :mod:`myflopy.specs_io`. TOML is not supported yet (see that module).
+
+        Parameters
+        ----------
+        path : str or Path, optional
+            A file to write the YAML to as well (overwritten if it exists; the
+            parent directory must exist). ``None`` only returns the text.
+            Default ``None``.
+
+        Returns
+        -------
+        str
+            The YAML text, whether or not it was written.
         """
 
         text = simulation_to_yaml(self)
@@ -4916,6 +6098,15 @@ class SimulationSpec:
         A :class:`~pathlib.Path` (or a ``str`` naming an existing file) is read
         from disk; any other ``str`` is parsed as YAML text. The inverse of
         :meth:`to_yaml`.
+
+        Parameters
+        ----------
+        source : str or Path
+            A ``Path`` is always read as a file. A ``str`` is read as a file
+            when it names an existing one, otherwise parsed as YAML text -- so a
+            mistyped file name is parsed as YAML and fails there. The document
+            must be a mapping (``ValueError`` otherwise) in the
+            :meth:`to_dict` shape.
         """
 
         return simulation_from_yaml(source)

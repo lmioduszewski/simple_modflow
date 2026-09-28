@@ -47,20 +47,46 @@ class ModelMapStyle:
     exporters (e.g. :func:`export_head_map_slider_html`) so every rendered frame
     looks consistent: figure size/DPI, colormap, grid and contour styling, and
     which overlays (grid, contours, colorbar) to draw. All fields have sensible
-    defaults, so override only what you need.
+    defaults, so override only what you need. Frozen: derive a variant with
+    :func:`dataclasses.replace`.
 
-    Attributes
+    Parameters
     ----------
-    figsize, dpi
-        Matplotlib figure size and resolution for each frame.
-    cmap
-        Colormap for the head field.
-    grid_color, grid_linewidth, show_grid
-        Cell-edge overlay styling and toggle.
-    contour_color, contour_linewidth, contour_levels, show_contours
-        Head-contour overlay styling, level count/values, and toggle.
-    show_colorbar
-        Whether to draw the colorbar.
+    figsize : tuple of (float, float), optional
+        Matplotlib figure size in inches, ``(width, height)``. Default ``(10, 8)``.
+        :func:`plot_model_head_map` uses it only when it creates the figure (no
+        ``ax=``); :func:`export_head_layer_mosaic_slider_html` uses it as the size
+        of EACH layer panel when its ``panel_figsize`` is not given.
+    cmap : str or matplotlib.colors.Colormap, optional
+        Colormap for the head cells, handed to FloPy's ``plot_array``. Default
+        ``"viridis"``.
+    grid_color : str, optional
+        Matplotlib color of the cell-edge overlay. Default ``"#3c4652"``.
+    grid_linewidth : float, optional
+        Line width of the cell-edge overlay, in points. Default ``0.2``.
+    contour_color : str, optional
+        Matplotlib color of the head contours. Default ``"white"``.
+    contour_linewidth : float, optional
+        Line width of the head contours, in points. Default ``0.7``.
+    contour_levels : int or sequence of float, optional
+        Handed to Matplotlib's contouring as ``levels``: an int is a level count
+        (Matplotlib picks up to that many plus one round values), a sequence
+        gives the head values to contour, in model length units. Default ``10``.
+    show_grid : bool, optional
+        Draw the cell edges over the head field. Default ``True``.
+    show_contours : bool, optional
+        Draw labelled head contours. Default ``True``. Skipped on a frame whose
+        layer has fewer than two valid cells or a flat field, since there is
+        nothing to contour.
+    show_colorbar : bool, optional
+        Draw a colorbar labelled ``"Head"``. Default ``True``. The layer mosaic
+        draws ONE shared colorbar for the whole frame instead of one per panel.
+    dpi : int, optional
+        PNG resolution, in dots per inch, of each frame that
+        :func:`export_head_map_slider_html` writes, and the mosaic's resolution
+        when its ``dpi`` is not given. Default ``140``;
+        :func:`export_head_layer_mosaic_slider_html` with no ``style`` uses 200.
+        :func:`plot_model_head_map` ignores it -- it returns a figure, not a PNG.
     """
 
     figsize: tuple[float, float] = (10, 8)
@@ -90,16 +116,27 @@ class StandaloneHtmlSlider:
 
     Attributes
     ----------
-    path
+    path : pathlib.Path
         The written HTML document.
-    labels, frame_count
-        Per-frame slider labels and the number of frames.
-    title
-        Document title.
-    embedded_frames, frame_directory
-        Whether frames are inlined, else the directory holding the frame images.
-    rendered_frames, reused_frames
-        Counts of newly rendered vs cache-reused frames.
+    labels : tuple of str
+        The slider label of each frame, in slider order -- after frame selection
+        (``frame_indices``/``frame_stride``/``max_frames``).
+    frame_count : int
+        Number of frames in the page, which is ``len(labels)``.
+    title : str
+        The page's ``<title>`` and heading.
+    embedded_frames : bool, optional
+        ``True`` when every frame is inlined in the HTML as a base64 PNG ``data:``
+        URI; ``False`` when the page references PNG files in ``frame_directory``
+        and must be moved together with that directory. Default ``True``.
+    frame_directory : pathlib.Path or None, optional
+        The directory holding the frame PNGs and their ``frames.json`` manifest;
+        ``None`` when the frames are embedded. Default ``None``.
+    rendered_frames : int, optional
+        Frames drawn during this export. Default ``0``.
+    reused_frames : int, optional
+        Frames taken from an earlier export's PNGs under ``resume=True`` instead of
+        being drawn again. Default ``0``.
     """
 
     path: Path
@@ -123,14 +160,21 @@ class FrameExportProgress:
 
     Attributes
     ----------
-    index, total
-        Zero-based frame index and total frame count.
-    label
+    index : int
+        Zero-based position of this frame among the SELECTED frames (after
+        ``frame_indices``/``frame_stride``/``max_frames``), not its index in the
+        original sequence.
+    total : int
+        Number of selected frames in the export.
+    label : str
         The frame's slider label.
-    status
-        Short status string for this frame.
-    path
-        Output path for the frame, when applicable.
+    status : str
+        ``"rendered"`` when the frame was drawn in this export, or ``"reused"``
+        when ``resume=True`` took an existing PNG instead.
+    path : pathlib.Path or None, optional
+        The frame's PNG file when frames are written to a directory
+        (``embed_frames=False``); ``None`` when the frame is embedded in the HTML.
+        Default ``None``.
     """
 
     index: int
@@ -303,6 +347,89 @@ def export_matplotlib_slider_html(
     Embedded frames produce one self-contained HTML file. For long simulations
     or large figures, ``embed_frames=False`` writes PNG assets beside the HTML
     and avoids holding all base64-encoded frames in memory.
+
+    Parameters
+    ----------
+    render_frame : callable
+        ``render_frame(value, index) -> Figure`` draws one frame. ``value`` is an
+        item of ``frame_values`` and ``index`` is its zero-based position among
+        the SELECTED frames (after ``frame_indices``/``frame_stride``/
+        ``max_frames``), not its index in ``frame_values``. It may return a
+        ``(fig, ...)`` tuple, e.g. ``(fig, ax)``; the first item is the figure
+        rasterized. Not called for a frame reused under ``resume=True``.
+    frame_values : iterable
+        One value per frame, handed to ``render_frame`` in order. Consumed with
+        ``list()``, so any iterable works. Must hold at least one item, else
+        ``ValueError``.
+    output_path : str or pathlib.Path
+        The HTML file to write. Its parent directory is created. A
+        ``<output_path>.lock`` file is held for the duration of the export.
+    labels : sequence of str, optional
+        One slider label per item of ``frame_values`` (before selection); each is
+        passed through ``str()``. Default ``None`` labels a frame ``str(value)``.
+        A length different from ``frame_values`` raises ``ValueError``.
+    title : str, optional
+        The page's ``<title>`` and heading (HTML-escaped). Default
+        ``"Model results through time"``.
+    dpi : int, optional
+        Resolution, in dots per inch, each figure is saved at as a PNG. Default
+        ``140``.
+    interval_ms : int, optional
+        Milliseconds between frames while the page's Play button runs. Default
+        ``700``.
+    close_figures : bool, optional
+        Close each figure with ``plt.close`` once it is rasterized, even if
+        rasterizing fails. Default ``True``; ``False`` leaves every frame's figure
+        open, which holds its memory.
+    embed_frames : bool, optional
+        ``True`` (default) inlines each frame as a base64 PNG ``data:`` URI, one
+        self-contained file. ``False`` writes ``frame_00000.png``, ... plus a
+        ``frames.json`` manifest to ``frame_directory`` and references them by
+        path relative to the HTML.
+    frame_directory : str or pathlib.Path, optional
+        Where the PNGs go when ``embed_frames=False``; created if missing.
+        Default ``None`` is ``<output stem>_frames`` beside the HTML. Ignored
+        when ``embed_frames=True``.
+    frame_indices : sequence of int, optional
+        Zero-based positions in ``frame_values`` to keep, in the order given
+        (so it may reorder or repeat frames). Applied before ``frame_stride``
+        and ``max_frames``. An index out of range raises ``IndexError``, a
+        negative one included (no counting from the end). Default ``None`` keeps
+        every frame.
+    frame_stride : int, optional
+        Keep every ``frame_stride``-th frame of the selection. Default ``1``
+        (all); below 1 raises ``ValueError``.
+    max_frames : int, optional
+        Keep at most this many frames, after ``frame_indices`` and
+        ``frame_stride``. Default ``None`` (no cap); below 1 raises
+        ``ValueError``.
+    resume : bool, optional
+        Reuse a frame whose PNG already exists (non-empty) in ``frame_directory``
+        instead of calling ``render_frame`` for it. Requires
+        ``embed_frames=False`` (``ValueError`` otherwise), and the existing
+        ``frames.json`` must match this export's labels, ``dpi`` and frame count
+        (``ValueError`` otherwise). Default ``False`` redraws every frame.
+    progress : bool or callable, optional
+        ``False`` (default) reports nothing; ``True`` prints one
+        ``[i/n] status: label`` line per frame; a callable is called once per
+        frame with a :class:`FrameExportProgress`.
+
+    Returns
+    -------
+    StandaloneHtmlSlider
+        A handle to the written document and its render statistics.
+
+    Raises
+    ------
+    ValueError
+        On an empty ``frame_values`` or selection, a ``labels`` length mismatch,
+        ``frame_stride``/``max_frames`` below 1, ``resume=True`` with embedded
+        frames, or a ``frames.json`` that does not match a resumed export.
+    IndexError
+        When ``frame_indices`` names a frame that does not exist.
+    RuntimeError
+        When ``<output_path>.lock`` already exists, i.e. another export appears
+        to be writing the same file.
     """
 
     values = list(frame_values)
@@ -514,22 +641,73 @@ def export_cross_section_slider_html(
 
     Parameters
     ----------
-    model
-        The model whose heads are sectioned.
-    line
-        The cross-section line (a 2-point LineString or coordinate pair).
-    output_path
-        Destination HTML file.
-    kstpkpers, head_frames, labels
-        Which time steps (or explicit head frames) to render and their labels.
-    style, title, dpi, interval_ms
-        Cross-section styling and animation/output options.
-    embed_frames, frame_directory, resume
-        Whether to inline frames; else where to store them and whether to reuse.
-    progress
-        ``True`` to print progress, or a :class:`FrameExportProgress` callback.
+    model : SimulationBase
+        The myflopy model whose heads are sectioned -- what ``run.model()``
+        returns, or a legacy ``SimulationBase``. Its ``gwf`` supplies the grid and,
+        unless ``head_frames`` is given, the head file.
+    line : LineString, dict, sequence of (x, y), str or pathlib.Path
+        The section line, in the grid's coordinates: a shapely ``LineString`` (a
+        ``MultiLineString`` is merged, keeping the longest piece if it does not
+        join), FloPy's ``{"line": [...]}`` dict, a sequence of ``(x, y)`` vertices,
+        or a path to a vector file whose geometries are unioned into one line.
+    output_path : str or pathlib.Path
+        The HTML file to write.
+    kstpkpers : sequence of tuple of (int, int), optional
+        The saved output times to render, as FloPy's zero-based
+        ``(kstp, kper)`` pairs, read from the model's head file. Default ``None``
+        renders every time the head file holds. Ignored when ``head_frames`` is
+        given.
+    head_frames : sequence of array_like, optional
+        Head arrays to render instead of reading the head file, one per frame,
+        each ``(nlay, ncpl)`` (a ``(nlay, 1, ncpl)`` array is squeezed) or
+        ``(ncpl,)``. Takes precedence over ``kstpkpers``. Default ``None``.
+    labels : sequence of str, optional
+        One slider label per frame BEFORE selection; each also titles its frame.
+        Default ``None`` labels a frame ``"kstpkper=(kstp, kper)"``, or
+        ``"Frame N"`` (one-based) for ``head_frames``. A shorter list raises
+        ``IndexError``; extra labels are dropped.
+    style : ModelCrossSectionStyle, optional
+        The section's appearance, forwarded to ``plot_model_cross_section``.
+        Default ``None`` uses its default style.
+    title : str, optional
+        The page's ``<title>`` and heading. Default
+        ``"Head cross section through time"``. Each frame's own title is its
+        label.
+    dpi : int, optional
+        Resolution, in dots per inch, of each frame's PNG. Default ``140``.
+    interval_ms : int, optional
+        Milliseconds between frames while the page's Play button runs. Default
+        ``700``.
+    embed_frames : bool, optional
+        Inline every frame in the HTML (default ``True``), or write PNGs to
+        ``frame_directory``. See :func:`export_matplotlib_slider_html`.
+    frame_directory : str or pathlib.Path, optional
+        Where the PNGs go when ``embed_frames=False``. Default ``None`` is
+        ``<output stem>_frames`` beside the HTML. Ignored when frames are
+        embedded.
+    frame_indices : sequence of int, optional
+        Zero-based positions among the resolved frames to keep, in the order
+        given. Default ``None`` keeps all. See
+        :func:`export_matplotlib_slider_html`.
+    frame_stride : int, optional
+        Keep every ``frame_stride``-th selected frame. Default ``1``.
+    max_frames : int, optional
+        Keep at most this many frames after the index and stride selection.
+        Default ``None`` (no cap).
+    resume : bool, optional
+        Reuse PNGs an earlier export left in ``frame_directory``; requires
+        ``embed_frames=False``. Default ``False``.
+    progress : bool or callable, optional
+        ``True`` prints one line per frame; a callable receives a
+        :class:`FrameExportProgress` per frame. Default ``False``.
     **cross_section_kwargs
-        Extra keyword arguments forwarded to ``plot_model_cross_section``.
+        Forwarded to every frame's ``plot_model_cross_section`` call, e.g.
+        ``head_layer=``, ``ylim=``, ``xlim=``, ``layer_colors=``,
+        ``layer_labels=``, ``show_grid=``, ``show_legend=``. This function sets
+        that call's ``title`` (the frame label) and its ``head_data`` (with
+        ``head_frames``) or ``kstpkper`` (otherwise) per frame, overriding the
+        same name given here. A name ``plot_model_cross_section`` does not accept
+        raises ``TypeError`` when the first frame is drawn.
 
     Returns
     -------
@@ -595,18 +773,32 @@ def plot_model_head_map(
 
     Parameters
     ----------
-    model
-        The model providing the grid (``model.gwf.modelgrid``).
-    head_data
-        A head array -- per-layer ``(nlay, ncpl)`` or a single layer ``(ncpl,)``.
-    layer
-        Layer index to draw when ``head_data`` is 2-D.
-    ax
-        Existing axis to draw on; a new figure is created when ``None``.
-    style
-        Appearance settings; defaults to :class:`ModelMapStyle`.
-    title, vmin, vmax
-        Title and fixed color limits.
+    model : SimulationBase
+        The myflopy model providing the grid -- what ``run.model()`` returns, or a
+        legacy ``SimulationBase``. Its ``gwf.modelgrid`` is drawn.
+    head_data : array_like
+        The head field, in model length units: ``(nlay, ncpl)``, ``(nlay, 1,
+        ncpl)`` (squeezed to ``(nlay, ncpl)``), or one layer's ``(ncpl,)``. A
+        non-finite value or a no-value marker (``|value| >= 1e29``, MF6's dry and
+        inactive cells) is left blank.
+    layer : int, optional
+        Zero-based layer to draw from a multi-layer ``head_data``; with a
+        ``(ncpl,)`` array the array itself is drawn. Also the layer FloPy's
+        ``PlotMapView`` is built for. Default ``0``.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on. Default ``None`` creates a new figure of
+        ``style.figsize``.
+    style : ModelMapStyle, optional
+        Colormap, grid and contour overlays and colorbar. Default ``None`` is
+        ``ModelMapStyle()``. Its ``dpi`` is not used here.
+    title : str, optional
+        Axes title. Default ``None`` (or ``""``) sets none.
+    vmin : float, optional
+        Lower color limit, in head units. Default ``None`` lets Matplotlib take it
+        from the drawn layer's valid values.
+    vmax : float, optional
+        Upper color limit, in head units. Default ``None`` lets Matplotlib take it
+        from the drawn layer's valid values.
 
     Returns
     -------
@@ -665,20 +857,44 @@ def plot_particle_pathlines(
 
     Parameters
     ----------
-    model
-        The model providing the grid.
-    pathlines
-        Particle pathline records (PRT/MODPATH-compatible).
-    layer
-        Which layer's pathlines to draw, or ``"all"``.
-    ax
-        Existing axis to draw on; a new figure is created when ``None``.
-    head_data, head_layer
-        Optional head field to shade beneath the pathlines, and its layer.
-    pathline_color, pathline_alpha, pathline_linewidth
-        Pathline styling.
-    show_grid, grid_alpha, title
-        Grid overlay toggle/opacity and plot title.
+    model : SimulationBase
+        The myflopy model providing the grid -- what ``run.model()`` returns, or a
+        legacy ``SimulationBase``. Its ``gwf.modelgrid`` is drawn.
+    pathlines : pandas.DataFrame, numpy.recarray, or list of them
+        Particle tracks, handed to FloPy's ``PlotMapView.plot_pathline``: MF6 PRT
+        track data or MODPATH 6/7 pathline data (e.g. FloPy's
+        ``PathlineFile.get_alldata()``), all particles in one table or one table
+        per particle. Their ``x``/``y`` are in the model's own frame; FloPy
+        places them with the grid's offset and rotation.
+    layer : int or str, optional
+        Which track points to draw. ``"all"`` (default) draws every point. An int
+        of 0 or more keeps the points whose layer column equals it, compared as
+        given (``k`` for MODPATH data, PRT's ``ilay`` otherwise -- no base
+        conversion); a negative int draws every point, as ``"all"`` does. Any
+        other string makes FloPy use ``head_layer`` instead.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on. Default ``None`` creates a new 10 x 8 inch figure.
+    head_data : array_like, optional
+        A head field shaded (alpha 0.35, FloPy's default ``viridis``) under the
+        tracks: ``(nlay, ncpl)``, of which layer ``head_layer`` is drawn, or one
+        layer's ``(ncpl,)``. FloPy masks NaN and MF6's ``+/-1e30`` no-value
+        markers. Default ``None`` draws no head field.
+    head_layer : int, optional
+        Zero-based layer of ``head_data`` to shade, and the layer FloPy's
+        ``PlotMapView`` is built for. Default ``0``.
+    pathline_color : str, optional
+        Matplotlib color of every track. Default ``None`` leaves FloPy's grey
+        (``"0.5"``).
+    pathline_alpha : float, optional
+        Track opacity, 0 to 1. Default ``0.7``.
+    pathline_linewidth : float, optional
+        Track line width, in points. Default ``1.0``.
+    show_grid : bool, optional
+        Draw the cell edges. Default ``True``.
+    grid_alpha : float, optional
+        Opacity of the cell edges, 0 to 1. Default ``0.25``.
+    title : str, optional
+        Axes title. Default ``"Particle pathlines"``.
 
     Returns
     -------
@@ -736,22 +952,69 @@ def export_head_map_slider_html(
 
     Parameters
     ----------
-    model
-        The model whose heads are mapped.
-    output_path
-        Destination HTML file.
-    layer
-        Layer index to map.
-    kstpkpers, head_frames, labels
-        Which time steps (or explicit head frames) to render and their labels.
-    style, title
-        Map appearance (:class:`ModelMapStyle`) and document title.
-    vmin, vmax, shared_color_scale
-        Fixed color limits, or auto-share one scale across frames.
-    embed_frames, frame_directory, frame_indices, frame_stride, max_frames, resume
-        Frame inlining, caching, and selection controls.
-    progress
-        ``True`` to print progress, or a :class:`FrameExportProgress` callback.
+    model : SimulationBase
+        The myflopy model whose heads are mapped -- what ``run.model()`` returns,
+        or a legacy ``SimulationBase``. Its ``gwf`` supplies the grid and, unless
+        ``head_frames`` is given, the head file.
+    output_path : str or pathlib.Path
+        The HTML file to write.
+    layer : int, optional
+        Zero-based layer to map. Default ``0``. With ``(ncpl,)`` head frames the
+        frame itself is drawn.
+    kstpkpers : sequence of tuple of (int, int), optional
+        The saved output times to render, as FloPy's zero-based
+        ``(kstp, kper)`` pairs, read from the model's head file. Default ``None``
+        renders every time the head file holds. Ignored when ``head_frames`` is
+        given.
+    head_frames : sequence of array_like, optional
+        Head arrays to render instead of reading the head file, one per frame,
+        each ``(nlay, ncpl)`` (a ``(nlay, 1, ncpl)`` array is squeezed) or
+        ``(ncpl,)``. Takes precedence over ``kstpkpers``. Default ``None``.
+    labels : sequence of str, optional
+        One slider label per frame BEFORE selection; each also titles its frame.
+        Default ``None`` labels a frame ``"kstpkper=(kstp, kper)"``, or
+        ``"Frame N"`` (one-based) for ``head_frames``. A shorter list raises
+        ``IndexError``; extra labels are dropped.
+    style : ModelMapStyle, optional
+        Map appearance, and the PNG resolution (``style.dpi``) -- this function
+        has no ``dpi`` of its own. Default ``None`` is ``ModelMapStyle()``.
+    title : str, optional
+        The page's ``<title>`` and heading. Default ``"Head map through time"``.
+    vmin : float, optional
+        Lower color limit for every frame, in head units. Default ``None``: taken
+        from the frames when ``shared_color_scale``, else per frame.
+    vmax : float, optional
+        Upper color limit for every frame, in head units. Default ``None``: taken
+        from the frames when ``shared_color_scale``, else per frame.
+    shared_color_scale : bool, optional
+        When ``True`` (default), a ``vmin``/``vmax`` left as ``None`` is filled
+        with the minimum/maximum head of ``layer`` over ALL selected frames
+        (ignoring non-finite values and ``|value| >= 1e29``), so colors compare
+        across frames; from the head file that costs one extra read per frame.
+        ``False`` lets each frame scale to its own values. An explicit
+        ``vmin``/``vmax`` always wins.
+    embed_frames : bool, optional
+        Inline every frame in the HTML (default ``True``), or write PNGs to
+        ``frame_directory``. See :func:`export_matplotlib_slider_html`.
+    frame_directory : str or pathlib.Path, optional
+        Where the PNGs go when ``embed_frames=False``. Default ``None`` is
+        ``<output stem>_frames`` beside the HTML. Ignored when frames are
+        embedded.
+    frame_indices : sequence of int, optional
+        Zero-based positions among the resolved frames to keep, in the order
+        given. Default ``None`` keeps all. See
+        :func:`export_matplotlib_slider_html`.
+    frame_stride : int, optional
+        Keep every ``frame_stride``-th selected frame. Default ``1``.
+    max_frames : int, optional
+        Keep at most this many frames after the index and stride selection.
+        Default ``None`` (no cap).
+    resume : bool, optional
+        Reuse PNGs an earlier export left in ``frame_directory``; requires
+        ``embed_frames=False``. Default ``False``.
+    progress : bool or callable, optional
+        ``True`` prints one line per frame; a callable receives a
+        :class:`FrameExportProgress` per frame. Default ``False``.
 
     Returns
     -------
@@ -830,8 +1093,102 @@ def export_head_layer_mosaic_slider_html(
 ) -> StandaloneHtmlSlider:
     """Export the layer-mosaic slider pattern used in the FloPy training notebooks.
 
-    ``dpi`` controls the PNG resolution directly. ``panel_figsize`` controls the
-    physical size of each layer panel before rasterization.
+    Each frame is one figure holding a :func:`plot_model_head_map` panel per
+    layer (titled ``Layer 1``, ``Layer 2``, ... one-based), laid out ``ncols``
+    wide, with at most one colorbar for the whole figure (``style.show_colorbar``),
+    and the frames are packed into a standalone HTML slider like
+    :func:`export_head_map_slider_html`. ``dpi`` controls the PNG resolution
+    directly. ``panel_figsize`` controls the physical size of each layer panel
+    before rasterization.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        The myflopy model whose heads are mapped -- what ``run.model()`` returns,
+        or a legacy ``SimulationBase``. Its ``gwf`` supplies the grid, the layer
+        count and, unless ``head_frames`` is given, the head file.
+    output_path : str or pathlib.Path
+        The HTML file to write.
+    layers : sequence of int, optional
+        Zero-based layers to draw, one panel each, in the order given. Default
+        ``None`` draws every layer of the grid. An empty sequence raises
+        ``ValueError``.
+    kstpkpers : sequence of tuple of (int, int), optional
+        The saved output times to render, as FloPy's zero-based
+        ``(kstp, kper)`` pairs, read from the model's head file. Default ``None``
+        renders every time the head file holds. Ignored when ``head_frames`` is
+        given.
+    head_frames : sequence of array_like, optional
+        Head arrays to render instead of reading the head file, one per frame,
+        each ``(nlay, ncpl)`` (a ``(nlay, 1, ncpl)`` array is squeezed). Takes
+        precedence over ``kstpkpers``. Default ``None``.
+    labels : sequence of str, optional
+        One slider label per frame BEFORE selection; each also becomes that
+        frame's figure title. Default ``None`` labels a frame
+        ``"kstpkper=(kstp, kper)"``, or ``"Frame N"`` (one-based) for
+        ``head_frames``. A shorter list raises ``IndexError``; extra labels are
+        dropped.
+    style : ModelMapStyle, optional
+        Each panel's appearance. Its colorbar is drawn once for the whole frame
+        (``style.show_colorbar``), never per panel. Default ``None`` is
+        ``ModelMapStyle(dpi=200)``.
+    title : str, optional
+        The page's ``<title>`` and heading. Default
+        ``"Head layer mosaic through time"``.
+    ncols : int, optional
+        Panels per row; the row count is ``ceil(len(layers) / ncols)`` and
+        unused grid cells are hidden. Default ``3``.
+    dpi : int, optional
+        PNG resolution, in dots per inch. Default ``None`` uses ``style.dpi``
+        (200 with the default style). Zero or less raises ``ValueError``.
+    panel_figsize : tuple of (float, float), optional
+        Size of ONE panel in inches, ``(width, height)``; the figure is
+        ``ncols`` panels wide and one panel high per row. Default ``None`` uses
+        ``style.figsize``. A length other than two, or a value of zero or less,
+        raises ``ValueError``.
+    vmin : float, optional
+        Lower color limit for every panel of every frame, in head units. Default
+        ``None``: taken from the frames when ``shared_color_scale``, else per
+        panel.
+    vmax : float, optional
+        Upper color limit for every panel of every frame, in head units. Default
+        ``None``: taken from the frames when ``shared_color_scale``, else per
+        panel.
+    shared_color_scale : bool, optional
+        When ``True`` (default), a ``vmin``/``vmax`` left as ``None`` is filled
+        with the minimum/maximum head over ``layers`` and ALL selected frames
+        (ignoring non-finite values and ``|value| >= 1e29``), so every panel
+        shares one scale; from the head file that costs one extra read per
+        frame. ``False`` lets each panel scale to its own values, which makes the
+        single colorbar describe only the first panel. An explicit
+        ``vmin``/``vmax`` always wins.
+    embed_frames : bool, optional
+        Inline every frame in the HTML (default ``True``), or write PNGs to
+        ``frame_directory``. See :func:`export_matplotlib_slider_html`.
+    frame_directory : str or pathlib.Path, optional
+        Where the PNGs go when ``embed_frames=False``. Default ``None`` is
+        ``<output stem>_frames`` beside the HTML. Ignored when frames are
+        embedded.
+    frame_indices : sequence of int, optional
+        Zero-based positions among the resolved frames to keep, in the order
+        given. Default ``None`` keeps all. See
+        :func:`export_matplotlib_slider_html`.
+    frame_stride : int, optional
+        Keep every ``frame_stride``-th selected frame. Default ``1``.
+    max_frames : int, optional
+        Keep at most this many frames after the index and stride selection.
+        Default ``None`` (no cap).
+    resume : bool, optional
+        Reuse PNGs an earlier export left in ``frame_directory``; requires
+        ``embed_frames=False``. Default ``False``.
+    progress : bool or callable, optional
+        ``True`` prints one line per frame; a callable receives a
+        :class:`FrameExportProgress` per frame. Default ``False``.
+
+    Returns
+    -------
+    StandaloneHtmlSlider
+        A handle to the written document and its render statistics.
     """
 
     if style is None:
@@ -950,23 +1307,47 @@ def build_particle_tracking_scene(
 
     Parameters
     ----------
-    model
-        The flow model providing the grid.
-    pathlines
-        Particle pathline records to render.
-    vertical_exaggeration
-        Vertical scale factor for the 3-D view.
-    model_style, model_opacity, show_edges
-        Grid rendering style/opacity and cell-edge toggle.
-    pathline_cmap, pathline_width
-        Colormap and tube width for the time-colored pathlines.
-    off_screen
-        Render without opening a window (required for headless export).
+    model : SimulationBase
+        The myflopy model providing the grid -- what ``run.model()`` returns, or a
+        legacy ``SimulationBase``. Its ``gwf`` is exported to VTK with FloPy's
+        ``Vtk.add_model``.
+    pathlines : pandas.DataFrame, numpy.recarray, or list of them
+        Particle tracks, handed to FloPy's ``Vtk.add_pathline_points``: MF6 PRT
+        track data or MODPATH pathline data, all particles in one table or one
+        table per particle; each needs ``x`` and ``y`` fields. Their ``x``/``y``
+        are read in the model's own frame and moved to the grid's world frame
+        (its offset and rotation) first, so tracks and grid line up on an
+        offset grid. The input is copied, not modified.
+    vertical_exaggeration : float, optional
+        Vertical scale factor for the exported points (FloPy's
+        ``vertical_exageration``). Default ``1.0``, no exaggeration.
+    model_style : str, optional
+        PyVista ``style`` for the grid mesh: ``"wireframe"`` (default; PyVista
+        draws the wireframe of the OUTER geometry only), ``"surface"``,
+        ``"points"`` or ``"points_gaussian"``.
+    model_opacity : float, optional
+        Grid mesh opacity, 0 to 1. Default ``0.25``.
+    pathline_cmap : str, optional
+        Colormap for the track mesh, coloured by its ``time`` (or ``t``) array
+        when it has one. Default ``"viridis"``.
+    pathline_width : float, optional
+        PyVista ``line_width`` of the tracks, which are drawn as tubes. Default
+        ``4.0``.
+    show_edges : bool, optional
+        Draw the grid mesh's cell edges. Default ``True``.
+    off_screen : bool, optional
+        Build the PyVista ``Plotter`` off screen, opening no window -- what a
+        headless export needs. Default ``True``.
 
     Returns
     -------
     VtkScene
         The configured plotter + meshes, as a Picture.
+
+    Raises
+    ------
+    ModuleNotFoundError
+        When ``pyvista`` is not installed.
     """
 
     pv = require("pyvista", feature="interactive 3-D particle-tracking scenes")
