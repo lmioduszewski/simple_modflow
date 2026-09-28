@@ -397,7 +397,7 @@ def test_a_run_freezes_the_records_it_built_not_the_recipe(tmp_path, triangulate
     assert (tmp_path / "proj" / "runs" / "r1" / ".myflopy" / "frozen.npz").exists()
 
     reopened = mf.load_run(tmp_path / "proj" / "runs" / "r1")
-    assert len(_records(reopened.model("m").rch)) == int(triangulated_grid.ncpl)
+    assert len(_records(reopened.model("m").fl.rch)) == int(triangulated_grid.ncpl)
 
 
 # --- the checks a lazy builder must not lose ----------------------------------

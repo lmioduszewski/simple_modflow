@@ -1,6 +1,6 @@
 """The 8.8 no-bare-kwargs rule, extended to the NOUN tier (2026-08-30).
 
-`model.hds.map()` and `model.packages.drn.inputs.elev.map()` are nouns: narrower
+`model.hds.map()` and `model.drn.inputs.elev.map()` are nouns: narrower
 than the verbs, because the noun already fixes WHAT is drawn. Plan 8.8 required
 every picture verb to name its parameters -- editors read the `def` line and
 never run the module -- and `tests/test_plot_vocabulary.py` enforces that over
@@ -266,14 +266,14 @@ def test_a_noun_verbs_examples_name_paths_that_exist(name, rel, line, fn, source
 
     Written after two of the fifteen conversions shipped an Examples block
     addressed to a noun that does not exist at that path:
-    ``model.packages.lak.inputs.connections`` (the explorer hangs off the
+    ``model.lak.inputs.connections`` (the explorer hangs off the
     PACKAGE, not off ``.inputs``) and ``model.surface_water.results.exchange``
-    (it is ``model.packages.surface_water.results.q``). Both were plausible,
+    (it is ``model.surface_water.results.q``). Both were plausible,
     both were wrong, and neither the signature tests nor a docstring-completeness
     check could see them -- an example is prose to every one of those.
 
     Only the ATTRIBUTE CHAIN is walked, not the call: resolving
-    ``model.packages.drn.inputs.elev`` proves the path, where actually drawing
+    ``model.drn.inputs.elev`` proves the path, where actually drawing
     eighteen maps with every parameter combination in every docstring would
     turn this file into the slowest in the suite for a much smaller gain.
     """
@@ -333,7 +333,7 @@ def test_a_spliced_docstring_is_one_well_formed_document(name, rel, line, fn, so
     `_merge_parameter_sections` folded the `Parameters` blocks and then appended
     everything else from both sides, so 7 of 8 nouns carried two `Returns`, two
     `See Also` and two `Examples`. Worse than untidy: the LAST examples a reader
-    reaches were the free verb's, so `help(model.packages.ghb.inputs.cond.map)`
+    reaches were the free verb's, so `help(model.ghb.inputs.cond.map)`
     ended on `>>> vor.plot.map(values=node_ids)` -- a different subject, and a
     call this noun REFUSES. The fix also has to order the result, because
     own-then-inherited put an inherited `Returns` after the method's own

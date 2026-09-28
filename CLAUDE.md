@@ -17,14 +17,15 @@ the gaps are INTENTIONAL (deprecated/frozen legacy tiers) and must not be "fixed
 
 **What adding a package actually costs (measured 2026-07-18, plan 4.7.6):** one
 descriptor entry reaches **9 surfaces automatically** (diff tiers, mover list,
-budget basing, suffix map, all three artifact sets, budget term). **7 still need
+budget basing, suffix map, all three artifact sets, budget term). **8 still need
 hand-writing**: the `<pkg>_spec` factory, the `package_api` helper class and the
 `GeoPackageSource` resolver — all deliberate, they carry prose and explicit
-signatures — plus four namespace properties (`ModelPackages`, `SimulationBase`,
-`GroupPackages`, `_PackageDiffNamespace`). Those four stay hand-written **on
+signatures — plus five namespace properties (`ModelPackages`, `SimulationBase`
+for `model.<pkg>`, `FlopyPackages` for `model.fl.<pkg>`, `GroupPackages`,
+`_PackageDiffNamespace`). Those five stay hand-written **on
 purpose** (4.7.7): a `.pyi` stub replaces a whole module for type checkers, so
 generating them would mean hand-maintaining stubs for every other public name in
-four large modules. Instead `test_package_descriptor.py` asserts all four
+four large modules. Instead `test_package_descriptor.py` asserts all five
 namespaces cover the whole registry, so a half-wired package fails immediately. `tests/test_package_descriptor_payoff.py` is the
 machine-checked version of this list and fails in BOTH directions: adding a
 hand-written site, or closing one without recording it.
@@ -69,7 +70,10 @@ model-budget clock the same way -- `model.bud("riv").df` raised `IndexError`.
 STILL OPEN there: the ~12-site STAGE-clock family (`LakStageOutput`,
 `build_lak_stage_result_table`'s `per`-as-record-index, `group/sfr.py`'s
 transposed decode), and `_kstpkper` is still never invalidated.
-The rule is `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()` — **every noun
+The rule is `model.<pkg>.<inputs|results>.<noun>.<verb>()` (ledger 339: `model.drn` is
+myflopy's view, **FloPy's package object is `model.fl.drn`**, and `model.packages` keeps
+only the all-packages `summary()`/`mosaic()`; group and diff still read
+`group.packages.<pkg>` / `diff.packages.<pkg>`) — **every noun
 is an object, every object answers the same verbs** (`get`/`summary`/`plot`, plus
 `map`/`section`/`mosaic`/`animate` for spatial nouns). Never add a `foo()` + `plot_foo()`
 method pair; add a view class exposed as a noun property.
@@ -615,7 +619,7 @@ and `Surface.maximum/minimum/clamp` are classmethods, so a misbound `a.maximum(b
 dropped `a` silently — they now raise `TypeError` naming `Surface.maximum(a, b)`
 and the fluent `a.floored_at(b)` (ledger 147).
 **`docs/package_api_reference.md` is the human-readable map of the whole API** — the
-`mf.*` build helpers and the `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()`
+`mf.*` build helpers and the `model.<pkg>.<inputs|results>.<noun>.<verb>()`
 read grammar (pinned by `tests/api_snapshot.json` + `package_registry.py`).
 **The package-first API in `package_api.py` is THE preferred, canonical way to build models.**
 Prefer it for all new model-building work; do not reach for the legacy OO path below unless
@@ -1490,7 +1494,7 @@ while `results.q.summary()` read as sealed (it sums |q| on the barrier's own fac
 `record_fields` is undefinable) and MF6 writes **no HFB budget record** at all. A
 registry entry would have to lie in the one file whose premise is that it cannot. It
 rides `run_model._NON_REGISTRY_SUFFIXES` instead, one line, like `mvr`.
-**But the FLOW is still queryable** — `model.packages.hfb.results.q.get()`. A barrier
+**But the FLOW is still queryable** — `model.hfb.results.q.get()`. A barrier
 sits ON a connection and `FLOW-JA-FACE` carries every connection's flow, looked up via
 the model's own `IA`/`JA` from the `.grb` (NOT reconstructed — idomain makes MF6
 renumber). Inputs side: `get`/`summary`/`segments`/`map`, all hand-written, because

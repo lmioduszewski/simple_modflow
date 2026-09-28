@@ -237,17 +237,17 @@ def attach_transport_model(
     if "lak" in flow_packages:
         flopy.mf6.ModflowGwtlkt(
             gwt, flow_package_name="lak", boundnames=False, pname="lkt",
-            packagedata=[(i, 0.0) for i in range(int(model.lak.nlakes.get_data()))],
+            packagedata=[(i, 0.0) for i in range(int(model.fl.lak.nlakes.get_data()))],
         )
     if "sfr" in flow_packages:
         flopy.mf6.ModflowGwtsft(
             gwt, flow_package_name="sfr", boundnames=False, pname="sft",
-            packagedata=[(i, 0.0) for i in range(int(model.sfr.nreaches.get_data()))],
+            packagedata=[(i, 0.0) for i in range(int(model.fl.sfr.nreaches.get_data()))],
         )
     if "uzf" in flow_packages:
         flopy.mf6.ModflowGwtuzt(
             gwt, flow_package_name="uzf", boundnames=False, pname="uzt",
-            packagedata=[(i, 0.0) for i in range(int(model.uzf.nuzfcells.get_data()))],
+            packagedata=[(i, 0.0) for i in range(int(model.fl.uzf.nuzfcells.get_data()))],
         )
     if "mvr" in flow_packages:
         # MVT carries solute along the SFR->LAK mover connections; it needs LKT

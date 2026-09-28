@@ -95,8 +95,8 @@ def main():
             "head_max": float(finite.max()),
             "head_mean": float(finite.mean()),
             "packages": sorted(model.package_names),
-            "lake_stage_rows": len(model.packages.lak.results.stage.get()),
-            "sfr_exchange_rows": len(model.packages.sfr.results.q.get()),
+            "lake_stage_rows": len(model.lak.results.stage.get()),
+            "sfr_exchange_rows": len(model.sfr.results.q.get()),
             "uzf_cells": len(model.outputs.uzf.ifno_to_cellid),
         }
     )

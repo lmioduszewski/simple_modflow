@@ -55,14 +55,14 @@ def run(tmp_path_factory):
 
 
 def test_both_chds_are_in_the_head_table(run):
-    table = run.model("flow").packages.chd.inputs.head.get()
+    table = run.model("flow").chd.inputs.head.get()
     assert sorted(zip(table["pname"], table["cell"], table["head"])) == [
         ("CHD", 0, 6.0), ("CHD_EAST", 8, 4.0),
     ]
 
 
 def test_every_recharge_package_is_in_the_table_array_form_included(run):
-    table = run.model("flow").packages.rch.inputs.recharge.get()
+    table = run.model("flow").rch.inputs.recharge.get()
     by_package = table.groupby("pname")["recharge"].agg(["count", "sum"])
     assert by_package.loc["RCH", "count"] == 1
     assert by_package.loc["RCH_ARRAY", "count"] == 9
@@ -70,7 +70,7 @@ def test_every_recharge_package_is_in_the_table_array_form_included(run):
 
 
 def test_a_reopened_run_gives_the_same_table(run):
-    table = mf.load_mf6_run(run.workspace).packages.rch.inputs.recharge.get()
+    table = mf.load_mf6_run(run.workspace).rch.inputs.recharge.get()
     assert set(table["pname"]) == {"RCH", "RCH_ARRAY"}
     assert table["recharge"].sum() == pytest.approx(1e-4 + 9 * 5e-5)
 
@@ -84,5 +84,5 @@ def test_one_package_can_still_be_asked_for_by_its_own_name(run):
 def test_a_map_adds_the_packages_that_share_a_cell(run):
     """MF6 applies both recharge packages to cell 4, and the map sums per cell."""
 
-    z = run.model("flow").packages.rch.inputs.recharge.map(per=0).fig.data[0].z
+    z = run.model("flow").rch.inputs.recharge.map(per=0).fig.data[0].z
     assert z[4] == pytest.approx(1e-4 + 5e-5)

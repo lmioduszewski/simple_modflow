@@ -68,7 +68,7 @@ def _stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
 
     ends = period_ends(
         model,
-        reader=lambda: model.sfr.output.stage(),
+        reader=lambda: model.fl.sfr.output.stage(),
         file="the SFR stage file",
         saves="HEAD",
         fallback=frame["kstpkper"] if "kstpkper" in frame.columns else (),
@@ -256,7 +256,7 @@ class SfrStageTargets:
         observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
         if observed is not None:
             return observed
-        frame = model.packages.sfr.results.stage.get().copy()
+        frame = model.sfr.results.stage.get().copy()
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
         frame = _stage_at_period_end(model, frame)
@@ -304,7 +304,7 @@ class SfrStageTargets:
             simulated["per"] = simulated["time"]
             simulated = self._locations.merge(simulated, on="name", how="left")
         else:
-            simulated = _stage_at_period_end(model, model.packages.sfr.results.stage.get().copy())
+            simulated = _stage_at_period_end(model, model.sfr.results.stage.get().copy())
             simulated = self._locations.merge(simulated, on="reach", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
             compare = simulated.rename(columns={"per": "time"}).copy()
@@ -622,7 +622,7 @@ class SfrFlowTargets:
             # production. Test doubles without ``.outputs`` feed flow-shaped data
             # through ``results.q``; keep reading it so those doubles resolve.
             try:
-                flow = model.packages.sfr.results.q.get().copy()
+                flow = model.sfr.results.q.get().copy()
             except (AttributeError, TypeError):
                 # A test double that exposes neither `.outputs` NOR a usable
                 # `results.q` -- an empty frame is the documented answer for

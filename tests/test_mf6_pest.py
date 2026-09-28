@@ -204,14 +204,12 @@ def _fake_surface_water_model():
     model = SimpleNamespace(
         vor=vor,
         gwf=SimpleNamespace(lak="lak_owner", sfr="sfr_owner", drn="drn_owner"),
-        packages=SimpleNamespace(
-            lak=SimpleNamespace(results=SimpleNamespace(stage=SimpleNamespace(get=lambda: lake_stage.copy()))),
-            sfr=SimpleNamespace(
-                results=SimpleNamespace(
-                    stage=SimpleNamespace(get=lambda: sfr_stage.copy()),
-                    q=SimpleNamespace(get=lambda: sfr_flow.copy()),
-                )
-            ),
+        lak=SimpleNamespace(results=SimpleNamespace(stage=SimpleNamespace(get=lambda: lake_stage.copy()))),
+        sfr=SimpleNamespace(
+            results=SimpleNamespace(
+                stage=SimpleNamespace(get=lambda: sfr_stage.copy()),
+                q=SimpleNamespace(get=lambda: sfr_flow.copy()),
+            )
         ),
     )
     model.bud = lambda package: SimpleNamespace(df=drn_df.copy())
@@ -701,10 +699,8 @@ def test_sfr_flow_table_refuses_to_substitute_exchange_for_missing_routing():
 
     model = SimpleNamespace(
         outputs=SimpleNamespace(sfr=SimpleNamespace(bud=SimpleNamespace(get=_get))),
-        packages=SimpleNamespace(
-            sfr=SimpleNamespace(
-                results=SimpleNamespace(q=SimpleNamespace(get=lambda: exchange.copy()))
-            )
+        sfr=SimpleNamespace(
+            results=SimpleNamespace(q=SimpleNamespace(get=lambda: exchange.copy()))
         ),
     )
     targets = SfrFlowTargets(

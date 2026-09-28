@@ -282,14 +282,14 @@ def barrier_run(canonical_run_fresh, crossing_line):
 
 @pytest.mark.slow
 def test_the_package_is_reachable_from_the_model(barrier_run):
-    """`model.packages.hfb` -- bespoke, because the generic explorer is cell-keyed."""
+    """`model.hfb` -- bespoke, because the generic explorer is cell-keyed."""
 
-    assert barrier_run.packages.hfb is not None
+    assert barrier_run.hfb is not None
 
 
 @pytest.mark.slow
 def test_get_lists_every_barrier(barrier_run, crossing_line):
-    table = barrier_run.packages.hfb.get()
+    table = barrier_run.hfb.get()
     assert len(table) == len(barrier_faces(barrier_run.vor, crossing_line))
     assert {"per", "layer", "cell1", "cell2", "hydchr", "length"} <= set(table.columns)
     # `length` is the shared face's own length -- what MF6 multiplies hydchr by
@@ -299,17 +299,17 @@ def test_get_lists_every_barrier(barrier_run, crossing_line):
 
 @pytest.mark.slow
 def test_summary_is_one_row_per_period(barrier_run):
-    summary = barrier_run.packages.hfb.summary()
+    summary = barrier_run.hfb.summary()
     assert len(summary) == 1
-    assert summary.iloc[0]["barriers"] == len(barrier_run.packages.hfb.get())
+    assert summary.iloc[0]["barriers"] == len(barrier_run.hfb.get())
 
 
 @pytest.mark.slow
 def test_segments_are_the_faces_themselves(barrier_run):
     """A barrier's geometry is the shared EDGE, and an edge survives a re-grid."""
 
-    frame = barrier_run.packages.hfb.segments()
-    assert len(frame) == len(barrier_run.packages.hfb.get())
+    frame = barrier_run.hfb.segments()
+    assert len(frame) == len(barrier_run.hfb.get())
     assert frame.crs is not None
     assert (frame.geometry.geom_type == "LineString").all()
 
@@ -318,7 +318,7 @@ def test_segments_are_the_faces_themselves(barrier_run):
 def test_the_map_draws_barriers_as_lines(barrier_run):
     """A barrier is an edge, so it is drawn over the cell field, not instead of it."""
 
-    types = [trace.type for trace in barrier_run.packages.hfb.map().fig.data]
+    types = [trace.type for trace in barrier_run.hfb.map().fig.data]
     assert types == ["choroplethmap", "scattermap"]
 
 
@@ -333,7 +333,7 @@ def test_flow_across_each_barrier_is_recoverable(barrier_run):
     flow on every connection, so a barrier's flow is simply that entry.
     """
 
-    flows = barrier_run.packages.hfb.results.q.get()
+    flows = barrier_run.hfb.results.q.get()
     assert not flows.empty
     assert "q_cell1_to_cell2" in flows.columns
     assert flows["q_cell1_to_cell2"].notna().all()
@@ -342,8 +342,8 @@ def test_flow_across_each_barrier_is_recoverable(barrier_run):
 
 @pytest.mark.slow
 def test_there_is_one_flow_per_barrier_per_step(barrier_run):
-    flows = barrier_run.packages.hfb.results.q.get()
-    barriers = len(barrier_run.packages.hfb.get())
+    flows = barrier_run.hfb.results.q.get()
+    barriers = len(barrier_run.hfb.get())
     assert len(flows) % barriers == 0
     for _, block in flows.groupby(["per", "kstp"]):
         assert len(block) == barriers
@@ -356,7 +356,7 @@ def test_the_flow_column_names_its_frame(barrier_run):
     Negating to make a number read "intuitively" is how sign bugs get built in.
     """
 
-    flows = barrier_run.packages.hfb.results.q.get()
+    flows = barrier_run.hfb.results.q.get()
     assert "q_cell1_to_cell2" in flows.columns
     assert "q" not in flows.columns
 
@@ -409,16 +409,16 @@ def test_a_barrier_across_the_grid_stops_the_flow_across_it(canonical_run, cross
 
 @pytest.mark.slow
 def test_results_summary_totals_the_barriers(barrier_run):
-    summary = barrier_run.packages.hfb.results.q.summary()
+    summary = barrier_run.hfb.results.q.summary()
     assert {"per", "kstp", "barriers", "q_net", "q_abs_total", "q_max_abs"} <= set(summary.columns)
     assert (summary["q_abs_total"] >= summary["q_net"].abs()).all()
 
 
 @pytest.mark.slow
 def test_the_results_map_draws_one_line_per_barrier(barrier_run):
-    picture = barrier_run.packages.hfb.results.q.map()
+    picture = barrier_run.hfb.results.q.map()
     scatter = [t for t in picture.fig.data if t.type == "scattermap"]
-    assert len(scatter) == len(barrier_run.packages.hfb.get())
+    assert len(scatter) == len(barrier_run.hfb.get())
 
 
 @pytest.mark.slow
@@ -441,12 +441,12 @@ def test_the_matplotlib_backend_draws_the_barriers_rather_than_dropping_them(bar
     matplotlib.use("Agg")
     from matplotlib.figure import Figure
 
-    expected = len(barrier_run.packages.hfb.segments())
+    expected = len(barrier_run.hfb.segments())
     assert expected, "the fixture built no barriers, so this proves nothing"
 
     for picture in (
-        barrier_run.packages.hfb.inputs.map(backend="mpl"),
-        barrier_run.packages.hfb.results.q.map(backend="mpl"),
+        barrier_run.hfb.inputs.map(backend="mpl"),
+        barrier_run.hfb.results.q.map(backend="mpl"),
     ):
         assert isinstance(picture, Figure)
         assert len(picture.axes[0].lines) == expected
@@ -464,12 +464,12 @@ def test_an_hfb_map_refuses_a_field_override_and_an_unknown_backend(barrier_run)
     """
 
     with pytest.raises(TypeError, match="values"):
-        barrier_run.packages.hfb.results.q.map(values=[1.0] * barrier_run.vor.ncpl)
+        barrier_run.hfb.results.q.map(values=[1.0] * barrier_run.vor.ncpl)
 
     # ... but the input map's `values` is its documented backdrop, and works.
-    assert barrier_run.packages.hfb.inputs.map(values=[1.0] * barrier_run.vor.ncpl)
+    assert barrier_run.hfb.inputs.map(values=[1.0] * barrier_run.vor.ncpl)
 
-    for verb in (barrier_run.packages.hfb.inputs.map,
-                 barrier_run.packages.hfb.results.q.map):
+    for verb in (barrier_run.hfb.inputs.map,
+                 barrier_run.hfb.results.q.map):
         with pytest.raises(ValueError, match="backend must be"):
             verb(backend="nope")

@@ -70,7 +70,7 @@ def counted(monkeypatch):
 def test_repeated_reads_load_once(flopy_named_workspace, counted):
     model = mf.load_mf6_run(flopy_named_workspace)
     for _ in range(3):
-        assert len(model.packages.chd.inputs.head.get()) == 2
+        assert len(model.chd.inputs.head.get()) == 2
     assert len(counted) <= 2, counted  # core, then one full load -- never one per read
 
 
@@ -111,7 +111,7 @@ def test_a_reopened_run_is_quiet_at_verbosity_zero(flopy_named_workspace, capsys
 
     model = mf.load_mf6_run(flopy_named_workspace)
     capsys.readouterr()
-    model.packages.chd.inputs.head.get()
+    model.chd.inputs.head.get()
     assert capsys.readouterr().out == ""
 
 

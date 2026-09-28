@@ -1,6 +1,6 @@
 """The SFR long-profile view -- the first package view on the house shape.
 
-``model.packages.sfr.results.profile`` is a view object rather than a pair of
+``model.sfr.results.profile`` is a view object rather than a pair of
 loose ``long_profile`` / ``plot_long_profile`` methods (see
 ``docs/view_layer_conventions.md``). Contracts pinned here:
 
@@ -38,7 +38,7 @@ pytestmark = pytest.mark.slow
 def profile(canonical_run):
     """The canonical model's SFR profile view."""
 
-    return canonical_run.packages.sfr.results.profile
+    return canonical_run.sfr.results.profile
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ def test_profile_frame_carries_the_merged_fields(profile):
 def test_calling_the_view_rebinds_the_period(canonical_run):
     """``profile(per=n).get()`` equals ``profile.get(per=n)``."""
 
-    results = canonical_run.packages.sfr.results
+    results = canonical_run.sfr.results
     last = canonical_run.nper - 1
     rebound = results.profile(per=last)
 
@@ -81,7 +81,7 @@ def test_calling_the_view_rebinds_the_period(canonical_run):
 def test_plot_honors_both_period_spellings(canonical_run):
     """``profile.plot(per=n)`` and ``profile(per=n).plot()`` agree."""
 
-    results = canonical_run.packages.sfr.results
+    results = canonical_run.sfr.results
     last = canonical_run.nper - 1
     assert (
         results.profile.plot(per=last).layout.title.text
@@ -186,7 +186,7 @@ def test_include_flags_drop_their_traces(profile):
 def test_long_profile_alias_warns_and_returns_the_frame(canonical_run):
     """The old name still returns a DataFrame, identical to ``profile.get()``."""
 
-    results = canonical_run.packages.sfr.results
+    results = canonical_run.sfr.results
     with pytest.warns(DeprecationWarning, match="long_profile is deprecated"):
         frame = results.long_profile(per=0)
     pd.testing.assert_frame_equal(frame, results.profile.get(per=0))
@@ -199,7 +199,7 @@ def test_plot_long_profile_alias_keeps_the_unsigned_line(canonical_run):
     under existing callers.
     """
 
-    results = canonical_run.packages.sfr.results
+    results = canonical_run.sfr.results
     with pytest.warns(DeprecationWarning, match="plot_long_profile is deprecated"):
         fig = results.plot_long_profile(per=0)
     assert _exchange_trace(fig).type == "scattergl"
@@ -245,7 +245,7 @@ def test_unknown_attributes_still_raise_attribute_error(canonical_run):
     """The alias ``__getattr__`` must not swallow genuine typos."""
 
     with pytest.raises(AttributeError, match="no attribute 'no_such_thing'"):
-        canonical_run.packages.sfr.results.no_such_thing
+        canonical_run.sfr.results.no_such_thing
 
 
 # ---------------------------------------------------------------------------
@@ -258,8 +258,8 @@ def test_field_level_profiles_are_views_with_the_house_shape(canonical_run):
 
     from myflopy import viz as figs
 
-    q = canonical_run.packages.sfr.results.q.profile
-    stage = canonical_run.packages.sfr.results.stage.profile
+    q = canonical_run.sfr.results.q.profile
+    stage = canonical_run.sfr.results.stage.profile
     assert isinstance(q, SfrReachProfileView)
     assert isinstance(stage, SfrReachProfileView)
     assert isinstance(q.get(), pd.DataFrame)
@@ -271,7 +271,7 @@ def test_field_level_profiles_are_views_with_the_house_shape(canonical_run):
 def test_field_profile_call_rebinds_the_period_without_mutating(canonical_run):
     """``q.profile(per=n)`` rebinds a fresh view; the original stays at its period."""
 
-    q = canonical_run.packages.sfr.results.q.profile
+    q = canonical_run.sfr.results.q.profile
     last = canonical_run.nper - 1
     rebound = q(per=last)
     assert rebound.per == last
@@ -281,7 +281,7 @@ def test_field_profile_call_rebinds_the_period_without_mutating(canonical_run):
 def test_field_profile_plots_its_own_field(canonical_run):
     """Each field-level profile plots only its field on the y-axis."""
 
-    results = canonical_run.packages.sfr.results
+    results = canonical_run.sfr.results
     assert results.q.profile.plot().layout.yaxis.title.text == results.q.value_name
     assert results.stage.profile.plot().layout.yaxis.title.text == "stage"
 
@@ -291,7 +291,7 @@ def test_field_plot_profile_alias_warns_and_returns_a_figure(canonical_run):
 
     from myflopy import viz as figs
 
-    results = canonical_run.packages.sfr.results
+    results = canonical_run.sfr.results
     with pytest.warns(DeprecationWarning, match="plot_profile is deprecated"):
         assert isinstance(results.q.plot_profile(per=0), figs.Fig)
     with pytest.warns(DeprecationWarning, match="plot_profile is deprecated"):

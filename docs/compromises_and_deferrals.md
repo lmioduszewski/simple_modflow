@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 338 entries (343 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 339 entries (344 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 339 | One package is `model.<pkg>`, and FloPy's package object is `model.fl.<pkg>`; `model.packages` keeps only t... | 2026-09-27 |
 | 338 | Every public parameter has a `name : type` entry with a description, and a test holds it: 1,968 missing ent... | 2026-09-27 |
 | 337 | `per=N` is the last SAVED step of stress period N on every picture and group table, through ONE function; b... | 2026-09-27 |
 | 336 | A period's flow is its END-of-period flow: the SFR and DRN flow targets added every step a period saved, an... | 2026-09-26 |
@@ -14970,3 +14971,24 @@ same day, which is the useful part of the result.
       `test_every_public_parameter_is_documented[mf.chd.gpkg]`; the rule's six complaints
       (missing, untyped, bodiless, undocumented tail, not accepted, prose line) are each
       produced by a synthetic docstring, and an `Attributes`-only non-dataclass is refused.
+
+339. **One package is `model.<pkg>`, and FloPy's package object is `model.fl.<pkg>`; `model.packages` keeps only the all-packages verbs (2026-09-27).**
+      The user's call: `model.drn.inputs.map()` in place of `model.packages.drn.inputs.map()`.
+      `model.drn` already existed -- 4.7.7's accessors returned FloPy's `ModflowGwfdrn` -- so
+      this CHANGED what the name means rather than adding a forward. FloPy's object moved to
+      `model.fl.drn` (`FlopyPackages`: the ten registry packages as typed properties, anything
+      else -- `npf`, `disv`, `tdis` -- by name through `model.package`, which raises naming the
+      model). **No transition shim and no warned alias** -- the user is the only user (their
+      call); the 35 reads of the FloPy object in `src/`, three in tests and one reproducer were
+      repointed, found by a sweep for the ten names on a model receiver.
+      **Kept, deliberately:** `model.packages`. It carries `summary()` and the cross-package
+      `mosaic()`, and `model.summary()` already means the model's own table, so there was
+      nowhere to move them. `model.packages.<pkg>` still resolves -- it is what `model.<pkg>`
+      returns -- and is no longer taught; 274 teaching sites were rewritten.
+      **NOT done -- scope cut:** the group and diff scopes keep `group.packages.<pkg>` /
+      `diff.packages.<pkg>`, so the grammar's first hop now differs by scope. The ledger, the
+      reproducers and the old reports and plans keep the old spelling as the record of their
+      day. Promoted beside the ten: `hfb`, `ic`, `npf`, `sto`, `surface_water`. There are five
+      hand-written namespaces now, each held complete by
+      `test_every_namespace_exposes_every_registry_package` and listed in the payoff test's
+      `MANUAL_SURFACES`.

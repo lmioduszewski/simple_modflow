@@ -285,7 +285,7 @@ def build_sfr_long_profile_table(
         intended as the canonical input to higher-level SFR profile plots.
     """
 
-    packagedata = pd.DataFrame(model.sfr.packagedata.get_data()).copy()
+    packagedata = pd.DataFrame(model.fl.sfr.packagedata.get_data()).copy()
     packagedata = split_cellid_columns(packagedata)
     if "ifno" in packagedata.columns:
         packagedata = packagedata.rename(columns={"ifno": "reach"})
@@ -470,13 +470,13 @@ def build_lak_stage_result_table(model: SimulationBase) -> pd.DataFrame:
     """
 
     stage_array = np.asarray(model.outputs.lak.stage.get(), dtype=float)
-    nlakes = int(model.lak.nlakes.data)
+    nlakes = int(model.fl.lak.nlakes.data)
     periods = pd.DataFrame(stage_array.reshape(-1, nlakes))
     periods["per"] = periods.index.astype(int)
     stage_long = periods.melt(id_vars="per", var_name="lake", value_name="stage")
     stage_long["lake"] = stage_long["lake"].astype(int)
 
-    connectiondata = pd.DataFrame(model.lak.connectiondata.get_data()).copy()
+    connectiondata = pd.DataFrame(model.fl.lak.connectiondata.get_data()).copy()
     connectiondata = split_cellid_columns(connectiondata)
     if "ifno" in connectiondata.columns:
         connectiondata = connectiondata.rename(columns={"ifno": "lake"})
@@ -559,7 +559,7 @@ def build_lak_budget_result_table(
         # a missed bare-"q" read fails loudly. See ResultSpec.reference_frame.
         frame = frame.rename(columns={"q": value_name})
 
-    connectiondata = pd.DataFrame(model.lak.connectiondata.get_data()).copy()
+    connectiondata = pd.DataFrame(model.fl.lak.connectiondata.get_data()).copy()
     connectiondata = split_cellid_columns(connectiondata)
     if "ifno" in connectiondata.columns:
         connectiondata = connectiondata.rename(columns={"ifno": "lake"})

@@ -450,12 +450,12 @@ class CellPackageInputFieldExplorer(SpatialView):
 
         Examples
         --------
-        >>> model.packages.drn.inputs.elev.map()
-        >>> model.packages.ghb.inputs.cond.map(per=3, agg="sum")
-        >>> model.packages.drn.inputs.cond.map(logscale=True, colorscale="Viridis")
-        >>> model.packages.ghb.inputs.bhead.map(fill_value=float("nan"))
-        >>> model.packages.drn.inputs.elev.map(select="all_streams")
-        >>> model.packages.ghb.inputs.cond.map(backend="mpl").savefig("cond.png")
+        >>> model.drn.inputs.elev.map()
+        >>> model.ghb.inputs.cond.map(per=3, agg="sum")
+        >>> model.drn.inputs.cond.map(logscale=True, colorscale="Viridis")
+        >>> model.ghb.inputs.bhead.map(fill_value=float("nan"))
+        >>> model.drn.inputs.elev.map(select="all_streams")
+        >>> model.ghb.inputs.cond.map(backend="mpl").savefig("cond.png")
         """
 
         refuse_noun_parameters(
@@ -832,12 +832,12 @@ class UzfFieldInputsExplorer(SpatialView):
 
         Examples
         --------
-        >>> model.packages.uzf.inputs.finf.map()
-        >>> model.packages.uzf.inputs.finf.map(per=5, multiplier=365.25)
-        >>> model.packages.uzf.inputs.pet.map(per=3, agg="mean")
-        >>> model.packages.uzf.inputs.extdp.map(agg="mean", fill_value=float("nan"))
-        >>> model.packages.uzf.inputs.finf.map(logscale=True, colorscale="Blues")
-        >>> model.packages.uzf.inputs.pet.map(backend="mpl").savefig("pet.png")
+        >>> model.uzf.inputs.finf.map()
+        >>> model.uzf.inputs.finf.map(per=5, multiplier=365.25)
+        >>> model.uzf.inputs.pet.map(per=3, agg="mean")
+        >>> model.uzf.inputs.extdp.map(agg="mean", fill_value=float("nan"))
+        >>> model.uzf.inputs.finf.map(logscale=True, colorscale="Blues")
+        >>> model.uzf.inputs.pet.map(backend="mpl").savefig("pet.png")
         """
 
         refuse_noun_parameters(
@@ -1436,12 +1436,12 @@ class StaticArrayFieldExplorer(SpatialView):
 
         Examples
         --------
-        >>> model.packages.npf.k.map()
-        >>> model.packages.npf.k33.map(layer=2, logscale=True)
-        >>> model.packages.ic.strt.map(contours=True, contour_levels=20)
-        >>> model.packages.sto.sy.map(zmin=0.0, zmax=0.3, colorscale="Blues")
-        >>> model.packages.npf.k.map(select="all_streams", select_color="red")
-        >>> model.packages.sto.ss.map(backend="mpl").savefig("ss.png")
+        >>> model.npf.k.map()
+        >>> model.npf.k33.map(layer=2, logscale=True)
+        >>> model.ic.strt.map(contours=True, contour_levels=20)
+        >>> model.sto.sy.map(zmin=0.0, zmax=0.3, colorscale="Blues")
+        >>> model.npf.k.map(select="all_streams", select_color="red")
+        >>> model.sto.ss.map(backend="mpl").savefig("ss.png")
         """
 
         refuse_noun_parameters(
@@ -1526,7 +1526,7 @@ class StaticArrayFieldExplorer(SpatialView):
 
 
 class TransmissivityMaxExplorer(StaticArrayFieldExplorer):
-    """``model.packages.npf.transmissivity_max`` -- K times the FULL layer thickness.
+    """``model.npf.transmissivity_max`` -- K times the FULL layer thickness.
 
     The most a layer could conduct, so it needs no heads and draws on a model that
     has not been run. Every verb reads :func:`~myflopy.modflow.mf6.hydraulics
@@ -1604,7 +1604,7 @@ class TransmissivityMaxExplorer(StaticArrayFieldExplorer):
 
 
 class TransmissivityExplorer(TransmissivityMaxExplorer):
-    """``model.packages.npf.transmissivity`` -- K times the SATURATED thickness.
+    """``model.npf.transmissivity`` -- K times the SATURATED thickness.
 
     The default meaning of transmissivity here (the user's decision, ledger 308):
     what the layer conducts at a stress period, following MF6's own ICELLTYPE rule
@@ -1673,7 +1673,7 @@ class TransmissivityExplorer(TransmissivityMaxExplorer):
             raise ValueError(
                 "npf.transmissivity is the SATURATED transmissivity and needs heads; "
                 "this model has none yet. Run it, or use "
-                "model.packages.npf.transmissivity_max (K x full thickness)."
+                "model.npf.transmissivity_max (K x full thickness)."
             ) from error
         last: dict[int, tuple[int, int]] = {}
         for key in keys:

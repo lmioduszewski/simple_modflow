@@ -48,7 +48,7 @@ def _truth_cells_from_cellid(model, package: str) -> set[int]:
     """
 
     ncpl = int(model.vor.ncpl)
-    owner = getattr(model, package)
+    owner = getattr(model.fl, package)
     table = owner.connectiondata if package == "lak" else owner.packagedata
     rows = pd.DataFrame(table.get_data())
     return {int(cellid[0]) * ncpl + int(cellid[1]) for cellid in rows["cellid"]}

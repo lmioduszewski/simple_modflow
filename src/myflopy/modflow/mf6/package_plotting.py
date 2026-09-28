@@ -588,7 +588,7 @@ def build_surface_water_q_map_payload(
 
 # --- what a NOUN's picture verb offers (plan 8.8, extended to the noun tier) ----
 #
-# `model.hds.map()` and `model.packages.drn.inputs.elev.map()` are NOUNS: narrower
+# `model.hds.map()` and `model.drn.inputs.elev.map()` are NOUNS: narrower
 # than the verb, because the noun already fixes WHAT is drawn. The 8.8 rule --
 # name every parameter, because editors read the `def` line and never run the
 # module -- applies to them too, and until 2026-08-30 reached none of them.
@@ -2018,11 +2018,11 @@ class SpatialView:
 
         Examples
         --------
-        >>> model.packages.npf.k.mosaic()                     # one panel per layer
-        >>> model.packages.npf.k.mosaic(logscale=True, show_layer_elevs=True)
+        >>> model.npf.k.mosaic()                     # one panel per layer
+        >>> model.npf.k.mosaic(logscale=True, show_layer_elevs=True)
         >>> model.hds.mosaic(by="layer", contours=True, contour_levels=8)
-        >>> model.packages.drn.results.q.mosaic(features="wells.gpkg", ncols=2)
-        >>> model.packages.npf.k.mosaic(logscale=True, backend="mpl")
+        >>> model.drn.results.q.mosaic(features="wells.gpkg", ncols=2)
+        >>> model.npf.k.mosaic(logscale=True, backend="mpl")
         """
 
         panel_options = _explicit_options(locals(), type(self).mosaic, PANEL_DRAWING_PARAMS)
@@ -2543,7 +2543,7 @@ class SpatialView:
         --------
         >>> model.hds.animate()                               # heads over periods
         >>> model.hds.animate(logscale=True, features="wells.gpkg")
-        >>> model.packages.drn.results.q.animate(over="period", zmin=-50, zmax=50)
+        >>> model.drn.results.q.animate(over="period", zmin=-50, zmax=50)
         >>> model.hds.animate(backend="mpl")
         """
 

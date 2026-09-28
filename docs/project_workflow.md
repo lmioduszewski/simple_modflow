@@ -216,7 +216,7 @@ model = run.model("flow")
 model.add_aoi("north", north_polygon)                      # defined on the model...
 sorted(project.aoi)                                        # ...kept by the project: ['north', 'site', 'wetland']
 model.plot.map(layer=0, extent="site", backend="mpl")      # the window a map opens on
-model.packages.npf.transmissivity.mosaic(per=3, extent="site")
+model.npf.transmissivity.mosaic(per=3, extent="site")
 model.plot.map(layer=0, select="wetland")                  # the cells under it
 model.plot.map(layer=0, features=model.aoi)                # every area, one layer each
 ```

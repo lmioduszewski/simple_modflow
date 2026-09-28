@@ -52,10 +52,10 @@ def test_one_limit_leaves_the_other_pooled(canonical_run):
 
 
 def test_a_log_mosaic_takes_its_limits_in_data_units(canonical_run):
-    fig = canonical_run.packages.npf.k.mosaic(logscale=True, zmin=1.0, zmax=100.0)
+    fig = canonical_run.npf.k.mosaic(logscale=True, zmin=1.0, zmax=100.0)
     # The trace axis is log10; the caller wrote data units.
     assert (fig.layout.coloraxis.cmin, fig.layout.coloraxis.cmax) == (0.0, 2.0)
-    static = canonical_run.packages.npf.k.mosaic(
+    static = canonical_run.npf.k.mosaic(
         logscale=True, zmin=1.0, zmax=100.0, backend="mpl"
     )
     norm = _cell_norm(static.axes[0])
@@ -76,11 +76,11 @@ def test_the_free_mosaic_takes_the_widest_panel_limits(canonical_run):
 
 
 def test_every_static_mosaic_panel_draws_its_features_and_selection(canonical_run):
-    single = canonical_run.packages.npf.k.map(backend="mpl", features=WELL, select=[0, 1, 2])
+    single = canonical_run.npf.k.map(backend="mpl", features=WELL, select=[0, 1, 2])
     expected = len(single.axes[0].collections)
     assert expected >= 3  # cells, the selection outline, the well
 
-    fig = canonical_run.packages.npf.k.mosaic(backend="mpl", features=WELL, select=[0, 1, 2])
+    fig = canonical_run.npf.k.mosaic(backend="mpl", features=WELL, select=[0, 1, 2])
     panels = [axis for axis in fig.axes if axis.get_label() != "<colorbar>" and axis.collections]
     assert len(panels) == 4
     assert [len(axis.collections) for axis in panels] == [expected] * 4

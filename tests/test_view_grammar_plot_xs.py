@@ -209,15 +209,15 @@ def test_plot_and_xs_verbs_render_on_canonical(canonical_run):
     assert isinstance(model.hds.section(line=line, backend="mpl"), Figure)
 
     # -- single model: package leaves --------------------------------------
-    ghb_series = model.packages.ghb.results.plot()  # flux by period (per layer)
+    ghb_series = model.ghb.results.plot()  # flux by period (per layer)
     assert isinstance(ghb_series, go.Figure) and len(ghb_series.data) >= 1
     # no redundant model-name prefix on a single-model surface
     assert all(model.name not in (trace.name or "") for trace in ghb_series.data)
 
-    lak_stage_series = model.packages.lak.results.plot(field="stage")
+    lak_stage_series = model.lak.results.plot(field="stage")
     assert isinstance(lak_stage_series, go.Figure) and len(lak_stage_series.data) >= 1
 
-    stage_change = model.packages.lak.results.stage_change.plot()
+    stage_change = model.lak.results.stage_change.plot()
     assert isinstance(stage_change, go.Figure)
 
     # -- group surface -------------------------------------------------------

@@ -181,7 +181,7 @@ def check_map_type(value) -> str:
             "whatever period was asked for, and raised KeyError on a model with "
             "fewer. Map "
             "declared recharge with its package noun, "
-            "model.packages.rch.inputs.recharge.map(per=...)."
+            "model.rch.inputs.recharge.map(per=...)."
         )
     if key not in MAP_TYPES:
         raise ValueError(
@@ -416,7 +416,7 @@ class Choro(Picture):
                 "type='trans_max' (K x FULL thickness) needs no heads"
                 if type == "trans"
                 else "map an input instead (type='ks', or a package noun such as "
-                "model.packages.npf.k.map())"
+                "model.npf.k.map())"
             )
             raise ValueError(
                 f"type={type!r} maps a RESULT and this model has none yet -- it has "

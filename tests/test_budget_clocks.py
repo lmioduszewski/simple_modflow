@@ -198,7 +198,7 @@ def test_a_lak_budget_is_labelled_by_its_own_clock_not_the_head_file(
     assert len(head_clock) == len(lak_clock), "fixture no longer has equal counts"
     assert head_clock != lak_clock, "fixture no longer separates the two clocks"
 
-    frame = model.packages.lak.budget.get()
+    frame = model.lak.budget.get()
     labelled = sorted({tuple(value) for value in frame.loc[frame.term == "GWF", "kstpkper"]})
     assert labelled == lak_clock
     assert set(frame["per"]) == {kper for _, kper in lak_clock}
@@ -221,7 +221,7 @@ def test_a_lak_budget_saved_more_often_than_heads_still_reads(
     lak_clock = _lak_budget_clock(workspace, name)
     assert len(lak_clock) > len(head_clock), "fixture no longer separates the two clocks"
 
-    frame = model.packages.lak.budget.get()
+    frame = model.lak.budget.get()
     assert isinstance(frame, pd.DataFrame)
     gwf = frame.loc[frame.term == "GWF"]
     assert sorted({tuple(value) for value in gwf["kstpkper"]}) == lak_clock
@@ -244,7 +244,7 @@ def test_a_package_budget_get_returns_a_dataframe_or_raises_never_a_list(
 
     assert isinstance(model.outputs.lak.bud.get("GWF"), pd.DataFrame)
     assert isinstance(model.outputs.lak.bud.get("GWF", return_df=False), list)
-    assert isinstance(package_output_df(model, model.lak, bud_type="GWF"), pd.DataFrame)
+    assert isinstance(package_output_df(model, model.fl.lak, bud_type="GWF"), pd.DataFrame)
 
 
 @pytest.mark.slow
@@ -296,7 +296,7 @@ def test_a_model_budget_file_the_oc_renamed_is_still_found(
 
     model = mf.load_mf6_run(str(workspace))
     assert "CHD" in [str(record).strip() for record in model.budget.types]
-    assert not model.packages.chd.results.q.get().empty
+    assert not model.chd.results.q.get().empty
 
 
 def test_a_workspace_whose_oc_names_no_budget_falls_back_to_the_default(tmp_path):

@@ -413,7 +413,7 @@ def build_uzf_field_input_wide_table(
 def build_sfr_reach_table(model: SimulationBase) -> pd.DataFrame:
     """Return per-reach geometry metadata used by SFR tables and profiles."""
 
-    packagedata = pd.DataFrame(model.sfr.packagedata.get_data()).copy()
+    packagedata = pd.DataFrame(model.fl.sfr.packagedata.get_data()).copy()
     packagedata = split_cellid_columns(packagedata)
     if "ifno" in packagedata.columns:
         packagedata = packagedata.rename(columns={"ifno": "reach"})
@@ -460,7 +460,7 @@ def build_lak_connection_table(model: SimulationBase) -> pd.DataFrame:
     exchange between the lake and groundwater.
     """
 
-    connectiondata = pd.DataFrame(model.lak.connectiondata.get_data()).copy()
+    connectiondata = pd.DataFrame(model.fl.lak.connectiondata.get_data()).copy()
     if connectiondata.empty:
         return pd.DataFrame(
             columns=[
@@ -542,14 +542,14 @@ def build_lak_connection_table(model: SimulationBase) -> pd.DataFrame:
 def build_sfr_input_table(model: SimulationBase) -> pd.DataFrame:
     """Return normalized static and stress-period SFR inputs mapped to cells."""
 
-    base = pd.DataFrame(model.sfr.packagedata.get_data()).copy()
+    base = pd.DataFrame(model.fl.sfr.packagedata.get_data()).copy()
     base = split_cellid_columns(base)
     if "ifno" in base.columns:
         base = base.rename(columns={"ifno": "reach"})
     base["reach"] = pd.to_numeric(base["reach"], errors="coerce").astype(int)
     base["layer"] = pd.to_numeric(base["layer"], errors="coerce").astype(int)
     base["cell"] = pd.to_numeric(base["cell"], errors="coerce").astype(int)
-    settings = _numeric_period_settings(model.sfr, id_column="ifno", nper=model.nper)
+    settings = _numeric_period_settings(model.fl.sfr, id_column="ifno", nper=model.nper)
     frames = []
     for period in range(int(model.nper)):
         frame = base.copy()
@@ -570,7 +570,7 @@ def build_lak_input_table(model: SimulationBase) -> pd.DataFrame:
     """Return normalized static and stress-period LAK inputs mapped to connection cells."""
 
     connections = build_lak_connection_table(model)
-    packagedata = pd.DataFrame(model.lak.packagedata.get_data()).copy()
+    packagedata = pd.DataFrame(model.fl.lak.packagedata.get_data()).copy()
     if "ifno" in packagedata.columns:
         packagedata = packagedata.rename(columns={"ifno": "lake"})
     packagedata["lake"] = pd.to_numeric(packagedata["lake"], errors="coerce").astype(
@@ -579,7 +579,7 @@ def build_lak_input_table(model: SimulationBase) -> pd.DataFrame:
     base = connections.merge(
         packagedata, on="lake", how="left", suffixes=("", "_package")
     )
-    settings = _numeric_period_settings(model.lak, id_column="number", nper=model.nper)
+    settings = _numeric_period_settings(model.fl.lak, id_column="number", nper=model.nper)
     frames = []
     for period in range(int(model.nper)):
         frame = base.copy()

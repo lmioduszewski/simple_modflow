@@ -336,27 +336,31 @@ def test_artifact_apply_order_is_unambiguous_across_both_sources():
 
 
 def test_every_namespace_exposes_every_registry_package():
-    """All four package namespaces must cover the whole registry.
+    """All five package namespaces must cover the whole registry.
 
     Was a "does the flag match reality" check that documented a gap: ``model.rch``
     worked while ``model.chd`` raised AttributeError, because someone wrote four
     accessors and stopped. 4.7.7 filled the six in and turned this into a
     completeness assertion, so the next package cannot be half-wired.
 
-    Not circular. These four classes write their properties by hand -- the
+    ``SimulationBase`` (``model.drn``, the view) and ``FlopyPackages``
+    (``model.fl.drn``, FloPy's object) are separate namespaces since ledger 339.
+
+    Not circular. These five classes write their properties by hand -- the
     registry does not generate them (a ``.pyi`` stub replaces a whole module for
     type checkers, so generating them would cost far more than it saves). This
     compares two genuinely independent things.
     """
 
     from myflopy.modflow.mf6.package_model import ModelPackages
-    from myflopy.modflow.mf6.simulation.base import SimulationBase
+    from myflopy.modflow.mf6.simulation.base import FlopyPackages, SimulationBase
     from myflopy.project.group.packages import GroupPackages
     from myflopy.project.model_diff import _PackageDiffNamespace
 
     namespaces = {
         "ModelPackages": ModelPackages,
         "SimulationBase": SimulationBase,
+        "FlopyPackages": FlopyPackages,
         "GroupPackages": GroupPackages,
         "_PackageDiffNamespace": _PackageDiffNamespace,
     }

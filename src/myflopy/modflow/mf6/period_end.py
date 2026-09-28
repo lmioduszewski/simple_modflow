@@ -74,7 +74,7 @@ def saved_steps(reader) -> list[tuple[int, int, float]]:
 
     Examples
     --------
-    >>> saved_steps(model.sfr.output.budget())
+    >>> saved_steps(model.fl.sfr.output.budget())
     [(0, 0, 3.333...), (1, 0, 6.666...), (2, 0, 10.0), (0, 1, 3.333...), ...]
     """
 
@@ -373,7 +373,7 @@ def period_ends(
         The run model the file belongs to.
     reader : callable
         Takes no arguments and returns the file's open FloPy reader
-        (``lambda: model.sfr.output.budget()``). Called only when the model has a
+        (``lambda: model.fl.sfr.output.budget()``). Called only when the model has a
         TDIS -- every run model does -- so a double without the file is never asked
         for it.
     file : str

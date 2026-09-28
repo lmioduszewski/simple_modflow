@@ -18,7 +18,7 @@ the same verbs: `get`/`summary` plus `map` / `plot` / `section` and the composer
 ```python
 model.hds.map(per=8, layer=0)                       # heads choropleth
 model.hds.mosaic(kind="map", by="layer")            # small multiples, shared scale
-model.packages.lak.results.mosaic(field="q")        # one panel per model (groups)
+model.lak.results.mosaic(field="q")        # one panel per model (groups)
 group.diff().hds.map("variant")                     # Δhead map vs the reference
 viz.mosaic([...panels...], ncols=2)                 # free-form composer (any mix)
 ```
@@ -44,7 +44,7 @@ viz.mosaic([...panels...], ncols=2)                 # free-form composer (any mi
   conductivity, recharge, travel time): the cells are coloured by `log10`, but
   the colorbar is labelled in real units at whole decades on both backends,
   the hover keeps the real value, and `zmin`/`zmax` are given in data units
-  (`model.packages.npf.k.map(logscale=True, zmin=1e-4, zmax=10)`). A mosaic
+  (`model.npf.k.map(logscale=True, zmin=1e-4, zmax=10)`). A mosaic
   of log maps relabels its pooled bar by itself.
 - **Layer elevations on hover are `show_layer_elevs=True`** on any map, not just
   heads: the model top and each layer's bottom at that cell

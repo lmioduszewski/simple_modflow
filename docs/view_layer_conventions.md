@@ -456,8 +456,14 @@ This file states both halves as one rule.
 ## The shape
 
 ```
-model.packages.<pkg>.<inputs|results>.<noun>.<verb>()
+model.<pkg>.<inputs|results>.<noun>.<verb>()
 ```
+
+`model.<pkg>` is myflopy's view of one package; **FloPy's own package object is
+`model.fl.<pkg>`** (`model.fl.drn.stress_period_data`; any other package by name --
+`model.fl.npf`, `model.fl.disv`). `model.packages` holds what spans packages --
+`summary()` and `mosaic()`. Group and diff scopes still read
+`group.packages.<pkg>` / `diff.packages.<pkg>` (ledger 339).
 
 - **`<pkg>`** — the package: `sfr`, `lak`, `chd`, `riv`, `evt`, …
 - **`<inputs|results>`** — declared inputs, or simulated results.
@@ -628,7 +634,7 @@ a `foo()` + `plot_foo()` pair.
 `SfrProfileView` (`package_surface_water.py`) is the reference implementation:
 
 ```python
-profile = model.packages.sfr.results.profile
+profile = model.sfr.results.profile
 
 profile.get()                       # merged reach table: geometry + stage + q
 profile.summary()                   # compact digest
@@ -660,7 +666,7 @@ Namespace-level nouns merge fields; field-level nouns cover a single field.
 - `model.budget.<term>` — the **model** budget file (`.cbc`), one noun per MF6 record,
   terms **discovered from the file** so they follow the model's kind and packages.
   Each term is a spatial noun with the full verb set.
-- `model.packages.<pkg>.budget.<term>` — the **package-output** budget file, a
+- `model.<pkg>.budget.<term>` — the **package-output** budget file, a
   genuinely different file whose node layout is feature-first. Its terms are
   hand-declared, and they answer a reduced verb set (`get`/`summary`/`wide`, no
   `plot`) — a known inconsistency, ledger 98.
@@ -698,8 +704,8 @@ raw sign and never negates data to force one convention:
 | `q_gwf` | aquifer `.cbc` cell record (SFR + every list BC) | the GWF cell | discharge **out of the aquifer** (the feature *gains*) |
 | `q_lake` | LAK package budget file | the lake | the lake **loses** |
 
-So `model.packages.sfr.results.q.get()` has a `q_gwf` column and
-`model.packages.lak.results.q.get()` has a `q_lake` column; both carry MF6's
+So `model.sfr.results.q.get()` has a `q_gwf` column and
+`model.lak.results.q.get()` has a `q_lake` column; both carry MF6's
 exact sign. Which frame a package is in is declared once, on
 `ResultSpec.reference_frame` (`package_registry.py`), and drives the column name,
 the map's colour orientation, and the docstrings together — never a literal at a

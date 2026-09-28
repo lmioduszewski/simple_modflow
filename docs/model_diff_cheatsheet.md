@@ -175,7 +175,7 @@ lake and period where stage rises most vs baseline.
   gwrch/sat, `lak/sfr` q+stage, `mvr`); heads live at `diff.hds`, budget at
   `diff.bud` — mirroring `model.hds` / `group.hds`.
 - `group.rch` (flat shortcut) still works but warns — use
-  `group.packages.rch.inputs`, which mirrors `model.packages.rch.inputs`.
+  `group.packages.rch.inputs`, which mirrors `model.rch.inputs`.
 - Reference = baseline; everything zero-based.
 
 ---

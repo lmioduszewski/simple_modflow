@@ -208,7 +208,7 @@ def _lake_stage_file(model):
     assert raw.shape == (NPER, 2)
     assert np.array_equal(np.flatnonzero(raw[:, 0] == -1e30), DRY_RECORDS)
     np.testing.assert_array_equal(raw[:, 1], 108.0)
-    rows = model.packages.lak.results.stage.get().groupby(["per", "lake"]).size()
+    rows = model.lak.results.stage.get().groupby(["per", "lake"]).size()
     assert set(rows.xs(0, level="lake")) == {3} and set(rows.xs(1, level="lake")) == {2}
     return model.outputs.lak.stage.get()
 
@@ -216,7 +216,7 @@ def _lake_stage_file(model):
 def _sfr_stage_file(model):
     """``{(per, reach): [stage at kstp 0, 1, 2]}``, asserting three steps saved per period."""
 
-    table = model.packages.sfr.results.stage.get()
+    table = model.sfr.results.stage.get()
     assert set(table.groupby(["per", "reach"]).size()) == {SFR_NSTP}
     table = table.assign(kstp=table["kstpkper"].map(lambda value: int(value[0])))
     return {key: group.sort_values("kstp")["stage"].to_numpy()
@@ -328,7 +328,7 @@ def test_a_lake_target_keyed_by_period_reads_the_record_clock_at_several_saves(
     assert stage.shape == (records, 1)
     # The stage moves at every step, so which step is read is visible.
     assert len(np.unique(stage[:, 0])) == records
-    rows = lake_steps_run.packages.lak.results.stage.get().groupby(["per", "lake"]).size()
+    rows = lake_steps_run.lak.results.stage.get().groupby(["per", "lake"]).size()
     assert set(rows) == {3}
 
     series = mf.LakeStageTargets(locations={"a": 0}).simulated_series(lake_steps_run)
@@ -347,7 +347,7 @@ def test_a_lake_target_keyed_by_period_reads_the_record_clock_at_several_saves(
     assert not np.isclose(compare["sim_stage"].to_numpy()[1:], period_end[1:]).any()
 
     # The head target beside it, keyed the same way, reads period end.
-    cell = int(lake_steps_run.packages.lak.results.stage.get()["cell"].iloc[0])
+    cell = int(lake_steps_run.lak.results.stage.get()["cell"].iloc[0])
     heads = mf.HeadTargets(
         locations=pd.DataFrame({"name": ["h"], "cell": [cell], "layer": [0]}),
         values=pd.DataFrame({"time": range(LAKE_STEPS_NPER), "name": "h", "head": 50.0}))
@@ -430,8 +430,7 @@ def _stub_lake_model(table: pd.DataFrame):
     """A model whose only output is this LAK stage table: the stage-file route."""
 
     stage = SimpleNamespace(get=lambda: table.copy())
-    return SimpleNamespace(packages=SimpleNamespace(
-        lak=SimpleNamespace(results=SimpleNamespace(stage=stage))))
+    return SimpleNamespace(lak=SimpleNamespace(results=SimpleNamespace(stage=stage)))
 
 
 def test_copies_that_disagree_are_refused_naming_the_lake_the_record_and_the_spread():
@@ -454,8 +453,7 @@ def test_an_sfr_stage_is_an_elevation_in_the_series_and_in_compare():
     table = pd.DataFrame({"kstpkper": [(0, 0), (0, 0)], "per": [0, 0], "reach": [2, 2],
                           "stage": [95.0, 96.0]})
     stage = SimpleNamespace(get=lambda: table.copy())
-    model = SimpleNamespace(packages=SimpleNamespace(
-        sfr=SimpleNamespace(results=SimpleNamespace(stage=stage))))
+    model = SimpleNamespace(sfr=SimpleNamespace(results=SimpleNamespace(stage=stage)))
     targets = mf.SfrStageTargets(locations={"gage": 2})
     with pytest.raises(ValueError, match=r"reach 2 at per=0: 2 rows span 95\.\.96"):
         targets.simulated_series(model)

@@ -63,8 +63,8 @@ class LakStageOutput:
         >>> dry = raw == -1e30                              # dry, not inactive
         """
 
-        nlakes = self.model.lak.nlakes.data
-        stages = self.model.lak.output.stage()
+        nlakes = self.model.fl.lak.nlakes.data
+        stages = self.model.fl.lak.output.stage()
         values = np.asarray(stages.get_alldata(), dtype=float).reshape(-1, nlakes)
         if masked:
             values[_is_sentinel(values)] = np.nan
@@ -82,8 +82,8 @@ class SFRStageOutput:
     def get(self):
         """Return a reach-by-saved-timestep dataframe of stream stage output."""
 
-        nreaches = self.model.sfr.nreaches.data
-        reader = self.model.sfr.output.stage()
+        nreaches = self.model.fl.sfr.nreaches.data
+        reader = self.model.fl.sfr.output.stage()
         kstpkpers = [tuple(value) for value in reader.get_kstpkper()]
         stages = reader.get_alldata()
         stage_data = stages.reshape(len(kstpkpers), nreaches).transpose()
@@ -159,7 +159,7 @@ class UzfOutputData:
 
         if self._ifno_to_cellid is None:
             if self.model.modelgrid.grid_type == 'vertex':
-                ifno_to_cellid = pd.DataFrame(self.model.uzf.packagedata.get_data().cellid.tolist())
+                ifno_to_cellid = pd.DataFrame(self.model.fl.uzf.packagedata.get_data().cellid.tolist())
                 ifno_to_cellid.index.name = 'ifno'
                 ifno_to_cellid.columns = ['layer', 'cellid']
                 self._ifno_to_cellid = ifno_to_cellid

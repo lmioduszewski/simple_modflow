@@ -197,19 +197,19 @@ def test_input_field_grammar_renders_on_canonical(canonical_run):
     model = canonical_run
 
     # single model: default field, explicit node, field= sugar -- same content
-    default_map = model.packages.ghb.inputs.map()
-    node_map = model.packages.ghb.inputs.cond.map()
-    sugar_map = model.packages.ghb.inputs.map(field="cond")
+    default_map = model.ghb.inputs.map()
+    node_map = model.ghb.inputs.cond.map()
+    sugar_map = model.ghb.inputs.map(field="cond")
     for panel in (default_map, node_map, sugar_map):
         assert panel is not None and not isinstance(panel, Figure)
     assert list(node_map.zs) == list(sugar_map.zs)  # same field drawn
 
-    cond_series = model.packages.ghb.inputs.cond.plot()
+    cond_series = model.ghb.inputs.cond.plot()
     assert isinstance(cond_series, go.Figure)
 
-    uzf_map = model.packages.uzf.inputs.map(field="pet")
+    uzf_map = model.uzf.inputs.map(field="pet")
     assert uzf_map is not None
-    sfr_map = model.packages.sfr.inputs.map(field="rhk")
+    sfr_map = model.sfr.inputs.map(field="rhk")
     assert sfr_map is not None
 
     # group surface

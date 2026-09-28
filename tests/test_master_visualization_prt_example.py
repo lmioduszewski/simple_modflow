@@ -70,7 +70,7 @@ def test_canonical_evt_and_uzf_footprints_stay_disjoint(canonical_model):
 def test_canonical_riv_and_evt_carry_real_flux(canonical_run):
     """riv/evt are contract packages, so they must do physical work, not just exist."""
 
-    riv = canonical_run.packages.riv.results.q.get()
+    riv = canonical_run.riv.results.q.get()
     assert not riv.empty
     # riv/evt are aquifer-referenced .cbc records, so the exchange column names
     # its frame: q_gwf (negative = out of the aquifer). An outlet river in
@@ -78,7 +78,7 @@ def test_canonical_riv_and_evt_carry_real_flux(canonical_run):
     # signed-q RdBu colorscale exercised in both directions.
     assert riv["q_gwf"].min() < 0.0 < riv["q_gwf"].max()
 
-    evt = canonical_run.packages.evt.results.q.get()
+    evt = canonical_run.evt.results.q.get()
     assert not evt.empty
     assert (evt["q_gwf"] <= 0.0).all(), "ET may only remove water"
     period0 = evt[evt["per"] == evt["per"].min()]
@@ -149,8 +149,8 @@ def test_master_example_validation_profile_runs_complex_package_topology():
             "drn_flow": model.targets.drn_flow.targets.simulated_series(model),
         }
         assert all(not frame.empty for frame in simulated.values())
-        assert not model.packages.lak.results.stage.get().empty
-        assert not model.packages.sfr.results.q.get().empty
+        assert not model.lak.results.stage.get().empty
+        assert not model.sfr.results.q.get().empty
         assert not model.outputs.uzf.ifno_to_cellid.empty
         from myflopy.modflow.mf6.canonical import canonical_head_signals
 

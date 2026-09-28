@@ -82,14 +82,14 @@ def test_a_term_answers_the_full_spatial_verb_set(canonical_run):
 def test_a_term_agrees_with_the_package_results_path(canonical_run):
     """The new noun must not become a second, disagreeing source of truth.
 
-    ``model.budget.drn`` and ``model.packages.drn.results.q`` read the same
+    ``model.budget.drn`` and ``model.drn.results.q`` read the same
     record. They differ ONLY in column name -- the package path renames ``q`` to
     ``q_gwf`` so the column carries its reference frame, while this namespace is
     explicitly the raw model-budget view and keeps MF6's own ``q``.
     """
 
     from_budget = canonical_run.budget.drn.get()
-    from_package = canonical_run.packages.drn.results.q.get()
+    from_package = canonical_run.drn.results.q.get()
 
     assert "q" in from_budget.columns and "q_gwf" in from_package.columns
     assert set(from_budget["cell"]) == set(from_package["cell"])

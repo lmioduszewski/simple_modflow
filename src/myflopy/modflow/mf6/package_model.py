@@ -179,7 +179,7 @@ class StaticArrayPackageExplorer:
 
 
 class NpfPackageExplorer(StaticArrayPackageExplorer):
-    """``model.packages.npf``: the stored arrays, plus the transmissivity they imply.
+    """``model.npf``: the stored arrays, plus the transmissivity they imply.
 
     ``transmissivity`` (K x SATURATED thickness, needs heads) and
     ``transmissivity_max`` (K x full thickness) are DERIVED, so they are
@@ -564,12 +564,12 @@ class HfbResultsExplorer:
 
         Examples
         --------
-        >>> model.packages.hfb.results.q.map()
-        >>> model.packages.hfb.results.q.map(per=5, layer=1)
-        >>> model.packages.hfb.results.q.map(kstpkper=(0, 5))
-        >>> model.packages.hfb.results.q.map(contours=True, contour_levels=6)
-        >>> model.packages.hfb.results.q.map(select="all_streams")
-        >>> model.packages.hfb.results.q.map(backend="mpl").savefig("hfb_q.png")
+        >>> model.hfb.results.q.map()
+        >>> model.hfb.results.q.map(per=5, layer=1)
+        >>> model.hfb.results.q.map(kstpkper=(0, 5))
+        >>> model.hfb.results.q.map(contours=True, contour_levels=6)
+        >>> model.hfb.results.q.map(select="all_streams")
+        >>> model.hfb.results.q.map(backend="mpl").savefig("hfb_q.png")
         """
 
         import plotly.graph_objects as go
@@ -1030,12 +1030,12 @@ class HfbPackageExplorer:
 
         Examples
         --------
-        >>> model.packages.hfb.inputs.map()
-        >>> model.packages.hfb.inputs.map(values=model.hds.array(layer=0))
-        >>> model.packages.hfb.inputs.map(layer=1, per=0)
-        >>> model.packages.hfb.inputs.map(values=k, logscale=True)
-        >>> model.packages.hfb.inputs.map(select="all_streams", select_style="both")
-        >>> model.packages.hfb.inputs.map(backend="mpl").savefig("barriers.png")
+        >>> model.hfb.inputs.map()
+        >>> model.hfb.inputs.map(values=model.hds.array(layer=0))
+        >>> model.hfb.inputs.map(layer=1, per=0)
+        >>> model.hfb.inputs.map(values=k, logscale=True)
+        >>> model.hfb.inputs.map(select="all_streams", select_style="both")
+        >>> model.hfb.inputs.map(backend="mpl").savefig("barriers.png")
         """
 
         import plotly.graph_objects as go
@@ -1125,11 +1125,11 @@ class ModelPackages:
 
     Examples
     --------
-    ``model.packages.rch.inputs.get()``
+    ``model.rch.inputs.get()``
         Normalized recharge input table.
-    ``model.packages.rch.inputs.map(per=0)``
+    ``model.rch.inputs.map(per=0)``
         Recharge choropleth using the shared choropleth styling.
-    ``model.packages.uzf.inputs.finf.summary()``
+    ``model.uzf.inputs.finf.summary()``
         Compact summary of UZF infiltration inputs.
     """
 
@@ -1139,7 +1139,7 @@ class ModelPackages:
         self.model = model
 
     #: Packages whose fields are static ARRAYS rather than stress-period
-    #: records. They answer `model.packages.npf.k.map()` -- one level shallower
+    #: records. They answer `model.npf.k.map()` -- one level shallower
     #: than the record packages' `.inputs.<field>.map()` -- so `summary` has to
     #: ask them for their fields differently.
     _STATIC_ARRAY_PACKAGES = ("npf", "ic", "sto")
@@ -1238,7 +1238,7 @@ class ModelPackages:
         PROBED, not inferred from the registry. HFB is deliberately absent from
         `package_registry` -- it is face-indexed, so it has no cellid, and MF6
         writes it no budget record (ledger 162) -- yet
-        `model.packages.hfb.inputs.map()` exists and works. Keying off registry
+        `model.hfb.inputs.map()` exists and works. Keying off registry
         fields alone would report the one package whose entry is entirely
         hand-written as undrawable, which is exactly backwards.
         """

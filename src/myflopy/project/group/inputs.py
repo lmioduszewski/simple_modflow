@@ -155,7 +155,7 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
     ) -> pd.DataFrame:
         """Return a per-model summary of this package's input coverage.
 
-        Mirrors the single-model ``model.packages.<pkg>.inputs.summary()`` verb:
+        Mirrors the single-model ``model.<pkg>.inputs.summary()`` verb:
         one row per model with the number of applied cells and stress periods.
         """
 

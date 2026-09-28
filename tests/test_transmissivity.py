@@ -1,7 +1,7 @@
 """Transmissivity maps and nouns (ledger 308).
 
 `model.plot.map(type="trans")` / `type="trans_max"` and
-`model.packages.npf.transmissivity` / `.transmissivity_max` -- one computation,
+`model.npf.transmissivity` / `.transmissivity_max` -- one computation,
 `hydraulics.model_transmissivity`, so the four cannot disagree.
 
 **Saturated is the default** (the user's decision): K times the thickness MF6
@@ -188,7 +188,7 @@ def test_a_bare_grid_or_a_transport_model_refuses_by_name(canonical_run):
 
 
 def test_the_nouns_draw_the_free_maps(canonical_run):
-    npf = canonical_run.packages.npf
+    npf = canonical_run.npf
     for noun, spelling in ((npf.transmissivity, "trans"), (npf.transmissivity_max, "trans_max")):
         picture = noun.map(per=3, layer=1)
         free = canonical_run.plot.map(type=spelling, per=3, layer=1)
@@ -197,15 +197,15 @@ def test_the_nouns_draw_the_free_maps(canonical_run):
 
 
 def test_the_noun_table_is_k_times_thickness_by_period(canonical_run):
-    table = canonical_run.packages.npf.transmissivity.get(per=[1, 4], layer=0)
+    table = canonical_run.npf.transmissivity.get(per=[1, 4], layer=0)
     assert sorted(table["per"].unique()) == [1, 4]
     assert np.allclose(table["transmissivity"], table["k"] * table["thickness"], equal_nan=True)
-    maximum = canonical_run.packages.npf.transmissivity_max.get()
+    maximum = canonical_run.npf.transmissivity_max.get()
     assert "per" not in maximum.columns
 
 
 def test_a_noun_mosaic_is_one_panel_per_layer_on_both_backends(canonical_run):
-    noun = canonical_run.packages.npf.transmissivity
+    noun = canonical_run.npf.transmissivity
     figure = noun.mosaic(per=2, logscale=True)
     nlay = canonical_run.gwf.modelgrid.nlay
     maps = {trace.subplot for trace in figure.data if trace.type == "choroplethmap"}
@@ -216,19 +216,19 @@ def test_a_noun_mosaic_is_one_panel_per_layer_on_both_backends(canonical_run):
 
 def test_the_saturated_noun_animates_over_the_saved_periods(canonical_run):
     periods = sorted({int(k[1]) for k in canonical_run.hds.kstpkper})
-    assert len(canonical_run.packages.npf.transmissivity.animate().frames) == len(periods)
+    assert len(canonical_run.npf.transmissivity.animate().frames) == len(periods)
 
 
 def test_the_saturated_noun_refuses_an_unrun_model_by_name(unrun_model):
     with pytest.raises(ValueError, match="transmissivity_max"):
-        unrun_model.packages.npf.transmissivity.get()
-    assert unrun_model.packages.npf.transmissivity_max.get().shape[0] > 0
+        unrun_model.npf.transmissivity.get()
+    assert unrun_model.npf.transmissivity_max.get().shape[0] > 0
 
 
 def test_derived_fields_are_not_declared_package_arrays(canonical_run):
     """`summary()`/`ModelPackages.mosaic` enumerate what the package STORES."""
 
-    assert canonical_run.packages.npf.fields["field"].tolist() == ["k", "k22", "k33"]
+    assert canonical_run.npf.fields["field"].tolist() == ["k", "k22", "k33"]
 
 
 # --- review fixes (ledger 311) ---------------------------------------------------
@@ -252,7 +252,7 @@ def test_a_saturated_map_redraws_when_its_time_moves(canonical_run):
 
 
 def test_the_saturated_table_keys_on_the_period(canonical_run):
-    noun = canonical_run.packages.npf.transmissivity
+    noun = canonical_run.npf.transmissivity
     series = noun.long(layer=0)
     assert series.index.names == ["per", "layer", "cell"] and series.index.is_unique
     wide = noun.wide(per=[1, 4])
@@ -313,10 +313,10 @@ def test_every_transmissivity_colorbar_writes_separators(canonical_run):
         type="trans_max", layer=0, logscale=True, zmin=10, zmax=100_000
     ).fig.data[0].colorbar
     assert "100,000" in log.ticktext
-    noun = canonical_run.packages.npf.transmissivity_max
+    noun = canonical_run.npf.transmissivity_max
     assert noun.mosaic().layout.coloraxis.colorbar.tickformat == ","
     assert "1,000" in noun.mosaic(logscale=True).layout.coloraxis.colorbar.ticktext
-    animation = canonical_run.packages.npf.transmissivity.animate(logscale=True)
+    animation = canonical_run.npf.transmissivity.animate(logscale=True)
     assert "1,000" in animation.layout.coloraxis.colorbar.ticktext
     # A K map is not transmissivity and keeps plotly's own ticks.
     assert canonical_run.plot.map(type="ks", layer=0).fig.data[0].colorbar.tickformat is None
@@ -325,7 +325,7 @@ def test_every_transmissivity_colorbar_writes_separators(canonical_run):
 def test_the_static_colorbars_write_separators_too(canonical_run):
     figure = canonical_run.plot.map(type="trans_max", layer=0, backend="mpl")
     assert "1,000" in [t.get_text() for t in figure.axes[-1].get_yticklabels()]
-    mosaic = canonical_run.packages.npf.transmissivity_max.mosaic(backend="mpl")
+    mosaic = canonical_run.npf.transmissivity_max.mosaic(backend="mpl")
     assert "1,000" in [t.get_text() for t in mosaic.axes[-1].get_yticklabels()]
     log = canonical_run.plot.map(
         type="trans_max", layer=0, backend="mpl", logscale=True, zmin=10, zmax=100_000

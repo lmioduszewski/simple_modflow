@@ -52,11 +52,11 @@ def _lake_stage_table(model) -> pd.DataFrame:
         period, the steps saved and ``SAVE HEAD LAST``.
     """
 
-    frame = model.packages.lak.results.stage.get().copy()
+    frame = model.lak.results.stage.get().copy()
     # Called for the refusal alone: the record clock keeps every record.
     period_ends(
         model,
-        reader=lambda: model.lak.output.stage(),
+        reader=lambda: model.fl.lak.output.stage(),
         file="the LAK stage file",
         saves="HEAD",
     )

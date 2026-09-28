@@ -146,22 +146,22 @@ def test_geopackage_specs_run_through_project(tmp_path):
     from myflopy import load_mf6_run
 
     view = load_mf6_run(run.workspace)
-    inputs = view.packages.riv.inputs.get()
+    inputs = view.riv.inputs.get()
     assert {"stage", "cond", "rbot"}.issubset(inputs.columns)
     assert float(inputs.loc[inputs["cell"] == 0, "stage"].iloc[0]) == 9.5
-    stage_map = view.packages.riv.inputs.map(per=0)
+    stage_map = view.riv.inputs.map(per=0)
     assert stage_map.colorscale == "earth"
-    q = view.packages.riv.results.q.get()
+    q = view.riv.results.q.get()
     assert not q.empty  # RIV budget term recorded by the run
-    q_map = view.packages.riv.results.q.map(per=0)
+    q_map = view.riv.results.q.map(per=0)
     assert q_map.colorscale == "RdBu"
 
-    evt_inputs = view.packages.evt.inputs.get()
+    evt_inputs = view.evt.inputs.get()
     assert {"surface", "rate", "depth"}.issubset(evt_inputs.columns)
-    assert view.packages.evt.inputs.map(per=0).colorscale == "earth"
-    evt_q = view.packages.evt.results.q.get()
+    assert view.evt.inputs.map(per=0).colorscale == "earth"
+    evt_q = view.evt.results.q.get()
     assert not evt_q.empty  # EVT budget term recorded by the run
-    assert view.packages.evt.results.q.map(per=0).colorscale == "RdBu"
+    assert view.evt.results.q.map(per=0).colorscale == "RdBu"
 
 
 def test_geopackage_source_supports_long_period_format_and_clear_field_errors(tmp_path):

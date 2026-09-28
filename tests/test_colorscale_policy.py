@@ -422,9 +422,9 @@ def test_every_exchange_map_puts_blue_on_gaining(canonical_run):
         "surface_water": "feature",
     }
     maps = {
-        "sfr": canonical_run.packages.sfr.results.q,
-        "lak": canonical_run.packages.lak.results.q,
-        "surface_water": canonical_run.packages.surface_water.results,
+        "sfr": canonical_run.sfr.results.q,
+        "lak": canonical_run.lak.results.q,
+        "surface_water": canonical_run.surface_water.results,
     }
     for label, accessor in maps.items():
         choro = accessor.map(per=0)
@@ -494,7 +494,7 @@ def test_lak_plot_budget_keeps_positive_blue(canonical_run):
     An adversarial review called this inverted; it is not.
     """
 
-    figure = canonical_run.packages.lak.results.q.budget.plot(per=0)
+    figure = canonical_run.lak.results.q.budget.plot(per=0)
     assert figure is not None
 
 
@@ -505,7 +505,7 @@ def test_lak_budget_is_a_view_with_the_house_shape(canonical_run):
 
     from myflopy.modflow.mf6.package_surface_water import LakBudgetView
 
-    budget = canonical_run.packages.lak.results.q.budget
+    budget = canonical_run.lak.results.q.budget
     assert isinstance(budget, LakBudgetView)
     assert isinstance(budget.get(per=0), pd.DataFrame)
     assert budget.plot(per=0) is not None
@@ -517,7 +517,7 @@ def test_lak_budget_retired_spellings_warn(canonical_run):
 
     import pytest
 
-    q = canonical_run.packages.lak.results.q
+    q = canonical_run.lak.results.q
     with pytest.warns(DeprecationWarning, match="budget_summary is deprecated"):
         q.budget_summary(per=0)
     with pytest.warns(DeprecationWarning, match="plot_budget is deprecated"):

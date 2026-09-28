@@ -246,7 +246,7 @@ def main() -> None:
     if len(sys.argv) > 1:
         print(f"\n4. {sys.argv[1]}")
         model = mf.load_mf6_run(sys.argv[1], verbosity_level=0)
-        nlakes = int(model.lak.nlakes.data)
+        nlakes = int(model.fl.lak.nlakes.data)
         _lake(model, {f"lake{lake}": lake for lake in range(nlakes)}, label="run")
 
 

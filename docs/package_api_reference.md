@@ -4,7 +4,7 @@ The vocabulary of the **package-first API** — the canonical way to build and r
 MODFLOW 6 models in myflopy. Two halves:
 
 - **Build side** — `mf.<pkg>(...)` helpers that assemble a model (`package_api.py`).
-- **Read side** — the `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()`
+- **Read side** — the `model.<pkg>.<inputs|results>.<noun>.<verb>()`
   view grammar for tables, plots, and maps.
 - **Drawing** — the six plotting verbs, free in `myflopy.plot` and bound as
   `model.plot` / `vor.plot` / `stack.plot` (section C).
@@ -887,8 +887,14 @@ per-node variation.
 ## B · Read side — the `noun.verb` grammar
 
 ```
-model.packages.<pkg>.<inputs|results>.<noun>.<verb>()
+model.<pkg>.<inputs|results>.<noun>.<verb>()
 ```
+
+`model.<pkg>` is myflopy's view of one package; **FloPy's own package object is
+`model.fl.<pkg>`** (`model.fl.drn.stress_period_data`; any other package by name --
+`model.fl.npf`, `model.fl.disv`). `model.packages` holds what spans packages --
+`summary()` and `mosaic()`. Group and diff scopes still read
+`group.packages.<pkg>` / `diff.packages.<pkg>` (ledger 339).
 
 Every **noun** is an object; every object answers the same **verbs**. Different plot
 *types* are different verbs — `plot()` is not a dispatcher.
@@ -920,7 +926,7 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
 - `results.q` — the groundwater exchange (spatial). The `.get()` column names its
   reference frame: **`q_gwf`** (aquifer `.cbc` record; negative = the feature gains).
 
-**SFR** (`model.packages.sfr`):
+**SFR** (`model.sfr`):
 - `results.q` — stream↔aquifer exchange (spatial; `q_gwf`).
 - `results.stage` — reach stage (spatial).
 - `results.profile` — the merged multi-field reach profile (`get`/`summary`/`plot`).
@@ -930,7 +936,7 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   `rain`, `runoff`, `evaporation`, `storage`, `from_mvr`, `to_mvr`, `mvr`,
   `stream_fluxes`, `auxiliary`, `types`.
 
-**LAK** (`model.packages.lak`):
+**LAK** (`model.lak`):
 - `results.q` — lake↔aquifer exchange (spatial; column **`q_lake`**, feature-referenced,
   negative = the lake loses).
 - `results.q.budget` — exchange summarized by connection type (`get`/`summary`/`plot`).
@@ -943,9 +949,9 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   `runoff`, `evaporation`, `storage`, `from_mvr`, `to_mvr`, `mvr`, `withdrawal`,
   `constant`, `lake_fluxes`, `auxiliary`, `types`.
 
-**UZF** (`model.packages.uzf`): `results.gwrch`, `results.sat`, `results.fields`.
+**UZF** (`model.uzf`): `results.gwrch`, `results.sat`, `results.fields`.
 
-**Static arrays** (`model.packages.npf` / `.ic` / `.sto`): one noun per STORED array --
+**Static arrays** (`model.npf` / `.ic` / `.sto`): one noun per STORED array --
 `npf.k`/`k22`/`k33`, `ic.strt`, `sto.ss`/`sy`. Plus two DERIVED nouns on `npf` (ledger
 308): **`npf.transmissivity`** -- K times the SATURATED thickness at a stress period
 (`per=`, its last saved time step), by MF6's own ICELLTYPE rule: `min(head, top) -
@@ -999,9 +1005,9 @@ Distinguish it from its three neighbours, which are genuinely different things:
 | `model.budget.<term>` | the model budget file, per cell, one noun per term |
 | `model.bud(pkg)` | the same file, legacy compatibility wrapper, raw frames |
 | `model.budget_cumulative` / `_incremental` | the **listing** file: whole-model totals |
-| `model.packages.<pkg>.budget.<term>` | the **package-output** file — a different file, feature-first node layout |
+| `model.<pkg>.budget.<term>` | the **package-output** file — a different file, feature-first node layout |
 
-The column is MF6's raw `q`, unlike `model.packages.<pkg>.results.q`, which renames it
+The column is MF6's raw `q`, unlike `model.<pkg>.results.q`, which renames it
 `q_gwf`/`q_lake` to carry the reference frame. The values are identical; only the name
 differs (ledger 97).
 
@@ -1073,7 +1079,7 @@ frames every panel and a list frames each on its own (a list is never synced).
 model.plot.map(layer=0, extent=(500, 600, 1000, 1100), backend="mpl")   # a static close-up
 model.plot.map(layer=0, extent=[(500, 600), (1000, 1100)])              # points -> their box
 model.plot.map(layer=0, extent=transect_line)                           # any geometry's bounds
-model.packages.npf.transmissivity.mosaic(per=3, extent=site_gdf)        # every panel
+model.npf.transmissivity.mosaic(per=3, extent=site_gdf)        # every panel
 model.hds.mosaic(by="layer", extent=[site, None, north, None])          # one per panel
 model.add_aoi("site", (500, 600, 1000, 1100))                           # a named area...
 model.plot.map(layer=0, extent="site", backend="mpl")                   # ...used by name
@@ -1092,13 +1098,13 @@ by `mosaic`/`animate`. `locs=` is deprecated in its favour.
 ```python
 model.plot.map(layer=0, features="wells.gpkg")                       # first layer of the file
 model.plot.map(layer=0, features=mf.plot.Feature("site.gpkg", layer="ponds", fill=True))
-model.packages.npf.k.map(logscale=True, features={"Wells": wells_gdf, "Boundary": boundary})
+model.npf.k.map(logscale=True, features={"Wells": wells_gdf, "Boundary": boundary})
 ```
 
 **Log colour scales** — `logscale=True` on any map colours `log10(value)` but
 labels the colorbar in real units at whole decades on both backends; the hover
 keeps the real value and `zmin`/`zmax`/`zmid` are given in DATA units
-(`model.packages.npf.k.map(logscale=True, zmin=1e-4, zmax=10)`). `colorscale=`
+(`model.npf.k.map(logscale=True, zmin=1e-4, zmax=10)`). `colorscale=`
 takes any Plotly name (`_r` reverses it) or explicit stops (ledger 252/253).
 
 
@@ -1226,9 +1232,9 @@ run = mf.Project(root).run("base", sim)               # build + run MF6
 
 # read
 model = run.model()
-model.packages.sfr.results.profile.plot(per=5)      # merged reach profile
-model.packages.sfr.results.q.profile.get()          # q_gwf along the stream
-model.packages.lak.results.q.budget.get(per=5)      # exchange by connection type
-model.packages.riv.results.q.map(per=5)             # exchange choropleth
-model.packages.sfr.budget.flow_ja_face.get()        # in-channel routing flow
+model.sfr.results.profile.plot(per=5)      # merged reach profile
+model.sfr.results.q.profile.get()          # q_gwf along the stream
+model.lak.results.q.budget.get(per=5)      # exchange by connection type
+model.riv.results.q.map(per=5)             # exchange choropleth
+model.sfr.budget.flow_ja_face.get()        # in-channel routing flow
 ```

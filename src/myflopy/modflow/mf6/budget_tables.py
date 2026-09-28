@@ -314,16 +314,16 @@ def package_output_df(
 def lake_stage_array(model: SimulationBase):
     """Return LAK stage output reshaped to ``(nper, nlakes)``."""
 
-    nlakes = model.lak.nlakes.data
-    stages = model.lak.output.stage()
+    nlakes = model.fl.lak.nlakes.data
+    stages = model.fl.lak.output.stage()
     return stages.get_alldata().reshape(-1, nlakes)
 
 
 def sfr_stage_df(model: SimulationBase) -> pd.DataFrame:
     """Return SFR stage output as a reach-by-period dataframe."""
 
-    nreaches = model.sfr.nreaches.data
-    stages = model.sfr.output.stage().get_alldata()
+    nreaches = model.fl.sfr.nreaches.data
+    stages = model.fl.sfr.output.stage().get_alldata()
     data = stages.reshape(model.nper, nreaches).transpose()
     frame = pd.DataFrame(data)
     frame.index.name = "reaches"

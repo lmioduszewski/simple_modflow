@@ -268,12 +268,12 @@ class LakBudget:
     @property
     def types(self):
         """Return record types available in the LAK budget output file."""
-        return _package_output_types(self.model.lak)
+        return _package_output_types(self.model.fl.lak)
 
     @property
     def budget(self):
         """Return the raw FloPy LAK package-output budget reader."""
-        return _package_output_budget(self.model.lak)
+        return _package_output_budget(self.model.fl.lak)
 
     def get(self, bud_type: str = None, return_df: bool = True):
         """Return LAK budget data for one output record type.
@@ -304,7 +304,7 @@ class LakBudget:
             )
         if return_df is False:
             return self.budget.get_data(text=bud_type)
-        return _package_output_df(self.model, self.model.lak, bud_type=bud_type)
+        return _package_output_df(self.model, self.model.fl.lak, bud_type=bud_type)
 
 
 class LakStage:
@@ -317,7 +317,7 @@ class LakStage:
     def __init__(self, model: SimulationBase):
         """Create one LAK stage accessor for ``model``."""
         self.model = model
-        self.nlakes = self.model.lak.nlakes.data
+        self.nlakes = self.model.fl.lak.nlakes.data
 
     def get(self):
         """Return ``model.outputs.lak.stage.get()``: one row per saved record, one
@@ -331,17 +331,17 @@ class SFRBudget:
     def __init__(self, model: SimulationBase):
         """Create one SFR budget accessor for ``model``."""
         self.model = model
-        self.nreaches = self.model.sfr.nreaches.data
+        self.nreaches = self.model.fl.sfr.nreaches.data
 
     @property
     def types(self):
         """Return record types available in the SFR budget output file."""
-        return _package_output_types(self.model.sfr)
+        return _package_output_types(self.model.fl.sfr)
 
     @property
     def budget(self):
         """Return the raw FloPy SFR package-output budget reader."""
-        return _package_output_budget(self.model.sfr)
+        return _package_output_budget(self.model.fl.sfr)
 
     def get(self, bud_type: str = None, return_df: bool = True):
         """Return SFR budget data for one output record type.
@@ -372,7 +372,7 @@ class SFRBudget:
             )
         if return_df is False:
             return self.budget.get_data(text=bud_type)
-        return _package_output_df(self.model, self.model.sfr, bud_type=bud_type)
+        return _package_output_df(self.model, self.model.fl.sfr, bud_type=bud_type)
 
     def plot_flows(
             self,
@@ -431,7 +431,7 @@ class SFRStage:
     def __init__(self, model: SimulationBase):
         """Create one SFR stage accessor for ``model``."""
         self.model = model
-        self.nreaches = self.model.sfr.nreaches.data
+        self.nreaches = self.model.fl.sfr.nreaches.data
 
     def get(self):
         """Return a reach-by-period dataframe of stream stage output."""

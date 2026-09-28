@@ -149,8 +149,8 @@ class SfrReachProfileView:
     ``get`` for the frame, ``plot`` for the figure, ``summary`` for the digest;
     calling the view rebinds the stress period, so these are the same figure::
 
-        model.packages.sfr.results.q.profile.plot(per=3)
-        model.packages.sfr.results.q.profile(per=3).plot()
+        model.sfr.results.q.profile.plot(per=3)
+        model.sfr.results.q.profile(per=3).plot()
     """
 
     def __init__(self, explorer, *, y_column: str, y_label: str, label: str, per: int = 0):
@@ -551,12 +551,12 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
 
         Examples
         --------
-        >>> model.packages.sfr.results.q.map()
-        >>> model.packages.sfr.results.q.map(per=5)
-        >>> model.packages.sfr.results.q.map(zmin=-0.5, zmax=0.5)
-        >>> model.packages.sfr.results.q.map(fill_value=float("nan"))
-        >>> model.packages.sfr.results.q.map(select="all_streams", select_style="both")
-        >>> model.packages.sfr.results.q.map(backend="mpl").savefig("sfr_q.png")
+        >>> model.sfr.results.q.map()
+        >>> model.sfr.results.q.map(per=5)
+        >>> model.sfr.results.q.map(zmin=-0.5, zmax=0.5)
+        >>> model.sfr.results.q.map(fill_value=float("nan"))
+        >>> model.sfr.results.q.map(select="all_streams", select_style="both")
+        >>> model.sfr.results.q.map(backend="mpl").savefig("sfr_q.png")
         """
 
         del agg
@@ -638,7 +638,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         {
             "plot_profile": (
                 "_legacy_profile_plot",
-                "model.packages.sfr.results.q.profile.plot",
+                "model.sfr.results.q.profile.plot",
                 "0.1.0",
             ),
         },
@@ -1079,12 +1079,12 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
 
         Examples
         --------
-        >>> model.packages.lak.results.q.map()
-        >>> model.packages.lak.results.q.map(per=5, connection_type="vertical")
-        >>> model.packages.lak.results.q.map(layer=1, fill_value=float("nan"))
-        >>> model.packages.lak.results.q.map(zmin=-0.2, zmax=0.2)
-        >>> model.packages.lak.results.q.map(contours=True, contour_levels=6)
-        >>> model.packages.lak.results.q.map(backend="mpl").savefig("lak_q.png")
+        >>> model.lak.results.q.map()
+        >>> model.lak.results.q.map(per=5, connection_type="vertical")
+        >>> model.lak.results.q.map(layer=1, fill_value=float("nan"))
+        >>> model.lak.results.q.map(zmin=-0.2, zmax=0.2)
+        >>> model.lak.results.q.map(contours=True, contour_levels=6)
+        >>> model.lak.results.q.map(backend="mpl").savefig("lak_q.png")
         """
 
         del agg
@@ -1241,12 +1241,12 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         {
             "budget_summary": (
                 "_legacy_budget_summary",
-                "model.packages.lak.results.q.budget.get",
+                "model.lak.results.q.budget.get",
                 "0.1.0",
             ),
             "plot_budget": (
                 "_legacy_budget_plot",
-                "model.packages.lak.results.q.budget.plot",
+                "model.lak.results.q.budget.plot",
                 "0.1.0",
             ),
         },
@@ -1485,7 +1485,7 @@ class LakConnectionsExplorer:
 
         An INPUTS noun. It draws how a lake is wired to the aquifer -- the area
         or width of each connection -- not what flows through it. For the flow,
-        see ``model.packages.lak.results.q.map()``.
+        see ``model.lak.results.q.map()``.
 
         Connection geometry has no time axis, so there is no ``per``: a lake's
         connections are declared once and do not change with the stress period.
@@ -1682,12 +1682,12 @@ class LakConnectionsExplorer:
 
         Examples
         --------
-        >>> model.packages.lak.connections.map()
-        >>> model.packages.lak.connections.map(lake=0, layer=1)
-        >>> model.packages.lak.connections.map(value_column="connwidth", agg="mean")
-        >>> model.packages.lak.connections.map(fill_value=float("nan"))
-        >>> model.packages.lak.connections.map(logscale=True)
-        >>> model.packages.lak.connections.map(backend="mpl").savefig("conn.png")
+        >>> model.lak.connections.map()
+        >>> model.lak.connections.map(lake=0, layer=1)
+        >>> model.lak.connections.map(value_column="connwidth", agg="mean")
+        >>> model.lak.connections.map(fill_value=float("nan"))
+        >>> model.lak.connections.map(logscale=True)
+        >>> model.lak.connections.map(backend="mpl").savefig("conn.png")
         """
 
         refuse_noun_parameters("lak.connections", value_column, trace_kwargs)
@@ -1773,7 +1773,7 @@ class SfrStageResultsExplorer(StageResultsExplorer):
         {
             "plot_profile": (
                 "_legacy_profile_plot",
-                "model.packages.sfr.results.stage.profile.plot",
+                "model.sfr.results.stage.profile.plot",
                 "0.1.0",
             ),
         },
@@ -2325,8 +2325,8 @@ class SfrProfileView:
     for the figure, and ``summary`` for the compact digest. Calling the view
     rebinds the stress period, so these are the same figure::
 
-        model.packages.sfr.results.profile.plot(per=3)
-        model.packages.sfr.results.profile(per=3).plot()
+        model.sfr.results.profile.plot(per=3)
+        model.sfr.results.profile(per=3).plot()
 
     The table merges reach geometry, streambed elevations, simulated stage, and
     stream-groundwater exchange, so it feeds custom analysis as readily as it
@@ -2623,12 +2623,12 @@ class SfrResultsNamespace(FieldMappable):
         {
             "long_profile": (
                 "_legacy_profile_frame",
-                "model.packages.sfr.results.profile.get",
+                "model.sfr.results.profile.get",
                 "0.1.0",
             ),
             "plot_long_profile": (
                 "_legacy_profile_plot",
-                "model.packages.sfr.results.profile.plot",
+                "model.sfr.results.profile.plot",
                 "0.1.0",
             ),
         },
@@ -2926,12 +2926,12 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
 
         Examples
         --------
-        >>> model.packages.surface_water.results.q.map()
-        >>> model.packages.surface_water.results.q.map(per=5)
-        >>> model.packages.surface_water.results.q.map(include="sfr")
-        >>> model.packages.surface_water.results.q.map(lak_connection_type="vertical")
-        >>> model.packages.surface_water.results.q.map(fill_value=float("nan"))
-        >>> model.packages.surface_water.results.q.map(backend="mpl").savefig("sw.png")
+        >>> model.surface_water.results.q.map()
+        >>> model.surface_water.results.q.map(per=5)
+        >>> model.surface_water.results.q.map(include="sfr")
+        >>> model.surface_water.results.q.map(lak_connection_type="vertical")
+        >>> model.surface_water.results.q.map(fill_value=float("nan"))
+        >>> model.surface_water.results.q.map(backend="mpl").savefig("sw.png")
         """
 
         refuse_noun_parameters(
@@ -3301,12 +3301,12 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
 
         Examples
         --------
-        >>> model.packages.sfr.inputs.rlen.map()
-        >>> model.packages.sfr.inputs.rhk.map(agg="mean", logscale=True)
-        >>> model.packages.lak.inputs.bedleak.map(fill_value=float("nan"))
-        >>> model.packages.sfr.inputs.inflow.map(per=3)
-        >>> model.packages.sfr.inputs.rwid.map(select="all_streams")
-        >>> model.packages.lak.inputs.strt.map(backend="mpl").savefig("strt.png")
+        >>> model.sfr.inputs.rlen.map()
+        >>> model.sfr.inputs.rhk.map(agg="mean", logscale=True)
+        >>> model.lak.inputs.bedleak.map(fill_value=float("nan"))
+        >>> model.sfr.inputs.inflow.map(per=3)
+        >>> model.sfr.inputs.rwid.map(select="all_streams")
+        >>> model.lak.inputs.strt.map(backend="mpl").savefig("strt.png")
         """
 
         refuse_noun_parameters(

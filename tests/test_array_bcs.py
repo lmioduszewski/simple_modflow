@@ -281,16 +281,16 @@ def test_an_array_package_runs(array_run):
 def test_the_inputs_tier_reads_an_array_package(array_run):
     """It used to raise AttributeError: an array package has no stress_period_data."""
 
-    table = array_run.packages.rch.inputs.get()
+    table = array_run.rch.inputs.get()
     assert not table.empty
     assert {"per", "layer", "cell", "recharge"} <= set(table.columns)
     assert len(table) == array_run.vor.ncpl
-    assert array_run.packages.rch.inputs.summary() is not None
+    assert array_run.rch.inputs.summary() is not None
 
 
 @pytest.mark.slow
 def test_the_results_tier_reads_an_array_package(array_run):
-    frame = array_run.packages.rch.results.q.get()
+    frame = array_run.rch.results.q.get()
     assert not frame.empty
 
 
@@ -302,6 +302,6 @@ def test_the_budget_record_is_matched_by_package_name(array_run):
     `packages.rch.results.q` quietly return UZF's recharge term.
     """
 
-    frame = array_run.packages.rch.results.q.get()
+    frame = array_run.rch.results.q.get()
     column = next(c for c in frame.columns if c.startswith("q"))
     assert frame[column].sum() != 0

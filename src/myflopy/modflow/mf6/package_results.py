@@ -441,11 +441,11 @@ class CellBudgetResultsExplorer(SpatialView):
 
         Examples
         --------
-        >>> model.packages.drn.results.q.map()
-        >>> model.packages.ghb.results.q.map(per=5, contours=True)
-        >>> model.packages.riv.results.q.map(zmin=-25, zmax=25)
-        >>> model.packages.wel.results.q.map(fill_value=float("nan"))
-        >>> model.packages.uzf.results.gwrch.map(per=3, colorscale="Blues")
+        >>> model.drn.results.q.map()
+        >>> model.ghb.results.q.map(per=5, contours=True)
+        >>> model.riv.results.q.map(zmin=-25, zmax=25)
+        >>> model.wel.results.q.map(fill_value=float("nan"))
+        >>> model.uzf.results.gwrch.map(per=3, colorscale="Blues")
         >>> model.budget.sto_ss.map(per=2, backend="mpl").savefig("storage.png")
         """
 
@@ -814,12 +814,12 @@ class StageResultsExplorer(SpatialView):
 
         Examples
         --------
-        >>> model.packages.lak.results.stage.map()
-        >>> model.packages.lak.results.stage.map(per=5, fill_value=float("nan"))
-        >>> model.packages.sfr.results.stage.map(layer=1, colorscale="Blues")
-        >>> model.packages.lak.results.stage.map(contours=True, contour_levels=6)
-        >>> model.packages.lak.results.stage.map(zmin=95, zmax=105)
-        >>> model.packages.sfr.results.stage.map(backend="mpl").savefig("stage.png")
+        >>> model.lak.results.stage.map()
+        >>> model.lak.results.stage.map(per=5, fill_value=float("nan"))
+        >>> model.sfr.results.stage.map(layer=1, colorscale="Blues")
+        >>> model.lak.results.stage.map(contours=True, contour_levels=6)
+        >>> model.lak.results.stage.map(zmin=95, zmax=105)
+        >>> model.sfr.results.stage.map(backend="mpl").savefig("stage.png")
         """
 
         refuse_noun_parameters(f"{self.package_name}.results.stage", "stage", trace_kwargs)
@@ -1200,7 +1200,7 @@ class ModelBudgetNamespace:
     * ``model.bud(pkg)`` -- the legacy compatibility wrapper, raw frames.
     * ``model.budget_cumulative`` / ``model.budget_incremental`` -- whole-model
       totals from the LISTING file, not per-cell.
-    * ``model.packages.<pkg>.budget.<term>`` -- a genuinely DIFFERENT file, the
+    * ``model.<pkg>.budget.<term>`` -- a genuinely DIFFERENT file, the
       package-output budget, whose node layout is feature-first. Conflating the
       two is what produced the off-by-one in ledger 92.
     """

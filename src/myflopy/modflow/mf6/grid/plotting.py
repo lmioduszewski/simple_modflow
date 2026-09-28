@@ -508,7 +508,7 @@ class GridPlots:
             that has not been run; the others are results and raise there. Case does
             not matter; any other value raises, naming this set, rather than drawing
             node numbers. The same two fields are nouns too:
-            ``model.packages.npf.transmissivity`` / ``.transmissivity_max``, whose
+            ``model.npf.transmissivity`` / ``.transmissivity_max``, whose
             ``.mosaic()`` draws one panel per layer.
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across

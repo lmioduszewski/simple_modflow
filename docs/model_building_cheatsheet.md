@@ -1447,7 +1447,7 @@ which carries the same serializability rule.
 model = run.model("valley")
 
 model.hds.array(layer=0)                 # numpy
-model.packages.ghb.results.q.get()       # a DataFrame
+model.ghb.results.q.get()       # a DataFrame
 
 model.plot.map(layer=0, contours=True)   # six verbs, four scopes
 model.plot.section(cells=[12, 40, 88])   # cross-section: cells by layer, water level on top
@@ -1455,7 +1455,7 @@ model.plot.grid()
 model.plot.animate([model.plot.map(layer=0, per=p) for p in range(model.nper)])
 ```
 
-Read grammar is always `model.packages.<pkg>.<inputs|results>.<noun>.<verb>()`.
+Read grammar is always `model.<pkg>.<inputs|results>.<noun>.<verb>()`.
 Everything drawn returns a `Picture`: `.fig` / `.show()` / `.save(p)` / `.html(p)`,
 never a trailing `.plot()` -- except a `backend="mpl"` figure, which is `section`'s
 default (`.savefig(p)`; `backend="plotly"` for the Picture, `fill=None` for the head

@@ -56,7 +56,8 @@ AUTOMATIC_SURFACES = frozenset(
 #: * the first three are DELIBERATE (ledger 38) -- named factories, helper
 #:   classes and resolvers carry per-package prose and explicit signatures, and
 #:   generating them would cost documentation quality and IDE completion;
-#: * the last four are namespace PROPERTIES, hand-written on purpose (4.7.7).
+#: * the last five are namespace PROPERTIES, hand-written on purpose (4.7.7;
+#:   ``FlopyPackages`` -- ``model.fl.<pkg>`` -- since ledger 339).
 #:   Generating them would need a `.pyi` stub to stay visible to type checkers
 #:   -- and a stub replaces the WHOLE module, so it would mean hand-maintaining
 #:   stubs for every other public name in four large modules. Completeness is
@@ -69,6 +70,7 @@ MANUAL_SURFACES = frozenset(
         "geopackage.zzz_resolver",
         "ModelPackages.zzz",
         "SimulationBase.zzz",
+        "FlopyPackages.zzz",
         "GroupPackages.zzz",
         "PackageDiffNamespace.zzz",
     }
@@ -137,7 +139,7 @@ _PROBE = textwrap.dedent(
     found["geopackage.zzz_resolver"] = hasattr(GeoPackageSource, "zzz")
 
     from myflopy.modflow.mf6.package_model import ModelPackages
-    from myflopy.modflow.mf6.simulation.base import SimulationBase
+    from myflopy.modflow.mf6.simulation.base import FlopyPackages, SimulationBase
     from myflopy.project.group.packages import GroupPackages
 
     def is_property(cls):
@@ -145,6 +147,7 @@ _PROBE = textwrap.dedent(
 
     found["ModelPackages.zzz"] = is_property(ModelPackages)
     found["SimulationBase.zzz"] = is_property(SimulationBase)
+    found["FlopyPackages.zzz"] = is_property(FlopyPackages)
     found["GroupPackages.zzz"] = is_property(GroupPackages)
     found["PackageDiffNamespace.zzz"] = is_property(_PackageDiffNamespace)
 

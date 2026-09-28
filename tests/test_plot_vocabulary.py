@@ -316,14 +316,14 @@ def test_every_model_backed_map_gets_the_sectioned_hover(canonical_run):
     surfaces = {
         "plot.map":        lambda: model.plot.map(layer=0),
         "hds.map":         lambda: model.hds.map(layer=0),
-        "npf.k.map":       lambda: model.packages.npf.k.map(),
-        "sto.ss.map":      lambda: model.packages.sto.ss.map(),
-        "rch.inputs.map":  lambda: model.packages.rch.inputs.map(per=0),
-        "ghb.results.q":   lambda: model.packages.ghb.results.q.map(per=0),
-        "drn.inputs.elev": lambda: model.packages.drn.inputs.elev.map(per=0),
-        "lak.results.q":   lambda: model.packages.lak.results.q.map(per=0),
-        "sfr.results.q":   lambda: model.packages.sfr.results.q.map(per=0),
-        "uzf.inputs.finf": lambda: model.packages.uzf.inputs.finf.map(per=0),
+        "npf.k.map":       lambda: model.npf.k.map(),
+        "sto.ss.map":      lambda: model.sto.ss.map(),
+        "rch.inputs.map":  lambda: model.rch.inputs.map(per=0),
+        "ghb.results.q":   lambda: model.ghb.results.q.map(per=0),
+        "drn.inputs.elev": lambda: model.drn.inputs.elev.map(per=0),
+        "lak.results.q":   lambda: model.lak.results.q.map(per=0),
+        "sfr.results.q":   lambda: model.sfr.results.q.map(per=0),
+        "uzf.inputs.finf": lambda: model.uzf.inputs.finf.map(per=0),
     }
     flat = []
     for name, build in surfaces.items():

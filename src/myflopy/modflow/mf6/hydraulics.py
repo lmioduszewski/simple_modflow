@@ -1,7 +1,7 @@
 """Transmissivity of a model's layers -- the one computation every spelling shares.
 
 ``model.plot.map(type="trans")``, ``type="trans_max"`` and the nouns
-``model.packages.npf.transmissivity`` / ``.transmissivity_max`` all read their numbers
+``model.npf.transmissivity`` / ``.transmissivity_max`` all read their numbers
 from :func:`model_transmissivity`, so the free map, the noun, its mosaic and its
 table cannot disagree about what transmissivity is (ledger 308).
 

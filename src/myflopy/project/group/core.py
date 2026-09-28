@@ -107,7 +107,7 @@ class ModelGroup:
 
     # -- deprecated flat input shortcuts --------------------------------------
     # These duplicate ``group.packages.<pkg>.inputs`` (which mirrors the
-    # single-model ``model.packages.<pkg>.inputs``) and have no single-model
+    # single-model ``model.<pkg>.inputs``) and have no single-model
     # equivalent, so they are deprecated in favor of the mirrored path.
     # Resolved only via __getattr__ so they stay out of dir()/completion (D12).
     __getattr__ = deprecated_instance_getattr(

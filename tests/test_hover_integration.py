@@ -58,7 +58,7 @@ def test_head_map_custom_hover_spec_overrides(canonical_run):
 @pytest.mark.slow
 def test_lak_q_map_uses_lake_hover_spec(canonical_run):
     model = canonical_run
-    choro = model.packages.lak.results.map(field="q")
+    choro = model.lak.results.map(field="q")
     trace = choro.get_choropleth()
     assert "Lake exchange" in trace.hovertemplate  # lak default spec title
     assert "q / area" in trace.hovertemplate  # relabeled primary
@@ -71,7 +71,7 @@ def test_package_map_hover_spec_is_overridable(canonical_run):
     from myflopy.modflow.utils.datatypes.hover import lak_hover
 
     model = canonical_run
-    choro = model.packages.lak.results.map(
+    choro = model.lak.results.map(
         field="q", hover_spec=lak_hover().with_style(accent="#abcdef")
     )
     assert "#abcdef" in choro.get_choropleth().hovertemplate
@@ -96,7 +96,7 @@ def test_group_lak_q_mosaic_panels_carry_sectioned_hover(canonical_run):
 @pytest.mark.slow
 def test_lak_map_hover_includes_joined_stage(canonical_run):
     model = canonical_run
-    trace = model.packages.lak.results.map(field="q").get_choropleth()
+    trace = model.lak.results.map(field="q").get_choropleth()
     assert "stage" in trace.hovertemplate  # feature block field now lights up
     flat = "".join(str(v) for row in trace.customdata for v in row)
     assert "ft" in flat  # stage values formatted with units in customdata
@@ -138,10 +138,10 @@ def test_group_package_result_and_compare_maps_carry_specs(canonical_run):
 @pytest.mark.slow
 def test_stage_and_input_field_maps_carry_specs(canonical_run):
     model = canonical_run
-    stage = model.packages.lak.results.stage.map().get_choropleth()
+    stage = model.lak.results.stage.map().get_choropleth()
     assert "LAK stage" in stage.hovertemplate
 
-    ghb_input = model.packages.ghb.inputs.map().get_choropleth()
+    ghb_input = model.ghb.inputs.map().get_choropleth()
     assert "#185FA5" in ghb_input.hovertemplate  # blue input accent
 
 
@@ -157,7 +157,7 @@ def test_mosaic_hover_sugar_threads_through_without_leaking(canonical_run):
 
     # package mosaic: hover_fields appends without erroring; hover_layers is a
     # harmless no-op (q has no per-layer profile)
-    lak = model.packages.lak.results.mosaic(
+    lak = model.lak.results.mosaic(
         field="q", hover_fields=["claktype"], hover_layers="all"
     )
     lak_traces = [t for t in lak.data if getattr(t, "type", "") == "choroplethmap"]
@@ -196,18 +196,18 @@ def test_a_static_array_map_can_show_the_grids_layer_elevations(canonical_run, f
     elevations are still the grid's, so both spellings draw them."""
 
     nlay = int(canonical_run.vor.gdf_topbtm.shape[1] - 2)
-    rows = _elevation_rows(canonical_run.packages.npf.k.map(**{flag: True}))
+    rows = _elevation_rows(canonical_run.npf.k.map(**{flag: True}))
     assert len(rows) == nlay + 1, rows          # a Top row plus one per layer
     assert rows[0].strip().startswith("Top")
-    assert not _elevation_rows(canonical_run.packages.npf.k.map()), "on by default"
+    assert not _elevation_rows(canonical_run.npf.k.map()), "on by default"
 
 
 @pytest.mark.slow
 def test_a_record_noun_map_can_show_them_too(canonical_run):
     """The same holds for a package's period table reduced to one value per cell."""
 
-    assert _elevation_rows(canonical_run.packages.drn.inputs.cond.map(show_layer_elevs=True))
-    assert _elevation_rows(canonical_run.packages.drn.results.q.map(show_layer_elevs=True))
+    assert _elevation_rows(canonical_run.drn.inputs.cond.map(show_layer_elevs=True))
+    assert _elevation_rows(canonical_run.drn.results.q.map(show_layer_elevs=True))
 
 
 @pytest.mark.slow
@@ -231,8 +231,8 @@ def test_the_elevations_are_not_fetched_unless_a_map_asks(canonical_run):
     """`gdf_topbtm` is lazy and samples rasters, so a map that does not ask must
     not pay for it. Asserted on the CONTEXT, which is where the cost is."""
 
-    asked = canonical_run.packages.npf.k.map(show_layer_elevs=True)._build_hover_context()
-    plain = canonical_run.packages.npf.k.map()._build_hover_context()
+    asked = canonical_run.npf.k.map(show_layer_elevs=True)._build_hover_context()
+    plain = canonical_run.npf.k.map()._build_hover_context()
     assert asked.botm is not None and asked.top is not None
     assert plain.botm is None and plain.top is None
 
@@ -242,7 +242,7 @@ def test_every_mosaic_panel_carries_the_elevations_and_its_own_active_layer(cano
     """The reported call. Each panel is a different layer, so each bolds its own
     row -- which is only meaningful because the table reaches every panel."""
 
-    mosaic = canonical_run.packages.npf.k.mosaic(logscale=True, show_layer_elevs=True)
+    mosaic = canonical_run.npf.k.mosaic(logscale=True, show_layer_elevs=True)
     panels = [t for t in mosaic.data if getattr(t, "z", None) is not None]
     assert len(panels) > 1
     for trace in panels:
@@ -294,7 +294,7 @@ def test_a_conductivity_map_lists_its_counterpart(canonical_run, field, sibling)
 
     import numpy as np
 
-    npf = canonical_run.packages.npf
+    npf = canonical_run.npf
     choro = getattr(npf, field).map(layer=1)
     labels = _hover_labels(choro)
     assert field in labels and sibling in labels, labels
@@ -313,7 +313,7 @@ def test_a_conductivity_map_lists_its_counterpart(canonical_run, field, sibling)
 def test_the_mapped_field_is_the_bold_one_and_the_sibling_is_not(canonical_run):
     """"Not bold like k, but still there for easy reference"."""
 
-    template = canonical_run.packages.npf.k.map().get_choropleth().hovertemplate
+    template = canonical_run.npf.k.map().get_choropleth().hovertemplate
     primary, sibling = (_hover_row(template, name) for name in ("k", "k33"))
     assert "<b>" in primary and "font-size:15px" in primary
     assert "<b>" not in sibling and "font-size:15px" not in sibling
@@ -325,7 +325,7 @@ def test_a_declared_sibling_with_no_values_is_not_listed(canonical_run):
     is None on the many that never set it, which reached the hover as a row of
     blanks under a real field name."""
 
-    npf = canonical_run.packages.npf
+    npf = canonical_run.npf
     assert "k22" in npf.k.siblings, "k22 is declared, so the skip is measured not vacuous"
     assert getattr(canonical_run.package("npf"), "k22", None) is not None
     assert canonical_run.package("npf").k22.array is None
@@ -336,8 +336,8 @@ def test_a_declared_sibling_with_no_values_is_not_listed(canonical_run):
 def test_storage_arrays_pair_the_same_way_and_a_lone_array_is_unchanged(canonical_run):
     """One rule, not an npf special case -- and a package with one array is untouched."""
 
-    assert "sy" in _hover_labels(canonical_run.packages.sto.ss.map())
-    assert _hover_labels(canonical_run.packages.ic.strt.map()) == ["cell", "strt", "layer"]
+    assert "sy" in _hover_labels(canonical_run.sto.ss.map())
+    assert _hover_labels(canonical_run.ic.strt.map()) == ["cell", "strt", "layer"]
 
 
 @pytest.mark.slow
@@ -348,7 +348,7 @@ def test_the_sibling_sits_with_the_value_even_when_elevations_are_shown(canonica
     kind as the `layer` row -- so it goes last; a per-layer table of the primary
     ITSELF still goes first, against the value it elaborates."""
 
-    labels = _hover_labels(canonical_run.packages.npf.k.map(layer=1, show_layer_elevs=True))
+    labels = _hover_labels(canonical_run.npf.k.map(layer=1, show_layer_elevs=True))
     assert labels.index("k33") == labels.index("k") + 1, labels
     assert labels.index("k33") < labels.index("Top"), labels
     # the head map is unchanged: its layer table IS the primary across layers

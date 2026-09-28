@@ -310,8 +310,8 @@ def canonical_sfr_signals(model, *, per: int = 0) -> dict[str, object]:
     ----------
     model : SimulationBase
         A built and *run* model with an SFR package, read through
-        ``model.packages.sfr.results.profile`` and
-        ``model.packages.sfr.budget.flow_ja_face``.
+        ``model.sfr.results.profile`` and
+        ``model.sfr.budget.flow_ja_face``.
     per : int, optional
         Zero-based stress period to summarize. Default 0. The stage and the
         routed flows come from the last saved time step of that period; the
@@ -333,14 +333,14 @@ def canonical_sfr_signals(model, *, per: int = 0) -> dict[str, object]:
         none).
     """
 
-    profile = model.packages.sfr.results.profile.get(per=per)
+    profile = model.sfr.results.profile.get(per=per)
     stage = profile["stage"].to_numpy(dtype=float)
     streambed_top = profile["streambed_top"].to_numpy(dtype=float)
     exchange = profile["q_gwf"].to_numpy(dtype=float)
     wet = np.isfinite(stage) & (stage > -1.0e20)
     depth = np.where(wet, stage - streambed_top, np.nan)
 
-    routing = model.packages.sfr.budget.flow_ja_face.get(per=per)
+    routing = model.sfr.budget.flow_ja_face.get(per=per)
     routed_flow = np.asarray([], dtype=float)
     if not routing.empty:
         last_kstpkper = last_saved_step(routing["kstpkper"], per)

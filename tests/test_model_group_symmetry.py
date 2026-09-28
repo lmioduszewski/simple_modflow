@@ -1,7 +1,7 @@
 """Single<->group inspection symmetry (Phase 4).
 
 The group side mirrors the single-model side: ``group.packages.<pkg>.inputs`` /
-``.results`` matches ``model.packages.<pkg>.inputs`` / ``.results``. The old flat
+``.results`` matches ``model.<pkg>.inputs`` / ``.results``. The old flat
 ``group.<pkg>`` shortcuts (which have no single-model equivalent) are deprecated
 but still work, returning the very same accessor as the mirrored path.
 """

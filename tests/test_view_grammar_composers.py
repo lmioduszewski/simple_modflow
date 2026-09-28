@@ -365,7 +365,7 @@ def test_composers_render_on_canonical(canonical_run):
     )
 
     # -- single model: entity-faceted series mosaic --------------------------
-    stage_mosaic = model.packages.lak.results.mosaic(kind="plot", field="stage")
+    stage_mosaic = model.lak.results.mosaic(kind="plot", field="stage")
     assert isinstance(stage_mosaic, go.Figure)  # one panel per lake
 
     # -- group surface --------------------------------------------------------
@@ -397,7 +397,7 @@ def test_composers_render_on_canonical(canonical_run):
     mixed = viz.mosaic(
         [
             ("heads", model.hds.map()),
-            ("lake stage", model.packages.lak.results.stage.plot()),
+            ("lake stage", model.lak.results.stage.plot()),
         ],
         ncols=2,
     )

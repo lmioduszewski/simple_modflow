@@ -317,12 +317,12 @@ def test_a_period_or_layer_with_no_records_draws_an_empty_map(canonical_model):
     certainly has, and making the all-fill branch below it unreachable.
     """
 
-    empty = canonical_model.packages.wel.inputs.get(per=0, layer=0)
+    empty = canonical_model.wel.inputs.get(per=0, layer=0)
     assert empty.empty and "q" not in empty.columns, "the trap stopped reproducing"
 
-    picture = canonical_model.packages.wel.inputs.map()          # layer 0
+    picture = canonical_model.wel.inputs.map()          # layer 0
     assert picture.__class__.__name__ == "Choro"
-    assert canonical_model.packages.wel.inputs.map(layer=3) is not None
+    assert canonical_model.wel.inputs.map(layer=3) is not None
 
 
 def test_a_genuinely_missing_value_column_still_raises(canonical_model):
@@ -331,7 +331,7 @@ def test_a_genuinely_missing_value_column_still_raises(canonical_model):
 
     from myflopy.modflow.mf6.package_plotting import build_cell_input_map_payload
 
-    frame = canonical_model.packages.drn.inputs.get().drop(columns=["elev"])
+    frame = canonical_model.drn.inputs.get().drop(columns=["elev"])
     with pytest.raises(KeyError, match="the selection has"):
         build_cell_input_map_payload(
             frame, ncpl=canonical_model.vor.ncpl, value_column="elev",
@@ -341,7 +341,7 @@ def test_a_genuinely_missing_value_column_still_raises(canonical_model):
 def test_mappable_is_probed_not_inferred_from_the_registry():
     """HFB is deliberately NOT in `package_registry` -- it is face-indexed, so it
     has no cellid, and MF6 writes it no budget record (ledger 162). Its explorer
-    is hand-written and it DRAWS: `model.packages.hfb.inputs.map()`.
+    is hand-written and it DRAWS: `model.hfb.inputs.map()`.
 
     Inferring `mappable` from registry fields reported exactly that package --
     the one whose entry is entirely hand-written -- as undrawable. So the column
@@ -476,14 +476,14 @@ def test_the_hover_says_which_layer_you_are_looking_at(canonical_model):
     has no records in the default layer 0 -- so the map should say which layer it
     is drawing."""
 
-    assert "layer" in _hover_text(canonical_model.packages.ghb.inputs.map())
+    assert "layer" in _hover_text(canonical_model.ghb.inputs.map())
 
 
 def test_field_selects_what_is_coloured_and_the_rest_ride_along(canonical_model):
     """`field=` drives the colour; the siblings stay in the hover either way."""
 
-    default = _hover_text(canonical_model.packages.riv.inputs.map())
-    by_cond = _hover_text(canonical_model.packages.riv.inputs.map(field="cond"))
+    default = _hover_text(canonical_model.riv.inputs.map())
+    by_cond = _hover_text(canonical_model.riv.inputs.map(field="cond"))
 
     # The title is the coloured field -- `stage` by default (the registry's
     # default_input), `cond` when asked for.
@@ -510,9 +510,9 @@ def test_a_single_field_package_gets_no_empty_sibling_block(canonical_model):
     names the payload lacks, so nothing renders an empty block."""
 
     for picture in (
-        canonical_model.packages.rch.inputs.map(),
-        canonical_model.packages.uzf.inputs.finf.map(),
-        canonical_model.packages.npf.k.map(),
+        canonical_model.rch.inputs.map(),
+        canonical_model.uzf.inputs.finf.map(),
+        canonical_model.npf.k.map(),
     ):
         text = _hover_text(picture)
         assert "layer" in text

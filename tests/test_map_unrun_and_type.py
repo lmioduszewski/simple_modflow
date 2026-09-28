@@ -73,7 +73,7 @@ def test_an_unrun_models_region_names_resolve(unrun_model):
     assert picture._select_cells == expected
 
     # ...and through a noun, which calls the free verb underneath.
-    noun = unrun_model.packages.npf.k.map(select="all_streams")
+    noun = unrun_model.npf.k.map(select="all_streams")
     assert noun._select_cells == expected
 
 
@@ -113,7 +113,7 @@ def test_an_unknown_type_raises_naming_the_set(unrun_model, value):
 def test_input_rch_is_retired_by_name():
     """It read stress period 37 whatever was asked, and KeyError'd on smaller models."""
 
-    with pytest.raises(ValueError, match=r"packages\.rch\.inputs"):
+    with pytest.raises(ValueError, match=r"model\.rch\.inputs"):
         check_map_type("input_rch")
 
 

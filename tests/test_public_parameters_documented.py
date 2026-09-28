@@ -38,7 +38,7 @@ subclasses, the ``dict`` libraries) is not measured as a constructor, but its ow
 methods are.
 
 NOT covered yet (ledger 338): the read-grammar view classes reached as
-``model.packages.<pkg>.<inputs|results>.<noun>``. They are not exported, so they
+``model.<pkg>.<inputs|results>.<noun>``. They are not exported, so they
 cannot be discovered from ``__all__``. Their plot verbs are already checked by
 `test_noun_signatures`.
 

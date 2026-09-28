@@ -140,7 +140,7 @@ def test_the_stage_table_keeps_every_row_and_blanks_the_dry_ones(lak_stage_runs)
 
     model = lak_stage_runs["dry"]
     raw = _raw(model)
-    frame = model.packages.lak.results.stage.get()
+    frame = model.lak.results.stage.get()
 
     assert len(frame) == NPER * 3
     for (per, lake), value in frame.set_index(["per", "lake"])["stage"].items():
@@ -160,7 +160,7 @@ def test_a_stage_map_is_blank_where_a_lake_has_no_stage(lak_stage_runs, per):
     real = raw[np.abs(raw) < 1e29]
     no_stage = [cells["dry"]] + ([cells["switched"]] if per == INACTIVE_PERIOD else [])
 
-    choro = model.packages.lak.results.stage.map(per=per, fill_value=float("nan"))
+    choro = model.lak.results.stage.map(per=per, fill_value=float("nan"))
     values = np.asarray(choro.linear_zs, dtype=float)
     assert np.isnan(values[no_stage]).all()
     assert values[cells["wet"]] == 108.0
@@ -169,7 +169,7 @@ def test_a_stage_map_is_blank_where_a_lake_has_no_stage(lak_stage_runs, per):
     text = _strings(choro.fig.data[0].customdata)
     assert not [s for s in text if "e+30" in s], "the hover still prints a sentinel"
 
-    static = model.packages.lak.results.stage.map(per=per, backend="mpl")
+    static = model.lak.results.stage.map(per=per, backend="mpl")
     norms = [c.norm for ax in static.axes for c in ax.collections if c.get_array() is not None]
     assert norms, "the static map drew no coloured cells"
     for norm in norms:  # fill_value 0.0 is the default backdrop, a real 0
@@ -184,7 +184,7 @@ def test_a_stage_map_is_blank_there_under_every_documented_aggregation(lak_stage
     model, cells = lak_stage_runs["dry"], lak_stage_runs["cells"]
     raw = _raw(model)
     real = raw[np.abs(raw) < 1e29]
-    choro = model.packages.lak.results.stage.map(per=1, agg=agg, fill_value=float("nan"))
+    choro = model.lak.results.stage.map(per=1, agg=agg, fill_value=float("nan"))
     values = np.asarray(choro.linear_zs, dtype=float)
 
     assert np.isnan(values[cells["dry"]]), values[cells["dry"]]
@@ -218,7 +218,7 @@ def test_mosaic_and_animate_colour_real_stages_only(lak_stage_runs):
     model = lak_stage_runs["dry"]
     raw = _raw(model)
     top = raw[np.abs(raw) < 1e29].max()
-    stage = model.packages.lak.results.stage
+    stage = model.lak.results.stage
     for figure in (stage.mosaic(per=INACTIVE_PERIOD), stage.animate()):
         axis = figure.layout.coloraxis
         assert 0.0 <= axis.cmin and axis.cmax <= top, (axis.cmin, axis.cmax)
@@ -230,7 +230,7 @@ def test_a_stage_series_leaves_a_gap_on_a_day_with_no_stage(lak_stage_runs, back
 
     model = lak_stage_runs["dry"]
     raw = _raw(model)
-    figure = model.packages.lak.results.stage.plot(backend=backend)
+    figure = model.lak.results.stage.plot(backend=backend)
     if backend == "plotly":
         lines = {trace.name: np.asarray(trace.y, dtype=float) for trace in figure.data}
     else:
@@ -250,7 +250,7 @@ def test_a_stage_change_into_or_out_of_a_dry_period_is_kept_and_undefined(lak_st
 
     model = lak_stage_runs["dry"]
     raw = _raw(model)
-    frame = model.packages.lak.results.stage_change.get()
+    frame = model.lak.results.stage_change.get()
 
     assert len(frame) == 3 * (NPER - 1)
     for row in frame.itertuples():
@@ -259,7 +259,7 @@ def test_a_stage_change_into_or_out_of_a_dry_period_is_kept_and_undefined(lak_st
             assert np.isnan(row.stage_change), row
         else:
             assert row.stage_change == pytest.approx(after - before)
-    figure = model.packages.lak.results.stage_change.plot()
+    figure = model.lak.results.stage_change.plot()
     assert all(np.nanmax(np.abs(np.asarray(t.y, dtype=float))) < 10.0 for t in figure.data)
 
 
@@ -268,7 +268,7 @@ def test_the_exchange_map_hover_has_no_stage_at_a_dry_lake(lak_stage_runs):
 
     model, cells = lak_stage_runs["dry"], lak_stage_runs["cells"]
     _raw(model)
-    choro = model.packages.lak.results.q.map(per=1)
+    choro = model.lak.results.q.map(per=1)
     trace = choro.fig.data[0]
     assert not [s for s in _strings(trace.customdata) if "e+30" in s]
     labels = [piece.split("%{customdata[")[0] for piece in trace.hovertemplate.split("<br>")]
@@ -323,8 +323,7 @@ def test_a_lake_dry_in_every_record_keeps_its_column_and_its_rows():
     table = pd.DataFrame({"per": [0, 0, 1, 1, 2, 2], "lake": [0, 1] * 3, "cell": [4, 9] * 3,
                           "stage": [np.nan, 101.0, np.nan, np.nan, np.nan, 102.0]})
     stage = SimpleNamespace(get=lambda: table.copy())
-    model = SimpleNamespace(packages=SimpleNamespace(
-        lak=SimpleNamespace(results=SimpleNamespace(stage=stage))))
+    model = SimpleNamespace(lak=SimpleNamespace(results=SimpleNamespace(stage=stage)))
     series = mf.LakeStageTargets(locations={"always_dry": 0, "wet": 1}).simulated_series(model)
 
     assert list(series.columns) == ["time", "always_dry", "wet"]

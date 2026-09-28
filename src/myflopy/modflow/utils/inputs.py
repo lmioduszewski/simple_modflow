@@ -132,7 +132,7 @@ class UzfInput:
         """UZF infiltration (``finf``) for one period, as a choropleth.
 
         A RECORD noun, and a legacy one: ``model.inputs.uzf`` predates the
-        ``model.packages.<pkg>.inputs.<field>`` grammar and survives because UZF
+        ``model.<pkg>.inputs.<field>`` grammar and survives because UZF
         is indexed by ``ifno`` rather than by cellid, so its period table has to
         be joined back to the package data before it can be coloured. That join
         is :meth:`finf`, and it is why this signature carries ``multiplier`` on

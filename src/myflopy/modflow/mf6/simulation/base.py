@@ -66,6 +66,18 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus as Vor
     from myflopy.modflow.mf6.observations import TargetRegistry
     from myflopy.modflow.mf6.package_explorer import ModelPackages
+    from myflopy.modflow.mf6.package_model import (
+        HfbPackageExplorer,
+        NpfPackageExplorer,
+        PackageExplorer,
+        StaticArrayPackageExplorer,
+        UzfPackageExplorer,
+    )
+    from myflopy.modflow.mf6.package_surface_water import (
+        LakPackageExplorer,
+        SfrPackageExplorer,
+        SurfaceWaterPackageExplorer,
+    )
     from myflopy.modflow.mf6.parallel import ParallelModelWorkflow
     from myflopy.modflow.mf6.prt import ParticleTracking
     from myflopy.modflow.mf6.sfr import SFRBuilder
@@ -90,6 +102,102 @@ def _model_config():
 
     return ModelConfig
 
+
+
+class FlopyPackages:
+    """The model's FloPy package objects: ``model.fl.drn``, ``model.fl.npf``, ...
+
+    ``model.drn`` is myflopy's view of a package (``model.drn.inputs.map()``,
+    ``model.drn.results.q.get()``); ``model.fl.drn`` is the FloPy object the
+    model was built with, for its data (``model.fl.drn.stress_period_data``).
+
+    The ten registry packages are typed properties so an editor completes them;
+    any other package the model or its simulation carries -- ``npf``, ``ic``,
+    ``sto``, ``disv``, ``oc``, ``tdis``, ``ims`` -- resolves by name through
+    :meth:`SimulationBase.package`, which raises ``AttributeError`` naming the
+    model when there is no such package.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        The model whose packages are looked up, on every access (nothing is
+        cached, so a package added or replaced later is seen).
+    """
+
+    def __init__(self, model: SimulationBase) -> None:
+        self._model = model
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return self._model.package(name)
+
+    def __dir__(self) -> list[str]:
+        model = self._model
+        return sorted(set(super().__dir__()) | set(model.package_types) | set(model.package_names))
+
+    def __repr__(self) -> str:
+        return f"<FloPy packages of {self._model.name!r}: {', '.join(self._model.package_types)}>"
+
+    @property
+    def chd(self) -> flopy.mf6.ModflowGwfchd | list[flopy.mf6.ModflowGwfchd]:
+        """FloPy's CHD package -- a list when the model carries several."""
+
+        return self._model.package("chd")
+
+    @property
+    def drn(self) -> flopy.mf6.ModflowGwfdrn | list[flopy.mf6.ModflowGwfdrn]:
+        """FloPy's DRN package -- a list when the model carries several."""
+
+        return self._model.package("drn")
+
+    @property
+    def ghb(self) -> flopy.mf6.ModflowGwfghb | list[flopy.mf6.ModflowGwfghb]:
+        """FloPy's GHB package -- a list when the model carries several."""
+
+        return self._model.package("ghb")
+
+    @property
+    def riv(self) -> flopy.mf6.ModflowGwfriv | list[flopy.mf6.ModflowGwfriv]:
+        """FloPy's RIV package -- a list when the model carries several."""
+
+        return self._model.package("riv")
+
+    @property
+    def wel(self) -> flopy.mf6.ModflowGwfwel | list[flopy.mf6.ModflowGwfwel]:
+        """FloPy's WEL package -- a list when the model carries several."""
+
+        return self._model.package("wel")
+
+    @property
+    def rch(self) -> flopy.mf6.ModflowGwfrch | list[flopy.mf6.ModflowGwfrch]:
+        """FloPy's RCH package -- a list when the model carries several."""
+
+        return self._model.package("rch")
+
+    @property
+    def evt(self) -> flopy.mf6.ModflowGwfevt | list[flopy.mf6.ModflowGwfevt]:
+        """FloPy's EVT package -- a list when the model carries several."""
+
+        return self._model.package("evt")
+
+    @property
+    def uzf(self) -> flopy.mf6.ModflowGwfuzf | list[flopy.mf6.ModflowGwfuzf]:
+        """FloPy's UZF package -- a list when the model carries several."""
+
+        return self._model.package("uzf")
+
+    @property
+    def sfr(self) -> flopy.mf6.ModflowGwfsfr | list[flopy.mf6.ModflowGwfsfr]:
+        """FloPy's SFR package -- a list when the model carries several."""
+
+        return self._model.package("sfr")
+
+    @property
+    def lak(self) -> flopy.mf6.ModflowGwflak | list[flopy.mf6.ModflowGwflak]:
+        """FloPy's LAK package -- a list when the model carries several."""
+
+        return self._model.package("lak")
 
 
 class SimulationBase:
@@ -869,12 +977,11 @@ class SimulationBase:
 
     @property
     def packages(self) -> ModelPackages:
-        """Preferred package exploration namespace for inputs and maps.
+        """Every package at once: ``summary()`` and the cross-package ``mosaic()``.
 
-        This is the higher-level package inspection surface intended to grow
-        over time. It complements the older ``inputs`` helper with a more
-        consistent API such as ``model.packages.rch.inputs.get()`` and
-        ``model.packages.rch.inputs.map()``.
+        One package is ``model.<pkg>`` (``model.rch.inputs.map()``), which
+        returns the same view this namespace builds; FloPy's own package object
+        is ``model.fl.<pkg>``.
         """
 
         return get_packages(self)
@@ -966,74 +1073,107 @@ class SimulationBase:
 
         return [tuple(int(value) for value in pair) for pair in self._get_budget_reader().get_kstpkper()]
 
-    @property
-    def lak(self) -> flopy.mf6.ModflowGwflak | list[flopy.mf6.ModflowGwflak]:
-        """Return the MF6 LAK package attached to this model."""
-
-        return self.package("lak")
-
-    @property
-    def uzf(self) -> flopy.mf6.ModflowGwfuzf | list[flopy.mf6.ModflowGwfuzf]:
-        """Return the MF6 UZF package attached to this model."""
-
-        return self.package("uzf")
+    # -- one package: model.<pkg> ---------------------------------------------
+    # myflopy's view of each package; FloPy's own object is ``model.fl.<pkg>``.
+    # Hand-written, not generated, for the reason 4.7.7 gives: a ``.pyi`` stub
+    # replaces the WHOLE module for type checkers. ``test_package_descriptor.py``
+    # asserts the list covers the registry.
 
     @property
-    def sfr(self) -> flopy.mf6.ModflowGwfsfr | list[flopy.mf6.ModflowGwfsfr]:
-        """Return the MF6 SFR package attached to this model."""
+    def fl(self) -> FlopyPackages:
+        """The model's FloPy package objects: ``model.fl.drn`` is FloPy's DRN."""
 
-        return self.package("sfr")
-
-    @property
-    def rch(self) -> flopy.mf6.ModflowGwfrch | list[flopy.mf6.ModflowGwfrch]:
-        """Return the MF6 RCH package attached to this model."""
-
-        return self.package("rch")
-
-    # -- cell-based boundary packages -----------------------------------------
-    # Added 2026-07-18 (plan 4.7.7). Only rch/uzf/sfr/lak existed, so
-    # ``model.rch`` worked while ``model.chd`` raised AttributeError -- not a
-    # design decision, just where someone stopped. Written out rather than
-    # generated: a ``.pyi`` stub replaces the WHOLE module for type checkers,
-    # so generating six properties would mean hand-maintaining a stub for every
-    # other public name in this file. ``test_package_descriptor.py`` now asserts
-    # this list is complete against the registry, so forgetting one fails.
+        return FlopyPackages(self)
 
     @property
-    def chd(self) -> flopy.mf6.ModflowGwfchd | list[flopy.mf6.ModflowGwfchd]:
-        """Return the MF6 CHD package attached to this model."""
+    def chd(self) -> PackageExplorer:
+        """Constant-head package: ``inputs`` / ``results`` views and their maps. FloPy's object is ``model.fl.chd``."""
 
-        return self.package("chd")
-
-    @property
-    def drn(self) -> flopy.mf6.ModflowGwfdrn | list[flopy.mf6.ModflowGwfdrn]:
-        """Return the MF6 DRN package attached to this model."""
-
-        return self.package("drn")
+        return self.packages.chd
 
     @property
-    def ghb(self) -> flopy.mf6.ModflowGwfghb | list[flopy.mf6.ModflowGwfghb]:
-        """Return the MF6 GHB package attached to this model."""
+    def drn(self) -> PackageExplorer:
+        """Drain package: ``inputs`` / ``results`` views and their maps. FloPy's object is ``model.fl.drn``."""
 
-        return self.package("ghb")
-
-    @property
-    def riv(self) -> flopy.mf6.ModflowGwfriv | list[flopy.mf6.ModflowGwfriv]:
-        """Return the MF6 RIV package attached to this model."""
-
-        return self.package("riv")
+        return self.packages.drn
 
     @property
-    def wel(self) -> flopy.mf6.ModflowGwfwel | list[flopy.mf6.ModflowGwfwel]:
-        """Return the MF6 WEL package attached to this model."""
+    def ghb(self) -> PackageExplorer:
+        """General-head boundary package: ``inputs`` / ``results`` views and their maps. FloPy's object is ``model.fl.ghb``."""
 
-        return self.package("wel")
+        return self.packages.ghb
 
     @property
-    def evt(self) -> flopy.mf6.ModflowGwfevt | list[flopy.mf6.ModflowGwfevt]:
-        """Return the MF6 EVT package attached to this model."""
+    def riv(self) -> PackageExplorer:
+        """River package: ``inputs`` / ``results`` views and their maps. FloPy's object is ``model.fl.riv``."""
 
-        return self.package("evt")
+        return self.packages.riv
+
+    @property
+    def wel(self) -> PackageExplorer:
+        """Well package: ``inputs`` / ``results`` views and their maps. FloPy's object is ``model.fl.wel``."""
+
+        return self.packages.wel
+
+    @property
+    def rch(self) -> PackageExplorer:
+        """Recharge package: ``inputs`` / ``results`` views and their maps. FloPy's object is ``model.fl.rch``."""
+
+        return self.packages.rch
+
+    @property
+    def evt(self) -> PackageExplorer:
+        """Evapotranspiration package: ``inputs`` / ``results`` views and their maps. FloPy's object is ``model.fl.evt``."""
+
+        return self.packages.evt
+
+    @property
+    def uzf(self) -> UzfPackageExplorer:
+        """Unsaturated-zone flow package views. FloPy's object is ``model.fl.uzf``."""
+
+        return self.packages.uzf
+
+    @property
+    def sfr(self) -> SfrPackageExplorer:
+        """Streamflow-routing package views. FloPy's object is ``model.fl.sfr``."""
+
+        return self.packages.sfr
+
+    @property
+    def lak(self) -> LakPackageExplorer:
+        """Lake package views. FloPy's object is ``model.fl.lak``."""
+
+        return self.packages.lak
+
+    @property
+    def hfb(self) -> HfbPackageExplorer:
+        """Horizontal-flow-barrier views (a barrier is a cell PAIR; no budget record)."""
+
+        return self.packages.hfb
+
+    @property
+    def ic(self) -> StaticArrayPackageExplorer:
+        """Initial-conditions array views (``strt``)."""
+
+        return self.packages.ic
+
+    @property
+    def npf(self) -> NpfPackageExplorer:
+        """Node-property-flow array views (``k``/``k22``/``k33``, ``transmissivity``)."""
+
+        return self.packages.npf
+
+    @property
+    def sto(self) -> StaticArrayPackageExplorer:
+        """Storage array views (``ss``/``sy``)."""
+
+        return self.packages.sto
+
+    @property
+    def surface_water(self) -> SurfaceWaterPackageExplorer:
+        """Combined SFR/LAK views."""
+
+        return self.packages.surface_water
 
     def bud(self, package: str = None):
         """Return budget information, optionally filtered to one package.
@@ -1073,7 +1213,7 @@ class SimulationBase:
         ``model.budget.drn`` or ``model.budget.sto_ss`` on a flow model). See
         :class:`~myflopy.modflow.mf6.package_results.ModelBudgetNamespace` for
         how this differs from ``bud()``, ``budget_cumulative``, and the
-        package-output ``model.packages.<pkg>.budget``.
+        package-output ``model.<pkg>.budget``.
         """
 
         return get_model_budget(self)

@@ -34,7 +34,7 @@ picture: ``backend="mpl"`` returns a bare Matplotlib ``Figure``, and that is
 
 Two things deliberately absent:
 
-* **``timeseries``.** Charts belong to a node -- ``model.packages.ghb.results.q
+* **``timeseries``.** Charts belong to a node -- ``model.ghb.results.q
   .plot()`` -- because the series only means something with the model's periods
   attached. There is no useful "chart these bare arrays" that plotly does not
   already do better.
@@ -329,7 +329,7 @@ def map(      # noqa: A001 - the verb IS `map`
         that has not been run; the others are results and raise there. Case does
         not matter; any other value raises, naming this set, rather than drawing
         node numbers. The same two fields are nouns too:
-        ``model.packages.npf.transmissivity`` / ``.transmissivity_max``, whose
+        ``model.npf.transmissivity`` / ``.transmissivity_max``, whose
         ``.mosaic()`` draws one panel per layer.
     zmin, zmax : float, optional
         Fixed color-scale limits. Set both to hold the scale steady across
@@ -1600,7 +1600,7 @@ class ModelPlots:
             that has not been run; the others are results and raise there. Case does
             not matter; any other value raises, naming this set, rather than drawing
             node numbers. The same two fields are nouns too:
-            ``model.packages.npf.transmissivity`` / ``.transmissivity_max``, whose
+            ``model.npf.transmissivity`` / ``.transmissivity_max``, whose
             ``.mosaic()`` draws one panel per layer.
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
