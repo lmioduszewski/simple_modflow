@@ -512,9 +512,11 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5333 passed / 4 skipped**, 2026-09-28, ledger 316's written-resolution
-  amendment on top of 338): `-n 10` **1m32s** in a detached checkout outside `.claude`, at a
-  load average of ~3.6 at its start; serial not re-measured. Before it, 5325 passed / 4
+- Full suite (**5371 passed / 4 skipped**, 2026-09-28, ledger 316's five build-failure
+  fixes and their review): `-n 10` **1m30s** in a detached checkout outside `.claude`, at a
+  load average of ~6.1 at its start; serial not re-measured. Before it, 5333 passed / 4
+  skipped (ledger 316's written-resolution amendment on top of 338): `-n 10` **1m32s** at
+  ~3.6. Before that, 5325 passed / 4
   skipped (ledger 338 -- the docstring guard adds 717 cases): serial (`-n0`) **7m08s** and `-n 10` **1m38s**, both in a detached checkout
   outside `.claude`, the serial one starting at a load average of ~11 as the parallel run
   ended. Before it, 4608 passed / 4 skipped (ledger 337): serial (`-n0`) **6m57s**
@@ -1313,11 +1315,13 @@ copies now, and a result given a `grid=` of another cell count is refused at the
   written with ZERO length and a real 20,323-cell model ran to normal termination with
   every head NaN. Dual vertices joined by a face shorter than one written unit on both
   axes are now one corner -- FloPy's where it drew one -- counted in `unsplit`; a face
-  FloPy drew ITSELF is joined only when both its ends PRINT as one point (a plain
-  four-corner boundary at state plane on the default profile had one: NaN heads on
-  FloPy's own cells), so no grid that runs today moves. And a
-  model whose DISV would still write a zero-length face is REFUSED at build naming the
-  cells (`zero_length_faces`; a snapshot rebuild is the grid that ran). Measure what the
+  FloPy drew ITSELF is joined only when it is a FACE two cells share and both its ends
+  PRINT as one point (a plain four-corner boundary at state plane on the default profile
+  had one: NaN heads on FloPy's own cells), so no grid that runs today moves. And a
+  model whose DISV would still write a face MF6 cannot compute -- zero length, or both
+  cell centres written on its line (CONNLEN 0, a division by zero) -- is REFUSED at build
+  naming the cells (`unwritable_faces`, comparing the numbers MF6 reads back, not the
+  text; a snapshot rebuild is the grid that ran). Measure what the
   FILE holds, not what float64 holds: every precision check in this module was right in
   memory. `tessellation_report` says what
   changed and carries `legacy_pin` (FloPy's own pin), and a package pinned to that is

@@ -14361,7 +14361,8 @@ same day, which is the useful part of the result.
       unit -- the largest 0.11 ft² on a star whose FloPy cells miss by 2,050 ft²; every
       vertex at state plane is written up to 0.005 ft off in any case.
       **A model whose DISV would be written with a zero-length face is refused at build**
-      (``grid_identity.zero_length_faces``, naming the cells), whatever made the grid: one
+      (``grid_identity.unwritable_faces``, naming the cells -- and, since the review below,
+      a face with both cell centres written on it), whatever made the grid: one
       rebuilt from a frozen snapshot or a pickle is the grid that ran and is never
       repaired, and the user's own run folder still holds that face. The check reads the
       simulation's own number format; the repair cannot (it runs before any simulation
@@ -14512,6 +14513,55 @@ same day, which is the useful part of the result.
       exactly, the 3.2e-14 one that "built normally" lies 3.0e-14 OUTSIDE and was dropped,
       and a pile forms for any inside offset below about the local cell size -- broken only
       below about one written unit.
+      **Reviewed the same day** (an adversarial pass over the five fixes and the corner rule;
+      every fix below fails a named test in ``tests/test_gridspec_build_failures.py``, 37 in
+      all, when it alone is reverted):
+      **The build check refuses a second face MF6 cannot compute** --
+      ``grid_identity.unwritable_faces``: a face written with zero length, AND one whose two
+      cell centres are both written on its line, which gives CONNLEN 0 and stops MF6 on a
+      division by zero (a 0.006 ft notch at state plane, "baseline" profile, writes three
+      and no zero-length face). ``zero_length_faces`` is its first half. It compares the
+      numbers MF6 reads back, not the text (``100000.00000000`` and ``1.00000000E+05`` are
+      one point across FloPy's 1e5 format switch), and skips a face beside a cell inactive
+      in every layer, which makes no connection.
+      **A corner FloPy drew is joined only across a FACE** -- an edge two cells share: a
+      short boundary edge makes no connection and MF6 runs it as written, so joining one
+      re-pinned a grid that runs. When the repair's only change is such a join, the grid
+      bb56668 built IS FloPy's, and a package pinned to it is told it predates the repair
+      (``legacy_pin``) rather than that bb56668 split its cells.
+      **The point guard** (5): a point exactly on a segment another point then bends is
+      re-inserted into the bent ring (left alone, it sat off the new chord, outside, with no
+      cell); a point near a contact two zones share goes into BOTH rings (into one, the other
+      kept a segment 1e-6 ft from the new vertex and Triangle ran out of memory); inside is
+      parity over the rings, so a part on an island in a hole is inside; an inside copy of a
+      well is never merged into an outside one, which gets no cell.
+      **Triangle's bounds** lower only the SOFT address-space limit, and never above the hard
+      one: setting both to the cap raised the hard limit wherever it was lower, which an
+      unprivileged process cannot, so under ``ulimit -v`` every grid build failed. An
+      interrupt kills Triangle, a failure to start it raises ``TriangleFailed``, and ``-jz``
+      counts as the jettison switch.
+      **(4)'s skip applies only to a feature outside AS DRAWN**: a buffered point or line whose
+      band reaches inside is refused (cause ``"clipped"``), as before -- skipping it dropped a
+      boundary well's refinement silently -- and a line with ``breakline_buffer=0`` is refused
+      naming the buffer, where it read as "outside" at ``nan`` ft. ``NoAreaInside`` pickles.
+      **(3)** names a band PIECE resampled to nothing, not only a whole region; a duplicate
+      row counts as landed for its own source (the second of two files was refused as if
+      every feature missed) and the warning names both files. The collapse warning names a
+      part by its bounds.
+      **A hole's seed is taken off any island in it** -- ledger 317's own defect (c4f3869):
+      the seed was the island's centre, so Triangle removed the island and meshed the water,
+      975,888 ft² of cells on an 880,000 ft² domain, silently.
+      **Found by the review and NOT done:** a band crossing the whole domain splits the
+      background sizing ring, and the side the ring loses meshes without ``max_area``
+      (pre-existing; fixing it moves grids that run); a join can leave a neighbouring face
+      shorter than one written unit (rare; that model is refused at build); interior point
+      pairs one to two written units apart are merged, by the rule's design; and the
+      wedge-tip limit above stands.
+      **The sweep, re-run after the review, is unchanged row for row** (1,510 grids, the
+      numbers above), and now also counts faces written with both cell centres on them: 0 on
+      FloPy's cells, 19 on the repaired grids -- 12 and 7 in the same "baseline" spiky star at
+      the two offsets that writes the 17 zero-length faces, so the second refusal stops no
+      sweep grid the first one passed.
       Tests: ``tests/test_voronoi_tiling.py`` (16 then, 21 after the fuzz pass), where each
       of ten single-piece mutations of the fix fails a named test. The reproducers now show FloPy's cells
       (``tessellation="flopy"``) beside the repaired grid, and ``surface_domain_mask.py``

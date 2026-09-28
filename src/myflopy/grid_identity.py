@@ -124,9 +124,12 @@ def _written_text(value, precision=FLOPY_FLOAT_PRECISION, upper=FLOPY_SCI_NOTE_U
 
 
 def _written_as_one_point(p, q) -> bool:
-    """Whether FloPy's default number format writes points ``p`` and ``q`` identically."""
+    """Whether points ``p`` and ``q`` are one point once FloPy's default number format has
+    written them and MF6 has read them back -- compared as the numbers read, not as text:
+    ``99999.999999997`` writes ``100000.00000000`` and ``100000.0003`` writes
+    ``1.00000000E+05``, which MF6 reads as the same value."""
 
-    return all(_written_text(float(p[k])) == _written_text(float(q[k])) for k in (0, 1))
+    return all(float(_written_text(float(p[k]))) == float(_written_text(float(q[k]))) for k in (0, 1))
 
 
 def written_resolution(coords, precision: int = FLOPY_FLOAT_PRECISION,
@@ -173,16 +176,120 @@ def written_resolution(coords, precision: int = FLOPY_FLOAT_PRECISION,
     return np.where(scientific, 10.0 ** (exponent - precision), 10.0 ** -precision)
 
 
+def unwritable_faces(disv, simulation_data=None) -> list[tuple[int, int, float, float, str]]:
+    """The faces MF6 cannot compute once the DISV package is WRITTEN and read back.
+
+    Two cells share a face when their rings share a vertex pair; MF6 computes its width
+    from the pair's written coordinates and each cell's distance to it from the written
+    cell centres. Two ways the file can make that impossible, both measured:
+
+    - ``"zero length"``: both vertices are written as one point, so the width is zero and
+      the distances divide by it -- NaN for every head under normal termination (ledger
+      316: the repair from bb56668 split one corner 7.4e-5 ft apart where the file holds
+      0.01 ft, on a real model at state plane);
+    - ``"centres on it"``: both cell centres are written exactly on the face's line, so
+      MF6's connection length is zero and it stops on a division by zero (a boundary with a
+      0.006 ft hairline notch at state plane, found by a review).
+
+    Only a face whose two cells are both active (``idomain > 0``) in some layer counts:
+    MF6 makes no connection to an inactive cell.
+
+    Parameters
+    ----------
+    disv : flopy.mf6.ModflowGwfdisv
+        A BUILT DISV package (``vertices`` and ``cell2d`` set; ``idomain`` read when given).
+    simulation_data : flopy.mf6.mfsimbase.MFSimulationData, optional
+        Its simulation's ``simulation_data``, whose number format decides what is
+        written. ``None`` means FloPy's defaults.
+
+    Returns
+    -------
+    list of tuple
+        ``(cell, other_cell, x, y, why)`` per face -- zero-based cells, a point on the face
+        as written, and ``"zero length"`` or ``"centres on it"``; empty when there are
+        none, or when the package cannot be read.
+
+    Examples
+    --------
+    >>> unwritable_faces(model.get_package("disv"), model.simulation_data)  # doctest: +SKIP
+    [(8692, 8695, 1258581.05, 719399.294, 'zero length')]
+    """
+
+    import numpy as np
+
+    try:
+        vertices = disv.vertices.get_data()
+        cell2d = disv.cell2d.get_data()
+        xy = np.column_stack([vertices["xv"], vertices["yv"]]).astype(float)
+        centres = np.array([[float(row[1]), float(row[2])] for row in cell2d])
+        rings = [[int(row[4 + i]) for i in range(int(row[3]))] for row in cell2d]
+        idomain = disv.idomain.get_data() if getattr(disv, "idomain", None) is not None else None
+    except (AttributeError, KeyError, TypeError, ValueError, IndexError):
+        logger.debug("could not read the DISV for the unwritable face check", exc_info=True)
+        return []
+    if not len(xy) or not rings:
+        return []
+    cell = np.concatenate([np.full(len(ring), k) for k, ring in enumerate(rings)])
+    a = np.concatenate([np.asarray(ring) for ring in rings])
+    b = np.concatenate([np.roll(np.asarray(ring), -1) for ring in rings])
+    key = np.minimum(a, b) * len(xy) + np.maximum(a, b)
+    order = np.argsort(key, kind="stable")
+    twice = np.flatnonzero(key[order][1:] == key[order][:-1])
+    if not len(twice):
+        return []
+    first, second = order[twice], order[twice + 1]
+    c1, c2, u, v = cell[first], cell[second], a[first], b[first]
+    if idomain is not None:
+        active = np.asarray(idomain).reshape(-1, len(rings)) > 0
+        both = (active[:, c1] & active[:, c2]).any(axis=0)
+        c1, c2, u, v = c1[both], c2[both], u[both], v[both]
+
+    precision = int(getattr(simulation_data, "float_precision", FLOPY_FLOAT_PRECISION))
+    upper = float(getattr(simulation_data, "_sci_note_upper_thres", FLOPY_SCI_NOTE_UPPER))
+    lower = float(getattr(simulation_data, "_sci_note_lower_thres", FLOPY_SCI_NOTE_LOWER))
+    unit = written_resolution(np.vstack([xy, centres]), precision=precision, upper=upper)
+    # Candidates by the TRUE coordinates, so only a handful are formatted: a face shorter
+    # than a written unit, or one with both centres within two units of its line.
+    d = xy[v] - xy[u]
+    length = np.hypot(d[:, 0], d[:, 1])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        off1 = np.abs(d[:, 0] * (centres[c1, 1] - xy[u, 1]) - d[:, 1] * (centres[c1, 0] - xy[u, 0])) / length
+        off2 = np.abs(d[:, 0] * (centres[c2, 1] - xy[u, 1]) - d[:, 1] * (centres[c2, 0] - xy[u, 0])) / length
+    near = 2.0 * float(unit.max())
+    candidates = np.flatnonzero((np.abs(d) < unit).all(axis=1) | ~np.isfinite(off1)
+                                | ((off1 < near) & (off2 < near)))
+    if not len(candidates):
+        return []
+
+    # FloPy's own rule (``mfdatautil.to_string``) and its own two formats -- which it names
+    # the other way round: ``reg_format_str`` is the scientific one -- read back as numbers.
+    scientific_format = getattr(simulation_data, "reg_format_str", f"{{:.{precision}E}}")
+    fixed_format = getattr(simulation_data, "sci_format_str", f"{{:15.{precision}f}}")
+
+    def read(point):
+        return tuple(float(_written_text(float(c), precision, upper, lower, scientific_format, fixed_format))
+                     for c in point)
+
+    found = []
+    for n in candidates:
+        (ux, uy), (vx, vy) = read(xy[u[n]]), read(xy[v[n]])
+        if (ux, uy) == (vx, vy):
+            found.append((int(c1[n]), int(c2[n]), ux, uy, "zero length"))
+            continue
+        on_line = [
+            (vx - ux) * (cy - uy) - (vy - uy) * (cx - ux) == 0.0
+            for cx, cy in (read(centres[c1[n]]), read(centres[c2[n]]))
+        ]
+        if all(on_line):
+            found.append((int(c1[n]), int(c2[n]), (ux + vx) / 2, (uy + vy) / 2, "centres on it"))
+    return found
+
+
 def zero_length_faces(disv, simulation_data=None) -> list[tuple[int, int, float, float]]:
     """The faces a DISV package will be WRITTEN with zero length.
 
-    Two cells share a face when their rings share a vertex pair, and MF6 computes the
-    face's width and its distances from the pair's two coordinates as the file holds
-    them. When FloPy writes both vertices as the same point the width is zero and those
-    distances divide by it: MF6 returns NaN for every head and still reports normal
-    termination. Ledger 316's repair made such faces on a real model at state plane,
-    splitting one corner into two 7.4e-5 ft apart where the file holds 0.01 ft; it no
-    longer does, but a grid rebuilt from a snapshot or a pickle is the grid that ran.
+    :func:`unwritable_faces` restricted to ``"zero length"``: both vertices of a shared face
+    written as one point, between two cells active in some layer.
 
     Parameters
     ----------
@@ -205,47 +312,7 @@ def zero_length_faces(disv, simulation_data=None) -> list[tuple[int, int, float,
     [(8692, 8695, 1258581.05, 719399.294)]
     """
 
-    import numpy as np
-    from scipy.spatial import cKDTree
-
-    try:
-        vertices = disv.vertices.get_data()
-        cell2d = disv.cell2d.get_data()
-        xy = np.column_stack([vertices["xv"], vertices["yv"]]).astype(float)
-        rings = [[int(row[4 + i]) for i in range(int(row[3]))] for row in cell2d]
-    except (AttributeError, KeyError, TypeError, ValueError, IndexError):
-        logger.debug("could not read the DISV's vertices for the zero-length face check", exc_info=True)
-        return []
-    if not len(xy):
-        return []
-    precision = int(getattr(simulation_data, "float_precision", FLOPY_FLOAT_PRECISION))
-    upper = float(getattr(simulation_data, "_sci_note_upper_thres", FLOPY_SCI_NOTE_UPPER))
-    lower = float(getattr(simulation_data, "_sci_note_lower_thres", FLOPY_SCI_NOTE_LOWER))
-    unit = written_resolution(xy, precision=precision, upper=upper)
-    pairs = cKDTree(xy / unit).query_pairs(float(np.nextafter(1.0, 0.0)), p=np.inf)
-    if not pairs:
-        return []
-
-    # FloPy's own rule (``mfdatautil.to_string``) and its own two formats -- which it names
-    # the other way round: ``reg_format_str`` is the scientific one.
-    scientific_format = getattr(simulation_data, "reg_format_str", f"{{:.{precision}E}}")
-    fixed_format = getattr(simulation_data, "sci_format_str", f"{{:15.{precision}f}}")
-
-    def written(value):
-        return _written_text(value, precision, upper, lower, scientific_format, fixed_format)
-
-    same = {frozenset(pair) for pair in pairs
-            if all(written(xy[pair[0], k]) == written(xy[pair[1], k]) for k in (0, 1))}
-    if not same:
-        return []
-    owners: dict = {}
-    for cell, ring in enumerate(rings):
-        for a, b in zip(ring, ring[1:] + ring[:1], strict=True):
-            edge = frozenset((a, b))
-            if edge in same:
-                owners.setdefault(edge, []).append(cell)
-    return [(cells[0], cells[1], float(written(xy[min(edge), 0])), float(written(xy[min(edge), 1])))
-            for edge, cells in owners.items() if len(cells) > 1]
+    return [face[:4] for face in unwritable_faces(disv, simulation_data) if face[4] == "zero length"]
 
 
 #: Context fields that ``ModelSpec.to_dict`` cannot carry, and that something reads.
@@ -2342,7 +2409,7 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
             pin = metadata.get(GRID_PIN)
             if pin is not None and pin != model_pin:
                 report = getattr(grid, "tessellation_report", None)
-                if report is not None and getattr(report, "split_pin", None) == pin:
+                if report is not None and getattr(report, "split_pin", None) == pin != getattr(report, "legacy_pin", None):
                     # The same cells, the same numbers: from bb56668 the repair split a
                     # corner into two vertices the file could not tell apart, which wrote
                     # a zero-length face and NaN heads. Joining them moved the pin only.

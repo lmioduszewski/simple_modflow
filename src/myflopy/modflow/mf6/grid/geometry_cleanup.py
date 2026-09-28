@@ -23,6 +23,7 @@ class CleanupStats:
     polygons_out: int
     vertices_in: int
     vertices_out: int
+    vanished: tuple = ()  # outline length of each part resampling left with no area
 
 
 def iter_polygons(geometry: Polygon | MultiPolygon | GeometryCollection):
@@ -144,11 +145,15 @@ def cleanup_polygonal_geometry(
             kept = [i for i, (b, a) in enumerate(zip(before, after, strict=True))
                     if b.area > 0 and abs(a.area - b.area) > COLLAPSE_FRACTION * b.area]
             if kept:
+                where = ", ".join(
+                    f"the part at ({before[i].bounds[0]:.10g}, {before[i].bounds[1]:.10g})-"
+                    f"({before[i].bounds[2]:.10g}, {before[i].bounds[3]:.10g}), "
+                    f"{before[i].area:.4g} -> {after[i].area:.4g}" for i in kept
+                )
                 message = (
-                    f"simplify_tolerance={simplify_tolerance:g} would change the area of boundary "
-                    "part(s) " + ", ".join(f"{i} ({before[i].area:.4g} -> {after[i].area:.4g})" for i in kept)
-                    + f" by more than {COLLAPSE_FRACTION:.0%}: narrower than the tolerance, they are "
-                    "kept as drawn."
+                    f"simplify_tolerance={simplify_tolerance:g} would change the area of "
+                    f"{len(kept)} boundary part(s) by more than {COLLAPSE_FRACTION:.0%} ({where}): "
+                    "narrower than the tolerance, they are kept as drawn."
                 )
                 logger.warning(message)
                 import warnings
@@ -172,7 +177,12 @@ def cleanup_polygonal_geometry(
 
     cleaned = polygons[0] if len(polygons) == 1 else MultiPolygon(polygons)
 
+    vanished = ()
     if target_segment_length and target_segment_length > 0:
+        vanished = tuple(
+            part.exterior.length for part in iter_polygons(cleaned)
+            if densify_poly(part, target_segment_length).buffer(0).area <= 0
+        )
         cleaned = resample_polygon_boundaries(
             cleaned,
             target_segment_length=target_segment_length,
@@ -186,4 +196,5 @@ def cleanup_polygonal_geometry(
         polygons_out=polygons_out,
         vertices_in=vertices_in,
         vertices_out=vertices_out,
+        vanished=vanished,
     )

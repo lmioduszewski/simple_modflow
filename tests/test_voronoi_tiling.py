@@ -637,7 +637,7 @@ def test_a_model_whose_disv_writes_a_zero_length_face_is_refused(tmp_path):
                 cell2d=[[k, X0 + cx, Y0 + cy, len(r), *r] for k, ((cx, cy), r) in enumerate(zip(centres, DUAL_RINGS, strict=True))]),
         mf.npf(k=1.0), mf.ic(strt=5.0), mf.oc(head_filerecord="m.hds")])
     sim = mf.simulation(model, name="z", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
-    with pytest.raises(ValueError, match=r"1 face\(s\) of ZERO length .* cells 0 and 2"):
+    with pytest.raises(ValueError, match=r"1 face\(s\) MF6 cannot compute -- cells 0 and 2 at .*: zero length"):
         sim.build_flopy(workspace=tmp_path / "z")
 
 

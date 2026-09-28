@@ -67,8 +67,8 @@ from myflopy.grid_identity import (
     package_move,  # noqa: F401 -- re-exported: the public spelling is myflopy.specs
     package_moves,
     source_fingerprint,  # noqa: F401
+    unwritable_faces,
     void_pin,
-    zero_length_faces,
 )
 from myflopy.sources import (
     DataSourceSpec,
@@ -4804,22 +4804,25 @@ class ModelSpec:
                 "carries without a word. Re-declare the packages against this grid, or "
                 "correct the context value named above."
             )
-        # A face the file will hold with zero length: MF6 answers NaN for every head under
-        # normal termination (ledger 316). Its own refusal, since no package is at fault.
+        # A face MF6 cannot compute once the file is written: zero length, or both cell
+        # centres on it -- NaN heads under normal termination, or a division by zero (ledger
+        # 316). Its own refusal, since no package is at fault.
         disv = model.get_package("disv") if hasattr(model, "get_package") else None
-        flat = zero_length_faces(disv, getattr(model, "simulation_data", None)) if disv is not None else []
+        flat = unwritable_faces(disv, getattr(model, "simulation_data", None)) if disv is not None else []
         if flat:
-            listing = "; ".join(f"cells {a} and {b} at ({x:.10g}, {y:.10g})" for a, b, x, y in flat[:5])
+            listing = "; ".join(f"cells {a} and {b} at ({x:.10g}, {y:.10g}): {why}" for a, b, x, y, why in flat[:5])
             if len(flat) > 5:
                 listing += f"; and {len(flat) - 5} more"
             raise ValueError(
-                f"Model {self.name!r}'s DISV would be written with {len(flat)} face(s) of ZERO "
-                f"length -- two cells sharing two vertices FloPy writes as one point: "
-                f"{listing}. MF6 returns NaN for every head across such a face and still "
-                "reports normal termination. Re-resolve the grid (a GridSpec.voronoi grid "
-                "no longer splits a corner closer than the file records; one rebuilt from a "
-                "snapshot or pickle is the grid that ran), or write more digits with "
-                "sim.simulation_data.float_precision."
+                f"Model {self.name!r}'s DISV would be written with {len(flat)} face(s) MF6 cannot "
+                f"compute -- {listing}. FloPy writes a coordinate above 1e5 to nine significant "
+                "digits (0.01 ft at x = 1.2e6), and MF6 returns NaN for every head across a "
+                "zero-length face under normal termination, or stops on one whose cell centres "
+                "both lie on it. The grid has a feature narrower than the file resolves there: a "
+                "boundary or region vertex a hair from another, a hairline notch or crack in the "
+                "boundary. Remove or simplify it (profiles 'balanced' and 'clean' simplify the "
+                "boundary by 2 ft), or build the model in local coordinates. A grid rebuilt from a "
+                "snapshot or a pickle is the grid that ran: re-resolve it."
             )
         # The documented opt-outs the guard does not refuse: an array-form flux put in
         # one layer everywhere (`irch=None`) where that layer's cell is removed. Legal,

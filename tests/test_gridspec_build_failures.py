@@ -177,7 +177,7 @@ def test_a_band_resampled_to_nothing_is_named_not_blamed_on_the_clip(tmp_path):
 
     from myflopy.grid_identity import grid_pin
 
-    with pytest.warns(UserWarning, match="removed when its outline was resampled") as record:
+    with pytest.warns(UserWarning, match=r"it was removed when resampled at target_segment_length=120") as record:
         vor, _ = _breaklines(tmp_path / "line", [[(100.0, 200.0), (140.0, 200.0)]])
     assert not any("empty after clipping" in str(w.message) for w in record)
     plain, _ = _voronoi(tmp_path / "plain", L_SHAPE, profile="clean", min_angle=23, max_area=3000.0)
@@ -240,7 +240,8 @@ def test_a_source_with_no_feature_inside_raises_naming_the_file_and_the_cause(tm
 def test_a_negative_buffer_that_erases_a_breakline_names_the_buffer_and_the_width(tmp_path):
     from myflopy.modflow.mf6.grid.triangle import NoAreaInside
 
-    with pytest.raises(NoAreaInside, match=r"Breakline 'breakline_0' has no area left after buffer=-10: it is at most 20"):
+    with pytest.raises(NoAreaInside, match=r"Breakline 'breakline_0' has no area left after buffer=-10: its part inside "
+                                           r"the boundary is at most 20 wide"):
         _breaklines(tmp_path, [[(100.0, 200.0), (300.0, 200.0)]], breakline_negative_buffer_after_clipping=-10)
 
 
@@ -252,7 +253,7 @@ def test_a_boundary_part_narrower_than_the_simplification_is_kept_as_drawn(tmp_p
 
     with pytest.warns(UserWarning) as record:  # item 2's warning too: a 2 ft strip holds no 10000
         vor, _ = _voronoi(tmp_path / "strip", box(0, 0, 1000, 2), max_area=10000.0)
-    assert any("boundary part(s) 0 (2000 -> 1000)" in str(w.message) and "kept as drawn" in str(w.message)
+    assert any("the part at (0, 0)-(1000, 2), 2000 -> 1000" in str(w.message) and "kept as drawn" in str(w.message)
                for w in record)
     assert sum(Polygon(np.asarray(vor.verts)[list(r)]).area for r in vor.iverts) == pytest.approx(2000.0)
     with pytest.warns(UserWarning, match="larger than the domain") as record:  # item 2's, not this one
@@ -351,3 +352,298 @@ def test_triangle_runs_bounded_and_otherwise_as_flopy_ran_it(tmp_path):
     with pytest.raises(TriangleFailed, match="wrote more than"):
         capped.build()  # the public route runs bounded too
     assert issubclass(TriangleFailed, subprocess.CalledProcessError)
+
+
+# --------------------------------------------------------------------------------------------
+# What a review of the five found, each reproduced before it was fixed.
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="RLIMIT_AS is POSIX")
+def test_triangle_runs_under_a_hard_memory_limit_below_its_own_cap(tmp_path):
+    """The cap RAISED the hard limit, which an unprivileged process cannot: under
+    `ulimit -v 4000000` every grid build failed with a bare SubprocessError."""
+
+    import subprocess
+    import sys
+    import textwrap
+
+    code = textwrap.dedent(f"""
+        import resource
+        limit = int(3.5 * 2**30)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+        from shapely.geometry import box
+        from myflopy.modflow.mf6.grid.triangle import TriangleGrid
+        tri = TriangleGrid(model_ws={str(tmp_path)!r}, angle=28)
+        tri.set_domain_polygon(box(0, 0, 100, 100), max_area=100.0)
+        tri.build()
+        print("built", tri.ncpl)
+    """)
+    run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
+    assert run.returncode == 0 and "built" in run.stdout, run.stderr[-2000:]
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="a shell script and SIGALRM")
+def test_an_interrupt_while_triangle_runs_kills_it(tmp_path, monkeypatch):
+    """The finally block cancelled the timeout and left a hung Triangle running."""
+
+    import os
+    import signal
+    import subprocess
+
+    from myflopy.modflow.mf6.grid.triangle import TriangleGrid
+
+    fake = tmp_path / "triangle.sh"
+    fake.write_text("#!/bin/sh\nsleep 60\n")
+    fake.chmod(0o755)
+    spawned = []
+
+    class Spy(subprocess.Popen):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            spawned.append(self)
+
+    monkeypatch.setattr(subprocess, "Popen", Spy)
+
+    def interrupt(signum, frame):
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGALRM, interrupt)
+    tri = TriangleGrid(model_ws=str(tmp_path / "ws"), angle=28)
+    tri.set_domain_polygon(box(0, 0, 100, 100), max_area=100.0)
+    tri.exe_name = str(fake)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0.5)
+        with pytest.raises(KeyboardInterrupt):
+            tri.build()
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert spawned and all(p.poll() is not None for p in spawned)
+    assert not any(os.path.exists(f"/proc/{p.pid}") and p.returncode is None for p in spawned)
+
+
+def test_a_point_exactly_on_an_edge_that_another_point_bends_goes_into_the_ring_too(tmp_path):
+    """p0 exactly on the bottom edge was left to Triangle; q, 0.005 ft above the same edge,
+    was spliced into it, and p0 then sat off the bent chord: outside it, with no cell."""
+
+    p0, q = (1.2e6 + 400.0, 6.5e5 + 0.0), (1.2e6 + 500.0, 6.5e5 + 0.005)
+    with pytest.warns(UserWarning, match="placed ON"):
+        vor, tri = _voronoi(tmp_path, SQUARE_AT_STATE_PLANE, points=[p0, q], max_area=2000.0)
+    ring = [tuple(v) for v in tri._polygons[0]]
+    assert p0 in ring and q in ring and abs(ring.index(p0) - ring.index(q)) == 1  # in the ring's own direction
+    assert _zero_length_faces(vor) == []
+
+
+def test_a_point_near_a_contact_two_zones_share_goes_into_both_rings(tmp_path):
+    """The contact is a segment of BOTH zones' rings; spliced into one, the other kept its
+    straight segment 1e-6 ft from the new vertex and Triangle ran out of memory."""
+
+    origin = np.array([1.2e6, 6.5e5])
+    tiles = [box(*(origin + (100, 100)), *(origin + (200, 200))), box(*(origin + (200, 100)), *(origin + (300, 200)))]
+    domain = Polygon([tuple(origin + c) for c in L_SHAPE.exterior.coords])
+    well = tuple(origin + (200 + 1e-6, 150.123))
+    with pytest.warns(UserWarning, match="placed ON"):
+        vor, tri = _voronoi(tmp_path, domain, refinement=[(t, 2500.0) for t in tiles], points=[well],
+                            max_area=10000.0, min_angle=28)
+    assert sum(well in [tuple(v) for v in ring] for ring in tri._polygons) >= 2
+    assert _zero_length_faces(vor) == []
+
+
+def test_a_point_on_an_island_in_a_hole_is_inside(tmp_path):
+    """A part inside another part's hole was called outside: a false 'no cell' warning,
+    and a well a hair inside the island's edge was not placed (388 zero-length faces)."""
+
+    import warnings
+
+    origin = np.array([1.2e6, 6.5e5])
+    donut = box(*origin, *(origin + 1000)).difference(box(*(origin + 300), *(origin + 700)))
+    island = box(*(origin + (320, 320)), *(origin + (400, 400)))
+    domain = donut.union(island)
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        vor, _ = _voronoi(tmp_path / "mid", domain, points=[tuple(origin + (360, 361))], max_area=2000.0)
+    assert not any("outside the meshed domain" in str(w.message) for w in record)
+    with pytest.warns(UserWarning, match="placed ON"):
+        vor, _ = _voronoi(tmp_path / "edge", domain, points=[tuple(origin + (320 + 1e-6, 361))], max_area=2000.0)
+    assert _zero_length_faces(vor) == []
+
+
+def test_an_inside_copy_is_never_merged_into_an_outside_copy(tmp_path):
+    """One well recorded twice either side of the edge, outside first: the inside record
+    was merged into the outside one, which gets no cell -- the well vanished."""
+
+    inside = (1.2e6 + 0.004, 6.5e5 + 437.123)
+    with pytest.warns(UserWarning):
+        _, tri = _voronoi(tmp_path, SQUARE_AT_STATE_PLANE, points=[(1.2e6 - 0.004, 6.5e5 + 437.123), inside],
+                          max_area=2000.0)
+    assert inside in [tuple(v) for v in tri._polygons[0]]
+
+
+def test_a_hole_seed_is_never_on_an_island_in_it(tmp_path):
+    """The hole's representative point was the island's centre: Triangle ate the island and
+    meshed the water (975,888 ft2 of cells on an 880,000 ft2 domain)."""
+
+    origin = np.array([1.2e6, 6.5e5])
+    donut = box(*origin, *(origin + 1000)).difference(box(*(origin + 300), *(origin + 700)))
+    domain = donut.union(box(*(origin + 400), *(origin + 600)))
+    vor, _ = _voronoi(tmp_path, domain, max_area=2000.0)
+    meshed = sum(Polygon(np.asarray(vor.verts)[list(r)]).area for r in vor.iverts)
+    assert meshed == pytest.approx(domain.area, rel=1e-9)
+
+
+def test_a_line_with_no_buffer_is_refused_naming_the_buffer(tmp_path):
+    """breakline_buffer=0 made a line an EMPTY region, which read as 'outside' (at nan
+    ft) and was skipped with a warning; before, it was refused."""
+
+    with pytest.raises(ValueError, match=r"breakline_buffer=0: a line needs a positive buffer"):
+        _breaklines(tmp_path, [[(100.0, 200.0), (300.0, 200.0)]], breakline_buffer=0)
+
+
+def test_a_buffered_point_just_outside_the_boundary_is_refused_not_skipped(tmp_path):
+    """Its 50 ft disc is half inside, but the clip comes before the buffer: skipping it
+    silently dropped a boundary well's refinement. Refused, as before, now saying why."""
+
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    import myflopy as mf
+    from myflopy.modflow.mf6.grid.triangle import NoAreaInside
+
+    gpd.GeoDataFrame({"n": [0]}, geometry=[L_SHAPE], crs=2927).to_file(tmp_path / "b.gpkg")
+    gpd.GeoDataFrame({"area": [400.0, 400.0]}, geometry=[Point(200, 200), Point(200, 1000 + 1e-6)],
+                     crs=2927).to_file(tmp_path / "p.gpkg")
+    spec = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=tmp_path / "b.gpkg"), max_area=10000.0,
+                               refinement=mf.GeoPackageSourceSpec(path=tmp_path / "p.gpkg", fields={"area": "area"}),
+                               refinement_buffer=50.0)
+    with pytest.raises(NoAreaInside, match=r"within its buffer=50.*clipped to the boundary BEFORE it is buffered"):
+        spec.resolve(workspace=tmp_path / "grid")
+
+
+def test_the_face_check_reads_the_numbers_mf6_reads_and_skips_inactive_cells(tmp_path):
+    """Across FloPy's 1e5 format switch '100000.00000000' and '1.00000000E+05' are one
+    number to MF6; and a face beside an inactive cell makes no connection."""
+
+    import flopy
+
+    from myflopy.grid_identity import unwritable_faces
+
+    rings = [[0, 7, 8, 9, 1], [1, 9, 3, 2], [8, 5, 4, 3, 9], [7, 6, 5, 8]]  # corner 8 split: face 8-9
+
+    def quads(x0, gap, idomain=None):
+        y0 = 5e4
+        verts = np.array([(x0 - 100, y0 - 100), (x0, y0 - 100), (x0 + 100, y0 - 100), (x0 + 100, y0),
+                          (x0 + 100, y0 + 100), (x0, y0 + 100), (x0 - 100, y0 + 100), (x0 - 100, y0),
+                          (x0 - 3e-9, y0), (x0 + gap, y0)])
+        sim = flopy.mf6.MFSimulation(sim_ws=str(tmp_path))
+        gwf = flopy.mf6.ModflowGwf(sim, modelname="m")
+        centres = [(-50, -50), (50, -50), (50, 50), (-50, 50)]
+        disv = flopy.mf6.ModflowGwfdisv(
+            gwf, nlay=1, ncpl=4, nvert=len(verts), top=10.0, botm=[0.0], idomain=idomain,
+            vertices=[[i, x, y] for i, (x, y) in enumerate(verts)],
+            cell2d=[[k, x0 + cx, 5e4 + cy, len(r), *r] for k, ((cx, cy), r) in enumerate(zip(centres, rings, strict=True))])
+        return unwritable_faces(disv, sim.simulation_data)
+
+    assert [f[4] for f in quads(1e5, 3e-4)] == ["zero length"]
+    assert quads(1e5, 3e-4, idomain=[[0, 1, 1, 1]]) == []
+
+
+def test_a_face_whose_cell_centres_are_both_written_on_it_is_refused(tmp_path):
+    """A 0.006 ft hairline notch at state plane, 'baseline' profile: no face is written with
+    zero length, but three have BOTH cell centres written on their line, and MF6 stopped
+    on a division by zero -- a model the zero-length check passed."""
+
+    import myflopy as mf
+
+    x, y = 1.2e6, 6.5e5
+    notch = Polygon([(x, y), (x + 500, y), (x + 500, y + 400), (x + 500.006, y + 400), (x + 500.006, y),
+                     (x + 1000, y), (x + 1000, y + 1000), (x, y + 1000)])
+    vor, _ = _voronoi(tmp_path, notch, max_area=5000.0, profile="baseline")
+    props = vor.get_disv_gridprops()
+    model = mf.gwf("m", packages=[
+        mf.disv(nlay=1, ncpl=props["ncpl"], nvert=props["nvert"], top=10.0, botm=[0.0],
+                vertices=props["vertices"], cell2d=props["cell2d"]),
+        mf.npf(k=1.0), mf.ic(strt=5.0), mf.oc(head_filerecord="m.hds")])
+    sim = mf.simulation(model, name="n", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    with pytest.raises(ValueError, match="centres on it"):
+        sim.build_flopy(workspace=tmp_path / "sim")
+
+
+def test_small_things_the_review_found():
+    """NoAreaInside survives a process pool; a jettison switch combined with others counts."""
+
+    import pickle
+
+    from myflopy.modflow.mf6.grid.triangle import NoAreaInside, TriangleGrid
+
+    back = pickle.loads(pickle.dumps(NoAreaInside("gone", cause="outside")))
+    assert (str(back), back.cause) == ("gone", "outside")
+    tri = TriangleGrid(angle=28, additional_args=["-jz"])
+    tri._polygons = [[(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)], [(0.0, 0.0), (1.0, 1.0), (0.0, 1.0)]]
+    assert tri._shared_nodes() is None
+    tri.additional_args = ["-z"]
+    assert tri._shared_nodes() is not None
+
+
+def test_a_short_boundary_edge_flopy_drew_is_not_joined():
+    """Edge 9-0 belongs to cell 0 alone: no connection, so MF6 runs it as written. Joining it
+    re-pinned a grid that runs, against 'no grid that runs today moves'."""
+
+    from myflopy.modflow.mf6.grid.tessellation import _onto_flopy
+
+    x0, y0 = 1.2e6 + 100.0, 6.5e5 + 100.0
+    verts = np.array([(x0 - 100, y0 - 100), (x0, y0 - 100), (x0 + 100, y0 - 100), (x0 + 100, y0),
+                      (x0 + 100, y0 + 100), (x0, y0 + 100), (x0 - 100, y0 + 100), (x0 - 100, y0), (x0, y0),
+                      (x0 - 100 + 7.4e-5, y0 - 100)])
+    rings = [[0, 7, 8, 1, 9], [1, 8, 3, 2], [8, 5, 4, 3], [7, 6, 5, 8]]
+    _, iverts, rewritten, appended, unsplit, _ = _onto_flopy(verts, rings, verts, rings, np.ones(4, dtype=bool))
+    assert (rewritten, appended, unsplit) == ({}, 0, 0) and [list(r) for r in iverts] == rings
+
+
+def test_a_package_on_flopys_own_cells_is_told_so_not_blamed_on_bb56668(tmp_path):
+    """When the only join is a face FloPy drew itself, the grid bb56668 built IS FloPy's:
+    its pin is legacy_pin, and the refusal must say the package predates the repair."""
+
+    from types import SimpleNamespace
+
+    from myflopy.grid_identity import GRID_PIN, _discretization_complaints
+
+    corners = [(0, 0), (1100.3, 130.7), (1250.9, 940.2), (310.4, 1180.6)]
+    quad = Polygon([(1.2e6 + x, 6.5e5 + y) for x, y in corners])
+    vor, _ = _voronoi(tmp_path, quad, max_area=2000.0)
+    report = vor.tessellation_report
+    assert report.legacy_pin is not None and report.split_pin in (None, report.legacy_pin)
+    package = SimpleNamespace(name="chd", metadata={GRID_PIN: report.legacy_pin})
+    [complaint] = _discretization_complaints(None, SimpleNamespace(grid=vor, metadata={}), [package])
+    assert "BEFORE ledger 316's repair" in complaint and "bb56668" not in complaint
+
+
+def test_a_band_piece_resampled_to_nothing_is_named_even_when_the_rest_survives(tmp_path):
+    """The notch cuts this band into a 901 ft piece and a 192 ft one; the short piece
+    resampled to nothing without a word, because only a WHOLE region's loss was reported."""
+
+    with pytest.warns(UserWarning, match=r"1 of its piece\(s\) were removed when resampled"):
+        _breaklines(tmp_path, [[(100.0, 850.0), (600.0, 350.0)]])
+
+
+def test_a_duplicate_row_counts_as_landed_and_names_both_files(tmp_path):
+    """Across two sources: the warning named neither file ('breakline_0' is a duplicate of
+    'breakline_0'), and the second source, its inside row deduplicated, was refused as if
+    every feature missed."""
+
+    import geopandas as gpd
+    from shapely.geometry import LineString
+
+    import myflopy as mf
+
+    inside, outside = LineString([(100, 200), (300, 200)]), LineString([(2000, 2000), (2100, 2000)])
+    gpd.GeoDataFrame({"n": [0]}, geometry=[L_SHAPE], crs=2927).to_file(tmp_path / "b.gpkg")
+    gpd.GeoDataFrame({"n": [0]}, geometry=[inside], crs=2927).to_file(tmp_path / "one.gpkg")
+    gpd.GeoDataFrame({"n": [0, 1]}, geometry=[inside, outside], crs=2927).to_file(tmp_path / "two.gpkg")
+    spec = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=tmp_path / "b.gpkg"), max_area=3000.0,
+                               breakline_max_area=60.0, breaklines=[mf.GeoPackageSourceSpec(path=tmp_path / "one.gpkg"),
+                                                                    mf.GeoPackageSourceSpec(path=tmp_path / "two.gpkg")])
+    with pytest.warns(UserWarning) as record:
+        spec.resolve(workspace=tmp_path / "grid")
+    said = " ".join(str(w.message) for w in record)
+    assert "two.gpkg) is an exact duplicate of 'breakline_0' (feature 0 of" in said and "one.gpkg)" in said
+    assert "1 of 2 breakline features in" in said

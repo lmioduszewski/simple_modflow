@@ -419,20 +419,29 @@ def _add_breakline_source(
             raise ValueError(
                 "breakline_negative_buffer_after_clipping must be less than or equal to zero"
             )
+        band = geometry.buffer(buffer)
+        if band.is_empty:
+            raise ValueError(
+                f"Breakline '{label}' (feature {index} of {_source_path(source, project_root)}) has no "
+                f"area once buffered by breakline_buffer={buffer:g}: a line needs a positive buffer "
+                "to become a region. Pass breakline_buffer > 0, or give it as a polygon."
+            )
+        where = f"'{label}' (feature {index} of {_source_path(source, project_root)})"
         if seen is not None:
             key = (shp.normalize(geometry).wkb, float(max_area), priority)
             if key in seen:
                 message = (
-                    f"Breakline '{label}' is an exact duplicate of '{seen[key]}' (the same "
-                    f"line, max_area {float(max_area):g} and priority {priority}); dropping it."
+                    f"Breakline {where} is an exact duplicate of {seen[key]} (the same line, "
+                    f"max_area {float(max_area):g} and priority {priority}); dropping it."
                 )
                 logger.warning(message)
                 warnings.warn(message, UserWarning, stacklevel=2)
+                added += 1  # it landed, through its twin: not a miss for this source
                 continue
-            seen[key] = str(label)
+            seen[key] = where
         added += _add_region_feature(
             tri,
-            geometry.buffer(buffer),
+            band,
             kind="breakline",
             index=index,
             source=source,

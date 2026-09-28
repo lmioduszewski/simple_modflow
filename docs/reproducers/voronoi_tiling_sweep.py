@@ -47,7 +47,9 @@ returns NaN for every head, which a real 20,323-cell model at state plane did af
 repair split a corner 7.4e-5 ft wide (ledger 316, 2026-09-28). So each grid also counts
 the faces WRITTEN with zero length -- on FloPy's cells, on the repaired grid, and on the
 grid the repair built from bb56668 until corners closer than the file holds were joined
-(``_onto_flopy``'s ``split``) -- and how many dual vertices the repair joined. And for each grid FloPy got right (no lost face; no gap, overshoot or overlap; no
+(``_onto_flopy``'s ``split``) -- and how many dual vertices the repair joined; and the faces
+written with BOTH cell centres on their line, the build check's second refusal (CONNLEN 0,
+a division by zero in MF6). And for each grid FloPy got right (no lost face; no gap, overshoot or overlap; no
 ring holding one location twice, which is a zero-width MF6 connection), it says whether
 the repair changed it anyway: that would re-pin a grid with nothing wrong.
 
@@ -157,19 +159,26 @@ def _lost_faces(vor, tri, short: bool = False) -> int:
     return len(want - have)
 
 
-def _zero_written(verts, iverts, points) -> int:
-    """Faces a DISV file FloPy writes (its default number format) holds with zero length."""
+def _unwritable(verts, iverts, points) -> collections.Counter:
+    """Faces a DISV file FloPy writes (its default number format) holds so MF6 cannot compute
+    them, by why: ``"zero length"`` (NaN heads) or ``"centres on it"`` (a division by zero).
+    The centres are the generators, as ``VoronoiGrid.get_disv_gridprops`` writes them."""
     from types import SimpleNamespace
 
     from flopy.utils.cvfdutil import get_disv_gridprops
 
-    from myflopy.grid_identity import zero_length_faces
+    from myflopy.grid_identity import unwritable_faces
 
     props = get_disv_gridprops(np.asarray(verts, dtype=float), [list(r) for r in iverts], xcyc=np.asarray(points))
     vertices = np.rec.fromrecords([tuple(v) for v in props["vertices"]], names="iv,xv,yv")
     disv = SimpleNamespace(vertices=SimpleNamespace(get_data=lambda: vertices),
                            cell2d=SimpleNamespace(get_data=lambda: props["cell2d"]))
-    return len(zero_length_faces(disv))
+    return collections.Counter(face[-1] for face in unwritable_faces(disv))
+
+
+def _zero_written(verts, iverts, points) -> int:
+    """Faces a DISV file FloPy writes (its default number format) holds with zero length."""
+    return _unwritable(verts, iverts, points)["zero length"]
 
 
 def _split_grid(vor, tri):
@@ -270,8 +279,10 @@ def _measure(task, root: pathlib.Path):
                lost=_lost_faces(vor, tri), lost_after=_lost_faces(repaired, tri), short=_lost_faces(repaired, tri, True),
                changed=repaired.tessellation_report.changed, unsplit=repaired.tessellation_report.unsplit,
                zero_before=_zero_written(vor.verts, vor.iverts, vor.points),
-               zero_after=_zero_written(repaired.verts, repaired.iverts, repaired.points),
                zero_split=_zero_written(*_split_grid(vor, tri)))
+    faces = _unwritable(repaired.verts, repaired.iverts, repaired.points)
+    row.update(zero_after=faces["zero length"], centres_after=faces["centres on it"],
+               centres_before=_unwritable(vor.verts, vor.iverts, vor.points)["centres on it"])
     if name == "star" or part == "F":
         return row
     reference, meshed = _reference(vor, tri)
@@ -423,6 +434,11 @@ def main() -> None:
               f"{sum(r[key] > 0 for r in rows)} grids")
     def where(r):
         return f"{r['part']} {r['name']} {r['theta']} {r['rot']} max_area {r['max_area']} {r['profile']} ({r['ncell']} cells)"
+
+    for label, key in (("FloPy's cells", "centres_before"), ("the repaired grid", "centres_after")):
+        print(f"WRITTEN WITH BOTH CELL CENTRES ON THE FACE (CONNLEN 0, MF6 divides by zero), {label}: "
+              f"{sum(r[key] for r in rows)} faces in {sum(r[key] > 0 for r in rows)} grids"
+              + "".join(f"\n  {where(r)}: {r[key]}" for r in rows if r[key]))
 
     for r in errors:
         if "task" in r:

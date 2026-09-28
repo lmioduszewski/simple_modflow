@@ -60,9 +60,12 @@ class NoAreaInside(ValueError):
     in its source land, and names the rest (ledger 316).
     """
 
-    def __init__(self, message: str, *, cause: str):
+    def __init__(self, message: str = "", *, cause: str = "empty"):
         super().__init__(message)
         self.cause = cause
+
+    def __reduce__(self):
+        return (type(self), (str(self),), {"cause": self.cause})
 
 
 @dataclass(slots=True)
@@ -459,13 +462,25 @@ class TriangleGrid(Triangle):
         geometry = cls._coerce_geometry(geometry)
         drawn = geometry
 
+        clipped = None
         if domain is not None:
             domain = cls._coerce_geometry(domain)
-            geometry = geometry.intersection(domain)
+            geometry = clipped = geometry.intersection(domain)
             # Nothing of it inside: disjoint, or (with no buffer to widen it) touching only
             # along a line or at a point. A buffered edge-touching polygon builds a strip
-            # today, so that one is left alone.
-            if geometry.is_empty or (buffer <= 0 and drawn.area > 0 and geometry.area == 0):
+            # today, so that one is left alone; an EMPTY feature (a line buffered by 0) is not
+            # "outside" but empty, below. A feature outside but within ``buffer`` of the
+            # boundary would reach inside once buffered, and the clip comes first: refused as
+            # it was, never skipped.
+            if not drawn.is_empty and (geometry.is_empty or (buffer <= 0 and drawn.area > 0 and geometry.area == 0)):
+                if buffer > 0 and drawn.distance(domain) < buffer:
+                    raise NoAreaInside(
+                        f"{what} lies outside the model boundary, {drawn.distance(domain):.4g} from "
+                        f"it -- within its buffer={buffer:g}, so its buffered area would reach inside, "
+                        "but it is clipped to the boundary BEFORE it is buffered. Move it inside the "
+                        "boundary, or draw it as a polygon.",
+                        cause="clipped",
+                    )
                 raise NoAreaInside(cls._no_area_inside(what, drawn, domain, geometry), cause="outside")
 
         if buffer != 0:
@@ -486,11 +501,14 @@ class TriangleGrid(Triangle):
             polygons = [densify_poly(polygon, densify_dist) for polygon in polygons]
 
         if not polygons:
-            if buffer < 0 and drawn.area > 0:
-                width = 2.0 * float(shp.maximum_inscribed_circle(drawn).length)
+            source = clipped if clipped is not None else drawn
+            area = [polygon for polygon in cls._iter_polygons(source) if polygon.area > 0]
+            if buffer < 0 and area:
+                width = 2.0 * float(shp.maximum_inscribed_circle(MultiPolygon(area)).length)
                 raise NoAreaInside(
-                    f"{what} has no area left after buffer={buffer:g}: it is at most {width:.4g} "
-                    "wide, so the inward buffer removes all of it. Use a smaller buffer.",
+                    f"{what} has no area left after buffer={buffer:g}: its part inside the boundary "
+                    f"is at most {width:.4g} wide, so the inward buffer removes all of it. Use a "
+                    "smaller buffer.",
                     cause="buffer",
                 )
             raise NoAreaInside(
@@ -1783,21 +1801,26 @@ class TriangleGrid(Triangle):
                 min_feature_area=min_feature_area,
                 target_segment_length=resample,
             )
-            if resample and not self._polygonal_parts(geometry):
+            if resample and stats.vanished:
                 # Resampling rebuilds an outline from points `resample` apart, so one shorter
                 # than twice that comes back with no area -- a breakline of ~35-95 ft at the
-                # default 10 ft buffer and 120 ft spacing. prepare() skipped it anyway, saying
-                # it was "empty after clipping to the domain interior", which it was not.
+                # default 10 ft buffer and 120 ft spacing, or a piece of a longer one the
+                # boundary cut off. prepare() skipped a whole such region saying it was "empty
+                # after clipping to the domain interior", and a piece went without a word.
+                gone = not self._polygonal_parts(geometry)
+                lengths = ", ".join(f"{length:.3g}" for length in stats.vanished)
                 message = (
-                    f"Region '{region.label}' ({region.source}) was removed when its outline "
-                    f"was resampled at target_segment_length={resample:g}: an outline "
-                    f"{region.geometry.length:.3g} long, shorter than twice that spacing, has "
-                    "no area left. Pass a smaller target_segment_length, "
-                    "resample_region_sources=(), or profile='baseline' to keep it."
+                    f"Region '{region.label}' ({region.source}): "
+                    + ("it was removed" if gone else f"{len(stats.vanished)} of its piece(s) were removed")
+                    + f" when resampled at target_segment_length={resample:g} -- an outline "
+                    f"shorter than twice that spacing ({lengths} long) has no area left. Pass a "
+                    "smaller target_segment_length, resample_region_sources=(), or "
+                    "profile='baseline' to keep it."
                 )
                 logger.warning(message)
                 warnings.warn(message, UserWarning, stacklevel=2)
-                continue
+                if gone:
+                    continue
             cleaned_specs.append(
                 RegionSpec(
                     geometry=geometry,
@@ -2201,7 +2224,11 @@ class TriangleGrid(Triangle):
             for ring in polygon.interiors:
                 hole = Polygon(ring)
                 super().add_polygon(hole, ignore_holes=True)
-                Triangle.add_hole(self, hole.representative_point().coords[0])
+                # The seed must be in the hole and in no other part: an island in the hole
+                # took the seed at its centre, and Triangle ate the island and meshed the water.
+                islands = [other for other in parts if other is not polygon and other.intersects(hole)]
+                seedable = hole.difference(shp.union_all(islands)) if islands else hole
+                Triangle.add_hole(self, seedable.representative_point().coords[0])
                 holes.append(hole)
 
         for region in self._prepared_regions:
@@ -2281,26 +2308,33 @@ class TriangleGrid(Triangle):
         tree, corners = STRtree(segments), cKDTree(coords)
         domain_rings = rings[: n_parts + n_holes]
 
-        kept, placed = [], []
+        def collinear(k, a, b):
+            c, d = rings[owner[k][0]][owner[k][1]], rings[owner[k][0]][(owner[k][1] + 1) % len(rings[owner[k][0]])]
+            return all(self._segment_side([a, b], 0, q)[0] == 0 for q in (c, d))
+
+        kept, placed = [], []  # placed: points that will be nodes INSIDE or on the domain
         inserts, moved, merged, outside = defaultdict(list), [], [], []
+        on_segment = defaultdict(list)  # a segment -> the user points kept exactly on it
         for p in node_points:
             if p not in user:
                 kept.append(p)
                 continue
             near = [int(i) for i in tree.query(Point(p), predicate="dwithin", distance=tol)]
             side = {i: self._segment_side(rings[owner[i][0]], owner[i][1], p) for i in near}
-            crowd = min([float(corners.query(p)[0])]
-                        + [float(np.hypot(p[0] - q[0], p[1] - q[1])) for q in placed])
-            if any(side[i][0] == 0 and 0 <= side[i][1] <= 1 for i in near):
+            to_vertex, vertex = corners.query(p)
+            crowd = min([float(to_vertex)] + [float(np.hypot(p[0] - q[0], p[1] - q[1])) for q in placed])
+            exact = [i for i in near if side[i][0] == 0 and 0 <= side[i][1] <= 1]
+            if exact:
                 if 0 < crowd < tol:
                     merged.append((p, crowd))
                     continue
                 kept.append(p)
                 placed.append(p)
+                for i in exact:
+                    on_segment[owner[i]].append((side[i][1], p))
                 continue
-            if not self._inside_rings(p, domain_rings, n_parts, exact=bool(near) or crowd < tol):
-                kept.append(p)
-                placed.append(p)
+            if not self._inside_rings(p, domain_rings, exact=bool(near) or crowd < tol):
+                kept.append(p)  # Triangle meshes around it, as before; never merged into
                 outside.append(p)
                 continue
             if 0 < crowd < tol:
@@ -2310,17 +2344,32 @@ class TriangleGrid(Triangle):
                 kept.append(p)
                 placed.append(p)
                 continue
-            first, *others = sorted(near, key=lambda i: side[i][2])
-            cross, t, distance, length = side[first]
+            first = min(near, key=lambda i: side[i][2])
             ri, j = owner[first]
-            corner = any(owner[k][0] == ri and (owner[k][1] - j) % len(rings[ri]) in (1, len(rings[ri]) - 1)
-                         for k in others)
-            if corner or float(t) * length < tol or (1 - float(t)) * length < tol:
-                merged.append((p, distance))  # a wedge's tip or a segment's end: that vertex
+            a, b = rings[ri][j], rings[ri][(j + 1) % len(rings[ri])]
+            # Every copy of this segment -- two zones along one contact, a region on the sizing
+            # ring -- takes the point, or the copy left straight is the pile all over again.
+            copies = [k for k in near if collinear(k, a, b)]
+            ends = [q for k in near for q in (rings[owner[k][0]][owner[k][1]],
+                                              rings[owner[k][0]][(owner[k][1] + 1) % len(rings[owner[k][0]])])]
+            at_an_end = any(float(side[k][1]) * side[k][3] < tol or (1 - float(side[k][1])) * side[k][3] < tol
+                            for k in copies)
+            if len(copies) < len(near) or at_an_end:
+                # near two lines (a corner, a wedge's tip) or a segment's end: that vertex
+                nearest = min(ends, key=lambda q: np.hypot(p[0] - q[0], p[1] - q[1]))
+                merged.append((p, float(np.hypot(p[0] - nearest[0], p[1] - nearest[1]))))
                 continue
-            inserts[(ri, j)].append((t, p))
+            for k in copies:
+                inserts[owner[k]].append((side[k][1], p))
             placed.append(p)
-            moved.append((p, distance))
+            moved.append((p, side[first][2]))
+        # A point kept exactly ON a segment that now bends to take another would sit off the
+        # new chord: it goes into the ring too, in order.
+        for key in list(inserts):
+            for t, q in on_segment.get(key, []):
+                inserts[key].append((t, q))
+                if q in kept:
+                    kept.remove(q)
         for ri, j in sorted(inserts, key=lambda key: (key[0], -key[1])):
             ring = list(self._polygons[ri])
             self._polygons[ri] = ring[: j + 1] + [q for _, q in sorted(inserts[(ri, j)])] + ring[j + 1:]
@@ -2329,10 +2378,10 @@ class TriangleGrid(Triangle):
         if moved or merged:
             worst = max(d for _, d in moved + merged)
             messages.append(
-                f"{len(moved)} point constraint(s) within {tol:.3g} of an edge were placed ON it and "
-                f"{len(merged)} merged into a vertex or another point within {tol:.3g} (moved at most "
-                f"{worst:.3g}): nearer an edge than the DISV file writes, Triangle crashes, hangs or "
-                "builds a grid that cannot be written."
+                f"{len(moved)} point constraint(s) within {tol:.3g} of an edge were placed ON it, and "
+                f"{len(merged)} within {tol:.3g} of a ring vertex, a corner or another point were merged "
+                f"into it (moved at most {worst:.3g}): nearer than the DISV file writes, Triangle "
+                "crashes, hangs or builds a grid that cannot be written."
             )
         if outside:
             messages.append(
@@ -2366,14 +2415,14 @@ class TriangleGrid(Triangle):
         return cross, t, abs(float(cross)) / length if length else float(np.hypot(*(np.subtract(p, a)))), length
 
     @staticmethod
-    def _inside_rings(p, rings, n_parts, *, exact):
-        """Whether ``p`` is inside one of the first ``n_parts`` rings and in none of the rest
-        (holes): exactly, by crossing number on ``Fraction``s, when ``exact``."""
+    def _inside_rings(p, rings, *, exact):
+        """Whether ``p`` is inside the domain bounded by ``rings`` (every part's exterior and
+        every hole): an odd number of them around it, so an island in another part's hole is
+        inside. Exactly, by crossing number on ``Fraction``s, when ``exact``."""
 
         if not exact:
             point = Point(p)
-            inside = [Polygon(ring).contains(point) for ring in rings]
-            return any(inside[:n_parts]) and not any(inside[n_parts:])
+            return sum(Polygon(ring).contains(point) for ring in rings) % 2 == 1
 
         from fractions import Fraction
 
@@ -2389,7 +2438,7 @@ class TriangleGrid(Triangle):
                         inside = not inside
             return inside
 
-        return any(crossing(r) for r in rings[:n_parts]) and not any(crossing(r) for r in rings[n_parts:])
+        return sum(crossing(r) for r in rings) % 2 == 1
 
     @staticmethod
     def _geometry_coordinate_tuples(geometry: Polygon | MultiPolygon | GeometryCollection) -> list[tuple[float, float]]:
@@ -2525,13 +2574,22 @@ class TriangleGrid(Triangle):
 
         limit = self.TRIANGLE_MEMORY_LIMIT
 
-        def cap_memory():  # runs in the child, before exec
+        def cap_memory():  # runs in the child, before exec: lower the SOFT limit only
             import resource
 
-            resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+            try:
+                soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+                cap = limit if hard == resource.RLIM_INFINITY else min(limit, hard)
+                if soft == resource.RLIM_INFINITY or soft > cap:
+                    resource.setrlimit(resource.RLIMIT_AS, (cap, hard))
+            except (ValueError, OSError):
+                pass  # a cap that cannot be set never blocks the run
 
-        process = subprocess.Popen(cmds, cwd=self.model_ws, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   preexec_fn=cap_memory if os.name == "posix" else None)
+        try:
+            process = subprocess.Popen(cmds, cwd=self.model_ws, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       preexec_fn=cap_memory if os.name == "posix" else None)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise TriangleFailed(-1, cmds, output=f"Triangle could not be started in {self.model_ws}: {exc}") from exc
         timed_out = threading.Event()
 
         def kill_on_timeout():
@@ -2551,6 +2609,9 @@ class TriangleGrid(Triangle):
             returncode = process.wait()
         finally:
             timer.cancel()
+            if process.poll() is None:  # an interrupt or error while reading: never leave it running
+                process.kill()
+                process.wait()
             process.stdout.close()
         text = output.decode(errors="replace")
         if returncode != 0 or runaway:
@@ -2611,7 +2672,8 @@ class TriangleGrid(Triangle):
             else:
                 index[key] = len(nodes)
                 nodes.append((x, y))
-        if not shared or "-j" in (self.additional_args or ()):
+        jettison = any(isinstance(a, str) and a.startswith("-") and "j" in a[1:] for a in (self.additional_args or ()))
+        if not shared or jettison:
             return None
         return nodes, rings
 

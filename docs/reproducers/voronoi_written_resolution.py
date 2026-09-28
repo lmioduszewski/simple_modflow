@@ -98,7 +98,7 @@ def run(verts, rings, precision=None):
 
 
 def check_run(folder: pathlib.Path) -> None:
-    """Zero-length faces in a written ``.disv``, from the file's own text."""
+    """Zero-length faces in a written ``.disv``, from the numbers MF6 reads out of its text."""
     for path in sorted(folder.glob("*.disv")):
         lines = path.read_text().splitlines()
 
@@ -107,7 +107,8 @@ def check_run(folder: pathlib.Path) -> None:
             e = next(i for i, line in enumerate(lines) if line.strip().upper() == f"END {name}")
             return [line.split() for line in lines[s + 1:e]]
 
-        written = [tuple(t[1:3]) for t in block("VERTICES")]
+        # compared as numbers: across FloPy's 1e5 format switch two spellings are one point
+        written = [tuple(float(v) for v in t[1:3]) for t in block("VERTICES")]
         owners: dict = {}
         for t in block("CELL2D"):
             ring = [int(v) - 1 for v in t[4:4 + int(t[3])]]

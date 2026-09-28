@@ -440,11 +440,16 @@ def _short_faces(D, d_iverts, unit, apart=None, written=None):
     if len(d_iverts):
         u = np.concatenate([np.asarray(r, dtype=np.int64) for r in d_iverts])
         v = np.concatenate([np.roll(np.asarray(r, dtype=np.int64), -1) for r in d_iverts])
+        edge = np.minimum(u, v) * max(len(D), 1) + np.maximum(u, v)
+        uniq, count = np.unique(edge, return_counts=True)
+        shared = set(uniq[count > 1].tolist())  # a FACE: an edge two cells share
         for e in np.flatnonzero((np.abs(D[u] - D[v]) < unit).all(axis=1) & (u != v)):
             ru, rv = root(int(u[e])), root(int(v[e]))
             both_drawn = held[ru] and held[rv]
-            if ru != rv and (not both_drawn or (written is not None and _written_as_one_point(
-                    written[u[e]], written[v[e]]))):
+            # Two corners FloPy drew are joined only across a FACE that prints as one point:
+            # an unshared (boundary) edge makes no connection, and MF6 runs it as written.
+            if ru != rv and (not both_drawn or (written is not None and int(edge[e]) in shared
+                                                and _written_as_one_point(written[u[e]], written[v[e]]))):
                 lo, hi = min(ru, rv), max(ru, rv)
                 parent[hi] = lo
                 held[lo] = held[lo] or held[hi]
