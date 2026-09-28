@@ -14482,6 +14482,36 @@ same day, which is the useful part of the result.
       guarding them moved a working 3 ft square through its background sizing region. Not
       done: ``*_densify_dist`` still deletes a boundary or region part whose outline is
       between one and two spacings, silently.
+      (5) **A point constraint strictly inside and nearer an edge than the file writes is
+      placed ON the edge** (the user's call over refusing it). A free node at exact distance
+      d inside any segment Triangle is given -- the boundary, a hole, a region's ring, the
+      background sizing ring -- makes Triangle bisect that segment toward its foot; below a
+      few ulp Triangle SIGSEGVs, hangs, or grows 0.3-0.5 GB a second, and below about one
+      written unit the grid cannot be written (394 offsets measured). Exactly ON the segment is
+      fine (Triangle splits it there) unless that leaves a piece shorter than the tolerance.
+      Wells snapped onto a boundary in GIS, or reprojected through 4326, land in the band:
+      4 of 8 failed (2 Triangle hangs), the rest were dropped. ``_place_point_constraints``
+      now, after the dedupe and on the rings Triangle is really given, decides inside and
+      on-segment EXACTLY (``Fraction``s: a float distance reads 0 for a point 1e-15 inside),
+      and within tol = 2 written units (0.02 ft at state plane, 2e-8 ft near the origin,
+      floored at 4000 ulp) inserts the point into the ring, or merges it into a vertex, a
+      wedge's tip or another point, with a warning. It changes only those inputs: every point
+      farther than tol builds as before (pins measured), and points in the [1u, 2u) band
+      that built today are moved too -- no threshold separates them, since at 1u some fail
+      and some do not. Outside points are left exactly as they were (dropping them moves
+      every such pin, for nothing: they got no cell either way) and now WARNED about.
+      **Triangle runs bounded** (``TriangleGrid._bounded_build``, FloPy's files, switches
+      and outputs byte for byte): a 4 GB address-space cap, a 300 s timeout and 64 MB of
+      output, raising ``TriangleFailed``, a ``CalledProcessError`` as FloPy's run raised, so
+      the smoothing loop's fallback still catches it. Not done: the wedge rule cannot help a
+      point 4-10 units from both edges of a needle tip at the origin; a point within tol of
+      the background sizing ring moves the ring by up to tol; and on the default profile the
+      smoothing loop re-adds a copy of a well's moved node 0.02-0.06 ft from it, tripling
+      the cells around one interior well (the L at 5000: 361 -> ~1,078) -- its own item.
+      Section 10's reading above is corrected: its "0 ft" point is 1.4e-15 ft inside
+      exactly, the 3.2e-14 one that "built normally" lies 3.0e-14 OUTSIDE and was dropped,
+      and a pile forms for any inside offset below about the local cell size -- broken only
+      below about one written unit.
       Tests: ``tests/test_voronoi_tiling.py`` (16 then, 21 after the fuzz pass), where each
       of ten single-piece mutations of the fix fails a named test. The reproducers now show FloPy's cells
       (``tessellation="flopy"``) beside the repaired grid, and ``surface_domain_mask.py``

@@ -539,12 +539,16 @@ between: 6,903 nodes against 493 for the same box kept 50 ft clear (the L, `max_
 5000, refinement 1000), and 44,324 around a hole. Stop refinement polygons about a cell
 width short of the edge.
 
-**Keep point constraints off the boundary.** A `points=` point on a boundary edge, or
-within rounding of one, can make Triangle pack hundreds of nodes around it -- measured
-at 0 and 1.5e-14 ft off the edge: 394 and 448 nodes within a foot, the closest two
-5.7e-14 ft apart, where no cell has any area. The grid is refused by name, with where
-and how far apart (ledger 316). Not every such point does it -- one 3.2e-14 ft off the
-same edge built normally -- so move a point clear of the edge rather than trusting it.
+**A point on the boundary becomes a boundary vertex.** A `points=` point strictly inside
+and nearer an edge than twice what the file writes (0.02 ft at state plane) -- a well
+snapped onto the boundary in GIS, or reprojected through latitude and longitude -- is
+placed ON that edge; one that close to a corner or another point is merged into it, and
+a warning says how many moved and how far (ledger 316). Left alone, Triangle bisected the
+edge toward it: it crashed, hung or ran out of memory, or built a grid that could not be
+written. A point OUTSIDE the boundary still gets no cell -- it is warned about now -- and
+a point on the drawn boundary can round outside it, or sit outside the 2 ft simplified
+one: move a well you need inside by more than that. Farther from an edge a point still
+grades small cells toward it (+65-128 nodes at 0.01-0.1 ft); that is legal, and kept.
 
 **Sources must be file-backed.** A `GridSpec` is a serializable recipe — it has to
 survive `to_dict()` / `from_yaml()` — so an in-memory GeoDataFrame cannot be one.

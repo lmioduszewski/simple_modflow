@@ -23,6 +23,7 @@ from shapely.geometry import GeometryCollection, MultiPoint, MultiPolygon, Point
 from shapely.geometry.base import BaseGeometry
 
 from myflopy._logging import get_logger
+from myflopy.grid_identity import written_resolution
 from myflopy.modflow.mf6.grid.geometry_cleanup import cleanup_polygonal_geometry
 from myflopy.modflow.mf6.grid.helpers import densify_poly
 from myflopy.modflow.mf6.grid.mesh_quality import triangle_quality_report
@@ -34,6 +35,19 @@ from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 
 logger = get_logger(__name__)
+
+
+class TriangleFailed(subprocess.CalledProcessError):
+    """The Triangle program crashed, ran out of memory, hung or wrote without end.
+
+    A ``CalledProcessError``, as FloPy's own run raised, so the smoothing loop's fallback
+    still catches it. A point constraint a fraction of an ulp inside an edge made Triangle
+    SIGSEGV, hang, or grow by 0.3-0.5 GB a second until the machine ran out (ledger 316),
+    so every run is now bounded: a memory cap, a timeout and a cap on its output.
+    """
+
+    def __str__(self) -> str:
+        return str(self.output or super().__str__())
 
 
 class NoAreaInside(ValueError):
@@ -2224,8 +2238,158 @@ class TriangleGrid(Triangle):
             [*self._point_constraints, *self._optimization_points],
             excluded=excluded,
         )
+        node_points = self._place_point_constraints(node_points, n_parts=len(parts), n_holes=len(holes))
         if node_points:
             self._nodes = np.asarray(node_points, dtype=float)
+
+    def _place_point_constraints(self, node_points, *, n_parts: int, n_holes: int):
+        """The user's point constraints placed where Triangle can mesh them; the rest unchanged.
+
+        A free node strictly INSIDE the domain and nearer a segment than the file writes makes
+        Triangle bisect that segment toward it: below a few ulp Triangle crashed, hung or ran
+        out of memory; below about one written unit the grid could not be written (ledger
+        316, measured over 394 offsets). Wells snapped onto a boundary in GIS, or reprojected
+        through latitude and longitude, land there. Within ``tol`` -- two written units
+        (:func:`~myflopy.grid_identity.written_resolution`: 0.02 ft at state plane), floored
+        at 4000 ulp -- of a segment Triangle is given (the boundary, a hole, a region's ring,
+        the background sizing ring), a point is inserted INTO that ring as a vertex; within
+        ``tol`` of a ring vertex, of another point, or of both segments at a corner, it is
+        merged into it. A point exactly ON a segment is left to Triangle, which splits the
+        segment there, unless that leaves a piece shorter than ``tol``. A point OUTSIDE the
+        domain is left as it was -- Triangle meshes around it and it gets no cell, as before --
+        and a warning says so. Anything farther than ``tol`` is untouched, so every grid whose
+        points are clear of the edges keeps its pin.
+        """
+
+        from collections import defaultdict
+
+        from scipy.spatial import cKDTree
+        from shapely import STRtree
+        from shapely.geometry import LineString
+
+        user = {(float(x), float(y)) for x, y in self._point_constraints}
+        rings = [[(float(v[0]), float(v[1])) for v in ring] for ring in self._polygons]
+        if not user or not node_points or not rings:
+            return node_points
+        coords = np.array([v for ring in rings for v in ring], dtype=float)
+        tol = max(2.0 * float(written_resolution(coords).max()), 4000.0 * float(np.spacing(np.abs(coords).max())))
+        segments, owner = [], []
+        for ri, ring in enumerate(rings):
+            for j in range(len(ring)):
+                segments.append(LineString([ring[j], ring[(j + 1) % len(ring)]]))
+                owner.append((ri, j))
+        tree, corners = STRtree(segments), cKDTree(coords)
+        domain_rings = rings[: n_parts + n_holes]
+
+        kept, placed = [], []
+        inserts, moved, merged, outside = defaultdict(list), [], [], []
+        for p in node_points:
+            if p not in user:
+                kept.append(p)
+                continue
+            near = [int(i) for i in tree.query(Point(p), predicate="dwithin", distance=tol)]
+            side = {i: self._segment_side(rings[owner[i][0]], owner[i][1], p) for i in near}
+            crowd = min([float(corners.query(p)[0])]
+                        + [float(np.hypot(p[0] - q[0], p[1] - q[1])) for q in placed])
+            if any(side[i][0] == 0 and 0 <= side[i][1] <= 1 for i in near):
+                if 0 < crowd < tol:
+                    merged.append((p, crowd))
+                    continue
+                kept.append(p)
+                placed.append(p)
+                continue
+            if not self._inside_rings(p, domain_rings, n_parts, exact=bool(near) or crowd < tol):
+                kept.append(p)
+                placed.append(p)
+                outside.append(p)
+                continue
+            if 0 < crowd < tol:
+                merged.append((p, crowd))
+                continue
+            if not near:
+                kept.append(p)
+                placed.append(p)
+                continue
+            first, *others = sorted(near, key=lambda i: side[i][2])
+            cross, t, distance, length = side[first]
+            ri, j = owner[first]
+            corner = any(owner[k][0] == ri and (owner[k][1] - j) % len(rings[ri]) in (1, len(rings[ri]) - 1)
+                         for k in others)
+            if corner or float(t) * length < tol or (1 - float(t)) * length < tol:
+                merged.append((p, distance))  # a wedge's tip or a segment's end: that vertex
+                continue
+            inserts[(ri, j)].append((t, p))
+            placed.append(p)
+            moved.append((p, distance))
+        for ri, j in sorted(inserts, key=lambda key: (key[0], -key[1])):
+            ring = list(self._polygons[ri])
+            self._polygons[ri] = ring[: j + 1] + [q for _, q in sorted(inserts[(ri, j)])] + ring[j + 1:]
+
+        messages = []
+        if moved or merged:
+            worst = max(d for _, d in moved + merged)
+            messages.append(
+                f"{len(moved)} point constraint(s) within {tol:.3g} of an edge were placed ON it and "
+                f"{len(merged)} merged into a vertex or another point within {tol:.3g} (moved at most "
+                f"{worst:.3g}): nearer an edge than the DISV file writes, Triangle crashes, hangs or "
+                "builds a grid that cannot be written."
+            )
+        if outside:
+            messages.append(
+                f"{len(outside)} point constraint(s) lie outside the meshed domain and get no cell, "
+                f"e.g. ({outside[0][0]:.10g}, {outside[0][1]:.10g}). A point drawn on the boundary can "
+                "round outside it, or sit outside after the profile simplifies the boundary."
+            )
+        issued = self.__dict__.setdefault("_point_messages_issued", set())
+        for message in messages:
+            if message not in issued:
+                issued.add(message)
+                logger.warning(message)
+                warnings.warn(message, UserWarning, stacklevel=4)
+        return kept
+
+    @staticmethod
+    def _segment_side(ring, j, p):
+        """``(cross, t, distance, length)`` of ``p`` against segment ``j`` of ``ring``: the
+        cross product and the foot's parameter EXACTLY (``Fraction``), since a float distance
+        reads 0 for a point 1e-15 inside; distance and length as floats."""
+
+        from fractions import Fraction
+
+        a, b = ring[j], ring[(j + 1) % len(ring)]
+        ax, ay, bx, by, px, py = (Fraction(v) for v in (*a, *b, *p))
+        dx, dy = bx - ax, by - ay
+        cross = dx * (py - ay) - dy * (px - ax)
+        squared = dx * dx + dy * dy
+        t = (dx * (px - ax) + dy * (py - ay)) / squared if squared else Fraction(0)
+        length = float(squared) ** 0.5
+        return cross, t, abs(float(cross)) / length if length else float(np.hypot(*(np.subtract(p, a)))), length
+
+    @staticmethod
+    def _inside_rings(p, rings, n_parts, *, exact):
+        """Whether ``p`` is inside one of the first ``n_parts`` rings and in none of the rest
+        (holes): exactly, by crossing number on ``Fraction``s, when ``exact``."""
+
+        if not exact:
+            point = Point(p)
+            inside = [Polygon(ring).contains(point) for ring in rings]
+            return any(inside[:n_parts]) and not any(inside[n_parts:])
+
+        from fractions import Fraction
+
+        px, py = Fraction(p[0]), Fraction(p[1])
+
+        def crossing(ring):
+            inside = False
+            for k in range(len(ring)):
+                (ax, ay), (bx, by) = ((Fraction(c) for c in ring[k]), (Fraction(c) for c in ring[(k + 1) % len(ring)]))
+                if (ay > py) != (by > py):
+                    left = (bx - ax) * (py - ay) - (px - ax) * (by - ay)
+                    if (left > 0) == (by > ay):
+                        inside = not inside
+            return inside
+
+        return any(crossing(r) for r in rings[:n_parts]) and not any(crossing(r) for r in rings[n_parts:])
 
     @staticmethod
     def _geometry_coordinate_tuples(geometry: Polygon | MultiPolygon | GeometryCollection) -> list[tuple[float, float]]:
@@ -2329,7 +2493,90 @@ class TriangleGrid(Triangle):
 
         self.prepare()
         Path(self.model_ws).mkdir(parents=True, exist_ok=True)
-        return super().build(verbose=verbose)
+        return self._bounded_build(verbose=verbose)
+
+    #: Bounds on one run of the Triangle program: its address space, its wall time and how
+    #: much output is kept. A mesh of ~1e6 cells takes seconds and ~0.3 GB.
+    TRIANGLE_MEMORY_LIMIT = 4 * 2**30
+    TRIANGLE_TIMEOUT = 300.0
+    TRIANGLE_OUTPUT_LIMIT = 64 * 2**20
+
+    def _bounded_build(self, verbose=False):
+        """FloPy's ``Triangle.build`` -- the same files, switches and results -- under bounds.
+
+        FloPy runs Triangle through ``subprocess.check_output`` with no timeout, holding all
+        of its output in memory; a runaway run grew by 0.3-0.5 GB a second there. This caps
+        Triangle's address space (POSIX), kills it after :attr:`TRIANGLE_TIMEOUT` seconds or
+        :attr:`TRIANGLE_OUTPUT_LIMIT` bytes of output, and raises :class:`TriangleFailed`.
+        """
+
+        import os
+        import threading
+
+        self.clean()
+        self._write_nodefile(os.path.join(self.model_ws, f"{self.file_prefix}.0.node"))
+        self._write_polyfile(os.path.join(self.model_ws, f"{self.file_prefix}.0.poly"))
+        cmds = [self.exe_name, f"-a{self.maximum_area}" if self.maximum_area is not None else "-a"]
+        if self.angle is not None:
+            cmds.append(f"-q{self.angle}")
+        if self.additional_args is not None:
+            cmds += list(self.additional_args)
+        cmds += ["-A", "-p", "-V", "-D", "-e", "-n", f"{self.file_prefix}.0"]
+
+        limit = self.TRIANGLE_MEMORY_LIMIT
+
+        def cap_memory():  # runs in the child, before exec
+            import resource
+
+            resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+
+        process = subprocess.Popen(cmds, cwd=self.model_ws, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   preexec_fn=cap_memory if os.name == "posix" else None)
+        timed_out = threading.Event()
+
+        def kill_on_timeout():
+            timed_out.set()
+            process.kill()
+
+        timer = threading.Timer(self.TRIANGLE_TIMEOUT, kill_on_timeout)
+        timer.start()
+        output, runaway = bytearray(), False
+        try:
+            for chunk in iter(lambda: process.stdout.read(1 << 16), b""):
+                if len(output) + len(chunk) > self.TRIANGLE_OUTPUT_LIMIT:
+                    runaway = True
+                    process.kill()
+                    break
+                output += chunk
+            returncode = process.wait()
+        finally:
+            timer.cancel()
+            process.stdout.close()
+        text = output.decode(errors="replace")
+        if returncode != 0 or runaway:
+            if timed_out.is_set():
+                why = f"was still running after {self.TRIANGLE_TIMEOUT:g} s"
+            elif runaway:
+                why = f"wrote more than {self.TRIANGLE_OUTPUT_LIMIT // 2**20} MB of output"
+            elif "Out of memory" in text or returncode == -9:
+                why = f"ran out of memory (capped at {limit / 2**30:g} GB)"
+            else:
+                why = f"exited with code {returncode}"
+            last = next((line for line in reversed(text.splitlines()) if line.strip()), "")
+            raise TriangleFailed(
+                returncode or -9, cmds,
+                output=(f"Triangle {why} meshing {self.model_ws}; its last line: {last[:160]!r}. A point "
+                        "constraint within rounding of an edge, or two edges drawn a hair apart, "
+                        "can do this (ledger 316)."),
+            )
+        if verbose:
+            print(text)
+        self._load_results()
+        self.ncpl = self.ele.shape[0]
+        self.nvert = self.node.shape[0]
+        self.verts = np.array(self.node[["x", "y"]].tolist(), float)
+        self.iverts = [[row[1], row[2], row[3]] for row in self.ele]
+        return None
 
     def _shared_nodes(self):
         """``(nodes, rings)`` with ONE Triangle node per distinct ``(x, y)``, or ``None``.

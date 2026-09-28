@@ -1301,7 +1301,9 @@ copies now, and a result given a `grid=` of another cell count is refused at the
   of the coordinates are ONE vertex (an edge of two ulps turned over under reprojection
   and GEOS refused the grid), so two NODES that close, or a node whose circumcentres all
   merge, have no cell left and are REFUSED by name rather than dropped -- a point
-  constraint on a boundary edge, or within rounding of one, can do that. The certificate
+  constraint on a boundary edge, or within rounding of one, did that, and is now PLACED on
+  the edge first (`TriangleGrid._place_point_constraints`, 0.02 ft at state plane; ledger
+  316's five). The certificate
   stays at 1e-9 of the edge: widened with the merge it passed a boundary circumcentre
   outside the domain and returned a cell crossing itself. **A corner is never split
   closer than the FILE records** (2026-09-28): FloPy writes a coordinate above 1e5 to

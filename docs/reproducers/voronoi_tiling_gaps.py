@@ -59,13 +59,15 @@ WHAT IT MEASURES
   9. What the repair costs: its own CPU time inside ``GridSpec.resolve`` of the L, against
      the rest of the resolve. It runs on every grid the smoothing loop builds (six per
      resolve on the "balanced" profile), not only the last.
- 10. What a fuzz pass found that the repair does not fix, and one thing it now refuses.
-     A ``points=`` point on a boundary edge to rounding -- the fuzz's own point, and one
-     computed as a fraction along the edge: how far off the edge, how many nodes Triangle
-     puts within a foot of it, how close the closest two are, and what the build says.
-     Then two pre-existing, reproduced here so they are not taken for the repair: the L
-     with a refinement box inside it on the default profile, and the L at a ``max_area``
-     far larger than its 400 ft arms.
+ 10. Three things a fuzz pass found, fixed 2026-09-28 (``gridspec_build_failures.py`` has
+     each with its working neighbours). A ``points=`` point on a boundary edge to rounding
+     -- the fuzz's own point, and one computed as a fraction along the edge: how far off the
+     edge (shapely's distance; the "0 ft" point is 1.4e-15 ft INSIDE exactly, and the
+     3.2e-14 one OUTSIDE), how many nodes Triangle puts within a foot of it, how close the
+     closest two are, and what the build says. Before, 394 and 448 nodes within a foot and a
+     refusal; the point is now placed on the edge. Then the L with a refinement box inside
+     it (FloPy's "duplicate points" before) and the L at a ``max_area`` far larger than its
+     400 ft arms (149,385 sliver cells before).
  11. Why the repair matches FloPy's vertices to 1000 ulp and not to a fraction of the
      circumradius: a 30-point star at (1.2e6, 6.5e5) ft ("baseline" profile, min angle 21,
      ``max_area`` 10000 -- the star of ``tests/test_voronoi_tiling.py``). For every

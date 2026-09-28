@@ -32,6 +32,12 @@ see the failures.
      (65cd7acae45a9bfa). All features outside, or one touching only along an edge, raise
      naming the file and the cause. A 1000 x 2 ft strip boundary meshed 1000 of its 2000
      ft2 (the 2 ft simplification); now all of it. A 10 ft square keeps pin 399b78376886f595.
+  5. Point constraints: the fuzz's point 1.4e-14 ft inside a star's edge was refused (two
+     nodes 5.7e-14 ft apart) and now builds as a vertex of that edge; a well 1e-6 ft inside
+     a square at (1.2e6, 6.5e5) built 303 zero-length faces and now 0. An interior well
+     (pin 2626796579998479), one 0.5 ft inside (e86194e380c0d6af), one outside
+     (7c89ef6707554347, now warned) and wells exactly on an edge (3e4e07dc219a508b) keep
+     their pins.
 """
 
 from __future__ import annotations
@@ -135,6 +141,38 @@ def section_4(root):
         print(f"4. boundary {name}: {out}{area}")
 
 
+def section_5(root):
+    from shapely import affinity
+    from shapely.geometry import Point
+
+    star = Polygon([(661.8362256750904, 883.1029801823399), (511.91496377356594, 626.1164105850135),
+                    (397.21997094758257, 885.1137352756316), (386.40892476116454, 557.6707655713188),
+                    (109.1024319089716, 485.9970101374019), (370.24990640694506, 465.76037745899043),
+                    (347.44602898891804, 135.9209639441857), (475.2659797603329, 367.603618660851),
+                    (619.0565569568803, 109.47346703950711), (597.078140534828, 424.58165921244836)])
+    square = affinity.translate(box(0, 0, 1000, 1000), 1.2e6, 6.5e5)
+    cases = {
+        "star, the fuzz's point": (star, [(393.48212885521264, 771.9026644960962)],
+                                   dict(max_area=1000.0, profile="clean", min_angle=29)),
+        "square, 1e-6 ft inside": (square, [(1.2e6 + 1e-6, 6.5e5 + 437.123)], dict(max_area=2000.0)),
+        "square, interior well": (square, [(1.2e6 + 300.0, 6.5e5 + 400.0)], dict(max_area=2000.0)),
+        "square, 0.5 ft inside": (square, [(1.2e6 + 0.5, 6.5e5 + 437.123)], dict(max_area=2000.0)),
+        "square, well outside": (square, [(1.2e6 - 50.0, 6.5e5 + 400.0)], dict(max_area=2000.0)),
+        "square, wells on an edge": (square, [tuple(square.exterior.interpolate(d).coords[0])
+                                              for d in (137.3, 1511.9, 2702.2, 3333.3)], dict(max_area=2000.0)),
+    }
+    for i, (name, (boundary, points, options)) in enumerate(cases.items()):
+        folder = root / f"5-{i}"
+        folder.mkdir(parents=True)
+        gpd.GeoDataFrame({"n": list(range(len(points)))}, geometry=[Point(p) for p in points],
+                         crs=2927).to_file(folder / "p.gpkg")
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            out = build(folder, boundary, points=[mf.GeoPackageSourceSpec(path=folder / "p.gpkg")], **options)
+        said = sorted({str(w.message)[:70] for w in record if "point constraint" in str(w.message)})
+        print(f"5. {name}: {out}" + (f"  {said}" if said else ""))
+
+
 def main():
     warnings.simplefilter("ignore")
     with tempfile.TemporaryDirectory() as root:
@@ -142,6 +180,7 @@ def main():
         section_2(Path(root))
         section_3(Path(root))
         section_4(Path(root))
+        section_5(Path(root))
 
 
 if __name__ == "__main__":

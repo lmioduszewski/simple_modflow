@@ -259,3 +259,95 @@ def test_a_boundary_part_narrower_than_the_simplification_is_kept_as_drawn(tmp_p
         square, _ = _voronoi(tmp_path / "square", box(0, 0, 10, 10), max_area=10000.0)
     assert not any("kept as drawn" in str(w.message) for w in record)
     assert grid_pin(square) == "399b78376886f595"
+
+
+# --------------------------------------------------------------------------------------------
+# 5. A point constraint on an edge, or within rounding of one: placed ON the edge.
+
+STAR = Polygon([(661.8362256750904, 883.1029801823399), (511.91496377356594, 626.1164105850135),
+                (397.21997094758257, 885.1137352756316), (386.40892476116454, 557.6707655713188),
+                (109.1024319089716, 485.9970101374019), (370.24990640694506, 465.76037745899043),
+                (347.44602898891804, 135.9209639441857), (475.2659797603329, 367.603618660851),
+                (619.0565569568803, 109.47346703950711), (597.078140534828, 424.58165921244836)])
+SQUARE_AT_STATE_PLANE = box(1.2e6, 6.5e5, 1.2e6 + 1000, 6.5e5 + 1000)
+
+
+def _zero_length_faces(vor):
+    import flopy
+
+    from myflopy.grid_identity import zero_length_faces
+
+    props = vor.get_disv_gridprops()
+    with __import__("tempfile").TemporaryDirectory() as ws:
+        sim = flopy.mf6.MFSimulation(sim_ws=ws)
+        gwf = flopy.mf6.ModflowGwf(sim, modelname="m")
+        disv = flopy.mf6.ModflowGwfdisv(gwf, nlay=1, ncpl=props["ncpl"], nvert=props["nvert"], top=1.0, botm=[0.0],
+                                        vertices=props["vertices"], cell2d=props["cell2d"])
+        return zero_length_faces(disv, sim.simulation_data)
+
+
+def test_a_point_a_fraction_of_an_ulp_inside_an_edge_builds_on_it(tmp_path):
+    """The fuzz's point, 1.4e-14 ft inside a star's edge: Triangle packed 448 nodes within a
+    foot and the repair refused two of them 5.7e-14 ft apart. Now it is a vertex of that edge."""
+
+    point = (393.48212885521264, 771.9026644960962)
+    with pytest.warns(UserWarning, match=r"1 point constraint\(s\) within .* were placed ON"):
+        vor, tri = _voronoi(tmp_path, STAR, points=[point], max_area=1000.0, profile="clean", min_angle=29)
+    assert any(tuple(v) == point for v in tri._polygons[0])
+    assert (np.hypot(*(np.asarray(tri.verts) - point).T) < 1.0).sum() < 20
+
+
+def test_a_point_a_millionth_of_a_foot_inside_an_edge_at_state_plane_is_writable(tmp_path):
+    """0.01 ft is what FloPy writes there: a well 1e-6 ft inside built 303 zero-length faces."""
+
+    point = (1.2e6 + 1e-6, 6.5e5 + 437.123)
+    with pytest.warns(UserWarning, match="placed ON"):
+        vor, _ = _voronoi(tmp_path, SQUARE_AT_STATE_PLANE, points=[point], max_area=2000.0)
+    assert _zero_length_faces(vor) == []
+
+
+def test_a_point_clear_of_the_edges_is_untouched_and_one_outside_is_named(tmp_path):
+    """0.5 ft inside is 25 written units from the edge: Triangle keeps it as it was. Outside,
+    it still gets no cell, and the warning now says so."""
+
+    import warnings
+
+    inside, outside = (1.2e6 + 0.5, 6.5e5 + 437.123), (1.2e6 - 50.0, 6.5e5 + 400.0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _, tri = _voronoi(tmp_path / "in", SQUARE_AT_STATE_PLANE, points=[inside], max_area=2000.0)
+    assert any(tuple(v) == inside for v in np.asarray(tri.verts))
+    with pytest.warns(UserWarning, match=r"1 point constraint\(s\) lie outside the meshed domain"):
+        _voronoi(tmp_path / "out", SQUARE_AT_STATE_PLANE, points=[outside], max_area=2000.0)
+
+
+def test_triangle_runs_bounded_and_otherwise_as_flopy_ran_it(tmp_path):
+    """FloPy held all of Triangle's output in memory with no timeout; a runaway run grew by
+    0.3-0.5 GB a second. A bounded run writes the same mesh, and a run past a bound raises
+    a CalledProcessError, which the smoothing loop's fallback catches."""
+
+    import subprocess
+
+    from flopy.utils.triangle import Triangle
+
+    from myflopy.modflow.mf6.grid.triangle import TriangleFailed, TriangleGrid
+
+    def grid(ws):
+        tri = TriangleGrid(model_ws=str(ws), angle=28)
+        tri.set_domain_polygon(L_SHAPE, max_area=5000.0)
+        tri.prepare()
+        return tri
+
+    ours, flopys = grid(tmp_path / "ours"), grid(tmp_path / "flopys")
+    (tmp_path / "ours").mkdir()
+    (tmp_path / "flopys").mkdir()
+    ours._bounded_build()
+    Triangle.build(flopys)
+    for suffix in ("1.node", "1.ele", "1.edge", "1.neigh"):
+        assert (tmp_path / "ours" / f"_triangle.{suffix}").read_bytes() == (tmp_path / "flopys" / f"_triangle.{suffix}").read_bytes()
+    capped = grid(tmp_path / "capped")
+    (tmp_path / "capped").mkdir()
+    capped.TRIANGLE_OUTPUT_LIMIT = 16
+    with pytest.raises(TriangleFailed, match="wrote more than"):
+        capped.build()  # the public route runs bounded too
+    assert issubclass(TriangleFailed, subprocess.CalledProcessError)
