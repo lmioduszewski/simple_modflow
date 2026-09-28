@@ -39,6 +39,10 @@ constant-head cells the same face would reach only the budget):
   2. The same split written at ``float_precision = 16``: 5, 10, 5, 0 -- it is the FILE.
   3. The corner joined, as the repair now draws it: 5, 10, 5, 0.
   4. What the repair does with that corner now, and what it did before this rule.
+  5. FloPy's OWN cells, no repair involved: a plain four-corner boundary at (1.2e6, 6.5e5),
+     max_area 2000, default profile, no points. FloPy drew a face 3.5e-4 ft long whose ends
+     print as one point (NaN heads in MF6); the repair joins it and rewrites 3 cells, and the
+     same boundary on the "clean" profile, which has no such face, is untouched.
 Pass run directories to check their written ``.disv`` files for zero-length faces.
 """
 
@@ -50,9 +54,12 @@ import tempfile
 import warnings
 
 import flopy
+import geopandas as gpd
 import numpy as np
+from shapely.geometry import Polygon
 
-from myflopy.grid_identity import zero_length_faces
+import myflopy as mf
+from myflopy.grid_identity import grid_pin, zero_length_faces
 from myflopy.modflow.mf6.grid.tessellation import _onto_flopy
 
 X0, Y0 = 1.2e6 + 100.0, 6.5e5 + 100.0
@@ -127,6 +134,27 @@ def main() -> None:
     print(f"4. the repair on that corner: {unsplit} vertex joined, {appended} appended, {len(rewritten)} cells "
           f"rewritten, rings {'FloPy' if [list(r) for r in iverts] == JOINED else 'rewritten'}'s; before this "
           f"rule it appended {len(was[0]) - len(QUADS)} and wrote {len(was[0])} vertices")
+
+    corners = [(0, 0), (1100.3, 130.7), (1250.9, 940.2), (310.4, 1180.6)]
+    quad = Polygon([(1.2e6 + x, 6.5e5 + y) for x, y in corners])
+    with tempfile.TemporaryDirectory() as root:
+        root = pathlib.Path(root)
+        gpd.GeoDataFrame({"n": ["b"]}, geometry=[quad], crs=2927).to_file(root / "b.gpkg")
+        for profile in ("balanced", "clean"):
+            for tessellation in ("flopy", "dual"):
+                spec = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=root / "b.gpkg"),
+                                           max_area=2000.0, crs="EPSG:2927", profile=profile,
+                                           tessellation=tessellation)
+                vor = spec.resolve(workspace=root / f"{profile}-{tessellation}")
+                props = vor.get_disv_gridprops()
+                sim = flopy.mf6.MFSimulation(sim_ws=str(root / "sim"))
+                gwf = flopy.mf6.ModflowGwf(sim, modelname="m")
+                disv = flopy.mf6.ModflowGwfdisv(gwf, nlay=1, ncpl=props["ncpl"], nvert=props["nvert"], top=1.0,
+                                                botm=[0.0], vertices=props["vertices"], cell2d=props["cell2d"])
+                report = vor.tessellation_report
+                print(f"5. {profile:8s} {tessellation:5s}: {vor.ncpl} cells, pin {grid_pin(vor)}, zero-length faces "
+                      f"{zero_length_faces(disv, sim.simulation_data)}"
+                      + (f"; {report.summary()}" if report is not None else ""))
 
     for folder in sys.argv[1:]:
         check_run(pathlib.Path(folder))

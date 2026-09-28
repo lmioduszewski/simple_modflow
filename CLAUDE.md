@@ -1310,7 +1310,10 @@ copies now, and a result given a `grid=` of another cell count is refused at the
   kept both, 7.4e-5 ft apart, where FloPy drew one corner; the face between them was
   written with ZERO length and a real 20,323-cell model ran to normal termination with
   every head NaN. Dual vertices joined by a face shorter than one written unit on both
-  axes are now one corner -- FloPy's where it drew one -- counted in `unsplit`, and a
+  axes are now one corner -- FloPy's where it drew one -- counted in `unsplit`; a face
+  FloPy drew ITSELF is joined only when both its ends PRINT as one point (a plain
+  four-corner boundary at state plane on the default profile had one: NaN heads on
+  FloPy's own cells), so no grid that runs today moves. And a
   model whose DISV would still write a zero-length face is REFUSED at build naming the
   cells (`zero_length_faces`; a snapshot rebuild is the grid that ran). Measure what the
   FILE holds, not what float64 holds: every precision check in this module was right in

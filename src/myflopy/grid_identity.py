@@ -109,6 +109,24 @@ def bed_tolerance(value: float) -> float:
 #: 0.001 ft at y = 7.2e5), anything else as ``{:15.8f}``.
 FLOPY_FLOAT_PRECISION = 8
 FLOPY_SCI_NOTE_UPPER = 1e5
+FLOPY_SCI_NOTE_LOWER = 1e-3
+
+
+def _written_text(value, precision=FLOPY_FLOAT_PRECISION, upper=FLOPY_SCI_NOTE_UPPER,
+                  lower=FLOPY_SCI_NOTE_LOWER, scientific_format=None, fixed_format=None) -> str:
+    """``value`` as FloPy writes it into an MF6 file (``mfdatautil.to_string``'s rule): its
+    scientific format above ``upper`` or below ``lower`` in magnitude, else its fixed one."""
+
+    magnitude = abs(value)
+    if (magnitude > upper or magnitude < lower) and magnitude != 0:
+        return (scientific_format or f"{{:.{precision}E}}").format(value).strip()
+    return (fixed_format or f"{{:15.{precision}f}}").format(value).strip()
+
+
+def _written_as_one_point(p, q) -> bool:
+    """Whether FloPy's default number format writes points ``p`` and ``q`` identically."""
+
+    return all(_written_text(float(p[k])) == _written_text(float(q[k])) for k in (0, 1))
 
 
 def written_resolution(coords, precision: int = FLOPY_FLOAT_PRECISION,
@@ -202,7 +220,7 @@ def zero_length_faces(disv, simulation_data=None) -> list[tuple[int, int, float,
         return []
     precision = int(getattr(simulation_data, "float_precision", FLOPY_FLOAT_PRECISION))
     upper = float(getattr(simulation_data, "_sci_note_upper_thres", FLOPY_SCI_NOTE_UPPER))
-    lower = float(getattr(simulation_data, "_sci_note_lower_thres", 1e-3))
+    lower = float(getattr(simulation_data, "_sci_note_lower_thres", FLOPY_SCI_NOTE_LOWER))
     unit = written_resolution(xy, precision=precision, upper=upper)
     pairs = cKDTree(xy / unit).query_pairs(float(np.nextafter(1.0, 0.0)), p=np.inf)
     if not pairs:
@@ -214,9 +232,7 @@ def zero_length_faces(disv, simulation_data=None) -> list[tuple[int, int, float,
     fixed_format = getattr(simulation_data, "sci_format_str", f"{{:15.{precision}f}}")
 
     def written(value):
-        magnitude = abs(value)
-        scientific = (magnitude > upper or magnitude < lower) and magnitude != 0
-        return (scientific_format if scientific else fixed_format).format(value).strip()
+        return _written_text(value, precision, upper, lower, scientific_format, fixed_format)
 
     same = {frozenset(pair) for pair in pairs
             if all(written(xy[pair[0], k]) == written(xy[pair[1], k]) for k in (0, 1))}

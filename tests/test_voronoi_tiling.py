@@ -669,3 +669,22 @@ def test_a_corner_whose_joining_would_collapse_a_cell_stays_split():
     assert list(_short_faces(tiny, rings, written_resolution(tiny))) == [0, 1, 2, 3, 4]
     # and a corner beside a cell that survives it is still joined
     assert list(_short_faces(tiny, [[0, 1, 3, 4]], written_resolution(tiny))) == [0, 0, 2, 3, 4]
+
+
+def test_a_face_flopy_drew_that_the_file_writes_as_one_point_is_joined():
+    """FloPy's OWN corners, 7.4e-5 ft apart at x = 1.2e6: both print as one point, and a plain
+    four-corner boundary at state plane on the default profile measured such a face (3.5e-4 ft,
+    NaN heads in MF6). The repair joins it; one the file can still tell apart stays FloPy's."""
+
+    from myflopy.modflow.mf6.grid.tessellation import _onto_flopy
+
+    for gap, joined in ((7.4e-5, True), (6e-3, False)):  # 1200100.006 prints one digit up
+        split = np.vstack([QUAD_VERTS, [(X0 + gap, Y0)]])
+        verts, iverts, rewritten, appended, unsplit, _ = _onto_flopy(
+            split, DUAL_RINGS, split, DUAL_RINGS, np.zeros(4, dtype=bool))
+        assert appended == 0
+        if joined:
+            assert unsplit == 1 and set(rewritten.values()) == {"one-written-point"}
+            assert frozenset((8, 9)) not in {frozenset(p) for r in iverts for p in zip(r, r[1:] + r[:1], strict=True)}
+        else:
+            assert unsplit == 0 and rewritten == {} and [list(r) for r in iverts] == DUAL_RINGS

@@ -55,7 +55,7 @@ from flopy.utils.cvfdutil import get_disv_gridprops
 from scipy.spatial import cKDTree
 
 from myflopy._logging import get_logger
-from myflopy.grid_identity import grid_pin, written_resolution
+from myflopy.grid_identity import _written_as_one_point, grid_pin, written_resolution
 
 logger = get_logger(__name__)
 
@@ -103,7 +103,9 @@ class TessellationReport:
         (the right polygon, but on a duplicate vertex id MF6 cannot match, or holding one
         location twice -- a zero-width connection), ``"foreign-vertex"`` (a vertex that is
         not one of this cell's: a circumcentre of a triangle the mesh does not have, a
-        neighbour's across a thin notch, or Qhull's merge of two), ``"interior-order"``.
+        neighbour's across a thin notch, or Qhull's merge of two), ``"interior-order"``,
+        ``"one-written-point"`` (a face FloPy drew itself so short that the DISV file writes
+        both its ends as one point -- a zero-length face, NaN heads in MF6).
     appended
         Vertices added because FloPy had none at a location a cell needs.
     unsplit
@@ -412,14 +414,18 @@ def _clusters(V, tol):
     return np.array([root(i) for i in range(len(V))], dtype=np.int64)
 
 
-def _short_faces(D, d_iverts, unit, apart=None):
+def _short_faces(D, d_iverts, unit, apart=None, written=None):
     """A root per dual vertex: the vertices joined along every face shorter than one
     written unit on BOTH axes (``unit``, :func:`~myflopy.grid_identity.written_resolution`),
     which a DISV file can write as a single point -- the lowest index of each group.
 
-    Two groups that each hold an ``apart`` vertex are not joined: FloPy drew both corners,
-    and a face between them is FloPy's own, not a corner the repair split. A group whose
-    joining would leave a cell with fewer than three corners, or one twice, stays split.
+    Two groups that each hold an ``apart`` vertex are joined only when the face's two ends,
+    at the coordinates actually ``written`` (FloPy's own for the vertices it drew), print as
+    ONE point: FloPy drew both corners, and a short face of its own that the file can still
+    tell apart is kept as FloPy drew it (a plain four-corner boundary at state plane, on the
+    default profile, measured a FloPy face 3.5e-4 ft long that printed as one point -- NaN
+    heads in MF6). A group whose joining would leave a cell with fewer than three corners,
+    or one twice, stays split.
     """
 
     parent = np.arange(len(D))
@@ -436,7 +442,9 @@ def _short_faces(D, d_iverts, unit, apart=None):
         v = np.concatenate([np.roll(np.asarray(r, dtype=np.int64), -1) for r in d_iverts])
         for e in np.flatnonzero((np.abs(D[u] - D[v]) < unit).all(axis=1) & (u != v)):
             ru, rv = root(int(u[e])), root(int(v[e]))
-            if ru != rv and not (held[ru] and held[rv]):
+            both_drawn = held[ru] and held[rv]
+            if ru != rv and (not both_drawn or (written is not None and _written_as_one_point(
+                    written[u[e]], written[v[e]]))):
                 lo, hi = min(ru, rv), max(ru, rv)
                 parent[hi] = lo
                 held[lo] = held[lo] or held[hi]
@@ -535,9 +543,13 @@ def _onto_flopy(d_verts, d_iverts, verts, iverts, on_boundary):
     # Not split: the dual's vertices joined by a face the written file cannot hold are one
     # corner -- FloPy's where it drew one, else one appended vertex.
     unit = written_resolution(np.vstack([V, D]))
-    roots = _short_faces(D, d_iverts, unit, apart=label >= 0)
+    drawn = label >= 0
+    written = D.copy()
+    written[drawn] = V[label[drawn]]
+    roots = _short_faces(D, d_iverts, unit, apart=drawn, written=written)
     extra = np.flatnonzero(label < 0)
     split, unsplit = None, len(D) - len(np.unique(roots))
+    one_point = set()
     if unsplit:
         split_label = label.copy()
         split_label[extra] = len(V) + np.arange(len(extra))
@@ -550,6 +562,7 @@ def _onto_flopy(d_verts, d_iverts, verts, iverts, on_boundary):
             members = np.flatnonzero(roots == r)
             held = label[members][label[members] >= 0]
             if len(held):
+                one_point.update(int(c) for c in held[1:])  # FloPy's own face, written as one point
                 label[members] = held[0]
                 continue
             if tree is None:
@@ -584,7 +597,9 @@ def _onto_flopy(d_verts, d_iverts, verts, iverts, on_boundary):
             want = want[i:] + want[:i]
         new_iverts.append(want)
         at = [int(location[v]) for v in have]
-        if set(at) - set(want):
+        if set(at) - set(want) and set(at) - set(want) <= one_point:
+            reason = "one-written-point"  # FloPy's own face, which the file writes as a point
+        elif set(at) - set(want):
             reason = "foreign-vertex"
         elif set(want) - set(at):
             reason = "missing-vertex"

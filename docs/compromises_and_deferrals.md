@@ -14332,8 +14332,13 @@ same day, which is the useful part of the result.
       below, held against the installed FloPy by a test) are ONE corner -- the FloPy vertex
       one of them holds, else a FloPy vertex no dual vertex holds that lies within a unit
       of all of them (Qhull's one corner drawn a hair off), else one appended vertex. Two
-      corners FloPy drew itself are never joined: its own short faces are FloPy's, not a
-      split (the spiky star has one, 5.7e-4 ft, written one digit apart). On the user's
+      corners FloPy drew ITSELF are joined only when the file writes both ends as the SAME
+      point: a plain four-corner boundary at (1.2e6, 6.5e5), max_area 2000 on the default
+      profile, with no points, measured a face FloPy drew 3.5e-4 ft long whose ends both
+      print ``1.20039496E+06 6.50525631E+05`` -- FloPy's own cells gave NaN heads there, and
+      now 3 cells are rewritten (``"one-written-point"``) and nothing else moves. A short
+      face of FloPy's that prints as two points is kept as FloPy drew it (the spiky star
+      has one, 5.7e-4 ft, written one digit apart), so no grid that runs today moves. On the user's
       model the repair now rewrites 2 cells (both corner-order) and appends nothing, where
       it rewrote 9 and appended 3, and the grid has FloPy's 41,813 vertices; its pin moves
       from 35000b3b to ef6fd280, and ``tessellation_report.split_pin`` keeps the old one, so
