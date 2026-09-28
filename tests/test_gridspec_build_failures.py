@@ -121,3 +121,64 @@ def test_a_max_area_the_domain_holds_keeps_its_sizing_ring(tmp_path):
     vor, tri = _voronoi(tmp_path, L_SHAPE, max_area=1.58e5)
     assert all(r.segments for r in tri._prepared_regions)
     assert (vor.ncpl, grid_pin(vor)) == (2851, "84a3746283f05e8d")
+
+
+# --------------------------------------------------------------------------------------------
+# 3. Breaklines: a band piece too short to resample, duplicated rows, and a band resampled
+#    to nothing.
+
+LINE_B = [(400.0, 581.5845702824), (509.9330967965, 172.0865051051)]  # starts on the notch edge, heads out
+
+
+def _breaklines(root, lines, areas=None, **options):
+    """``GridSpec.voronoi`` of the L with ``lines`` as breaklines on the "clean" profile."""
+
+    import geopandas as gpd
+    from shapely.geometry import LineString
+
+    import myflopy as mf
+
+    root.mkdir(parents=True, exist_ok=True)
+    gpd.GeoDataFrame({"n": [0]}, geometry=[L_SHAPE], crs=2927).to_file(root / "b.gpkg")
+    columns = {"n": list(range(len(lines)))} if areas is None else {"area": list(areas)}
+    gpd.GeoDataFrame(columns, geometry=[LineString(c) for c in lines], crs=2927).to_file(root / "l.gpkg")
+    source = mf.GeoPackageSourceSpec(path=root / "l.gpkg", fields={} if areas is None else {"area": "area"})
+    spec = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=root / "b.gpkg"), breaklines=[source],
+                               profile="clean", min_angle=23, max_area=3000.0, breakline_max_area=60.0, **options)
+    return spec.resolve(workspace=root / "grid", return_triangle=True)
+
+
+@pytest.mark.parametrize("line", [LINE_B, [(100.0, 200.0), (120.0, 200.0)]], ids=["off-the-edge", "20-ft"])
+def test_a_band_piece_too_short_to_resample_builds(tmp_path, line):
+    """A piece of the 10 ft band whose outline is no longer than the 120 ft resampling
+    spacing -- line B's sliver inside the notch, a 20 ft line -- became a 2-point ring and
+    shapely raised "A linearring requires at least 4 coordinates"."""
+
+    vor, tri = _breaklines(tmp_path, [line])
+    assert vor.ncpl > 0 and any(r.source == "line" for r in tri._prepared_regions)
+
+
+def test_an_exact_duplicate_breakline_row_is_dropped_with_a_warning(tmp_path):
+    """Two identical rows claimed no unique area and the grid was refused; they mean one
+    line. The same line at a DIFFERENT max_area is still refused, as documented."""
+
+    line = [(464.0, 400.0), (428.6, 165.1)]
+    with pytest.warns(UserWarning, match="exact duplicate of 'breakline_0'"):
+        vor, tri = _breaklines(tmp_path / "same", [line, line[::-1]])
+    assert sum(r.source == "line" for r in tri._prepared_regions) == 1
+    with pytest.raises(ValueError, match="unique interior area"):
+        _breaklines(tmp_path / "different", [line, line], areas=[60.0, 30.0])
+
+
+def test_a_band_resampled_to_nothing_is_named_not_blamed_on_the_clip(tmp_path):
+    """A 40 ft line: its band's outline is under twice the spacing, so resampling leaves no
+    area. It was skipped as "empty after clipping to the domain interior", which it is not;
+    the grid is unchanged (the no-breakline grid, as before) and the warning names why."""
+
+    from myflopy.grid_identity import grid_pin
+
+    with pytest.warns(UserWarning, match="removed when its outline was resampled") as record:
+        vor, _ = _breaklines(tmp_path / "line", [[(100.0, 200.0), (140.0, 200.0)]])
+    assert not any("empty after clipping" in str(w.message) for w in record)
+    plain, _ = _voronoi(tmp_path / "plain", L_SHAPE, profile="clean", min_angle=23, max_area=3000.0)
+    assert grid_pin(vor) == grid_pin(plain)

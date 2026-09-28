@@ -14442,6 +14442,27 @@ same day, which is the useful part of the result.
       Just below the threshold the inset is a thin or tiny sliver and the mesh stays
       fine-grained (the L at 1.58e5: 2,851 cells; a square at 9.999e5: smallest cell 0.0023
       ft2) -- deliberately unchanged, since any fix moves grids that are not broken.
+      (3) **The breakline crash is a band piece shorter around than the resampling spacing**,
+      not overlap or ending on the boundary (neither is necessary nor sufficient): the
+      cleanup profiles rebuild a "line" region's outline from points ``target_segment_length``
+      apart (120 ft on the default), and an outline no longer than that gave a 2-point ring.
+      The pieces come from lines of about 34 ft or less at the default 10 ft buffer, and from
+      a line lying just outside the boundary (the fuzz case's line B starts on the notch edge
+      and heads out). ``densify_poly`` now returns such a ring as drawn -- the same comparison
+      that made it raise, so only failing inputs change, on both routes (the cleanup and
+      ``*_densify_dist``). An outline under TWICE the spacing still resamples to no area --
+      lines of ~35-95 ft vanish, as they did -- but is now named for what happened instead of
+      "empty after clipping to the domain interior" (the user's call: fixing it re-meshes those
+      grids and long breaklines that cross the boundary, so it belongs with the clip-inset
+      sliver). An EXACT duplicate breakline row (same line either way round, ``max_area`` and
+      priority) is dropped with a warning; kept, it claimed no unique area and the grid was
+      refused, and two identical rows mean one line. The same line at a different
+      ``max_area`` is still refused, as the cheatsheet documents. Not done, all moving
+      working grids: a band piece containing none of its line (a line just outside the
+      boundary) meshes the inset gap when it survives; where two bands cross, the cut-off
+      piece of one loses its ``max_area`` (``_claimed_region_geometry`` keeps the largest
+      piece); and resampling distorts every band on the cleanup profiles (a curvy 800 ft
+      band's outline differs from it by 79% of its area) and fills a closed loop's hole.
       Tests: ``tests/test_voronoi_tiling.py`` (16 then, 21 after the fuzz pass), where each
       of ten single-piece mutations of the fix fails a named test. The reproducers now show FloPy's cells
       (``tessellation="flopy"``) beside the repaired grid, and ``surface_domain_mask.py``

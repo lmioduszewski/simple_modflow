@@ -85,11 +85,31 @@ def densify_poly(
     polygon: shp.Polygon = None,
     distance_between: int | float = None,
 ) -> shp.Polygon:
-    """
-    Add evenly spaced points along a polygon exterior.
+    """Add evenly spaced points along a polygon exterior.
+
+    The exterior is rebuilt from points ``distance_between`` apart along it plus its end
+    point, so holes are dropped and corners that fall between two points are cut. A ring
+    no longer than ``distance_between`` would give two points -- shapely's "A linearring
+    requires at least 4 coordinates" -- so it is returned unchanged: a breakline band
+    clipped to a short piece crashed the build that way (ledger 316).
+
+    Parameters
+    ----------
+    polygon : shapely.geometry.Polygon
+        The polygon to resample.
+    distance_between : float
+        Spacing between the new exterior points, in the polygon's length units.
+
+    Returns
+    -------
+    shapely.geometry.Polygon
+        The resampled polygon, or ``polygon`` itself when its exterior is no longer than
+        ``distance_between``.
     """
     exterior: shp.geometry.polygon.LinearRing = polygon.exterior
     total_length = exterior.length
+    if total_length <= distance_between:
+        return polygon
     current_distance = 0.0
     new_points = []
 

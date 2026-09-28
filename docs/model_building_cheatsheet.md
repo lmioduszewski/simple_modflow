@@ -572,7 +572,8 @@ refinement to `0`, so a corridor takes the overlap from a refinement polygon:
 That is usually right for a stream and wrong when you used `breaklines=` only to
 pass a second polygon file — set `priority` explicitly there. A region left with no
 unique area raises `does not have any unique interior area left after resolving
-overlaps`, which is what a duplicated polygon gets you.
+overlaps`, which is what a duplicated polygon gets you -- except an EXACT duplicate
+breakline row (the same line, `max_area` and priority), which is dropped with a warning.
 
 **Check it before meshing.** `build=False` reads the sources and resolves regions
 without running Triangle:

@@ -21,6 +21,12 @@ see the failures.
      The L at 1e5 (207 cells, pin 4394bb5bf7eefb22) and just below the threshold at 1.58e5
      (2,851 cells, pin 84a3746283f05e8d -- a thin inset, fine-grained, unchanged on
      purpose) keep their pins.
+  3. Breaklines on the L at (1.2e6, 6.5e5), profile "clean", min_angle 23, max_area 3000,
+     breakline_max_area 60 (the fuzz input). Line B alone, a 20 ft line and the fuzz's five
+     rows (A, B, B, C, C) raised "A linearring requires at least 4 coordinates"; they build,
+     the duplicated rows dropped with a warning. A 40 ft line still vanishes, now named. Line
+     A alone keeps pin c4c813f7b898e39b and a 100 ft line pin 824e8318f6c2acf2 -- A's pin on
+     the repair from bb56668 was 4714a10d3ef12cf9, a grid that wrote a zero-length face.
 """
 
 from __future__ import annotations
@@ -77,11 +83,39 @@ def section_2(root):
         print(f"2. 2000 x 1000 rectangle at max_area {max_area:g}: {out}")
 
 
+def section_3(root):
+    from shapely import affinity
+    from shapely.geometry import LineString
+
+    origin = (1.2e6, 6.5e5)
+    domain = affinity.translate(L_SHAPE, *origin)
+    a = LineString([(1199808.0861394587, 649924.4522525535), (1201191.9138605413, 651075.5477474465)])
+    b = LineString([(1200400, 650581.5845702824), (1200509.9330967965, 650172.0865051051)])
+    c = LineString([(1200464.0038896762, 650400), (1200428.6498325951, 650165.1040641002)])
+
+    def line(length):
+        return LineString([(origin[0] + 100, origin[1] + 200), (origin[0] + 100 + length, origin[1] + 200)])
+
+    cases = {"A alone": [a], "B alone": [b], "A, B, B, C, C": [a, b, b, c, c], "20 ft line": [line(20)],
+             "40 ft line": [line(40)], "100 ft line": [line(100)]}
+    for i, (name, lines) in enumerate(cases.items()):
+        folder = root / f"3-{i}"
+        folder.mkdir(parents=True)
+        gpd.GeoDataFrame({"n": list(range(len(lines)))}, geometry=lines, crs=2927).to_file(folder / "l.gpkg")
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            out = build(folder, domain, profile="clean", min_angle=23, max_area=3000.0, breakline_max_area=60.0,
+                        breaklines=[mf.GeoPackageSourceSpec(path=folder / "l.gpkg")])
+        said = sorted({str(w.message)[:60] for w in record if "duplicate" in str(w.message) or "resampled" in str(w.message)})
+        print(f"3. {name}: {out}" + (f"  {said}" if said else ""))
+
+
 def main():
     warnings.simplefilter("ignore")
     with tempfile.TemporaryDirectory() as root:
         section_1(Path(root))
         section_2(Path(root))
+        section_3(Path(root))
 
 
 if __name__ == "__main__":

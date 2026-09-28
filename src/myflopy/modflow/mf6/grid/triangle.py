@@ -1705,17 +1705,33 @@ class TriangleGrid(Triangle):
         polygons_after = domain_stats.polygons_out
 
         for region in self.region_specs:
+            resample = (
+                target_segment_length
+                if target_segment_length and region.source in set(resample_region_sources)
+                else None
+            )
             geometry, stats = cleanup_polygonal_geometry(
                 region.geometry,
                 snap_tolerance=snap_tolerance,
                 simplify_tolerance=simplify_tolerance,
                 min_feature_area=min_feature_area,
-                target_segment_length=(
-                    target_segment_length
-                    if target_segment_length and region.source in set(resample_region_sources)
-                    else None
-                ),
+                target_segment_length=resample,
             )
+            if resample and not self._polygonal_parts(geometry):
+                # Resampling rebuilds an outline from points `resample` apart, so one shorter
+                # than twice that comes back with no area -- a breakline of ~35-95 ft at the
+                # default 10 ft buffer and 120 ft spacing. prepare() skipped it anyway, saying
+                # it was "empty after clipping to the domain interior", which it was not.
+                message = (
+                    f"Region '{region.label}' ({region.source}) was removed when its outline "
+                    f"was resampled at target_segment_length={resample:g}: an outline "
+                    f"{region.geometry.length:.3g} long, shorter than twice that spacing, has "
+                    "no area left. Pass a smaller target_segment_length, "
+                    "resample_region_sources=(), or profile='baseline' to keep it."
+                )
+                logger.warning(message)
+                warnings.warn(message, UserWarning, stacklevel=2)
+                continue
             cleaned_specs.append(
                 RegionSpec(
                     geometry=geometry,

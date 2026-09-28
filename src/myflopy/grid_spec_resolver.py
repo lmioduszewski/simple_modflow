@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -326,12 +327,19 @@ def _add_breakline_source(
     project_root: Path | str | None,
     options: dict[str, Any],
     target_crs: str | None,
+    seen: dict | None = None,
 ) -> None:
     """Add each line in a breakline source to the triangle grid as a buffered region.
 
     Lines are buffered (``breakline_buffer``/``line_buffer``) into refinement
     polygons with an optional negative post-clip buffer; cell-size targets come
     from the source's ``area`` field or ``options['breakline_max_area']``.
+
+    An EXACT duplicate -- the same line (either direction), ``max_area`` and priority as
+    one already added, in this source or another sharing ``seen`` -- is dropped with a
+    warning. Kept, its band claimed no unique area and the grid was refused (or Triangle
+    ran out of precision); two identical rows mean the same thing (ledger 316). The same
+    line with a different ``max_area`` is still refused, as documented.
     """
 
     gdf = _read_source(source, project_root, target_crs=target_crs)
@@ -363,6 +371,17 @@ def _add_breakline_source(
             raise ValueError(
                 "breakline_negative_buffer_after_clipping must be less than or equal to zero"
             )
+        if seen is not None:
+            key = (shp.normalize(geometry).wkb, float(max_area), priority)
+            if key in seen:
+                message = (
+                    f"Breakline '{label}' is an exact duplicate of '{seen[key]}' (the same "
+                    f"line, max_area {float(max_area):g} and priority {priority}); dropping it."
+                )
+                logger.warning(message)
+                warnings.warn(message, UserWarning, stacklevel=2)
+                continue
+            seen[key] = str(label)
         tri.add_region_polygon(
             geometry.buffer(buffer),
             max_area=float(max_area),
@@ -525,6 +544,7 @@ def _resolve_voronoi(
             options=options,
             target_crs=spec.crs,
         )
+    seen_breaklines: dict = {}
     for source in spec.breaklines:
         _add_breakline_source(
             tri,
@@ -532,6 +552,7 @@ def _resolve_voronoi(
             project_root=project_root,
             options=options,
             target_crs=spec.crs,
+            seen=seen_breaklines,
         )
     for source in spec.points:
         _add_point_source(tri, source, project_root=project_root, target_crs=spec.crs)
