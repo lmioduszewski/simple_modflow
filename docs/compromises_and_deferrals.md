@@ -14413,6 +14413,21 @@ same day, which is the useful part of the result.
       raise shapely's "A linearring requires at least 4 coordinates"; and some small or
       thin boundaries raise "geometry does not contain any polygonal area after
       preprocessing".
+      **The five, diagnosed and resolved 2026-09-28** (the user's calls; a diagnosis
+      workflow, one investigator and one skeptic per failure; every fix below changes only
+      inputs that fail or silently misbehave today unless it says otherwise;
+      ``tests/test_gridspec_build_failures.py``, ``docs/reproducers/gridspec_build_failures.py``):
+      (1) **"Duplicate points" is two rings sharing an exact point**, on every profile and
+      angle, not the default profile: two refinement zones along one contact is the common
+      case, and the fuzz L failed only because 50 = 0.5*sqrt(10000) put the box's corner on
+      the background sizing ring's corner. FloPy writes each ring's vertices as nodes of
+      their own; Triangle marks the copy unused but still outputs it, and ``tri2vor``
+      raises. ``TriangleGrid`` now writes one node per distinct point, and calls FloPy's own
+      writers whenever nothing coincides (and under ``-j``), so every grid that builds today
+      gets the same bytes -- measured on 39 working inputs, and all 298 Triangle writes of
+      1,783 grid tests were FloPy's own. Not covered: zones digitised 1e-12 to 1e-6 ft apart
+      still make Triangle run out of memory, and adjacent zones that cross the boundary now
+      build into the clip-inset sliver below instead of failing.
       Tests: ``tests/test_voronoi_tiling.py`` (16 then, 21 after the fuzz pass), where each
       of ten single-piece mutations of the fix fails a named test. The reproducers now show FloPy's cells
       (``tessellation="flopy"``) beside the repaired grid, and ``surface_domain_mask.py``

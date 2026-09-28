@@ -2230,6 +2230,84 @@ class TriangleGrid(Triangle):
         Path(self.model_ws).mkdir(parents=True, exist_ok=True)
         return super().build(verbose=verbose)
 
+    def _shared_nodes(self):
+        """``(nodes, rings)`` with ONE Triangle node per distinct ``(x, y)``, or ``None``.
+
+        FloPy writes every ring's vertices as nodes of their own, so a point two rings share
+        -- two refinement zones along one contact, a region corner on the background sizing
+        ring's corner -- became two input nodes. Triangle marks one unused and still copies
+        both to its output, and FloPy's ``tri2vor`` then refused the mesh with a bare
+        "duplicate points" ``Exception`` (ledger 316; Triangle's triangles were measured the
+        same with and without the duplicate). ``None`` when nothing coincides, and under
+        Triangle's ``-j`` (which already jettisons it and numbers by its own sort): FloPy's
+        writers then run unchanged, so every grid that builds today gets the same bytes.
+        """
+
+        index, nodes, rings, shared = {}, [], [], False
+        for polygon in self._polygons:
+            ids = []
+            for vertex in polygon:
+                key = (float(vertex[0]), float(vertex[1]))
+                if key in index:
+                    shared = True
+                else:
+                    index[key] = len(nodes)
+                    nodes.append((vertex[0], vertex[1]))
+                ids.append(index[key])
+            rings.append(ids)
+        extra = [] if self._nodes is None else [(self._nodes[i, 0], self._nodes[i, 1]) for i in range(self._nodes.shape[0])]
+        for x, y in extra:
+            key = (float(x), float(y))
+            if key in index:
+                shared = True
+            else:
+                index[key] = len(nodes)
+                nodes.append((x, y))
+        if not shared or "-j" in (self.additional_args or ()):
+            return None
+        return nodes, rings
+
+    def _write_nodefile(self, fname):
+        """FloPy's ``.node`` writer, with a point several rings share written once."""
+
+        shared = self._shared_nodes()
+        if shared is None:
+            return super()._write_nodefile(fname)
+        nodes, _ = shared
+        with open(fname, "w") as f:
+            f.write(f"{len(nodes)} 2 0 0\n")
+            for ip, (x, y) in enumerate(nodes):
+                f.write(f"{ip} {x} {y}\n")
+        return None
+
+    def _write_polyfile(self, fname):
+        """FloPy's ``.poly`` writer, each ring's segments on the shared node ids.
+
+        Segment count, order and markers (``iseg + 1``) are FloPy's, and ``_polygons``,
+        ``_holes`` and ``_regions`` are untouched, so ``tri2vor``'s boundary-marker reading
+        is unchanged.
+        """
+
+        shared = self._shared_nodes()
+        if shared is None:
+            return super()._write_polyfile(fname)
+        _, rings = shared
+        with open(fname, "w") as f:
+            f.write("0 0 0 0\n")
+            f.write(f"{sum(len(ring) for ring in rings)} 1\n")
+            iseg = 0
+            for ids in rings:
+                for i in range(len(ids)):
+                    f.write(f"{iseg} {ids[i]} {ids[(i + 1) % len(ids)]} {iseg + 1}\n")
+                    iseg += 1
+            f.write(f"{len(self._holes)}\n")
+            for i, hole in enumerate(self._holes):
+                f.write(f"{i} {hole[0]} {hole[1]}\n")
+            f.write(f"{len(self._regions)}\n")
+            for i, (pt, attribute, maxarea) in enumerate((r[0], r[1], r[2]) for r in self._regions):
+                f.write(f"{i} {pt[0]} {pt[1]} {attribute} {-1.0 if maxarea is None else maxarea}\n")
+        return None
+
     @staticmethod
     def _build_voronoi_for_mesh(mesh):
         """Wrap a triangulation in a :class:`VoronoiGridPlus`, silencing benign numpy warnings."""
