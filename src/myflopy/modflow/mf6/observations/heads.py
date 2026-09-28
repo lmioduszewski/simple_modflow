@@ -108,7 +108,7 @@ class HeadTargets:
         stripped and lower-cased, or ``ValueError`` is raised. Values are read
         as floats: a BLANK entry (missing, or empty text) is ``NaN`` and means
         unmeasured -- the PEST build leaves that row out of the targets, at
-        weight 0 -- and any other entry that is not a number raises
+        weight 0 -- and any other entry that is not a finite number raises
         ``ValueError`` naming the target and its column (ledger 340; it used to
         become ``NaN`` silently).
     name_column : str, optional
@@ -513,7 +513,8 @@ class HeadTargets:
         Targets are reprojected to the grid's CRS first. One that lands on no
         active cell is left out and named in a warning; if NONE of them land,
         that raises, rather than handing back an observation set that is quietly
-        about somewhere else. A target given as a cell id is checked instead: an
+        about somewhere else. A PEST build refuses the one left out when the
+        values name it (ledger 341): there it would be a target PEST never sees. A target given as a cell id is checked instead: an
         id this grid does not have, or one inactive in its layer, raises.
         """
 

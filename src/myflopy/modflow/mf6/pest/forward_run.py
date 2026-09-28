@@ -88,7 +88,8 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
         ``sim_ws``.
     mapping_csv : str or pathlib.Path
         The target map the build wrote: ``obsname``/``name``, ``layer``, ``cell``.
-        Its row order IS the column order written.
+        Its row order IS the column order written, and its labels are read as
+        text, verbatim (a well named ``007`` is not the number 7, ledger 341).
     output_csv : str or pathlib.Path
         The simulated CSV to write: ``per``, then one column per mapping row
         (its ``obsname``, else its ``name``) in mapping order; one row per stress
@@ -117,7 +118,11 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
 
     from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
 
-    mapping = pd.read_csv(mapping_csv)
+    # Labels read VERBATIM: pandas reads a well named 007 as the integer 7 and one
+    # named NA as a missing value, so the columns written would be 7 and nan while
+    # the target map, the targets and the base table's header say 007 and NA
+    # (ledger 341). A converter sees the raw text before either reading.
+    mapping = pd.read_csv(mapping_csv, converters={"obsname": str, "name": str})
     hds = flopy.utils.HeadFile(str(Path(sim_ws) / f"{model_name}.hds"))
     try:
         ends = period_end_steps(
@@ -161,7 +166,8 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
         ``.hds`` in ``sim_ws`` because the simulation is flat.
     mapping_csv : str or pathlib.Path
         The target map the build wrote: ``obsname``/``name``, ``layer``, ``cell``.
-        Its row order IS the column order written.
+        Its row order IS the column order written, and its labels are read as
+        text, verbatim (a well named ``007`` is not the number 7, ledger 341).
     output_csv : str or pathlib.Path
         The simulated CSV to write: ``per``, then one column per mapping row in
         mapping order; one row per stress period the file saved.
@@ -188,7 +194,11 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
 
     from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
 
-    mapping = pd.read_csv(mapping_csv)
+    # Labels read VERBATIM: pandas reads a well named 007 as the integer 7 and one
+    # named NA as a missing value, so the columns written would be 7 and nan while
+    # the target map, the targets and the base table's header say 007 and NA
+    # (ledger 341). A converter sees the raw text before either reading.
+    mapping = pd.read_csv(mapping_csv, converters={"obsname": str, "name": str})
     ucn = flopy.utils.HeadFile(
         str(Path(sim_ws) / f"{model_name}.ucn"), text="concentration"
     )
@@ -247,6 +257,8 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
     locations_file : str or pathlib.Path
         The ``*_target_locations`` snapshot the build wrote: a CSV (lake and
         reach ids, or DRN zones with comma-joined ``cells``) or a GeoPackage.
+        A CSV's names are read as text, verbatim, as the base run's table has
+        them (ledger 341).
     output_csv : str or pathlib.Path
         The simulated CSV to write, the file pyEMU's instruction file reads.
     sim_ws : str or pathlib.Path, default "."
@@ -278,7 +290,9 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
 
         locations = gpd.read_file(locations_path)
     else:
-        locations = pd.read_csv(locations_path)
+        # Names read VERBATIM, as the base run's table has them (ledger 341): a
+        # zone named 007 read as the integer 7, one named NA as a missing value.
+        locations = pd.read_csv(locations_path, converters={"name": str})
         if "cells" in locations.columns:
             locations["cells"] = locations["cells"].fillna("").apply(
                 lambda text: [int(v) for v in str(text).split(",") if str(v).strip() != ""]

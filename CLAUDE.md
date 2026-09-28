@@ -111,7 +111,9 @@ as a saved-RECORD index until then: `per=1` at `nstp=3` drew (1, 0) beside the m
 (2, 1). The LAK stage file's `per` is still a record index (301's stage clock). STILL OPEN: the OBSERVATION route is still keyed by MF6's simulated
 time, one row per step, so a target keyed by period matches nothing there -- which the
 PEST build now REFUSES by name (ledger 340) where it silently dropped the target and
-anchored the calibration to the starting model at weight 1 -- and the
+anchored the calibration to the starting model at weight 1 -- UNLESS a simulated time
+equals the period number, which it then reads in silence (daily periods: key 1 reads
+`t = 1`, the END of period 0, ledger 341) -- and the
 SFR flow there keeps MF6's NEGATIVE `DOWNSTREAM-FLOW` where the file route reports the
 magnitude. A LAK STAGE-FILE target is keyed by SAVED RECORD (301's `per`-as-record-index),
 the period only at one save per period: at `nstp=3` periods 0-2 read steps 1-3 of period
@@ -1666,9 +1668,11 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   read as a period by NUMBER through `_shared._numeric_periods` (`1.0` is period 1,
   `1.5` refused, in `compare()` too) -- and never rebuilds pyEMU's observation NAME from
   a key's spelling: that is what silently dropped `per:1.0` against pyEMU's `per:1`, and
-  `time:10` against `time:10.0`. A target nothing holds, two values for one (target,
-  period), a non-numeric value and two sets under one prefix are REFUSED by name; a
-  blank is unmeasured. Every row no target measures carries weight 0 (a forecast set's
+  `time:10` against `time:10.0`. A target nothing holds (a head/conc target on no
+  active cell too, ledger 341 -- `compare()` only warns), two values for one (target,
+  period), a value that is not a finite number and two sets under one prefix are
+  REFUSED by name; a blank is unmeasured. The forward-run writers read target names as
+  TEXT: pandas read a well named `007` as `7` and `NA` as missing (ledger 341). Every row no target measures carries weight 0 (a forecast set's
   other periods too); pyEMU's default is weight 1 and the BASE value, which anchored the
   calibration to the starting model. Heads/conc base and forward CSVs come from ONE
   writer (the pivot SORTED its columns: PEST read W1's head as W10's in every

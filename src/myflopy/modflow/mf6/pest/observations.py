@@ -454,17 +454,45 @@ def _point_target_frame(targets, labels: pd.DataFrame, *, prefix: str) -> pd.Dat
     """A head or concentration target set's values, one row per (screen, time), in the build's shape.
 
     Joined from the VALUES table to the matched locations' labels, so a name
-    screened in two layers is two targets -- one per label -- and a location that
-    matched no active cell (warned about when matched, ledger 211) reads none.
+    screened in two layers is two targets -- one per label.
+
+    Raises
+    ------
+    ValueError
+        When a values row names a location that lands on no active cell of the
+        model (ledger 341). ``match_to_model`` only WARNS about such a partial miss
+        -- one target file may serve several grids (ledger 211) -- and that warning
+        goes to a logger nobody reads, so the inner join here dropped the target
+        from the control file in silence: the one route left by which a target
+        with a value never reached PEST.
     """
 
     values = targets._values
+    caller = _caller(type(targets).__name__, prefix)
     per = _measured_periods(
         values,
         value_column="head_target",
         name_column="name_key",
-        caller=_caller(type(targets).__name__, prefix),
+        caller=caller,
     )
+    left_out = values.loc[~values["name_key"].isin(set(labels["name_key"]))]
+    if not left_out.empty:
+        listing = [
+            f"{_shown(name)} at time(s) {_format_keys(group['time'])}"
+            for name, group in left_out.groupby("name", sort=True)
+        ]
+        more = len(listing) - 5
+        raise ValueError(
+            f"{caller}: {len(listing)} target(s) name a location that lands on no "
+            "active cell of this model, so PEST would never see them: "
+            + "; ".join(listing[:5])
+            + (f"; and {more} more" if more > 0 else "")
+            + ". Comparing a target file against a model leaves such a location "
+            "out with a warning, because one file may serve several grids (ledger "
+            "211); a PEST build is one model, and each of these is a target the "
+            "calibration would lose without a word (ledger 341). Build the targets "
+            "from the locations inside the model's active cells."
+        )
     joined = (
         values.drop(columns=["name"], errors="ignore")
         .assign(per=per.to_numpy())
@@ -578,8 +606,9 @@ def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
     ------
     ValueError
         When a target's key is not a whole number, two values name one target
-        in one period, or a target matches no row or column of the table; or when
-        a ``simulated_values`` table's columns are not the forward run's, in its
+        in one period, a target's location lands on no active cell (ledger 341),
+        or a target matches no row or column of the table; or when a
+        ``simulated_values`` table's columns are not the forward run's, in its
         order.
     """
 

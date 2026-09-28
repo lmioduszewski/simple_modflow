@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 340 entries (345 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 341 entries (346 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 341 | The review of ledger 340: a head or concentration target on no active cell is refused by the PEST build, ta... | 2026-09-27 |
 | 340 | What PEST is handed matches the targets: each target is matched to the row PEST's instruction file reads by... | 2026-09-27 |
 | 339 | One package is `model.<pkg>`, and FloPy's package object is `model.fl.<pkg>`; `model.packages` keeps only t... | 2026-09-27 |
 | 338 | Every public parameter has a `name : type` entry with a description, and a test holds it: 1,968 missing ent... | 2026-09-27 |
@@ -15246,11 +15247,12 @@ same day, which is the useful part of the result.
       with nothing. Checked on the VALUES table, never one joined to the locations, which
       repeats a value per location row (a DRN zone given as two rows, a two-screen well).
       **A target nothing holds is REFUSED at build**, forecasts included, naming it, its key
-      and the table's rows and columns. **Deliberately NOT refused:** a HEAD target whose
+      and the table's rows and columns. ~~**Deliberately NOT refused:** a HEAD target whose
       location lands on no active cell stays out with ledger 211's warning -- 211 decided a
       partial miss warns (one target file for several grids), and this does not overrule
       it. That warning reaches nobody in a default session (`log.warning` only, doc bug 55);
-      found, not fixed here.
+      found, not fixed here.~~ **REFUSED at build since ledger 341** (the review of this
+      entry); `compare()` still only warns.
       **Every row no target names carries weight 0** -- every family and route, its
       `obsval` left at the base run's value so ensembles still report it; a target's weight
       is its own, else 1.0. That is F1-W1 and G2, and it closes ledger 81's build-side note.
@@ -15295,7 +15297,9 @@ same day, which is the useful part of the result.
       the copy of pyEMU's row-label rule -- are deleted, with the package re-export.
       **Interim, until the observation route is keyed by period** (the next commit of the
       series): its rows are still MF6 simulated times, so a PERIOD key there is refused at
-      build where it was dropped; a whole MF6 time (`10`, `10.0`) matches in `compare()` and
+      build where it was dropped -- **unless a simulated time equals the key, which it then
+      reads in silence (ledger 341: daily periods, key 1 reads `t = 1`, the END of period
+      0)**; a whole MF6 time (`10`, `10.0`) matches in `compare()` and
       the build alike; a fractional MF6 time (`3.3333`) is refused on every route.
       Reproducer: `docs/reproducers/pest_handed_targets.py`, run against this tree and the
       parent's `src`. Tests: `tests/test_pest_handed_targets.py`, 11 on real MF6 runs; the
@@ -15314,3 +15318,54 @@ same day, which is the useful part of the result.
       (`test_the_named_series_forward_run_reads_the_calibrated_model_not_the_first`); no
       prefix check (`test_two_sets_under_one_prefix_are_refused`); the review ignoring
       `obsnme` (`test_a_snapshot_naming_its_observations_joins_on_the_name`).
+
+341. **The review of ledger 340: a head or concentration target on no active cell is refused by the PEST build, target names reach PEST verbatim (`007`, `NA`), an infinite value is refused, and the observation route's interim is stated as it is (2026-09-27).**
+      An adversarial review of 340's commit. Each item is a place a target still failed to
+      reach PEST as the user wrote it.
+      **A head/conc target whose location lands on no active cell is REFUSED at build** --
+      judgment call, overruling 340's recorded one. 340 kept ledger 211's partial-miss
+      WARNING for it, but the build's inner join then dropped its values from the control
+      file, and that warning is a `log.warning` nobody reads (doc bug 55; measured: zero
+      Python warnings): the one silent drop 340 left, and one its own spec (a) names. A DRN
+      zone on no active cell was ALREADY refused at build (its column is missing), so the two
+      families disagreed. 211's reason -- one target file serving several grids -- still
+      holds where it was made: `compare()` still warns and answers. A PEST build is one
+      model, and every values row of such a location is refused, blank ones too, as 340's
+      `_locate_targets` refuses a blank row it cannot place. **Not built:** an opt-out
+      (`observe(..., off_grid="drop")`) -- a new public argument, and the user has not been
+      asked; filtering the targets is the one spelling.
+      **Target names are read as TEXT by the forward-run writers** -- the head and
+      concentration writers read the target map, `write_named_series_targets` the lake/
+      reach/zone snapshot, with `converters={"name": str}` (and `obsname`). `pd.read_csv`
+      read a well named `007` as the integer 7 and `NA` as missing, so those writers wrote
+      columns `7.0`, `12.0` and `nan`. A REGRESSION of 340: its parent built such names
+      (PEST reads by position), and 340's base table, written by that same writer, failed
+      340's own header check with a message naming columns the user never wrote. For a
+      lake/reach/zone the header only drifted (`time,7` under the base's `time,007`), which
+      PEST's positional read survives; it is fixed for the same reason, one writer means one
+      spelling. **Not fixed:** `IesResults`' residual map reads the same mapping with a
+      plain `read_csv`, so a `007` well can lose its cell on the map; a target named `per`
+      collides with the index column and is refused by the header check with an unhelpful
+      message.
+      **An infinite value is REFUSED** with the non-numbers (`_coerce_target_values`): it is
+      a float, so it passed as a number, and pyEMU then refused the control file as holding
+      a NaN, writing `pst.obs_data.nans.csv` into the caller's working directory -- the
+      failure 340 said the build could no longer produce.
+      **The observation route's interim, stated as it is.** 340 wrote that a period key there
+      "matches nothing" and is refused. It is refused only while no simulated time EQUALS
+      the key: with daily periods the rows are `t = 1, 2, 3`, and keys 1 and 2 build at
+      weight 1 reading the ENDS of periods 0 and 1 (measured; unchanged since before 340).
+      Corrected in CLAUDE.md, `package_api_reference.md` and 340's interim paragraph; the
+      next commit of the series keys that route by period, which is the fix. **Not built:**
+      an interim guard -- a period key and an MF6 time cannot be told apart on that route.
+      **Checked and sound** (redone, not taken from 340): reverting the zero weights fails
+      the three weight tests, and the sorted base table with the header check off fails the
+      order test, the two-layer test and the concentration end to end; the 340 reproducer
+      reproduces its "after" column on this tree.
+      Reproducer: `docs/reproducers/pest_handed_targets_review.py`, run against this tree
+      and 340's `src` (and, for B, 340's parent). Tests, in
+      `tests/test_pest_handed_targets.py`; each fix reverted fails its own by name:
+      `test_a_head_target_on_no_active_cell_is_refused_by_the_build_naming_it` (the
+      refusal), `test_a_name_pandas_would_read_as_a_number_or_a_blank_reaches_pest_verbatim`
+      (the writers' converters; the lake assertion alone for the named-series one),
+      `test_an_infinite_value_is_refused_naming_it` (the `isinf` check).

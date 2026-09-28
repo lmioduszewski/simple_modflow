@@ -46,7 +46,7 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
         location) or as one series when there is a single location. Every name
         must match a location (stripped, ignoring case) or ``ValueError``.
         Units are the transport model's concentration units. A blank value (missing, or empty text) is unmeasured; any other
-        entry that is not a number raises ``ValueError`` naming the target and
+        entry that is not a finite number raises ``ValueError`` naming the target and
         its column (ledger 340).
     name_column : str, optional
         Column of ``locations`` holding each location's name. Default

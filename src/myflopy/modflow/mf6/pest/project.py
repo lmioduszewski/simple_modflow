@@ -499,7 +499,8 @@ class PestProject:
         matched to the simulated row whose index EQUALS its ``time`` read as a
         zero-based stress period (``1.0`` is period 1, ``1.5`` is refused), and a
         target no row holds -- a period the output did not save, a name with no
-        simulated column -- makes :meth:`build` raise, naming it. A blank value
+        simulated column, a head or concentration target on no active cell
+        (ledger 341) -- makes :meth:`build` raise, naming it. A blank value
         is unmeasured. Every simulated row no target measures stays in the
         control file at weight 0, its ``obsval`` the base run's own value, so it
         is reported but never history-matched; it used to carry weight 1, which
@@ -1137,11 +1138,12 @@ class PestProject:
         ------
         ValueError
             When an observation or forecast target matches no row of its
-            simulated table (naming it and the rows the table has); when a
-            target's ``time`` is not a whole number, or two values name one
-            target in one period; when two sets share a prefix; or when a head
-            or concentration ``simulated_values`` table's columns are not the
-            forward run's, in its order (ledger 340).
+            simulated table (naming it and the rows the table has), or a head or
+            concentration target's location lands on no active cell (ledger
+            341); when a target's ``time`` is not a whole number, or two values
+            name one target in one period; when two sets share a prefix; or when
+            a head or concentration ``simulated_values`` table's columns are not
+            the forward run's, in its order (ledger 340).
         """
 
         target_name = Path(filename).name if filename else f"{self.name}.pst"

@@ -102,7 +102,7 @@ class LakeStageTargets:
         to them exactly (case counts): a row naming no target gets no ``lake``
         and no simulated stage in :meth:`compare`, and the PEST build refuses
         it. A blank value (missing, or empty text) is unmeasured; any other
-        entry that is not a number raises ``ValueError`` naming the target and
+        entry that is not a finite number raises ``ValueError`` naming the target and
         its column (ledger 340).
         Default ``None`` makes a template that only captures simulated series:
         observed, its rows register at weight 0; forecast, every row is a

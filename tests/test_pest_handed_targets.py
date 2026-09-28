@@ -300,7 +300,7 @@ def test_a_blank_is_unmeasured_and_a_value_that_is_not_a_number_is_refused(toy, 
     assert pst.nnz_obs == 3
 
     with pytest.raises(ValueError, match=(
-            r"HeadTargets values must be numbers, or blank where a target was not "
+            r"HeadTargets values must be finite numbers, or blank where a target was not "
             r"measured, and 1 are neither: 'W1' at time 1 holds '12,5' \(column 'W1'\)")):
         _head_targets([("W1", 22)], pd.DataFrame({"time": [0, 1], "W1": ["50", "12,5"]}))
     with pytest.raises(ValueError, match=r"'r' at time 0 holds 'dry' \(column 'flow'\)"):
@@ -425,3 +425,88 @@ def test_the_named_series_forward_run_reads_the_calibrated_model_not_the_first(t
     subprocess.run([sys.executable, "forward_run.py"], cwd=template, check=True,
                    capture_output=True, text=True)
     assert table.read_text() == base
+
+
+# -- the review of ledger 340 (ledger 341) --------------------------------------
+
+
+def test_a_head_target_on_no_active_cell_is_refused_by_the_build_naming_it(toy, tmp_path):
+    """``compare()`` leaves a target on no active cell out with a warning -- one file may
+    serve several grids (ledger 211) -- and that warning goes to a logger nobody reads.
+    The build joined the values to the matched locations and dropped the rest, so the
+    measurement vanished from the control file in silence: the one silent drop 340
+    left. A DRN zone that lands nowhere was already refused (no column)."""
+
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    xmin, ymin, xmax, ymax = toy.vor.gdf_vorPolys.total_bounds
+    inside = toy.vor.gdf_vorPolys.geometry.iloc[22].centroid
+    wells = gpd.GeoDataFrame(
+        {"name": ["IN", "OUT"], "layer": [0, 0]},
+        geometry=[inside, Point(xmax + 5000.0, ymax + 5000.0)], crs=toy.vor.crs)
+    targets = mf.HeadTargets(
+        locations=wells,
+        values=pd.DataFrame({"time": [0, 1], "IN": [50.0, 51.0], "OUT": [60.0, 61.0]}))
+
+    # compare() is unchanged: it answers, the location left out holding no head.
+    compared = targets.compare(toy).set_index("name")["sim_head"]
+    assert compared.loc["IN"].notna().all() and compared.loc["OUT"].isna().all()
+    with pytest.raises(ValueError, match=(
+            r"HeadTargets \(PEST build, prefix 'hds'\): 1 target\(s\) name a location "
+            r"that lands on no active cell of this model, so PEST would never see "
+            r"them: 'OUT' at time\(s\) 0, 1")):
+        _build(toy, tmp_path / "pest", observe=(targets,))
+
+
+def test_a_name_pandas_would_read_as_a_number_or_a_blank_reaches_pest_verbatim(
+    toy, tmp_path
+):
+    """Wells named ``007``, ``0012`` and ``NA``: the forward-run writer read the target
+    map back with ``pd.read_csv``, which reads ``007`` as the integer 7 and ``NA`` as a
+    missing value, so it wrote columns ``7``, ``12`` and ``nan`` -- and the base table,
+    written by that same writer since 340, failed the build's own header check,
+    naming columns the user never wrote. A lake's forward run read its snapshot the
+    same way and wrote ``7`` under the base run's ``007``."""
+
+    from myflopy.modflow.mf6.pest.forward_run import (
+        _write_head_target_csv,
+        write_named_series_targets,
+    )
+
+    wells = _head_targets(
+        [("007", 22), ("0012", 23), ("NA", 24)],
+        pd.DataFrame({"time": [0], "007": [50.0], "0012": [51.0], "NA": [52.0]}))
+    pond = mf.LakeStageTargets(locations={"007": 0},
+                               values=pd.DataFrame({"time": [0], "007": [99.0]}))
+    cal, pst = _build(toy, tmp_path / "pest", observe=(wells, pond))
+    template = cal.template_workspace
+    heads = template / "hds_simulated_heads.csv"
+    stage = template / "stage_simulated_lake_stage.csv"
+    assert heads.read_text().splitlines()[0] == "per,007,0012,NA"
+    assert stage.read_text().splitlines()[0] == "time,007"
+    assert pst.nnz_obs == 4
+
+    # Each forward-run writer, as forward_run.py calls it, writes the same header.
+    rewritten = tmp_path / "heads_again.csv"
+    _write_head_target_csv("m", template / "hds_head_target_map.csv", rewritten,
+                           sim_ws=toy.workspace)
+    assert rewritten.read_text() == heads.read_text()
+    lake_again = tmp_path / "stage_again.csv"
+    write_named_series_targets("lake_stage", template / "stage_target_locations.csv",
+                               lake_again, sim_ws=toy.workspace, model_name="m")
+    assert lake_again.read_text().splitlines()[0] == "time,007"
+
+
+def test_an_infinite_value_is_refused_naming_it(toy, tmp_path):
+    """``inf`` is a float, so it passed the "is it a number" test and reached the
+    control file as an ``obsval``; pyEMU refused the file as holding a NaN and wrote
+    ``pst.obs_data.nans.csv`` into the caller's working directory."""
+
+    with pytest.raises(ValueError, match=(
+            r"HeadTargets values must be finite numbers, or blank where a target was "
+            r"not measured, and 1 are neither: 'W' at time 0 holds inf \(column 'W'\)")):
+        _head_targets([("W", 22)], pd.DataFrame({"time": [0], "W": [np.inf]}))
+    with pytest.raises(ValueError, match=r"'r' at time 1 holds '-inf' \(column 'flow'\)"):
+        mf.SfrFlowTargets(locations={"r": 3}, values=pd.DataFrame(
+            {"time": [1], "name": ["r"], "flow": ["-inf"]}))

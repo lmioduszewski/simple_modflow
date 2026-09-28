@@ -81,7 +81,10 @@ def _coerce_target_values(
     typo like ``"12,5"`` or ``"dry"`` each became ``NaN`` -- so a value that failed
     to parse was quietly unmeasured (ledger 340). The two are told apart BEFORE the
     conversion: an entry that is missing, or text that is empty or blank, is
-    ``NaN``; one that parses as a number is that number; anything else is refused.
+    ``NaN``; one that parses as a FINITE number is that number; anything else is
+    refused -- an infinite value included, which reached the control file as an
+    ``obsval`` pyEMU refuses as a NaN, writing ``pst.obs_data.nans.csv`` into the
+    caller's working directory (ledger 341).
 
     Parameters
     ----------
@@ -105,8 +108,8 @@ def _coerce_target_values(
     Raises
     ------
     ValueError
-        When any entry is neither blank nor a number, naming up to five by target,
-        time, the entry and its column.
+        When any entry is neither blank nor a finite number, naming up to five by
+        target, time, the entry and its column.
     """
 
     raw = long[column]
@@ -120,6 +123,7 @@ def _coerce_target_values(
             numbers.at[index] = float(str(raw.at[index]).strip())
         except ValueError:
             failed.at[index] = True
+    failed |= np.isinf(numbers.to_numpy())
     if failed.any():
         sources = source if isinstance(source, pd.Series) else pd.Series(source, index=long.index)
         offenders = [
@@ -131,8 +135,8 @@ def _coerce_target_values(
         ]
         more = int(failed.sum()) - len(offenders)
         raise ValueError(
-            f"{owner} values must be numbers, or blank where a target was not "
-            f"measured, and {int(failed.sum())} are neither: "
+            f"{owner} values must be finite numbers, or blank where a target was "
+            f"not measured, and {int(failed.sum())} are neither: "
             + "; ".join(offenders)
             + (f"; and {more} more" if more else "")
             + ". A blank is read as unmeasured; an entry that is not a number is "

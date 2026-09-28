@@ -1946,10 +1946,10 @@ class IesResults:
             if not {"time", "name"}.issubset(table.columns):
                 continue
             found = True
-            # The observation name's trailing token is str(time) verbatim --
-            # `_build_index_row_labels` formats it as f"{index}:{value}" -- so
-            # comparing the stringified time avoids having to know whether this
-            # family indexed on `per` (heads) or `time` (named series).
+            # An older snapshot, from a build that rebuilt each target's name as
+            # f"{index}:{str(time)}" (before ledger 340): comparing the stringified
+            # time against the name's trailing token avoids having to know whether
+            # this family indexed on `per` (heads) or `time` (named series).
             for name, time in zip(table["name"], table["time"], strict=True):
                 keys.add((
                     prefix.lower(),

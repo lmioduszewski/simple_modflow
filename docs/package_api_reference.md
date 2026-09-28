@@ -576,7 +576,9 @@ against the record index (LAK) or the stress period (SFR, DRN) -- and targets mu
 keyed by the route's label: on the observation route a target keyed by period matches
 nothing, which `compare()` shows as `NaN` and the PEST build REFUSES, naming the target
 and the rows the table holds (ledger 340; it used to drop the target silently and leave
-the STARTING model's own flow in its place at weight 1). Key flow targets by simulated
+the STARTING model's own flow in its place at weight 1) -- UNLESS a simulated time
+happens to equal the period number, which it then reads in silence: with daily periods
+the key 1 reads `t = 1`, the END of period 0 (ledger 341). Key flow targets by simulated
 time there (`10, 20, 30` for three 10-day periods) until that route is keyed by period.
 The
 observation route's SFR flow also keeps MF6's sign (`DOWNSTREAM-FLOW` is negative)
@@ -591,14 +593,16 @@ it read period end -- key it by saved-record index there, until
 `compare()` and the PEST build** (`_shared._numeric_periods`, ledger 340): `1.0` is
 period 1, and a key with a fraction (`1.5`, which was truncated to 1) is refused. Two
 values for one target in one period are refused in both, naming them -- the build kept
-the last. A blank value is unmeasured; a value that is not a number (`"12,5"`) is
-refused when the targets are built, naming the target and its column.
+the last. A blank value is unmeasured; a value that is not a finite number (`"12,5"`,
+`inf`) is refused when the targets are built, naming the target and its column.
 
 **What PEST is handed is exactly the targets** (ledger 340). `cal.build()` matches each
 target to the simulated row whose index EQUALS its period and to its column by name,
 and takes the observation pyEMU's instruction file reads there -- never a name rebuilt
 from the key's spelling, which missed `per:1` for a key of `1.0`. A target nothing
-holds is refused. Every simulated row no target measures stays at weight 0 with the base
+holds is refused -- a head or concentration target whose location lands on no active
+cell included (ledger 341: `compare()` only warns about one, since one target file may
+serve several grids). Every simulated row no target measures stays at weight 0 with the base
 run's value (a forecast set's other periods too), so nothing unmeasured is
 history-matched. A set given no values registers: observed, it only captures; forecast,
 it forecasts every row. The head and concentration tables are written by ONE writer for
