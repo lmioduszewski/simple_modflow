@@ -52,12 +52,24 @@ def _grid(n: int = 4, length: float = 100.0, order: list[int] | None = None) -> 
 
 
 def _model(grid, idomain=None, budget=None):
-    """A model-like object: the grid, a flopy-shaped DISV idomain, an optional DRN budget."""
+    """A model-like object: the grid, a flopy-shaped DISV idomain, an optional DRN budget.
+
+    ``node_to_lni`` is MF6's USER numbering, ``layer * ncpl + cell`` -- the node a
+    cell-budget record carries, which ``tests/test_drn_zone_layers.py`` pins on a
+    real run with an inactive cell.
+    """
 
     disv = None if idomain is None else SimpleNamespace(
         idomain=SimpleNamespace(array=np.asarray(idomain, dtype=int))
     )
-    model = SimpleNamespace(vor=grid, gwf=SimpleNamespace(disv=disv, drn="drn_owner"))
+    ncpl = len(grid.gdf_vorPolys)
+    nlay = 1 if idomain is None or np.ndim(idomain) == 1 else np.shape(idomain)[0]
+    model = SimpleNamespace(
+        vor=grid,
+        gwf=SimpleNamespace(disv=disv, drn="drn_owner"),
+        node_to_lni={layer * ncpl + cell: (layer, cell)
+                     for layer in range(nlay) for cell in range(ncpl)},
+    )
     if budget is not None:
         model.bud = lambda package, frame=budget: SimpleNamespace(df=frame.copy())
     return model

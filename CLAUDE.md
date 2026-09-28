@@ -1678,6 +1678,18 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   writer (the pivot SORTED its columns: PEST read W1's head as W10's in every
   realization); the named-series forward run reloads the calibrated model BY NAME.
   **A template built before this bakes the old forward run and must be rebuilt.**
+- **A DRN zone's cell is a `(layer, cell)` pair, on every route** (ledger 342). A
+  cell-budget record names a drain by MF6's model-wide USER node (`layer * ncpl + cell`
+  on a DISV, past an inactive cell too -- pinned by `tests/test_drn_zone_layers.py`);
+  the budget route matched it against a zone's IN-LAYER numbers, so a zone in layer 1
+  read the layer-0 drain sharing a number (-6.77 for drains holding -5975.73), and the
+  PEST zone snapshot dropped `layer`. It matches the pair through `model.node_to_lni`
+  now -- a test double reading the DRN budget must carry that map -- and the snapshot
+  carries `layer`. A zone is ONE zone of its rows' pairs, compared once and written to
+  MF6 once per cell (`<name>_lay<layer>_c<cell>` when it spans layers); a row with no
+  `cells` entry is resolved from its geometry, so one table may mix the two. A partial
+  miss of a DRN zone or a head/conc target is a Python warning as well as a log line
+  (ledger 288's rule).
 - `forward_run.py` — injected forward run: pyEMU's `apply_list_and_array_pars` for params,
   plus post-processors that regenerate head + named-series (lake/SFR/DRN) simulated CSVs.
 - **Run discovery + review**: `model.pest_runs` / `run.pest_runs` (`runs.py`,

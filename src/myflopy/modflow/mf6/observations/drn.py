@@ -8,6 +8,7 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from shapely.geometry.base import BaseGeometry
 
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.domain import model_domain
@@ -33,6 +34,56 @@ from myflopy.modflow.mf6.period_end import period_ends
 logger = get_logger(__name__)
 
 
+def _zone_layer(value, name) -> int:
+    """One zone row's layer as a zero-based int; blank is 0, anything else not a layer raises."""
+
+    if value is None or (not isinstance(value, str) and pd.isna(value)) or str(value).strip() == "":
+        return 0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = float("nan")
+    if not np.isfinite(number) or number < 0 or number != int(number):
+        raise ValueError(
+            f"DrnFlowTargets zone {str(name)!r}: layer {value!r} is not a zero-based layer "
+            "number (a whole number, 0 or more)."
+        )
+    return int(number)
+
+
+def _with_geometry(frame: pd.DataFrame, *, name_column: str = "name") -> pd.DataFrame:
+    """A plain frame carrying a ``geometry`` column, as the ``GeoDataFrame`` it describes.
+
+    A dict with a ``geometry`` key and a list of record dicts carrying one were
+    read into a plain ``DataFrame``, whose geometry the column filter then dropped,
+    so the zones were refused as having none ("polygon zones require a
+    GeoDataFrame"). The geometry is taken in the GRID's coordinates: a plain dict
+    carries no CRS.
+    """
+
+    if isinstance(frame, gpd.GeoDataFrame) or "geometry" not in frame.columns:
+        return frame
+    values = [
+        None if value is None or (isinstance(value, float) and np.isnan(value)) else value
+        for value in frame["geometry"]
+    ]
+    wrong = [
+        (str(name), type(value).__name__)
+        for name, value in zip(frame[name_column], values, strict=True)
+        if value is not None and not isinstance(value, BaseGeometry)
+    ]
+    if wrong:
+        listing = ", ".join(f"{name!r} ({kind})" for name, kind in wrong[:5])
+        raise ValueError(
+            "DrnFlowTargets locations: a 'geometry' entry must be a shapely geometry "
+            f"(a Point, LineString or Polygon), not {listing}. Parse text first -- "
+            "shapely.wkt.loads(...) -- or give the zones as a GeoDataFrame or vector file."
+        )
+    located = frame.copy()
+    located["geometry"] = values
+    return gpd.GeoDataFrame(located, geometry="geometry")
+
+
 def _normalize_drn_zone_locations(
     locations,
     *,
@@ -40,7 +91,14 @@ def _normalize_drn_zone_locations(
     group_column: str | None = "group",
     weight_column: str | None = "weight",
 ) -> pd.DataFrame:
-    """Normalize drain-zone definitions from cells or polygons."""
+    """Normalize drain-zone definitions from cells or geometry.
+
+    Every row comes back with ``name``, ``group``, ``weight``, ``layer`` (an int,
+    0 when blank) and ``cells`` when the input has that column: a list of ints, or
+    ``None`` where the row gives none -- a row :func:`_resolve_drn_zone_cells`
+    resolves from its geometry. An EMPTY list (``[]``, or ``""`` in a CSV) is an
+    explicit zone of no cells, taken as given.
+    """
 
     if isinstance(locations, pd.Series):
         frame = locations.rename("cells").rename_axis(name_column).reset_index()
@@ -61,6 +119,7 @@ def _normalize_drn_zone_locations(
 
     if name_column not in frame.columns:
         raise ValueError("DrnFlowTargets locations must include a name column.")
+    frame = _with_geometry(frame, name_column=name_column)
     keep = [name_column]
     for column in ("cells", group_column, weight_column, "layer"):
         if column is not None and column in frame.columns:
@@ -79,24 +138,48 @@ def _normalize_drn_zone_locations(
         frame["weight"] = np.nan
     if "layer" not in frame.columns:
         frame["layer"] = 0
+    frame["layer"] = [
+        _zone_layer(value, name) for value, name in zip(frame["layer"], frame["name"], strict=True)
+    ]
     if "cells" in frame.columns:
         def _coerce_cells(values):
-            """Coerce one zone's cell spec (CSV string / sequence / scalar / NaN) to a list of ints."""
+            """One zone row's cells as a list of ints; ``None`` when the row gives none.
+
+            ``None`` (or ``NaN``) means "resolve this row from its geometry"; an empty
+            list or empty text is an explicit zone of no cells.
+            """
 
             if isinstance(values, str):
                 return [int(value) for value in values.split(",") if str(value).strip() != ""]
             if isinstance(values, (list, tuple, np.ndarray, pd.Series)):
                 return [int(value) for value in values]
-            if pd.isna(values):
-                return []
+            if values is None or pd.isna(values):
+                return None
             return [int(values)]
 
-        frame["cells"] = frame["cells"].apply(_coerce_cells)
+        frame["cells"] = pd.Series(
+            [_coerce_cells(values) for values in frame["cells"]], index=frame.index, dtype=object
+        )
     return frame
+
+
+def _zone_listing(names) -> str:
+    """Zone names for a message: the first ten, quoted, and a count of the rest."""
+
+    names = list(dict.fromkeys(str(name) for name in names))
+    listing = ", ".join(repr(name) for name in names[:10])
+    if len(names) > 10:
+        listing += f", and {len(names) - 10} more"
+    return listing
 
 
 def _resolve_drn_zone_cells(locations: pd.DataFrame, model, *, owner=None) -> pd.DataFrame:
     """Attach explicit cell lists to each DRN zone, resolving geometry against the grid.
+
+    A row that gives ``cells`` keeps them, as given; a row that gives none -- no
+    ``cells`` column, or a missing entry in one -- is resolved from its geometry,
+    so one ``GeoDataFrame`` may mix the two (ledger 342: its geometry rows were
+    skipped whenever a ``cells`` column existed, and came back with no cells).
 
     A zone COVERS the cells it is drawn over, by the shared rule
     (:func:`myflopy.modflow.mf6.grid.geometry.cell_shares`): a seepage polygon
@@ -115,9 +198,10 @@ def _resolve_drn_zone_cells(locations: pd.DataFrame, model, *, owner=None) -> pd
     resolved with no reference to the DRN package, and a covered cell with no
     drain adds zero to the budget sum.
 
-    A zone given as SEVERAL ROWS is ONE zone, as the grouped join made it: its
-    cells are the union over its rows and it has missed only when EVERY row of it
-    has, which is also how the set is counted.
+    A zone given as SEVERAL ROWS is ONE zone, as the grouped join made it: each
+    geometry row carries the union of the cells its zone's geometry rows cover IN
+    ITS LAYER, and the zone has missed only when it holds no cell at all, which is
+    also how the set is counted.
 
     Misses follow ledger 211. A zone set that lands nowhere raises, naming both
     extents and both CRSs, where an off-grid zone used to come back as ``[]`` and
@@ -126,80 +210,173 @@ def _resolve_drn_zone_cells(locations: pd.DataFrame, model, *, owner=None) -> pd
     """
 
     frame = locations.copy()
-    if "cells" in frame.columns and frame["cells"].notna().all():
+    if "cells" in frame.columns:
+        pending = frame["cells"].isna().to_numpy()
+    else:
+        pending = np.ones(len(frame), dtype=bool)
+    if not pending.any():
         return frame
+    waiting = frame.loc[pending, "name"]
     if not isinstance(frame, gpd.GeoDataFrame):
-        raise ValueError("DrnFlowTargets polygon zones require a GeoDataFrame or GIS layer input.")
+        raise ValueError(
+            f"DrnFlowTargets zone(s) {_zone_listing(waiting)} give no cells and no geometry. "
+            "Give each a 'cells' list, or give the zones as a GeoDataFrame, a vector file, "
+            "or record dicts carrying a 'geometry'."
+        )
+    empty = frame.geometry.isna().to_numpy() | frame.geometry.is_empty.to_numpy()
+    if (pending & empty).any():
+        raise ValueError(
+            f"DrnFlowTargets zone(s) {_zone_listing(frame.loc[pending & empty, 'name'])} give "
+            "neither cells nor a geometry, so there is nothing to resolve them from."
+        )
+    if model is None:
+        raise ValueError(
+            f"DrnFlowTargets zone(s) {_zone_listing(waiting)} are drawn as geometry, which is "
+            "resolved against a model's grid; pass the model (it is None here), or give "
+            "their 'cells'."
+        )
     polys = model.vor.gdf_vorPolys
     domain = model_domain(model, len(polys))
     located = _in_grid_crs(frame, model)
-    layers = located["layer"] if "layer" in located.columns else pd.Series(0, index=located.index)
-    covered: dict[str, list[int]] = {}
+    covered: dict[tuple[str, int], list[int]] = {}
     reasons: dict[str, str] = {}
-    for name, layer, geometry in zip(located["name"], layers, located.geometry, strict=True):
-        key = str(name)
-        layer = 0 if pd.isna(layer) else int(layer)
+    for name, layer, geometry in zip(
+        located.loc[pending, "name"], located.loc[pending, "layer"],
+        located.geometry[pending], strict=True,
+    ):
+        key = (str(name), int(layer))
         hits = cell_shares(
             polys,
             geometry,
             # Eligibility only. ``cell_shares`` sorts whatever this returns, so
             # the lowest-numbered usable cell wins a tie without a second copy of
             # that rule here.
-            usable=lambda cells, layer=layer: [
+            usable=lambda cells, layer=int(layer): [
                 cell for cell in cells if domain_active(domain, layer, cell)
             ],
         )
         if not hits:
-            reason = miss_reason(polys, geometry, target=f"active cell in layer {layer}")
-            reasons.setdefault(key, reason)
+            reason = miss_reason(polys, geometry, target=f"active cell in layer {int(layer)}")
+            reasons.setdefault(key[0], reason)
         covered[key] = sorted(set(covered.get(key, ())) | {cell for cell, _share in hits})
+    resolved = located.copy()
+    # A list per row, not the shared one: two rows of one zone must not alias.
+    resolved["cells"] = pd.Series(
+        [
+            list(covered[(str(name), int(layer))]) if waits else list(cells)
+            for name, layer, cells, waits in zip(
+                resolved["name"], resolved["layer"],
+                resolved["cells"] if "cells" in resolved.columns else [None] * len(resolved),
+                pending, strict=True,
+            )
+        ],
+        index=resolved.index,
+        dtype=object,
+    )
     # Counted by NAME, not by row. A multipart zone has one row per part, and
     # accumulating the misses inside the loop said "1 of 2 DRN zones land on no
     # active cell" of a single zone given as two rows -- naming the zone that had
     # in fact landed, and which the frame still carried.
-    missed = [f"{key!r} ({reasons[key]})" for key, cells in covered.items() if not cells]
+    members = _zone_members(resolved)
+    missed = [f"{name!r} ({reasons[name]})" for name, cells in members.items()
+              if not cells and name in reasons]
     if missed:
         _report_missed_features(
             owner,
             missed,
-            total=len(covered),
+            total=len(members),
             subject="DRN zone",
             nothing_left="sum",
             where=lambda: _placement_note(frame, model, label="zones"),
             log=logger,
         )
-    resolved = located.drop(columns=["cells"], errors="ignore").copy()
-    # A list per row, not the shared one: two rows of one zone must not alias.
-    resolved["cells"] = [list(covered[str(name)]) for name in resolved["name"]]
     return resolved
 
 
-def _zone_members(zones: pd.DataFrame) -> dict[str, set[int]]:
-    """Each zone's member cells by NAME: a zone given as several rows is ONE zone.
+def _zone_members(zones: pd.DataFrame) -> dict[str, set[tuple[int, int]]]:
+    """Each zone's member cells by NAME, as ``(layer, cell)``: several rows are ONE zone.
 
-    ``_resolve_drn_zone_cells`` gives every row of a geometry zone the union of
-    its rows' cells already; a zone given as several rows of explicit cells is
-    united here, so its flow is summed once over all of them rather than once
-    per row.
+    A cell is a ``(layer, cell)`` pair because that is what MF6 names: a DRN
+    observation's cellid, and the model-wide node a cell-budget record carries
+    (``layer * ncpl + cell`` on a DISV). A zone keyed by its in-layer numbers
+    alone read, below layer 0, whichever layer-0 drain shared a number
+    (ledger 342). A zone given as several rows -- explicit cells, or geometry, in
+    one layer or several -- is united here, so its flow is summed once over all
+    of them rather than once per row.
 
     Parameters
     ----------
     zones : pandas.DataFrame
-        Resolved zones (``DrnFlowTargets.zone_definitions``): ``name`` and
-        ``cells``.
+        Zones with ``name``, ``layer`` and ``cells``
+        (``DrnFlowTargets.zone_definitions``); a row whose ``cells`` is ``None``
+        (unresolved geometry) adds nothing.
 
     Returns
     -------
-    dict of str to set of int
-        Zone name to its cells, in the order the zones first appear.
+    dict of str to set of tuple of (int, int)
+        Zone name to its ``(layer, cell)`` pairs, zero-based, in the order the
+        zones first appear.
     """
 
-    members: dict[str, set[int]] = {}
+    members: dict[str, set[tuple[int, int]]] = {}
     for row in zones.itertuples(index=False):
+        layer = int(getattr(row, "layer", 0))
         members.setdefault(str(row.name), set()).update(
-            int(value) for value in getattr(row, "cells", [])
+            (layer, int(value)) for value in (getattr(row, "cells", None) or ())
         )
     return members
+
+
+def _zone_labels(members: dict[str, set[tuple[int, int]]]) -> dict[str, list[tuple[str, tuple[int, int]]]]:
+    """Each zone's MF6 observation labels, one per member cell, and the cellid each names.
+
+    ``<name>_c<cell>`` for a zone in one layer -- the label :meth:`to_flopy_obs`
+    has always written -- and ``<name>_lay<layer>_c<cell>`` for a zone reaching
+    several, whose cell numbers can repeat between layers (the head targets'
+    ``_lay`` convention). Every character that is not a letter or digit becomes
+    ``_``. Two zones whose labels coincide once written -- ``"a b"`` and ``"a_b"``
+    -- are refused: MF6 accepts the duplicate and the reader could then only take
+    one of the two columns for both.
+
+    Parameters
+    ----------
+    members : dict of str to set of tuple of (int, int)
+        :func:`_zone_members`.
+
+    Returns
+    -------
+    dict of str to list of tuple of (str, tuple of (int, int))
+        Zone name to ``(label, (layer, cell))``, in ascending ``(layer, cell)``.
+
+    Raises
+    ------
+    ValueError
+        When two cells of the set would carry one label, naming the label and the
+        zones.
+    """
+
+    labels: dict[str, list[tuple[str, tuple[int, int]]]] = {}
+    owners: dict[str, list[str]] = {}
+    for name, pairs in members.items():
+        layered = len({layer for layer, _cell in pairs}) > 1
+        entries = []
+        for layer, cell in sorted(pairs):
+            label = _observation_label(
+                f"{name}_lay{layer}_c{cell}" if layered else f"{name}_c{cell}"
+            )
+            owners.setdefault(label.lower(), []).append(name)
+            entries.append((label, (layer, cell)))
+        labels[name] = entries
+    clashes = {label: names for label, names in owners.items() if len(names) > 1}
+    if clashes:
+        listing = "; ".join(
+            f"{label!r} from zones {_zone_listing(names)}" for label, names in list(clashes.items())[:5]
+        )
+        raise ValueError(
+            "DrnFlowTargets: two zone cells would carry one MF6 observation label once "
+            f"written (letters and digits only): {listing}. Rename one of the zones."
+        )
+    return labels
 
 
 @dataclass
@@ -220,28 +397,39 @@ class DrnFlowTargets:
     measurement is -- and the steps a period saved do not; a period whose final
     step output control did not save is refused rather than read early.
 
+    **A zone's cell is a ``(layer, cell)`` pair, on every route** (ledger 342): the
+    budget file names a drain by its model-wide node, and matching that against a
+    zone's in-layer numbers read a zone in layer 1 as whichever layer-0 drain
+    shared a number. A zone is summed ONCE over the union of its rows' cells, and
+    written to MF6 as one observation per cell.
+
     Parameters
     ----------
     locations : str, pathlib.Path, GeoDataFrame, DataFrame, Series, dict, list or tuple
         The seepage zones, one name each; rows sharing a name are ONE zone, its
-        cells united. A zone's cells come one of two ways. EXPLICIT: a ``cells``
-        column holding a list of ints, one int or a comma-separated string
-        (``"317, 342"``) -- ZERO-based cell numbers within the zone's layer,
-        taken as given; the ``{name: cells}`` dict and a ``Series`` of cells
-        indexed by name are shorthands for it. GEOMETRY: a ``GeoDataFrame``, or
-        any other value (a vector-file path) read with ``geopandas.read_file``,
-        with no ``cells`` column -- :meth:`zone_definitions` resolves each zone
-        to the cells it COVERS that are active in its layer. A dict with a
+        cells united across the rows and their layers. Each row names its cells
+        one of two ways. EXPLICIT: a ``cells`` entry holding a list of ints, one
+        int or a comma-separated string (``"317, 342"``) -- ZERO-based cell
+        numbers within the row's ``layer``, taken as given (an empty list, or
+        ``""``, is a zone of no cells); the ``{name: cells}`` dict and a
+        ``Series`` of cells indexed by name are shorthands for it. GEOMETRY: a
+        row with no ``cells`` entry (no such column, or a missing value in it)
+        and a geometry -- :meth:`zone_definitions` resolves it to the cells it
+        COVERS that are active in its layer. One table may mix the two. Geometry
+        comes from a ``GeoDataFrame``, from any other value (a vector-file path)
+        read with ``geopandas.read_file``, or from a ``geometry`` column of
+        shapely geometries in a dict, a list of record dicts or a ``DataFrame``,
+        which becomes a ``GeoDataFrame`` in the GRID's coordinates (it carries no
+        CRS; anything but a geometry there raises ``ValueError``). A dict with a
         ``name``, ``cells`` or ``geometry`` key is read as columns, and a list or
         tuple as record dicts. Kept: ``name_column``, ``cells``,
-        ``group_column``, ``weight_column``, ``layer`` (zero-based, default 0:
-        the layer a geometry zone is resolved in and :meth:`to_flopy_obs`
-        writes each record for) and a ``GeoDataFrame``'s
-        geometry; every other column is DROPPED, a ``node`` or ``cell`` column
-        and a geometry in a plain dict or ``DataFrame`` included. When a
-        ``GeoDataFrame`` carries a ``cells`` column, every row is taken as
-        explicit and a row whose cells are ``NaN`` gets none. ``ValueError``
-        when ``name_column`` is missing.
+        ``group_column``, ``weight_column``, ``layer`` and the geometry; every
+        other column is DROPPED, a ``node`` or ``cell`` column included.
+        ``layer`` is zero-based, default 0, a blank read as 0: the layer a row's
+        cells are in, which every route reads -- MF6's cell-budget node is
+        ``layer * ncpl + cell`` on a DISV, and the budget route matches the pair
+        (ledger 342). ``ValueError`` when ``name_column`` is missing, or a
+        ``layer`` is not a whole number 0 or more.
     values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
         Observed discharge through time, in model length cubed per model time
         unit. :meth:`compare` subtracts it, as given, from the simulated flow,
@@ -340,36 +528,45 @@ class DrnFlowTargets:
     def zone_definitions(self, model) -> pd.DataFrame:
         """Resolve each zone's member cells against ``model`` (covering geometry if needed).
 
-        A zone reaches the cells it COVERS, active in its own layer -- the rule
-        ``.gpkg`` boundaries and head targets use -- and comes back in the GRID's
-        CRS, whatever the zone file's own was. See
+        A row given ``cells`` keeps them as given; a row given none is resolved from
+        its geometry: it reaches the cells it COVERS, active in its own layer -- the
+        rule ``.gpkg`` boundaries and head targets use -- and comes back in the
+        GRID's CRS, whatever the zone file's own was. See
         :func:`_resolve_drn_zone_cells` for what that rule replaced and for what a
         zone landing on nothing does.
 
         Parameters
         ----------
         model : SimulationBase or None
-            The model whose grid (``model.vor``) and active domain geometry zones
-            are resolved against. Not read when the zones carry a ``cells``
-            column, which is returned as given; ``None`` then works.
+            The model whose grid (``model.vor``) and active domain geometry rows
+            are resolved against. Not read when every row gives its ``cells``,
+            which are returned as given; ``None`` then works.
 
         Returns
         -------
         pandas.DataFrame or geopandas.GeoDataFrame
             One row per ``locations`` row: ``name``, ``cells`` (zero-based cell
-            numbers in the row's layer; for a geometry zone, the union over
-            every row of that name), ``group``, ``weight``, ``layer``, and for
-            geometry zones their geometry, converted to the grid's CRS when both
-            CRSs are known.
+            numbers in the row's layer: an explicit row's own; a geometry row's,
+            the union over every geometry row of that name IN THAT LAYER),
+            ``group``, ``weight``, ``layer``, and, where the zones carry
+            geometry, the geometry, converted to the grid's CRS when both CRSs
+            are known.
 
         Raises
         ------
         ValueError
-            When zones without a ``cells`` column were not given as a
-            ``GeoDataFrame`` or vector file; or when no zone lands on a cell
-            active in its layer, naming the zones (the first ten) and both
-            extents and CRSs (ledger 211). A PARTIAL miss is logged at WARNING instead, once per
-            missed set on this object.
+            When a row gives no cells and has no geometry to resolve them from,
+            or ``model`` is ``None`` while one does; or when no zone lands on a
+            cell active in its layer, naming the zones (the first ten) and both
+            extents and CRSs (ledger 211).
+
+        Warns
+        -----
+        UserWarning
+            When SOME zones land on no active cell, naming them, once per missed
+            set on this object -- through ``warnings.warn`` as well as the
+            logger, because a log line alone reaches nobody by default (ledgers
+            288 and 342).
         """
 
         return _resolve_drn_zone_cells(self._locations, model, owner=self)
@@ -382,8 +579,8 @@ class DrnFlowTargets:
         model : SimulationBase or None, optional
             When given, zones are resolved through :meth:`zone_definitions`,
             whose ``Raises`` apply. Default ``None``: the zones as normalized at
-            construction -- explicit cells only, geometry unresolved and in the
-            zone file's own CRS.
+            construction -- a geometry row's ``cells`` is ``None``, unresolved,
+            and its geometry in the zone file's own CRS.
 
         Returns
         -------
@@ -435,25 +632,40 @@ class DrnFlowTargets:
         ----------
         model : SimulationBase or None, optional
             When given, zones are resolved through :meth:`zone_definitions`
-            first, whose ``Raises`` apply. Default ``None``: geometry zones are
+            first, whose ``Raises`` apply. Default ``None``: geometry rows are
             unresolved and count no cells.
 
         Returns
         -------
         pandas.DataFrame
-            One row: ``n_zones`` (distinct names), ``n_cells`` (the length of
-            every row's cell list, added over rows -- so a geometry zone given as
-            several rows, each carrying the zone's union, is counted once per
-            row) and ``n_rows`` (observed values).
+            One row: ``n_zones`` (distinct names), ``n_cells`` (distinct
+            ``(layer, cell)`` pairs over the whole set -- a cell is counted once
+            however many rows or zones name it; it counted every row's list, so a
+            geometry zone given as several rows, each carrying the zone's union,
+            was counted once per row) and ``n_rows`` (observed values).
         """
 
         definitions = self.zone_definitions(model) if model is not None else self._locations.copy()
         zone_count = int(definitions["name"].nunique())
-        cell_count = int(sum(len(value) for value in definitions.get("cells", pd.Series(dtype=object))))
-        return pd.DataFrame([{"n_zones": zone_count, "n_cells": cell_count, "n_rows": int(len(self._values))}])
+        cells = set().union(*_zone_members(definitions).values()) if len(definitions) else set()
+        return pd.DataFrame([{"n_zones": zone_count, "n_cells": len(cells), "n_rows": int(len(self._values))}])
 
     def _drn_budget_frame(self, model) -> pd.DataFrame:
-        """The DRN cell-by-cell budget as a tidy per/node/q frame (adds ``per`` if only kstpkper)."""
+        """The DRN cell-by-cell budget as a tidy frame: ``per``, ``node``, ``layer``, ``cell``, ``q``.
+
+        ``node`` is MF6's model-wide USER node, zero-based -- ``layer * ncpl +
+        cell`` on a DISV, whatever the ``idomain`` removes (MF6 writes user, not
+        reduced, node numbers; pinned by ``tests/test_drn_zone_layers.py``) --
+        and ``layer``/``cell`` are that node through ``model.node_to_lni``, the
+        one conversion the package budget tables use.
+
+        Raises
+        ------
+        ValueError
+            When the budget carries neither ``per`` nor ``kstpkper``, no ``node``,
+            or a node that is not a cell of the model's grid -- the file and the
+            model do not line up.
+        """
 
         budget = model.bud("drn").df.reset_index().copy()
         if "per" not in budget.columns:
@@ -464,6 +676,18 @@ class DrnFlowTargets:
             raise ValueError("DRN budget dataframe requires a zero-based 'node' column.")
         budget["node"] = pd.to_numeric(budget["node"], errors="coerce").astype(int)
         budget["q"] = pd.to_numeric(budget["q"], errors="coerce")
+        lookup = model.node_to_lni
+        nodes = pd.unique(budget["node"])
+        stray = sorted(int(node) for node in nodes if int(node) not in lookup)
+        if stray:
+            raise ValueError(
+                f"The DRN cell-budget record names node(s) {stray[:5]} (zero-based), which "
+                f"are not cells of this model's grid ({len(lookup)} nodes): the budget "
+                "file and the model do not line up."
+            )
+        pairs = {int(node): lookup[int(node)] for node in nodes}
+        budget["layer"] = [int(pairs[int(node)][0]) for node in budget["node"]]
+        budget["cell"] = [int(pairs[int(node)][1]) for node in budget["node"]]
         return budget
 
     def _zone_flow_table(self, model, zones: pd.DataFrame) -> pd.DataFrame:
@@ -477,12 +701,19 @@ class DrnFlowTargets:
         on the canonical model at ``nstp=3`` under ``SAVE BUDGET ALL`` read
         -292.51 where each step held -97.50.
 
+        A budget row belongs to a zone by its ``(layer, cell)``, not its in-layer
+        cell number: the record's node is model-wide, so matching it against a
+        zone's cell numbers read, for a zone in layer 1, the LAYER-0 drain
+        sharing a number (ledger 342: -6.77 for a zone whose drains held
+        -5975.73).
+
         Parameters
         ----------
         model : SimulationBase
             A run model with a DRN package and a cell-budget file.
         zones : pandas.DataFrame
-            The resolved zones (:meth:`zone_definitions`): ``name`` and ``cells``.
+            The resolved zones (:meth:`zone_definitions`): ``name``, ``layer``
+            and ``cells``.
 
         Returns
         -------
@@ -494,16 +725,18 @@ class DrnFlowTargets:
         ------
         ValueError
             When a period the budget file saved lacks its final step -- naming
-            the period, the steps saved and ``SAVE BUDGET LAST``.
+            the period, the steps saved and ``SAVE BUDGET LAST``; or when the
+            budget names a node the grid does not have.
         """
 
         budget = self._drn_budget_frame(model)
         members = _zone_members(zones)
         names = list(members)
+        located = pd.MultiIndex.from_arrays([budget["layer"], budget["cell"]])
         pieces = [
-            budget.loc[budget["node"].isin(cells)].assign(zone=index)
-            for index, cells in enumerate(members.values())
-            if cells
+            budget.loc[located.isin(sorted(pairs))].assign(zone=index)
+            for index, pairs in enumerate(members.values())
+            if pairs
         ]
         if not pieces:
             return pd.DataFrame(columns=["per", "name", "sim_flow"])
@@ -523,6 +756,32 @@ class DrnFlowTargets:
         table["name"] = [names[int(zone)] for zone in table["zone"]]
         return table.rename(columns={"q": "sim_flow"}).loc[:, ["per", "name", "sim_flow"]]
 
+    def _zone_details(self, zones: pd.DataFrame) -> pd.DataFrame:
+        """One row per zone NAME: its ``group``, ``weight`` and ``cells`` as ``(layer, cell)``.
+
+        What :meth:`compare` joins to each simulated row, on both routes. The
+        observation route joined the zone table's ROWS, so a zone given as two
+        rows doubled every comparison row and ``stats`` counted each residual
+        twice.
+        """
+
+        details = pd.DataFrame(
+            [
+                {
+                    "name": str(row.name),
+                    "group": getattr(row, "group", pd.NA),
+                    "weight": getattr(row, "weight", np.nan),
+                }
+                for row in zones.itertuples(index=False)
+            ],
+            columns=["name", "group", "weight"],
+        ).drop_duplicates(subset="name")
+        members = _zone_members(zones)
+        details["cells"] = pd.Series(
+            [sorted(members[name]) for name in details["name"]], index=details.index, dtype=object
+        )
+        return details.reset_index(drop=True)
+
     def _obs_column_map(self, model) -> tuple[pd.DataFrame, dict[str, list[str]]]:
         """The resolved zones and, per zone NAME, the MF6 observation label of each member cell.
 
@@ -541,13 +800,20 @@ class DrnFlowTargets:
         -------
         tuple of (pandas.DataFrame, dict of str to list of str)
             The resolved zones (:meth:`zone_definitions`), and each zone's labels
-            in ascending cell order.
+            in ascending ``(layer, cell)`` order -- the labels
+            :meth:`to_flopy_obs` writes, from the one :func:`_zone_labels`.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`zone_definitions`; or when two zones' cells would carry one
+            label (:func:`_zone_labels`).
         """
 
         zones = self.zone_definitions(model)
         zone_columns = {
-            name: [_observation_label(f"{name}_c{cell}") for cell in sorted(cells)]
-            for name, cells in _zone_members(zones).items()
+            name: [label for label, _cellid in entries]
+            for name, entries in _zone_labels(_zone_members(zones)).items()
         }
         return zones, zone_columns
 
@@ -587,10 +853,10 @@ class DrnFlowTargets:
         if wide is None:
             return None
 
-        zones = self.zone_definitions(model)
+        details = self._zone_details(self.zone_definitions(model))
         simulated = wide.melt(id_vars=["time"], var_name="name", value_name="sim_flow")
         simulated["per"] = simulated["time"]
-        simulated = zones.merge(simulated, on="name", how="left")
+        simulated = details.merge(simulated, on="name", how="left")
         if self._values.empty:
             compare = simulated.copy()
             compare["flow_target"] = np.nan
@@ -641,8 +907,10 @@ class DrnFlowTargets:
         ValueError
             On the budget-file route, when a period the budget file saved lacks
             its final step -- naming the period, the steps saved and the ``SAVE
-            BUDGET LAST`` setting that fixes it; or when no zone lands on an
-            active cell (ledger 211).
+            BUDGET LAST`` setting that fixes it, or when the file names a node
+            the model's grid does not have; or as :meth:`zone_definitions` (no
+            zone landing on an active cell, ledger 211) and :meth:`to_flopy_obs`
+            (two zones sharing an observation label).
 
         Examples
         --------
@@ -681,12 +949,16 @@ class DrnFlowTargets:
         Returns
         -------
         pandas.DataFrame
-            One row per target row (per simulated row when the targets hold no
-            values): ``name``, ``time``, ``per``, ``flow_target``, ``sim_flow``,
-            ``residual`` (simulated minus target), ``abs_residual``, and the
-            zone's ``group``, ``weight`` and ``cells``. On the budget-file route
-            with no values there is no ``per`` column: the period is ``time``,
-            and ``flow_target`` and the residuals are ``NaN``.
+            One row per target row (per simulated row -- one per zone and
+            period, or per zone and MF6 time on the observation route -- when the
+            targets hold no values): ``name``, ``time``, ``per``,
+            ``flow_target``, ``sim_flow``, ``residual`` (simulated minus target),
+            ``abs_residual``, and the zone's ``group``, ``weight`` and ``cells``
+            -- ONE set per zone however many rows define it, its cells the
+            sorted ``(layer, cell)`` pairs MF6 reads. With no values
+            ``flow_target`` and the residuals are ``NaN``, and on the budget-file
+            route ``time`` is the period, equal to ``per`` (it had no ``per``
+            column, so :meth:`residuals` raised ``KeyError``, ledger 342).
 
         Raises
         ------
@@ -704,21 +976,10 @@ class DrnFlowTargets:
 
         zones = self.zone_definitions(model)
         simulated = self._zone_flow_table(model, zones)
-        details = pd.DataFrame(
-            [
-                {
-                    "name": str(row.name),
-                    "group": getattr(row, "group", pd.NA),
-                    "weight": getattr(row, "weight", np.nan),
-                }
-                for row in zones.itertuples(index=False)
-            ]
-        ).drop_duplicates(subset="name")
-        members = _zone_members(zones)
-        details["cells"] = [sorted(members[name]) for name in details["name"]]
-        simulated = simulated.merge(details, on="name", how="left")
+        simulated = simulated.merge(self._zone_details(zones), on="name", how="left")
         if self._values.empty:
-            compare = simulated.rename(columns={"per": "time"}).copy()
+            compare = simulated.copy()
+            compare["time"] = compare["per"]
             compare["flow_target"] = np.nan
         else:
             targets = self._values.copy()
@@ -745,14 +1006,11 @@ class DrnFlowTargets:
         pandas.DataFrame
             :meth:`compare`'s rows, reduced to ``name``, ``group``, ``time``,
             ``per``, ``flow_target``, ``sim_flow``, ``residual``,
-            ``abs_residual``, ``weight`` and, when present, ``cells``.
-
-        Raises
-        ------
-        KeyError
-            Naming ``per``, when the targets hold no ``values`` and the
-            budget-file route is taken: :meth:`compare` then returns no ``per``
-            column.
+            ``abs_residual``, ``weight`` and ``cells`` (each zone's
+            ``(layer, cell)`` pairs; absent only when :meth:`compare` has none).
+            A set given no ``values`` -- a capture template -- gets one row per
+            simulated row, its targets and residuals ``NaN``: it raised
+            ``KeyError`` naming ``per`` on the budget-file route (ledger 342).
         """
 
         frame = self.compare(model)
@@ -812,23 +1070,30 @@ class DrnFlowTargets:
         Returns
         -------
         dict of str to list of tuple
-            ``{csv_name: [(label, kind, (layer, cell)), ...]}``: one record per
-            cell of every zone row, labelled ``<name>_c<cell>`` with every
-            character that is not a letter or digit made ``_`` and leading
-            ``_`` stripped, the cellid
-            ZERO-based as FloPy takes it. Records follow the ROWS, so a cell on
-            two rows of one zone -- every cell of a geometry zone given as
-            several rows -- is written once per row under one label. The shape
-            ``ModflowUtlobs(continuous=)`` and a DRN package's
-            ``observations=`` take.
+            ``{csv_name: [(label, kind, (layer, cell)), ...]}``: ONE record per
+            cell of each zone -- the ``(layer, cell)`` pairs its rows name,
+            united, whether the zone is given as one row or several -- labelled
+            ``<name>_c<cell>``, or ``<name>_lay<layer>_c<cell>`` for a zone
+            reaching several layers, with every character that is not a letter
+            or digit made ``_`` and leading ``_`` stripped; the cellid ZERO-based
+            as FloPy takes it. Records followed the ROWS before ledger 342, so
+            every cell of a geometry zone given as several rows was written once
+            per row under one label. The shape ``ModflowUtlobs(continuous=)`` and
+            a DRN package's ``observations=`` take.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`zone_definitions`; or when two zones' cells would carry one
+            label once written (``"a b"`` and ``"a_b"``), naming them.
         """
 
-        zones = self.zone_definitions(model)
-        records: list[tuple[str, str, tuple[int, int]]] = []
-        for row in zones.itertuples(index=False):
-            for cell in getattr(row, "cells", []):
-                obsname = _observation_label(f"{row.name}_c{int(cell)}")
-                records.append((obsname, str(kind).upper(), (int(getattr(row, "layer", 0)), int(cell))))
+        members = _zone_members(self.zone_definitions(model))
+        records = [
+            (label, str(kind).upper(), cellid)
+            for entries in _zone_labels(members).values()
+            for label, cellid in entries
+        ]
         return {str(csv_name): records}
 
     def attach_flopy_obs(

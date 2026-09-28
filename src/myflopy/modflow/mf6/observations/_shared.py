@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -1186,7 +1187,11 @@ def _report_missed_features(
     means the features and the model are in different places, so it raises rather
     than handing back an empty set whose comparison is silently about nothing. A
     PARTIAL miss can be deliberate -- one file serving several grids -- so it
-    warns, by name.
+    warns, by name, through ``warnings.warn`` as well as ``log`` (ledger 342):
+    ``import myflopy`` installs a ``NullHandler``, so a log line alone reaches
+    nobody in a default session -- ledger 288's finding, for the ``.gpkg``
+    sources. The message names the features, so two different misses are two
+    warnings rather than one Python deduplicates.
 
     ``where`` is CALLED, and only for the raise, since the warning does not use
     it: the placement note scans both extents, and the deduped path below returns
@@ -1215,10 +1220,6 @@ def _report_missed_features(
         if listing in warned:
             return
         warned.add(listing)
-    log.warning(
-        "%d of %d %ss land on no active cell and are left out: %s",
-        len(missed),
-        total,
-        subject,
-        listing,
-    )
+    message = f"{len(missed)} of {total} {subject}s land on no active cell and are left out: {listing}"
+    log.warning(message)
+    warnings.warn(message, UserWarning, stacklevel=4)

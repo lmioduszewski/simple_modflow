@@ -738,15 +738,22 @@ def prepare_sfr_flow_observations(project, spec: SfrFlowObservationSpec):
 
 
 def prepare_drn_flow_observations(project, spec: DrnFlowObservationSpec):
-    """Create simulated DRN-zone seepage CSVs and register pyEMU observations."""
+    """Create simulated DRN-zone seepage CSVs and register pyEMU observations.
+
+    The zone snapshot the forward run rebuilds the targets from carries each row's
+    RESOLVED ``cells`` and its ``layer``, so every realization sums the drains the
+    base run did. It dropped ``layer`` (ledger 342), and the forward run then read
+    each zone in layer 0.
+    """
 
     targets = spec.targets
     pivot = targets.simulated_series(project.model)
     locations_snapshot = targets.zone_definitions(project.model)
+    columns = ["name", "group", "weight", "layer", "cells"]
     if isinstance(locations_snapshot, gpd.GeoDataFrame):
-        snapshot = locations_snapshot.loc[:, ["name", "group", "weight", "cells", locations_snapshot.geometry.name]].copy()
+        snapshot = locations_snapshot.loc[:, [*columns, locations_snapshot.geometry.name]].copy()
     else:
-        snapshot = locations_snapshot.loc[:, [column for column in ["name", "group", "weight", "cells"] if column in locations_snapshot.columns]].copy()
+        snapshot = locations_snapshot.loc[:, [column for column in columns if column in locations_snapshot.columns]].copy()
     if "cells" in snapshot.columns:
         snapshot["cells"] = snapshot["cells"].apply(lambda values: ",".join(str(value) for value in values))
     return _prepare_named_series_observations(

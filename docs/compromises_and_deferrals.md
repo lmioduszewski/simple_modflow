@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 341 entries (346 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 342 entries (347 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 342 | A DRN zone is read by layer and cell, once per zone: the budget route matches MF6's node as a... | 2026-09-27 |
 | 341 | The review of ledger 340: a head or concentration target on no active cell is refused by the PEST build, ta... | 2026-09-27 |
 | 340 | What PEST is handed matches the targets: each target is matched to the row PEST's instruction file reads by... | 2026-09-27 |
 | 339 | One package is `model.<pkg>`, and FloPy's package object is `model.fl.<pkg>`; `model.packages` keeps only t... | 2026-09-27 |
@@ -15033,8 +15034,9 @@ same day, which is the useful part of the result.
       the union of its rows, as `_resolve_drn_zone_cells` already made them for geometry --
       on BOTH routes: the observation route's label map was built row by row by
       assignment until review, so the LAST row won, and a zone given as rows `[20]` and
-      `[21, 27]` read -474.37 where it ends period 0 at -709.47. (`to_flopy_obs` still
-      writes a cell listed in two rows twice; MF6 accepts it and the reader takes one.)
+      `[21, 27]` read -474.37 where it ends period 0 at -709.47. ~~(`to_flopy_obs` still
+      writes a cell listed in two rows twice; MF6 accepts it and the reader takes one.)~~
+      One record per zone cell since ledger 342.
       **`model.hds`/`conc`/`temp.get()` read the rule too** (review). Documented as
       "period-end values", it took each period's largest `kstp` unchecked, so under `SAVE
       HEAD FIRST` it returned step 1 of 3 (97.61 where period 0 ends at 101.18) while
@@ -15325,8 +15327,9 @@ same day, which is the useful part of the result.
       **A head/conc target whose location lands on no active cell is REFUSED at build** --
       judgment call, overruling 340's recorded one. 340 kept ledger 211's partial-miss
       WARNING for it, but the build's inner join then dropped its values from the control
-      file, and that warning is a `log.warning` nobody reads (doc bug 55; measured: zero
-      Python warnings): the one silent drop 340 left, and one its own spec (a) names. A DRN
+      file, and ~~that warning is a `log.warning` nobody reads~~ that warning was a
+      `log.warning` nobody read -- a Python warning too since ledger 342 -- (doc bug 55;
+      measured: zero Python warnings): the one silent drop 340 left, and one its own spec (a) names. A DRN
       zone on no active cell was ALREADY refused at build (its column is missing), so the two
       families disagreed. 211's reason -- one target file serving several grids -- still
       holds where it was made: `compare()` still warns and answers. A PEST build is one
@@ -15369,3 +15372,92 @@ same day, which is the useful part of the result.
       refusal), `test_a_name_pandas_would_read_as_a_number_or_a_blank_reaches_pest_verbatim`
       (the writers' converters; the lake assertion alone for the named-series one),
       `test_an_infinite_value_is_refused_naming_it` (the `isinf` check).
+342. **A DRN zone is read by layer and cell, once per zone: the budget route matches MF6's node as a `(layer, cell)` pair, the PEST zone snapshot carries `layer`, geometry rows beside explicit ones resolve, `to_flopy_obs` writes each zone cell once, and a partial miss is a Python warning (2026-09-27).**
+      `DrnFlowTargets` defects (G5, doc bugs 48-58). Each was a place a zone was read as
+      something other than the cells the user drew.
+      **The budget route matches `(layer, cell)`**, through `model.node_to_lni` -- the
+      conversion the package budget tables use, not a new `layer * ncpl + cell`. A
+      cell-budget record's node is MF6's USER node: measured with cell 3 of layer 0
+      INACTIVE, the DRN nodes read 21, 57, 58, 64, where a reduced numbering reads 20, 56,
+      57, 63 -- pinned by a test. Matching it against a zone's in-layer numbers read a zone
+      in layer 1 as the layer-0 drain sharing a number: -6.77 / -7.79 for drains holding
+      -5975.73 / -6003.62. The members are PAIRS rather than nodes built from them, so an
+      explicit cell past its layer's count matches nothing instead of aliasing into the
+      next layer. Judgment call: a budget node the grid does not have RAISES (the file and
+      the model do not line up).
+      **The PEST zone snapshot carries `layer`**, so the forward run reads the drains the
+      base run did; it read layer 0. The forward run itself is unchanged -- it rebuilds
+      `DrnFlowTargets` from the snapshot, which now has the column -- so a template built
+      before this keeps its layer-less snapshot and stays self-consistently wrong (base and
+      forward both read layer 0) until it is rebuilt.
+      **A zone reaching several layers is ONE zone of its `(layer, cell)` pairs.** A
+      geometry row now carries the union of its zone's geometry rows IN ITS OWN LAYER; the
+      union was taken across rows regardless of layer, so a zone drawn as a layer-0 row and
+      a layer-1 row put every cell of each in BOTH layers.
+      **A row with no `cells` entry is resolved from its geometry, whatever the other rows
+      give** -- judgment call on what "missing" means: `None`/`NaN` means "resolve me", an
+      empty list or `""` is an explicit zone of no cells (the forward-run snapshot writes a
+      missed zone as `""`, which must stay explicit). Refused by name: a row with neither
+      cells nor a geometry, and a geometry row resolved with `model=None` (an
+      `AttributeError` on `None.vor` before). A zone counts as missed only when it holds no
+      cell at all, geometry and explicit rows together, and `total` is every zone name.
+      **A `geometry` column in a dict, a list of record dicts or a plain `DataFrame` makes a
+      `GeoDataFrame`** in the grid's coordinates (a dict carries no CRS; the house rule is
+      not to warn on a defaulted CRS). Judgment call: the plain `DataFrame` gets the same
+      rule, since it dropped the column too. Anything but a shapely geometry there is
+      refused naming `shapely.wkt.loads` -- WKT text is not parsed for the caller.
+      **`to_flopy_obs` writes ONE record per zone cell** (a geometry zone drawn as two rows
+      wrote each cell twice under one name, and MF6 accepts that: measured, Normal
+      termination). Labels stay `<name>_c<cell>` for a zone in one layer, so an OBS package
+      written before still matches the reader; a zone in several layers gets
+      `<name>_lay<layer>_c<cell>`, the head targets' `_lay` convention. Two zones whose
+      labels coincide once written (`"a b"`, `"a_b"`, or two names differing in case) are
+      refused on writing AND reading -- judgment call: the reader would otherwise take one
+      column for both, and pyEMU lower-cases names anyway. `summary()['n_cells']` is the
+      count of DISTINCT `(layer, cell)` over the whole set -- judgment call: the cells the
+      set covers, so a cell two zones share counts once (it is not the record count).
+      **`compare()` joins one row per zone on both routes** -- found in passing: the
+      observation route joined the zone table's ROWS, so a zone given as two rows doubled
+      every comparison row and `stats()` counted each residual twice. Its `cells` column is
+      now the zone's sorted `(layer, cell)` pairs on both routes -- a changed column shape
+      (in-layer ints before, and per ROW on the observation route).
+      **`residuals()` of a set given no values works**: the budget route's `compare()`
+      renamed `per` to `time`, and `residuals` selected `per`. It keeps `per`, with `time`
+      equal to it. **Found, NOT fixed** (same shape, other families): `SfrFlowTargets`,
+      `SfrStageTargets` and `LakeStageTargets.residuals()` raise the same `KeyError: 'per'`
+      on a value-less set on their file routes (measured on ledger 340's toy).
+      **A partial miss is a Python warning** for DRN zones and head/concentration targets
+      (`_report_missed_features`): `warnings.warn` beside the logger, ledger 288's rule --
+      `import myflopy` installs a `NullHandler`, so the log line reached nobody (measured:
+      zero Python warnings before, one naming the feature after). The message names the
+      features, so two different misses are two warnings; the once-per-set memory on the
+      target object stays, and Python's own registry still silences an IDENTICAL message
+      from the same line, as it does for 288's.
+      **A `layer` that is not a layer is refused** (1.5 was truncated to 1 by `int()`, -1
+      indexed from the end); a blank stays 0, as the resolver already read it.
+      **NOT done:** an explicit cell id outside the grid is still taken as given and
+      matches nothing on the budget route (MF6 refuses it on the observation route).
+      Checking it needs each layer's cell count at every consumer; recorded, not guessed.
+      **For the next commit of the series** (the observation route keyed by period): two of
+      the new tests read that route's per-step rows (`iloc[NSTP - 1::NSTP]`) and will move
+      with it; the others compare against `len(simulated_series(...))`.
+      Reproducer: `docs/reproducers/drn_zone_layer_and_cells.py`, run on this tree and on
+      ledger 341's `src`. Tests: `tests/test_drn_zone_layers.py` (15, one MF6 run of a
+      two-layer toy with an inactive cell and a layer-0 decoy drain; two PEST builds).
+      Each fix reverted alone fails by name: the pair match ->
+      `test_a_zone_below_layer_0_reads_its_own_drains_on_both_routes` and five others; the
+      snapshot's `layer` -> both `test_the_pest_forward_run_reads_the_zone_in_its_layer`;
+      NaN cells read as `[]` ->
+      `test_a_table_mixing_cells_and_geometry_resolves_the_geometry_rows`; records per row
+      -> `test_a_geometry_zone_given_as_several_rows_is_written_and_counted_once`; the
+      summed `n_cells` -> the same test; the row join ->
+      `test_the_observation_route_compares_a_zone_given_as_two_rows_once`; the geometry
+      column dropped -> `test_a_geometry_key_in_a_dict_or_record_dicts_is_a_geometry_zone`;
+      the rename -> `test_the_residuals_of_a_set_given_no_values_are_its_comparison`; no
+      `warnings.warn` ->
+      `test_a_partial_miss_is_a_python_warning_for_zones_and_head_targets`; labels without
+      `_lay` -> the toy fixture itself (its two-layer zone is refused as a clash), erroring
+      `test_a_zone_reaching_two_layers_is_one_zone_with_a_label_per_layer` and ten others;
+      and each refusal (label clash, layer, neither cells nor geometry, stray node) its own
+      `test_..._refused` test. Two test doubles (`test_drn_zones_on_faces.py`,
+      `test_mf6_pest.py`) now carry `node_to_lni` in MF6's user numbering.

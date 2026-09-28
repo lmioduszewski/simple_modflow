@@ -511,7 +511,9 @@ class HeadTargets:
         build and its forward run read different cells for it.
 
         Targets are reprojected to the grid's CRS first. One that lands on no
-        active cell is left out and named in a warning; if NONE of them land,
+        active cell is left out and named in a warning -- a Python
+        ``UserWarning`` as well as the log (ledger 342) -- once per missed set on
+        this object; if NONE of them land,
         that raises, rather than handing back an observation set that is quietly
         about somewhere else. A PEST build refuses the one left out when the
         values name it (ledger 341): there it would be a target PEST never sees. A target given as a cell id is checked instead: an

@@ -256,9 +256,12 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
         Which target family the saved definition file describes.
     locations_file : str or pathlib.Path
         The ``*_target_locations`` snapshot the build wrote: a CSV (lake and
-        reach ids, or DRN zones with comma-joined ``cells``) or a GeoPackage.
-        A CSV's names are read as text, verbatim, as the base run's table has
-        them (ledger 341).
+        reach ids, or DRN zones with their ``layer`` and comma-joined resolved
+        ``cells``) or a GeoPackage (DRN zones drawn as geometry, with the same
+        columns). A CSV's names are read as text, verbatim, as the base run's
+        table has them (ledger 341); a DRN zone is read in its snapshot's
+        ``layer`` (ledger 342 -- the snapshot carried none, so it was read in
+        layer 0).
     output_csv : str or pathlib.Path
         The simulated CSV to write, the file pyEMU's instruction file reads.
     sim_ws : str or pathlib.Path, default "."

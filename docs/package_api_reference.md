@@ -528,7 +528,9 @@ is involved. TOML is not supported (no null type; `tomllib` is 3.11+). Example:
 A target given as a POINT resolves to the one cell holding it; on a shared face
 or vertex, the lowest-numbered cell active in that target's own layer. Targets
 are reprojected to the grid's CRS first, a target on no active cell is left out
-and named in a warning, and none of them landing raises. A target given as a
+and named in a warning -- a Python `UserWarning` as well as the log, since a log line
+alone reaches nobody by default (ledger 342, ledger 288's rule) -- and none of them
+landing raises. A target given as a
 cell id is checked instead: an id the grid does not have, or one inactive in its
 layer, raises (ledger 233). A name used in TWO layers is two observations,
 `<name>_lay<layer>`: `targets.observation_labels(model)` is the one definition,
@@ -546,6 +548,24 @@ one zone: its cells are the union -- on the observation route as on the budget
 file, which until ledger 336 summed only the LAST row's cells there -- and it is
 reported missing only when every part of it misses. Zone membership is geometry
 only: a covered cell that carries no drain is still in the zone and adds zero.
+
+**A zone's cell is a `(layer, cell)` pair, on every route** (ledger 342). MF6's
+cell-budget file names a drain by its model-wide USER node -- `layer * ncpl + cell` on
+a DISV, whatever the idomain removes -- and the budget route matched that against a
+zone's in-layer cell numbers, so a zone in layer 1 read whichever LAYER-0 drain shared
+a number (-6.77 for a zone whose drains held -5975.73); it now matches the pair through
+`model.node_to_lni`, and the zone snapshot a PEST build writes carries `layer`, so the
+forward run reads the same drains. A zone's rows may sit in different layers; it is one
+zone of their union. A row gives explicit `cells` or is resolved from its geometry, and
+one table may mix the two (a missing `cells` entry means "resolve me"); a dict or a list
+of record dicts with a `geometry` key is a geometry zone in the grid's coordinates.
+`to_flopy_obs` writes ONE record per zone cell -- `<name>_c<cell>`, or
+`<name>_lay<layer>_c<cell>` for a zone in several layers -- where it wrote one per
+locations ROW (every cell of a zone drawn as two rows twice, under one name, which MF6
+accepts), and refuses two zones whose labels coincide once written (`"a b"`, `"a_b"`).
+`compare()` gives one set of zone columns per zone on both routes -- its `cells` the
+`(layer, cell)` pairs -- and a set given no values compares with `time` equal to `per`,
+so `residuals()` of a capture template works (it raised `KeyError: 'per'`).
 
 **A target keyed by stress period reads the value at the period's END** -- head,
 concentration, reach stage, reach flow and zone flow alike (ledger 336; the user's

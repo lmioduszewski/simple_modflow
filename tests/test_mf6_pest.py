@@ -203,6 +203,8 @@ def _fake_surface_water_model():
 
     model = SimpleNamespace(
         vor=vor,
+        # MF6's user numbering of a one-layer, two-cell grid: what a budget node means.
+        node_to_lni={0: (0, 0), 1: (0, 1)},
         gwf=SimpleNamespace(lak="lak_owner", sfr="sfr_owner", drn="drn_owner"),
         lak=SimpleNamespace(results=SimpleNamespace(stage=SimpleNamespace(get=lambda: lake_stage.copy()))),
         sfr=SimpleNamespace(
