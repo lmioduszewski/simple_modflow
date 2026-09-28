@@ -548,7 +548,9 @@ edge toward it: it crashed, hung or ran out of memory, or built a grid that coul
 written. A point OUTSIDE the boundary still gets no cell -- it is warned about now -- and
 a point on the drawn boundary can round outside it, or sit outside the 2 ft simplified
 one: move a well you need inside by more than that. Farther from an edge a point still
-grades small cells toward it (+65-128 nodes at 0.01-0.1 ft); that is legal, and kept.
+grades small cells toward it -- a 1000 ft square at state plane, max_area 2000, is 684
+cells alone and 853 with a well 0.05 ft inside, 788 at 0.1 ft, 1,005 at 0.5 ft
+(`docs/reproducers/gridspec_build_failures.py`); that is legal, and kept.
 
 **Sources must be file-backed.** A `GridSpec` is a serializable recipe — it has to
 survive `to_dict()` / `from_yaml()` — so an in-memory GeoDataFrame cannot be one.

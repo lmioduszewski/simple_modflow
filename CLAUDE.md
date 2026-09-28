@@ -513,8 +513,10 @@ validation — that bug was found twice, in `read_gpkg` and `contour_line_segmen
 
 ## Test suite (fast by design)
 - Full suite (**5371 passed / 4 skipped**, 2026-09-28, ledger 316's five build-failure
-  fixes and their review): `-n 10` **1m30s** in a detached checkout outside `.claude`, at a
-  load average of ~6.1 at its start; serial not re-measured. Before it, 5333 passed / 4
+  fixes and their review, rebased onto ledger 339): `-n 10` **1m34s** in a detached checkout
+  outside `.claude`, at a load average of ~0.6 at its start; serial not re-measured. The
+  same fixes before the rebase counted the same 5371 in 1m30s at ~6.1, and ledger 339 alone
+  5325 in 1m29s. Before them, 5333 passed / 4
   skipped (ledger 316's written-resolution amendment on top of 338): `-n 10` **1m32s** at
   ~3.6. Before that, 5325 passed / 4
   skipped (ledger 338 -- the docstring guard adds 717 cases): serial (`-n0`) **7m08s** and `-n 10` **1m38s**, both in a detached checkout

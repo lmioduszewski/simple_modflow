@@ -18,9 +18,10 @@ see the failures.
      W x H rectangle, max_area >= H**2): the sizing region was the domain itself, clipped to
      a ring 1e-4 of the diagonal inside it, and Triangle filled that band -- the L at 1e6
      gave 149,385 cells, smallest 0.00019 ft2, the same at 1e7. Now 8 cells and a warning.
-     The L at 1e5 (207 cells, pin 4394bb5bf7eefb22) and just below the threshold at 1.58e5
-     (2,851 cells, pin 84a3746283f05e8d -- a thin inset, fine-grained, unchanged on
-     purpose) keep their pins.
+     The L at 1e5 (207 cells, pin 4394bb5bf7eefb22) and at 1.58e5 (2,851 cells, pin
+     84a3746283f05e8d), just below its ARMS' width squared -- a thin inset in each arm,
+     fine-grained, unchanged on purpose -- keep their pins. The L's own threshold is
+     (2 x 234.3)^2 = 219,613 (its inscribed circle): 779 cells at 2.19e5, 8 at 2.2e5.
   3. Breaklines on the L at (1.2e6, 6.5e5), profile "clean", min_angle 23, max_area 3000,
      breakline_max_area 60 (the fuzz input). Line B alone, a 20 ft line and the fuzz's five
      rows (A, B, B, C, C) raised "A linearring requires at least 4 coordinates"; they build,
@@ -37,7 +38,9 @@ see the failures.
      a square at (1.2e6, 6.5e5) built 303 zero-length faces and now 0. An interior well
      (pin 2626796579998479), one 0.5 ft inside (e86194e380c0d6af), one outside
      (7c89ef6707554347, now warned) and wells exactly on an edge (3e4e07dc219a508b) keep
-     their pins.
+     their pins. Farther than the 0.02 ft tolerance a well still grades cells toward the
+     edge, legally: the square alone is 684 cells, 853 with a well 0.05 ft inside, 788 at
+     0.1 ft and 1,005 at 0.5 ft.
 """
 
 from __future__ import annotations
@@ -86,7 +89,7 @@ def section_1(root):
 
 
 def section_2(root):
-    for max_area in (1e5, 1.58e5, 1e6):
+    for max_area in (1e5, 1.58e5, 2.19e5, 2.2e5, 1e6):
         print(f"2. L at max_area {max_area:g}: {build(root / f'2-L-{max_area:g}', L_SHAPE, max_area=max_area)}")
     rectangle = box(0, 0, 2000, 1000)
     for max_area in (0.9e6, 1e6):
@@ -154,8 +157,11 @@ def section_5(root):
     cases = {
         "star, the fuzz's point": (star, [(393.48212885521264, 771.9026644960962)],
                                    dict(max_area=1000.0, profile="clean", min_angle=29)),
+        "square, no point": (square, [], dict(max_area=2000.0)),
         "square, 1e-6 ft inside": (square, [(1.2e6 + 1e-6, 6.5e5 + 437.123)], dict(max_area=2000.0)),
         "square, interior well": (square, [(1.2e6 + 300.0, 6.5e5 + 400.0)], dict(max_area=2000.0)),
+        "square, 0.05 ft inside": (square, [(1.2e6 + 0.05, 6.5e5 + 437.123)], dict(max_area=2000.0)),
+        "square, 0.1 ft inside": (square, [(1.2e6 + 0.1, 6.5e5 + 437.123)], dict(max_area=2000.0)),
         "square, 0.5 ft inside": (square, [(1.2e6 + 0.5, 6.5e5 + 437.123)], dict(max_area=2000.0)),
         "square, well outside": (square, [(1.2e6 - 50.0, 6.5e5 + 400.0)], dict(max_area=2000.0)),
         "square, wells on an edge": (square, [tuple(square.exterior.interpolate(d).coords[0])
@@ -164,11 +170,13 @@ def section_5(root):
     for i, (name, (boundary, points, options)) in enumerate(cases.items()):
         folder = root / f"5-{i}"
         folder.mkdir(parents=True)
-        gpd.GeoDataFrame({"n": list(range(len(points)))}, geometry=[Point(p) for p in points],
-                         crs=2927).to_file(folder / "p.gpkg")
+        if points:
+            gpd.GeoDataFrame({"n": list(range(len(points)))}, geometry=[Point(p) for p in points],
+                             crs=2927).to_file(folder / "p.gpkg")
+            options = dict(options, points=[mf.GeoPackageSourceSpec(path=folder / "p.gpkg")])
         with warnings.catch_warnings(record=True) as record:
             warnings.simplefilter("always")
-            out = build(folder, boundary, points=[mf.GeoPackageSourceSpec(path=folder / "p.gpkg")], **options)
+            out = build(folder, boundary, **options)
         said = sorted({str(w.message)[:70] for w in record if "point constraint" in str(w.message)})
         print(f"5. {name}: {out}" + (f"  {said}" if said else ""))
 

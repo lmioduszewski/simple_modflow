@@ -55,8 +55,10 @@ class NoAreaInside(ValueError):
 
     ``cause`` says which step removed it: ``"outside"`` (a region with no area inside the
     model boundary -- disjoint from it, or touching it only along a line or at a point),
-    ``"buffer"`` (a negative buffer at least half its width) or ``"empty"`` (zero area as
-    given). ``GridSpec.voronoi`` skips an ``"outside"`` feature with a warning when others
+    ``"clipped"`` (a buffered point or line outside the boundary but within its buffer of
+    it: it is clipped to the boundary BEFORE it is buffered, so nothing is left to
+    buffer), ``"buffer"`` (a negative buffer at least half its width) or ``"empty"``
+    (zero area as given). ``GridSpec.voronoi`` skips an ``"outside"`` feature with a warning when others
     in its source land, and names the rest (ledger 316).
     """
 

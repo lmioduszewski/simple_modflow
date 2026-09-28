@@ -113,8 +113,9 @@ def test_a_max_area_too_large_for_the_domain_gives_a_coarse_mesh_and_warns(tmp_p
 
 
 def test_a_max_area_the_domain_holds_keeps_its_sizing_ring(tmp_path):
-    """Just below the threshold the inset is a thin sliver and the mesh is fine-grained
-    (2,851 cells) -- unchanged on purpose: it builds today, and this pin is its pin."""
+    """Just below the ARMS' width squared (1.58e5 against 400^2; the L's own threshold is
+    219,613) each arm's inset is a thin sliver and the mesh is fine-grained (2,851 cells) --
+    unchanged on purpose: it builds today, and this pin is its pin."""
 
     from myflopy.grid_identity import grid_pin
 

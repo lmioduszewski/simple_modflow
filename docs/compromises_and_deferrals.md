@@ -14240,7 +14240,7 @@ same day, which is the useful part of the result.
       FloPy's cells against the dual of Triangle's own mesh and repairs the wrong ones
       (``grid/tessellation.py``). Over the grids of ``voronoi_tiling_sweep.py`` (1,266 then,
       1,510 since the fuzz pass) the repaired grid leaves no gap, overshoot or overlap above
-      1e-6 ft² (eleven spiky stars at state plane do since 2026-09-28, where corners the
+      1e-6 ft² (16 spiky-star grids at state plane do since 2026-09-28, where corners the
       written file cannot tell apart are joined -- below),
       and the L's flow comes back (28.1645 ft³/d at max_area 10000, where FloPy's cells gave
       26.7224). The design pass also found what the entry above did not list -- a kept
@@ -14370,8 +14370,8 @@ same day, which is the useful part of the result.
       ``float_precision`` it may join a face the file could have held -- 0.01 ft at most at
       state plane. NOT done: every vertex at state plane is still written up to 0.005 ft off
       (section 12); writing full precision grows every file ~60% and moves every result,
-      which is the separate open question. ``tests/test_voronoi_tiling.py`` gains eight
-      tests (33 in all), and seven single-piece mutations each fail a named one: joining
+      which is the separate open question. ``tests/test_voronoi_tiling.py`` gains nine
+      tests (34 in all), and seven single-piece mutations each fail a named one: joining
       off, FloPy's hair-off corner ignored, FloPy's own faces joined, the float64 unit put
       back, the build check silenced, the split-pin message removed, a collapsing join kept. Reproducer:
       ``voronoi_written_resolution.py`` -- NaN on four quads at FloPy's format, the same
@@ -14441,8 +14441,10 @@ same day, which is the useful part of the result.
       grids hold ~1e5 sliver cells and are not what was asked; at (5e6, 5e6) they were
       already refused for zero-length faces; 650 of the sweep's 679 such faces were theirs).
       Just below the threshold the inset is a thin or tiny sliver and the mesh stays
-      fine-grained (the L at 1.58e5: 2,851 cells; a square at 9.999e5: smallest cell 0.0023
-      ft2) -- deliberately unchanged, since any fix moves grids that are not broken.
+      fine-grained (the L, whose threshold is (2 x 234.3)^2 = 219,613, at 2.19e5: 779 cells,
+      smallest 0.054 ft2; a square at 9.999e5: smallest cell 0.0023 ft2) -- deliberately
+      unchanged, since any fix moves grids that are not broken. So is the L just below its
+      ARMS' width squared (1.58e5 against 400^2: 2,851 cells, a thin inset in each arm).
       (3) **The breakline crash is a band piece shorter around than the resampling spacing**,
       not overlap or ending on the boundary (neither is necessary nor sufficient): the
       cleanup profiles rebuild a "line" region's outline from points ``target_segment_length``
