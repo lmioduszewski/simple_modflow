@@ -68,6 +68,7 @@ from myflopy.grid_identity import (
     package_moves,
     source_fingerprint,  # noqa: F401
     void_pin,
+    zero_length_faces,
 )
 from myflopy.sources import (
     DataSourceSpec,
@@ -4799,6 +4800,23 @@ class ModelSpec:
                 "geometry and reports normal termination, or drops what a removed cell "
                 "carries without a word. Re-declare the packages against this grid, or "
                 "correct the context value named above."
+            )
+        # A face the file will hold with zero length: MF6 answers NaN for every head under
+        # normal termination (ledger 316). Its own refusal, since no package is at fault.
+        disv = model.get_package("disv") if hasattr(model, "get_package") else None
+        flat = zero_length_faces(disv, getattr(model, "simulation_data", None)) if disv is not None else []
+        if flat:
+            listing = "; ".join(f"cells {a} and {b} at ({x:.10g}, {y:.10g})" for a, b, x, y in flat[:5])
+            if len(flat) > 5:
+                listing += f"; and {len(flat) - 5} more"
+            raise ValueError(
+                f"Model {self.name!r}'s DISV would be written with {len(flat)} face(s) of ZERO "
+                f"length -- two cells sharing two vertices FloPy writes as one point: "
+                f"{listing}. MF6 returns NaN for every head across such a face and still "
+                "reports normal termination. Re-resolve the grid (a GridSpec.voronoi grid "
+                "no longer splits a corner closer than the file records; one rebuilt from a "
+                "snapshot or pickle is the grid that ran), or write more digits with "
+                "sim.simulation_data.float_precision."
             )
         # The documented opt-outs the guard does not refuse: an array-form flux put in
         # one layer everywhere (`irch=None`) where that layer's cell is removed. Legal,

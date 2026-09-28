@@ -27,23 +27,35 @@ node itself. A certificate proves the result tiles the meshed domain exactly.
 
 :func:`tessellate` gives every one of the dual's vertices a FloPy vertex id -- the one
 FloPy has at that location, or an appended one where it has none -- so every ring it
-returns IS the dual's ring, and no face can be lost between two cells. A FloPy ring that
-already is that ring is returned exactly as FloPy wrote it. A grid with nothing wrong
-therefore comes back byte-identical -- the same ``grid_pin``, the same ``.disv`` bytes --
-and only a grid that had a broken cell re-pins. Where FloPy's cell SET is wrong (a part of
-the domain lost, a stray node kept as a cell) the dual's cells are taken whole:
-renumbered, and logged at WARNING.
+returns IS the dual's ring, and no face a DISV file can hold is lost between two cells. A
+FloPy ring that already is that ring is returned exactly as FloPy wrote it. A grid with
+nothing wrong therefore comes back byte-identical -- the same ``grid_pin``, the same
+``.disv`` bytes -- and only a grid that had a broken cell re-pins. Where FloPy's cell SET
+is wrong (a part of the domain lost, a stray node kept as a cell) the dual's cells are
+taken whole: renumbered, and logged at WARNING.
+
+A corner is never split into two vertices the written file cannot tell apart
+(:func:`~myflopy.grid_identity.written_resolution`). Four nodes almost on one circle give
+two circumcentres a hair apart -- 7.4e-5 ft on a real 20,323-cell model at state plane,
+where FloPy writes 0.01 ft -- and FloPy drew ONE corner there. Kept as two, the face
+between them was written with zero length and MF6 returned NaN for every head under
+normal termination. Such a vertex takes FloPy's corner, and two the repair would append
+are one.
 """
 
 from __future__ import annotations
 
+import dataclasses
+import types
 from collections import Counter
 from dataclasses import dataclass, field
 
 import numpy as np
+from flopy.utils.cvfdutil import get_disv_gridprops
 from scipy.spatial import cKDTree
 
 from myflopy._logging import get_logger
+from myflopy.grid_identity import grid_pin, written_resolution
 
 logger = get_logger(__name__)
 
@@ -94,6 +106,15 @@ class TessellationReport:
         neighbour's across a thin notch, or Qhull's merge of two), ``"interior-order"``.
     appended
         Vertices added because FloPy had none at a location a cell needs.
+    unsplit
+        The dual's vertices joined to a neighbour across a face shorter than a DISV file
+        FloPy writes can record (:func:`~myflopy.grid_identity.written_resolution`), so a
+        corner FloPy drew once is not split in two. Kept apart, such a face can be written
+        with zero length, and MF6 returns NaN for every head.
+    split_pin
+        ``grid_pin`` of the grid with those vertices kept apart -- what the repair built
+        from bb56668 (2026-09-26) until this rule -- when that differs, else ``None``. A
+        package pinned to it was resolved on that grid: same cells, same numbers.
     adopted
         ``True`` when FloPy's cell SET was wrong and the dual's cells were taken whole --
         the grid is renumbered relative to FloPy's. ``reason`` says why.
@@ -104,6 +125,8 @@ class TessellationReport:
 
     rewritten: dict = field(default_factory=dict)
     appended: int = 0
+    unsplit: int = 0
+    split_pin: str | None = None
     adopted: bool = False
     reason: str | None = None
     flopy_ncpl: int | None = None
@@ -119,15 +142,17 @@ class TessellationReport:
     def summary(self) -> str:
         """One sentence: what was repaired, or that nothing needed it."""
 
+        kept = (f"; {self.unsplit} corners closer than the written file records kept as one"
+                if self.unsplit else "")
         if self.adopted:
             return (f"FloPy's cells were replaced whole ({self.reason}): {self.flopy_ncpl} "
-                    f"cells became {self.ncpl}, renumbered")
+                    f"cells became {self.ncpl}, renumbered{kept}")
         if not self.rewritten:
-            return "FloPy's cells tile the domain; nothing was rewritten"
+            return "FloPy's cells tile the domain; nothing was rewritten" + kept
         why = Counter(self.rewritten.values())
         return (f"{len(self.rewritten)} of {self.ncpl} cells rewritten in place ("
                 + ", ".join(f"{n} {r}" for r, n in sorted(why.items()))
-                + f"); {self.appended} vertices appended; no cell renumbered")
+                + f"); {self.appended} vertices appended; no cell renumbered{kept}")
 
 
 # --------------------------------------------------------------------------------------
@@ -387,8 +412,78 @@ def _clusters(V, tol):
     return np.array([root(i) for i in range(len(V))], dtype=np.int64)
 
 
+def _short_faces(D, d_iverts, unit, apart=None):
+    """A root per dual vertex: the vertices joined along every face shorter than one
+    written unit on BOTH axes (``unit``, :func:`~myflopy.grid_identity.written_resolution`),
+    which a DISV file can write as a single point -- the lowest index of each group.
+
+    Two groups that each hold an ``apart`` vertex are not joined: FloPy drew both corners,
+    and a face between them is FloPy's own, not a corner the repair split. A group whose
+    joining would leave a cell with fewer than three corners, or one twice, stays split.
+    """
+
+    parent = np.arange(len(D))
+    held = np.zeros(len(D), dtype=bool) if apart is None else np.array(apart, dtype=bool)
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    if len(d_iverts):
+        u = np.concatenate([np.asarray(r, dtype=np.int64) for r in d_iverts])
+        v = np.concatenate([np.roll(np.asarray(r, dtype=np.int64), -1) for r in d_iverts])
+        for e in np.flatnonzero((np.abs(D[u] - D[v]) < unit).all(axis=1) & (u != v)):
+            ru, rv = root(int(u[e])), root(int(v[e]))
+            if ru != rv and not (held[ru] and held[rv]):
+                lo, hi = min(ru, rv), max(ru, rv)
+                parent[hi] = lo
+                held[lo] = held[lo] or held[hi]
+    roots = np.array([root(i) for i in range(len(D))], dtype=np.int64)
+    # A group that would leave a cell with fewer than three corners, or one corner twice,
+    # stays split: that cell is smaller than the file can write whichever way it is drawn,
+    # and the build-time check (``zero_length_faces``) says so for the file actually written
+    # -- where more digits (``float_precision``) can still hold it. Joined, the GRID refused.
+    undo = set()
+    grouped = np.bincount(roots, minlength=len(D))[roots] > 1
+    for ring in d_iverts if grouped.any() else ():
+        if not grouped[list(ring)].any():
+            continue
+        rr = [int(roots[x]) for x in ring]
+        rr = [x for i, x in enumerate(rr) if x != rr[i - 1]]
+        if len(rr) < 3 or len(set(rr)) != len(rr):
+            undo.update(int(roots[x]) for x in ring)
+    if undo:
+        split = np.isin(roots, list(undo))
+        roots[split] = np.flatnonzero(split)
+    return roots
+
+
+def _rings_on(label, d_iverts, where):
+    """The dual's rings under ``label``, a vertex repeated in a row dropped; refused when a
+    cell is left with fewer than three corners or one corner twice."""
+
+    rings = []
+    for k, ring in enumerate(d_iverts):
+        want = [int(label[x]) for x in ring]
+        want = [x for i, x in enumerate(want) if x != want[i - 1]]
+        if len(want) < 3 or len(set(want)) != len(want):
+            x0, y0 = where[int(ring[0])]
+            raise NotConformingDelaunay(
+                f"cell {k} near ({x0:.6g}, {y0:.6g}) has corners closer together than a DISV "
+                "file FloPy writes can record, so it would reach MF6 with no area or "
+                "crossing itself. Nodes packed that close usually come from a point "
+                "constraint on or near a boundary edge, or two points almost on top of each "
+                "other; move them apart."
+            )
+        rings.append(want)
+    return rings
+
+
 def _onto_flopy(d_verts, d_iverts, verts, iverts, on_boundary):
-    """``(verts, iverts, rewritten, appended)``: the dual's cells on FloPy's vertex ids.
+    """``(verts, iverts, rewritten, appended, unsplit, split)``: the dual's cells on FloPy's
+    vertex ids.
 
     Each of the dual's vertices is given the FloPy vertex at its location -- the one most
     of FloPy's rings use there, since FloPy can hold one location under several ids -- or,
@@ -396,6 +491,15 @@ def _onto_flopy(d_verts, d_iverts, verts, iverts, on_boundary):
     relabelling, so two neighbours share their face as the same index pair by
     construction. A FloPy ring that already IS that ring is kept exactly as FloPy wrote it,
     starting vertex included; any other is replaced, and its reason recorded.
+
+    One exception, the file's: the dual's vertices joined by a face shorter than one
+    written unit on both axes (:func:`~myflopy.grid_identity.written_resolution`) are ONE
+    corner, not split -- the FloPy vertex one of them holds, else a FloPy vertex no dual
+    vertex holds that lies within a unit of all of them (FloPy's single corner, drawn a
+    hair off), else one appended vertex. A face that short cannot be written: kept, it
+    reached MF6 with zero length and NaN heads. ``unsplit`` counts the vertices joined, and
+    ``split`` is ``(verts, iverts)`` with them kept apart -- the grid the repair built from
+    bb56668 until this rule -- when there are any; else ``None``.
     """
 
     V = np.asarray(verts, dtype=float)
@@ -428,13 +532,47 @@ def _onto_flopy(d_verts, d_iverts, verts, iverts, on_boundary):
         if label[i] < 0 and c not in dual_at:
             dual_at[c] = i
             label[i] = c
+    # Not split: the dual's vertices joined by a face the written file cannot hold are one
+    # corner -- FloPy's where it drew one, else one appended vertex.
+    unit = written_resolution(np.vstack([V, D]))
+    roots = _short_faces(D, d_iverts, unit, apart=label >= 0)
     extra = np.flatnonzero(label < 0)
-    label[extra] = len(V) + np.arange(len(extra))
-    V = np.vstack([V, D[extra]]) if len(extra) else V
+    split, unsplit = None, len(D) - len(np.unique(roots))
+    if unsplit:
+        split_label = label.copy()
+        split_label[extra] = len(V) + np.arange(len(extra))
+        split = (np.vstack([V, D[extra]]), [[int(split_label[x]) for x in r] for r in d_iverts])
+        claimed = set(dual_at)
+        free = np.array([c for c in ids if int(c) not in claimed], dtype=np.int64)
+        tree = cKDTree(V[free] / unit) if len(free) else None
+        joined = np.flatnonzero(np.bincount(roots, minlength=len(D)) > 1)
+        for r in joined:
+            members = np.flatnonzero(roots == r)
+            held = label[members][label[members] >= 0]
+            if len(held):
+                label[members] = held[0]
+                continue
+            if tree is None:
+                continue
+            reach = [int(free[j]) for j in tree.query_ball_point(D[members[0]] / unit, 1.0, p=np.inf)]
+            reach = [c for c in reach if c not in claimed and (np.abs(V[c] - D[members]) < unit).all()]
+            if reach:
+                c = min(reach, key=lambda c: float(np.hypot(*(V[c] - D[members[0]]))))
+                label[members] = c
+                claimed.add(c)
+    extra = np.flatnonzero(label < 0)
+    fresh = {}
+    for j in extra:  # ascending, so each group is placed at its lowest-index member
+        fresh.setdefault(int(roots[j]), (len(V) + len(fresh), int(j)))
+        label[j] = fresh[int(roots[j])][0]
+    if fresh:
+        V = np.vstack([V, D[[j for _, j in fresh.values()]]])
+    rings = _rings_on(label, d_iverts, D)
 
     new_iverts, rewritten = [], {}
+    location = canon[loc]
     for k in range(ncell):
-        want = [int(label[x]) for x in d_iverts[k]]
+        want = rings[k]
         have = [int(v) for v in iverts[k]]
         if len(have) == len(want) and have[0] in want:
             i = want.index(have[0])
@@ -445,17 +583,17 @@ def _onto_flopy(d_verts, d_iverts, verts, iverts, on_boundary):
             i = want.index(have[0])
             want = want[i:] + want[:i]
         new_iverts.append(want)
-        at = [dual_at.get(int(canon[loc[v]])) for v in have]
-        if any(x is None for x in at) or set(at) - set(d_iverts[k]):
+        at = [int(location[v]) for v in have]
+        if set(at) - set(want):
             reason = "foreign-vertex"
-        elif set(d_iverts[k]) - set(at):
+        elif set(want) - set(at):
             reason = "missing-vertex"
         elif len(at) != len(set(at)) or sorted(have) != sorted(want):
             reason = "twin-vertex"  # one location under another id, or twice in the ring
         else:
             reason = "corner-order" if on_boundary[k] else "interior-order"
         rewritten[k] = reason
-    return V, new_iverts, rewritten, len(extra)
+    return V, new_iverts, rewritten, len(V) - len(verts), unsplit, split
 
 
 def tessellate(tri, verts, iverts, points) -> tuple[np.ndarray, list, np.ndarray, TessellationReport]:
@@ -474,6 +612,10 @@ def tessellate(tri, verts, iverts, points) -> tuple[np.ndarray, list, np.ndarray
     flopy_points = np.asarray(points, dtype=float)
     ncell = len(iverts)
 
+    def pin(v, rings, xy):
+        props = types.SimpleNamespace(get_disv_gridprops=lambda: get_disv_gridprops(v, rings, xcyc=xy))
+        return grid_pin(props)
+
     if flopy_points.shape != d_points.shape or not np.array_equal(flopy_points, d_points):
         lost = len({tuple(p) for p in d_points.tolist()} - {tuple(p) for p in flopy_points.tolist()})
         extra = len({tuple(p) for p in flopy_points.tolist()} - {tuple(p) for p in d_points.tolist()})
@@ -481,10 +623,22 @@ def tessellate(tri, verts, iverts, points) -> tuple[np.ndarray, list, np.ndarray
         logger.warning(
             "the Voronoi grid's cells were rebuilt from Triangle's mesh (%s): FloPy's %d "
             "cells became %d, renumbered (ledgers 316, 317)", reason, ncell, len(d_iverts))
-        return d_verts, d_iverts, d_points, TessellationReport(
-            adopted=True, reason=reason, flopy_ncpl=ncell, ncpl=len(d_iverts))
-    new_verts, new_iverts, rewritten, appended = _onto_flopy(d_verts, d_iverts, verts, iverts, on_boundary)
-    report = TessellationReport(rewritten=rewritten, appended=appended, flopy_ncpl=ncell, ncpl=ncell)
+        # The dual's own vertices, a corner joined across any face the file cannot hold.
+        roots = _short_faces(d_verts, d_iverts, written_resolution(d_verts))
+        _, first, group = np.unique(roots, return_index=True, return_inverse=True)
+        unsplit = len(d_verts) - len(first)
+        rings = _rings_on(group, d_iverts, d_verts) if unsplit else d_iverts
+        return d_verts[first], rings, d_points, TessellationReport(
+            adopted=True, reason=reason, flopy_ncpl=ncell, ncpl=len(d_iverts), unsplit=unsplit,
+            split_pin=pin(d_verts, d_iverts, d_points) if unsplit else None)
+    new_verts, new_iverts, rewritten, appended, unsplit, split = _onto_flopy(
+        d_verts, d_iverts, verts, iverts, on_boundary)
+    report = TessellationReport(rewritten=rewritten, appended=appended, unsplit=unsplit,
+                                flopy_ncpl=ncell, ncpl=ncell)
+    if split is not None:
+        split_pin = pin(split[0], split[1], flopy_points)
+        if split_pin != pin(new_verts, new_iverts, flopy_points):
+            report = dataclasses.replace(report, split_pin=split_pin)
     if report.changed:
         logger.info("Voronoi grid repaired: %s", report.summary())
     return new_verts, new_iverts, flopy_points, report

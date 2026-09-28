@@ -512,8 +512,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5325 passed / 4 skipped**, 2026-09-27, ledger 338 -- the docstring guard adds
-  717 cases): serial (`-n0`) **7m08s** and `-n 10` **1m38s**, both in a detached checkout
+- Full suite (**5333 passed / 4 skipped**, 2026-09-28, ledger 316's written-resolution
+  amendment on top of 338): `-n 10` **1m32s** in a detached checkout outside `.claude`, at a
+  load average of ~3.6 at its start; serial not re-measured. Before it, 5325 passed / 4
+  skipped (ledger 338 -- the docstring guard adds 717 cases): serial (`-n0`) **7m08s** and `-n 10` **1m38s**, both in a detached checkout
   outside `.claude`, the serial one starting at a load average of ~11 as the parallel run
   ended. Before it, 4608 passed / 4 skipped (ledger 337): serial (`-n0`) **6m57s**
   in a detached checkout outside `.claude` at a load average of ~0.9. Before it, 4575 passed /
@@ -1301,10 +1303,23 @@ copies now, and a result given a `grid=` of another cell count is refused at the
   merge, have no cell left and are REFUSED by name rather than dropped -- a point
   constraint on a boundary edge, or within rounding of one, can do that. The certificate
   stays at 1e-9 of the edge: widened with the merge it passed a boundary circumcentre
-  outside the domain and returned a cell crossing itself. `tessellation_report` says what
+  outside the domain and returned a cell crossing itself. **A corner is never split
+  closer than the FILE records** (2026-09-28): FloPy writes a coordinate above 1e5 to
+  nine significant digits -- 0.01 ft at x = 1.26e6, `grid_identity.written_resolution` --
+  and four nodes almost on one circle give two circumcentres a hair apart. The repair
+  kept both, 7.4e-5 ft apart, where FloPy drew one corner; the face between them was
+  written with ZERO length and a real 20,323-cell model ran to normal termination with
+  every head NaN. Dual vertices joined by a face shorter than one written unit on both
+  axes are now one corner -- FloPy's where it drew one -- counted in `unsplit`, and a
+  model whose DISV would still write a zero-length face is REFUSED at build naming the
+  cells (`zero_length_faces`; a snapshot rebuild is the grid that ran). Measure what the
+  FILE holds, not what float64 holds: every precision check in this module was right in
+  memory. `tessellation_report` says what
   changed and carries `legacy_pin` (FloPy's own pin), and a package pinned to that is
   refused by a message naming the repair; one resolved under the FIRST version of the
-  repair (9bd3651) has no pin on record, and its refusal says so. Where FloPy's cell SET
+  repair (9bd3651) has no pin on record, and its refusal says so; one resolved on a grid
+  the repair split from bb56668 matches `split_pin`, and its refusal says the cells kept
+  their numbers. Where FloPy's cell SET
   is wrong -- a boundary in two parts (ledger 317), a point outside the domain -- the
   dual's cells are taken whole, renumbered, logged at WARNING. `tessellation="flopy"`
   (on `GridSpec.voronoi` or `VoronoiGridPlus`) rebuilds FloPy's cells exactly, and a grid

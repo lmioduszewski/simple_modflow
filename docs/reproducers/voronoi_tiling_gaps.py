@@ -74,6 +74,8 @@ WHAT IT MEASURES
      nearest of the rest is.
  12. What FloPy writes: one DISV vertex at (1200000.123456789, 650000.987654321) through
      ``write_simulation`` on FloPy's default float precision, read back from the file.
+     What that costs a face shorter than it -- NaN heads -- is
+     ``voronoi_written_resolution.py``.
 """
 
 from __future__ import annotations

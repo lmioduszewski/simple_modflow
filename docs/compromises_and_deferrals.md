@@ -14240,7 +14240,8 @@ same day, which is the useful part of the result.
       FloPy's cells against the dual of Triangle's own mesh and repairs the wrong ones
       (``grid/tessellation.py``). Over the grids of ``voronoi_tiling_sweep.py`` (1,266 then,
       1,510 since the fuzz pass) the repaired grid leaves no gap, overshoot or overlap above
-      1e-6 ft²,
+      1e-6 ft² (eleven spiky stars at state plane do since 2026-09-28, where corners the
+      written file cannot tell apart are joined -- below),
       and the L's flow comes back (28.1645 ft³/d at max_area 10000, where FloPy's cells gave
       26.7224). The design pass also found what the entry above did not list -- a kept
       on-boundary vertex duplicating its midpoint under another id, so MF6 drops a face
@@ -14315,6 +14316,60 @@ same day, which is the useful part of the result.
       two -- 98 faces in 4 of the star grids at (5e6, 5e6) and 2 in 2 at (1.2e6, 6.5e5)
       (part E); FloPy writes a vertex to nine significant digits, 0.01 ft at x = 1.2e6
       (``voronoi_tiling_gaps.py`` section 12), so no written grid held one anyway.
+      **A corner is not split closer than the written FILE records** (2026-09-28, the
+      user's call after a real model failed). The sentence above read the rounding as
+      harmless, and every precision check here was sized to float64. A face whose two ends
+      are WRITTEN as one point reaches MF6 with zero length, and MF6 returns NaN for every
+      head under normal termination. A user's 20,323-cell model at state plane did: four
+      smoothed nodes 5.7e-5 ft off one circle (a near-rectangle in a 100 ft² refinement)
+      gave two circumcentres 7.4e-5 ft apart; FloPy drew one corner, the repair drew both
+      and appended a vertex, and the face between the two cells was written as
+      ``1.25858105E+06 7.19399294E+05`` twice. That one line rewritten at full precision,
+      the model solved (32 s, 0.00% discrepancy). A second corner it split, 3.5e-4 ft
+      either side of FloPy's, printed one digit apart and ran by the luck of the rounding.
+      Now the dual's vertices joined by a face shorter than one written unit on BOTH axes
+      (``grid_identity.written_resolution``: FloPy's ``{:.8E}`` above 1e5, ``{:15.8f}``
+      below, held against the installed FloPy by a test) are ONE corner -- the FloPy vertex
+      one of them holds, else a FloPy vertex no dual vertex holds that lies within a unit
+      of all of them (Qhull's one corner drawn a hair off), else one appended vertex. Two
+      corners FloPy drew itself are never joined: its own short faces are FloPy's, not a
+      split (the spiky star has one, 5.7e-4 ft, written one digit apart). On the user's
+      model the repair now rewrites 2 cells (both corner-order) and appends nothing, where
+      it rewrote 9 and appended 3, and the grid has FloPy's 41,813 vertices; its pin moves
+      from 35000b3b to ef6fd280, and ``tessellation_report.split_pin`` keeps the old one, so
+      a package resolved there is told its cells kept their numbers. A group whose joining
+      would leave a cell with fewer than three corners stays split: that cell is smaller
+      than the file can write either way, and joined, six of the sweep's spiky stars at
+      state plane refused to build as GRIDS; split, they build, and the model build refuses
+      what the file would actually hold -- where more digits can still hold it.
+      **Over the sweep's 1,510 grids** (``voronoi_tiling_sweep.py``, re-run): every grid
+      builds; none loses a face the file can hold; of the 702 FloPy gets right none
+      changed and none writes a zero-length face. Faces WRITTEN with zero length: FloPy's
+      cells 309 in 41 grids, the repair as bb56668 built it 23,484 in 41, now 679 in 17 --
+      every one a spiky star at (1.2e6, 6.5e5) or (5e6, 5e6), most of them the
+      38,000-41,000-cell meshes of the clip-inset sliver (the "max_area far larger than a
+      domain's arms" item below) where a cell is smaller than the file can write, and
+      the rest faces FloPy drew itself; those models are refused at build rather than
+      run to NaN. 53,542 dual vertices were joined in 43 grids (5 of them grids FloPy gets
+      right, where joining gave FloPy's own rings back). The price: 11 grids now miss the
+      triangles by more than 1e-6 ft² -- a joined corner moves by less than one written
+      unit -- the largest 1.7 ft² on a 37,978-cell sliver star whose FloPy cells miss by
+      2,480 ft²; every vertex at state plane is written up to 0.005 ft off in any case.
+      **A model whose DISV would be written with a zero-length face is refused at build**
+      (``grid_identity.zero_length_faces``, naming the cells), whatever made the grid: one
+      rebuilt from a frozen snapshot or a pickle is the grid that ran and is never
+      repaired, and the user's own run folder still holds that face. The check reads the
+      simulation's own number format; the repair cannot (it runs before any simulation
+      exists), so it measures against FloPy's default, and under a raised
+      ``float_precision`` it may join a face the file could have held -- 0.01 ft at most at
+      state plane. NOT done: every vertex at state plane is still written up to 0.005 ft off
+      (section 12); writing full precision grows every file ~60% and moves every result,
+      which is the separate open question. ``tests/test_voronoi_tiling.py`` gains eight
+      tests (33 in all), and seven single-piece mutations each fail a named one: joining
+      off, FloPy's hair-off corner ignored, FloPy's own faces joined, the float64 unit put
+      back, the build check silenced, the split-pin message removed, a collapsing join kept. Reproducer:
+      ``voronoi_written_resolution.py`` -- NaN on four quads at FloPy's format, the same
+      heads at 16 digits and joined; pass run folders to check what their ``.disv`` holds.
       **A package resolved under the first version has no pin on record**: that version's
       grids pinned differently and nothing kept their pin, so such a package meets the
       generic "different mesh" refusal -- which now adds, on a repaired grid, that a

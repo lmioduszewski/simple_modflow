@@ -82,8 +82,12 @@ def _disv_faces(iverts):
     return faces
 
 
-def _mesh_faces(vor, tri):
-    """The faces the mesh says exist, as cell pairs, from Triangle's triangles alone."""
+def _mesh_faces(vor, tri, recordable=False):
+    """The faces the mesh says exist, as cell pairs, from Triangle's triangles alone.
+
+    ``recordable`` keeps only the faces a DISV file can hold: a dual segment shorter than
+    one written unit on both axes is written as one point, and the repair joins its ends.
+    """
 
     P, T = np.asarray(tri.verts, dtype=float), np.asarray(tri.iverts, dtype=int)
     cell_of = {(float(x), float(y)): k for k, (x, y) in enumerate(np.asarray(vor.points))}
@@ -101,6 +105,9 @@ def _mesh_faces(vor, tri):
     for t in T:
         for u, v in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
             edges.setdefault((min(u, v), max(u, v)), []).append(t)
+    from myflopy.grid_identity import written_resolution
+
+    unit = written_resolution(np.asarray(vor.verts, dtype=float))
     faces = set()
     for (u, v), ts in edges.items():
         a, b = node_cell[u], node_cell[v]
@@ -108,10 +115,10 @@ def _mesh_faces(vor, tri):
             continue
         length = math.dist(P[u], P[v])
         if len(ts) == 2:
-            dual = np.linalg.norm(circumcentre(ts[0]) - circumcentre(ts[1]))
+            segment = circumcentre(ts[0]) - circumcentre(ts[1])
         else:
-            dual = np.linalg.norm(circumcentre(ts[0]) - (P[u] + P[v]) / 2)
-        if dual > 1e-7 * length:
+            segment = circumcentre(ts[0]) - (P[u] + P[v]) / 2
+        if np.linalg.norm(segment) > 1e-7 * length and not (recordable and (np.abs(segment) < unit).all()):
             faces.add((min(a, b), max(a, b)))
     return faces
 
@@ -353,10 +360,14 @@ def star(tmp_path_factory):
 
 def test_a_spiky_boundary_at_state_plane_keeps_every_face(star, tmp_path_factory):
     """Found by a fuzz pass: across 30 thin spikes near x = 1.2e6, Qhull's Delaunay is not
-    Triangle's, and cells FloPy drew from both lost faces the first repair did not give back."""
+    Triangle's, and cells FloPy drew from both lost faces the first repair did not give back.
+    Every face the written file can hold is there. Of the four shorter than 0.01 ft, the
+    three the repair would have split off a corner are joined, and FloPy's own is kept."""
 
     vor, tri = star
-    assert _disv_faces(vor.iverts) == _mesh_faces(vor, tri)
+    everything, recordable = _mesh_faces(vor, tri), _mesh_faces(vor, tri, recordable=True)
+    assert recordable <= _disv_faces(vor.iverts) <= everything
+    assert len(everything - recordable) == 4 and len(everything - _disv_faces(vor.iverts)) == 3
     gap, outside, overlap = _tiling(vor, tri)
     assert gap < 1e-6 and outside < 1e-6 and abs(overlap) < 1e-6
     polygon = Polygon([(1.2e6 + x, 6.5e5 + y) for x, y in STAR])
@@ -387,8 +398,14 @@ def test_every_vertex_is_where_the_mesh_puts_one(star):
     used = np.unique(np.concatenate([np.asarray(r) for r in vor.iverts]))
     from scipy.spatial import cKDTree
 
+    from myflopy.grid_identity import written_resolution
+
     off = cKDTree(truth).query(np.asarray(vor.verts, dtype=float)[used])[0]
-    assert off.max() <= 2 * 1000 * np.spacing(np.abs(P).max()), off.max()
+    # Only a corner joined across a face the file cannot hold may stand off its
+    # circumcentre, and then by less than what the file writes (0.01 ft here).
+    far = off > 2 * 1000 * np.spacing(np.abs(P).max())
+    assert far.sum() <= vor.tessellation_report.unsplit, off[far]
+    assert (off[far] < written_resolution(np.asarray(vor.verts)).max()).all(), off.max()
 
 
 def _triangle_at_state_plane(tmp_path, nodes):
@@ -502,5 +519,153 @@ def test_one_flopy_vertex_is_never_given_to_two_dual_vertices():
     dual = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, -1.0], [1e-14, 0.0], [0.0, -1.0]])
     rings = [[0, 1, 2, 4], [3, 2, 4]]  # vertices 0 and 3 sit 1e-14 apart, inside the tolerance
     flopy = np.array([[0.0, 0.0], [1.0, 0.0], [1.0, -1.0], [0.0, -1.0]])
-    verts, iverts, _, appended = _onto_flopy(dual, rings, flopy, [[0, 1, 2, 3], [0, 2, 3]], np.array([False, False]))
-    assert appended == 1 and iverts[1][0] == 4 and len(verts) == 5
+    verts, iverts, _, appended, unsplit, _ = _onto_flopy(
+        dual, rings, flopy, [[0, 1, 2, 3], [0, 2, 3]], np.array([False, False]))
+    assert appended == 1 and unsplit == 0 and iverts[1][0] == 4 and len(verts) == 5
+
+
+# ---------------------------------------------------------------------------------------
+# A corner is not split closer than the written file can record (ledger 316, 2026-09-28).
+# Four nodes almost on one circle give two circumcentres a hair apart; FloPy drew ONE
+# corner there, the repair drew two, 7.4e-5 ft apart on a real model where FloPy writes
+# 0.01 ft -- a face written with zero length, and MF6 answered NaN for every head.
+
+X0, Y0 = 1.2e6 + 100.0, 6.5e5 + 100.0
+
+# Four quads around a corner at (X0, Y0), as FloPy drew them: every cell holds vertex 8.
+QUAD_VERTS = np.array([(X0 - 100, Y0 - 100), (X0, Y0 - 100), (X0 + 100, Y0 - 100), (X0 + 100, Y0),
+                       (X0 + 100, Y0 + 100), (X0, Y0 + 100), (X0 - 100, Y0 + 100), (X0 - 100, Y0),
+                       (X0, Y0)])
+FLOPY_RINGS = [[0, 7, 8, 1], [1, 8, 3, 2], [8, 5, 4, 3], [7, 6, 5, 8]]
+# The dual splits that corner into 8 and 9, with a face 8-9 between cells 0 and 2.
+DUAL_RINGS = [[0, 7, 8, 9, 1], [1, 9, 3, 2], [8, 5, 4, 3, 9], [7, 6, 5, 8]]
+
+
+def _split_corner(gap, flopy_corner=None):
+    from myflopy.modflow.mf6.grid.tessellation import _onto_flopy
+
+    dual = np.vstack([QUAD_VERTS, [(X0 + gap, Y0)]])
+    flopy = QUAD_VERTS.copy()
+    if flopy_corner is not None:
+        flopy[8] = flopy_corner
+    return _onto_flopy(dual, DUAL_RINGS, flopy, FLOPY_RINGS, np.zeros(4, dtype=bool))
+
+
+def test_a_corner_is_not_split_closer_than_the_file_records():
+    """7.4e-5 ft apart at x = 1.2e6, where FloPy writes 0.01 ft: FloPy's one corner stays."""
+
+    verts, iverts, rewritten, appended, unsplit, split = _split_corner(7.4e-5)
+    assert appended == 0 and unsplit == 1 and rewritten == {}
+    assert [list(r) for r in iverts] == FLOPY_RINGS and len(verts) == 9
+    assert split is not None and len(split[0]) == 10  # the split grid, for its pin
+
+
+def test_a_face_the_file_can_record_is_kept():
+    """0.02 ft apart is two written points, so the face between them is a real face."""
+
+    verts, iverts, rewritten, appended, unsplit, split = _split_corner(0.02)
+    assert appended == 1 and unsplit == 0 and split is None
+    assert sorted(rewritten) == [0, 1, 2]
+    assert frozenset((8, 9)) in {frozenset(p) for r in iverts for p in zip(r, r[1:] + r[:1], strict=True)}
+
+
+def test_flopys_corner_drawn_a_hair_off_is_that_corner():
+    """Qhull's one vertex sat BETWEEN the two circumcentres (3.5e-4 ft from each on the real
+    model): neither is FloPy's exactly, and both take it rather than one appended vertex."""
+
+    verts, iverts, rewritten, appended, unsplit, _ = _split_corner(7.4e-4, flopy_corner=(X0 + 3.7e-4, Y0))
+    assert appended == 0 and unsplit == 1 and rewritten == {}
+    assert [list(r) for r in iverts] == FLOPY_RINGS
+
+
+def test_the_written_resolution_is_flopys():
+    """The unit is FloPy's own number format; a FloPy that changes it fails here."""
+
+    import flopy
+
+    from myflopy.grid_identity import (
+        FLOPY_FLOAT_PRECISION,
+        FLOPY_SCI_NOTE_UPPER,
+        written_resolution,
+    )
+
+    with __import__("tempfile").TemporaryDirectory() as d:
+        data = flopy.mf6.MFSimulation(sim_ws=d).simulation_data
+    assert data.float_precision == FLOPY_FLOAT_PRECISION
+    assert data._sci_note_upper_thres == FLOPY_SCI_NOTE_UPPER
+    assert data.reg_format_str.format(1258581.0531261326) == data.reg_format_str.format(1258581.0531488403)
+    assert list(written_resolution([[1258581.05, 719399.29]])) == [0.01, 0.001]
+    assert list(written_resolution([[1000.0, 10.0]])) == [1e-8, 1e-8]
+
+
+def _quad_disv(tmp_path, gap, x0=X0, y0=Y0, precision=None):
+    import flopy
+
+    dual = np.vstack([QUAD_VERTS - [X0, Y0] + [x0, y0], [(x0 + gap, y0)]])
+    sim = flopy.mf6.MFSimulation(sim_ws=str(tmp_path))
+    if precision is not None:
+        sim.simulation_data.float_precision = precision
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="m")
+    centres = [(-50, -50), (50, -50), (50, 50), (-50, 50)]
+    cell2d = [[k, x0 + cx, y0 + cy, len(r), *r] for k, ((cx, cy), r) in enumerate(zip(centres, DUAL_RINGS, strict=True))]
+    disv = flopy.mf6.ModflowGwfdisv(gwf, nlay=1, ncpl=4, nvert=len(dual), top=10.0, botm=[0.0],
+                                    vertices=[[i, x, y] for i, (x, y) in enumerate(dual)], cell2d=cell2d)
+    return disv, sim.simulation_data
+
+
+def test_a_face_written_as_one_point_is_found(tmp_path):
+    from myflopy.grid_identity import zero_length_faces
+
+    disv, data = _quad_disv(tmp_path / "a", 7.4e-5)
+    [(a, b, x, y)] = zero_length_faces(disv, data)
+    assert (a, b) == (0, 2) and (x, y) == (1200100.0, 650100.0)
+    assert zero_length_faces(_quad_disv(tmp_path / "b", 0.02)[0]) == []  # two written points
+    assert zero_length_faces(*_quad_disv(tmp_path / "c", 7.4e-5, precision=16)) == []  # more digits
+    assert zero_length_faces(_quad_disv(tmp_path / "d", 7.4e-5, x0=100.0, y0=100.0)[0]) == []  # 1e-8 ft
+
+
+def test_a_model_whose_disv_writes_a_zero_length_face_is_refused(tmp_path):
+    """A grid rebuilt from a snapshot is the grid that ran, so the build asks the file."""
+
+    import myflopy as mf
+
+    dual = np.vstack([QUAD_VERTS, [(X0 + 7.4e-5, Y0)]])
+    centres = [(-50, -50), (50, -50), (50, 50), (-50, 50)]
+    model = mf.gwf("m", packages=[
+        mf.disv(nlay=1, ncpl=4, nvert=len(dual), top=10.0, botm=[0.0],
+                vertices=[[i, x, y] for i, (x, y) in enumerate(dual)],
+                cell2d=[[k, X0 + cx, Y0 + cy, len(r), *r] for k, ((cx, cy), r) in enumerate(zip(centres, DUAL_RINGS, strict=True))]),
+        mf.npf(k=1.0), mf.ic(strt=5.0), mf.oc(head_filerecord="m.hds")])
+    sim = mf.simulation(model, name="z", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    with pytest.raises(ValueError, match=r"1 face\(s\) of ZERO length .* cells 0 and 2"):
+        sim.build_flopy(workspace=tmp_path / "z")
+
+
+def test_a_package_from_the_split_grid_is_told_its_cells_kept_their_numbers(star):
+    """The repair built from bb56668 pinned the split grid; a package resolved there is told so."""
+
+    from types import SimpleNamespace
+
+    from myflopy.grid_identity import GRID_PIN, _discretization_complaints, grid_pin
+
+    vor, _ = star
+    report = vor.tessellation_report
+    assert report.unsplit == 3 and report.split_pin not in (None, grid_pin(vor))
+    package = SimpleNamespace(name="chd", metadata={GRID_PIN: report.split_pin})
+    complaints = _discretization_complaints(None, SimpleNamespace(grid=vor, metadata={}), [package])
+    assert any("bb56668" in c and "every cell kept its number" in c for c in complaints), complaints
+
+
+def test_a_corner_whose_joining_would_collapse_a_cell_stays_split():
+    """A cell whose every corner lies within 0.01 ft of the next cannot be written at all.
+    Joined, the GRID was refused (6 spiky stars in the sweep); split, it builds, and the
+    build-time check refuses only a file that would actually hold a zero-length face."""
+
+    from myflopy.grid_identity import written_resolution
+    from myflopy.modflow.mf6.grid.tessellation import _short_faces
+
+    tiny = np.array([(X0, Y0), (X0 + 1e-3, Y0), (X0, Y0 + 1e-3), (X0 + 100, Y0), (X0, Y0 + 100)])
+    rings = [[0, 1, 2], [1, 3, 4, 2]]
+    assert list(_short_faces(tiny, rings, written_resolution(tiny))) == [0, 1, 2, 3, 4]
+    # and a corner beside a cell that survives it is still joined
+    assert list(_short_faces(tiny, [[0, 1, 3, 4]], written_resolution(tiny))) == [0, 0, 2, 3, 4]

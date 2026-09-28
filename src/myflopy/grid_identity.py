@@ -103,6 +103,135 @@ def bed_tolerance(value: float) -> float:
     return max(1e-6 * abs(float(value)), 1e-6)
 
 
+#: How FloPy writes a floating-point value into an MF6 input file -- its
+#: ``MFSimulationData`` defaults, which a test holds against the installed FloPy: a
+#: magnitude above ``1e5`` as ``{:.8E}``, nine significant digits (0.01 ft at x = 1.2e6,
+#: 0.001 ft at y = 7.2e5), anything else as ``{:15.8f}``.
+FLOPY_FLOAT_PRECISION = 8
+FLOPY_SCI_NOTE_UPPER = 1e5
+
+
+def written_resolution(coords, precision: int = FLOPY_FLOAT_PRECISION,
+                       upper: float = FLOPY_SCI_NOTE_UPPER):
+    """Per axis, the smallest gap between two vertex coordinates a DISV file can hold.
+
+    One unit in the last digit FloPy writes for the largest coordinate on that axis. Two
+    vertices closer than this on BOTH axes can be written as the same point, and a face
+    between them then reaches MF6 with zero length -- MF6 returns NaN for every head and
+    reports normal termination (ledger 316, measured on a 20,323-cell model at state
+    plane). It is the largest coordinate's unit, not each vertex's own, so a grid that
+    crosses a power of ten is judged by its coarser end.
+
+    Parameters
+    ----------
+    coords : array_like
+        ``(n, 2)`` vertex coordinates, in model length units.
+    precision : int, optional
+        Digits FloPy writes after the decimal point, ``simulation_data.float_precision``.
+        Default 8, FloPy's.
+    upper : float, optional
+        Magnitude above which FloPy writes scientific notation, and so a fixed number of
+        SIGNIFICANT digits. Default ``1e5``, FloPy's.
+
+    Returns
+    -------
+    numpy.ndarray
+        ``(2,)`` -- the x and y resolution, in model length units.
+
+    Examples
+    --------
+    >>> written_resolution([[1258581.05, 719399.29], [1258591.0, 719409.0]])
+    array([0.01 , 0.001])
+    >>> written_resolution([[0.0, 0.0], [1000.0, 1000.0]])
+    array([1.e-08, 1.e-08])
+    """
+
+    import numpy as np
+
+    xy = np.asarray(coords, dtype=float).reshape(-1, 2)
+    largest = np.abs(xy).max(axis=0) if len(xy) else np.zeros(2)
+    scientific = largest > upper
+    exponent = np.floor(np.log10(np.where(scientific, largest, 1.0)))
+    return np.where(scientific, 10.0 ** (exponent - precision), 10.0 ** -precision)
+
+
+def zero_length_faces(disv, simulation_data=None) -> list[tuple[int, int, float, float]]:
+    """The faces a DISV package will be WRITTEN with zero length.
+
+    Two cells share a face when their rings share a vertex pair, and MF6 computes the
+    face's width and its distances from the pair's two coordinates as the file holds
+    them. When FloPy writes both vertices as the same point the width is zero and those
+    distances divide by it: MF6 returns NaN for every head and still reports normal
+    termination. Ledger 316's repair made such faces on a real model at state plane,
+    splitting one corner into two 7.4e-5 ft apart where the file holds 0.01 ft; it no
+    longer does, but a grid rebuilt from a snapshot or a pickle is the grid that ran.
+
+    Parameters
+    ----------
+    disv : flopy.mf6.ModflowGwfdisv
+        A BUILT DISV package (``vertices`` and ``cell2d`` set).
+    simulation_data : flopy.mf6.mfsimbase.MFSimulationData, optional
+        Its simulation's ``simulation_data``, whose number format decides what is
+        written. ``None`` means FloPy's defaults.
+
+    Returns
+    -------
+    list of tuple
+        ``(cell, other_cell, x, y)`` per face, zero-based cells and the point both
+        vertices are written as; empty when there are none, or when the package cannot
+        be read.
+
+    Examples
+    --------
+    >>> zero_length_faces(model.get_package("disv"), model.simulation_data)  # doctest: +SKIP
+    [(8692, 8695, 1258581.05, 719399.294)]
+    """
+
+    import numpy as np
+    from scipy.spatial import cKDTree
+
+    try:
+        vertices = disv.vertices.get_data()
+        cell2d = disv.cell2d.get_data()
+        xy = np.column_stack([vertices["xv"], vertices["yv"]]).astype(float)
+        rings = [[int(row[4 + i]) for i in range(int(row[3]))] for row in cell2d]
+    except (AttributeError, KeyError, TypeError, ValueError, IndexError):
+        logger.debug("could not read the DISV's vertices for the zero-length face check", exc_info=True)
+        return []
+    if not len(xy):
+        return []
+    precision = int(getattr(simulation_data, "float_precision", FLOPY_FLOAT_PRECISION))
+    upper = float(getattr(simulation_data, "_sci_note_upper_thres", FLOPY_SCI_NOTE_UPPER))
+    lower = float(getattr(simulation_data, "_sci_note_lower_thres", 1e-3))
+    unit = written_resolution(xy, precision=precision, upper=upper)
+    pairs = cKDTree(xy / unit).query_pairs(float(np.nextafter(1.0, 0.0)), p=np.inf)
+    if not pairs:
+        return []
+
+    # FloPy's own rule (``mfdatautil.to_string``) and its own two formats -- which it names
+    # the other way round: ``reg_format_str`` is the scientific one.
+    scientific_format = getattr(simulation_data, "reg_format_str", f"{{:.{precision}E}}")
+    fixed_format = getattr(simulation_data, "sci_format_str", f"{{:15.{precision}f}}")
+
+    def written(value):
+        magnitude = abs(value)
+        scientific = (magnitude > upper or magnitude < lower) and magnitude != 0
+        return (scientific_format if scientific else fixed_format).format(value).strip()
+
+    same = {frozenset(pair) for pair in pairs
+            if all(written(xy[pair[0], k]) == written(xy[pair[1], k]) for k in (0, 1))}
+    if not same:
+        return []
+    owners: dict = {}
+    for cell, ring in enumerate(rings):
+        for a, b in zip(ring, ring[1:] + ring[:1], strict=True):
+            edge = frozenset((a, b))
+            if edge in same:
+                owners.setdefault(edge, []).append(cell)
+    return [(cells[0], cells[1], float(written(xy[min(edge), 0])), float(written(xy[min(edge), 1])))
+            for edge, cells in owners.items() if len(cells) > 1]
+
+
 #: Context fields that ``ModelSpec.to_dict`` cannot carry, and that something reads.
 #: ``dates`` is deliberately absent: nothing in the library reads it, so losing it
 #: costs nothing and warning about it would be noise.
@@ -2197,6 +2326,20 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
             pin = metadata.get(GRID_PIN)
             if pin is not None and pin != model_pin:
                 report = getattr(grid, "tessellation_report", None)
+                if report is not None and getattr(report, "split_pin", None) == pin:
+                    # The same cells, the same numbers: from bb56668 the repair split a
+                    # corner into two vertices the file could not tell apart, which wrote
+                    # a zero-length face and NaN heads. Joining them moved the pin only.
+                    complaints.append(
+                        f"package {package.name!r} was resolved on this model's grid as "
+                        f"ledger 316's repair built it from myflopy bb56668 (grid {pin}), "
+                        f"which split {report.unsplit} cell corner(s) into two vertices "
+                        "closer together than the DISV file records -- a face written with "
+                        "zero length, on which MF6 returns NaN heads. Those corners are one "
+                        f"vertex again and every cell kept its number, so this grid is now "
+                        f"{model_pin}. Re-declare the package against this grid"
+                    )
+                    continue
                 if report is not None and getattr(report, "legacy_pin", None) == pin:
                     # The same mesh, re-outlined: ledger 316's repair rewrote cells that
                     # FloPy drew wrong, so every cell keeps its number and the pin moves

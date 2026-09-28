@@ -37,11 +37,16 @@ WHAT IT MEASURES
 
 Every grid, every part, also counts LOST FACES: mesh edges whose dual segment is longer
 than 1e-7 of the edge (an interior edge between two distinct circumcentres, a boundary
-edge whose circumcentre is not its midpoint) AND than 1000 ulp of the coordinates (9.3e-7
-ft at 5e6 -- the repair makes two circumcentres that close one vertex, and FloPy writes a
-vertex to nine significant digits anyway, ``voronoi_tiling_gaps.py`` section 12), and
-that the two cells do not share as a vertex pair, which is how MF6 DISV finds a face --
-for FloPy's cells and for the repaired grid. And for each grid FloPy got right (no lost face; no gap, overshoot or overlap; no
+edge whose circumcentre is not its midpoint) AND than what a DISV file FloPy writes can
+hold -- one unit in its last digit, on at least one axis (``written_resolution``: 0.01 ft
+at x = 1.2e6, 1e-8 ft below 1e5) -- and that the two cells do not share as a vertex pair,
+which is how MF6 DISV finds a face -- for FloPy's cells and for the repaired grid. A face
+shorter than that is written as one point: kept, it reaches MF6 with zero length and MF6
+returns NaN for every head, which a real 20,323-cell model at state plane did after the
+repair split a corner 7.4e-5 ft wide (ledger 316, 2026-09-28). So each grid also counts
+the faces WRITTEN with zero length -- on FloPy's cells, on the repaired grid, and on the
+grid the repair built from bb56668 until corners closer than the file holds were joined
+(``_onto_flopy``'s ``split``) -- and how many dual vertices the repair joined. And for each grid FloPy got right (no lost face; no gap, overshoot or overlap; no
 ring holding one location twice, which is a zero-width MF6 connection), it says whether
 the repair changed it anyway: that would re-pin a grid with nothing wrong.
 
@@ -109,10 +114,12 @@ def _build(path: str, domain: Polygon, max_area: float, angle: float, profile: s
 def _lost_faces(vor, tri, short: bool = False) -> int:
     """Mesh faces the cells do not share as a vertex pair (see the module docstring).
 
-    ``short=True`` counts instead the faces longer than 1e-7 of their edge but NOT longer
-    than 1000 ulp: the ones the repair makes one vertex. Pass the repaired grid, which has a
-    cell for every node.
+    ``short=True`` counts instead the faces longer than 1e-7 of their edge but shorter than
+    the written file holds: the ones the repair may make one vertex. Pass the repaired grid,
+    which has a cell for every node.
     """
+    from myflopy.grid_identity import written_resolution
+
     P = np.asarray(tri.verts, dtype=float)
     T = np.asarray(tri.iverts, dtype=np.int64)
     cell_of = {(float(x), float(y)): k for k, (x, y) in enumerate(np.asarray(vor.points))}
@@ -127,14 +134,15 @@ def _lost_faces(vor, tri, short: bool = False) -> int:
     for t, (i, j, k) in enumerate(T):
         for u, v in ((i, j), (j, k), (k, i)):
             edges[(min(u, v), max(u, v))].append(t)
-    resolvable = 1000 * float(np.spacing(np.abs(np.asarray(tri.verts, dtype=float)).max()))
+    unit = written_resolution(np.asarray(tri.verts, dtype=float))
     want = set()
     for (u, v), ts in edges.items():
         if node_cell[u] is None or node_cell[v] is None:
             continue
         end = cc[ts[1]] if len(ts) == 2 else (P[u] + P[v]) / 2
         dual, floor = np.hypot(*(cc[ts[0]] - end)), 1e-7 * np.hypot(*(P[u] - P[v]))
-        if (floor < dual <= resolvable) if short else dual > max(floor, resolvable):
+        unwritable = bool((np.abs(cc[ts[0]] - end) < unit).all())
+        if (floor < dual and unwritable) if short else (dual > floor and not unwritable):
             want.add((min(node_cell[u], node_cell[v]), max(node_cell[u], node_cell[v])))
     if short:
         return len(want)
@@ -146,6 +154,32 @@ def _lost_faces(vor, tri, short: bool = False) -> int:
                 have.add((min(owner[edge], k), max(owner[edge], k)))
             owner[edge] = k
     return len(want - have)
+
+
+def _zero_written(verts, iverts, points) -> int:
+    """Faces a DISV file FloPy writes (its default number format) holds with zero length."""
+    from types import SimpleNamespace
+
+    from flopy.utils.cvfdutil import get_disv_gridprops
+
+    from myflopy.grid_identity import zero_length_faces
+
+    props = get_disv_gridprops(np.asarray(verts, dtype=float), [list(r) for r in iverts], xcyc=np.asarray(points))
+    vertices = np.rec.fromrecords([tuple(v) for v in props["vertices"]], names="iv,xv,yv")
+    disv = SimpleNamespace(vertices=SimpleNamespace(get_data=lambda: vertices),
+                           cell2d=SimpleNamespace(get_data=lambda: props["cell2d"]))
+    return len(zero_length_faces(disv))
+
+
+def _split_grid(vor, tri):
+    """The repaired grid as bb56668 built it: every dual vertex kept, however close."""
+    from myflopy.modflow.mf6.grid.tessellation import _dual, _onto_flopy
+
+    d_verts, d_iverts, d_points, on_boundary = _dual(tri)
+    if not np.array_equal(np.asarray(vor.points, dtype=float), d_points):
+        return d_verts, d_iverts, d_points  # adopted whole; bb56668 joined nothing there either
+    verts, iverts, *_, split = _onto_flopy(d_verts, d_iverts, vor.verts, vor.iverts, on_boundary)
+    return (split[0], split[1], d_points) if split is not None else (verts, iverts, d_points)
 
 
 def _star(seed: int) -> Polygon | None:
@@ -198,7 +232,9 @@ def _measure(task, root: pathlib.Path):
     try:
         repaired = VoronoiGridPlus(tri)
     except Exception as exc:  # noqa: BLE001 - a refused mesh is a row, not the end of the sweep
-        return dict(part=part, error=f"repair: {type(exc).__name__}: {exc}")
+        return dict(part=part, error=f"repair: {type(exc).__name__}: {exc}", task=task, ncell=vor.ncpl,
+                    zero_before=_zero_written(vor.verts, vor.iverts, vor.points),
+                    zero_split=_zero_written(*_split_grid(vor, tri)))
     pieces = [Polygon(np.asarray(tri.verts)[t]) for t in np.asarray(tri.iverts)]
     triangles = shapely.union_all(pieces)
 
@@ -231,7 +267,10 @@ def _measure(task, root: pathlib.Path):
     row = dict(part=part, path=path, name=name, theta=theta, rot=rot, max_area=max_area, angle=angle,
                profile=profile, ncell=vor.ncpl, after=misfit(repaired, local=True), before=misfit(vor), twice=twice,
                lost=_lost_faces(vor, tri), lost_after=_lost_faces(repaired, tri), short=_lost_faces(repaired, tri, True),
-               changed=repaired.tessellation_report.changed)
+               changed=repaired.tessellation_report.changed, unsplit=repaired.tessellation_report.unsplit,
+               zero_before=_zero_written(vor.verts, vor.iverts, vor.points),
+               zero_after=_zero_written(repaired.verts, repaired.iverts, repaired.points),
+               zero_split=_zero_written(*_split_grid(vor, tri)))
     if name == "star" or part == "F":
         return row
     reference, meshed = _reference(vor, tri)
@@ -359,7 +398,8 @@ def main() -> None:
               f"cells ({sum(r['lost'] for r in group)} faces), {sum(r['lost_after'] > 0 for r in group)} on the "
               f"repaired grid; {sum(r['before'] > 1e-6 for r in group)} leave a gap, overshoot or overlap on "
               f"FloPy's cells, {sum(r['after'] > 1e-6 for r in group)} repaired; {sum(r['short'] for r in group)} "
-              f"faces no longer than 1000 ulp in {sum(r['short'] > 0 for r in group)} grids, made one vertex")
+              f"faces shorter than the written file holds in {sum(r['short'] > 0 for r in group)} grids; "
+              f"{sum(r['unsplit'] for r in group)} dual vertices joined in {sum(r['unsplit'] > 0 for r in group)}")
     print("\nF. grids FloPy gets right, at state-plane offsets:")
     for offset in OFFSETS[1:]:
         group = [r for r in rows if r["part"] == "F" and tuple(r["rot"][1]) == offset]
@@ -376,6 +416,28 @@ def main() -> None:
           f"{len(right)} grids FloPy got right, the repair changed {sum(r['changed'] for r in right)}; "
           f"{sum(r['twice'] > 0 and r['lost'] == 0 and r['before'] <= 1e-6 for r in rows)} more tiled but "
           "held a location twice in a ring, and the repair took the zero-width connection out.")
+    for label, key in (("FloPy's cells", "zero_before"), ("the repair as bb56668 built it", "zero_split"),
+                       ("the repaired grid", "zero_after")):
+        print(f"WRITTEN WITH ZERO LENGTH (NaN in MF6), {label}: {sum(r[key] for r in rows)} faces in "
+              f"{sum(r[key] > 0 for r in rows)} grids")
+    def where(r):
+        return f"{r['part']} {r['name']} {r['theta']} {r['rot']} max_area {r['max_area']} {r['profile']} ({r['ncell']} cells)"
+
+    for r in errors:
+        if "task" in r:
+            print(f"  REFUSED {r['task']} ({r['ncell']} cells): FloPy's cells wrote {r['zero_before']} "
+                  f"zero-length faces, bb56668's {r['zero_split']}")
+    for r in rows:
+        if r["zero_after"] or r["after"] > 1e-6:
+            print(f"  {where(r)}: joined {r['unsplit']}, misfit {r['after']:.3g} ft2 (FloPy's {r['before']:.3g}); "
+                  f"zero-length faces FloPy {r['zero_before']}, bb56668 {r['zero_split']}, now {r['zero_after']}")
+    bad_right = [r for r in right if r["zero_before"]]
+    print(f"  of the {len(right)} grids FloPy got right, {len(bad_right)} still write a zero-length face on "
+          f"FloPy's own cells: " + "; ".join(where(r) for r in bad_right[:10]))
+    joined = [r for r in rows if r["unsplit"]]
+    print(f"JOINED: {sum(r['unsplit'] for r in joined)} dual vertices in {len(joined)} grids "
+          f"({dict(collections.Counter((r['part'], str(r['rot'])) for r in joined))}); of the {len(right)} grids "
+          f"FloPy got right, {sum(r['unsplit'] > 0 for r in right)} had any joined.")
 
 
 if __name__ == "__main__":
