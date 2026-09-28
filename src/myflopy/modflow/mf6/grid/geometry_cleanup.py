@@ -6,7 +6,15 @@ import numpy as np
 import shapely as shp
 from shapely.geometry import GeometryCollection, LineString, MultiLineString, MultiPolygon, Polygon
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.helpers import densify_poly
+
+logger = get_logger(__name__)
+
+#: A part the profile's simplification changes by more than this fraction of its area is
+#: narrower than the tolerance and is kept as drawn -- boundary parts only (ledger 316).
+#: The real boundaries measured moved 0-10%; a collapse moves ~50% (a quad becomes a triangle).
+COLLAPSE_FRACTION = 0.25
 
 
 @dataclass(slots=True)
@@ -112,8 +120,15 @@ def cleanup_polygonal_geometry(
     simplify_tolerance: float | None = None,
     min_feature_area: float = 0.0,
     target_segment_length: float | None = None,
+    keep_collapsing_parts: bool = False,
 ) -> tuple[Polygon | MultiPolygon, CleanupStats]:
-    """Clean a polygonal geometry (snap, simplify, drop tiny features, re-sample) with before/after stats."""
+    """Clean a polygonal geometry (snap, simplify, drop tiny features, re-sample) with before/after stats.
+
+    ``keep_collapsing_parts=True`` (the model boundary) keeps as drawn, with a warning, any
+    part the simplification would change by more than ``COLLAPSE_FRACTION`` of its area: a
+    part narrower than ``simplify_tolerance`` loses a corner and half its area otherwise --
+    a 1 ft square became a triangle meshed into 20,681 cells (ledger 316).
+    """
 
     polygons_in = sum(1 for _ in iter_polygons(geometry))
     vertices_in = polygon_vertex_count(geometry)
@@ -123,7 +138,25 @@ def cleanup_polygonal_geometry(
         cleaned = shp.snap(cleaned, cleaned, snap_tolerance)
 
     if simplify_tolerance and simplify_tolerance > 0:
-        cleaned = cleaned.simplify(simplify_tolerance, preserve_topology=True)
+        simplified = cleaned.simplify(simplify_tolerance, preserve_topology=True)
+        before, after = list(iter_polygons(cleaned)), list(iter_polygons(simplified))
+        if keep_collapsing_parts and len(before) == len(after):
+            kept = [i for i, (b, a) in enumerate(zip(before, after, strict=True))
+                    if b.area > 0 and abs(a.area - b.area) > COLLAPSE_FRACTION * b.area]
+            if kept:
+                message = (
+                    f"simplify_tolerance={simplify_tolerance:g} would change the area of boundary "
+                    "part(s) " + ", ".join(f"{i} ({before[i].area:.4g} -> {after[i].area:.4g})" for i in kept)
+                    + f" by more than {COLLAPSE_FRACTION:.0%}: narrower than the tolerance, they are "
+                    "kept as drawn."
+                )
+                logger.warning(message)
+                import warnings
+
+                warnings.warn(message, UserWarning, stacklevel=2)
+                parts = [before[i] if i in kept else a for i, a in enumerate(after)]
+                simplified = parts[0] if len(parts) == 1 else MultiPolygon(parts)
+        cleaned = simplified
 
     cleaned = cleaned.buffer(0)
 

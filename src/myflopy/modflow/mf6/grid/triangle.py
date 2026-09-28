@@ -36,6 +36,21 @@ from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 logger = get_logger(__name__)
 
 
+class NoAreaInside(ValueError):
+    """A boundary or region with no polygonal area left to mesh.
+
+    ``cause`` says which step removed it: ``"outside"`` (a region with no area inside the
+    model boundary -- disjoint from it, or touching it only along a line or at a point),
+    ``"buffer"`` (a negative buffer at least half its width) or ``"empty"`` (zero area as
+    given). ``GridSpec.voronoi`` skips an ``"outside"`` feature with a warning when others
+    in its source land, and names the rest (ledger 316).
+    """
+
+    def __init__(self, message: str, *, cause: str):
+        super().__init__(message)
+        self.cause = cause
+
+
 @dataclass(slots=True)
 class DomainSpec:
     """Describes the model domain and its optional background cell sizing."""
@@ -417,19 +432,27 @@ class TriangleGrid(Triangle):
         buffer: int | float = 0,
         simplify_tolerance=None,
         densify_dist: int | None = None,
+        what: str = "The geometry",
     ) -> Polygon | MultiPolygon:
         """Turn arbitrary region input into a clean polygon/multipolygon for meshing.
 
         Coerces the geometry, optionally clips it to ``domain``, buffers points/lines
-        into areas, simplifies/densifies, and drops empty pieces; raises if nothing
-        with positive area remains.
+        into areas, simplifies/densifies, and drops empty pieces; raises
+        :class:`NoAreaInside`, naming ``what`` and the cause, if nothing with positive area
+        remains.
         """
 
         geometry = cls._coerce_geometry(geometry)
+        drawn = geometry
 
         if domain is not None:
             domain = cls._coerce_geometry(domain)
             geometry = geometry.intersection(domain)
+            # Nothing of it inside: disjoint, or (with no buffer to widen it) touching only
+            # along a line or at a point. A buffered edge-touching polygon builds a strip
+            # today, so that one is left alone.
+            if geometry.is_empty or (buffer <= 0 and drawn.area > 0 and geometry.area == 0):
+                raise NoAreaInside(cls._no_area_inside(what, drawn, domain, geometry), cause="outside")
 
         if buffer != 0:
             geometry = geometry.buffer(buffer)
@@ -449,11 +472,36 @@ class TriangleGrid(Triangle):
             polygons = [densify_poly(polygon, densify_dist) for polygon in polygons]
 
         if not polygons:
-            raise ValueError("geometry does not contain any polygonal area after preprocessing")
+            if buffer < 0 and drawn.area > 0:
+                width = 2.0 * float(shp.maximum_inscribed_circle(drawn).length)
+                raise NoAreaInside(
+                    f"{what} has no area left after buffer={buffer:g}: it is at most {width:.4g} "
+                    "wide, so the inward buffer removes all of it. Use a smaller buffer.",
+                    cause="buffer",
+                )
+            raise NoAreaInside(
+                f"{what} has no polygonal area (area {drawn.area:.4g}, a {drawn.geom_type}); "
+                "geometry with zero area cannot be meshed.",
+                cause="empty",
+            )
 
         if len(polygons) == 1:
             return polygons[0]
         return MultiPolygon(polygons)
+
+    @staticmethod
+    def _no_area_inside(what, drawn, domain, clipped) -> str:
+        """Why a region clipped to the model boundary has no area: outside it, or touching it."""
+
+        bounds = ", ".join(f"{v:.6g}" for v in drawn.bounds)
+        boundary = ", ".join(f"{v:.6g}" for v in domain.bounds)
+        if clipped.is_empty:
+            where = f"lies entirely outside the model boundary ({drawn.distance(domain):.4g} away)"
+        else:
+            where = (f"touches the model boundary only along a line or at a point (the overlap "
+                     f"is a {clipped.geom_type}), so no part of it is inside")
+        return (f"{what} {where}. Its bounds are ({bounds}); the boundary's are ({boundary}). "
+                "Check its location and CRS.")
 
     def _region_point_spacing(
         self,
@@ -781,6 +829,7 @@ class TriangleGrid(Triangle):
             buffer=buffer,
             simplify_tolerance=simplify_tolerance,
             densify_dist=densify_dist,
+            what=f"The model boundary '{label}'",
         )
         return self._coerce_domain_region(geometry, max_area=max_area, label=label)
 
@@ -999,6 +1048,7 @@ class TriangleGrid(Triangle):
             buffer=buffer,
             simplify_tolerance=simplify_tolerance,
             densify_dist=densify_dist,
+            what=f"{'Breakline' if source == 'line' else 'Refinement region'} '{label or 'unnamed'}'",
         )
         spec = RegionSpec(
             geometry=geometry,
@@ -1182,6 +1232,7 @@ class TriangleGrid(Triangle):
             buffer=buffer,
             simplify_tolerance=simplify_tolerance,
             densify_dist=densify_dist,
+            what=f"Refinement file {shp_gpkg}",
         )
         if explode:
             for idx, polygon in enumerate(self._iter_polygons(geometry)):
@@ -1690,6 +1741,7 @@ class TriangleGrid(Triangle):
             simplify_tolerance=simplify_tolerance,
             min_feature_area=min_feature_area,
             target_segment_length=target_segment_length if resample_domain_boundary else None,
+            keep_collapsing_parts=True,
         )
         self.domain_spec = DomainSpec(
             geometry=domain_geometry,

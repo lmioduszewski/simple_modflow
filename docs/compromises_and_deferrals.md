@@ -14463,6 +14463,25 @@ same day, which is the useful part of the result.
       piece of one loses its ``max_area`` (``_claimed_region_geometry`` keeps the largest
       piece); and resampling distorts every band on the cleanup profiles (a curvy 800 ft
       band's outline differs from it by 79% of its area) and fills a closed loop's hole.
+      (4) **"No polygonal area" is a feature that misses the boundary, not a thin boundary**:
+      it is raised only at declaration, when a refinement or breakline feature has no area
+      inside the boundary (disjoint, or touching it only along an edge -- which was told to
+      "pass buffer>0", advice for a point), a negative buffer erases a feature, or a boundary
+      has zero area. ONE stray feature refused the whole grid, naming neither it nor its file.
+      ``NoAreaInside`` now carries the cause; ``GridSpec.voronoi`` skips an outside feature
+      with a warning naming it, its file and both extents, and raises only when every feature
+      of a source misses (ledger 211's rule for a boundary package: the user's call). The
+      grid is then the one without the stray feature (same pin). A buffered edge-touching
+      polygon still builds its strip, as it did. Separately, the thin-boundary defect the
+      fuzz pass had seen is a SILENT one: the 2 ft profile simplification took a corner off
+      any boundary part narrower than about 2 ft and meshed half its area (a 1000 x 2 ft
+      strip: 1000 of 2000 ft2; a 1 ft square a triangle of 20,681 cells). A boundary part the
+      simplification would change by more than 25% of its area is now kept as drawn, with a
+      warning -- those grids re-pin (the user's call: they were wrong); none of the real
+      boundaries measured (Ten Trails 0.0003%) moves. Refinement regions are not guarded:
+      guarding them moved a working 3 ft square through its background sizing region. Not
+      done: ``*_densify_dist`` still deletes a boundary or region part whose outline is
+      between one and two spacings, silently.
       Tests: ``tests/test_voronoi_tiling.py`` (16 then, 21 after the fuzz pass), where each
       of ten single-piece mutations of the fix fails a named test. The reproducers now show FloPy's cells
       (``tessellation="flopy"``) beside the repaired grid, and ``surface_domain_mask.py``

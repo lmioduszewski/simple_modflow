@@ -15,7 +15,7 @@ import shapely as shp
 
 from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
-from myflopy.modflow.mf6.grid.triangle import MeshBuildProfile, TriangleGrid
+from myflopy.modflow.mf6.grid.triangle import MeshBuildProfile, NoAreaInside, TriangleGrid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 from myflopy.sources import (
     DataSourceSpec,
@@ -272,6 +272,45 @@ def _union_geometry(
     return gdf.geometry.union_all()
 
 
+def _add_region_feature(tri: TriangleGrid, geometry, *, kind: str, index, source, project_root,
+                        missed: list, **region) -> bool:
+    """``tri.add_region_polygon`` for one feature; ``False`` when it has no area inside the
+    boundary (recorded in ``missed``), any other no-area cause re-raised naming the feature."""
+
+    try:
+        tri.add_region_polygon(geometry, source=region.pop("source_kind"), **region)
+    except NoAreaInside as exc:
+        if exc.cause != "outside":
+            raise NoAreaInside(f"{exc} ({kind} feature {index} of {_source_path(source, project_root)})",
+                               cause=exc.cause) from exc
+        missed.append((index, str(region.get("label")), exc))
+        return False
+    return True
+
+
+def _report_missed(kind: str, source, project_root, missed: list, added: int) -> None:
+    """A source whose features ALL miss the boundary raises; some missing is a warning.
+
+    Ledger 211's rule for a boundary package, and ledger 316's for a mesh: one stray
+    refinement or breakline feature refused the whole grid, naming neither it nor its file.
+    """
+
+    if not missed:
+        return
+    path = _source_path(source, project_root)
+    if not added:
+        raise NoAreaInside(
+            f"No {kind} feature in {path} has area inside the model boundary "
+            f"({len(missed)} of {len(missed)} miss it). {missed[0][2]}",
+            cause="outside",
+        )
+    names = ", ".join(f"{label!r} (feature {index})" for index, label, _ in missed)
+    message = (f"{len(missed)} of {len(missed) + added} {kind} features in {path} have no area "
+               f"inside the model boundary and were skipped: {names}. {missed[0][2]}")
+    logger.warning(message)
+    warnings.warn(message, UserWarning, stacklevel=3)
+
+
 def _add_refinement_source(
     tri: TriangleGrid,
     source: DataSourceSpec,
@@ -296,6 +335,7 @@ def _add_refinement_source(
             "Refinement sources require fields={'area': '<column>'} or "
             "options['refinement_max_area']."
         )
+    added, missed = 0, []
     for index, row in gdf.iterrows():
         geometry = row.geometry
         if geometry is None or geometry.is_empty:
@@ -308,16 +348,23 @@ def _add_refinement_source(
                 _option(options, "refinement_priority", default=0),
             )
         )
-        tri.add_region_polygon(
+        added += _add_region_feature(
+            tri,
             geometry,
+            kind="refinement",
+            index=index,
+            source=source,
+            project_root=project_root,
+            missed=missed,
             max_area=float(max_area),
             label=str(label),
             priority=priority,
-            source="refinement",
+            source_kind="refinement",
             buffer=float(_option(options, "refinement_buffer", default=0)),
             simplify_tolerance=_option(options, "refinement_simplify_tolerance"),
             densify_dist=_option(options, "refinement_densify_dist"),
         )
+    _report_missed("refinement", source, project_root, missed, added)
 
 
 def _add_breakline_source(
@@ -351,6 +398,7 @@ def _add_breakline_source(
             "Breakline sources require fields={'area': '<column>'} or "
             "options['breakline_max_area']."
         )
+    added, missed = 0, []
     for index, row in gdf.iterrows():
         geometry = row.geometry
         if geometry is None or geometry.is_empty:
@@ -382,18 +430,25 @@ def _add_breakline_source(
                 warnings.warn(message, UserWarning, stacklevel=2)
                 continue
             seen[key] = str(label)
-        tri.add_region_polygon(
+        added += _add_region_feature(
+            tri,
             geometry.buffer(buffer),
+            kind="breakline",
+            index=index,
+            source=source,
+            project_root=project_root,
+            missed=missed,
             max_area=float(max_area),
             label=str(label),
             priority=priority,
-            source="line",
+            source_kind="line",
             buffer=negative_buffer,
             simplify_tolerance=_option(
                 options, "breakline_simplify_tolerance", default=10
             ),
             densify_dist=_option(options, "breakline_densify_dist"),
         )
+    _report_missed("breakline", source, project_root, missed, added)
 
 
 def _add_point_source(

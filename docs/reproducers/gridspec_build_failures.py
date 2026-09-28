@@ -27,6 +27,11 @@ see the failures.
      the duplicated rows dropped with a warning. A 40 ft line still vanishes, now named. Line
      A alone keeps pin c4c813f7b898e39b and a 100 ft line pin 824e8318f6c2acf2 -- A's pin on
      the repair from bb56668 was 4714a10d3ef12cf9, a grid that wrote a zero-length face.
+  4. "No polygonal area": a refinement feature outside the boundary beside one inside
+     refused the grid; now it is skipped by name and the grid keeps the inside-only pin
+     (65cd7acae45a9bfa). All features outside, or one touching only along an edge, raise
+     naming the file and the cause. A 1000 x 2 ft strip boundary meshed 1000 of its 2000
+     ft2 (the 2 ft simplification); now all of it. A 10 ft square keeps pin 399b78376886f595.
 """
 
 from __future__ import annotations
@@ -110,12 +115,33 @@ def section_3(root):
         print(f"3. {name}: {out}" + (f"  {said}" if said else ""))
 
 
+def section_4(root):
+    from shapely.geometry import Polygon as P
+
+    inside, outside = (box(100, 100, 300, 300), 2500.0), (box(2000, 2000, 2100, 2100), 2500.0)
+    for name, regions in {"inside only": [inside], "inside + outside": [inside, outside],
+                          "outside only": [outside], "edge-touching": [(box(1000, 100, 1100, 200), 2500.0)]}.items():
+        print(f"4. refinement {name}: {build(root / f'4-{name}', L_SHAPE, refinement=regions, max_area=10000.0)}")
+    for name, boundary in {"1000 x 2 strip": box(0, 0, 1000, 2), "10 ft square": box(0, 0, 10, 10)}.items():
+        folder = root / f"4-{name}"
+        out = build(folder, boundary, max_area=10000.0)
+        grids = list(folder.glob("grid"))
+        area = ""
+        if grids and "cells" in out:
+            vor = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=folder / "b.gpkg"),
+                                      max_area=10000.0).resolve(workspace=folder / "again")
+            meshed = sum(P([tuple(vor.verts[i]) for i in ring]).area for ring in vor.iverts)
+            area = f", meshed area {meshed:g} of {boundary.area:g}"
+        print(f"4. boundary {name}: {out}{area}")
+
+
 def main():
     warnings.simplefilter("ignore")
     with tempfile.TemporaryDirectory() as root:
         section_1(Path(root))
         section_2(Path(root))
         section_3(Path(root))
+        section_4(Path(root))
 
 
 if __name__ == "__main__":

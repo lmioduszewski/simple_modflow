@@ -182,3 +182,80 @@ def test_a_band_resampled_to_nothing_is_named_not_blamed_on_the_clip(tmp_path):
     assert not any("empty after clipping" in str(w.message) for w in record)
     plain, _ = _voronoi(tmp_path / "plain", L_SHAPE, profile="clean", min_angle=23, max_area=3000.0)
     assert grid_pin(vor) == grid_pin(plain)
+
+
+# --------------------------------------------------------------------------------------------
+# 4. "No polygonal area": a feature that misses the boundary is skipped and named, and a
+#    boundary part narrower than the 2 ft simplification is kept as drawn.
+
+
+def test_a_refinement_feature_outside_the_boundary_is_skipped_by_name(tmp_path):
+    """One stray feature refused the whole grid, naming neither it nor its file. Now the
+    grid is the one without it, and the warning says which feature and where."""
+
+    from myflopy.grid_identity import grid_pin
+
+    inside = (box(100, 100, 300, 300), 2500.0)
+    with pytest.warns(UserWarning, match=r"1 of 2 refinement features in .*r\.gpkg .* skipped: 'refinement_1'"):
+        vor, _ = _voronoi(tmp_path / "both", L_SHAPE, refinement=[inside, (box(2000, 2000, 2100, 2100), 2500.0)],
+                          max_area=10000.0)
+    alone, _ = _voronoi(tmp_path / "alone", L_SHAPE, refinement=[inside], max_area=10000.0)
+    assert grid_pin(vor) == grid_pin(alone)
+
+
+def test_a_point_feature_given_width_is_skipped_when_it_is_outside(tmp_path):
+    """A point refinement widened by refinement_buffer: outside, it has no area inside."""
+
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    import myflopy as mf
+
+    gpd.GeoDataFrame({"n": [0]}, geometry=[L_SHAPE], crs=2927).to_file(tmp_path / "b.gpkg")
+    gpd.GeoDataFrame({"area": [400.0, 400.0]}, geometry=[Point(200, 200), Point(3000, 3000)],
+                     crs=2927).to_file(tmp_path / "p.gpkg")
+    spec = mf.GridSpec.voronoi(boundary=mf.GeoPackageSourceSpec(path=tmp_path / "b.gpkg"), max_area=10000.0,
+                               refinement=mf.GeoPackageSourceSpec(path=tmp_path / "p.gpkg", fields={"area": "area"}),
+                               refinement_buffer=50.0)
+    with pytest.warns(UserWarning, match="1 of 2 refinement features"):
+        assert spec.resolve(workspace=tmp_path / "grid").ncpl > 0
+
+
+@pytest.mark.parametrize(
+    ("region", "why"),
+    [(box(2000, 2000, 2100, 2100), "lies entirely outside the model boundary"),
+     (box(1000, 100, 1100, 200), "touches the model boundary only along a line")],
+    ids=["disjoint", "edge-touching"],
+)
+def test_a_source_with_no_feature_inside_raises_naming_the_file_and_the_cause(tmp_path, region, why):
+    """Every feature missing still refuses (ledger 211's rule): an edge-touching polygon was
+    told to "pass buffer>0", advice for a point or a line."""
+
+    from myflopy.modflow.mf6.grid.triangle import NoAreaInside
+
+    with pytest.raises(NoAreaInside, match=rf"No refinement feature in .*r\.gpkg .*{why}"):
+        _voronoi(tmp_path, L_SHAPE, refinement=[(region, 2500.0)], max_area=10000.0)
+
+
+def test_a_negative_buffer_that_erases_a_breakline_names_the_buffer_and_the_width(tmp_path):
+    from myflopy.modflow.mf6.grid.triangle import NoAreaInside
+
+    with pytest.raises(NoAreaInside, match=r"Breakline 'breakline_0' has no area left after buffer=-10: it is at most 20"):
+        _breaklines(tmp_path, [[(100.0, 200.0), (300.0, 200.0)]], breakline_negative_buffer_after_clipping=-10)
+
+
+def test_a_boundary_part_narrower_than_the_simplification_is_kept_as_drawn(tmp_path):
+    """The 2 ft profile simplification took a corner off a 1000 x 2 ft strip and meshed half
+    its area, saying nothing. A 10 ft square, which it does not change, is untouched."""
+
+    from myflopy.grid_identity import grid_pin
+
+    with pytest.warns(UserWarning) as record:  # item 2's warning too: a 2 ft strip holds no 10000
+        vor, _ = _voronoi(tmp_path / "strip", box(0, 0, 1000, 2), max_area=10000.0)
+    assert any("boundary part(s) 0 (2000 -> 1000)" in str(w.message) and "kept as drawn" in str(w.message)
+               for w in record)
+    assert sum(Polygon(np.asarray(vor.verts)[list(r)]).area for r in vor.iverts) == pytest.approx(2000.0)
+    with pytest.warns(UserWarning, match="larger than the domain") as record:  # item 2's, not this one
+        square, _ = _voronoi(tmp_path / "square", box(0, 0, 10, 10), max_area=10000.0)
+    assert not any("kept as drawn" in str(w.message) for w in record)
+    assert grid_pin(square) == "399b78376886f595"
