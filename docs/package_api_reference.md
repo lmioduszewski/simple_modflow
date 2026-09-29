@@ -634,9 +634,11 @@ every route reads. A file short of a period's end -- a run that stopped, a trunc
 copy -- is REFUSED naming the period. Every route now labels `time` by stress period,
 bar the LAK stage FILE, keyed by saved record (below). **A target keyed by MF6's
 simulated time is refused there**, in `compare()` and the build alike, naming the period
-each key ends (`10 is the end of period 0 in simulated time -- key it 0`); one that is
-also a period number -- `1` on daily periods -- cannot be told from one and reads that
-period. PEST templates built on this route at more than one step per period expect a
+each key ends (`10 is the end of period 0 in simulated time -- key it 0`) -- when a key
+names no period. A time key BELOW `nper` is also a period number and reads that period
+in silence: `1` on daily periods, and on twelve 2-day periods the old keys 2, 4, 6 (the
+ends of periods 0, 1, 2) read periods 2, 4, 6 (ledger 347). A set written for the old
+spelling is refused only when a key reaches past the last period -- re-key it. PEST templates built on this route at more than one step per period expect a
 line per step and must be rebuilt. The
 observation route's SFR flow also keeps MF6's sign (`DOWNSTREAM-FLOW` is negative)
 where the file route reports the magnitude. On the LAK stage-file route the record

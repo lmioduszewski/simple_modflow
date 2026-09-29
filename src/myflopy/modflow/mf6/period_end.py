@@ -346,9 +346,13 @@ def period_end_rows(
     ----------
     totim : sequence of float
         The file's ``time`` column: MF6's simulated time at the end of each time
-        step, in file order, in the model's time units. A binary file's times read
-        the same way; a ``PRECISION SINGLE`` one carries 7 significant digits, which
-        the check does not absorb.
+        step, in file order, in the model's time units. MF6 writes a TEXT file's
+        time at 13 significant digits (a binary file's in full; OBS has no
+        single-precision output), and that rounding stays inside :data:`END_RTOL`
+        for any realistic model -- ten years of hourly periods, 87,600 ends, read
+        each within 4.4e-9 of its length -- but not for a period shorter than one
+        time unit past ``totim`` ~1e4, where a row can be put in the wrong period
+        and the file refused (ledger 347).
     perlen : sequence of float
         Each stress period's length from the simulation's TDIS
         (:func:`period_lengths`), one per period, in the same time units.

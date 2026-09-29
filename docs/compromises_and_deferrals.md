@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 346 entries (351 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 347 entries (352 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 347 | The review of ledger 346: a time key below `nper` reads as that period in silence on ANY model, not only a... | 2026-09-29 |
 | 346 | The observation route is one row per stress period, at its end: a lake, reach or zone target keyed by perio... | 2026-09-29 |
 | 345 | The review of ledger 344: a declared observation file MF6 wrote BINARY is read, and 344's two untested halv... | 2026-09-29 |
 | 344 | The observation route reads the package's DECLARED observations, by identity: a lake, reach or zone target... | 2026-09-29 |
@@ -15083,10 +15084,12 @@ same day, which is the useful part of the result.
       ~~Keyed by time 10/20/30 it matches in `compare()` -- and in the build only since
       ledger 340 matches by NUMBER: at `nstp=3` the integer keys had matched none of
       pyEMU's `time:10.0` rows. Both route defects are open.~~ Keyed by time 10/20/30 it
-      matched in `compare()` ONLY: the build before ledger 340 matched by spelling, and at
-      `nstp=3` the integer keys reached none of pyEMU's `time:10.0` rows (the floats, at
-      `nstp=1`, none of `time:10`). **The period-key defect is RESOLVED by ledger 346** --
-      a period key reads, a time key is refused naming the period; the SFR sign is open.
+      matched in `compare()`, and in the build only from ledger 340 (by NUMBER): before
+      it the build matched by spelling, and at `nstp=3` the integer keys reached none of
+      pyEMU's `time:10.0` rows (the floats, at `nstp=1`, none of `time:10`). **The
+      period-key defect is RESOLVED by ledger 346** -- a period key reads, a time key
+      naming no period is refused naming the period (one below `nper` reads that period,
+      ledger 347); the SFR sign is open.
       **Not built:** a time-weighted mean over the period (the user chose the end); the LAK
       period clock.
       Reproducer: `docs/reproducers/flow_targets_period_end.py` (the toy under five OC
@@ -15753,10 +15756,14 @@ same day, which is the useful part of the result.
       most `perlen` plus the tolerance, and the row that ENDS a period is its last -- so a
       zero-length period after it, written at the same `totim`, is the next period's.
       Limits: a last time step shorter than `END_RTOL` of its period, or an ATS first step
-      that short, is read into the wrong period (`END_RTOL`'s own caveat); a `PRECISION
+      that short, is read into the wrong period (`END_RTOL`'s own caveat); ~~a `PRECISION
       SINGLE` binary observation file carries 7 significant digits in its times, which the
       check does not absorb -- a length not exact in float32 (an hour) can be REFUSED
-      there, loudly (reasoned from the format, not run against MF6).
+      there, loudly (reasoned from the format, not run against MF6).~~ **Corrected by
+      ledger 347, measured:** MF6's OBS has no single-precision output -- 6.8 stops on
+      `PRECISION SINGLE` ("Unrecognized option: PRECISION") and writes a binary file in
+      double; the rounding that IS there is a TEXT file's time, written at 13 significant
+      digits, which stays inside `END_RTOL` for any realistic model (ledger 347).
       **Refused, each by name:** a file short of a period's end (MF6 stopped inside it, or
       a copy was cut), naming the period, the steps it holds and where they end; a period
       with no row; rows past the last period's end (another simulation's file); times that
@@ -15765,6 +15772,7 @@ same day, which is the useful part of the result.
       no step labels to fall back to. `tests/test_mf6_pest.py`'s declared-OBS double gained
       a TDIS and MF6's times (1.0, 2.0 -- it wrote 0, 1, a time MF6 never writes).
       **A target keyed by MF6's time is REFUSED on this route, naming the period it ends**
+      (**when a key names no period** -- ledger 347; below)
       (`10 is the end of period 0 in simulated time -- key it 0`) -- in `compare()`
       (`_shared._refuse_keys_off_the_periods`) and in the build, whose `_locate_targets`
       now names the period for any key that is a period's end, on every route. That was
@@ -15773,9 +15781,13 @@ same day, which is the useful part of the result.
       observation route only.** The FILE routes' `compare()` still answers `NaN` for a
       period the table lacks (340 refused it at build only), and the LAK stage FILE is
       keyed by saved record (331's limit), so a periods-only check there would refuse its
-      documented keys. **Limit, stated:** a time key that is also a period -- `1` on daily
+      documented keys. **Limit, stated:** ~~a time key that is also a period -- `1` on daily
       periods -- cannot be told from one, and reads that period (the END of period 1,
-      where it read the end of period 0 before).
+      where it read the end of period 0 before).~~ **Restated by ledger 347, measured:**
+      every time key BELOW `nper` is also a period and reads that period in silence -- not
+      a daily corner: on twelve 2-day periods the pre-346 keys 2, 4, 6 (the ends of periods
+      0, 1, 2) read periods 2, 4, 6, three other flows. A set written for the old spelling
+      is refused only when one of its keys reaches past the last period.
       **Scope cut:** a sub-period target on this route is no longer expressible; nothing
       in-tree used one, and the per-step values stay in MF6's CSV.
       **Callers that read the per-step series for another purpose** -- the spec's (d):
@@ -15832,3 +15844,59 @@ same day, which is the useful part of the result.
       routes_values` and seven others that compare the route with MF6's file to the bit
       (the tests read MF6's CSVs `round_trip` too); no TDIS refusal -> `test_a_model_with_no_tdis_is_refused_on_the_
       observation_route`.
+347. **The review of ledger 346: a time key below `nper` reads as that period in silence on ANY model, not only a daily one, and is recorded as such; MF6 writes a text observation file's time at 13 significant digits, so one zone declared over a text and a binary file is read, not refused; MF6's OBS has no single-precision output (2026-09-29).**
+      Adversarial review of 346 (87acb4c). Its rule is sound: two of its revert checks, redone,
+      fail by name (no reduction: 19 tests across six modules; the cumulative rule:
+      `test_hourly_periods_read_live_find_every_period_end` and
+      `test_the_rule_measures_each_period_from_mf6s_own_previous_end`), its reproducer's
+      "after" column re-ran to the digit, and a forecast on the route names one row per
+      period. What it understated or missed:
+      **A time key below `nper` IS a period, on any model -- recorded, NOT refused.** 346
+      stated the limit as "`1` on daily periods"; it is every key below `nper`. Measured on
+      twelve 2-day periods: the pre-346 keys 2, 4, 6 (the ends of periods 0, 1, 2: 0.0,
+      -383.248, -630.055) read periods 2, 4, 6 (-630.055, -808.923, -852.023) in `compare()`
+      and the build alike, with nothing said; 2, 4, 24 is refused naming period 11. So a set
+      written for the old spelling is refused only when a key reaches past the last period;
+      a daily model's early record reads one period late, and a ten-year monthly model's
+      first three month-ends (31, 59, 90, all below 120) read periods 31, 59 and 90.
+      **Judgment call: no refusal or warning added.** Such a key is genuinely both, and no
+      spelling today says which: refusing a set whose every key is a period end would refuse
+      every daily-period set that skips period 0 (every integer from 1 is a period end
+      there) with no way past it, and a warning could not be silenced by correcting
+      anything. A disambiguating spelling (a `per`-named key column, a `time_basis=`) is a
+      public-API decision for the user. The limit is restated in 346, CLAUDE.md, the API
+      reference and `_refuse_keys_off_the_periods`' docstring, and PINNED by
+      `test_a_time_key_below_the_last_period_reads_as_that_period` -- a commit that refuses
+      it fails that test, and must update this entry.
+      **MF6 writes a text observation file's TIME at 13 significant digits**
+      (`3.747252747253`, `0.1388889000000E-01`, `121.6666654500` -- measured, 6.8, with or without
+      OBS `DIGITS`; the values beside it carry every digit unless `DIGITS` says fewer, a
+      BINARY file's time is exact): the "unverified risk"
+      against `END_RTOL` the scoping's skeptic raised. Measured with MF6's own arithmetic
+      (FloPy's 8-decimal lengths added, written at 13 digits): hourly periods for 1 and 10
+      years and 1/3-day periods for 30 years read every period, the worst 4.33e-9 from its
+      length; hourly for 30 years (262,800 ends) and 0.1-day periods for 50 years are
+      REFUSED, naming the wrong cause ("row past the end", "no row in period 116909").
+      **Judgment call: left inside `END_RTOL`**, not a second tolerance for this route -- the
+      failures need a sub-unit period past totim ~1e4, 10^5 periods and more, and a second
+      tolerance would split the one rule. `test_mf6s_thirteen_digit_observation_time_stays_
+      inside_end_rtol` reads the digits off a real run and pins the ten-year case.
+      **FIXED: one zone declared over a text and a binary file is read.** The reader compared
+      two files' times bit for bit (ledger 345), so a DRN zone with cell 20 in `drn_a.csv`
+      and cells 21, 27 in a `BINARY` `drn_b.bsv` was refused as "different times" --
+      3.333333333333 against 3.3333333333333335, MF6's one clock. It compares within
+      `_shared._OBSERVATION_TIME_RTOL` = 1e-12 of the time (twice the 13th digit's half
+      unit), a step 2e-10 off is still refused, and the zone reads -710.119, -853.68,
+      -864.954, the one-file declaration to the bit. Reverted to the exact comparison,
+      `test_a_zone_declared_over_a_text_and_a_binary_file_reads_as_one` fails by name.
+      **Corrected:** 346's `PRECISION SINGLE` limit -- MF6's OBS has no such option (6.8
+      stops on it: "Unrecognized option: PRECISION"), which `period_end_rows`' docstring
+      also said it had; and 336's restatement "matched in `compare()` ONLY" -- the build
+      matched time keys by NUMBER from ledger 340 until 346.
+      **Seen, NOT changed:** the build's hint (`_locate_targets`) says "key it N" on the LAK
+      stage-FILE route too, where a key is a saved record, not a period, at more than one
+      save per period -- F4's clock, still open.
+      Reproducer: `docs/reproducers/obs_route_period_end_review.py` (sections A-D; B's
+      "before" is 87acb4c's `src`). Tests: the three above, in
+      `tests/test_obs_route_period_end.py`, on a fifth run (`twelve`, twelve 2-day periods)
+      beside `steps` and `hourly`.

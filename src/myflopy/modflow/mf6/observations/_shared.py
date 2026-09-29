@@ -188,6 +188,17 @@ def _clean_observation_output_values(values: pd.Series, *, no_value: float = 0.0
 #: columns under one header, each holding its own record's values (ledger 344).
 _MF6_OBSNAME_LENGTH = 40
 
+#: How far apart two of one package's observation files may put one time step's
+#: time and still be on MF6's one clock, relative to the time. MF6 writes a TEXT
+#: file's ``time`` column at 13 significant digits (``3.747252747253``,
+#: ``0.1388889000000E-01`` -- measured, MF6 6.8, whatever the OBS ``DIGITS``), the
+#: values beside it with every digit unless ``DIGITS`` says fewer, and a BINARY
+#: file's time in full, so the same step read 3.333333333333 in
+#: one and 3.3333333333333335 in the other: a half unit in the 13th digit is at most
+#: 5e-13 of the time, and this is twice it. Exact equality refused a zone declared
+#: over one file of each (ledger 347).
+_OBSERVATION_TIME_RTOL = 1e-12
+
 
 @dataclass(frozen=True)
 class _ObservedQuantity:
@@ -711,7 +722,10 @@ def _read_declared_observations(
         When a declared file is not in the workspace.
     ValueError
         When a file's columns do not line up with its declared records (a count
-        or a header that differs), two files hold different times, or a binary
+        or a header that differs), two files hold different times -- compared
+        within the 13 significant digits MF6 writes a text file's time at
+        (:data:`_OBSERVATION_TIME_RTOL`), so a text file and a binary one of the
+        same run agree -- or a binary
         file cannot be read whole (:func:`_observation_output_table`); when the
         model has no TDIS to tell the periods by; or when the rows do not end
         every period the TDIS declares
@@ -755,7 +769,11 @@ def _read_declared_observations(
         this_time = pd.to_numeric(frame[0], errors="coerce").astype(float).reset_index(drop=True)
         if time is None:
             time, time_file = this_time, csv
-        elif not np.array_equal(time.to_numpy(), this_time.to_numpy()):
+        elif len(time) != len(this_time) or not np.allclose(
+            time.to_numpy(), this_time.to_numpy(), rtol=_OBSERVATION_TIME_RTOL, atol=0.0
+        ):
+            # Within the 13 digits MF6 writes a text file's time at, not bit for bit:
+            # a binary file beside it holds the same step's time in full (ledger 347).
             raise ValueError(
                 f"{owner}: the declared observation files {time_file} and {csv} hold different "
                 "times, so their rows cannot be read side by side."
@@ -837,8 +855,10 @@ def _refuse_keys_off_the_periods(
     docs taught (``10, 20, 30``). Such a target used to match; now it would match
     nothing, and ``compare()`` would answer ``NaN`` for it while ``stats()``
     counted one row fewer. So it is refused, naming the period each simulated-time
-    key ends. A time key that is ALSO a period (``1`` on daily periods) cannot be
-    told from one and reads that period.
+    key ends. A time key that is ALSO a period -- any key below ``nper``: ``1`` on
+    daily periods, and ``2, 4, 6`` on twelve 2-day periods, the ENDS of periods 0,
+    1, 2 -- cannot be told from one and reads that period in silence (ledger 347);
+    a set is refused only when one of its keys names no period.
 
     Parameters
     ----------

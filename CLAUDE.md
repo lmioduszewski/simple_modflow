@@ -114,10 +114,12 @@ CSV is every time step labelled by `totim` alone, so `period_end.period_end_rows
 each period's END row -- measuring each period from MF6's OWN previous end, since MF6
 adds FloPy's 8-decimal lengths and a live hourly model outgrows 1e-8 of the cumulative
 `perlen` from the fourth period -- through `period_end_steps`' check; a file short of an
-end is refused, a target keyed by MF6's time (`10, 20, 30`) is refused naming the period,
-and ATS no longer moves the row count PEST's positional `.ins` reads (12/13/14 rows at
-K = 10/1/2 read t = 23 as the last period's end). A time key that is also a period
-(`1` on daily periods) cannot be told apart. STILL OPEN: the SFR flow there keeps MF6's
+end is refused, a target keyed by MF6's time (`10, 20, 30`) is refused naming the period
+WHEN A KEY NAMES NO PERIOD, and ATS no longer moves the row count PEST's positional `.ins`
+reads (12/13/14 rows at K = 10/1/2 read t = 23 as the last period's end). **A time key
+below `nper` IS a period and reads that period in silence** (ledger 347) -- not a daily
+corner: on twelve 2-day periods the old keys 2, 4, 6 read periods 2, 4, 6; only a set
+reaching past the last period is refused, so audit a set written before 346. STILL OPEN: the SFR flow there keeps MF6's
 NEGATIVE `DOWNSTREAM-FLOW` where the file route reports the
 magnitude. A LAK STAGE-FILE target is keyed by SAVED RECORD (301's `per`-as-record-index),
 the period only at one save per period: at `nstp=3` periods 0-2 read steps 1-3 of period
@@ -519,9 +521,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5434 passed / 4 skipped**, 2026-09-29, ledger 346 -- the observation
-  route keyed by period): `-n 10` **1m40s** in a worktree outside `.claude`, at a load
-  average of ~1.5 at its start, absolute `PYTHONPATH`; serial not re-measured. Before it,
+- Full suite (**5437 passed / 4 skipped**, 2026-09-29, ledger 347 -- the review of 346):
+  `-n 10` **1m38s** in a worktree outside `.claude`, at a load average of ~0.2 at its
+  start, absolute `PYTHONPATH`; serial not re-measured. Before it, 5434 passed / 4 skipped
+  (ledger 346 -- the observation route keyed by period): `-n 10` 1m40s at ~1.5. Before it,
   5424 passed / 4 skipped (ledger 345, the review of 344):
   `-n 10` 1m39s in a worktree outside `.claude`, at a load average of ~0.3 at its
   start, with an ABSOLUTE `PYTHONPATH` (next bullet); serial not re-measured. Before it,

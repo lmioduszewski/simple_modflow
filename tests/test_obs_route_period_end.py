@@ -33,6 +33,9 @@ periods:
              decimals, so MF6's period-end time runs 3.3e-9 further ahead of the
              lengths the live model holds every period -- past ``END_RTOL`` from the
              fourth.
+``twelve``   ``steps`` with TWELVE two-day periods: more periods than the time of the
+             early period ends, so a key of MF6's time there is also a period number
+             (the review of ledger 346, ledger 347).
 
 The expected values are read from MF6's own files -- the observation CSVs with pandas,
 the budget and stage files with FloPy -- not through the tables under test.
@@ -135,6 +138,7 @@ def runs(tmp_path_factory):
         "ats_k10": _build_and_run(root / "ats_k10", ats=True, k=10.0),
         "ats_k2": _build_and_run(root / "ats_k2", ats=True, k=2.0),
         "hourly": _build_and_run(root / "hourly", perlen=HOUR, nper=HOURLY_NPER),
+        "twelve": _build_and_run(root / "twelve", perlen=2.0, nper=12),
     }
 
 
@@ -382,6 +386,94 @@ def test_hourly_periods_read_live_find_every_period_end(runs):
     assert list(series["time"]) == list(range(HOURLY_NPER))
     np.testing.assert_allclose(
         series["seep"], raw.iloc[NSTP - 1::NSTP, 1:].sum(axis=1), rtol=1e-14)
+
+
+@pytest.mark.slow
+def test_mf6s_thirteen_digit_observation_time_stays_inside_end_rtol(runs):
+    """MF6 writes a text observation file's VALUES with every digit but its TIME at 13
+    significant digits (``0.1388889000000E-01``) -- a rounding ``END_RTOL`` was never
+    calibrated for. Rounded as MF6 rounds it, ten years of hourly periods (87,600
+    ends, up to t = 3,650) still read every period, each within 4.4e-9 of its length
+    (ledger 347)."""
+
+    lines = (Path(runs["hourly"].workspace) / "drn_flow_targets.csv").read_text().splitlines()
+    for line in lines[1:]:
+        token = line.split(",")[0]
+        digits = token.upper().split("E")[0].lstrip("+-").replace(".", "").lstrip("0")
+        assert len(digits) == 13, token
+
+    nper = 24 * 3650
+    # MF6 ends each period at the last end plus the length it READ, FloPy's 8 decimals.
+    ends = np.cumsum(np.full(nper, float(f"{HOUR:15.8f}")))
+    times = [float(f"{end:.13G}") for end in ends]
+    assert period_end_rows(times, [HOUR] * nper) == {per: per for per in range(nper)}
+    assert np.abs(np.diff(np.concatenate([[0.0], times])) - HOUR).max() < END_RTOL
+
+
+@pytest.mark.slow
+def test_a_time_key_below_the_last_period_reads_as_that_period(runs):
+    """The limit, pinned (ledger 347): a set keyed by MF6's time -- this route's
+    spelling until ledger 346 -- is refused only when a key names no period. With
+    twelve 2-day periods, t = 2, 4, 6 END periods 0, 1, 2 and ARE periods 2, 4, 6, and
+    they read there in silence, each another flow; a key past the last period (t = 24,
+    the end of period 11) refuses the set, naming the period it ends."""
+
+    model = runs["twelve"]
+    series = mf.DrnFlowTargets(locations={"seep": DRN_CELLS}).simulated_series(model)
+    old = mf.DrnFlowTargets(locations={"seep": DRN_CELLS},
+                            values=pd.DataFrame({"time": [2, 4, 6], "seep": -700.0}))
+    read = old.compare(model).sort_values("per")["sim_flow"].to_numpy()
+    np.testing.assert_array_equal(read, series["seep"].to_numpy()[[2, 4, 6]])
+    assert not np.isclose(read, series["seep"].to_numpy()[[0, 1, 2]]).any()
+
+    reaching = mf.DrnFlowTargets(locations={"seep": DRN_CELLS},
+                                 values=pd.DataFrame({"time": [2, 4, 24], "seep": -700.0}))
+    with pytest.raises(ValueError, match=(
+            r"periods are 0 \.\. 11; 1 target row\(s\) name none of them: 'seep' at time 24\. "
+            r"24 is the end of period 11 in simulated time -- key it 11")):
+        reaching.compare(model)
+
+
+@pytest.mark.slow
+def test_a_zone_declared_over_a_text_and_a_binary_file_reads_as_one(runs, tmp_path):
+    """MF6 writes a text observation file's time at 13 significant digits and a BINARY
+    one's in full, so a zone declared over one of each -- cell 20 in ``drn_a.csv``,
+    cells 21 and 27 in ``drn_b.bsv`` -- was refused as two files holding "different
+    times" (3.333333333333 against 3.3333333333333335). They are MF6's one clock: the
+    zone reads what the one-file declaration reads, to the bit (ledger 347)."""
+
+    import subprocess
+
+    from myflopy.modflow.mf6.observations._shared import _observation_output_table
+
+    copy = tmp_path / "ws"
+    shutil.copytree(runs["steps"].workspace, copy)
+    records = [f"  seep_c{cell}  DRN  1 {cell + 1}" for cell in DRN_CELLS]
+    (copy / "m.drn.obs").write_text(
+        "BEGIN options\nEND options\n\n"
+        f"BEGIN continuous  FILEOUT  drn_a.csv\n{records[0]}\nEND continuous\n\n"
+        "BEGIN continuous  FILEOUT  drn_b.bsv  BINARY\n"
+        + "\n".join(records[1:]) + "\nEND continuous\n")
+    (copy / "drn_flow_targets.csv").unlink()
+    run = subprocess.run(["mf6"], cwd=copy, capture_output=True, text=True)
+    assert run.returncode == 0, run.stdout[-2000:]
+    text_time = _observation_output_table(copy / "drn_a.csv", owner="t")[1][0].to_numpy()
+    binary_time = _observation_output_table(copy / "drn_b.bsv", owner="t")[1][0].to_numpy()
+    assert not np.array_equal(text_time, binary_time)  # the premise: one clock, two roundings
+    np.testing.assert_allclose(text_time, binary_time, rtol=1e-12)
+
+    reloaded = mf.load_mf6_run(copy, verbosity_level=0)
+    split = mf.DrnFlowTargets(locations={"seep": DRN_CELLS}).simulated_series(reloaded)
+    whole = mf.DrnFlowTargets(locations={"seep": DRN_CELLS}).simulated_series(runs["steps"])
+    assert list(split["time"]) == list(range(NPER))
+    np.testing.assert_array_equal(split["seep"], whole["seep"])
+
+    # Still a check: one step 2e-10 of its time off (past MF6's 13 digits) is refused.
+    text = pd.read_csv(copy / "drn_a.csv", dtype=str)
+    text.loc[0, "time"] = f"{float(text.loc[0, 'time']) * (1 + 2e-10):.13G}"
+    text.to_csv(copy / "drn_a.csv", index=False)
+    with pytest.raises(ValueError, match=r"drn_a\.csv and drn_b\.bsv hold different times"):
+        mf.DrnFlowTargets(locations={"seep": DRN_CELLS}).simulated_series(reloaded)
 
 
 # -- what is refused ------------------------------------------------------------------
