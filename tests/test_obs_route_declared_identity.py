@@ -397,7 +397,11 @@ def test_a_reused_run_directory_reads_its_own_stage_file(tmp_path):
     second, _ = _run(tmp_path, [_lake(lakes=((DRYING, 111.0, "drying", 300.0),))],
                      overwrite=True, project=project)
     stale = pd.read_csv(second.workspace / "lake_stage_targets.csv")
-    own = second.outputs.lak.stage.get()[:, 0]
+    raw = second.outputs.lak.stage.get(masked=False)[:, 0]
+    # A dry record is the lake's bottom -- the 110 ft top of both its cells -- as MF6's
+    # own STAGE observation would report it (ledger 351).
+    own = np.where(raw == -1e30, 110.0, raw)
+    assert (raw == -1e30).any()
     assert not np.allclose(stale["DRYING"].to_numpy()[:2], own[:2])
 
     series = mf.LakeStageTargets(locations={"drying": 0}).simulated_series(second)

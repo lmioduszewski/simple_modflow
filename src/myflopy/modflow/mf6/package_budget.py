@@ -478,7 +478,7 @@ def build_sfr_budget_result_table(
     return frame[ordered + remaining]
 
 
-def build_lak_stage_result_table(model: SimulationBase) -> pd.DataFrame:
+def build_lak_stage_result_table(model: SimulationBase, *, masked: bool = True) -> pd.DataFrame:
     """Return a normalized table of LAK stage results mapped to connected cells.
 
     One row per saved stage record per connected cell, each carrying the lake's one
@@ -496,20 +496,26 @@ def build_lak_stage_result_table(model: SimulationBase) -> pd.DataFrame:
     stage file) or an INACTIVE one (+1e30) -- because it is read through
     ``model.outputs.lak.stage.get()``, which masks both by the head file's rule
     (ledger 329). The row stays, so a dry period is a gap in every view built on
-    this table, never a missing record. ``model.outputs.lak.stage.get(masked=False)``
-    tells the two apart.
+    this table, never a missing record. ``masked=False`` keeps the two numbers,
+    which is how ``LakeStageTargets`` tells a dry lake (calibrated against its
+    bottom, ledger 351) from an inactive one.
 
     Parameters
     ----------
     model : SimulationBase
         A run model with a LAK package declaring a ``stage_filerecord``.
+    masked : bool, default True
+        Passed to ``model.outputs.lak.stage.get``: ``True`` makes MF6's two
+        no-stage sentinels ``NaN``; ``False`` keeps -1e30 (dry) and +1e30
+        (inactive) as MF6 wrote them. Every view reads the default.
 
     Returns
     -------
     pandas.DataFrame
         ``model``, ``package`` (``"lak"``), ``kstpkper`` (zero-based tuple),
         ``per`` (zero-based stress period), ``lake`` (zero-based), ``layer``,
-        ``cell`` and ``stage`` (model length units, ``NaN`` where MF6 wrote none).
+        ``cell`` and ``stage`` (model length units; ``NaN`` where MF6 wrote none,
+        or its -1e30/+1e30 under ``masked=False``).
 
     Raises
     ------
@@ -523,7 +529,7 @@ def build_lak_stage_result_table(model: SimulationBase) -> pd.DataFrame:
     """
 
     stage_output = model.outputs.lak.stage
-    stage_array = np.asarray(stage_output.get(), dtype=float)
+    stage_array = np.asarray(stage_output.get(masked=masked), dtype=float)
     saved = stage_output.kstpkper()
     nlakes = int(model.fl.lak.nlakes.data)
     records = stage_array.reshape(-1, nlakes)

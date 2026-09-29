@@ -54,6 +54,9 @@ from myflopy.modflow.mf6.pest.specs import LakeStageObservationSpec, SfrStageObs
 
 NPER = 6
 DRY_RECORDS = (1, 2, 3)  # lake 0
+#: Lake 0's bottom by MF6's rule: three VERTICAL connections under cells whose top is
+#: 100 ft -- the stage a lake target reads where the lake is dry (ledger 351).
+LAKE0_BOTTOM = 100.0
 SFR_NPER, SFR_NSTP = 3, 3
 LAKE_STEPS_NPER, LAKE_STEPS_NSTP = 3, 3
 
@@ -202,7 +205,11 @@ def sfr_run(tmp_path_factory):
 
 
 def _lake_stage_file(model):
-    """The masked LAK stage file, asserting the fixture is what the docstring says."""
+    """The masked LAK stage file, asserting the fixture is what the docstring says.
+
+    What a lake TARGET reads is this with lake 0's dry records at its bottom
+    (:func:`_calibrated`); the stage views read it as it is.
+    """
 
     raw = model.outputs.lak.stage.get(masked=False)
     assert raw.shape == (NPER, 2)
@@ -211,6 +218,14 @@ def _lake_stage_file(model):
     rows = model.lak.results.stage.get().groupby(["per", "lake"]).size()
     assert set(rows.xs(0, level="lake")) == {3} and set(rows.xs(1, level="lake")) == {2}
     return model.outputs.lak.stage.get()
+
+
+def _calibrated(stage):
+    """``stage`` as a lake target reads it: a dry lake at its bottom (ledger 351)."""
+
+    stage = stage.copy()
+    stage[list(DRY_RECORDS), 0] = LAKE0_BOTTOM
+    return stage
 
 
 def _sfr_stage_file(model):
@@ -231,7 +246,7 @@ def test_a_lake_reads_its_stage_once_not_once_per_connected_cell(lake_runs):
     """The stage-file route added a lake's copies: 3x lake 0's stage, and 216.0 for a
     lake held at 108.0 with two connections."""
 
-    stage = _lake_stage_file(lake_runs)
+    stage = _calibrated(_lake_stage_file(lake_runs))
     series = mf.LakeStageTargets(locations={"a": 0, "b": 1}).simulated_series(lake_runs)
 
     assert list(series["time"]) == list(range(NPER))
@@ -240,13 +255,14 @@ def test_a_lake_reads_its_stage_once_not_once_per_connected_cell(lake_runs):
 
 
 @pytest.mark.slow
-def test_the_two_lake_routes_agree_wherever_the_lake_holds_water(lake_runs):
-    """The observation route always read the lake itself; the stage-file route now
-    reads the same number. They still differ where MF6's two outputs do -- a DRY
-    lake is its bottom in the observation, ``NaN`` in the file (ledger 329). Both
-    label ``time`` 0..5 here: the observation route by stress period (ledger 346;
-    it carried MF6's time, 10..60), the stage file by stress period too (ledger 348;
-    by saved record before, which is the period at one save per period)."""
+def test_the_two_lake_routes_agree_at_every_record_wet_or_dry(lake_runs):
+    """The observation route always read the lake itself; the stage-file route reads
+    the same number. A DRY lake is its bottom on both (ledger 351): MF6's STAGE
+    observation IS the bottom there, where the stage file writes -1e30 -- which this
+    route read as ``NaN`` until then (ledger 329). Both label ``time`` 0..5 here: the
+    observation route by stress period (ledger 346; it carried MF6's time, 10..60),
+    the stage file by stress period too (ledger 348; by saved record before, which is
+    the period at one save per period)."""
 
     stage = _lake_stage_file(lake_runs)
     observed = mf.LakeStageTargets(locations={"drying": 0, "held": 1}).simulated_series(lake_runs)
@@ -257,9 +273,8 @@ def test_the_two_lake_routes_agree_wherever_the_lake_holds_water(lake_runs):
     np.testing.assert_array_equal(observed["time"], np.arange(NPER))
     np.testing.assert_array_equal(from_file["time"], np.arange(NPER))
     wet = np.isfinite(stage[:, 0])
-    np.testing.assert_allclose(observed["drying"][wet], from_file["a"][wet], rtol=1e-14)
-    np.testing.assert_array_equal(observed["drying"][~wet], 100.0)
-    assert from_file["a"][~wet].isna().all()
+    np.testing.assert_array_equal(observed["drying"], from_file["a"])
+    np.testing.assert_array_equal(observed["drying"][~wet], LAKE0_BOTTOM)
     np.testing.assert_array_equal(observed["held"], from_file["b"])
 
 
@@ -267,7 +282,7 @@ def test_the_two_lake_routes_agree_wherever_the_lake_holds_water(lake_runs):
 def test_a_lake_compare_reads_the_same_one_stage(lake_runs):
     """``compare()``'s stage-file fallback went through the same sum."""
 
-    stage = _lake_stage_file(lake_runs)
+    stage = _calibrated(_lake_stage_file(lake_runs))
     targets = mf.LakeStageTargets(
         locations={"a": 0, "b": 1},
         values=pd.DataFrame({"time": range(NPER), "a": 100.5, "b": 108.0}))
@@ -303,10 +318,10 @@ def test_the_files_pest_reads_carry_each_lake_once(lake_runs, tmp_path, names):
     wet = np.isfinite(stage[:, 0])
     np.testing.assert_allclose(written[names[0]][wet], stage[wet, 0], rtol=1e-14)
     np.testing.assert_array_equal(written[names[1]], 108.0)
-    # A dry lake: the bottom MF6 observes on the observation route, PEST's no-value
-    # fill (ledger 329) on the stage-file route.
-    expected_dry = 100.0 if names[0] == "drying" else 1e30
-    np.testing.assert_array_equal(written[names[0]][~wet], expected_dry)
+    # A dry lake is its bottom on both routes (ledger 351): MF6's own observation of
+    # it on one, the stage file's -1e30 replaced by it on the other -- where this
+    # route wrote PEST's no-value fill, 1e30, until then (ledger 329).
+    np.testing.assert_array_equal(written[names[0]][~wet], LAKE0_BOTTOM)
 
 
 @pytest.mark.slow
@@ -423,23 +438,40 @@ def test_an_sfr_compare_and_the_files_pest_reads_carry_the_period_end_stage(sfr_
 # -- the reduction itself --------------------------------------------------------
 
 
-def _stub_lake_model(table: pd.DataFrame):
-    """A model whose only output is this LAK stage table: the stage-file route."""
+@pytest.fixture
+def stub_lake_model(monkeypatch):
+    """``make(table)``: a model whose only output is this RAW LAK stage table.
 
-    stage = SimpleNamespace(get=lambda: table.copy())
-    return SimpleNamespace(lak=SimpleNamespace(results=SimpleNamespace(stage=stage)))
+    The stage-file route reads the table unmasked (ledger 351), so the double hands
+    over what MF6 writes: a stage, or +1e30 for an INACTIVE lake. (A DRY lake's
+    -1e30 would need the model's LAK and discretization, which a double does not
+    carry; the real runs above cover it.) It has no ``package``, so it declares no
+    observation and reads the stage-file route.
+    """
+
+    from myflopy.modflow.mf6.observations import lake as lake_module
+
+    def make(table: pd.DataFrame):
+        def build(model, *, masked=True):
+            assert masked is False, "a lake target reads the RAW stage file (ledger 351)"
+            return table.copy()
+
+        monkeypatch.setattr(lake_module, "build_lak_stage_result_table", build)
+        return SimpleNamespace()
+
+    return make
 
 
-def test_copies_that_disagree_are_refused_naming_the_lake_the_record_and_the_spread():
+def test_copies_that_disagree_are_refused_naming_the_lake_the_record_and_the_spread(stub_lake_model):
     """MF6's table cannot produce this; averaging it would invent a stage."""
 
     table = pd.DataFrame({"per": [0, 0, 1, 1], "lake": [0, 0, 0, 0], "cell": [4, 9, 4, 9],
                           "stage": [101.0, 101.0, 101.0, 102.5]})
     targets = mf.LakeStageTargets(locations={"pond": 0})
     with pytest.raises(ValueError, match=r"lake 0 at per=1: 2 rows span 101\.\.102\.5 \(spread 1\.5\)"):
-        targets.simulated_series(_stub_lake_model(table))
+        targets.simulated_series(stub_lake_model(table))
     with pytest.raises(ValueError, match=r"lake 0 at per=1"):
-        targets.compare(_stub_lake_model(table))
+        targets.compare(stub_lake_model(table))
 
 
 def test_an_sfr_stage_is_an_elevation_in_the_series_and_in_compare():
@@ -458,17 +490,17 @@ def test_an_sfr_stage_is_an_elevation_in_the_series_and_in_compare():
         targets.compare(model)
 
 
-def test_a_record_where_only_some_copies_hold_a_stage_is_refused():
+def test_a_record_where_only_some_copies_hold_a_stage_is_refused(stub_lake_model):
     table = pd.DataFrame({"per": [0, 0], "lake": [0, 0], "cell": [4, 9],
-                          "stage": [101.0, np.nan]})
+                          "stage": [101.0, 1.0e30]})
     with pytest.raises(ValueError, match=r"lake 0 at per=0: 1 of 2 rows hold a stage"):
-        mf.LakeStageTargets(locations={"pond": 0}).simulated_series(_stub_lake_model(table))
+        mf.LakeStageTargets(locations={"pond": 0}).simulated_series(stub_lake_model(table))
 
 
-def test_copies_within_rounding_and_a_record_with_no_stage_pass():
+def test_copies_within_rounding_and_a_record_with_no_stage_pass(stub_lake_model):
     table = pd.DataFrame({"per": [0, 0, 1, 1], "lake": [0, 0, 0, 0], "cell": [4, 9, 4, 9],
-                          "stage": [526.0025, 526.0025 + 1e-10, np.nan, np.nan]})
-    series = mf.LakeStageTargets(locations={"pond": 0}).simulated_series(_stub_lake_model(table))
+                          "stage": [526.0025, 526.0025 + 1e-10, 1.0e30, 1.0e30]})
+    series = mf.LakeStageTargets(locations={"pond": 0}).simulated_series(stub_lake_model(table))
     assert series["pond"].iloc[0] == 526.0025 and np.isnan(series["pond"].iloc[1])
 
 

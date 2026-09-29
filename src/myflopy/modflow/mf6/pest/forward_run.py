@@ -236,12 +236,16 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
     forward run, so it loads the model and reads the saved locations inline rather
     than calling other module-level helpers.
 
-    A lake with no stage is ``NaN`` in ``LakeStageTargets.simulated_series`` and is
-    WRITTEN here as 1e30, the value the base run was built with (ledger 329).
-    Measured with PEST++ (``docs/reproducers/pest_no_value_fields.py``): an empty
-    field and ``nan`` each fail the run, and so does a file one row short of the
-    base run, at end of file. A dry lake is otherwise legitimate -- zero-weighted,
-    1e30 changes nothing; weighted, it makes that realization's phi ~1e60.
+    A DRY lake is its BOTTOM in ``LakeStageTargets.simulated_series`` on both of
+    its routes (ledger 351) -- MF6's own STAGE observation of it -- and is written
+    as that number. An INACTIVE lake is ``NaN`` there and is WRITTEN here as 1e30,
+    the value the base run was built with (ledger 329). Measured with PEST++
+    (``docs/reproducers/pest_no_value_fields.py``): an empty field and ``nan`` each
+    fail the run, and so does a file one row short of the base run, at end of
+    file. Zero-weighted, 1e30 changes nothing; weighted, it makes that
+    realization's phi ~1e60 -- which is why a DRY lake is no longer written so:
+    PESTPP-IES never recovered its lambda from it
+    (``docs/reproducers/dry_lake_bottom.py``).
 
     Each period's value is the one at its END (ledger 336) -- an SFR or DRN flow
     included, which used to be the sum of the steps the period saved -- because

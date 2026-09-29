@@ -9,6 +9,7 @@ from typing import ClassVar
 import numpy as np
 import pandas as pd
 
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.observations._shared import (
     _copy_frame,
     _declared_route,
@@ -27,6 +28,8 @@ from myflopy.modflow.mf6.observations._shared import (
     _stage_at_period_end,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
+from myflopy.modflow.mf6.package_budget import build_lak_stage_result_table
+from myflopy.modflow.mf6.package_tables import lake_bottoms
 
 #: What a lake target reads on the observation route: a LAK package's STAGE
 #: observations (ledger 344).
@@ -37,6 +40,54 @@ _LAKE_STAGE = _ObservedQuantity(
     feature="lake",
     file_route="the LAK stage file",
 )
+
+
+def _calibration_stage_table(model) -> pd.DataFrame:
+    """The LAK stage table a lake TARGET reads: a DRY lake at MF6's bottom, an INACTIVE one ``NaN``.
+
+    The user's rule (ledger 351): a dry lake is CALIBRATED against its bottom, on
+    both routes. MF6's STAGE observation already reports it there -- the solver
+    clamps a lake's stage at its bottom, and the observation writes that stage --
+    while the stage file writes -1e30, which the stage VIEWS keep as a gap (ledger
+    329). So this reads the file RAW, where the two sentinels still differ: -1e30
+    (dry) becomes the lake's bottom by MF6's own rule
+    (:func:`~myflopy.modflow.mf6.package_tables.lake_bottoms`), and +1e30 (MF6's
+    ``STATUS INACTIVE``) stays ``NaN``, which the PEST files write as 1e30.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        A run model with one LAK package declaring a ``stage_filerecord``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        :func:`~myflopy.modflow.mf6.package_budget.build_lak_stage_result_table`'s
+        columns, ``stage`` in model length units: the file's stage, the lake's
+        bottom where it wrote -1e30, ``NaN`` where it wrote +1e30.
+
+    Raises
+    ------
+    AttributeError
+        As the table builder: no LAK package, or no stage file. As
+        ``lake_bottoms``, only when a lake is dry: several LAK packages, or no
+        discretization package.
+    ValueError
+        As the table builder, when the file's records do not line up; as
+        ``lake_bottoms``, when a DRY lake connects ``EMBEDDEDH``/``EMBEDDEDV``,
+        whose bottom comes from a lake table this does not read.
+    """
+
+    frame = build_lak_stage_result_table(model, masked=False)
+    stage = frame["stage"].to_numpy(dtype=float)
+    no_stage = _is_sentinel(stage)
+    dry = no_stage & (stage < 0.0)
+    frame["stage"] = np.where(no_stage, np.nan, stage)
+    if dry.any():
+        lakes = frame.loc[dry, "lake"]
+        bottoms = lake_bottoms(model, lakes=sorted(set(lakes.astype(int))))
+        frame.loc[dry, "stage"] = lakes.astype(int).map(bottoms).to_numpy(dtype=float)
+    return frame
 
 
 def _lake_stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
@@ -54,13 +105,14 @@ def _lake_stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
     model : SimulationBase
         A run model with a LAK ``stage_filerecord``.
     frame : pandas.DataFrame
-        ``model.lak.results.stage.get()``.
+        :func:`_calibration_stage_table`'s rows (the stage-file table with a dry
+        lake at its bottom).
 
     Returns
     -------
     pandas.DataFrame
         ``per``, ``lake``, ``stage``: one row per lake per period, ``NaN`` where the
-        lake has no stage.
+        lake is inactive.
 
     Raises
     ------
@@ -99,6 +151,16 @@ class LakeStageTargets:
     step output control did not save is refused rather than read early; on the
     observation route, MF6's observation at the time step that ends it (ledger
     346).
+
+    **A DRY lake reads its BOTTOM, on both routes** (ledger 351, the user's
+    rule): the stage MF6's own STAGE observation reports for it, since the
+    solver never lets a lake's stage below its bottom. The stage file writes
+    -1e30 there instead, so its route puts the lake's bottom in its place, by
+    MF6's rule (:func:`~myflopy.modflow.mf6.package_tables.lake_bottoms`), and
+    the two routes read one number record for record. An INACTIVE lake (MF6's
+    ``STATUS INACTIVE``) has no stage on either route: ``NaN`` here, 1e30 in
+    the files PEST reads. The stage VIEWS (``model.lak.results.stage`` and its
+    pictures) still leave a dry day as a gap (ledger 329).
 
     **The observation route reads what the LAK package DECLARES** (ledger 344):
     a target reads MF6's STAGE observation only when its label (its name as
@@ -179,15 +241,17 @@ class LakeStageTargets:
     times: list | tuple | pd.Index | pd.Series | None = None
     package: str | None = None
 
-    #: What a lake with no stage is WRITTEN as in the CSV PEST reads (ledger 329),
-    #: by both writers -- the base run and ``write_named_series_targets``, which
-    #: reads it off the instance because pyEMU copies that function's source and
-    #: not its module. The series itself says ``NaN``; PEST++ fails the run on an
-    #: empty field and on ``nan`` (``docs/reproducers/pest_no_value_fields.py``),
-    #: so a lake dry in a period nobody even weights would fail every realization
-    #: in which it is dry. MF6's own no-value magnitude (the stage file's inactive
-    #: lake, the head file's inactive cell); the sign is not kept because the mask
-    #: has already merged dry and inactive, and a squared residual has none.
+    #: What an INACTIVE lake -- the one lake with no stage for calibration -- is
+    #: WRITTEN as in the CSV PEST reads (ledger 329), by both writers -- the base
+    #: run and ``write_named_series_targets``, which reads it off the instance
+    #: because pyEMU copies that function's source and not its module. The series
+    #: itself says ``NaN``; PEST++ fails the run on an empty field and on ``nan``
+    #: (``docs/reproducers/pest_no_value_fields.py``), so a lake inactive in a
+    #: period nobody even weights would fail every realization. MF6's own no-value
+    #: magnitude (the stage file's inactive lake, the head file's inactive cell). A
+    #: DRY lake is NOT this: it reads its bottom (ledger 351), because 1e30 there
+    #: stalled PESTPP-IES (lambda stuck near 1e57, phi 1.11 against 0.085 with the
+    #: bottom; ``docs/reproducers/dry_lake_bottom.py``).
     _PEST_NO_STAGE: ClassVar[float] = 1.0e30
 
     def __post_init__(self):
@@ -385,7 +449,7 @@ class LakeStageTargets:
         label (its name as :meth:`to_flopy_obs` writes it) is declared there, for
         the target's own lake -- only the files that OBS names are read, each
         record from its own column -- else, when NO target is declared, from
-        ``model.lak.results.stage`` (ledger 344; see the class notes for what is
+        the LAK stage file (ledger 344; see the class notes for what is
         refused). Both routes label ``time`` by the zero-based STRESS PERIOD, one
         row per period at its END: the observation route takes MF6's observation
         at the time step that ends each period (ledger 346; it carried every step,
@@ -404,18 +468,31 @@ class LakeStageTargets:
         ``STEPS`` short of it) is refused, because its end-of-period stage does not
         exist in the file.
 
-        **A period with no stage is a row holding ``NaN``, never a missing row**
-        (ledger 329). An INACTIVE lake is ``NaN`` on both routes: the observation
-        file's 3e30 had been read as a stage of 0.0 ft, and the stage file's +1e30
-        as itself. The routes differ at a DRY lake because MF6's two outputs do: its
-        observation reports the stage it solved, which sits at the lake bottom
-        (100 ft on the reproducer's lake, measured), while the stage file writes
-        -1e30. So a dry period is the bottom on the observation route and ``NaN`` on
-        the stage-file route.
+        **A DRY lake reads its BOTTOM on both routes** (ledger 351, the user's
+        rule), which is MF6's own number for it. The observation reports the stage
+        MF6 solved, and the solver clamps a lake's stage at its bottom, so a dry
+        lake's observation IS the bottom (100 ft on the reproducer's one-cell lake,
+        measured); the stage file writes -1e30 there instead, and this route puts
+        the lake's bottom in its place, computed by MF6's rule
+        (:func:`~myflopy.modflow.mf6.package_tables.lake_bottoms`: a VERTICAL
+        connection's cell top, a HORIZONTAL one's ``belev``, the lowest over the
+        lake's connections). The two routes then read the same number at every
+        record, dry or wet (measured equal to the bit on vertical, horizontal and
+        excavated lakes loaded from their files, under LAK ``IMPLICIT`` too; a
+        model still in memory from its build carries its elevations unrounded
+        where FloPy wrote them at 8 decimals, so there a dry lake can differ from
+        MF6's bottom by up to 5e-9).
+        It was ``NaN`` on this route until then, and 1e30 in the file PEST read,
+        which stalled PESTPP-IES (``docs/reproducers/dry_lake_bottom.py``). The
+        stage VIEWS keep a dry day as a gap (ledger 329).
+
+        **An INACTIVE lake is a row holding ``NaN``, never a missing row**
+        (ledger 329), on both routes: the observation file's 3e30 had been read as
+        a stage of 0.0 ft, and the stage file's +1e30 as itself.
 
         The stage-file route keeps one row per period and one column per
-        target, even a target dry in every period, so the shape does not depend on
-        which lakes are dry. That is what PEST needs: pyEMU builds the instruction
+        target, even a target inactive in every period, so the shape does not
+        depend on which lakes are active. That is what PEST needs: pyEMU builds the instruction
         file from the BASE run's copy of this table, one line advance per row and
         each value found by counting commas past a skipped ``time``, so a
         realization one row short fails at end of file and one with an extra
@@ -442,8 +519,9 @@ class LakeStageTargets:
         Returns
         -------
         pandas.DataFrame
-            ``time`` plus one float column per target name, ``NaN`` where the
-            lake has no stage. On the stage-file route a target naming a lake the
+            ``time`` plus one float column per target name, in model length
+            units: the lake's bottom where it is dry, ``NaN`` where it is
+            inactive. On the stage-file route a target naming a lake the
             model does not have gets no column. Empty (those columns, no rows)
             when the stage file holds no record.
 
@@ -471,19 +549,22 @@ class LakeStageTargets:
             LAST`` setting that fixes it (ledger 336); or when the rows of one
             lake in one saved record are not copies of one stage -- naming the
             lake, the record and the spread. MF6's stage table cannot produce the
-            second; it guards a table that is not the one this reads.
+            second; it guards a table that is not the one this reads. On the
+            stage-file route, when a DRY lake connects ``EMBEDDEDH`` or
+            ``EMBEDDEDV``: MF6 takes its bottom from its lake table, which is not
+            read (declare a STAGE observation for it instead).
 
         Examples
         --------
         >>> targets = mf.LakeStageTargets(locations={"pond": 0})
         >>> series = targets.simulated_series(model)   # one row per stress period
-        >>> series["pond"].isna()                       # True where the pond is dry
+        >>> series["pond"].isna()                       # True where the pond is inactive
         """
 
         observed = self._observed(model)
         if observed is not None:
             return observed
-        frame = model.lak.results.stage.get().copy()
+        frame = _calibration_stage_table(model)
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._series.keys()])
         frame = _lake_stage_at_period_end(model, frame)
@@ -506,10 +587,13 @@ class LakeStageTargets:
 
         ``sim_stage`` comes from the same two routes as :meth:`simulated_series`,
         and is the lake's ONE stage on both: the stage-file route used to add the
-        copies the stage table holds for each connected cell (ledger 331). It is
-        ``NaN`` where MF6 reports no stage, and so are ``residual`` and
-        ``abs_residual``; which lakes that covers depends on the route (ledger
-        329). Targets are matched on ``per``, read from their ``time`` as a
+        copies the stage table holds for each connected cell (ledger 331). A DRY
+        lake's is its BOTTOM on both routes (ledger 351), so a dry period is
+        compared -- ``residual`` is the bottom minus the target -- and counted in
+        :meth:`stats` alike on both; the stage-file route read ``NaN`` there and
+        dropped it (measured: ``n`` 3 against 6 for one run). ``sim_stage`` is
+        ``NaN`` only for an INACTIVE lake, and so are ``residual`` and
+        ``abs_residual``. Targets are matched on ``per``, read from their ``time`` as a
         zero-based integer -- the stress period, on both routes (ledgers 346, 348),
         at its END. On the observation route a key naming no period of the model is
         refused, naming the period each simulated-time key ends: that route was
@@ -549,7 +633,8 @@ class LakeStageTargets:
             end; on the observation route, when a target's key is no stress period
             of the model (ledger 346); on the stage-file
             route, when a period the stage file saved lacks its final step or a
-            lake's copies in one record disagree; or when a target's ``time`` is not a
+            lake's copies in one record disagree, or a DRY lake connects
+            ``EMBEDDEDH``/``EMBEDDEDV``; or when a target's ``time`` is not a
             whole number, or two rows hold a value for one target in one period
             (the period rule PEST's build reads too, ledger 340).
         """
@@ -561,7 +646,7 @@ class LakeStageTargets:
             simulated["per"] = simulated["time"]
             simulated = definitions.merge(simulated, on="name", how="left")
         else:
-            simulated = _lake_stage_at_period_end(model, model.lak.results.stage.get().copy())
+            simulated = _lake_stage_at_period_end(model, _calibration_stage_table(model))
             simulated = definitions.merge(simulated, on="lake", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
             compare = simulated.rename(columns={"per": "time"}).copy()
@@ -615,8 +700,8 @@ class LakeStageTargets:
         Returns
         -------
         pandas.DataFrame
-            One row: ``n`` (rows with a residual -- a lake with no stage has
-            none), ``mean_error``, ``mae`` and ``rmse`` of simulated minus
+            One row: ``n`` (rows with a residual -- an INACTIVE lake has none; a
+            dry one is compared at its bottom), ``mean_error``, ``mae`` and ``rmse`` of simulated minus
             target stage, in model length units. ``n`` is 0 and the rest
             ``NaN`` when no row has a residual.
         """

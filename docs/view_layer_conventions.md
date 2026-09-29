@@ -91,11 +91,18 @@ pond 1e30 ft down and every stage map, mosaic and animation coloured from -1e30 
 `hds.array()` does, with `masked=False` for the raw file, so the tidy table, its maps
 and series, the exchange hover, the group tier and the diff all inherit it. Two
 consequences to keep: a table keeps the ROW and blanks the value (a stage change
-touching a dry period is `NaN`, not dropped; so is a target's row), and nothing may SUM
-an all-NaN group, which pandas makes 0.0 -- `package_plotting._aggregate_leaving_gaps`
-keeps it a gap in the series engine and in both map payloads, where `agg="sum"` had
-painted a dry lake's cell 0 ft and stretched the colour range down to it.
+touching a dry period is `NaN`, not dropped; so is an inactive lake's target row), and
+nothing may SUM an all-NaN group, which pandas makes 0.0 --
+`package_plotting._aggregate_leaving_gaps` keeps it a gap in the series engine and in
+both map payloads, where `agg="sum"` had painted a dry lake's cell 0 ft and stretched the
+colour range down to it.
 A difference a number cannot measure is COUNTED: the stage diff's `n_one_sided`.
+**A calibration target is not a picture** (ledger 351, the user's rule): a lake TARGET
+reads the file RAW and gives a DRY lake its BOTTOM -- what MF6's own STAGE observation
+reports for it, by MF6's rule (`package_tables.lake_bottoms`) -- because PEST needs a
+number that moves continuously as a lake empties, and 1e30 stalled PESTPP-IES. Only an
+INACTIVE lake is no-value there. A view keeps the gap; do not route a view through the
+target's table, or a target through the masked one.
 **SFR's stage file is NOT masked** (a dry reach is -1e30 too, by MF6's source); it is
 the same change, not made here. Its STAGE observation's no-data value (3e30) reads
 `NaN` in `SfrStageTargets` since ledger 344, as a lake's does.

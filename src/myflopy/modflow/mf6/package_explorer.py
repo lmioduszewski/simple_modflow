@@ -122,6 +122,7 @@ from myflopy.modflow.mf6.package_tables import (
     build_sfr_reach_table,
     build_uzf_field_input_table,
     build_uzf_field_input_wide_table,
+    lake_bottoms,
     summarize_input_table,
 )
 
@@ -153,6 +154,7 @@ __all__ = [
     "build_uzf_field_input_wide_table",
     "build_sfr_reach_table",
     "build_lak_connection_table",
+    "lake_bottoms",
     "build_sfr_input_table",
     "build_lak_input_table",
     "summarize_input_table",

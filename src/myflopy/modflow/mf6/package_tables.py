@@ -539,6 +539,153 @@ def build_lak_connection_table(model: SimulationBase) -> pd.DataFrame:
     return connectiondata[ordered + remaining]
 
 
+#: MF6's LAK connection types whose lake bottom comes from a lake TABLE, which
+#: :func:`lake_bottoms` does not read (``gwf-lak.f90``, ``lak_read_table``).
+_EMBEDDED_LAK_CONNECTIONS = ("EMBEDDEDH", "EMBEDDEDV")
+
+
+def _cell_top_and_bottom(model: SimulationBase):
+    """MF6's ``dis%top`` / ``dis%bot`` of a cell, looked up by its FloPy ``cellid``.
+
+    The model's discretization package, found by its exact TYPE (FloPy's
+    ``get_package("dis")`` prefix-matches a DISV). A cell's top is the model top
+    in layer 0 and the bottom of the layer above it below that, as MF6's
+    ``Disv.f90`` and ``Dis.f90`` fill ``top``; a DISU cell carries its own.
+    """
+
+    gwf = model.gwf
+    dis = next(
+        (package for package in gwf.packagelist
+         if getattr(package, "package_type", None) in ("dis", "disv", "disu")),
+        None,
+    )
+    if dis is None:
+        raise AttributeError(
+            f"Model '{model.name}' has no DIS, DISV or DISU package, so its cells' "
+            "elevations -- which MF6 derives a lake's bottom from -- are unknown."
+        )
+    if dis.package_type == "disu":
+        top = np.asarray(dis.top.array, dtype=float).reshape(-1)
+        bottom = np.asarray(dis.bot.array, dtype=float).reshape(-1)
+        return lambda cellid: (float(top[cellid[0]]), float(bottom[cellid[0]]))
+    top = np.asarray(dis.top.array, dtype=float)
+    botm = np.asarray(dis.botm.array, dtype=float)
+    surfaces = np.concatenate([top[np.newaxis, ...], botm], axis=0)
+
+    def lookup(cellid):
+        layer, rest = int(cellid[0]), tuple(int(value) for value in cellid[1:])
+        return float(surfaces[(layer, *rest)]), float(surfaces[(layer + 1, *rest)])
+
+    return lookup
+
+
+def lake_bottoms(model: SimulationBase, *, lakes: Iterable[int] | None = None) -> pd.Series:
+    """Each lake's BOTTOM as MF6 computes it: the stage MF6 gives a DRY lake.
+
+    MF6 derives a lake's bottom (``lakebot``) from its connections and writes it
+    nowhere, yet it is the number a dry lake reads: the solver never lets a
+    lake's stage below it, the STAGE observation reports that clamped stage,
+    and the stage file writes -1e30 once the stage is at or below it
+    (``gwf-lak.f90``, ``lak_ot_dv``). So it is what a dry lake is CALIBRATED
+    against (``LakeStageTargets``, ledger 351). The rule, from
+    ``gwf-lak.f90`` (``lak_read_lake_connections``):
+
+    - a VERTICAL connection gives its cell's TOP -- MF6 overwrites the BELEV
+      written for a vertical connection, so a bed declared inside the cell does
+      not lower it (ledger 327);
+    - a HORIZONTAL connection gives its BELEV as written, or its cell's BOTTOM
+      when BELEV equals TELEV exactly (MF6 then takes the whole cell face);
+    - the lake's bottom is the LOWEST of these over its connections.
+
+    Read from the model's own LAK and discretization packages -- exactly what
+    MF6 read when the model was loaded from its files (``mf.load_mf6_run``,
+    which PEST's forward run uses; measured equal to MF6's observation to the
+    bit). A model still held in memory from its build carries its elevations
+    unrounded, where FloPy WROTE them rounded -- a number between 0.001 and
+    100,000 at 8 decimals -- so there the two differ by up to 5e-9 (measured
+    8.8e-10 and 1.2e-9, ledger 351).
+
+    Parameters
+    ----------
+    model : SimulationBase
+        A model with one LAK package (``model.fl.lak``) and a DIS, DISV or DISU
+        package; run or not -- nothing here reads an output file.
+    lakes : iterable of int or None, optional
+        The lakes to compute, as zero-based MF6 lake numbers (each passed through
+        ``int``). Default ``None``: every lake of the package, ``0 ..
+        nlakes - 1``. Only the lakes asked for are checked, so an EMBEDDED lake
+        (below) refuses only when it is one of them.
+
+    Returns
+    -------
+    pandas.Series
+        Named ``"lake_bottom"``, indexed by zero-based lake number in the order
+        asked (ascending for ``None``), in the model's length units.
+
+    Raises
+    ------
+    AttributeError
+        When the model has no LAK package, or several (FloPy then hands back a
+        list), or no discretization package.
+    ValueError
+        When a lake asked for is not a lake of the package, has no connection,
+        or connects ``EMBEDDEDH``/``EMBEDDEDV``: MF6 takes an embedded lake's
+        bottom from its cell's bottom and then from the leading all-zero rows of
+        its lake TABLE (``lak_read_table``), which this does not read. MF6's
+        own STAGE observation of that lake reports it
+        (``LakeStageTargets.attach_flopy_obs``).
+
+    Examples
+    --------
+    >>> lake_bottoms(model)            # one VERTICAL connection under a 100 ft top
+    0    100.0
+    Name: lake_bottom, dtype: float64
+    """
+
+    lak = model.fl.lak
+    nlakes = int(lak.nlakes.get_data())
+    wanted = list(range(nlakes)) if lakes is None else [int(lake) for lake in lakes]
+    unknown = [lake for lake in wanted if not 0 <= lake < nlakes]
+    if unknown:
+        raise ValueError(
+            f"Lake(s) {unknown} are not lakes of model '{model.name}'s LAK package, "
+            f"which numbers its {nlakes} lake(s) 0..{nlakes - 1} (zero-based)."
+        )
+    connections = pd.DataFrame(lak.connectiondata.get_data())
+    connections["ifno"] = connections["ifno"].astype(int)
+    connections["claktype"] = connections["claktype"].astype(str).str.strip().str.upper()
+    elevations = _cell_top_and_bottom(model)
+
+    bottoms: dict[int, float] = {}
+    for lake in wanted:
+        rows = connections.loc[connections["ifno"] == lake]
+        if rows.empty:
+            raise ValueError(
+                f"Lake {lake} of model '{model.name}' has no connection in its LAK "
+                "CONNECTIONDATA, so MF6 gives it no bottom."
+            )
+        embedded = sorted(set(rows["claktype"]) & set(_EMBEDDED_LAK_CONNECTIONS))
+        if embedded:
+            raise ValueError(
+                f"Lake {lake} of model '{model.name}' connects {embedded[0]}: MF6 takes "
+                "an embedded lake's bottom from its cell's bottom and then from the "
+                "leading all-zero rows of its lake TABLE (gwf-lak.f90, lak_read_table), "
+                "which this does not read. MF6's own STAGE observation of the lake "
+                "reports it: declare one (LakeStageTargets(...).attach_flopy_obs)."
+            )
+        candidates = []
+        for row in rows.itertuples(index=False):
+            top, bottom = elevations(tuple(row.cellid))
+            if row.claktype == "VERTICAL":
+                candidates.append(top)
+            elif float(row.belev) == float(row.telev):
+                candidates.append(bottom)
+            else:
+                candidates.append(float(row.belev))
+        bottoms[lake] = min(candidates)
+    return pd.Series(bottoms, name="lake_bottom", dtype=float).rename_axis("lake")
+
+
 def build_sfr_input_table(model: SimulationBase) -> pd.DataFrame:
     """Return normalized static and stress-period SFR inputs mapped to cells."""
 
@@ -690,6 +837,7 @@ __all__ = [
     "build_uzf_field_input_wide_table",
     "build_sfr_reach_table",
     "build_lak_connection_table",
+    "lake_bottoms",
     "build_sfr_input_table",
     "build_lak_input_table",
     "summarize_input_table",

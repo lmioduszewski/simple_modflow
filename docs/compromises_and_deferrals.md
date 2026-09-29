@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 350 entries (355 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 351 entries (356 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 351 | A DRY lake is calibrated against its BOTTOM on both routes: the stage-file route reads the file raw and put... | 2026-09-29 |
 | 350 | A flow target is compared in MF6's own sign on both routes: the SFR budget route reads MF6's negative... | 2026-09-29 |
 | 349 | The review of ledger 348: the TABLES keyed by period read each period's last saved step too -- a cell-budge... | 2026-09-29 |
 | 348 | A lake's stage file is read on its own clock, and every view that reduces a results table to one value per... | 2026-09-29 |
@@ -14033,7 +14034,9 @@ same day, which is the useful part of the result.
       through `headsplus._is_sentinel` by default and takes `masked=False` for the raw file,
       as `hds.array()` does; everything else (`packages.lak.results.stage` and its
       maps/series/mosaic/animate, `stage_change`, the exchange hover's stage join, the group
-      tier, the diff, `LakeStageTargets`' stage-file route) reads through it. **The call
+      tier, the diff~~, `LakeStageTargets`' stage-file route~~) reads through it (**the
+      target route reads the RAW file since ledger 351**, where a dry lake is its bottom).
+      **The call
       made:** the tidy table blanks a dry and an inactive lake alike, as `hds.get()` blanks a
       dry and an inactive cell, and `masked=False` is the one place they differ. No
       status column was added: the precedent has none, and it would change the shape of
@@ -14078,10 +14081,13 @@ same day, which is the useful part of the result.
       right for a flow and wrong for an elevation. It takes `no_value=` now (default 0.0,
       so SFR/DRN flows are unchanged) and `LakeStageTargets` passes `NaN`. Its own `> 1e20`
       threshold stays: it predates this, catches 3e30 like `_is_sentinel`, and moving it
-      would move the flow targets. **The two routes still differ at a DRY lake, because
+      would move the flow targets. ~~**The two routes still differ at a DRY lake, because
       MF6's two outputs do**: the observation reports the stage it solved -- the bottom, 100
       ft, measured -- where the stage file writes -1e30. Not harmonized: masking the
-      observation at the bottom needs MF6's `lakebot`, which neither output records.
+      observation at the bottom needs MF6's `lakebot`, which neither output records.~~
+      **RESOLVED by ledger 351, the other way round** (the user's call): the stage-file
+      route gives a dry lake MF6's bottom, `package_tables.lake_bottoms` replicating
+      `lakebot`, and the two routes read one number.
       **NOT done:**
       - **SFR's stage is not masked.** A dry reach is -1e30 too (MF6's `sfr_ot_dv`, read,
         not measured here), through `SFRStageOutput`, `build_sfr_stage_result_table` and
@@ -14101,7 +14107,9 @@ same day, which is the useful part of the result.
       - A lake connected in several layers draws one identical line per layer (three on the
         user's pond). Unchanged.
       - **What PEST reads for a lake with no stage is 1e30, on both routes** -- a call
-        made, not inherited. Measured with `pestpp-glm`
+        made, not inherited. (**Since ledger 351 that is an INACTIVE lake only**: the user
+        ruled a DRY lake is calibrated against its bottom on both routes, and the
+        struck sentences below were its half of this call.) Measured with `pestpp-glm`
         (`docs/reproducers/pest_no_value_fields.py`): an empty field (what `to_csv` writes
         for `NaN`) and `nan` each FAIL the run; 1e30 reads, a phi of 1e60 for one weighted
         observation; a forward run one row short of its base fails at end of file; one
@@ -14109,19 +14117,23 @@ same day, which is the useful part of the result.
         instruction file from the BASE run -- one line advance per row, each value found
         by counting commas past a skipped `time` -- so the forward run must match it in
         shape and every field must parse. `NaN` would fail every realization in which a
-        lake is dry, weighted or not. `simulated_series` keeps `NaN` (it is also the review
-        table); the two PEST writers -- the base run in `prepare_lake_stage_observations`
-        and `write_named_series_targets` -- fill it with `LakeStageTargets._PEST_NO_STAGE`,
-        so the two files agree row for row (a test compares them byte for byte on both
-        routes). 1e30 is MF6's own magnitude, the stage file's inactive lake and the head
-        file's inactive cell; the sign is not kept, since the mask has merged dry and
-        inactive and a squared residual has none. Before this entry the stage-file route
-        wrote the raw -1e30/+1e30 and the observation route 0.0 for an inactive lake; the
-        observation route still writes the bottom for a DRY lake, MF6's number. Only
-        `lake_stage` is filled: the flow kinds' observation route still turns 3e30 into
-        0.0, and nothing was measured for them. NOT built: failing a realization on
-        purpose where a WEIGHTED target is dry. 1e30 keeps it in the ensemble with a phi
-        of order 1e60; what PESTPP-IES then does with it (`ies_bad_phi`) was not measured.
+        lake is ~~dry~~ inactive, weighted or not. `simulated_series` keeps `NaN` (it is
+        also the review table); the two PEST writers -- the base run in
+        `prepare_lake_stage_observations` and `write_named_series_targets` -- fill it with
+        `LakeStageTargets._PEST_NO_STAGE`, so the two files agree row for row (a test
+        compares them byte for byte on both routes). 1e30 is MF6's own magnitude, the
+        stage file's inactive lake and the head file's inactive cell~~; the sign is not
+        kept, since the mask has merged dry and inactive and a squared residual has
+        none~~. Before this entry the stage-file route wrote the raw -1e30/+1e30 and the
+        observation route 0.0 for an inactive lake; the observation route still writes
+        the bottom for a DRY lake, MF6's number~~, and the stage-file route 1e30~~ (**and
+        so does the stage-file route since ledger 351**). Only `lake_stage` is filled: the
+        flow kinds' observation route still turns 3e30 into 0.0, and nothing was measured
+        for them. ~~NOT built: failing a realization on purpose where a WEIGHTED target is
+        dry. 1e30 keeps it in the ensemble with a phi of order 1e60; what PESTPP-IES then
+        does with it (`ies_bad_phi`) was not measured.~~ (**Measured by ledger 351**:
+        PESTPP-IES does not fail such a realization; its lambda starts near 1e61 and stays
+        near 1e57, and it stops calibrating -- phi 1.11 against 0.085 with the bottom.)
       - ~~**Found alongside, not fixed:** `prepare_lake_stage_observations` on a TEMPLATE --
         `LakeStageTargets` with no `values`, which the class documents -- dies with
         `KeyError: 'time'` in `_prepare_named_series_observations`, because
@@ -15840,8 +15852,9 @@ same day, which is the useful part of the result.
       different clocks", now that they read different NUMBERS (a dry lake, the SFR sign,
       the LAK stage file's record clock).
       **Still open:** ~~the SFR flow's sign on this route (the next commit)~~ (**RESOLVED by
-      ledger 350**), the dry lake's
-      value (F5), ~~the LAK stage file's record clock (F4)~~ (**RESOLVED by ledger 348**).
+      ledger 350**), ~~the dry lake's
+      value (F5)~~ (**RESOLVED by ledger 351**), ~~the LAK stage file's record clock (F4)~~
+      (**RESOLVED by ledger 348**).
       Reproducer: `docs/reproducers/obs_route_period_end.py`, run on this tree and on
       0c38bf5's `src` (sections A-G; E is `pestpp-glm` NOPTMAX=0 end to end: every family
       and a head keyed by period, phi 18,754.74 at the base K and 0.0000 at the truth,
@@ -16129,3 +16142,95 @@ same day, which is the useful part of the result.
       `test_a_flow_target_above_zero_is_refused_naming_minus_q[sfr|drn]`); the exchange
       branch restored (1, `test_a_model_without_outputs_is_not_read_through_its_exchange`);
       and, not this commit's, `TO-MVR` dropped from the pieces (3, the mover tests).
+
+351. **A DRY lake is calibrated against its BOTTOM on both routes: the stage-file route reads the file raw and puts MF6's lake bottom where it wrote -1e30, one helper replicates MF6's `lakebot`, and only an INACTIVE lake is 1e30 in the files PEST reads (2026-09-29).**
+      The user's call, on F5 (its option 1): for CALIBRATION a dry lake's stage is MF6's
+      lake bottom, on both routes -- what MF6's own STAGE observation writes, since the
+      solver clamps a lake's stage there (`gwf-lak.f90`, `xnewpak` at `lakebot`) while the
+      stage file writes -1e30 (`lak_ot_dv`); an INACTIVE lake stays no-value (`NaN` in
+      review, 1e30 in PEST's files); the stage VIEWS keep ledger 329's gap. The stage-file
+      route read `NaN` there, so one run gave `stats()` n 3 (rmse 0.9603) against the
+      observation route's n 6 (0.6960), and PEST's files 1e30. **The evidence that moved
+      329's call** (reproducer part 3, a one-parameter Python "lake", not MF6, 40
+      realizations, PESTPP-IES 5.2.16): with the bottom, phi mean 22.66 -> 0.08456 and
+      posterior p 0.9975 +/- 0.0207; with 1e30, PESTPP-IES does not fail the dry
+      realizations -- its lambda starts at 1e61 and is still 4.2e57 at iteration 4, once
+      every realization is wet -- and it stops calibrating at phi 1.111, p 0.9630 +/-
+      0.0655. The calibration half of 329 is struck (its views half stands), and 346's
+      open "dry lake's value (F5)".
+      **ONE helper replicates MF6's rule**, `package_tables.lake_bottoms(model, lakes=)`:
+      VERTICAL gives the cell's TOP (MF6 overwrites the BELEV written, ledger 327),
+      HORIZONTAL its BELEV or the cell's BOTTOM when BELEV == TELEV exactly, the lowest
+      over the lake's connections (`lak_read_lake_connections`); DIS, DISV and DISU by
+      cellid. It is a replicated rule, so it is held to MF6 by real runs, bit for bit, on
+      each connection type at every dry record: one vertical (100.0), two verticals under
+      100 and 99.123456789123 (99.12345679, the LOWER as FloPy wrote it), a horizontal
+      with BELEV 45 < TELEV 58 (45.0), one with BELEV = TELEV = 55 in a cell 60..40 (40.0,
+      not the 55 written), ledger 325's excavated pit (82.3456789), and the same pit under
+      LAK `IMPLICIT` (ledger 326, the formulation the user's pond runs: the stage is a
+      matrix unknown, held at the bottom by Newton under-relaxation, `lak_nur`, rather
+      than by the clamp -- the same 82.3456789). Nothing under `src` computed it before
+      (F5's grep). **Considered and not taken:** attaching STAGE
+      observations to PEST's template so MF6 supplies the bottom (F5's option 3) -- it
+      rewrites the user's LAK and leaves `compare()` on a model without them reading
+      another number.
+      **Read from the model's packages, not MF6's binary grid** -- judgment call. On a
+      model LOADED from its files (what PEST's forward run reloads) it is MF6's number to
+      the bit; on one still in memory from its build it reads the elevations UNROUNDED,
+      where FloPy wrote a number between 0.001 and 100,000 at 8 decimals -- measured
+      -8.8e-10 and +1.2e-9 from MF6's, bounded by 5e-9. The `.grb` holds MF6's own cell
+      elevations, but a HORIZONTAL connection's BELEV would still come from the package,
+      so it would be exact for vertical lakes only. What the difference reaches: the BASE
+      run's CSV of a calibration built from a model in memory, at a dry record of a lake
+      whose bottom has more than 8 decimals -- the instruction file reads positions, and an
+      untargeted row is weight 0 (ledger 340), so no phi moves.
+      **EMBEDDED lakes are REFUSED by name**, and only the dry lakes are asked about
+      (`lakes=`), so a dry plain lake beside an embedded one reads. MF6 takes an embedded
+      lake's bottom from its cell's bottom (by assignment, not min) and then from its lake
+      TABLE's leading all-zero rows (`lak_read_table`), which is not read, and no MF6 run
+      was made to verify it; `mf.lak` never writes one (it refuses the types), so only
+      `mf.lak.flopy` or an imported model reaches it. The message names the way round: a
+      STAGE observation, the observation route. The bottoms are computed only when a lake
+      is dry, so a model with none never reads its discretization for this.
+      **`build_lak_stage_result_table(masked=)`** (default `True`: every view reads what it
+      read) rather than a second read of the raw array aligned to the masked table by
+      hand -- one reader keeps the file's record labels, and ledger 348's refusal of a
+      misaligned file, in one place. The partial-declaration refusal (344) no longer cites
+      "a dry lake's stage, an SFR flow's sign" as what the routes read differently -- both
+      are one number now -- but a dry SFR reach, still -1e30 in its stage file.
+      **Test doubles carry MF6's sentinels:** the stub stage tables of
+      `test_stage_targets_one_stage` and `test_lak_stage_sentinels` held `NaN` for "no
+      stage", a value no raw file holds; they stand in for
+      `build_lak_stage_result_table(masked=False)` and hand MF6's +1e30 now (an INACTIVE
+      lake), and the "lake dry in every record keeps its column" stub became "inactive in
+      every record" -- a lake DRY throughout keeps its column holding its bottom, on a real
+      run (`horizontal`). `test_mf6_pest`'s fake surface-water model answered the stage
+      VIEW (`lak.results.stage`); it answers what the table builder reads now -- the raw
+      stage file by record (`outputs.lak.stage.get(masked=)`, `.kstpkper()`) and the LAK
+      connections (`fl.lak`) -- with no lake dry, so its numbers do not move.
+      **NOT done:** `SfrStageTargets`' file route still reads a dry reach's -1e30 as a
+      stage (329's open SFR item; no rule was decided for a reach). An observed-dry target
+      as a `less_` inequality at the bottom (F5 measured that PESTPP-IES honours the group
+      and pestpp-glm does not at NOPTMAX 0) is not offered: not measured here, and the
+      guide says only that the bottom is the number.
+      Reproducer: `docs/reproducers/dry_lake_bottom.py` (part 1 each connection type against
+      MF6, part 2 the routes, `stats()` and the PEST file before and after, part 3 IES).
+      Tests: `tests/test_dry_lake_calibration_stage.py` (14; 12 on four real MF6 runs).
+      Each single-piece revert fails by name, across the six modules that read a lake
+      target:
+      - no substitution: 15, among them
+        `test_both_routes_read_one_number_at_every_record[vertical|horizontal|excavated|implicit]`
+        and `test_the_two_lake_routes_agree_at_every_record_wet_or_dry`;
+      - an inactive lake given the bottom too: 7, among them
+        `test_a_lake_inactive_in_every_record_keeps_its_column_and_its_rows` and
+        `test_the_pest_files_hold_the_bottom_and_1e30_only_for_an_inactive_lake[stage-file]`;
+      - the masked table read instead: 18;
+      - VERTICAL reading the BELEV written: 14, among them
+        `test_lake_bottoms_is_mf6s_own_stage_at_every_dry_record[vertical]`;
+      - the BELEV == TELEV rule dropped: 3,
+        `test_lake_bottoms_is_mf6s_own_stage_at_every_dry_record[horizontal]` and
+        `test_lake_bottoms_reads_a_structured_and_an_unstructured_grid` among them;
+      - the highest, or the first, connection in place of the lowest: 5 and 4, both with
+        `test_lake_bottoms_is_mf6s_own_stage_at_every_dry_record[vertical]`;
+      - every lake asked instead of the dry ones, or the embedded refusal removed: 1 each,
+        `test_an_embedded_lake_is_refused_by_name_and_only_when_it_is_asked_for`.

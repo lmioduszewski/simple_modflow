@@ -623,7 +623,7 @@ a previous run left in a directory `prepare_run(overwrite=True)` reused -- froze
 PEST realization at its values. A label declared as another quantity only, for another
 lake, reach or cell, or twice, is REFUSED naming the target and the record; so is a
 set declared in PART (it silently moved the whole set to the file route, which reads
-other numbers -- a dry lake's stage; until ledger 350 an SFR flow's sign, until ledger 348 the LAK stage
+other numbers -- until ledger 351 a dry lake's stage, until ledger 350 an SFR flow's sign, until ledger 348 the LAK stage
 file's record clock and until ledger 346 another clock altogether); a set with nothing declared reads the file, as before. A model carrying several
 LAK, SFR or DRN packages needs `package=<name>` on the targets (their lake and reach
 numbers each start at 0), carried into PEST's forward run -- the packages are found by
@@ -668,6 +668,24 @@ own `kstpkper` now and the route reads the record that ENDS each period, by the 
 every other file route reads. A set keyed by saved-record index for that route (this
 page's advice before) now reads its first `nper` keys as PERIODS -- re-key it; a key past
 the last period is refused by the build.
+
+**A DRY lake is calibrated against its BOTTOM, on both routes** (ledger 351, the user's
+rule). MF6's STAGE observation reports the stage its solver clamps at the lake's bottom,
+so a dry lake's observation IS the bottom; the stage file writes -1e30 there instead,
+which the stage-file route read as `NaN` and PEST's files as 1e30 -- one lake, observed
+one way, `stats()` `n` 3 on one route and 6 on the other, and PESTPP-IES held its lambda
+near 1e57 and stopped calibrating (phi 1.11 against 0.085 with the bottom;
+`docs/reproducers/dry_lake_bottom.py`). The stage-file route now reads the file RAW and
+puts the lake's bottom in place of -1e30, by MF6's own rule --
+`package_tables.lake_bottoms(model, lakes=)`: a VERTICAL connection's cell TOP (MF6
+ignores the BELEV written for one), a HORIZONTAL one's BELEV or, where BELEV equals TELEV,
+its cell's BOTTOM, the lowest over the lake's connections -- measured equal to MF6's
+observation to the bit on vertical, horizontal and excavated lakes loaded from their
+files, under LAK `IMPLICIT` too (a model still in memory from its build carries its elevations unrounded, where
+FloPy wrote 8 decimals: within 5e-9). An `EMBEDDEDH`/`EMBEDDEDV` lake is refused when it is
+dry (MF6 takes its bottom from its lake table, not read). An INACTIVE lake (+1e30, MF6's
+`STATUS INACTIVE`) has no stage on either route: `NaN` in `compare()`, 1e30 in the files
+PEST reads. The stage VIEWS keep a dry day as a gap (ledger 329).
 
 **A target's `time` is a zero-based stress period, read by NUMBER, one rule for
 `compare()` and the PEST build** (`_shared._numeric_periods`, ledger 340): `1.0` is
@@ -1049,7 +1067,8 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   stage -- DRY (MF6 writes -1e30) or INACTIVE (+1e30) -- is `NaN` in `results.stage`,
   a gap in its series, blank on its maps and an undefined `stage_change`, never a
   number 1e30 ft away; `model.outputs.lak.stage.get(masked=False)` is the raw file
-  and the one place dry and inactive differ (ledger 329). `results.stage.get()` is
+  and the one place dry and inactive differ (ledger 329). A lake TARGET reads it raw:
+  there a dry lake is its bottom (`package_tables.lake_bottoms`, ledger 351). `results.stage.get()` is
   labelled by the stage file's own `kstpkper`, and `per` is the stress period (ledger
   348; it was the saved-record INDEX): `get(per=N)` keeps every step period N saved,
   while `map`, `plot`, `stage_change` and the exchange hover read its LAST saved step.

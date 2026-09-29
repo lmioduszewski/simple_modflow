@@ -240,10 +240,20 @@ series, exchange hover, group and diff inherit it. A table keeps the ROW with a 
 (dropping on it deleted the transitions INTO a dry period, and `LakeStageTargets`' rows);
 nothing may SUM an all-NaN group, which pandas makes 0.0 -- `_aggregate_leaving_gaps`
 serves the series and both map payloads (`agg="sum"` painted a dry lake 0 ft); a diff
-COUNTS a one-sided dry lake (`n_one_sided`). What PEST reads is 1e30, every row kept:
+COUNTS a one-sided dry lake (`n_one_sided`). **A lake TARGET is not a view** (ledger 351,
+the user's rule): a DRY lake is calibrated against its BOTTOM on both routes -- MF6's own
+STAGE observation of it, since the solver clamps the stage there -- so the stage-file
+route reads the file RAW (`build_lak_stage_result_table(masked=False)`) and puts
+`package_tables.lake_bottoms` in place of -1e30, MF6's `lakebot` rule (VERTICAL: the cell
+TOP, never the BELEV written; HORIZONTAL: BELEV, or the cell BOTTOM when BELEV == TELEV;
+the lowest; EMBEDDED refused -- its bottom is its table's). 1e30 there stalled PESTPP-IES
+(lambda stuck near 1e57, phi 1.11 against 0.085; `docs/reproducers/dry_lake_bottom.py`).
+Exact on a model LOADED from its files; a model still in memory is off by FloPy's
+8-decimal write (<= 5e-9). What PEST reads for an INACTIVE lake is 1e30, every row kept:
 PEST++ fails a run on an empty field, on `nan` and on a missing row, and reads an extra
 column as the wrong one (`docs/reproducers/pest_no_value_fields.py`). SFR's stage FILE is
-NOT masked yet (its STAGE observation's 3e30 reads `NaN` in `SfrStageTargets`, ledger 344).
+NOT masked yet (its STAGE observation's 3e30 reads `NaN` in `SfrStageTargets`, ledger 344),
+and `SfrStageTargets`' file route still reads a dry reach's -1e30 as a stage.
 **Highlighting cells is `map(select=...)`, on EVERY scope** (ledger 160,
 2026-08-29) -- cell indices, a boolean mask, a registered region name, a vector
 file, or a geometry. It draws a **dissolved-boundary outline** by default, NOT
@@ -1750,9 +1760,9 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   those files, each record BY POSITION, as text or MF6's `BINARY` form (ledger 345; MF6
   cuts names to 40 characters; the header is checked, not matched). Refused by name:
   another quantity only, another id, a label declared twice, a set declared in PART
-  (the route is chosen for the whole set, since the two routes do not read the same
-  numbers -- a dry lake, an SFR flow's sign; the LAK stage file's record clock until
-  ledger 348), a
+  (the route is chosen for the whole set, since the two routes did not read the same
+  numbers -- a dry lake until ledger 351, an SFR flow's sign until ledger 350, the LAK
+  stage file's record clock until ledger 348), a
   missing declared file, and a model with several LAK/SFR/DRN packages unless
   the targets name one (`package=`, carried into the forward run; packages found by
   TYPE -- FloPy's `get_package("lak")` answers a package NAMED `lak` first, and the

@@ -172,13 +172,17 @@ def _fake_model_with_heads():
 
 def _fake_surface_water_model():
     vor = _two_cell_vor_clockwise()
-    lake_stage = pd.DataFrame(
-        {
-            "per": [0, 1, 0, 1],
-            "lake": [0, 0, 1, 1],
-            "stage": [100.0, 101.0, 97.5, 97.0],
-        }
+    # The LAK stage file as MF6 writes it -- one row per saved record, one column per
+    # lake, labelled by the file's own (kstp, kper) -- which a lake target reads RAW
+    # (ledger 351), and the one VERTICAL connection each lake has, which labels its cell.
+    lake_stage = np.array([[100.0, 97.5], [101.0, 97.0]])
+    lak = SimpleNamespace(
+        nlakes=SimpleNamespace(data=2),
+        connectiondata=SimpleNamespace(get_data=lambda: pd.DataFrame(
+            {"ifno": [0, 1], "cellid": [(0, 0), (0, 1)], "claktype": ["VERTICAL"] * 2})),
     )
+    lak_stage_output = SimpleNamespace(
+        get=lambda *, masked=True: lake_stage.copy(), kstpkper=lambda: [(0, 0), (0, 1)])
     sfr_stage = pd.DataFrame(
         {
             "per": [0, 1],
@@ -209,11 +213,12 @@ def _fake_surface_water_model():
     ).set_index(["kstpkper", "node"])
 
     model = SimpleNamespace(
+        name="m",
         vor=vor,
         # MF6's user numbering of a one-layer, two-cell grid: what a budget node means.
         node_to_lni={0: (0, 0), 1: (0, 1)},
         gwf=SimpleNamespace(lak="lak_owner", sfr="sfr_owner", drn="drn_owner"),
-        lak=SimpleNamespace(results=SimpleNamespace(stage=SimpleNamespace(get=lambda: lake_stage.copy()))),
+        fl=SimpleNamespace(lak=lak),
         sfr=SimpleNamespace(
             results=SimpleNamespace(
                 stage=SimpleNamespace(get=lambda: sfr_stage.copy()),
@@ -221,6 +226,7 @@ def _fake_surface_water_model():
             )
         ),
         outputs=SimpleNamespace(
+            lak=SimpleNamespace(stage=lak_stage_output),
             sfr=SimpleNamespace(
                 bud=SimpleNamespace(
                     get=lambda text: sfr_routing.copy() if text == "FLOW-JA-FACE" else None,

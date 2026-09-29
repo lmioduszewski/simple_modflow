@@ -173,6 +173,17 @@ reads — so a gauged `Q` is entered as `-Q`. A value above zero can never be ma
 is refused when the targets are built, naming `-Q`; zero (a dry reach or spring) is
 accepted.
 
+**A dry lake is calibrated against its bottom** (ledger 351). When a lake empties,
+MF6 holds its stage at the lake's bottom -- the lowest cell top under a vertical
+connection, or a horizontal connection's bottom elevation -- and `LakeStageTargets` hands
+PEST that number, on both of its routes, so the simulated stage falls continuously to
+the bottom and stays there while the lake is dry. (It was 1e30 on the route reading the
+stage file, which PESTPP-IES could not recover from: its lambda stayed near 1e57 and it
+stopped calibrating.) Only a lake set `STATUS INACTIVE` has no stage, and is written
+1e30. So a lake you OBSERVED dry is a target AT its bottom: `lake_bottoms(model)` in
+`myflopy.modflow.mf6.package_tables` gives the number MF6 uses, and a simulated stage can
+never go below it.
+
 > Weighting matters *a lot* and there is no one-size-fits-all. Pre-process data
 > for information content, use more groups rather than fewer, and aim weights at
 > the model's purpose.

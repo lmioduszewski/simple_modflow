@@ -15,6 +15,11 @@ Every MF6-backed test reads ``lak_stage_runs``: two runs of one small model. In
 refills in period 4, lake 1 is set INACTIVE in period 2, and lake 2 is held at a
 CONSTANT 108 ft. ``wet`` is the same model with no withdrawal and lake 1 always
 active. What the stage file holds is asserted here, not assumed.
+
+The stage VIEWS keep both as a gap. A lake TARGET does not (ledger 351, the user's
+rule): a DRY lake is calibrated against its bottom -- 100 ft here, MF6's own STAGE
+observation of it -- on both routes, and only an INACTIVE lake has no stage there
+(``tests/test_dry_lake_calibration_stage.py`` covers every connection type).
 """
 
 from __future__ import annotations
@@ -37,6 +42,8 @@ from myflopy.modflow.mf6.package_plotting import (
 DRY_PERIODS = (1, 2, 3)  # lake 0, dry
 INACTIVE_PERIOD = 2  # lake 1, STATUS INACTIVE
 NPER = 6
+#: Every lake's bottom by MF6's rule: one VERTICAL connection under a 100 ft top.
+BOTTOM = 100.0
 
 
 def _run(root, *, withdrawal: float, switch: bool):
@@ -280,7 +287,8 @@ def test_the_exchange_map_hover_has_no_stage_at_a_dry_lake(lak_stage_runs):
 def test_lake_stage_targets_read_an_inactive_lake_as_no_stage(lak_stage_runs):
     """The observation CSV route read MF6's 3e30 for an inactive lake as a stage of
     0.0 ft. A DRY lake there is MF6's own observed stage -- its bottom, 100 ft --
-    which differs from the stage file's -1e30 because MF6's two outputs differ."""
+    which the stage-file route now reads too, where the file writes -1e30 (ledger
+    351)."""
 
     model = lak_stage_runs["dry"]
     _raw(model)
@@ -298,7 +306,11 @@ def test_lake_stage_targets_read_an_inactive_lake_as_no_stage(lak_stage_runs):
 def test_lake_stage_targets_keep_every_record_on_the_stage_file_route(lak_stage_runs):
     """The stage-file route DROPPED a record with no stage, so the wide series was
     3 rows for 6 records -- and 5 for two lakes, since period 2 has none for either.
-    Names the observation CSV does not hold, so the route is the stage file's."""
+    Names the observation CSV does not hold, so the route is the stage file's.
+
+    A DRY record is the lake's bottom there now, and only an INACTIVE one is ``NaN``
+    (ledger 351): the file's -1e30 and +1e30 are told apart, where the masked table
+    this route read merged them."""
 
     model = lak_stage_runs["dry"]
     raw = _raw(model)
@@ -306,29 +318,41 @@ def test_lake_stage_targets_keep_every_record_on_the_stage_file_route(lak_stage_
         series = mf.LakeStageTargets(locations=locations).simulated_series(model)
         assert list(series["time"]) == list(range(NPER))
         for name, lake in locations.items():
-            expected = np.where(np.abs(raw[:, lake]) >= 1e29, np.nan, raw[:, lake])
+            expected = np.where(raw[:, lake] == -1e30, BOTTOM, raw[:, lake])
+            expected = np.where(expected == 1e30, np.nan, expected)
             np.testing.assert_array_equal(series[name], expected)
     compare = mf.LakeStageTargets(locations={"foo": 0}).compare(model)
-    assert len(compare) == NPER and compare["sim_stage"].isna().sum() == len(DRY_PERIODS)
+    assert len(compare) == NPER and compare["sim_stage"].notna().all()
+    np.testing.assert_array_equal(
+        compare.sort_values("time")["sim_stage"].iloc[list(DRY_PERIODS)], BOTTOM)
 
 
-def test_a_lake_dry_in_every_record_keeps_its_column_and_its_rows():
+def test_a_lake_inactive_in_every_record_keeps_its_column_and_its_rows(monkeypatch):
     """The pivot's default drops a column that is all NaN and a row that is all NaN:
-    a lake dry for the whole base run would lose its column, so a later realization
-    in which it holds water would write one column MORE than the instruction file
-    reads. A stub model: no workspace CSV, so the stage-file route."""
+    a lake with no stage for the whole base run would lose its column, so a later
+    realization in which it holds water would write one column MORE than the
+    instruction file reads. Only an INACTIVE lake has no stage for a target (ledger
+    351; a dry one reads its bottom). A double handing over the RAW stage table, in
+    MF6's +1e30; it declares no observation, so the stage-file route."""
 
     from types import SimpleNamespace
 
-    table = pd.DataFrame({"per": [0, 0, 1, 1, 2, 2], "lake": [0, 1] * 3, "cell": [4, 9] * 3,
-                          "stage": [np.nan, 101.0, np.nan, np.nan, np.nan, 102.0]})
-    stage = SimpleNamespace(get=lambda: table.copy())
-    model = SimpleNamespace(lak=SimpleNamespace(results=SimpleNamespace(stage=stage)))
-    series = mf.LakeStageTargets(locations={"always_dry": 0, "wet": 1}).simulated_series(model)
+    from myflopy.modflow.mf6.observations import lake as lake_module
 
-    assert list(series.columns) == ["time", "always_dry", "wet"]
+    table = pd.DataFrame({"per": [0, 0, 1, 1, 2, 2], "lake": [0, 1] * 3, "cell": [4, 9] * 3,
+                          "stage": [1e30, 101.0, 1e30, 1e30, 1e30, 102.0]})
+
+    def build(model, *, masked=True):
+        assert masked is False
+        return table.copy()
+
+    monkeypatch.setattr(lake_module, "build_lak_stage_result_table", build)
+    series = mf.LakeStageTargets(locations={"always_off": 0, "wet": 1}).simulated_series(
+        SimpleNamespace())
+
+    assert list(series.columns) == ["time", "always_off", "wet"]
     assert list(series["time"]) == [0, 1, 2]
-    assert series["always_dry"].isna().all()
+    assert series["always_off"].isna().all()
     np.testing.assert_array_equal(series["wet"], [101.0, np.nan, 102.0])
 
 
@@ -339,7 +363,8 @@ def test_the_files_pest_reads_agree_row_for_row_and_have_no_empty_field(
     """PEST's instruction file is built from the BASE run, one line per row. The
     forward run wrote fewer rows (EOF: the realization fails) and empty fields for a
     lake with no stage (PEST++ refuses those, and ``nan``). Both files now carry
-    every record, and 1e30 where the series says NaN."""
+    every record, and 1e30 where the series says NaN -- an INACTIVE lake only: a DRY
+    one is written as its bottom on both routes (ledger 351)."""
 
     from types import SimpleNamespace
 
@@ -374,6 +399,9 @@ def test_the_files_pest_reads_agree_row_for_row_and_have_no_empty_field(
     np.testing.assert_array_equal(written[list(names)].to_numpy()[no_stage], 1e30)
     np.testing.assert_allclose(written[list(names)].to_numpy()[~no_stage],
                                series[list(names)].to_numpy()[~no_stage], rtol=1e-14)
+    np.testing.assert_array_equal(written[names[0]].iloc[list(DRY_PERIODS)], BOTTOM)
+    assert written[names[1]].iloc[INACTIVE_PERIOD] == 1e30
+    assert (written.to_numpy() == 1e30).sum() == 1
 
 
 def test_an_observation_flow_keeps_zero_and_a_stage_asks_for_nan():

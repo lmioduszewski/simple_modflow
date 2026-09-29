@@ -497,10 +497,12 @@ def _declared_route(
       the records -- a record of another quantity under the same label is
       another observation, and is left alone when the quantity's own is there;
     - the choice is for the whole SET: every target declared, or none -- a set
-      of some of each RAISES naming both groups, because the two routes do not
-      read the same numbers -- MF6 time against period until ledger 346, the LAK
-      stage file's record clock until ledger 348, and still a dry lake's stage
-      and an SFR flow's sign -- and a silent flip moved every target of the set;
+      of some of each RAISES naming both groups, because the two routes have not
+      always read the same numbers -- MF6 time against period until ledger 346,
+      the LAK stage file's record clock until ledger 348, an SFR flow's sign
+      until ledger 350, a dry lake's stage until ledger 351, and still a dry
+      reach's (-1e30 in the SFR stage file) -- and a silent flip moved every
+      target of the set;
     - a set with no target declared takes the family's file route, as before.
 
     Parameters
@@ -605,8 +607,8 @@ def _declared_route(
             f"{_listing(repr(name) for name in targets if name in short)} "
             f"{'is' if len(short) == 1 else 'are'} not (labels "
             f"{_listing(str(wanted[key][1]).upper() for key in missing)}). The two routes do "
-            "not read the same numbers (a dry lake's stage, an SFR flow's sign), so the set "
-            f"would be read from {quantity.file_route} in "
+            "not always read the same numbers (a dry SFR reach is still -1e30 in its stage "
+            f"file), so the set would be read from {quantity.file_route} in "
             "silence. Declare the missing observations (to_flopy_obs / attach_flopy_obs), or "
             "give each route its own target set."
         )
