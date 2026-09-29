@@ -508,6 +508,12 @@ class PestProject:
         nobody measured. A set given no values at all registers every row at
         weight 0: its simulated values are captured, nothing is fitted.
 
+        A FLOW is written to the control file in MF6's own sign, on both routes
+        (ledger 350): an SFR reach's streamflow and a DRN zone's discharge are
+        negative, water leaving the reach or the aquifer, so a gauged ``Q`` is
+        entered as ``-Q`` -- the targets refuse a value above zero when they are
+        built, which scored ``-2Q`` at a perfect fit.
+
         Parameters
         ----------
         targets : target set or observation spec

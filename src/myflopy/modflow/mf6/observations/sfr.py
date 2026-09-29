@@ -24,6 +24,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _observation_label,
     _ObservedQuantity,
     _read_declared_observations,
+    _refuse_flows_leaving_the_frame,
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
     _refuse_shared_labels,
@@ -51,17 +52,6 @@ _SFR_FLOW = _ObservedQuantity(
     feature="reach",
     file_route="the SFR budget file",
 )
-
-
-def _exchange_column(frame: pd.DataFrame) -> str:
-    """Return the SFR exchange column, tolerating the frame name (``q_gwf``).
-
-    ``sfr.results.q.get()`` names the exchange column by its reference frame
-    (``q_gwf``); older/mock frames may still use the bare ``q``. This flow
-    observation takes ``.abs()`` of it, so the frame's sign is irrelevant here.
-    """
-
-    return "q_gwf" if "q_gwf" in frame.columns else "q"
 
 
 def _sfr_stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
@@ -587,6 +577,17 @@ class SfrFlowTargets:
     to the next reach, to a mover or out of the network, as MF6's own
     ``DOWNSTREAM-FLOW`` observation measures it.
 
+    **A flow is in MF6's own sign, on both routes** (ledger 350, the user's
+    rule): MF6 writes water leaving the reach as NEGATIVE, so ``sim_flow`` is zero
+    or negative, and a gauged streamflow ``Q`` is entered as ``-Q``. A target
+    value above zero can never be matched and is REFUSED when the targets are
+    built, naming ``-Q``; zero (a dry reach) is accepted. The budget-file route
+    reported the magnitude until then while the observation route read MF6's
+    negative number, so one reach read with opposite signs under two names, and
+    a positive ``Q`` matched exactly scored a residual of ``-2Q`` -- a misfit only
+    a smaller simulated flow lowers, which pulls a calibration toward drying the
+    reach.
+
     **The observation route reads what the SFR package DECLARES** (ledger 344):
     a target reads MF6's ``DOWNSTREAM-FLOW`` observation only when its label is
     declared in the SFR package's own OBS as a ``DOWNSTREAM-FLOW`` of the
@@ -607,9 +608,12 @@ class SfrFlowTargets:
         targets.
     values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
         Observed streamflow through time, in model length cubed per model time
-        unit. :meth:`compare` subtracts it from the simulated flow, which is a
-        positive MAGNITUDE on the budget-file route and carries MF6's sign on
-        the observation route. A path is read with ``pandas.read_csv``. LONG
+        unit, in MF6's own sign: water leaving the reach is NEGATIVE, so enter a
+        gauged streamflow ``Q`` as ``-Q``. :meth:`compare` subtracts it, as given,
+        from the simulated flow, which is MF6's ``DOWNSTREAM-FLOW`` on both
+        routes (ledger 350). A value above zero is refused (``ValueError``
+        naming the target, the time and ``-Q``); zero is accepted. A path is
+        read with ``pandas.read_csv``. LONG
         form has ``name`` and ``value_column`` columns (headers matched
         ignoring case); WIDE form has one column per target name beside
         ``time_column``; a table of only ``time_column`` and ``value_column``,
@@ -680,6 +684,14 @@ class SfrFlowTargets:
             if len(self._locations) != 1:
                 raise ValueError("SfrFlowTargets values without explicit names require exactly one target reach.")
             self._values["name"] = str(self._locations["name"].iloc[0])
+        _refuse_flows_leaving_the_frame(
+            self._values,
+            "flow_target",
+            owner=type(self).__name__,
+            quantity="MF6's DOWNSTREAM-FLOW",
+            leaving="the reach",
+            measured="a gauged streamflow",
+        )
 
     def get(self) -> pd.DataFrame:
         """Return the named reach definitions, or the observed flows merged with them."""
@@ -725,14 +737,25 @@ class SfrFlowTargets:
         return _read_declared_observations(model, chosen, owner=_SFR_FLOW.owner)
 
     def _package_flow_table(self, model) -> pd.DataFrame:
-        """Each reach's streamflow at each stress period's END, from the SFR budget file.
+        """Each reach's streamflow at each stress period's END, from the SFR budget file, in MF6's sign.
 
         A reach's streamflow is the water it sends downstream in one time step:
         its outbound FLOW-JA-FACE rows (to the next reaches), plus ``TO-MVR`` and
         ``EXT-OUTFLOW`` (out of the network) where the budget file holds them --
-        the quantity MF6's own ``DOWNSTREAM-FLOW`` observation reports (measured
-        equal on the canonical model and on a stream with no mover), as a
-        magnitude. Those rows ADD, within one time step (``kind="extensive"``).
+        the quantity MF6's own ``DOWNSTREAM-FLOW`` observation reports. Those rows
+        ADD, within one time step (``kind="extensive"``), each taken as a
+        magnitude so the sum does not depend on the sign the file gives a term.
+
+        **The flow is reported in MF6's own sign** (ledger 350, the user's rule):
+        ``sim_flow`` is MINUS that sum -- water leaving the reach is negative, as
+        MF6 writes ``DOWNSTREAM-FLOW`` -- so it equals the observation route's
+        number (measured equal to the last digit at every period end on a plain
+        reach, an outlet, and a reach and an outlet each passing water to a
+        mover; ``docs/reproducers/flow_target_sign.py``). This
+        route reported the magnitude, POSITIVE, while the observation route
+        beside it read MF6's negative number, so the same reach read with
+        opposite signs under two names, and a gauged flow matched exactly on the
+        observation route scored a residual of ``-2Q``.
 
         **A period's value is its END-of-period value** (ledger 336): the record
         read is the one that ends the period on the SFR budget file's own clock
@@ -742,11 +765,13 @@ class SfrFlowTargets:
         BUDGET ALL`` read its outlet reach at 113,453.29 where each step held
         37,817.76. A period whose final step the file does not hold is refused.
 
-        If routing flow is unavailable on a real model it returns an empty frame
-        with a warning -- it does **not** substitute ``sfr.results.q`` (the
-        stream-aquifer *exchange*, a different physical quantity, ~1e2 leakage),
-        because relabeling that as ``sim_flow`` would silently feed PEST the wrong
-        quantity under the streamflow column name.
+        If routing flow is unavailable it returns an empty frame with a warning
+        -- it does **not** substitute ``sfr.results.q`` (the stream-aquifer
+        *exchange*, a different physical quantity), because relabeling that as
+        ``sim_flow`` would silently feed PEST the wrong quantity under the
+        streamflow column name. A model without ``outputs`` -- only a test double
+        -- is not read at all: a branch for such doubles read ``sfr.results.q``,
+        that exchange, as the streamflow (ledger 350).
 
         Parameters
         ----------
@@ -756,8 +781,9 @@ class SfrFlowTargets:
         Returns
         -------
         pandas.DataFrame
-            ``per``, ``reach`` (zero-based) and ``sim_flow``, one row per reach
-            that sends water downstream, per stress period.
+            ``per``, ``reach`` (zero-based) and ``sim_flow`` -- MF6's sign, zero
+            or negative -- one row per reach the budget file holds an outbound
+            record for, per stress period.
 
         Raises
         ------
@@ -765,27 +791,6 @@ class SfrFlowTargets:
             When a period the SFR budget file saved lacks its final step --
             naming the period, the steps saved and ``SAVE BUDGET LAST``.
         """
-
-        if not hasattr(model, "outputs"):
-            # Mock-only accommodation: a real model is a ``SimulationBase`` and always
-            # exposes ``.outputs`` (a property), so this branch never runs in
-            # production. Test doubles without ``.outputs`` feed flow-shaped data
-            # through ``results.q``; keep reading it so those doubles resolve.
-            try:
-                flow = model.sfr.results.q.get().copy()
-            except (AttributeError, TypeError):
-                # A test double that exposes neither `.outputs` NOR a usable
-                # `results.q` -- an empty frame is the documented answer for
-                # "this model has no streamflow to observe".
-                return pd.DataFrame(columns=["per", "reach", "sim_flow"])
-            if flow.empty:
-                return pd.DataFrame(columns=["per", "reach", "sim_flow"])
-            flow["per"] = pd.to_numeric(flow["per"], errors="coerce").astype(int)
-            flow["reach"] = pd.to_numeric(flow["reach"], errors="coerce").astype(int)
-            flow["sim_flow"] = _clean_observation_output_values(
-                flow[_exchange_column(flow)]
-            ).abs()
-            return flow.loc[:, ["per", "reach", "sim_flow"]]
 
         budget = model.outputs.sfr.bud
         flow = budget.get("FLOW-JA-FACE")
@@ -822,8 +827,7 @@ class SfrFlowTargets:
         frame = flow.copy()
         frame["q"] = _clean_observation_output_values(frame["q"])
         # For in-channel through-flow, use the outbound FLOW-JA-FACE rows
-        # leaving each reach. Those are the negative rows in the SFR package
-        # budget. Taking absolute values keeps the reported flow intuitive.
+        # leaving each reach: the negative rows in the SFR package budget.
         pieces = [frame.loc[frame["q"] <= 0.0, ["kstpkper", "node", "q"]]]
         # Only the terms the file HOLDS: FloPy raises on a record text the budget
         # file does not have, and a stream with no mover writes no TO-MVR -- so
@@ -841,11 +845,16 @@ class SfrFlowTargets:
         rows["reach"] = pd.to_numeric(rows["node"], errors="coerce")
         if rows["reach"].dropna().min() >= 1:
             rows["reach"] = rows["reach"] - 1
+        # Each piece as a magnitude, so the sum is the reach's DOWNSTREAM-FLOW
+        # whatever sign the file gives a term, then that sum in MF6's own sign.
         rows["sim_flow"] = rows["q"].abs()
         rows["per"] = rows["kstpkper"].map(lambda value: int(value[1]))
-        return _aggregate_named_series(
+        table = _aggregate_named_series(
             rows, id_column="reach", value_column="sim_flow", kind="extensive", ends=ends
         )
+        # ``0.0 - x``, not ``-x``: a dry reach reads 0.0, as MF6 writes it, not -0.0.
+        table["sim_flow"] = 0.0 - table["sim_flow"]
+        return table
 
     def simulated_series(self, model) -> pd.DataFrame:
         """Return one wide simulated-flow table: a ``time`` column and one column per target.
@@ -859,9 +868,10 @@ class SfrFlowTargets:
         period, one row per period at its END -- the observation route takes
         MF6's observation at the time step that ends each period (ledger 346; it
         handed on every step, keyed by MF6's simulated time) and refuses a file
-        that does not end every period. They differ in sign: the observation
-        route carries MF6's own (``DOWNSTREAM-FLOW`` is negative), the
-        budget-file route the flow's magnitude.
+        that does not end every period. Both carry MF6's own sign --
+        ``DOWNSTREAM-FLOW``, negative when the reach sends water on -- and read
+        the same number for one reach (ledger 350; the budget-file route
+        reported the magnitude, so the two read opposite signs).
 
         **On the budget-file route a period holds ONE flow per reach: the flow
         at the period's END** (ledger 336) -- the record that ends the period on
@@ -883,9 +893,10 @@ class SfrFlowTargets:
         Returns
         -------
         pandas.DataFrame
-            ``time`` plus one float column per target name. On the budget-file
-            route a target naming a reach that sends no water downstream gets no
-            column.
+            ``time`` plus one float column per target name, each a reach's
+            streamflow in MF6's sign: zero or NEGATIVE, water leaving the reach
+            (ledger 350). On the budget-file route a target naming a reach the
+            SFR budget file holds no outbound record for gets no column.
 
         Raises
         ------
@@ -948,7 +959,10 @@ class SfrFlowTargets:
             One row per target row (per simulated row when the targets hold no
             values): ``name``, ``reach``, ``time``, ``per``, ``flow_target``,
             ``sim_flow``, ``residual`` (simulated minus target) and
-            ``abs_residual``.
+            ``abs_residual``. ``flow_target`` and ``sim_flow`` are both in MF6's
+            sign -- zero or negative, water leaving the reach (ledger 350) -- so a
+            residual above zero means the model sends LESS water downstream than
+            was gauged.
 
         Raises
         ------
@@ -1050,8 +1064,8 @@ class SfrFlowTargets:
         kind : str, optional
             The MF6 SFR observation type written on every record. Must be
             ``"DOWNSTREAM-FLOW"`` (any case), the default -- which MF6 reports
-            NEGATIVE, and the observation route reads, sign included, as the
-            flow -- and any other raises ``ValueError``: ``kind="SFR"`` wrote the
+            NEGATIVE, the sign both routes read (ledger 350) -- and any other
+            raises ``ValueError``: ``kind="SFR"`` wrote the
             stream-aquifer EXCHANGE under the targets' names, which that route
             read as streamflow (ledger 344).
 

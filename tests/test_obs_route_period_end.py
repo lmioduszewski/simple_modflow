@@ -202,8 +202,8 @@ def test_every_family_reads_one_row_per_period_at_its_end(runs):
 def test_the_period_end_rows_are_the_file_routes_values(runs):
     """The two routes agree at each period's end: the lake with the stage file's
     period-end record, the reach with the stage file, the flows with the budget files
-    (SFR with MF6's NEGATIVE sign on this route, the magnitude on the budget route --
-    a later commit's), and the DRN zone cell by cell to the bit."""
+    (SFR in MF6's NEGATIVE sign on both routes since ledger 350, where the budget route
+    reported the magnitude), and the DRN zone cell by cell to the bit."""
 
     model = runs["steps"]
     lake = mf.LakeStageTargets(locations={"pond": 0}).simulated_series(model)
@@ -217,7 +217,7 @@ def test_the_period_end_rows_are_the_file_routes_values(runs):
         rtol=1e-14)
     flow = mf.SfrFlowTargets(locations={"up": 0}).simulated_series(model)
     np.testing.assert_allclose(
-        -flow["up"], mf.SfrFlowTargets(locations={"a": 0}).simulated_series(model)["a"],
+        flow["up"], mf.SfrFlowTargets(locations={"a": 0}).simulated_series(model)["a"],
         rtol=1e-10)
 
     # Each cell to the bit: a one-cell zone ``seep`` of cell c reads MF6's ``seep_c<c>``.
@@ -244,13 +244,15 @@ def test_compare_reads_a_period_key_and_refuses_a_time_key_naming_the_period(run
         name = next(iter(columns))
         locations = {name: locations[name]}
         series = make(locations=locations).simulated_series(model)
+        # A flow is entered in MF6's sign, negative (ledger 350); a stage as it reads.
+        value = -1.0 if make in (mf.SfrFlowTargets, mf.DrnFlowTargets) else 1.0
         by_period = make(locations=locations,
-                         values=pd.DataFrame({"time": range(NPER), name: 1.0})).compare(model)
+                         values=pd.DataFrame({"time": range(NPER), name: value})).compare(model)
         simulated = "sim_stage" if "sim_stage" in by_period.columns else "sim_flow"
         np.testing.assert_array_equal(by_period.sort_values("per")[simulated], series[name],
                                       err_msg=family)
         by_time = make(locations=locations,
-                       values=pd.DataFrame({"time": [10, 20, 30], name: 1.0}))
+                       values=pd.DataFrame({"time": [10, 20, 30], name: value}))
         with pytest.raises(ValueError, match=(
                 r"\.compare\(\.\.\.\): the observation route is keyed by zero-based stress "
                 r"period, one row per period at its end \(ledger 346\), and this model's "

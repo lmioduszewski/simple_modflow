@@ -163,7 +163,8 @@ def section_a(model, root):
     wells = _heads([("W2", 1), ("W1", 2), ("W10", 34)], pd.DataFrame(
         {"time": [0.0, 1.0], "W2": [101.0, 101.5], "W1": [100.0, 100.5],
          "W10": [99.0, 99.5]}))
-    flow = mf.SfrFlowTargets(locations={"a": 0}, values=pd.DataFrame({"time": [1.0], "a": [7.0]}))
+    # A flow in MF6's own sign, negative: a value above zero is refused since ledger 350.
+    flow = mf.SfrFlowTargets(locations={"a": 0}, values=pd.DataFrame({"time": [1.0], "a": [-7.0]}))
     predicted = _heads([("P", 23)], pd.DataFrame({"time": [2.0], "P": [0.0]}))
     cal, pst = _build(model, root / "a", observe=(wells, flow), forecast=(predicted,))
     template = pathlib.Path(cal.template_workspace)
@@ -173,7 +174,7 @@ def section_a(model, root):
               for well, values in (("W2", (101.0, 101.5)), ("W1", (100.0, 100.5)),
                                    ("W10", (99.0, 99.5)))
               for per, value in enumerate(values)]
-    wanted.append(("sfr_flow_simulated_sfr_flow.csv", 1, "a", 7.0))
+    wanted.append(("sfr_flow_simulated_sfr_flow.csv", 1, "a", -7.0))
     carried = sum(obs.loc[_observation_at(template, t, p, c), "obsval"] == v
                   for t, p, c, v in wanted)
     forecast_rows = [_observation_at(template, "fore1_simulated_heads.csv", p, "P")

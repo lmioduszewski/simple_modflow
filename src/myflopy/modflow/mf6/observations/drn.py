@@ -29,6 +29,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _ObservedQuantity,
     _placement_note,
     _read_declared_observations,
+    _refuse_flows_leaving_the_frame,
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
     _report_missed_features,
@@ -468,6 +469,14 @@ class DrnFlowTargets:
     observation route the zone is its cells' observations at the time step that
     ends each period, keyed by the period (ledger 346).
 
+    **A flow is in MF6's own sign, on both routes**: MF6 writes water a drain
+    takes out of the aquifer as NEGATIVE, so ``sim_flow`` is zero or negative and
+    a measured spring or drain discharge ``Q`` is entered as ``-Q``. A target
+    value above zero can never be matched -- a drain cannot add water -- and is
+    REFUSED when the targets are built, naming ``-Q`` (ledger 350); zero (a dry
+    spring) is accepted. A positive discharge was accepted before and scored a
+    residual of ``-2Q`` at a perfect fit, on either route.
+
     **A zone's cell is a ``(layer, cell)`` pair, on every route** (ledger 342): the
     budget file names a drain by its model-wide node, and matching that against a
     zone's in-layer numbers read a zone in layer 1 as whichever layer-0 drain
@@ -514,9 +523,11 @@ class DrnFlowTargets:
         ``layer`` is not a whole number 0 or more.
     values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
         Observed discharge through time, in model length cubed per model time
-        unit. :meth:`compare` subtracts it, as given, from the simulated flow,
-        which carries MF6's sign on both routes -- a drain's outflow is NEGATIVE
-        -- so enter a measured discharge negative. A path is read with
+        unit, in MF6's own sign: water leaving the aquifer through a drain is
+        NEGATIVE, so enter a measured discharge ``Q`` as ``-Q``. :meth:`compare`
+        subtracts it, as given, from the simulated flow, which carries MF6's sign
+        on both routes. A value above zero is refused (``ValueError`` naming the
+        zone, the time and ``-Q``, ledger 350); zero is accepted. A path is read with
         ``pandas.read_csv``. LONG form has ``name`` and ``value_column`` columns
         (headers matched ignoring case); WIDE form has one column per zone name
         beside ``time_column``; a table of only ``time_column`` and
@@ -614,6 +625,14 @@ class DrnFlowTargets:
             if len(self._locations["name"].unique()) != 1:
                 raise ValueError("DrnFlowTargets values without explicit names require exactly one zone.")
             self._values["name"] = str(self._locations["name"].iloc[0])
+        _refuse_flows_leaving_the_frame(
+            self._values,
+            "flow_target",
+            owner=type(self).__name__,
+            quantity="MF6's DRN flow",
+            leaving="the aquifer through a drain",
+            measured="a measured discharge",
+        )
 
     @property
     def locations_gdf(self):
@@ -992,9 +1011,9 @@ class DrnFlowTargets:
         Returns
         -------
         pandas.DataFrame
-            ``time`` plus one float column per zone, in MF6's sign (a drain's
-            outflow is negative). On the budget-file route a zone with no member
-            cell gets no column.
+            ``time`` plus one float column per zone, in MF6's sign: zero or
+            NEGATIVE, the water the zone's drains take out of the aquifer. On the
+            budget-file route a zone with no member cell gets no column.
 
         Raises
         ------
@@ -1062,7 +1081,10 @@ class DrnFlowTargets:
             ``flow_target``, ``sim_flow``, ``residual`` (simulated minus target),
             ``abs_residual``, and the zone's ``group``, ``weight`` and ``cells``
             -- ONE set per zone however many rows define it, its cells the
-            sorted ``(layer, cell)`` pairs MF6 reads. With no values
+            sorted ``(layer, cell)`` pairs MF6 reads. ``flow_target`` and
+            ``sim_flow`` are both in MF6's sign -- zero or negative, water
+            leaving the aquifer (ledger 350) -- so a residual above zero means
+            the model drains LESS than was measured. With no values
             ``flow_target`` and the residuals are ``NaN``, and ``time`` is the
             period, equal to ``per`` -- on the budget-file route since ledger 342
             (it had no ``per`` column, so :meth:`residuals` raised ``KeyError``),

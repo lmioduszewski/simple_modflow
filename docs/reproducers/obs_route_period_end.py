@@ -172,6 +172,13 @@ def _period_end_values(model, csv: str, columns: list[str], perlen=PERLEN, nper=
     return raw.iloc[rows].loc[:, columns].sum(axis=1).to_numpy()
 
 
+def _placeholder(make) -> float:
+    """A target value that only has to be accepted: 1.0, or -1.0 for a FLOW, which is
+    entered in MF6's own sign since ledger 350 (a value above zero is refused)."""
+
+    return -1.0 if make in (mf.SfrFlowTargets, mf.DrnFlowTargets) else 1.0
+
+
 def section_a(toy):
     print("A. three steps per period: the observation route")
     for family, (make, locations, name, simulated) in _families().items():
@@ -179,7 +186,7 @@ def section_a(toy):
         print(f"   {family}: {len(series)} rows, time {_round(series['time'])}")
         for label, keys in (("period", [0, 1, 2]), ("time", [10, 20, 30])):
             targets = make(locations=locations,
-                           values=pd.DataFrame({"time": keys, name: 1.0}))
+                           values=pd.DataFrame({"time": keys, name: _placeholder(make)}))
             got = _try(lambda targets=targets: str(_round(targets.compare(toy)[simulated])))
             print(f"      compare() keyed by {label} {keys}: {got}")
 
@@ -198,8 +205,8 @@ def _build(model, workspace, observe):
 def section_b(toy, root):
     print("\nB. a PEST build of all four, keyed by period")
     observe = {
-        family.replace(" ", "_"): make(locations=locations,
-                                       values=pd.DataFrame({"time": [0, 1, 2], name: 1.0}))
+        family.replace(" ", "_"): make(locations=locations, values=pd.DataFrame(
+            {"time": [0, 1, 2], name: _placeholder(make)}))
         for family, (make, locations, name, _sim) in _families().items()
     }
 

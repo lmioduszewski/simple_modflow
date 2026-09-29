@@ -135,10 +135,16 @@ WHEN A KEY NAMES NO PERIOD, and ATS no longer moves the row count PEST's positio
 reads (12/13/14 rows at K = 10/1/2 read t = 23 as the last period's end). **A time key
 below `nper` IS a period and reads that period in silence** (ledger 347) -- not a daily
 corner: on twelve 2-day periods the old keys 2, 4, 6 read periods 2, 4, 6; only a set
-reaching past the last period is refused, so audit a set written before 346. STILL OPEN: the SFR flow there keeps MF6's
-NEGATIVE `DOWNSTREAM-FLOW` where the file route reports the
-magnitude. A LAK STAGE-FILE target is keyed by period too since ledger 348 (it was keyed
+reaching past the last period is refused, so audit a set written before 346. A LAK
+STAGE-FILE target is keyed by period too since ledger 348 (it was keyed
 by SAVED RECORD: at `nstp=3` periods 0-2 read steps 1-3 of period 0).
+**A flow target is MF6's own sign on BOTH routes** (ledger 350, the user's call): an SFR
+reach reads MF6's `DOWNSTREAM-FLOW` and a DRN zone its `DRN` flow, zero or NEGATIVE
+(water leaving), so a gauged `Q` is entered `-Q`, and a target above zero is REFUSED at
+construction naming `-Q` (`_shared._refuse_flows_leaving_the_frame`). The SFR file route
+took the MAGNITUDE, so one reach read with opposite signs under two names and a positive
+`Q` matched exactly scored `-2Q` (phi 327,106 on three exact observations), a misfit only
+a drier reach lowers. Do not normalize a flow's sign anywhere on this path.
 Figures are **always `viz.Fig`**, never a bare `go.Figure` — a bare figure silently
 drops `scrollZoom`, `dragmode='pan'`, and the house template. Colors come from the
 policy helper, not hex literals at the call site.
@@ -536,9 +542,12 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5454 passed / 4 skipped**, 2026-09-29, ledger 349 -- the review of 348):
-  `-n 10` **1m38s** in a worktree outside `.claude`, at a load average of ~0.5 at its
-  start, absolute `PYTHONPATH`; serial not re-measured. Before it, 5451 passed / 4 skipped
+- Full suite (**5460 passed / 4 skipped**, 2026-09-29, ledger 350 -- flow targets in
+  MF6's sign): `-n 10` **1m38s** in a worktree outside `.claude`, at a load average of
+  ~0.1 at its start (1m43s at ~2.7 after the last docs edits), absolute `PYTHONPATH` (a relative `PYTHONPATH=src` fails the two
+  tests that run a PEST `forward_run.py` in its template: the subprocess imports another
+  checkout's myflopy); serial not re-measured. Before it, 5454 passed / 4 skipped
+  (ledger 349 -- the review of 348): `-n 10` 1m38s at ~0.5. Before it, 5451 passed / 4 skipped
   (ledger 348 -- the LAK stage clock): `-n 10` 1m34s at ~0.5. Before it, 5437 passed / 4 skipped
   (ledger 347 -- the review of 346): `-n 10` 1m38s at ~0.2. Before it, 5434 passed / 4 skipped
   (ledger 346 -- the observation route keyed by period): `-n 10` 1m40s at ~1.5. Before it,

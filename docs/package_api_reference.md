@@ -590,6 +590,23 @@ reach reads its outflow) -- the quantity MF6's `DOWNSTREAM-FLOW` observation rep
 a zone's flow is its cells ADDED within that one step. Both flows used to add every
 step a period saved as well: 3.0x at `nstp=3` under `SAVE BUDGET ALL`.
 
+**A flow target is in MF6's own sign, on both routes: enter a gauged `Q` as `-Q`**
+(ledger 350, the user's rule). A reach's streamflow and a drain's discharge are water
+LEAVING -- the reach, the aquifer -- which MF6 writes NEGATIVE (`DOWNSTREAM-FLOW`,
+`DRN`), so `SfrFlowTargets` and `DrnFlowTargets` read zero or negative flows, in
+`simulated_series`, `compare()` and the tables PEST reads, and compare the `values`
+you give them as given. A value above zero can never be matched -- a reach does not
+send water upstream, a drain does not add it -- so it is REFUSED when the targets
+are built, naming the target, the time and `-Q`; zero (a dry reach or spring) is
+accepted. Before this the SFR budget-file route reported the MAGNITUDE while the
+observation route read MF6's number, so one reach read with opposite signs under two
+names, and a positive gauged `Q` matched exactly scored a residual of `-2Q` there
+(phi 327,106 on three exact observations), as a positive discharge did on both DRN
+routes: a misfit (`Q + |q|` per row) that only a smaller simulated flow lowers, so it
+pulls a calibration toward drying the reach or shutting the drain. A residual
+(simulated minus target) above zero means the model sends or drains LESS than was
+measured (`docs/reproducers/flow_target_sign.py`).
+
 A lake, reach or zone target reads one of two routes: MF6's own observation, when
 EVERY target of the set is DECLARED in the owning package's OBS, else the output file.
 **Declared means by identity** (ledger 344): a target's label -- its name as
@@ -606,7 +623,7 @@ a previous run left in a directory `prepare_run(overwrite=True)` reused -- froze
 PEST realization at its values. A label declared as another quantity only, for another
 lake, reach or cell, or twice, is REFUSED naming the target and the record; so is a
 set declared in PART (it silently moved the whole set to the file route, which reads
-other numbers -- a dry lake's stage, an SFR flow's sign; until ledger 348 the LAK stage
+other numbers -- a dry lake's stage; until ledger 350 an SFR flow's sign, until ledger 348 the LAK stage
 file's record clock and until ledger 346 another clock altogether); a set with nothing declared reads the file, as before. A model carrying several
 LAK, SFR or DRN packages needs `package=<name>` on the targets (their lake and reach
 numbers each start at 0), carried into PEST's forward run -- the packages are found by
@@ -641,8 +658,8 @@ in silence: `1` on daily periods, and on twelve 2-day periods the old keys 2, 4,
 ends of periods 0, 1, 2) read periods 2, 4, 6 (ledger 347). A set written for the old
 spelling is refused only when a key reaches past the last period -- re-key it. PEST templates built on this route at more than one step per period expect a
 line per step and must be rebuilt. The
-observation route's SFR flow also keeps MF6's sign (`DOWNSTREAM-FLOW` is negative)
-where the file route reports the magnitude. **The LAK stage-file route was keyed by
+observation route's SFR flow is MF6's `DOWNSTREAM-FLOW`, negative -- and so is the file
+route's since ledger 350 (it reported the magnitude). **The LAK stage-file route was keyed by
 SAVED RECORD until ledger 348**: `build_lak_stage_result_table` labelled `per` by the
 record's index, so under `SAVE HEAD ALL` at `nstp=3` a lake target keyed by period 0, 1,
 2 read steps 1-3 of period 0 while the SFR and head targets beside it read period end,

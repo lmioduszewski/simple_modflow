@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 349 entries (354 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 350 entries (355 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 350 | A flow target is compared in MF6's own sign on both routes: the SFR budget route reads MF6's negative... | 2026-09-29 |
 | 349 | The review of ledger 348: the TABLES keyed by period read each period's last saved step too -- a cell-budge... | 2026-09-29 |
 | 348 | A lake's stage file is read on its own clock, and every view that reduces a results table to one value per... | 2026-09-29 |
 | 347 | The review of ledger 346: a time key below `nper` reads as that period in silence on ANY model, not only a... | 2026-09-29 |
@@ -15085,8 +15086,10 @@ same day, which is the useful part of the result.
       need it) -- **CHANGED by ledger 346, the user's call: it is one row per period at
       its end now, keyed by the period, like every other route**: MF6 writes a flow observation every time step, labelled by simulated time,
       and its period-end rows equal the file route -- the DRN zone to the bit, the SFR reach
-      with MF6's NEGATIVE sign where the file route reports the magnitude, so a positive
-      gauged flow Q matched exactly there reads a residual of -2Q. A target keyed by
+      ~~with MF6's NEGATIVE sign where the file route reports the magnitude, so a positive
+      gauged flow Q matched exactly there reads a residual of -2Q~~ (**RESOLVED by ledger
+      350**: both routes read MF6's negative `DOWNSTREAM-FLOW`, and a target above zero is
+      refused naming `-Q`). A target keyed by
       PERIOD matches nothing: `compare()` gives `NaN`, ~~and a PEST build keeps all nine
       simulated rows (`time:3.333333333333` .. `time:30.0`) as `obsval`, weight 1 -- the
       targets silently dropped (ledger 331's finding, for flows too), and not inertly:
@@ -15102,7 +15105,7 @@ same day, which is the useful part of the result.
       pyEMU's `time:10.0` rows (the floats, at `nstp=1`, none of `time:10`). **The
       period-key defect is RESOLVED by ledger 346** -- a period key reads, a time key
       naming no period is refused naming the period (one below `nper` reads that period,
-      ledger 347); the SFR sign is open.
+      ledger 347); ~~the SFR sign is open~~ (**RESOLVED by ledger 350**).
       **Not built:** a time-weighted mean over the period (the user chose the end); the LAK
       period clock.
       Reproducer: `docs/reproducers/flow_targets_period_end.py` (the toy under five OC
@@ -15832,7 +15835,8 @@ same day, which is the useful part of the result.
       described the per-step route; `_declared_route` said the two routes were "on
       different clocks", now that they read different NUMBERS (a dry lake, the SFR sign,
       the LAK stage file's record clock).
-      **Still open:** the SFR flow's sign on this route (the next commit), the dry lake's
+      **Still open:** ~~the SFR flow's sign on this route (the next commit)~~ (**RESOLVED by
+      ledger 350**), the dry lake's
       value (F5), ~~the LAK stage file's record clock (F4)~~ (**RESOLVED by ledger 348**).
       Reproducer: `docs/reproducers/obs_route_period_end.py`, run on this tree and on
       0c38bf5's `src` (sections A-G; E is `pestpp-glm` NOPTMAX=0 end to end: every family
@@ -16045,3 +16049,77 @@ same day, which is the useful part of the result.
       namespace's `summary` and `wide`, the SFR namespace's `summary` and `wide` each adding
       the steps (1 each, the budget-tables test); `per` as the record index fails the ATS
       test too.
+
+350. **A flow target is compared in MF6's own sign on both routes: the SFR budget route reads MF6's negative `DOWNSTREAM-FLOW`, a flow target above zero is refused naming `-Q`, and the branch that read the stream-aquifer exchange as streamflow is deleted (2026-09-29).**
+      The user's calls, on F3 and G8: flow targets are MF6's OWN number on both routes -- an
+      SFR reach's streamflow and a DRN zone's discharge NEGATIVE when water leaves the reach
+      or the aquifer; a gauged `Q` is entered as `-Q`; a target of the sign MF6 can never
+      write is refused when the targets are built, and zero is accepted. `SfrFlowTargets`'
+      budget route took the MAGNITUDE of what MF6's observation route hands on unchanged,
+      so one reach read +165.733 and -165.733 under two names (|obs - budget| / |obs| = 2
+      on every reach of two toys), a positive gauged `Q` matched exactly scored `-2Q` on
+      the observation route (phi 327,106.2 on three exact observations) and `-Q` scored
+      `+2Q` on the budget route. `DrnFlowTargets` was already MF6's sign on both routes,
+      said only in a Returns section: a positive discharge scored `-2Q` on either (phi
+      7,916,474.4). No stored PEST run observes a flow (F3's search), so nothing built
+      before this changes meaning.
+      **The budget route keeps its sum of MAGNITUDES and negates the total** -- judgment
+      call. Each piece (outbound FLOW-JA-FACE, `TO-MVR`, `EXT-OUTFLOW`) is taken as `|q|`
+      and the sum negated, so the answer does not rest on the sign a file gives a term;
+      MF6 6.8 writes `TO-MVR` negative (-14.926 at the toy's reach 1), so a raw sum gives
+      the same number today. `0.0 - x`, so a dry reach reads 0.0 as MF6 writes it, not
+      -0.0. Equal to MF6's own `DOWNSTREAM-FLOW` observation to the bit (relative
+      difference 0.0; the test holds 1e-10) on a plain reach, a reach passing 30% to a
+      mover and an outlet passing up to 20 -- every piece exercised; `DOWNSTREAM-FLOW` is
+      MF6's `dsflow` before the mover's share, forced <= 0 (`gwf-sfr.f90`).
+      **The refusal is at CONSTRUCTION**, one helper for both classes
+      (`_shared._refuse_flows_leaving_the_frame`) -- judgment call. Both quantities are
+      sign-definite (a reach cannot send water upstream, a drain `C (elev - h)` cannot add
+      it), so a value above zero is always a sign error, never a measurement; refusing
+      where the values are GIVEN names the fix before any model is read and covers
+      `compare()`, the build and a forecast's placeholder values alike. A blank stays
+      unmeasured; up to five offenders are named, the rest counted. **Considered and not
+      taken:** a `sign=` switch (a second spelling of a sign-definite quantity -- the
+      user's one-spelling rule; F3's option F); a positive magnitude on both routes
+      (option B, the user chose A -- it departs from MF6's number, and needs D, which
+      ledger 344 built); a build-time check comparing observed and simulated signs (G8's
+      heuristic, weaker than a refusal that needs no model).
+      **The mock-only branch is DELETED, not repaired.** For any object without `outputs`,
+      `_package_flow_table` read `model.sfr.results.q` -- the stream-AQUIFER exchange --
+      and returned its magnitude as the reach's streamflow, the substitution the real
+      branch's own comment refuses; only a test double reached it (a real model always has
+      `outputs`), and `test_mf6_pest`'s compare test was checking exchange data labelled
+      streamflow. `_exchange_column` went with it; a model without `outputs` now raises
+      `AttributeError`. That double carries an SFR budget in MF6's sign instead, and its
+      exchange as a trap (123.0, 456.0) no target may read.
+      **Test doubles carry MF6's signs** (the finding's test-fidelity half): the fake DRN
+      budget held q = +0.2 .. +0.85, which MF6 never writes, beside positive DRN targets;
+      the fake SFR `TO-MVR` was +0.5; and the real-run DRN end-to-end test entered +0.5
+      against a draining seep and asserted only that a CSV existed. It enters the seep's
+      own simulated value now and asserts `compare()`'s residual is 0, the control file's
+      `obsval`, and that PEST's instruction file reads that value back from the forward
+      run. Other positive flow placeholders flipped: `test_pest_handed_targets` (7.0,
+      100/140), `test_flow_targets_period_end` (1.0; its `_budget_flows` reads MF6's sign),
+      `test_obs_route_period_end` (the flow families' 1.0), and the reproducers
+      `obs_route_period_end.py` (sections A, B) and `pest_handed_targets.py` (section A),
+      whose measurements do not depend on the sign -- they would now stop at the refusal.
+      **Docs name the frame** wherever a flow is read or supplied: both classes' notes and
+      `values`, `simulated_series`/`compare` Returns, `PestProject.observe`,
+      `package_api_reference.md`, the PEST guide's residual map (on a DRN zone
+      "over-simulated", blue, drains LESS than measured) and `canonical_01`'s
+      observation-network cell (its flows were already negative: the canonical targets
+      take the observation route). Ledger 336's and 346's open SFR-sign notes are struck.
+      **Left as it is:** `IesResults.plot_obs_residuals` colours a DRN zone by
+      `simulated - measured` like a head, so in MF6's sign a zone draining too little
+      reads "over-simulated" (blue) -- documented in the PEST guide rather than
+      re-coloured per family, which would split the map's one scale.
+      Reproducer: `docs/reproducers/flow_target_sign.py` (both routes on two toys, the
+      budget pieces of a mover reach and outlet, `compare()` and a PEST build given `+Q`
+      and `-Q`), "before" 80af79d's `src`. Tests: `tests/test_flow_target_sign.py` (6; 3 on
+      one real MF6 run with a mover). Each single-piece revert fails by name: the budget
+      route's magnitude back (13 tests across four modules, among them
+      `test_both_routes_read_mf6s_downstream_flow_at_every_period_end` and
+      `test_pest_is_handed_mf6s_sign_on_both_routes`); either refusal removed (1 each,
+      `test_a_flow_target_above_zero_is_refused_naming_minus_q[sfr|drn]`); the exchange
+      branch restored (1, `test_a_model_without_outputs_is_not_read_through_its_exchange`);
+      and, not this commit's, `TO-MVR` dropped from the pieces (3, the mover tests).

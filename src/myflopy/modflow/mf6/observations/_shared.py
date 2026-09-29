@@ -154,6 +154,72 @@ def _coerce_target_values(
     return numbers
 
 
+def _refuse_flows_leaving_the_frame(
+    long: pd.DataFrame,
+    column: str,
+    *,
+    owner: str,
+    quantity: str,
+    leaving: str,
+    measured: str,
+) -> None:
+    """Refuse a flow target of the sign MF6 can never write for it (ledger 350).
+
+    A reach's streamflow (MF6's ``DOWNSTREAM-FLOW``) and a drain's discharge (MF6's
+    ``DRN``) are both water LEAVING something -- the reach, the aquifer -- and MF6
+    writes that NEGATIVE, from the reach's or the aquifer's point of view; the
+    targets compare in that sign on both routes, the user's rule. So a value above
+    zero can never be matched and is a sign error: a positive gauged ``Q`` scored
+    a residual of ``-2Q`` at a perfect fit (measured, phi 327,106 on three exact
+    SFR observations), a misfit only a smaller simulated flow lowers, so it pulls a
+    calibration toward drying the reach. Zero is accepted --
+    a reach or drain measured dry -- and a blank (``NaN``) is unmeasured.
+
+    Parameters
+    ----------
+    long : pandas.DataFrame
+        The normalized long target table: ``column`` plus, for the message,
+        ``name`` and ``time``.
+    column : str
+        The column of ``long`` holding the observed flows.
+    owner : str
+        The target class, named in the error (``"SfrFlowTargets"``).
+    quantity : str
+        What the simulated flow is, for the message (``"MF6's DOWNSTREAM-FLOW"``).
+    leaving : str
+        What the water leaves, for the message (``"the reach"``).
+    measured : str
+        What the user measured, for the spelling (``"a gauged streamflow"``).
+
+    Raises
+    ------
+    ValueError
+        When any value is above zero, naming up to five by target, time and value,
+        the frame, and the spelling (``-Q``).
+    """
+
+    values = pd.to_numeric(long[column], errors="coerce")
+    positive = values > 0.0
+    if not positive.any():
+        return
+    offenders = [
+        f"{_shown(long.at[index, 'name'])} at time {_shown(long.at[index, 'time'])} "
+        f"holds {_shown(long.at[index, column])}"
+        if {"name", "time"} <= set(long.columns)
+        else _shown(long.at[index, column])
+        for index in positive[positive].index[:5]
+    ]
+    more = int(positive.sum()) - len(offenders)
+    raise ValueError(
+        f"{owner} values are {quantity}, in MF6's own sign: MF6 writes water leaving "
+        f"{leaving} as negative, so the flow is never above 0, and "
+        f"{int(positive.sum())} value(s) are: "
+        + "; ".join(offenders)
+        + (f"; and {more} more" if more else "")
+        + f". Enter {measured} Q as -Q (0, a dry reading, is accepted)."
+    )
+
+
 def _observation_label(value: str) -> str:
     """Return a compact, MF6-friendly observation label fragment."""
 

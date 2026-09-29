@@ -186,18 +186,25 @@ def _fake_surface_water_model():
             "stage": [12.0, 11.5],
         }
     )
-    sfr_flow = pd.DataFrame(
+    # The SFR budget file's routing, in MF6's own sign (ledger 350): reach 0 (node 1)
+    # sends 1.25 then 1.5 on to reach 1 (node 2) -- negative, water leaving it -- and
+    # reach 1 holds the matching inflow rows.
+    sfr_routing = pd.DataFrame(
         {
-            "per": [0, 1],
-            "reach": [0, 0],
-            "q": [1.25, 1.5],
+            "kstpkper": [(0, 0), (0, 0), (0, 1), (0, 1)],
+            "node": [1, 2, 1, 2],
+            "node2": [2, 1, 2, 1],
+            "q": [-1.25, 1.25, -1.5, 1.5],
         }
     )
+    # The stream-aquifer EXCHANGE, a different quantity: a flow target must never read it.
+    sfr_exchange = pd.DataFrame({"per": [0, 1], "reach": [0, 0], "q_gwf": [123.0, 456.0]})
+    # A drain only takes water out of the aquifer: MF6 writes DRN negative, never positive.
     drn_df = pd.DataFrame(
         {
             "kstpkper": [(0, 0), (0, 0), (0, 1), (0, 1)],
             "node": [0, 1, 0, 1],
-            "q": [0.2, 0.8, 0.25, 0.85],
+            "q": [-0.2, -0.8, -0.25, -0.85],
         }
     ).set_index(["kstpkper", "node"])
 
@@ -210,7 +217,15 @@ def _fake_surface_water_model():
         sfr=SimpleNamespace(
             results=SimpleNamespace(
                 stage=SimpleNamespace(get=lambda: sfr_stage.copy()),
-                q=SimpleNamespace(get=lambda: sfr_flow.copy()),
+                q=SimpleNamespace(get=lambda: sfr_exchange.copy()),
+            )
+        ),
+        outputs=SimpleNamespace(
+            sfr=SimpleNamespace(
+                bud=SimpleNamespace(
+                    get=lambda text: sfr_routing.copy() if text == "FLOW-JA-FACE" else None,
+                    types=["    FLOW-JA-FACE"],
+                )
             )
         ),
     )
@@ -569,13 +584,13 @@ def test_named_surface_water_and_drn_targets_are_model_bound_and_plot_ready(monk
     )
     sfr_flow_targets = SfrFlowTargets(
         locations={"reach_001": 0},
-        values={"per": [0, 1], "reach_001": [1.0, 1.8]},
+        values={"per": [0, 1], "reach_001": [-1.0, -1.8]},
         time_column="per",
         value_column="flow",
     )
     drn_targets = DrnFlowTargets(
         locations={"zone_west": [0], "zone_east": [1]},
-        values={"per": [0, 1], "zone_west": [0.15, 0.3], "zone_east": [0.75, 0.9]},
+        values={"per": [0, 1], "zone_west": [-0.15, -0.3], "zone_east": [-0.75, -0.9]},
         time_column="per",
         value_column="flow",
     )
@@ -598,14 +613,16 @@ def test_named_surface_water_and_drn_targets_are_model_bound_and_plot_ready(monk
     assert isinstance(sfr_stage_plot, CalibrationPlot)
     assert len(sfr_stage_plot.data) == 2
 
-    sfr_flow_compare = model.targets.sfr_flow.compare()
-    assert pytest.approx(sfr_flow_compare["sim_flow"].iloc[1]) == 1.5
+    sfr_flow_compare = model.targets.sfr_flow.compare().sort_values("per")
+    # The routing, in MF6's sign -- not the exchange the double also carries.
+    assert sfr_flow_compare["sim_flow"].tolist() == [-1.25, -1.5]
+    assert sfr_flow_compare["residual"].tolist() == pytest.approx([-0.25, 0.3])
     sfr_flow_plot = model.targets.sfr_flow.plot.residuals_by_period()
     assert isinstance(sfr_flow_plot, CalibrationPlot)
     assert sfr_flow_plot.layout.title.text == "Residual MAE by period"
 
     drn_compare = model.targets.drn_flow.compare()
-    assert pytest.approx(drn_compare.loc[drn_compare["name"] == "zone_east", "sim_flow"].iloc[0]) == 0.8
+    assert pytest.approx(drn_compare.loc[drn_compare["name"] == "zone_east", "sim_flow"].iloc[0]) == -0.8
     assert model.targets.drn_flow.summary().loc[0, "n_cells"] == 2
     drn_plot = model.targets.drn_flow.plot.obs_vs_sim()
     assert isinstance(drn_plot, CalibrationPlot)
@@ -653,7 +670,8 @@ def _fake_flow_ja_face_model():
             "q": [-4.0, -2.0, 4.0, -1.5],  # outbound rows are negative
         }
     )
-    to_mvr = pd.DataFrame({"kstpkper": [(0, 0)], "node": [3], "q": [0.5]})
+    # MF6 writes TO-MVR negative too (measured -14.93 on a real run, ledger 350).
+    to_mvr = pd.DataFrame({"kstpkper": [(0, 0)], "node": [3], "q": [-0.5]})
 
     def _get(text):
         if text == "FLOW-JA-FACE":
@@ -685,8 +703,9 @@ def test_sfr_flow_table_uses_flow_ja_face_routing_and_aggregates():
     )
     frame = targets._package_flow_table(_fake_flow_ja_face_model())
     by_reach = frame.set_index("reach")["sim_flow"]
-    assert pytest.approx(by_reach.loc[0]) == 6.0   # 4.0 + 2.0 outbound rows summed
-    assert pytest.approx(by_reach.loc[2]) == 2.0   # 1.5 outbound + 0.5 TO-MVR
+    # MF6's DOWNSTREAM-FLOW frame, negative: water leaving the reach (ledger 350).
+    assert by_reach.loc[0] == -6.0                  # 4.0 + 2.0 outbound rows summed
+    assert by_reach.loc[2] == -2.0                  # 1.5 outbound + 0.5 TO-MVR
     assert 1 not in by_reach.index                  # inbound-only reach dropped
 
 
@@ -846,12 +865,12 @@ def test_drn_flow_targets_accept_polygon_zones():
             geometry=[Polygon([(0.0, 0.0), (0.95, 0.0), (0.95, 0.95), (0.0, 0.95)])],
             crs=model.vor.crs,
         ),
-        values={"per": [0, 1], "zone_west": [0.15, 0.3]},
+        values={"per": [0, 1], "zone_west": [-0.15, -0.3]},
         time_column="per",
         value_column="flow",
     )
     compare = zone_targets.compare(model)
-    assert pytest.approx(compare["sim_flow"].iloc[0]) == 0.2
+    assert pytest.approx(compare["sim_flow"].iloc[0]) == -0.2
     zones = zone_targets.zone_definitions(model)
     assert zones["cells"].iloc[0] == [0]
 
@@ -882,13 +901,13 @@ def test_named_surface_water_and_drn_pest_observation_builders():
     )
     sfr_flow_targets = SfrFlowTargets(
         locations={"reach_001": 0},
-        values={"per": [0, 1], "reach_001": [1.0, 1.8]},
+        values={"per": [0, 1], "reach_001": [-1.0, -1.8]},
         time_column="per",
         value_column="flow",
     )
     drn_targets = DrnFlowTargets(
         locations={"zone_west": [0], "zone_east": [1]},
-        values={"per": [0, 1], "zone_west": [0.15, 0.3], "zone_east": [0.75, 0.9]},
+        values={"per": [0, 1], "zone_west": [-0.15, -0.3], "zone_east": [-0.75, -0.9]},
         time_column="per",
         value_column="flow",
     )
@@ -934,7 +953,7 @@ def test_drn_flow_targets_accept_csv_style_cell_lists():
                 "weight": [1.0, 0.5],
             }
         ),
-        values={"per": [0], "zone_west": [0.2], "zone_east": [0.7]},
+        values={"per": [0], "zone_west": [-0.2], "zone_east": [-0.7]},
         time_column="per",
         value_column="flow",
     )
@@ -1438,12 +1457,18 @@ def test_named_series_drn_observation_forward_run_end_to_end():
     assert success is True
     assert not model.bud("drn").df.empty  # the drain is seeping
 
+    # The seep measured exactly as the model makes it, in MF6's sign: water leaving the
+    # aquifer is NEGATIVE, so a gauged discharge Q is entered as -Q (ledger 350). This
+    # test entered +0.5 against the draining seep and asserted only that a CSV existed.
+    seeping = DrnFlowTargets(locations={"seep": [1]}).simulated_series(model)["seep"]
+    assert (seeping < 0).all()
     drn_targets = DrnFlowTargets(
         locations={"seep": [1]},
-        values=pd.DataFrame({"per": [0], "seep": [0.5]}),
+        values=pd.DataFrame({"per": [0], "seep": [float(seeping.iloc[0])]}),
         time_column="per",
         value_column="flow",
     )
+    assert drn_targets.compare(model)["residual"].tolist() == [0.0]
 
     cal = model.pest("ns_drn_demo", start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.2, 5.0), physical=(1e-3, 100.0))
@@ -1468,6 +1493,21 @@ def test_named_series_drn_observation_forward_run_end_to_end():
     simulated = pd.read_csv(sim_csv)
     assert "seep" in simulated.columns
     assert len(simulated) >= 1
+
+    # What PEST reads from the realization, against what it was handed: the one
+    # measured row carries the target, and its residual is zero -- a positive target
+    # had scored -2Q here.
+    import pyemu
+
+    pst = pyemu.Pst(str(template / "ns_drn_demo.pst"))
+    measured = pst.observation_data.loc[pst.observation_data["weight"] > 0]
+    assert len(measured) == 1
+    read = pyemu.pst_utils.InstructionFile(str(template / f"{sim_csv.name}.ins")).read_output_file(
+        str(sim_csv))["obsval"]
+    name = measured.index[0]
+    # (the control file holds 16 significant digits)
+    assert measured.loc[name, "obsval"] == pytest.approx(float(seeping.iloc[0]), rel=1e-14)
+    assert float(read.loc[name]) == pytest.approx(measured.loc[name, "obsval"], rel=1e-9)
 
 
 def test_prior_monte_carlo_and_conflict_end_to_end():

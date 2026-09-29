@@ -173,7 +173,7 @@ def test_a_period_key_written_as_a_float_reaches_its_row_in_every_family(toy, tm
     pyEMU wrote ``per:1``, the build looked for ``per:1.0`` and skipped it."""
 
     heads = _head_targets([("W", 22)], pd.DataFrame({"time": [0.0, 1.0], "W": [50.0, 51.0]}))
-    flow = mf.SfrFlowTargets(locations={"a": 0}, values=pd.DataFrame({"time": [1.0], "a": [7.0]}))
+    flow = mf.SfrFlowTargets(locations={"a": 0}, values=pd.DataFrame({"time": [1.0], "a": [-7.0]}))
     seep = mf.DrnFlowTargets(locations={"zone": DRN_CELLS},
                              values=pd.DataFrame({"time": [2.0], "zone": [-3.0]}))
     pond = mf.LakeStageTargets(locations={"pond": 0},
@@ -185,7 +185,7 @@ def test_a_period_key_written_as_a_float_reaches_its_row_in_every_family(toy, tm
     for table, period, column, value in (
         ("hds_simulated_heads.csv", 0, "W", 50.0),
         ("hds_simulated_heads.csv", 1, "W", 51.0),
-        ("sfr_flow_simulated_sfr_flow.csv", 1, "a", 7.0),
+        ("sfr_flow_simulated_sfr_flow.csv", 1, "a", -7.0),
         ("drn_flow_simulated_drn_flow.csv", 2, "zone", -3.0),
         ("stage_simulated_lake_stage.csv", 1, "pond", 99.0),
     ):
@@ -217,7 +217,7 @@ def test_a_fractional_period_is_refused_by_compare_and_by_the_build(toy, tmp_pat
     """``1.5`` was truncated to period 1 by ``compare()`` and dropped by the build."""
 
     heads = _head_targets([("W", 22)], pd.DataFrame({"time": [1.5], "W": [50.0]}))
-    flow = mf.SfrFlowTargets(locations={"a": 0}, values=pd.DataFrame({"time": [10.9], "a": [7.0]}))
+    flow = mf.SfrFlowTargets(locations={"a": 0}, values=pd.DataFrame({"time": [10.9], "a": [-7.0]}))
     refusal = r"reads `time` as a zero-based stress period, and {} is not a whole number"
     with pytest.raises(ValueError, match=refusal.format(r"1\.5")):
         heads.compare(toy)
@@ -236,7 +236,7 @@ def test_two_measurements_of_one_target_in_one_period_are_refused(toy, tmp_path)
                              "head": [99.0, 95.0, 97.0]}))
     flow = mf.SfrFlowTargets(
         locations={"r": 3},
-        values=pd.DataFrame({"time": [0, 0], "name": ["r", "r"], "flow": [100.0, 140.0]}))
+        values=pd.DataFrame({"time": [0, 0], "name": ["r", "r"], "flow": [-100.0, -140.0]}))
     refusal = r"two or more measurements of one target in one stress period -- {} at period 0: 2 values"
     with pytest.raises(ValueError, match=refusal.format("'A'")):
         heads.compare(toy)

@@ -379,7 +379,9 @@ zero** — so a point and the cell under it mean the same thing at the same colo
 is under-simulated**, blue is over-simulated, white is on the money. The residual is
 `simulated − measured` (the convention `phi_contributions` uses; note PEST's own `.res`
 file reports the opposite sign, and every label on this figure says which one it is
-in). Each location is summarized over time, so a target measured in six stress periods
+in). A DRN zone's seepage is in MF6's own sign, negative -- water leaving the aquifer,
+entered as `-Q` (ledger 350) -- so on a zone "over-simulated" (blue) means it drains
+LESS than was measured. Each location is summarized over time, so a target measured in six stress periods
 is one point showing its mean bias, with the count in the hover. `obs_residuals()`
 returns the same numbers as a DataFrame.
 

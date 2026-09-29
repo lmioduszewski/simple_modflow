@@ -176,8 +176,8 @@ def _budget_flows(model):
     """``{(kstp, kper): {"up", "down", "seep": flow}}`` read with FloPy, zero-based.
 
     A reach's flow is what it sends downstream -- outbound FLOW-JA-FACE plus
-    EXT-OUTFLOW, the quantity MF6's DOWNSTREAM-FLOW reports -- as a magnitude;
-    the zone's is its cells' DRN rows added, in MF6's sign.
+    EXT-OUTFLOW, the quantity MF6's DOWNSTREAM-FLOW reports -- and the zone's is its
+    cells' DRN rows added, both in MF6's sign: negative, water leaving (ledger 350).
     """
 
     workspace = Path(model.workspace)
@@ -191,7 +191,7 @@ def _budget_flows(model):
         by_reach = []
         for reach in (0, len(REACHES) - 1):
             rows = routed[routed["node"] == reach + 1]
-            out = -rows["q"][rows["q"] < 0].sum() - outflow["q"][outflow["node"] == reach + 1].sum()
+            out = rows["q"][rows["q"] < 0].sum() + outflow["q"][outflow["node"] == reach + 1].sum()
             by_reach.append(float(out))
         drains = cbc.get_data(text="DRN", kstpkper=key)[0]
         seep = float(drains["q"][np.isin(drains["node"], np.array(DRN_CELLS) + 1)].sum())
@@ -304,12 +304,13 @@ def test_a_flow_target_reads_each_periods_end_not_the_sum_of_its_steps(runs):
 @pytest.mark.slow
 def test_the_outlet_reach_reads_what_leaves_the_network(runs):
     """Reach 3 has no downstream reach: its water leaves as EXT-OUTFLOW, which the
-    route did not read, so the outlet -- the reach a gage sits on -- had no column."""
+    route did not read, so the outlet -- the reach a gage sits on -- had no column.
+    It reads in MF6's sign, negative, as DOWNSTREAM-FLOW does (ledger 350)."""
 
     series = mf.SfrFlowTargets(locations={"outlet": len(REACHES) - 1}).simulated_series(runs["all"])
     np.testing.assert_allclose(series["outlet"], _period_end(_budget_flows(runs["all"]), "down"),
                                rtol=1e-12)
-    assert (series["outlet"] > 0).all()
+    assert (series["outlet"] < 0).all()
 
 
 @pytest.mark.slow
@@ -341,7 +342,7 @@ def test_compare_and_the_files_pest_reads_carry_the_period_end_flow(runs, tmp_pa
 
     model = runs["all"]
     flows = _budget_flows(model)
-    sfr, drn = _targets(values=[1.0] * NPER)
+    sfr, drn = _targets(values=[-1.0] * NPER)
     compare = sfr.compare(model)
     by_name = {name: frame.sort_values("per") for name, frame in compare.groupby("name")}
     np.testing.assert_allclose(by_name["a"]["sim_flow"], _period_end(flows, "up"), rtol=1e-12)
@@ -371,7 +372,7 @@ def test_a_period_whose_end_the_budget_did_not_save_is_refused(runs, tmp_path):
 
     model = runs["budget_first"]
     assert sorted(_budget_flows(model)) == [(0, per) for per in range(NPER)]
-    sfr, drn = _targets(values=[1.0] * NPER)
+    sfr, drn = _targets(values=[-1.0] * NPER)
     refusal = (r"END is missing from the (SFR budget|model's cell-budget) file: period 0 "
                r"saved step 1, the last ending 3\.33333 into a period 10 long.*"
                r"SAVE BUDGET LAST")
@@ -618,9 +619,9 @@ def test_the_observation_route_is_keyed_by_period_and_agrees_at_each_period_end(
     """MF6 writes a flow observation at every time step, keyed by simulated time; the
     route hands on the row that ENDS each period, keyed by the period (ledger 346), and
     it equals the budget route -- the DRN zone to rounding, each of its cells to the bit,
-    the SFR reach with MF6's own NEGATIVE sign, where the budget route reports the magnitude. It handed on every
-    step, so a target keyed by PERIOD matched nothing; one keyed by MF6's time now
-    names the period to key it by."""
+    the SFR reach in MF6's own NEGATIVE sign on both (ledger 350; the budget route
+    reported the magnitude). It handed on every step, so a target keyed by PERIOD
+    matched nothing; one keyed by MF6's time now names the period to key it by."""
 
     model = runs["all"]
     observed_sfr = mf.SfrFlowTargets(locations={"up": 0, "down": len(REACHES) - 1})
@@ -629,8 +630,8 @@ def test_the_observation_route_is_keyed_by_period_and_agrees_at_each_period_end(
     seep = observed_drn.simulated_series(model)
     assert list(stream["time"]) == list(seep["time"]) == list(range(NPER))
     sfr, drn = _targets()
-    np.testing.assert_allclose(-stream["up"], sfr.simulated_series(model)["a"], rtol=1e-10)
-    np.testing.assert_allclose(-stream["down"], sfr.simulated_series(model)["b"], rtol=1e-10)
+    np.testing.assert_allclose(stream["up"], sfr.simulated_series(model)["a"], rtol=1e-10)
+    np.testing.assert_allclose(stream["down"], sfr.simulated_series(model)["b"], rtol=1e-10)
     # Each cell is MF6's number on both routes; the zone's sum is added in another order.
     np.testing.assert_allclose(seep["seep"], drn.simulated_series(model)["zone"], rtol=1e-14)
 
