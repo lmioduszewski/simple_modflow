@@ -1,4 +1,4 @@
-"""A stage target reads ONE stage per feature per saved record (ledger 331).
+"""A stage target reads ONE stage per feature per period, at its end (ledgers 331, 348).
 
 ``LakeStageTargets``' stage-file route read ``packages.lak.results.stage`` -- one
 row per CONNECTED CELL, each a copy of the lake's one stage -- and
@@ -26,8 +26,8 @@ Three small real MF6 runs:
 ``lake_steps_run``  the same grid with ONE lake of three vertical connections and a
                steady withdrawal, three periods of THREE time steps each saved
                (``SAVE HEAD ALL``); no LAK observations, so every name takes the
-               stage-file route. It pins a limit, not a fix: that route is keyed by
-               saved record, not by period (ledger 331, open under 301).
+               stage-file route -- keyed by saved record until ledger 348, and by
+               stress period, at its end, since.
 
 What each file holds is asserted before it is used, not assumed.
 """
@@ -245,8 +245,8 @@ def test_the_two_lake_routes_agree_wherever_the_lake_holds_water(lake_runs):
     reads the same number. They still differ where MF6's two outputs do -- a DRY
     lake is its bottom in the observation, ``NaN`` in the file (ledger 329). Both
     label ``time`` 0..5 here: the observation route by stress period (ledger 346;
-    it carried MF6's time, 10..60), the stage file by saved record, which is the
-    period at one save per period."""
+    it carried MF6's time, 10..60), the stage file by stress period too (ledger 348;
+    by saved record before, which is the period at one save per period)."""
 
     stage = _lake_stage_file(lake_runs)
     observed = mf.LakeStageTargets(locations={"drying": 0, "held": 1}).simulated_series(lake_runs)
@@ -310,18 +310,17 @@ def test_the_files_pest_reads_carry_each_lake_once(lake_runs, tmp_path, names):
 
 
 @pytest.mark.slow
-def test_a_lake_target_keyed_by_period_reads_the_record_clock_at_several_saves(
+def test_a_lake_target_keyed_by_period_reads_each_periods_end_at_several_saves(
     lake_steps_run,
 ):
-    """A LIMIT, pinned so the docs cannot outlive it (ledger 331, open under 301).
+    """The stage-file route is keyed by stress period, at its END (ledger 348).
 
-    The LAK stage table labels ``per`` by SAVED-RECORD index, so at three saves per
-    period the stage-file route has nine rows labelled 0..8, and a target keyed by
-    stress period 0, 1, 2 reads records 0, 1, 2 -- all inside period 0 -- where
-    ``HeadTargets`` on the same run reads each period's LAST step. Nothing warns.
-    When ``build_lak_stage_result_table`` carries the stage file's own ``kstpkper``
-    this fails: update ledger 331's time-labels bullet, the ``LakeStageTargets``
-    docstrings and ``docs/package_api_reference.md`` with it.
+    It was pinned as a LIMIT here (ledgers 331, 301): the LAK stage table labelled
+    ``per`` by SAVED-RECORD index, so at three saves per period the route had nine
+    rows labelled 0..8 and a target keyed by period 0, 1, 2 read records 0, 1, 2 --
+    all inside period 0 -- where ``HeadTargets`` on the same run read each period's
+    LAST step. The table carries the stage file's own ``kstpkper`` now, and the
+    route reads the record that ends each period, as the head target beside it does.
     """
 
     records = LAKE_STEPS_NPER * LAKE_STEPS_NSTP
@@ -329,12 +328,11 @@ def test_a_lake_target_keyed_by_period_reads_the_record_clock_at_several_saves(
     assert stage.shape == (records, 1)
     # The stage moves at every step, so which step is read is visible.
     assert len(np.unique(stage[:, 0])) == records
-    rows = lake_steps_run.lak.results.stage.get().groupby(["per", "lake"]).size()
-    assert set(rows) == {3}
+    period_end = stage[LAKE_STEPS_NSTP - 1::LAKE_STEPS_NSTP, 0]
 
     series = mf.LakeStageTargets(locations={"a": 0}).simulated_series(lake_steps_run)
-    assert list(series["time"]) == list(range(records))
-    np.testing.assert_array_equal(series["a"], stage[:, 0])
+    assert list(series["time"]) == list(range(LAKE_STEPS_NPER))
+    np.testing.assert_array_equal(series["a"], period_end)
 
     targets = mf.LakeStageTargets(
         locations={"a": 0},
@@ -342,12 +340,9 @@ def test_a_lake_target_keyed_by_period_reads_the_record_clock_at_several_saves(
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
         compare = targets.compare(lake_steps_run).sort_values("per")
-    in_period_0 = stage[:LAKE_STEPS_NPER, 0]
-    period_end = stage[LAKE_STEPS_NSTP - 1::LAKE_STEPS_NSTP, 0]
-    np.testing.assert_array_equal(compare["sim_stage"], in_period_0)
-    assert not np.isclose(compare["sim_stage"].to_numpy()[1:], period_end[1:]).any()
+    np.testing.assert_array_equal(compare["sim_stage"], period_end)
 
-    # The head target beside it, keyed the same way, reads period end.
+    # The head target beside it, keyed the same way, reads the same instants.
     cell = int(lake_steps_run.lak.results.stage.get()["cell"].iloc[0])
     heads = mf.HeadTargets(
         locations=pd.DataFrame({"name": ["h"], "cell": [cell], "layer": [0]}),

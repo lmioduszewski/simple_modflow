@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 347 entries (352 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 348 entries (353 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 348 | A lake's stage file is read on its own clock, and every view that reduces a results table to one value per... | 2026-09-29 |
 | 347 | The review of ledger 346: a time key below `nper` reads as that period in silence on ANY model, not only a... | 2026-09-29 |
 | 346 | The observation route is one row per stress period, at its end: a lake, reach or zone target keyed by perio... | 2026-09-29 |
 | 345 | The review of ledger 344: a declared observation file MF6 wrote BINARY is read, and 344's two untested halv... | 2026-09-29 |
@@ -12664,15 +12665,19 @@ same day, which is the useful part of the result.
       packages of one type in a budget-reading test either.
       **NOT FIXED, and recorded rather than quietly left:**
       * **The STAGE-clock family, ~12 sites, same root shape.**
-        `LakStageOutput.get` reshapes with no clock at all and
+        ~~`LakStageOutput.get` reshapes with no clock at all and
         `build_lak_stage_result_table` labels `per` by SAVED-RECORD INDEX (measured
         `per = 0..5` on a 2-period model; a `LakeStageTargets` keyed by period reads
         through it, ledger 331); `group/lak.py` pairs stage records with
         `model.kstpkper` and truncates; `group/sfr.py` decodes `SFRStageOutput`'s
         reach-indexed frame as if it were LAK's time-indexed array, so `per=` and `reach=`
-        both select the wrong thing; `_coerce_kstpkper` and `XSection.__init__` index the
+        both select the wrong thing;~~ **RESOLVED by ledger 348**: the table is labelled
+        from the stage file's own headers (`LakStageOutput.kstpkper()` beside the array),
+        and both group tables are rebuilt on the single-model tables.
+        ~~`_coerce_kstpkper` and `XSection.__init__` index the
         head-clock LIST by a stress-period number, which is only correct at one save per
-        period; `budget_tables.sfr_stage_df` reshapes by `model.nper` and raises;
+        period;~~ **RESOLVED by ledger 337.** STILL OPEN: `budget_tables.sfr_stage_df`
+        reshapes by `model.nper` and raises;
         `budget_obs_df` swallows the mismatch with `except KeyError: continue`.
         Scoped OUT by the user to keep this pass to the reported defect. They are a
         genuinely larger surface -- the group tier and the PEST observation path -- and
@@ -14668,10 +14673,12 @@ same day, which is the useful part of the result.
       so head and SFR-stage targets in one PEST run read the same instant. Refusing was
       the other candidate (the house default), and would have made SFR stage targets
       unusable under `SAVE HEAD ALL` while head targets beside them quietly took period
-      end. Not warned. The LAK table carries no `kstpkper` -- its `per` IS the saved
+      end. Not warned. ~~The LAK table carries no `kstpkper` -- its `per` IS the saved
       record's index (ledger 301's stage clock) -- so every LAK record is kept, as before,
       and **lake targets on the stage-file route are NOT on that instant**: at more than
-      one saved step per period they sit on the record clock (the time-labels bullet).
+      one saved step per period they sit on the record clock (the time-labels bullet).~~
+      **RESOLVED by ledger 348:** the LAK table carries the stage file's `kstpkper`, and a
+      lake target reads the same instant through the same helper.
       ~~**The extensive branch has no caller today.**~~ **It has two since ledger 336.** The flow targets never went through
       this helper -- `SfrFlowTargets._package_flow_table` and `DrnFlowTargets` sum with
       their own `groupby`; it exists because the rule is "sum only if extensive", and it
@@ -14703,24 +14710,28 @@ same day, which is the useful part of the result.
         346 the observation route is keyed by PERIOD** -- one row per period, the one that
         ends it -- so a period key reads in `compare()` and the build alike and a key of
         MF6's time (`10`, `10.0`) is REFUSED in both, naming the period it ends. Keyed by period
-        on the stage-file route both work -- **at ONE saved step per period only.** When
+        on the stage-file route both work -- ~~**at ONE saved step per period only.** When
         output control saves several, a LAK stage-file target must be keyed by
         SAVED-RECORD index: keyed by stress period it silently reads a step inside an
-        EARLIER period, unlike the SFR and head targets beside it, which read period end.
+        EARLIER period, unlike the SFR and head targets beside it, which read period end.~~
+        **at any number of saves since ledger 348**, which carried the fix below. What it
+        measured, kept as the record:
         Measured on the same grid with one three-connection lake, `nper=3`, `nstp=3`,
         `SAVE HEAD ALL`: the stage file holds 9 records and the route labels them 0..8;
         targets at `time` 0, 1, 2 read 102.7025, 101.8236, 101.2282 -- steps 1-3 of
         period 0 -- where the period ends are 101.2282, 100.3666, 100.0987 (records 2, 5,
         8), and `HeadTargets` on that run reads each period's step 3. The PEST build puts
         the three targets on `time:0..2` and keeps the SIMULATED value as the `obsval`
-        of `time:3..8`, at ~~weight 1~~ weight 0 since ledger 340. Nothing warns. The open fix is
+        of `time:3..8`, at ~~weight 1~~ weight 0 since ledger 340. Nothing warns. ~~The open fix is
         `build_lak_stage_result_table` carrying the stage file's own `kstpkper` (ledger
         301), after which this helper's period-end reduction applies to LAK as it does to
         SFR. Not fixed here: that table is `packages.lak.results.stage`, so the fix moves
         `per` under every LAK stage view (the plots, maps, `stage_change` and the
         exchange hover's `join_lak_stage`), not only these targets. Pinned as a limit by
         `test_a_lake_target_keyed_by_period_reads_the_record_clock_at_several_saves`, so
-        this sentence fails with the fix rather than outliving it.
+        this sentence fails with the fix rather than outliving it.~~ **RESOLVED by ledger
+        348**, the table and every view moving together; the limit test is flipped into
+        `test_a_lake_target_keyed_by_period_reads_each_periods_end_at_several_saves`.
       - ~~**The observation route is chosen, and read, by NAME.** The lake id is never
         consulted: `LakeStageTargets(locations={"drying": 1})` returned lake 0's
         `DRYING` column (100.09 ft) where lake 1 holds 108.0.~~ **RESOLVED by ledger 344:
@@ -15034,10 +15045,11 @@ same day, which is the useful part of the result.
       generated before this reads unchecked). A period that saved NOTHING is absent, not
       refused: nothing is read for it, so nothing can be wrong. A model with no TDIS -- only
       a duck-typed double -- reads each period's last saved step unchecked.
-      **LAK keeps its record clock** (ledger 331's limit, `build_lak_stage_result_table`,
+      ~~**LAK keeps its record clock** (ledger 331's limit, `build_lak_stage_result_table`,
       open under 301): its table has no `kstpkper` to reduce. What it gains is the refusal,
       which catches the worst of it -- one `FIRST` record per period made the record index
-      look like the period with every stage read at step 1.
+      look like the period with every stage read at step 1.~~ **RESOLVED by ledger 348:** LAK
+      reads its period-end record like the others; the refusal stays.
       **Found on the same route and FIXED:** the SFR flow route asked FloPy for `TO-MVR`
       unconditionally, which RAISES on every stream without a mover ("The specified text
       string is not in the budget file") -- it reads only the terms the file holds now;
@@ -15125,7 +15137,8 @@ same day, which is the useful part of the result.
       NOT 336's end-checked rule: a `SAVE HEAD FIRST` run still draws. A group now reads
       each MEMBER's own last step, and its period-end reduction keeps each model's last
       step, not each row's: a cell with no record there is dropped rather than read at an
-      earlier step. The LAK stage file's record-indexed `per` (301) is still open.
+      earlier step. ~~The LAK stage file's record-indexed `per` (301) is still open.~~
+      **RESOLVED by ledger 348.**
       **Default time (the user's call: both on the FIRST saved time).** The filled section
       opened on the LAST (the reader's own default), the profile, noun, map and surface on
       the first. It now resolves one time for its colours and water levels
@@ -15168,8 +15181,9 @@ same day, which is the useful part of the result.
       defaults to `silent=False`); saving a Matplotlib line profile writes ~287 `findfont`
       lines to stderr (the vendored theme names Calibri with no fallback); a live DIS
       `run.model()` cannot draw either section (`get_disv_gridprops`); `x_or_y` still acts
-      only on a one-cell `cells=` path; `regions.filter_region_heads(per=)` keeps every
-      step of the period, which is a filter, not a choice of one.
+      only on a one-cell `cells=` path; ~~`regions.filter_region_heads(per=)` keeps every
+      step of the period, which is a filter, not a choice of one~~ (**RESOLVED by ledger
+      348**: its last saved step, the time `kstpkper=` beside it names).
       Tests: `tests/test_section_times.py`, 33, on one run of two GWF models at `nstp=3`.
       Each of ten single-piece reverts fails a named test: `per` as a record index in
       `XSection` (6), in `InterpolatedSurface` (1), in `_coerce_kstpkper` (1); the filled
@@ -15779,9 +15793,9 @@ same day, which is the useful part of the result.
       the route's documented key (ledgers 331, 336, CLAUDE.md), and it would otherwise read
       `NaN` in `compare()` with `stats()` counting one row fewer. **Judgment call: the
       observation route only.** The FILE routes' `compare()` still answers `NaN` for a
-      period the table lacks (340 refused it at build only), and the LAK stage FILE is
-      keyed by saved record (331's limit), so a periods-only check there would refuse its
-      documented keys. **Limit, stated:** ~~a time key that is also a period -- `1` on daily
+      period the table lacks (340 refused it at build only), and the LAK stage FILE ~~is~~
+      was keyed by saved record (331's limit, **RESOLVED by ledger 348**), so a periods-only
+      check there would ~~refuse~~ have refused its documented keys. **Limit, stated:** ~~a time key that is also a period -- `1` on daily
       periods -- cannot be told from one, and reads that period (the END of period 1,
       where it read the end of period 0 before).~~ **Restated by ledger 347, measured:**
       every time key BELOW `nper` is also a period and reads that period in silence -- not
@@ -15818,7 +15832,7 @@ same day, which is the useful part of the result.
       different clocks", now that they read different NUMBERS (a dry lake, the SFR sign,
       the LAK stage file's record clock).
       **Still open:** the SFR flow's sign on this route (the next commit), the dry lake's
-      value (F5), the LAK stage file's record clock (F4).
+      value (F5), ~~the LAK stage file's record clock (F4)~~ (**RESOLVED by ledger 348**).
       Reproducer: `docs/reproducers/obs_route_period_end.py`, run on this tree and on
       0c38bf5's `src` (sections A-G; E is `pestpp-glm` NOPTMAX=0 end to end: every family
       and a head keyed by period, phi 18,754.74 at the base K and 0.0000 at the truth,
@@ -15893,10 +15907,89 @@ same day, which is the useful part of the result.
       stops on it: "Unrecognized option: PRECISION"), which `period_end_rows`' docstring
       also said it had; and 336's restatement "matched in `compare()` ONLY" -- the build
       matched time keys by NUMBER from ledger 340 until 346.
-      **Seen, NOT changed:** the build's hint (`_locate_targets`) says "key it N" on the LAK
+      ~~**Seen, NOT changed:** the build's hint (`_locate_targets`) says "key it N" on the LAK
       stage-FILE route too, where a key is a saved record, not a period, at more than one
-      save per period -- F4's clock, still open.
+      save per period -- F4's clock, still open.~~ **RESOLVED by ledger 348:** that route is
+      keyed by period, so the hint is right there too.
       Reproducer: `docs/reproducers/obs_route_period_end_review.py` (sections A-D; B's
       "before" is 87acb4c's `src`). Tests: the three above, in
       `tests/test_obs_route_period_end.py`, on a fifth run (`twelve`, twelve 2-day periods)
       beside `steps` and `hourly`.
+
+348. **A lake's stage file is read on its own clock, and every view that reduces a results table to one value per period reads that period's LAST saved step before any rows combine: the LAK stage table, its targets and its views, and the maps, series and tables that ADDED a period's saved steps (2026-09-29).**
+      Scoping F4, option B (not B'), with the skeptic's correction. **The table:**
+      `build_lak_stage_result_table` labels each record from the stage file's OWN headers
+      (`model.outputs.lak.stage.kstpkper()`, new, through `period_end.saved_steps`) and
+      `per` is the stress period, in `build_sfr_stage_result_table`'s column order. `per`
+      was the saved record's INDEX (301's stage clock). A header count that differs from
+      the array's rows RAISES rather than zips (301's rule). `LakStageOutput.get` stays an
+      ndarray: the sentinel tests and `calcs/calibration.py` index it by position.
+      **The targets:** SFR's `_stage_at_period_end` is now `_shared._stage_at_period_end`
+      (`reader=`, `file=`, `id_column=`), ONE function for both families, so a lake target
+      reads the record that ENDS each period, checked against the TDIS. `SAVE HEAD FIRST`
+      is still refused (through the same call now, not a refusal-only one). A PEST build at
+      `nstp=3` writes three lake rows, not nine. **Stated, not refused:** a set keyed by
+      saved-record INDEX -- what the docstrings advised at several saves per period until
+      now -- reads its first `nper` keys as PERIODS in silence, 347's class; a key past the
+      last period is refused by the build, and `compare()` answers `NaN` there, as on every
+      file route (346's judgment call). A PEST template built on this route at `nstp > 1`
+      must be REBUILT (nine base rows against three); none exists on disk (scoping's find).
+      **The views, and the call that went WIDER than the spec.** The rule is ONE helper
+      pair, `period_end.at_last_saved_step` / `at_last_saved_steps` (337's
+      `last_saved_step(s)` plus `at_period_end`), and it runs where rows COMBINE: the three
+      map payload builders (`package_plotting._rows_drawn_for_period`: cell, LAK q, SFR q),
+      `SpatialView._series_selection` for every series (each group member on its own
+      clock), and the hover's `_join_feature_stage` (the STAGE file's own last step, beside
+      the budget file's). The spec named the stage views, the LAK exchange map, the SFR
+      long profile and `region_heads`; placed there, the fix also reaches EVERY results map
+      and series at every scope -- a CHD `q.map(per=1)` at `nstp=3` read -2152.678, the three
+      steps -1018.687, -681.279, -452.712 added -- which is 337's rule ("every picture")
+      holding, and a per-noun fix would have left `LakBudgetResultsExplorer`'s parent class
+      adding what the subclass no longer did. Also moved, each had ADDED a period's steps:
+      `stage_change` (eight "period" transitions between steps of a three-period run), the
+      LAK `q.budget` view, the combined surface-water table and map, the group LAK/SFR diff
+      maps (`_reduce_to_period_end`, which now delegates to `at_last_saved_steps(by="model")`).
+      **`get(per=N)` stays a FILTER** -- every step period N saved -- as `q.get(per=)` always
+      was (B, not B'). `agg=` on a map now combines the cells of ONE step; its `"first"`
+      default on the stage map existed for two connections in one cell, not for time.
+      **The group tier:** `GroupLakStageResults.get` and `GroupSfrStageResults.get` are
+      rebuilt on the single-model tables plus `_reduce_to_period_end`. The SFR one was 301's
+      "transposed decode" -- it read a REACH-by-time frame as time-by-lake, so `per` held
+      the reach and `reach` the record -- fixed here although the spec named LAK only,
+      because the diff tier's `StageResultDiff` is shared and its `per` docstring would
+      otherwise have been wrong for SFR in a new way. **`GroupLakOutputs.stage` keeps EVERY
+      record** (the spec said "plus `_reduce_to_period_end`"): it is the outputs tier, the
+      group twin of `model.outputs.lak.stage.get()`, so it lists the file, now labelled from
+      the file's own headers. Its old `model.kstpkper` labels were the SAME clock on a file
+      MF6 wrote (LAK gates the stage file on `idvsave`, the skeptic's correction); what
+      changed is that a mismatch raises instead of being cut to length.
+      **`region_heads(per=N)`** reads the last saved step (doc bug 32, 337's found-not-fixed):
+      its `per` sits beside `kstpkper=` as ONE time selector, as on the sections, unlike a
+      noun's `get(per=)`. A period the head file saved nothing in RAISES (it gave an empty
+      frame). The SFR long profile's exchange reads its budget file's last step (doc bug 33).
+      **What did not move:** at one saved step per period nothing -- the sentinel tests
+      (`nstp=1`) and the canonical testing profile pass unchanged, and no existing test
+      assertion moved but the flipped limit. The canonical default and validation profiles
+      (`steps_per_period=2`, `SAVE ... ALL`) draw different, correct pictures; no notebook
+      was re-executed, and no cell's code is wrong. The hover's `_STAGE_UNAVAILABLE`
+      swallows the table's new refusal at DEBUG, as it does a missing stage file -- accepted
+      for a hover; the table and every other view raise.
+      **Found, not fixed:** `CellBudgetResultsExplorer.wide()` pivots by period with
+      `aggfunc=agg` (default `sum`) over every saved step, and the package-budget namespaces'
+      `summary`/`wide` group by period the same way (code-read, not measured) -- tables with
+      their own `agg=`, left for a decision about what `wide` means; `calcs/calibration.py`'s
+      legacy `lak_obs` reads every stage record by position; and a PEST build rewrites its
+      source run's input files in place (ledger 110's known mutation) -- measured: the DISV
+      goes from 133 lines of inline arrays to 25 of `OPEN/CLOSE`, so `RunModel.grid_signature`
+      changes and a group of that run and an identical sibling is refused by every diff map
+      as "does not match ... the same grid".
+      Reproducer: `docs/reproducers/lak_stage_clock.py`, on this tree and on 12b3a57's `src`
+      (its docstring lists every before -> after). Tests: `tests/test_lak_stage_clock.py`
+      (14, four real MF6 runs), and the flipped limit,
+      `test_a_lake_target_keyed_by_period_reads_each_periods_end_at_several_saves`. Each single-piece revert fails by name: `per` as
+      the record index (6 across two modules); no header check (1); the LAK targets unchecked
+      (`test_a_lake_stage_target_is_refused_when_the_stage_file_saved_no_period_end`); the
+      map step choice (5); the series step choice (5); the hover's (1); `stage_change` (1);
+      the group LAK table (1); the SFR transposed decode (1); the group diff map (1); the
+      long profile's exchange (1); `q.budget` (2); the surface-water table (2);
+      `region_heads` (1); the group outputs' old pairing (1).

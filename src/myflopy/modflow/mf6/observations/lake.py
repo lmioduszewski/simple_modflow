@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.observations._shared import (
-    _aggregate_named_series,
     _copy_frame,
     _declared_route,
     _default_compare_stats,
@@ -25,9 +24,9 @@ from myflopy.modflow.mf6.observations._shared import (
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
     _refuse_shared_labels,
+    _stage_at_period_end,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
-from myflopy.modflow.mf6.period_end import period_ends
 
 #: What a lake target reads on the observation route: a LAK package's STAGE
 #: observations (ledger 344).
@@ -40,43 +39,41 @@ _LAKE_STAGE = _ObservedQuantity(
 )
 
 
-def _lake_stage_table(model) -> pd.DataFrame:
-    """``packages.lak.results.stage``, refused when a period's end was not saved (ledger 336).
+def _lake_stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
+    """The LAK stage file read at each period's END, by the rule both stage families share.
 
-    The table's ``per`` is the saved record's INDEX (ledger 301's stage clock),
-    so it cannot be reduced to each period's end the way the SFR table is -- that
-    stays the open limit ledger 331 pins. What it can do is refuse a schedule that
-    saved no END for some period (``SAVE HEAD FIRST``, ``STEPS`` short of the end):
-    there, one record per period made the index look like the period while every
-    value was read before the period ended. Checked on the LAK stage file's own
-    clock, which MF6 writes when it saves HEAD.
+    :func:`~myflopy.modflow.mf6.observations._shared._stage_at_period_end` on
+    ``model.fl.lak.output.stage()``, which MF6 writes when it saves HEAD. The LAK
+    table was keyed by SAVED RECORD until ledger 348 (ledger 301's stage clock), so
+    this only refused a schedule saving no period's end and kept every record: at
+    ``nstp=3`` under ``SAVE HEAD ALL`` a target keyed by period 0, 1, 2 read steps
+    1-3 of period 0.
 
     Parameters
     ----------
     model : SimulationBase
         A run model with a LAK ``stage_filerecord``.
+    frame : pandas.DataFrame
+        ``model.lak.results.stage.get()``.
 
     Returns
     -------
     pandas.DataFrame
-        ``packages.lak.results.stage.get()``, a copy.
+        ``per``, ``lake``, ``stage``: one row per lake per period, ``NaN`` where the
+        lake has no stage.
 
     Raises
     ------
     ValueError
         When a period the LAK stage file saved lacks its final step -- naming the
-        period, the steps saved and ``SAVE HEAD LAST``.
+        period, the steps saved and ``SAVE HEAD LAST`` -- or a lake's copies in one
+        record disagree.
     """
 
-    frame = model.lak.results.stage.get().copy()
-    # Called for the refusal alone: the record clock keeps every record.
-    period_ends(
-        model,
-        reader=lambda: model.fl.lak.output.stage(),
-        file="the LAK stage file",
-        saves="HEAD",
+    return _stage_at_period_end(
+        model, frame, reader=lambda: model.fl.lak.output.stage(),
+        file="the LAK stage file", id_column="lake",
     )
-    return frame
 
 
 @dataclass
@@ -94,12 +91,14 @@ class LakeStageTargets:
     ``values`` yields an observation *template* useful for capturing simulated
     series only.
 
-    A lake target on the stage file is keyed by SAVED RECORD, not by period
-    (ledgers 301, 331) -- the one family the period-end rule cannot reduce yet --
-    but a schedule that saves no period's END (``SAVE HEAD FIRST``, ``STEPS``
-    short of it) is refused as it is for heads, stages and flows (ledger 336).
-    On the observation route it is keyed by stress period, one row per period at
-    its end (ledger 346).
+    A target keyed by stress period reads the stage at that period's END on both
+    routes, as heads, reach stages and flows do (ledger 336): on the stage file,
+    the record that ends the period on the file's own clock (ledger 348 -- that
+    route was keyed by SAVED RECORD until then, so at several saves per period a
+    period key read a step inside an EARLIER period), and a period whose final
+    step output control did not save is refused rather than read early; on the
+    observation route, MF6's observation at the time step that ends it (ledger
+    346).
 
     **The observation route reads what the LAK package DECLARES** (ledger 344):
     a target reads MF6's STAGE observation only when its label (its name as
@@ -387,23 +386,23 @@ class LakeStageTargets:
         the target's own lake -- only the files that OBS names are read, each
         record from its own column -- else, when NO target is declared, from
         ``model.lak.results.stage`` (ledger 344; see the class notes for what is
-        refused). The two routes label ``time`` differently: the observation
-        route by the zero-based STRESS PERIOD, one row per period -- MF6's
-        observation at the time step that ENDS it (ledger 346; it carried every
-        step, keyed by MF6's simulated time) -- and the stage-file route by the
-        zero-based index of the saved stage record.
+        refused). Both routes label ``time`` by the zero-based STRESS PERIOD, one
+        row per period at its END: the observation route takes MF6's observation
+        at the time step that ends each period (ledger 346; it carried every step,
+        keyed by MF6's simulated time), the stage-file route the record that ends
+        it on the stage file's own clock (ledger 348).
 
-        **That index is the stress period only when output control saves one step
-        per period, and that step ENDS it** (ledgers 331, 336). Saving several --
-        ``SAVE HEAD ALL`` at ``nstp=3`` -- writes three records per period, so a
-        target keyed by stress period silently reads a step inside an EARLIER
-        period, where the ``SfrStageTargets`` and ``HeadTargets`` beside it read
-        each period's end. Key a lake target by saved-record index there. The open
-        fix is ``build_lak_stage_result_table`` carrying the stage file's own
-        ``kstpkper`` (ledger 301). A schedule that saves no period's end at all
-        (``SAVE HEAD FIRST``, ``STEPS`` short of it) made the index look like the
-        period with every value read early; that is refused now, as it is for
-        heads, stages and flows.
+        **The stage-file route was keyed by SAVED RECORD until ledger 348**
+        (ledgers 301, 331): its table labelled ``per`` by the record's index, so at
+        ``SAVE HEAD ALL`` with ``nstp=3`` a target keyed by period 0, 1, 2 read
+        steps 1-3 of period 0 while ``SfrStageTargets`` and ``HeadTargets`` beside
+        it read each period's end, and a PEST build wrote nine rows for three
+        periods. It reads the period-end record now, by the rule they read
+        (``period_end.period_end_steps`` on the stage file's own clock); one saved
+        step per period that ends it (``SAVE HEAD LAST``, or one time step) reads
+        as before. A period whose final step was not saved (``SAVE HEAD FIRST``,
+        ``STEPS`` short of it) is refused, because its end-of-period stage does not
+        exist in the file.
 
         **A period with no stage is a row holding ``NaN``, never a missing row**
         (ledger 329). An INACTIVE lake is ``NaN`` on both routes: the observation
@@ -414,8 +413,8 @@ class LakeStageTargets:
         -1e30. So a dry period is the bottom on the observation route and ``NaN`` on
         the stage-file route.
 
-        The stage-file route keeps one row per saved record and one column per
-        target, even a target dry in every record, so the shape does not depend on
+        The stage-file route keeps one row per period and one column per
+        target, even a target dry in every period, so the shape does not depend on
         which lakes are dry. That is what PEST needs: pyEMU builds the instruction
         file from the BASE run's copy of this table, one line advance per row and
         each value found by counting commas past a skipped ``time``, so a
@@ -429,7 +428,7 @@ class LakeStageTargets:
         table repeats a lake's stage on every cell the lake connects to, and the
         stage-file route used to ADD those copies: the user's pond, 763 connected
         cells, read 401,339.97 ft for a stage of 526.00. It takes the one number
-        per saved record now, as a stage is not added (ledger 297), and refuses
+        per record now, as a stage is not added (ledger 297), and refuses
         copies that disagree rather than averaging them.
 
         Parameters
@@ -477,19 +476,17 @@ class LakeStageTargets:
         Examples
         --------
         >>> targets = mf.LakeStageTargets(locations={"pond": 0})
-        >>> series = targets.simulated_series(model)   # one row per period, or per saved record
+        >>> series = targets.simulated_series(model)   # one row per stress period
         >>> series["pond"].isna()                       # True where the pond is dry
         """
 
         observed = self._observed(model)
         if observed is not None:
             return observed
-        frame = _lake_stage_table(model)
+        frame = model.lak.results.stage.get().copy()
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._series.keys()])
-        frame = _aggregate_named_series(
-            frame, id_column="lake", value_column="stage", kind="elevation"
-        )
+        frame = _lake_stage_at_period_end(model, frame)
         definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
         # A target naming a lake the model does not have matches no row; drop it
         # here, as the pivot always did, rather than as a NaN ``time`` row.
@@ -513,19 +510,16 @@ class LakeStageTargets:
         ``NaN`` where MF6 reports no stage, and so are ``residual`` and
         ``abs_residual``; which lakes that covers depends on the route (ledger
         329). Targets are matched on ``per``, read from their ``time`` as a
-        zero-based integer -- which on the observation route is the stress period
-        (ledger 346), and on the stage-file route the index of the saved stage
-        record. On the observation route a key naming no period of the model is
+        zero-based integer -- the stress period, on both routes (ledgers 346, 348),
+        at its END. On the observation route a key naming no period of the model is
         refused, naming the period each simulated-time key ends: that route was
         keyed by MF6's time (``10, 20, 30``) until ledger 346, and such a set would
-        otherwise read ``NaN``. That index is the stress period only at one saved step
-        per period: with several, a target keyed by period silently reads a step
-        inside an earlier period (measured at ``nstp=3``: periods 0, 1, 2 read
-        steps 1, 2, 3 of period 0), unlike ``SfrStageTargets`` and
-        ``HeadTargets``, which read each period's last step. Key it by
-        saved-record index there until ``build_lak_stage_result_table`` carries
-        the stage file's ``kstpkper`` (ledgers 331, 301). A schedule that saves no
-        period's end is refused (ledger 336).
+        otherwise read ``NaN``. The stage-file route was keyed by saved-record index
+        until ledger 348: at ``nstp=3`` periods 0, 1, 2 read steps 1, 2, 3 of period
+        0 (measured), so a set keyed by record index for that route -- as this
+        docstring advised -- now matches its first ``nper`` keys to PERIODS and
+        leaves the rest ``NaN`` (a PEST build refuses them); re-key it by period. A
+        schedule that saves no period's end is refused (ledger 336).
 
         Parameters
         ----------
@@ -567,10 +561,7 @@ class LakeStageTargets:
             simulated["per"] = simulated["time"]
             simulated = definitions.merge(simulated, on="name", how="left")
         else:
-            simulated = _lake_stage_table(model)
-            simulated = _aggregate_named_series(
-                simulated, id_column="lake", value_column="stage", kind="elevation"
-            )
+            simulated = _lake_stage_at_period_end(model, model.lak.results.stage.get().copy())
             simulated = definitions.merge(simulated, on="lake", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
             compare = simulated.rename(columns={"per": "time"}).copy()

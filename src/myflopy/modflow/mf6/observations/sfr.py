@@ -27,6 +27,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
     _refuse_shared_labels,
+    _stage_at_period_end,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
 from myflopy.modflow.mf6.period_end import period_ends
@@ -63,22 +64,19 @@ def _exchange_column(frame: pd.DataFrame) -> str:
     return "q_gwf" if "q_gwf" in frame.columns else "q"
 
 
-def _stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
-    """One stage per reach per stress period: the one that ENDS it (ledgers 331, 336).
+def _sfr_stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
+    """The SFR stage file read at each period's END, by the rule both stage families share.
 
-    The SFR stage table holds one row per reach per saved step, labelled from the
-    stage file's own clock -- which MF6 writes when it saves HEAD, not BUDGET
-    (ledger 301). The period-end record is read off that file and checked against
-    the TDIS, so a period whose end was not saved is refused rather than read at
-    an earlier step.
+    :func:`~myflopy.modflow.mf6.observations._shared._stage_at_period_end` on
+    ``model.fl.sfr.output.stage()`` -- ``per``, ``reach``, ``stage``, one row per
+    reach per period.
 
     Parameters
     ----------
     model : SimulationBase
         The run model the table was read from.
     frame : pandas.DataFrame
-        ``packages.sfr.results.stage.get()``: ``kstpkper``, ``per``, ``reach``,
-        ``stage``.
+        ``model.sfr.results.stage.get()``.
 
     Returns
     -------
@@ -92,15 +90,9 @@ def _stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
         rows in one record disagree.
     """
 
-    ends = period_ends(
-        model,
-        reader=lambda: model.fl.sfr.output.stage(),
-        file="the SFR stage file",
-        saves="HEAD",
-        fallback=frame["kstpkper"] if "kstpkper" in frame.columns else (),
-    )
-    return _aggregate_named_series(
-        frame, id_column="reach", value_column="stage", kind="elevation", ends=ends
+    return _stage_at_period_end(
+        model, frame, reader=lambda: model.fl.sfr.output.stage(),
+        file="the SFR stage file", id_column="reach",
     )
 
 
@@ -344,7 +336,7 @@ class SfrStageTargets:
         frame = model.sfr.results.stage.get().copy()
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
-        frame = _stage_at_period_end(model, frame)
+        frame = _sfr_stage_at_period_end(model, frame)
         merged = self._locations.merge(frame, on="reach", how="left")
         wide = merged.pivot_table(index="per", columns="name", values="stage", aggfunc="first").reset_index()
         wide.columns.name = None
@@ -398,7 +390,7 @@ class SfrStageTargets:
             simulated["per"] = simulated["time"]
             simulated = self._locations.merge(simulated, on="name", how="left")
         else:
-            simulated = _stage_at_period_end(model, model.sfr.results.stage.get().copy())
+            simulated = _sfr_stage_at_period_end(model, model.sfr.results.stage.get().copy())
             simulated = self._locations.merge(simulated, on="reach", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
             compare = simulated.rename(columns={"per": "time"}).copy()

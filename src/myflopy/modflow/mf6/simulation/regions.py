@@ -11,6 +11,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.grid.geometry import selected_cells
 from myflopy.modflow.mf6.grid.selection import get_vor_cells_as_series
+from myflopy.modflow.mf6.period_end import last_saved_step
 
 
 @dataclass(slots=True)
@@ -396,14 +397,28 @@ def filter_region_heads(
 
     Parameters
     ----------
-    model
+    model : SimulationBase
         Model whose heads table should be filtered.
-    name
+    name : str
         Region or group name to resolve through the model's registry.
-    per, kstpkper
-        Optional stress-period selectors.
-    layer
-        Optional layer filter applied after the region cells are resolved.
+    per : int or None, optional
+        Zero-based stress period, read at its LAST saved step on the head file's
+        clock (``period_end.last_saved_step``, ledger 337's rule; ledger 348): the
+        same time ``kstpkper`` names, one per call. It kept EVERY saved step of the
+        period until ledger 348. A period the head file saved nothing in raises
+        ``ValueError``. Ignored when ``kstpkper`` is given.
+    kstpkper : tuple of (int, int) or None, optional
+        One zero-based saved time; takes precedence over ``per``. A time not in the
+        file gives an empty frame.
+    layer : int or list of int or None, optional
+        Layer filter applied after the region cells are resolved; ``None`` uses the
+        region's own layer, if any.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        The kept rows of ``all_heads`` with each cell's polygon and a ``region``
+        column.
     """
     node = model.regions.get(name)
     resolved_cells = model.regions.resolve_cells(name)
@@ -420,7 +435,9 @@ def filter_region_heads(
     if kstpkper is not None:
         heads = heads.loc[heads["kstpkper"] == tuple(kstpkper)]
     elif per is not None:
-        heads = heads.loc[heads["kstpkper"].map(lambda value: value[1]) == int(per)]
+        # The head file's own clock (`model.kstpkper`), the one `all_heads` is read on.
+        step = last_saved_step(model.kstpkper, per)
+        heads = heads.loc[heads["kstpkper"].map(lambda value: tuple(map(int, value))) == step]
 
     heads["geometry"] = heads["cell"].map(model.vor.gdf_vorPolys.geometry.to_dict())
     heads["region"] = name

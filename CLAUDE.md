@@ -67,9 +67,14 @@ caught it downstream `continue`d, returning **0 rows against a file holding 38**
 **A model with TWO packages of one type** (two `RIV6` entries, a main stem plus
 a named tributary) writes two budget records per saved time, which overran the
 model-budget clock the same way -- `model.bud("riv").df` raised `IndexError`.
-STILL OPEN there: the ~12-site STAGE-clock family (`LakStageOutput`,
-`build_lak_stage_result_table`'s `per`-as-record-index, `group/sfr.py`'s
-transposed decode), and `_kstpkper` is still never invalidated.
+**The STAGE clock too** (ledger 348): `build_lak_stage_result_table` labels each
+record from the stage file's own headers (`model.outputs.lak.stage.kstpkper()`) and
+`per` is the stress period -- it was the saved record's INDEX, so at `nstp=3` a lake
+target keyed by period read steps 1-3 of period 0 and PEST got nine rows for three
+periods -- and a record count that disagrees with the headers RAISES. `group/sfr.py`
+decoded a reach-by-time frame as time-by-reach (`per` held the reach); both group
+stage tables are rebuilt on the single-model tables. STILL OPEN: `_kstpkper` is never
+invalidated.
 The rule is `model.<pkg>.<inputs|results>.<noun>.<verb>()` (ledger 339: `model.drn` is
 myflopy's view, **FloPy's package object is `model.fl.drn`**, and `model.packages` keeps
 only the all-packages `summary()`/`mosaic()`; group and diff still read
@@ -108,7 +113,14 @@ both sections, `surface`, the section composers, `HeadsPlus.array`, the group's
 `period_end_steps` is it plus the end check. Deliberately NOT the end-checked rule, so a
 `SAVE HEAD FIRST` run still draws. The profile, the noun, `surface` and a group read `per`
 as a saved-RECORD index until then: `per=1` at `nstp=3` drew (1, 0) beside the map's
-(2, 1). The LAK stage file's `per` is still a record index (301's stage clock).
+(2, 1). **A view that reduces a results table to one value per period reads that step
+through `period_end.at_last_saved_step(s)`** (ledger 348) -- before ANY rows combine:
+the results maps chose the step in the payload builders, every series in
+`SpatialView._series_selection`, and `stage_change`, the SFR long profile, the LAK
+`q.budget`, the surface-water table, the group stage tables and diff maps and
+`region_heads(per=)` likewise. They had ADDED a period's saved steps (a LAK exchange
+map at `nstp=3` read -2793 ft3/d for -587) or painted its FIRST (`agg="first"`).
+`get(per=N)` stays a FILTER: every step of period N.
 **The OBSERVATION route is one row per period at its end too** (ledger 346): an MF6 OBS
 CSV is every time step labelled by `totim` alone, so `period_end.period_end_rows` finds
 each period's END row -- measuring each period from MF6's OWN previous end, since MF6
@@ -121,9 +133,8 @@ below `nper` IS a period and reads that period in silence** (ledger 347) -- not 
 corner: on twelve 2-day periods the old keys 2, 4, 6 read periods 2, 4, 6; only a set
 reaching past the last period is refused, so audit a set written before 346. STILL OPEN: the SFR flow there keeps MF6's
 NEGATIVE `DOWNSTREAM-FLOW` where the file route reports the
-magnitude. A LAK STAGE-FILE target is keyed by SAVED RECORD (301's `per`-as-record-index),
-the period only at one save per period: at `nstp=3` periods 0-2 read steps 1-3 of period
-0, where head and SFR targets beside it read period end.
+magnitude. A LAK STAGE-FILE target is keyed by period too since ledger 348 (it was keyed
+by SAVED RECORD: at `nstp=3` periods 0-2 read steps 1-3 of period 0).
 Figures are **always `viz.Fig`**, never a bare `go.Figure` — a bare figure silently
 drops `scrollZoom`, `dragmode='pan'`, and the house template. Colors come from the
 policy helper, not hex literals at the call site.
@@ -521,9 +532,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5437 passed / 4 skipped**, 2026-09-29, ledger 347 -- the review of 346):
-  `-n 10` **1m38s** in a worktree outside `.claude`, at a load average of ~0.2 at its
-  start, absolute `PYTHONPATH`; serial not re-measured. Before it, 5434 passed / 4 skipped
+- Full suite (**5451 passed / 4 skipped**, 2026-09-29, ledger 348 -- the LAK stage clock):
+  `-n 10` **1m34s** in a worktree outside `.claude`, at a load average of ~0.5 at its
+  start, absolute `PYTHONPATH`; serial not re-measured. Before it, 5437 passed / 4 skipped
+  (ledger 347 -- the review of 346): `-n 10` 1m38s at ~0.2. Before it, 5434 passed / 4 skipped
   (ledger 346 -- the observation route keyed by period): `-n 10` 1m40s at ~1.5. Before it,
   5424 passed / 4 skipped (ledger 345, the review of 344):
   `-n 10` 1m39s in a worktree outside `.claude`, at a load average of ~0.3 at its
@@ -1725,7 +1737,8 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   cuts names to 40 characters; the header is checked, not matched). Refused by name:
   another quantity only, another id, a label declared twice, a set declared in PART
   (the route is chosen for the whole set, since the two routes do not read the same
-  numbers -- a dry lake, an SFR flow's sign, the LAK stage file's record clock), a
+  numbers -- a dry lake, an SFR flow's sign; the LAK stage file's record clock until
+  ledger 348), a
   missing declared file, and a model with several LAK/SFR/DRN packages unless
   the targets name one (`package=`, carried into the forward run; packages found by
   TYPE -- FloPy's `get_package("lak")` answers a package NAMED `lak` first, and the

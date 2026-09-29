@@ -18,6 +18,7 @@ from myflopy.modflow.mf6.package_explorer import (
     build_lak_budget_result_table,
     build_lak_connection_table,
     build_lak_q_map_payload,
+    build_lak_stage_result_table,
     get_default_group_compare_colorscale,
 )
 from myflopy.modflow.mf6.package_plotting import (
@@ -30,6 +31,7 @@ from myflopy.modflow.utils.datatypes.hover import cell_input_hover, compare_hove
 from myflopy.project.group._shared import (
     _ensure_group_map_compatible,
     _filter_group_input_table,
+    _reduce_to_period_end,
     _resolve_group_compare_target,
 )
 from myflopy.project.group.results import GroupCellPackageResults, GroupCellPackageResultsNamespace
@@ -37,6 +39,28 @@ from myflopy.project.group.spatial import _GroupSpatialView
 
 if TYPE_CHECKING:
     from myflopy.project.group.core import ModelGroup
+
+
+def _one_stage_per_lake(table: pd.DataFrame) -> pd.DataFrame:
+    """A LAK stage table reduced to one row per saved step per lake.
+
+    ``build_lak_stage_result_table`` repeats a lake's one stage on every cell it
+    connects to; these are copies (the file holds one stage per lake per record), so
+    the first is the lake's stage -- a stage is not added (ledger 297).
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        ``build_lak_stage_result_table(model)``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``kstpkper``, ``per``, ``lake``, ``stage``, in the table's order.
+    """
+
+    frame = table.drop_duplicates(subset=["kstpkper", "lake"])
+    return frame.loc[:, ["kstpkper", "per", "lake", "stage"]].reset_index(drop=True)
 
 
 class GroupLakBudgetResults(GroupCellPackageResults):
@@ -199,7 +223,11 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         target_name = _resolve_group_compare_target(self.group, model_name)
         _ensure_group_map_compatible(self.group, target_name)
         reference_model = self.group.models[self.group.reference]
-        data = self.get(per=per, layer=layer, connection_type=connection_type)
+        # Each model's last saved step of the period (ledger 348): the per-cell sums
+        # below added every step the period saved.
+        data = _reduce_to_period_end(
+            self.get(per=per, layer=layer, connection_type=connection_type)
+        )
 
         def _normalized_by_cell(frame: pd.DataFrame, current_model_name: str) -> pd.DataFrame:
             """Per-cell exchange per unit connection area (``sum(q)/sum(flow_area)``) for one model."""
@@ -278,17 +306,33 @@ class GroupLakOutputs:
         self.group = group
 
     def stage(self) -> pd.DataFrame:
-        """Return lake stages for all models as one aligned long-format table."""
+        """Return every saved lake stage of every member as one long table.
+
+        The group twin of ``model.outputs.lak.stage``: EVERY record the stage file
+        saved, one row per lake, labelled by the ``kstpkper`` in that file's own
+        record headers (``build_lak_stage_result_table``, ledger 348). It paired
+        the records with ``model.kstpkper`` -- the head file's clock, which MF6
+        gates on the same ``SAVE HEAD`` flag, so the labels were right on a file
+        MF6 wrote -- and silently cut the records to that list's length; a stage
+        file whose record count differs from its headers now raises instead. For
+        one value per period use ``group.packages.lak.results.stage.get()``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``kstpkper`` (zero-based tuple), ``lake`` (zero-based) and
+            ``stage`` (model length units, ``NaN`` where a lake has none, ledger
+            329), members in group order, each in its file's order.
+
+        Raises
+        ------
+        ValueError
+            When a member's stage file does not line up with its record headers.
+        """
 
         rows: list[pd.DataFrame] = []
         for model_name, model in self.group.models.items():
-            stage_data = np.asarray(model.outputs.lak.stage.get(), dtype=float)
-            if stage_data.ndim == 1:
-                stage_data = stage_data.reshape(-1, 1)
-            periods = list(model.kstpkper)
-            frame = pd.DataFrame(stage_data, columns=list(range(stage_data.shape[1])))
-            frame["kstpkper"] = periods[: len(frame)]
-            frame = frame.melt(id_vars="kstpkper", var_name="lake", value_name="stage")
+            frame = _one_stage_per_lake(build_lak_stage_result_table(model))
             frame["model"] = model_name
             rows.append(frame)
 
@@ -331,23 +375,48 @@ class GroupLakStageResults(_GroupSpatialView):
         lake: int | None = None,
         per: int | None = None,
     ) -> pd.DataFrame:
-        """Return aligned lake stages for all models."""
+        """Return each member's lake stages, one per lake per stress period.
+
+        Each period is its LAST saved step on each member's own stage-file clock
+        (``_reduce_to_period_end``, ledger 337's rule for a group table), so two
+        members with different ``nstp`` align on the period. Until ledger 348
+        ``per`` was the index of the saved RECORD (ledger 301's stage clock): at
+        ``nstp=3`` ``per=1`` read step 2 of period 0, and a member saving more
+        steps than the reference was compared step-for-record against it.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one member, by its name in the group. Default ``None``: every
+            member.
+        lake : int or None, optional
+            Keep one lake, zero-based. Default ``None``: every lake.
+        per : int or None, optional
+            Keep one stress period, zero-based -- its last saved step. Default
+            ``None``: every period.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``kstpkper`` (the step read, zero-based), ``per``, ``lake``
+            and ``stage`` (model length units, ``NaN`` where a lake has none).
+
+        Raises
+        ------
+        ValueError
+            When a member's stage file does not line up with its record headers.
+        """
 
         rows: list[pd.DataFrame] = []
         for current_model_name, model in self.group.models.items():
-            stage_data = np.asarray(model.outputs.lak.stage.get(), dtype=float)
-            if stage_data.ndim == 1:
-                stage_data = stage_data.reshape(-1, 1)
-            periods = pd.DataFrame(stage_data, columns=list(range(stage_data.shape[1])))
-            periods["per"] = periods.index.astype(int)
-            frame = periods.melt(id_vars="per", var_name="lake", value_name="stage")
-            frame["lake"] = frame["lake"].astype(int)
+            frame = _one_stage_per_lake(build_lak_stage_result_table(model))
             frame["model"] = current_model_name
-            rows.append(frame[["model", "per", "lake", "stage"]])
+            rows.append(frame)
 
         if not rows:
-            return pd.DataFrame(columns=["model", "per", "lake", "stage"])
-        combined = pd.concat(rows, ignore_index=True)
+            return pd.DataFrame(columns=["model", "kstpkper", "per", "lake", "stage"])
+        combined = _reduce_to_period_end(pd.concat(rows, ignore_index=True))
+        combined = combined[["model", "kstpkper", "per", "lake", "stage"]]
         if model_name is not None:
             combined = combined.loc[combined["model"] == str(model_name)].copy()
         if lake is not None:
@@ -363,7 +432,27 @@ class GroupLakStageResults(_GroupSpatialView):
         lake: int | None = None,
         per: int | None = None,
     ) -> pd.DataFrame:
-        """Compare lake stages against the reference model."""
+        """Compare lake stages against the reference model, period by period.
+
+        Rows are aligned on the stress PERIOD and the lake, each model read at its
+        own last saved step of the period (:meth:`get`) -- not on the saved-record
+        index they were aligned on until ledger 348.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one compared (non-reference) member. Default ``None``: every one.
+        lake : int or None, optional
+            Keep one lake, zero-based. Default ``None``: every lake.
+        per : int or None, optional
+            Keep one stress period, zero-based. Default ``None``: every period.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, ``per``, ``lake``, ``stage``,
+            ``reference_stage`` and ``stage_diff`` (model minus reference).
+        """
 
         data = self.get(lake=lake, per=per)
         if data.empty:

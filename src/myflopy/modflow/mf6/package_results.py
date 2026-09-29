@@ -266,9 +266,11 @@ class CellBudgetResultsExplorer(SpatialView):
         Parameters
         ----------
         per : int, default 0
-            Stress period to draw, zero-based. One period per picture; use
-            :meth:`animate` to flip through them, or :meth:`wide` to see every
-            period side by side as numbers.
+            Stress period to draw, zero-based, at its LAST saved step on the budget
+            file's own clock (ledger 337's rule): at ``nstp=3`` under ``SAVE BUDGET
+            ALL`` the map ADDED the period's three steps until ledger 348. One
+            period per picture; use :meth:`animate` to flip through them, or
+            :meth:`wide` to see every period side by side as numbers.
         layer : int, default 0
             Zero-based layer. Records in other layers are not drawn, so pass the
             layer the boundary actually sits in -- ``.get()`` shows it in the
@@ -286,7 +288,8 @@ class CellBudgetResultsExplorer(SpatialView):
             but pass ``float("nan")`` to leave untouched cells uncoloured, which
             is usually clearer for a sparse package such as WEL.
         agg : {'sum', 'mean', 'min', 'max', 'first', 'last'}, default 'sum'
-            How several records landing in ONE cell are reduced to one number.
+            How several records landing in ONE cell, at the one step drawn, are
+            reduced to one number -- never the steps of a period.
             ``sum`` is right for a flow: two drains in one cell remove the sum of
             what each removes. Change it only when you want a per-feature
             statistic rather than the cell's net exchange.
@@ -556,7 +559,14 @@ class StageResultsExplorer(SpatialView):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return the normalized stage table for the selected rows."""
+        """Return the normalized stage table for the selected rows.
+
+        Every row is labelled by the stage file's own ``kstpkper`` and its stress
+        period ``per`` (LAK since ledger 348; its ``per`` was a saved-record index).
+        ``per=N`` is a FILTER: every step period ``N`` saved, one row per step per
+        connected cell -- where :meth:`map`, :meth:`plot` and the composers draw its
+        last saved step.
+        """
 
         frame = self._builder(self.model)
         return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
@@ -642,8 +652,12 @@ class StageResultsExplorer(SpatialView):
         Parameters
         ----------
         per : int, default 0
-            Stress period to draw, zero-based. One period per picture; use
-            :meth:`animate` to flip through them.
+            Stress period to draw, zero-based, at its LAST saved step on the stage
+            file's own clock (ledger 337's rule). It drew the period's FIRST step
+            until ledger 348 (``agg="first"`` over every step the period saved), and
+            on LAK, whose table was keyed by saved record, a step of an EARLIER
+            period. A period the stage file saved nothing in raises. One period per
+            picture; use :meth:`animate` to flip through them.
         layer : int, default 0
             Zero-based layer. Connections in other layers are not drawn -- for a
             lake that occupies several layers this is how you pick the one you
@@ -660,8 +674,8 @@ class StageResultsExplorer(SpatialView):
             never ``fill_value``, while that lake has no stage -- dry or inactive,
             ``NaN`` in :meth:`get` (ledger 329).
         agg : {'first', 'mean', 'min', 'max', 'last', 'sum'}, default 'first'
-            How several connections landing in ONE cell are reduced to one
-            number. ``first`` suits a shared water level; use ``mean`` when two
+            How several connections landing in ONE cell, at the one step drawn,
+            are reduced to one number. ``first`` suits a shared water level; use ``mean`` when two
             different features overlap a cell and you want the average of their
             stages rather than whichever was read first.
 

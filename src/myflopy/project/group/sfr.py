@@ -15,6 +15,7 @@ from myflopy.modflow.mf6.package_explorer import (
     build_group_input_compare_map_payload,
     build_sfr_budget_result_table,
     build_sfr_q_map_payload,
+    build_sfr_stage_result_table,
     get_default_group_compare_colorscale,
 )
 from myflopy.modflow.mf6.package_surface_water import join_sfr_stage
@@ -190,7 +191,9 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         target_name = _resolve_group_compare_target(self.group, model_name)
         _ensure_group_map_compatible(self.group, target_name)
         reference_model = self.group.models[self.group.reference]
-        data = self.get(per=per, layer=layer)
+        # Each model's last saved step of the period (ledger 348): the per-cell sums
+        # below added every step the period saved.
+        data = _reduce_to_period_end(self.get(per=per, layer=layer))
 
         def _normalized_by_cell(frame: pd.DataFrame, current_model_name: str) -> pd.DataFrame:
             """Per-cell exchange per unit reach length (``sum(q)/sum(rlen)``) for one model."""
@@ -292,23 +295,50 @@ class GroupSfrStageResults(_GroupSpatialView):
         reach: int | None = None,
         per: int | None = None,
     ) -> pd.DataFrame:
-        """Return aligned SFR reach stages for all models."""
+        """Return each member's reach stages, one per reach per stress period.
+
+        Read from ``build_sfr_stage_result_table`` -- the table the single-model
+        noun draws, labelled by the stage file's own ``kstpkper`` -- with each
+        period at its LAST saved step on each member's own clock
+        (``_reduce_to_period_end``, ledger 337's rule for a group table). Until
+        ledger 348 it decoded ``model.outputs.sfr.stage.get()`` -- a REACH-by-time
+        frame -- as LAK's time-by-lake array, so ``per`` held the reach number and
+        ``reach`` the saved record (ledger 301's "transposed decode"): measured on
+        a four-reach stream at ``nstp=3``, ``get(per=1, reach=0)`` read reach 1 at
+        the first saved step.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one member, by its name in the group. Default ``None``: every
+            member.
+        reach : int or None, optional
+            Keep one reach, zero-based. Default ``None``: every reach.
+        per : int or None, optional
+            Keep one stress period, zero-based -- its last saved step. Default
+            ``None``: every period.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``kstpkper`` (the step read, zero-based), ``per``, ``reach``
+            and ``stage`` (model length units; SFR's stage file is NOT masked, so a
+            dry reach is MF6's -1e30, ledger 329).
+        """
 
         rows: list[pd.DataFrame] = []
         for current_model_name, model in self.group.models.items():
-            stage_data = np.asarray(model.outputs.sfr.stage.get(), dtype=float)
-            if stage_data.ndim == 1:
-                stage_data = stage_data.reshape(-1, 1)
-            periods = pd.DataFrame(stage_data, columns=list(range(stage_data.shape[1])))
-            periods["per"] = periods.index.astype(int)
-            frame = periods.melt(id_vars="per", var_name="reach", value_name="stage")
-            frame["reach"] = frame["reach"].astype(int)
+            table = build_sfr_stage_result_table(model)
+            frame = table.drop_duplicates(subset=["kstpkper", "reach"]).loc[
+                :, ["kstpkper", "per", "reach", "stage"]
+            ]
             frame["model"] = current_model_name
-            rows.append(frame[["model", "per", "reach", "stage"]])
+            rows.append(frame)
 
         if not rows:
-            return pd.DataFrame(columns=["model", "per", "reach", "stage"])
-        combined = pd.concat(rows, ignore_index=True)
+            return pd.DataFrame(columns=["model", "kstpkper", "per", "reach", "stage"])
+        combined = _reduce_to_period_end(pd.concat(rows, ignore_index=True))
+        combined = combined[["model", "kstpkper", "per", "reach", "stage"]]
         if model_name is not None:
             combined = combined.loc[combined["model"] == str(model_name)].copy()
         if reach is not None:
@@ -324,7 +354,27 @@ class GroupSfrStageResults(_GroupSpatialView):
         reach: int | None = None,
         per: int | None = None,
     ) -> pd.DataFrame:
-        """Compare SFR reach stages against the reference model."""
+        """Compare SFR reach stages against the reference model, period by period.
+
+        Rows are aligned on the stress PERIOD and the reach, each model read at its
+        own last saved step of the period (:meth:`get`); until ledger 348 the
+        "period" was a reach number and the "reach" a saved record.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one compared (non-reference) member. Default ``None``: every one.
+        reach : int or None, optional
+            Keep one reach, zero-based. Default ``None``: every reach.
+        per : int or None, optional
+            Keep one stress period, zero-based. Default ``None``: every period.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, ``per``, ``reach``, ``stage``,
+            ``reference_stage`` and ``stage_diff`` (model minus reference).
+        """
 
         columns = [
             "model", "reference_model", "per", "reach",

@@ -437,7 +437,8 @@ def test_an_sfr_stage_target_is_refused_when_the_stage_file_saved_no_period_end(
 @pytest.mark.slow
 def test_a_lake_stage_target_is_refused_when_the_stage_file_saved_no_period_end(runs):
     """One record per period made the record index look like the period, with every
-    value read at step 1 of 3. The record clock itself stays (ledger 331's limit)."""
+    value read at step 1 of 3. The route is keyed by period now (ledger 348) and
+    reads the period-end record, which this run did not save."""
 
     targets = mf.LakeStageTargets(locations={"pond": 0},
                                   values=pd.DataFrame({"time": range(NPER), "pond": 100.0}))

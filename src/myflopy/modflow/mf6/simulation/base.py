@@ -1789,9 +1789,13 @@ class SimulationBase:
         name : str
             A region or group name; an unknown name raises ``KeyError``.
         per : int or None, optional
-            Zero-based stress period: keeps EVERY saved time step of that period
-            (rows whose ``kstpkper[1] == per``), not only its last. Ignored when
-            ``kstpkper`` is given. Default ``None`` keeps all periods.
+            Zero-based stress period, read at its LAST saved step on the head
+            file's clock -- the one time ``kstpkper`` would name, by ledger 337's
+            rule (``period_end.last_saved_step``). It kept EVERY saved step of the
+            period until ledger 348, so at ``nstp=3`` a region's table was three
+            times as long and mixed three heads per cell. A period the head file
+            saved nothing in raises ``ValueError``. Ignored when ``kstpkper`` is
+            given. Default ``None`` keeps all periods.
         kstpkper : tuple of (int, int) or None, optional
             One zero-based ``(kstp, kper)`` saved time to keep; takes precedence
             over ``per``. A time not in the file gives an empty frame, not an

@@ -606,8 +606,8 @@ a previous run left in a directory `prepare_run(overwrite=True)` reused -- froze
 PEST realization at its values. A label declared as another quantity only, for another
 lake, reach or cell, or twice, is REFUSED naming the target and the record; so is a
 set declared in PART (it silently moved the whole set to the file route, which reads
-other numbers -- a dry lake's stage, an SFR flow's sign, the LAK stage file's record
-clock, and until ledger 346 another clock altogether); a set with nothing declared reads the file, as before. A model carrying several
+other numbers -- a dry lake's stage, an SFR flow's sign; until ledger 348 the LAK stage
+file's record clock and until ledger 346 another clock altogether); a set with nothing declared reads the file, as before. A model carrying several
 LAK, SFR or DRN packages needs `package=<name>` on the targets (their lake and reach
 numbers each start at 0), carried into PEST's forward run -- the packages are found by
 TYPE, so one NAMED `lak` does not hide a `lak_2` beside it (ledger 345); with none it is refused
@@ -615,9 +615,10 @@ wherever the targets are declared -- and for LAK and SFR always, since their fil
 belongs to one package -- while an undeclared DRN zone still sums every package's
 drains. `to_flopy_obs` refuses a `kind=` other than the family's quantity and two
 names MF6 would upper-case to one label (`"Pond A"`, `"pond-a"`). An SFR stage's
-no-data value (3e30) reads `NaN` there, as a lake's does. On the file it reads ONE value per lake per saved
-record and ONE per reach or zone per stress period, at the period's end (ledgers 331,
-336; it had added a lake's copies, one per connected cell, and a period's steps).
+no-data value (3e30) reads `NaN` there, as a lake's does. On the file it reads ONE value per lake, reach
+or zone per stress period, at the period's end (ledgers 331, 336, 348; it had added a
+lake's copies, one per connected cell, and a period's steps, and read a lake per SAVED
+RECORD).
 **The observation route is one row per stress period too, at its end, keyed `0 ..
 nper - 1`** (ledger 346, the user's rule). MF6 writes a continuous observation at EVERY
 time step, labelled by simulated time and nothing else, and the route handed every
@@ -631,8 +632,8 @@ OWN previous period end, because MF6 accumulates the 8-decimal lengths FloPy wro
 hourly live model's ends run 3.3e-9 further ahead of the lengths the model holds every
 period, past the 1e-8 tolerance from the fourth), and each end is checked by the rule
 every route reads. A file short of a period's end -- a run that stopped, a truncated
-copy -- is REFUSED naming the period. Every route now labels `time` by stress period,
-bar the LAK stage FILE, keyed by saved record (below). **A target keyed by MF6's
+copy -- is REFUSED naming the period. Every route now labels `time` by stress period
+(the LAK stage FILE since ledger 348, below). **A target keyed by MF6's
 simulated time is refused there**, in `compare()` and the build alike, naming the period
 each key ends (`10 is the end of period 0 in simulated time -- key it 0`) -- when a key
 names no period. A time key BELOW `nper` is also a period number and reads that period
@@ -641,12 +642,15 @@ ends of periods 0, 1, 2) read periods 2, 4, 6 (ledger 347). A set written for th
 spelling is refused only when a key reaches past the last period -- re-key it. PEST templates built on this route at more than one step per period expect a
 line per step and must be rebuilt. The
 observation route's SFR flow also keeps MF6's sign (`DOWNSTREAM-FLOW` is negative)
-where the file route reports the magnitude. On the LAK stage-file route the record
-index IS the period only when output control saves one step per period, the step that
-ends it. Saving several (`SAVE HEAD ALL` at `nstp=3`), a lake target keyed by period
-silently reads a step inside an EARLIER period, while the SFR and head targets beside
-it read period end -- key it by saved-record index there, until
-`build_lak_stage_result_table` carries the stage file's own `kstpkper` (ledger 301).
+where the file route reports the magnitude. **The LAK stage-file route was keyed by
+SAVED RECORD until ledger 348**: `build_lak_stage_result_table` labelled `per` by the
+record's index, so under `SAVE HEAD ALL` at `nstp=3` a lake target keyed by period 0, 1,
+2 read steps 1-3 of period 0 while the SFR and head targets beside it read period end,
+and a PEST build wrote nine rows for three periods. The table carries the stage file's
+own `kstpkper` now and the route reads the record that ENDS each period, by the rule
+every other file route reads. A set keyed by saved-record index for that route (this
+page's advice before) now reads its first `nper` keys as PERIODS -- re-key it; a key past
+the last period is refused by the build.
 
 **A target's `time` is a zero-based stress period, read by NUMBER, one rule for
 `compare()` and the PEST build** (`_shared._numeric_periods`, ledger 340): `1.0` is
@@ -1026,7 +1030,11 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   stage -- DRY (MF6 writes -1e30) or INACTIVE (+1e30) -- is `NaN` in `results.stage`,
   a gap in its series, blank on its maps and an undefined `stage_change`, never a
   number 1e30 ft away; `model.outputs.lak.stage.get(masked=False)` is the raw file
-  and the one place dry and inactive differ (ledger 329).
+  and the one place dry and inactive differ (ledger 329). `results.stage.get()` is
+  labelled by the stage file's own `kstpkper`, and `per` is the stress period (ledger
+  348; it was the saved-record INDEX): `get(per=N)` keeps every step period N saved,
+  while `map`, `plot`, `stage_change` and the exchange hover read its LAST saved step.
+  `model.outputs.lak.stage.kstpkper()` labels the raw array's rows.
 - `budget.<term>` — `gwf`, `flow_ja_face`, `ext_inflow`, `ext_outflow`, `rainfall`,
   `runoff`, `evaporation`, `storage`, `from_mvr`, `to_mvr`, `mvr`, `withdrawal`,
   `constant`, `lake_fluxes`, `auxiliary`, `types`.

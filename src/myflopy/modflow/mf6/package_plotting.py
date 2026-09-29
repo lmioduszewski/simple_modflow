@@ -26,7 +26,11 @@ if TYPE_CHECKING:
 from myflopy.modflow.mf6.package_explorer_utils import (
     _aggregate_hover_strings,
 )
-from myflopy.modflow.mf6.period_end import last_saved_steps
+from myflopy.modflow.mf6.period_end import (
+    at_last_saved_step,
+    at_last_saved_steps,
+    last_saved_steps,
+)
 
 #: Spellings each renderer answers to. One tuple pair, because the alias set was
 #: written out three times (here, `SpatialView._normalize_backend`, and
@@ -330,6 +334,41 @@ def _as_layer_cell_property(values, *, nlay: int, ncpl: int, label: str) -> np.n
 _FEATURE_HOVER_COLUMNS = ("stage", "depth")
 
 
+def _rows_drawn_for_period(frame: pd.DataFrame, per: int | None) -> pd.DataFrame:
+    """The rows a picture of stress period ``per`` draws: its LAST saved step (ledger 337).
+
+    A results table labelled by its file's own clock (a ``kstpkper`` column) holds
+    every step the period saved, and a map reduces the rows of one CELL to one value
+    -- which ADDED a flow's steps (3.0x at ``nstp=3`` under ``SAVE BUDGET ALL``) and
+    painted a stage's FIRST step (the default ``agg="first"``) until ledger 348. The
+    step is chosen here, before any rows combine, through
+    :func:`~myflopy.modflow.mf6.period_end.at_last_saved_step`. A table with no
+    clock (an INPUT table: one record per period) or no period (``per=None``) is
+    returned as given.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        The selected rows, usually a noun's ``get(per=per, ...)``.
+    per : int or None
+        The stress period drawn, zero-based; ``None`` draws the rows as given.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The rows of ``per``'s last saved step, or ``frame`` itself.
+
+    Raises
+    ------
+    ValueError
+        When ``frame`` has rows and a clock but none saved in ``per``.
+    """
+
+    if per is None or frame.empty or "kstpkper" not in frame.columns:
+        return frame
+    return at_last_saved_step(frame, per)
+
+
 def _append_feature_hover_columns(hover, selected, full_index) -> None:
     """Add joined per-feature columns (stage, depth) to a q-map hover payload.
 
@@ -364,7 +403,10 @@ def build_sfr_q_map_payload(
     The mapped value is ``sum(q) / sum(rlen)`` within each cell, which is more
     meaningful than raw exchange magnitude alone when reach lengths vary across
     cells. ``value_column`` is the frame's exchange column (``q_gwf``); it keeps
-    MF6's raw aquifer-referenced sign, so gaining reaches are negative.
+    MF6's raw aquifer-referenced sign, so gaining reaches are negative. The sums run
+    over ONE time step, ``per``'s last saved (``_rows_drawn_for_period``, ledger
+    348): they ran over every step the period saved, three flows added at
+    ``nstp=3`` under ``SAVE BUDGET ALL``.
     """
 
     full_index = pd.Index(range(int(ncpl)), name="cell")
@@ -382,7 +424,7 @@ def build_sfr_q_map_payload(
         }
         return values.tolist(), hover
 
-    selected = frame.copy()
+    selected = _rows_drawn_for_period(frame, per).copy()
     selected[value_column] = pd.to_numeric(selected[value_column], errors="coerce")
     selected["rlen"] = pd.to_numeric(selected["rlen"], errors="coerce")
     grouped = selected.groupby("cell", dropna=False)
@@ -439,7 +481,11 @@ def build_lak_q_map_payload(
     The mapped value is ``sum(q) / sum(flow_area)`` within each cell, giving a
     lake-groundwater exchange intensity with units of length per time.
     ``value_column`` is the frame's exchange column (``q_lake``); it keeps MF6's
-    raw feature-referenced sign, so a gaining lake is positive.
+    raw feature-referenced sign, so a gaining lake is positive. The sums run over
+    ONE time step, ``per``'s last saved (``_rows_drawn_for_period``, ledger 348):
+    they ran over every step the period saved, so at ``nstp=3`` under ``SAVE BUDGET
+    ALL`` a connection's three flows AND its area were each added, and the hover's
+    ``q`` read -2793 ft3/d where the period ends at -587.
     """
 
     full_index = pd.Index(range(int(ncpl)), name="cell")
@@ -457,7 +503,7 @@ def build_lak_q_map_payload(
         }
         return values.tolist(), hover
 
-    selected = frame.copy()
+    selected = _rows_drawn_for_period(frame, per).copy()
     selected[value_column] = pd.to_numeric(selected[value_column], errors="coerce")
     selected["flow_area"] = pd.to_numeric(selected["flow_area"], errors="coerce")
     grouped = selected.groupby("cell", dropna=False)
@@ -839,7 +885,13 @@ def build_cell_input_map_payload(
     value_column
         Numeric column to render as choropleth values.
     per, layer
-        Metadata added to the hover table.
+        Metadata added to the hover table. On a RESULTS table -- one carrying
+        ``kstpkper``, its file's clock -- ``per`` also chooses the rows drawn: the
+        period's LAST saved step (ledger 337's rule, ``_rows_drawn_for_period``),
+        before ``agg`` combines anything. It combined every step the period saved
+        until ledger 348: a flow's steps were added (``agg="sum"``) and a stage's
+        FIRST step painted (``agg="first"``). An input table (no ``kstpkper``) or
+        ``per=None`` is drawn as given.
     multiplier
         Optional scalar multiplier applied to the mapped values.
     fill_value
@@ -878,7 +930,7 @@ def build_cell_input_map_payload(
             f"{sorted(frame.columns)}."
         )
 
-    selected = frame.copy()
+    selected = _rows_drawn_for_period(frame, per).copy()
     grouped = selected.groupby("cell", dropna=False)
     values = _aggregate_leaving_gaps(grouped[value_column], agg).reindex(
         full_index, fill_value=fill_value
@@ -1531,6 +1583,16 @@ class SpatialView:
             )
             frame = frame[frame["cell"].isin(cell_values)]
 
+        # One point per period: its LAST saved step, on the table's own clock and,
+        # in a group table, on each MODEL's (ledger 337's rule). A results table
+        # carries every step a period saved, and the point was the SUM of a flow's
+        # steps (3.0x at nstp=3 under SAVE BUDGET ALL) or the MEAN of a stage's
+        # until ledger 348. A table with no clock is one record per period already.
+        if "kstpkper" in frame.columns:
+            frame = at_last_saved_steps(
+                frame, by="model" if "model" in frame.columns else None
+            )
+
         value_column = self._series_value_column(frame)
         frame[value_column] = pd.to_numeric(frame[value_column], errors="coerce")
 
@@ -1593,6 +1655,9 @@ class SpatialView:
         otherwise cells are aggregated (``agg``, default sum for fluxes).
         ``backend="plotly"`` (default) returns an interactive ``viz.Fig``;
         ``backend="mpl"`` a matplotlib ``Figure``. Stress periods are zero-based.
+        A period's point is its LAST saved step (each model's own, in a group):
+        ``agg`` combines the cells of that one step, never the steps of a period
+        (ledgers 337, 348).
         """
 
         backend_kind = self._normalize_backend(backend)

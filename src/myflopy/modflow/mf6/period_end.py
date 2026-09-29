@@ -111,7 +111,9 @@ def last_saved_steps(saved: Iterable[Sequence]) -> dict[int, tuple[int, int]]:
     calls this function (:func:`last_saved_step` for one period,
     :func:`period_end_steps` before it checks that the step ENDS its period, the
     map's ``per``, both sections, ``surface``, the section composers, a group's
-    ``per`` and its period-end reduction, ``HeadsPlus.array``); there were five
+    ``per`` and its period-end reduction, ``HeadsPlus.array``, and through
+    :func:`at_last_saved_step`/:func:`at_last_saved_steps` every results map, series,
+    stage change and group stage table, ledger 348); there were five
     copies of it, and a sixth reading ``per`` as a SAVED-RECORD index, so
     ``per=1`` drew step (2, 1) on one picture and (1, 0) on the next.
 
@@ -610,8 +612,119 @@ def at_period_end(
     return frame.loc[mask]
 
 
+def at_last_saved_step(
+    frame: pd.DataFrame,
+    per: int,
+    *,
+    column: str = "kstpkper",
+) -> pd.DataFrame:
+    """The rows of ``frame`` saved at stress period ``per``'s LAST saved step (ledger 337).
+
+    What ``per=N`` draws on a picture -- a results map, the exchange hover's stage --
+    read on the TABLE's own clock, the file it was read from (ledger 301): a LAK or SFR
+    stage table follows ``SAVE HEAD``, a budget table ``SAVE BUDGET``. The steps a
+    period saved are never combined: at ``nstp=3`` under ``SAVE BUDGET ALL`` a map
+    that took every row of the period ADDED three flows (ledger 348). It is
+    :func:`last_saved_step` and :func:`at_period_end` together, so the rule stays
+    the one function.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        A table labelled by its own file's clock: one ``(kstp, kper)`` tuple per
+        row, zero-based, in ``column``. It may hold every period or only
+        ``per``'s rows (a ``get(per=N)``); the step is found among the rows given.
+    per : int
+        The stress period, zero-based.
+    column : str, default "kstpkper"
+        The column holding each row's ``(kstp, kper)``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The rows saved at that one step, in their original order and with their
+        original index.
+
+    Raises
+    ------
+    ValueError
+        When no row of ``frame`` was saved in ``per`` (an empty frame included),
+        naming the periods it has -- :func:`last_saved_step`'s refusal.
+
+    Examples
+    --------
+    >>> table = model.lak.results.q.get(per=1)         # three steps at nstp=3
+    >>> at_last_saved_step(table, 1)["kstpkper"].unique()
+    [(2, 1)]
+    """
+
+    step = last_saved_step(frame[column], per)
+    return at_period_end(frame, {int(per): step}, column=column)
+
+
+def at_last_saved_steps(
+    frame: pd.DataFrame,
+    *,
+    column: str = "kstpkper",
+    by: str | None = None,
+) -> pd.DataFrame:
+    """The rows of ``frame`` saved at each stress period's LAST saved step (ledger 337).
+
+    The reduction every per-period view of a results table reads before it combines
+    rows -- a series by stress period, a stage change between periods, a group
+    table: a period is represented by the last step its file saved, and its other
+    steps are dropped rather than added or averaged (ledger 348). Deliberately the
+    UNCHECKED rule, as every picture's is: a run saved with ``SAVE HEAD FIRST`` still
+    draws; the targets read :func:`period_end_steps`, which refuses it.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        A table labelled by its own file's clock: one ``(kstp, kper)`` tuple per
+        row, zero-based, in ``column``.
+    column : str, default "kstpkper"
+        The column holding each row's ``(kstp, kper)``.
+    by : str or None, optional
+        A column whose groups each keep THEIR OWN last steps -- ``"model"`` for a
+        group table, whose members may save different steps (``nstp=3`` beside
+        ``nstp=2``). Default ``None``: the whole frame is one clock. A column the
+        frame does not have raises ``KeyError``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The rows saved at a period's last saved step (of their own ``by`` group),
+        in their original order and with their original index. A row with no
+        record at that step -- a cell present only earlier in the period -- is
+        dropped, never read at the earlier step. An empty frame comes back as it is.
+
+    Examples
+    --------
+    >>> table = model.lak.results.stage.get()          # nine records at nstp=3
+    >>> sorted(set(at_last_saved_steps(table)["kstpkper"]))
+    [(2, 0), (2, 1), (2, 2)]
+    """
+
+    if frame.empty:
+        return frame
+    keys = [(int(value[0]), int(value[1])) for value in frame[column]]
+    if by is None:
+        keep = set(last_saved_steps(keys).values())
+        mask = [key in keep for key in keys]
+    else:
+        groups = frame[by].to_numpy()
+        owned: dict[object, list[tuple[int, int]]] = {}
+        for key, group in zip(keys, groups, strict=True):
+            owned.setdefault(group, []).append(key)
+        ends = {group: set(last_saved_steps(saved).values()) for group, saved in owned.items()}
+        mask = [key in ends[group] for key, group in zip(keys, groups, strict=True)]
+    return frame.loc[np.asarray(mask, dtype=bool)]
+
+
 __all__ = [
     "END_RTOL",
+    "at_last_saved_step",
+    "at_last_saved_steps",
     "at_period_end",
     "last_saved_step",
     "last_saved_steps",

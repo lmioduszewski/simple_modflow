@@ -603,9 +603,10 @@ class StageResultDiff(_ResultDiffBase):
             Relative tolerance, dimensionless, multiplying ``|reference stage|``
             in the same test as ``atol``.
         per : int, optional
-            Restrict to one zero-based stress period (the stage table's ``per``,
-            the index of the saved stage record). ``None`` (default) uses every
-            record.
+            Restrict to one zero-based stress period, each model read at its own
+            last saved step of it (the grouped stage table's ``per``; until ledger
+            348 the index of the saved stage record for LAK, and a REACH number for
+            SFR). ``None`` (default) uses every period.
 
         Returns
         -------

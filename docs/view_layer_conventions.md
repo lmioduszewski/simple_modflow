@@ -150,11 +150,27 @@ as a saved-RECORD index until then, and they moved WITH `_reduce_to_period_end`:
 a period-end filter there turned `group.hds.compare(per=0)` and `(per=1)` at `nstp=3`
 into a `KeyError` (`docs/reproducers/flow_targets_period_end.py`, 8d, measured before
 ledger 337). The reduction keeps each MODEL's last saved step now, not each row's: a cell
-with no record there is dropped rather than read at an earlier step. The period-end rule needs a table
-carrying `kstpkper`, and the LAK stage table carries none (its `per` is the
-saved-record index, ledger 301), so a LAK target keyed by period at several saves per
-period reads a step inside an earlier period -- still open (ledger 331); it IS refused
-when no period end was saved at all.
+with no record there is dropped rather than read at an earlier step.
+
+**A view that reduces a results table to one value per period chooses the step FIRST,
+before any rows combine** (ledger 348), through `period_end.at_last_saved_step` (one
+period, `per=N`) or `at_last_saved_steps` (every period; `by="model"` in a group, each
+member on its own clock). The results maps do it in their payload builders
+(`package_plotting._rows_drawn_for_period`), every series in
+`SpatialView._series_selection`, and so do `stage_change`, the SFR long profile, the LAK
+`q.budget`, the combined surface-water table, the group stage tables, the group LAK/SFR
+diff maps and `region_heads(per=)`. Each had combined every step the period saved: a map
+or a series ADDED a flow's steps (a LAK exchange at `nstp=3` read -2793 ft3/d where the
+period ends at -587, CHD's 3x the same), averaged a stage's in a series, and painted a
+stage's FIRST step on a map (`agg="first"`, which exists for two connections in one cell,
+not for time). `agg` now combines the cells of ONE step. **`get(per=N)` stays a FILTER**
+-- every step of period N -- because it is the table, and a flow's `q.get(per=)` has
+always been one. A table carrying no `kstpkper` (an input table: one record per period)
+is left as it is. **Every result table carries its file's `kstpkper`** -- the LAK stage
+table too since ledger 348, whose `per` was the saved-record INDEX (ledger 301's stage
+clock) until then, so a LAK target keyed by period read steps 1-3 of period 0 at
+`nstp=3`; it reads each period's end now, and a stage file whose records and headers do
+not line up is refused rather than zipped.
 
 **A section has two subjects, and `fill=` picks which** (ledger 177, 2026-09-02;
 defaults since ledger 333, 2026-09-26). By default -- `fill="layer"`,

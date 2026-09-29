@@ -432,9 +432,9 @@ def _declared_route(
       another observation, and is left alone when the quantity's own is there;
     - the choice is for the whole SET: every target declared, or none -- a set
       of some of each RAISES naming both groups, because the two routes do not
-      read the same numbers -- MF6 time against period until ledger 346, and
-      still a dry lake's stage, an SFR flow's sign and the LAK stage file's
-      record clock -- and a silent flip moved every target of the set;
+      read the same numbers -- MF6 time against period until ledger 346, the LAK
+      stage file's record clock until ledger 348, and still a dry lake's stage
+      and an SFR flow's sign -- and a silent flip moved every target of the set;
     - a set with no target declared takes the family's file route, as before.
 
     Parameters
@@ -539,8 +539,8 @@ def _declared_route(
             f"{_listing(repr(name) for name in targets if name in short)} "
             f"{'is' if len(short) == 1 else 'are'} not (labels "
             f"{_listing(str(wanted[key][1]).upper() for key in missing)}). The two routes do "
-            "not read the same numbers (a dry lake's stage, an SFR flow's sign, the LAK stage "
-            f"file's record clock), so the set would be read from {quantity.file_route} in "
+            "not read the same numbers (a dry lake's stage, an SFR flow's sign), so the set "
+            f"would be read from {quantity.file_route} in "
             "silence. Declare the missing observations (to_flopy_obs / attach_flopy_obs), or "
             "give each route its own target set."
         )
@@ -1646,9 +1646,9 @@ def _aggregate_named_series(
     :func:`~myflopy.modflow.mf6.period_end.period_end_steps` -- so a period's
     value is its end-of-period value. Adding a period's saved steps multiplied an
     SFR stage, an SFR flow and a DRN zone's flow by the number of steps saved
-    (3.0x at ``nstp=3``). A table without it -- the LAK stage table, whose ``per``
-    is the index of the saved record (ledger 301's stage clock) -- keeps every
-    record.
+    (3.0x at ``nstp=3``). Every result table carries it -- the LAK stage table since
+    ledger 348, whose ``per`` was the index of the saved record until then (ledger
+    301's stage clock); a table without it (a test double's) keeps every row.
 
     A row whose VALUE is missing is kept, and an id with no value in a period comes
     back ``NaN`` rather than absent or 0.0: a lake with no stage (ledger 329) is a
@@ -1714,6 +1714,70 @@ def _aggregate_named_series(
     else:
         reduced = _one_value_per_group(grouped, id_column=id_column, value_column=value_column)
     return reduced.reset_index().sort_values(["per", id_column]).reset_index(drop=True)
+
+
+def _stage_at_period_end(
+    model: Any,
+    frame: pd.DataFrame,
+    *,
+    reader: Any,
+    file: str,
+    id_column: str,
+) -> pd.DataFrame:
+    """One stage per feature per stress period: the one that ENDS it (ledgers 331, 336, 348).
+
+    The stage-file route of a lake or reach target. A LAK or SFR stage table holds
+    one row per feature-cell per saved step, labelled from the stage file's own
+    clock -- which MF6 writes when it saves HEAD, not BUDGET (ledger 301). The
+    period-end record is read off that file and checked against the TDIS
+    (``period_end.period_ends``), so a period whose end was not saved is refused
+    rather than read at an earlier step; the rows of that record are then reduced
+    to the feature's one stage (a stage is not added, ledger 297). Both families
+    call this: it was ``SfrStageTargets``' alone until ledger 348, while the LAK
+    table, keyed by saved record, kept every record and a lake target keyed by
+    period read a step inside an EARLIER period.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        The run model the table was read from.
+    frame : pandas.DataFrame
+        ``model.lak.results.stage.get()`` or ``model.sfr.results.stage.get()``:
+        ``kstpkper``, ``per``, ``id_column`` and ``stage``. A table without
+        ``kstpkper`` (a test double's) keeps every row.
+    reader : callable
+        Takes no arguments and returns the stage file's open FloPy reader
+        (``lambda: model.fl.lak.output.stage()``); called only when the model has
+        a TDIS.
+    file : str
+        What the file is, for the refusal (``"the LAK stage file"``).
+    id_column : str
+        The feature id column, ``"lake"`` or ``"reach"``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``per``, ``id_column``, ``stage``: one row per feature per period, ``NaN``
+        where it has no stage.
+
+    Raises
+    ------
+    ValueError
+        When a period the stage file saved lacks its final step -- naming the
+        period, the steps saved and ``SAVE HEAD LAST`` -- or a feature's rows in one
+        record disagree.
+    """
+
+    ends = period_ends(
+        model,
+        reader=reader,
+        file=file,
+        saves="HEAD",
+        fallback=frame["kstpkper"] if "kstpkper" in frame.columns else (),
+    )
+    return _aggregate_named_series(
+        frame, id_column=id_column, value_column="stage", kind="elevation", ends=ends
+    )
 
 
 def _one_value_per_group(grouped, *, id_column: str, value_column: str) -> pd.Series:

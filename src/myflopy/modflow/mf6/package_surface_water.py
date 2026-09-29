@@ -60,6 +60,11 @@ from myflopy.modflow.mf6.package_tables import (
     build_sfr_input_table,
     summarize_input_table,
 )
+from myflopy.modflow.mf6.period_end import (
+    at_last_saved_step,
+    at_last_saved_steps,
+    last_saved_steps,
+)
 from myflopy.modflow.utils.datatypes.hover import (
     cell_input_hover,
     lak_hover,
@@ -90,14 +95,42 @@ def _join_feature_stage(frame, stage_table, *, per=None):
     """Join per-cell feature stage onto an exchange frame for the hover.
 
     ``stage_table`` is a normalized stage result table (one row per feature-cell
-    per period). Cells touched by more than one feature take the mean stage,
-    matching :class:`StageResultsExplorer`'s series aggregate.
+    per saved step, labelled by the stage file's own ``kstpkper``). With ``per``,
+    the stage joined is that period's LAST saved step on the STAGE file's clock
+    (ledger 337's rule) -- the exchange beside it is drawn at its own budget file's
+    last saved step, each file read on its own clock (ledger 301). It averaged every
+    step of the period until ledger 348, and on LAK, whose ``per`` was a record
+    index, joined a record of an EARLIER period. A stage file that saved nothing in
+    ``per`` leaves the frame without a stage, as a missing stage file does. Cells
+    touched by more than one feature take the mean stage, matching
+    :class:`StageResultsExplorer`'s series aggregate.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        The exchange rows being drawn, with a ``cell`` column.
+    stage_table : pandas.DataFrame
+        ``build_lak_stage_result_table`` / ``build_sfr_stage_result_table``.
+    per : int or None, optional
+        The stress period drawn, zero-based. ``None`` joins the mean over every
+        record.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``frame`` with a ``stage`` column, or ``frame`` unchanged when it is empty,
+        already has one, or there is no stage to join.
     """
 
     if frame.empty or "stage" in frame.columns or stage_table.empty:
         return frame
     selected = stage_table
-    if per is not None and "per" in selected.columns:
+    if per is not None and "kstpkper" in selected.columns:
+        if int(per) not in last_saved_steps(selected["kstpkper"]):
+            logger.debug("the stage file saved nothing in period %s; the hover omits it", per)
+            return frame
+        selected = at_last_saved_step(selected, per)
+    elif per is not None and "per" in selected.columns:
         selected = selected[selected["per"] == int(per)]
     if selected.empty or "stage" not in selected.columns:
         return frame
@@ -381,8 +414,11 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         Parameters
         ----------
         per : int, default 0
-            Stress period to draw, zero-based. One period per picture; use
-            :meth:`animate` to flip through them.
+            Stress period to draw, zero-based, at its LAST saved step on the SFR
+            budget file's own clock, the hover's stage at the stage file's (ledger
+            337's rule): at ``nstp=3`` under ``SAVE BUDGET ALL`` the map ADDED the
+            period's three steps, and averaged its stages, until ledger 348. One
+            period per picture; use :meth:`animate` to flip through them.
         layer : int, default 0
             Zero-based layer. Reaches connected in other layers are not drawn.
         multiplier : float, default 1.0
@@ -904,8 +940,12 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         Parameters
         ----------
         per : int, default 0
-            Stress period to draw, zero-based. One period per picture; use
-            :meth:`animate` to flip through them.
+            Stress period to draw, zero-based, at its LAST saved step on the LAK
+            budget file's own clock, the hover's stage at the stage file's (ledger
+            337's rule): at ``nstp=3`` under ``SAVE BUDGET ALL`` the map ADDED the
+            period's three flows and three copies of each area, and the hover
+            joined a stage from an EARLIER period, until ledger 348. One period per
+            picture; use :meth:`animate` to flip through them.
         layer : int, default 0
             Zero-based layer. A lake usually connects across several, so this is
             how you pick the one you mean -- ``.get()`` shows which exist.
@@ -1175,11 +1215,20 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
     ) -> pd.DataFrame:
         """Summarize lake-groundwater exchange by period, lake, and connection type.
 
+        Each period is its LAST saved step on the LAK budget file's own clock
+        (ledgers 337, 348): the connections of that one step add. Every step the
+        period saved was added until ledger 348 -- three steps' flows, and three
+        copies of each connection's area and count, at ``nstp=3`` under ``SAVE
+        BUDGET ALL``.
+
         Parameters
         ----------
-        per
-            Optional zero-based stress period filter. When omitted, all periods
+        per : int or None, optional
+            Zero-based stress period filter. When omitted, all periods
             are summarized.
+        connection_type : str or iterable of str or None, optional
+            LAK connection types to keep (``"VERTICAL"``, ``"HORIZONTAL"``, ...,
+            any case). ``None`` keeps every type.
 
         Returns
         -------
@@ -1189,7 +1238,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             and connection type.
         """
 
-        frame = self.get(per=per, connection_type=connection_type)
+        frame = at_last_saved_steps(self.get(per=per, connection_type=connection_type))
         q = self.value_name  # feature-referenced exchange column (q_lake)
         if frame.empty:
             return pd.DataFrame(
@@ -2751,8 +2800,10 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
         Parameters
         ----------
         per : int, default 0
-            Stress period to draw, zero-based. One period per picture; use
-            :meth:`animate` to flip through them.
+            Stress period to draw, zero-based, at its LAST saved step on each
+            budget file's own clock (ledger 337's rule; the steps were ADDED until
+            ledger 348). One period per picture; use :meth:`animate` to flip
+            through them.
         layer : int, default 0
             Zero-based layer. Connections in other layers are not drawn.
         include : str or iterable of str, optional

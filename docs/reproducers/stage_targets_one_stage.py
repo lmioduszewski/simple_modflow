@@ -38,10 +38,12 @@ WHAT IT MEASURES
      after, against the stage file and against MF6's own STAGE observation.
   2. The same for SFR: rows per (period, reach), and the route before and after,
      against the stage at each period's LAST step and the observation there.
-  3. A LIMIT, not fixed (ledger 331, open under 301): the LAK stage-file route is
-     keyed by SAVED RECORD. At three saves per period, targets keyed by period 0, 1,
+  3. The LAK stage-file route's clock. It was keyed by SAVED RECORD (ledger 331's
+     limit, open under 301): at three saves per period, targets keyed by period 0, 1,
      2 read records 0, 1, 2 -- all inside period 0 -- in ``compare()`` and in a PEST
-     build, where ``HeadTargets`` on the same run reads each period's last step.
+     build, where ``HeadTargets`` on the same run reads each period's last step. Since
+     ledger 348 it is keyed by period and reads records 2, 5, 8, the period ends;
+     ``docs/reproducers/lak_stage_clock.py`` has the before and after.
   4. With ``RUN_WS``: the same numbers as 1 on that run.
 """
 
@@ -213,7 +215,7 @@ def main() -> None:
     print(f"   time labels: observation {observed['time'].round(3).tolist()}, "
           f"stage file {series['time'].tolist()}")
 
-    print("\n3. a lake at three saves per period: the stage-file route's clock (NOT fixed)")
+    print("\n3. a lake at three saves per period: the stage-file route's clock (ledger 348)")
     steps, cell = _steps_model(root / "steps")
     stage = steps.outputs.lak.stage.get()[:, 0]
     series = mf.LakeStageTargets(locations={"a": 0}).simulated_series(steps)
@@ -223,7 +225,8 @@ def main() -> None:
         locations={"a": 0}, values=pd.DataFrame({"time": [0, 1, 2], "a": [111.0, 222.0, 333.0]}))
     compare = targets.compare(steps).sort_values("per")
     print(f"   compare() keyed by period 0/1/2 {_show(compare['sim_stage'])} "
-          f"(records 0, 1, 2: steps 1-3 of period 0)")
+          f"(records 2, 5, 8 since ledger 348; records 0, 1, 2 -- steps 1-3 of period 0 "
+          f"-- before)")
     heads = mf.HeadTargets(
         locations=pd.DataFrame({"name": ["h"], "cell": [cell], "layer": [0]}),
         values=pd.DataFrame({"time": [0, 1, 2], "name": "h", "head": 50.0}))

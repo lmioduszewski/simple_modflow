@@ -30,6 +30,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
 from myflopy.modflow.mf6.package_tables import (
     build_sfr_reach_table,
 )
+from myflopy.modflow.mf6.period_end import at_last_saved_step, at_last_saved_steps
 
 #: MF6 spells declared units out in full; hover labels want the abbreviation.
 _LENGTH_UNIT_ABBREVIATIONS = {
@@ -239,7 +240,9 @@ def build_sfr_stage_result_table(model: SimulationBase) -> pd.DataFrame:
         id_vars="reach", var_name="kstpkper", value_name="stage"
     )
     stage_long["reach"] = stage_long["reach"].astype(int)
-    stage_long["kstpkper"] = stage_long["kstpkper"].apply(tuple)
+    stage_long["kstpkper"] = stage_long["kstpkper"].apply(
+        lambda value: (int(value[0]), int(value[1]))
+    )
     stage_long["per"] = stage_long["kstpkper"].apply(lambda value: int(value[1]))
 
     reach_table = build_sfr_reach_table(model)
@@ -270,12 +273,21 @@ def build_sfr_long_profile_table(
 ) -> pd.DataFrame:
     """Return one merged SFR long-profile table for a selected stress period.
 
+    Stage and exchange are each read at the period's LAST saved step on their own
+    file's clock -- the stage file follows ``SAVE HEAD``, the SFR budget file ``SAVE
+    BUDGET`` (ledgers 301, 337). The exchange ADDED every step the period saved
+    until ledger 348 (about 2x at two steps per period under ``SAVE BUDGET ALL``)
+    while the stage beside it was the last step's.
+
     Parameters
     ----------
-    model
-        Live or file-backed model object.
-    per
-        Zero-based stress period to extract.
+    model : SimulationBase
+        Live or file-backed model object with an SFR package.
+    per : int, default 0
+        Zero-based stress period to extract, read at its last saved step.
+    value_name : str, default "q_gwf"
+        Name given to the exchange column (MF6's raw aquifer-referenced ``q``);
+        ``"q"`` keeps the raw name.
 
     Returns
     -------
@@ -283,6 +295,12 @@ def build_sfr_long_profile_table(
         Reach-ordered table combining geometry metadata, packagedata fields,
         stage results, and stream-groundwater exchange results. The table is
         intended as the canonical input to higher-level SFR profile plots.
+
+    Raises
+    ------
+    ValueError
+        When the stage file, or an SFR budget file that holds records, saved
+        nothing in ``per`` -- naming the periods it has.
     """
 
     packagedata = pd.DataFrame(model.fl.sfr.packagedata.get_data()).copy()
@@ -309,12 +327,13 @@ def build_sfr_long_profile_table(
         how="left",
     )
 
+    # Each file's OWN last saved step of the period (ledger 337's rule, ledger 348):
+    # the stage file follows SAVE HEAD, the budget file SAVE BUDGET. The exchange
+    # ADDED every step the period saved until ledger 348 -- about 2x at the canonical
+    # profile's two steps per period -- beside a stage taken from the last step.
     stage = build_sfr_stage_result_table(model)
     stage = (
-        stage.loc[stage["per"] == int(per)]
-        .sort_values("kstpkper")
-        .groupby("reach", as_index=False)
-        .tail(1)
+        at_last_saved_step(stage, per)
         .loc[:, ["reach", "stage"]]
         .drop_duplicates(subset=["reach"])
         .reset_index(drop=True)
@@ -323,7 +342,8 @@ def build_sfr_long_profile_table(
     q_frame = build_sfr_budget_result_table(model, budget_text="SFR", value_name="q")
     if not q_frame.empty:
         q_frame = (
-            q_frame.loc[q_frame["per"] == int(per), ["reach", "q"]]
+            at_last_saved_step(q_frame, per)
+            .loc[:, ["reach", "q"]]
             .dropna(subset=["reach"])
             .groupby("reach", as_index=False)["q"]
             .sum()
@@ -461,19 +481,63 @@ def build_sfr_budget_result_table(
 def build_lak_stage_result_table(model: SimulationBase) -> pd.DataFrame:
     """Return a normalized table of LAK stage results mapped to connected cells.
 
+    One row per saved stage record per connected cell, each carrying the lake's one
+    stage. **Every row is labelled from the stage file's OWN clock** (ledger 348):
+    ``kstpkper`` is the ``(kstp, kper)`` the record's header names
+    (``model.outputs.lak.stage.kstpkper()``) and ``per`` is its stress period, the
+    columns and order of :func:`build_sfr_stage_result_table`. ``per`` was the
+    record's INDEX until then (ledger 301's stage clock), so at ``nstp=3`` under
+    ``SAVE HEAD ALL`` the nine records read as periods 0..8 and ``per=1`` selected
+    step 2 of period 0. A view that wants one value per period reads each period's
+    last saved step (``period_end.at_last_saved_steps``); ``get(per=N)`` keeps every
+    step of period ``N``.
+
     ``stage`` is ``NaN`` wherever MF6 wrote no stage -- a DRY lake (-1e30 in the
     stage file) or an INACTIVE one (+1e30) -- because it is read through
     ``model.outputs.lak.stage.get()``, which masks both by the head file's rule
     (ledger 329). The row stays, so a dry period is a gap in every view built on
     this table, never a missing record. ``model.outputs.lak.stage.get(masked=False)``
     tells the two apart.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        A run model with a LAK package declaring a ``stage_filerecord``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``model``, ``package`` (``"lak"``), ``kstpkper`` (zero-based tuple),
+        ``per`` (zero-based stress period), ``lake`` (zero-based), ``layer``,
+        ``cell`` and ``stage`` (model length units, ``NaN`` where MF6 wrote none).
+
+    Raises
+    ------
+    AttributeError
+        If the model has no LAK package or it declares no ``stage_filerecord``.
+    ValueError
+        When the stage file's saved times do not line up with its records -- a
+        count that differs from the stage array's rows -- naming both: the records
+        cannot be labelled, and zipping them would put a stage at the wrong time
+        (ledger 301's rule, "a reader whose records do not line up must RAISE").
     """
 
-    stage_array = np.asarray(model.outputs.lak.stage.get(), dtype=float)
+    stage_output = model.outputs.lak.stage
+    stage_array = np.asarray(stage_output.get(), dtype=float)
+    saved = stage_output.kstpkper()
     nlakes = int(model.fl.lak.nlakes.data)
-    periods = pd.DataFrame(stage_array.reshape(-1, nlakes))
-    periods["per"] = periods.index.astype(int)
-    stage_long = periods.melt(id_vars="per", var_name="lake", value_name="stage")
+    records = stage_array.reshape(-1, nlakes)
+    if len(saved) != records.shape[0]:
+        raise ValueError(
+            f"The LAK stage file of model {model.name!r} holds {records.shape[0]} "
+            f"record(s) of {nlakes} lake(s) but names {len(saved)} saved time(s) in its "
+            "record headers, so its records cannot be labelled with the time each was "
+            "saved at. Is the file complete -- was it read while MF6 was still writing it?"
+        )
+    periods = pd.DataFrame(records)
+    periods["kstpkper"] = [(int(kstp), int(kper)) for kstp, kper in saved]
+    stage_long = periods.melt(id_vars="kstpkper", var_name="lake", value_name="stage")
+    stage_long["per"] = stage_long["kstpkper"].map(lambda value: int(value[1]))
     stage_long["lake"] = stage_long["lake"].astype(int)
 
     connectiondata = pd.DataFrame(model.fl.lak.connectiondata.get_data()).copy()
@@ -486,7 +550,9 @@ def build_lak_stage_result_table(model: SimulationBase) -> pd.DataFrame:
     stage_long["package"] = "lak"
     stage_long["layer"] = stage_long["layer"].astype(int)
     stage_long["cell"] = stage_long["cell"].astype(int)
-    return stage_long[["model", "package", "per", "lake", "layer", "cell", "stage"]]
+    return stage_long[
+        ["model", "package", "kstpkper", "per", "lake", "layer", "cell", "stage"]
+    ]
 
 
 def build_lak_budget_result_table(
@@ -961,6 +1027,11 @@ def build_surface_water_exchange_cell_table(
 ) -> pd.DataFrame:
     """Return a normalized cell table combining SFR and LAK exchange intensity.
 
+    One row per period per cell per package, each period read at its LAST saved
+    step on the budget file's own clock (ledgers 337, 348) -- the rows of that one
+    step are what add up in a cell. Every step the period saved was ADDED until
+    ledger 348.
+
     Notes
     -----
     The returned ``exchange_intensity`` field uses one unified physical sign
@@ -982,8 +1053,10 @@ def build_surface_water_exchange_cell_table(
         sfr_frame = build_sfr_budget_result_table(
             model, budget_text="SFR", value_name="q"
         )
-        sfr_frame = _filter_normalized_table(
-            sfr_frame, per=per, layer=layer, cells=None
+        # One step per period, its last saved (ledger 348): the groupby below is by
+        # PERIOD, and it added every step the period saved.
+        sfr_frame = at_last_saved_steps(
+            _filter_normalized_table(sfr_frame, per=per, layer=layer, cells=None)
         )
         if not sfr_frame.empty:
             grouped = sfr_frame.groupby(
@@ -1011,8 +1084,8 @@ def build_surface_water_exchange_cell_table(
         lak_frame = build_lak_budget_result_table(
             model, budget_text="GWF", value_name="q"
         )
-        lak_frame = _filter_normalized_table(
-            lak_frame, per=per, layer=layer, cells=None
+        lak_frame = at_last_saved_steps(
+            _filter_normalized_table(lak_frame, per=per, layer=layer, cells=None)
         )
         connection_types = _normalize_connection_type_filter(lak_connection_type)
         if connection_types is not None and "claktype" in lak_frame.columns:
@@ -1064,14 +1137,37 @@ def build_lak_stage_change_table(model: SimulationBase) -> pd.DataFrame:
     """Return per-transition lake-stage changes for one model.
 
     The resulting table carries one row per lake and stress-period transition,
-    with ``stage_change = stage_1 - stage_0``. A transition into or out of a
-    period with no stage (a dry or inactive lake, ``NaN`` in the stage table) is
-    KEPT, with ``stage_change`` ``NaN``: the change is undefined, not zero, and
-    dropping the row would make a lake that went dry look as if it had no
-    transition at all (ledger 329).
+    with ``stage_change = stage_1 - stage_0``. **Each period is its LAST saved
+    step** on the stage file's own clock (``period_end.at_last_saved_steps``, ledger
+    337's rule; ledger 348): the table's ``per`` was a saved-record index until
+    ledger 348, so at ``nstp=3`` under ``SAVE HEAD ALL`` it reported eight
+    "period" transitions between consecutive TIME STEPS of a three-period run. A
+    transition into or out of a period with no stage (a dry or inactive lake,
+    ``NaN`` in the stage table) is KEPT, with ``stage_change`` ``NaN``: the change
+    is undefined, not zero, and dropping the row would make a lake that went dry
+    look as if it had no transition at all (ledger 329).
+
+    Parameters
+    ----------
+    model : SimulationBase
+        A run model with a LAK package declaring a ``stage_filerecord``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``model``, ``package``, ``lake``, ``per0``/``per1`` (consecutive stress
+        periods the stage file saved, zero-based), ``stage0``/``stage1`` (each
+        period's last saved stage) and ``stage_change`` (``stage1 - stage0``, model
+        length units).
+
+    Raises
+    ------
+    ValueError
+        As :func:`build_lak_stage_result_table`: a stage file whose saved times do
+        not line up with its records.
     """
 
-    stage_table = build_lak_stage_result_table(model)
+    stage_table = at_last_saved_steps(build_lak_stage_result_table(model))
     if stage_table.empty:
         return pd.DataFrame(
             columns=[

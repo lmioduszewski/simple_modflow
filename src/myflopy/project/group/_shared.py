@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 import pandas as pd
 
-from myflopy.modflow.mf6.period_end import last_saved_step, last_saved_steps
+from myflopy.modflow.mf6.period_end import at_last_saved_steps, last_saved_step
 
 if TYPE_CHECKING:
     from myflopy.project.group.core import ModelGroup
@@ -113,19 +113,13 @@ def _reduce_to_period_end(frame: pd.DataFrame) -> pd.DataFrame:
 
     if frame.empty or "kstpkper" not in frame.columns:
         return frame
-    out = frame.copy()
-    keys = out["kstpkper"].map(lambda kk: (int(kk[0]), int(kk[1])))
-    out["per"] = keys.map(lambda kk: kk[1])
-    # Each model's OWN last saved step per period, by the one rule (ledger 337).
-    # It used to keep each ROW identity's largest kstp, so a cell with no record
-    # at its model's last step kept an earlier step's value -- a different number.
-    models = out["model"] if "model" in out.columns else pd.Series("", index=out.index)
-    ends = {
-        name: set(last_saved_steps(keys[models == name]).values())
-        for name in models.unique()
-    }
-    keep = [key in ends[name] for key, name in zip(keys, models, strict=True)]
-    return out.loc[keep].sort_values("per", kind="stable").reset_index(drop=True)
+    # Each model's OWN last saved step per period, by the one rule (ledger 337),
+    # through the helper every per-period view reads (ledger 348). It used to keep
+    # each ROW identity's largest kstp, so a cell with no record at its model's
+    # last step kept an earlier step's value -- a different number.
+    out = at_last_saved_steps(frame, by="model" if "model" in frame.columns else None).copy()
+    out["per"] = out["kstpkper"].map(lambda kk: int(kk[1]))
+    return out.sort_values("per", kind="stable").reset_index(drop=True)
 
 
 def _resolve_group_compare_target(group: ModelGroup, model_name: str | None) -> str:
