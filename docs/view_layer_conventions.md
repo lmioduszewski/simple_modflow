@@ -97,7 +97,17 @@ keeps it a gap in the series engine and in both map payloads, where `agg="sum"` 
 painted a dry lake's cell 0 ft and stretched the colour range down to it.
 A difference a number cannot measure is COUNTED: the stage diff's `n_one_sided`.
 **SFR's stage file is NOT masked** (a dry reach is -1e30 too, by MF6's source); it is
-the same change, not made here.
+the same change, not made here. Its STAGE observation's no-data value (3e30) reads
+`NaN` in `SfrStageTargets` since ledger 344, as a lake's does.
+
+**A reader opens the file its package DECLARES, never one found by its contents**
+(ledger 344). The observation targets took the first `*.csv` in the workspace whose
+header held their labels, so a GWF head, a LAK volume, another lake's stage, a
+same-named SFR flow or a stale copy was read in their place. What an OBS file holds
+is what the owning package's OBS declares -- each record's type, its id and its
+column -- so a reader asks FloPy for that (`observations._shared._declared_route`) and
+reads only those files, each record by position; the MF6 header names are cut to 40
+characters and only checked.
 
 **A feature's value is ONE number, however many rows repeat it** (ledger 331). The LAK
 stage table carries a lake's stage once per CONNECTED CELL and the SFR stage table a

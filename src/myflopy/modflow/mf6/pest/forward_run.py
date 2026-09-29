@@ -224,7 +224,7 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
         ucn.close()
 
 
-def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", model_name=None):
+def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", model_name=None, package=None):
     """Regenerate one lake/SFR/DRN simulated-target CSV in the native forward run.
 
     Post-model command for named-series observations (lake stage, SFR stage/flow,
@@ -272,12 +272,22 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
         GWF model -- which, in a simulation of several, handed PEST another
         model's lake, reach or zone every realization while the base run's
         values came from the calibrated one.
+    package : str or None, optional
+        The targets' ``package`` -- the name of the LAK, SFR or DRN package they
+        belong to -- which the build records. ``None`` (the default, and what a
+        forward run generated before ledger 344 passes) reads the model's one
+        package of the type; with several, the family refuses as it did at build.
 
     Raises
     ------
     ValueError
         For an unknown ``kind``; or, as the family's ``simulated_series`` does,
-        when a period the output file saved lacks its final step.
+        when a period the output file saved lacks its final step, or its
+        observation route refuses what the package declares (ledger 344).
+    FileNotFoundError
+        As the family's ``simulated_series``: a declared observation file is not
+        in ``sim_ws`` -- only the files the package's OBS names are read, so a
+        stale copy left in the template is never taken for this run's output.
     """
 
     # Deliberately duplicated: pyEMU extracts this function's SOURCE into the
@@ -313,7 +323,7 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
     kind_key = str(kind).strip().lower()
     if kind_key not in builders:
         raise ValueError(f"Unsupported named-series observation kind {kind!r}.")
-    targets = builders[kind_key](locations=locations, values=None)
+    targets = builders[kind_key](locations=locations, values=None, package=package)
     simulated = targets.simulated_series(model)
     if kind_key == "lake_stage":
         simulated = simulated.fillna(targets._PEST_NO_STAGE)

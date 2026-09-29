@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 343 entries (348 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 344 entries (349 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 344 | The observation route reads the package's DECLARED observations, by identity: a lake, reach or zone target... | 2026-09-29 |
 | 343 | The review of ledger 342: a DRN zone cell the grid does not have is refused on the budget route, and MF6 cu... | 2026-09-29 |
 | 342 | A DRN zone is read by layer and cell, once per zone: the budget route matches MF6's node as a... | 2026-09-27 |
 | 341 | The review of ledger 340: a head or concentration target on no active cell is refused by the PEST build, ta... | 2026-09-27 |
@@ -14070,8 +14071,9 @@ same day, which is the useful part of the result.
       **NOT done:**
       - **SFR's stage is not masked.** A dry reach is -1e30 too (MF6's `sfr_ot_dv`, read,
         not measured here), through `SFRStageOutput`, `build_sfr_stage_result_table` and
-        the SFR stage explorer, and `SfrStageTargets`' observation route still reads 3e30
-        as 0.0. The same change; kept to LAK because that is what was asked.
+        the SFR stage explorer~~, and `SfrStageTargets`' observation route still reads 3e30
+        as 0.0~~ (**RESOLVED for the observation route by ledger 344: `NaN`, as LAK's**).
+        The same change; kept to LAK because that is what was asked.
       - `budget_tables.lake_stage_array`, ledger 301's dead duplicate, still returns the raw
         file; nothing calls it.
       - The stage-clock family (ledger 301) is untouched: `per` is still the record index.
@@ -14710,9 +14712,11 @@ same day, which is the useful part of the result.
         exchange hover's `join_lak_stage`), not only these targets. Pinned as a limit by
         `test_a_lake_target_keyed_by_period_reads_the_record_clock_at_several_saves`, so
         this sentence fails with the fix rather than outliving it.
-      - **The observation route is chosen, and read, by NAME.** The lake id is never
+      - ~~**The observation route is chosen, and read, by NAME.** The lake id is never
         consulted: `LakeStageTargets(locations={"drying": 1})` returned lake 0's
-        `DRYING` column (100.09 ft) where lake 1 holds 108.0.
+        `DRYING` column (100.09 ft) where lake 1 holds 108.0.~~ **RESOLVED by ledger 344:
+        the route reads the package's DECLARED observations -- type and lake -- and that
+        target is refused.**
       - ~~The period-end rule is now stated twice~~ **RESOLVED by ledger 336: one function, `period_end.period_end_steps`.** It was stated twice in `observations/_shared.py` (per
         (`per`, layer, cell) in `_simulated_field_by_period`, per period here); the same
         for every table that saves each id at every step, not merged.
@@ -15482,7 +15486,7 @@ same day, which is the useful part of the result.
       OBSERVATION there, ledger 321). One helper, `_refuse_cells_off_the_grid`, called from
       `_zone_flow_table`; `to_flopy_obs(None)`, `summary()` and `get()` still take the
       cells as given, since nothing there reads a value.
-      **Found, NOT fixed: MF6 cuts an observation name to 40 characters, silently.**
+      ~~**Found, NOT fixed: MF6 cuts an observation name to 40 characters, silently.**
       Measured: a zone with a 36-character name reaching two layers is written as three
       45-character `_lay` labels, and MF6 wrote all three as ONE name, `<name>_LAY`, under
       Normal termination; the reader, finding none of the labels it asked for, read the
@@ -15492,7 +15496,12 @@ same day, which is the useful part of the result.
       suffix brings the limit in five characters sooner; `<name>_c<cell>` and the head
       targets' labels have the same limit. Not refused here: the label map is built on
       EVERY route, so a refusal there would also stop a model whose budget route reads
-      correctly today, and which of the two to break is a decision, not a fix.
+      correctly today, and which of the two to break is a decision, not a fix.~~
+      **RESOLVED for the lake, reach and zone readers by ledger 344:** they read each
+      DECLARED record from its own column, by position, and only check the header against
+      the 40 characters MF6 keeps, so the three labels read the observation route (times
+      10, 20). MF6 still writes one header for the three -- a file a person reads, not
+      one myflopy reads by name. The head targets read the head FILE, not this route.
       Also: the reproducers' "before" instructions named the commits as they were before
       the 2026-09-29 rebase (9871965, 3a46332); they name 4fbcc03 and 58988d7 now.
       Reproducer: sections H and I of `docs/reproducers/drn_zone_layer_and_cells.py` (H's
@@ -15500,3 +15509,137 @@ same day, which is the useful part of the result.
       `test_a_zone_cell_the_grid_does_not_have_is_refused_on_the_budget_route` (a cell past
       the layer, a layer below the bottom, a negative cell), which fails in all three cases
       with the helper's call removed.
+344. **The observation route reads the package's DECLARED observations, by identity: a lake, reach or zone target reads MF6's observation only when the owning package's OBS declares its label as the family's quantity for the target's own lake, reach or cell, only from the files that OBS names, and a set declared in part -- or a model with several packages of the type and no `package=` -- is refused (2026-09-29).**
+      Findings F2 (option 1), G7, F3 option D and F1's SFR-stage no-data note.
+      `LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets` and `DrnFlowTargets` took
+      the first `*.csv` in the workspace, in sorted order, whose header held every target
+      NAME; the observation's type and its id were never consulted, and the file need not
+      belong to the package or to this run. Measured on the reproducer's toy: `{"drying":
+      1}` read lake 0's stage; `{"held": 1}` read a GWF HEAD (`heads.csv` sorts first,
+      100.24 ft for a lake held at 118); `{"pond": 0}` a LAK VOLUME (4861.62); an SFR
+      stage target the `DOWNSTREAM-FLOW` of a flow target of the same name (-89.67 "ft");
+      a copy of the LAK file 20 ft low, `archive_lake.csv`, was read in place of the live
+      one by `compare()` AND by PEST's forward-run writer (every realization the same
+      stale values: zero sensitivity); and a run directory reused through
+      `prepare_run(overwrite=True)` kept the first run's CSV, which the second run -- with
+      no OBS at all -- read as its own.
+      **One helper, `_shared._declared_route`, for all four families.** It asks FloPy for
+      the owning package's OBS records (`package.obs[i].continuous.get_data()`, the
+      public child-package index, on a live model and a reloaded one alike) and resolves
+      each id: a number from one, or a BOUNDNAME through the package's `packagedata`
+      (LAK, SFR); a zero-based cellid (DRN -- a DRN boundname names drains, not a cell,
+      and is treated as another id). A target reads the observation route only when its
+      label is declared as the family's quantity (`stage`, `downstream-flow`, `drn`) for
+      its OWN lake, reach or `(layer, cell)`. Refused by name, with the target, its id,
+      the file and the record: a label declared for another id; a label declared twice
+      as the quantity (judgment call: refused even when the two agree -- the user removes
+      one; guessing which is "the" observation is the defect this closes); and a label
+      declared ONLY as another quantity.
+      **Judgment call, a narrowing of the spec's "a label declared with another obstype
+      RAISES":** a record of another quantity UNDER THE SAME LABEL is left alone when the
+      quantity's own record is there. A gauge that reads both stage and flow is naturally
+      one name in two observation files -- the canonical layout's one SFR OBS with a stage CSV and
+      a flow CSV invites it -- MF6 accepts it, and which record is the target's is not in
+      doubt once the type is read. Raising there would refuse a correct model.
+      **The route is chosen for the WHOLE set** (the skeptic's correction): every target
+      declared, or none. A set of some of each is REFUSED naming both groups -- one added
+      undeclared name had moved every target of the set to the file route, on another
+      clock (MF6 time against period or record) and with another dry-lake value. A set
+      with nothing declared reads the file route exactly as before; for a DRN zone, one
+      label per cell, a zone declared in part is "not declared".
+      **Only the declared files are read, each record BY POSITION.** MF6 writes a file's
+      records as its columns in declaration order; the header is CHECKED against the name
+      MF6 keeps -- the first 40 characters, upper-cased (`LENOBSNAME`), measured: two
+      42-character names sharing 40 characters wrote two columns under one header, each
+      with its own values -- and a file whose column count or header does not match its
+      declaration, a missing declared file, or two declared files on different times is
+      refused. **This closes ledger 343's found-not-fixed for reading:** labels MF6 cuts
+      to one header are read from their own columns (the DRN reproducer's section I now
+      reads the observation route, times 10 and 20, where it fell to the budget file).
+      `_zone_labels`' clash refusal comparing FULL labels is now the right comparison, so
+      it stays; `to_flopy_obs` is NOT extended to refuse a 40-character collision.
+      **Several packages of one type** (item f): each family takes `package=` -- a
+      package NAME (FloPy's `package_name`, any case), a dataclass field, carried into
+      the PEST build's forward-run call (`write_named_series_targets(package=)`) and used
+      by `attach_flopy_obs` as its default owner (judgment call: one name, both
+      directions). With several packages and no `package=`: a label declared in any of
+      them is refused (a lake or reach number is ONE package's -- the reproducer's two
+      LAKs each declare `pond STAGE 1`, their own lake 0, and the name scan read
+      whichever file sorted first); a LAK/SFR set with nothing declared is refused too,
+      because their file belongs to one package (it failed on FloPy's list,
+      `AttributeError: 'list' object has no attribute 'nlakes'`); an undeclared DRN set
+      still reads the budget route, which sums every package's drains in a zone -- the
+      one file route that serves several packages -- so `package=` naming a DRN package
+      that declares none of the zone cells is refused rather than ignored. The packages
+      are found by TYPE (`get_package(type, type_only=True)`): FloPy's `get_package(name)`
+      answers a package NAMED like the type first, so `model.package("lak")` returns ONE
+      package when one is named `lak` and another `lak_2` (found, not fixed, for
+      `model.fl.<pkg>` below).
+      **`to_flopy_obs` refuses** a `kind=` other than the family's quantity (any case
+      accepted -- the parameter is kept for callers who spell the default out) and two
+      target names MF6 would upper-case to one label (`"Pond A"`, `"pond-a"`: MF6 wrote
+      `POND_A,POND_A` and both targets read lake 0). The DRN form already refused label
+      clashes (ledger 342); it now refuses `kind` too.
+      **SFR stage no-data is `NaN` on this route**, as LAK's is (ledger 329) -- one rule for
+      a stage reader. **Measured, and not what the finding assumed:** MF6 6.8 writes an
+      INACTIVE reach's STAGE observation as its bed top (94.7 ft, `STATUS INACTIVE`),
+      its `DOWNSTREAM-FLOW` as 0.0 and its stage-file record as 1e30 -- not 3e30 -- so the
+      mask changes no value MF6 was seen to write; the test puts MF6's 3e30 into a copy of
+      MF6's own file.
+      **The cost, measured:** a lake, reach or zone read on a freshly reloaded run
+      (`mf.load_mf6_run`) now loads the package through FloPy -- and the first package
+      access of a `LoadedMf6Run` is a FULL load, by design
+      (`LoadedMf6Run._ensure_packages_loaded`: a partial load lost edits on write). On a
+      copy of the full-profile master
+      example (4 layers x 10,000 cells, 6 periods), `load_mf6_run` + one
+      `DrnFlowTargets.simulated_series`: observation route 0.06 s -> 2.00 s, budget route
+      0.64 s -> 1.99 s (min of 3, load average ~1). Paid once per model object; a live
+      `run.model()` and a run any package was already read from pay nothing, the LAK/SFR
+      file routes already paid it (`model.fl.lak`), and the PEST forward run already called
+      `load_all()`. Judgment call: accepted -- the alternative is parsing OBS input files
+      beside FloPy, a second reader of the same declaration.
+      **Test doubles:** a double reaching the observation route must answer
+      `model.package(type)` with a package whose `obs[i].continuous.get_data()` holds the
+      records (`tests/test_mf6_pest.py::_declare_observations`); a double with no
+      `package` declares nothing and reads the file route. The test that certified the
+      defect -- `test_surface_water_targets_prefer_direct_mf6_observation_csvs`, which read
+      a hand-written `gold_lakes.csv` no OBS declared -- is rewritten against a declared
+      double, with a companion asserting the same undeclared files are NOT read.
+      **Templates:** one built before this reads by identity with no rebuild (its baked
+      forward run calls the library's `simulated_series`), but cannot pass `package=`, so
+      a model of several packages of the type must be rebuilt.
+      **NOT done:** clocks (the observation route is still keyed by MF6's simulated time --
+      the next commit), signs, the dry-lake value; `from_series`/`from_records` take no
+      `package=` (set the attribute on the result); a DRN BOUNDNAME observation is not
+      resolved to its drains' cells (refused as another id); clearing MF6's outputs from a
+      reused run directory (ledger 191's D5) -- the reader no longer reads an undeclared
+      file, but the directory still holds it.
+      **Found, NOT fixed:** `model.fl.<pkg>` / `model.package("<type>")` return ONE package
+      when a package is NAMED exactly the type and another is not (FloPy's name-first
+      lookup), where their docstrings promise "a list when the model carries several";
+      the LAK/SFR stage VIEWS still fail on a model of several such packages
+      (`AttributeError` on FloPy's list); and running the suite with a RELATIVE
+      `PYTHONPATH=src` makes every PEST forward-run subprocess import the EDITABLE
+      install (the main checkout) instead of the worktree, because the forward run's
+      working directory is the template -- measured: this commit's forward-run tests
+      failed with `TypeError: ... unexpected keyword argument 'package'` until the path
+      was absolute.
+      Reproducer: `docs/reproducers/obs_route_declared_identity.py` (sections A-J, run on
+      this tree and on f0fe9c7's `src`). Tests: `tests/test_obs_route_declared_identity.py`
+      (16; real MF6 runs of the reproducer's three models) and the rewritten pair in
+      `tests/test_mf6_pest.py`; on f0fe9c7's `src` 16 of those 18 fail, the two passing
+      being a correct declaration read the same on both trees. Each fix reverted alone
+      fails by name: the id check -> `test_a_target_naming_another_lakes_observation_raises`,
+      `test_a_boundname_id_resolves_to_its_lake` and `test_a_label_declared_as_another_
+      quantity_raises`; the type filter -> `test_a_correctly_declared_set_reads_its_own_
+      columns`, `test_sfr_stage_reads_its_stage_not_a_same_named_flow` and the quantity
+      test; boundname resolution -> the boundname test; the whole-set refusal ->
+      `test_a_set_declared_in_part_raises_naming_both_groups`; SFR stage `NaN` ->
+      `test_an_sfr_stage_no_data_value_reads_nan`; the two `to_flopy_obs` refusals ->
+      `test_to_flopy_obs_refuses_two_names_one_label_and_another_kind`; the three
+      several-packages refusals -> `test_several_packages_of_a_type_need_the_targets_
+      package`; `package=` in the forward run or in `attach_flopy_obs` ->
+      `test_the_targets_package_reaches_attach_and_the_pest_forward_run`; reading by
+      header instead of position -> `test_names_mf6_cuts_to_one_header_read_their_own_
+      columns`; the missing-file refusal -> `test_a_declared_file_that_is_missing_raises`;
+      the header check -> `test_a_declared_file_that_does_not_line_up_raises`.

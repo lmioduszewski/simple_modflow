@@ -215,8 +215,8 @@ nothing may SUM an all-NaN group, which pandas makes 0.0 -- `_aggregate_leaving_
 serves the series and both map payloads (`agg="sum"` painted a dry lake 0 ft); a diff
 COUNTS a one-sided dry lake (`n_one_sided`). What PEST reads is 1e30, every row kept:
 PEST++ fails a run on an empty field, on `nan` and on a missing row, and reads an extra
-column as the wrong one (`docs/reproducers/pest_no_value_fields.py`). SFR's stage is NOT
-masked yet.
+column as the wrong one (`docs/reproducers/pest_no_value_fields.py`). SFR's stage FILE is
+NOT masked yet (its STAGE observation's 3e30 reads `NaN` in `SfrStageTargets`, ledger 344).
 **Highlighting cells is `map(select=...)`, on EVERY scope** (ledger 160,
 2026-08-29) -- cell indices, a boolean mask, a registered region name, a vector
 file, or a geometry. It draws a **dissolved-boundary outline** by default, NOT
@@ -515,7 +515,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5371 passed / 4 skipped**, 2026-09-28, ledger 316's five build-failure
+- Full suite (**5421 passed / 4 skipped**, 2026-09-29, ledger 344 on the PEST-target
+  series 340-343): `-n 10` **1m42s** in a worktree outside `.claude`, at a load average of
+  ~0.8 at its start, with an ABSOLUTE `PYTHONPATH` (next bullet); serial not re-measured.
+  Before it, 5371 passed / 4 skipped (2026-09-28, ledger 316's five build-failure
   fixes and their review, rebased onto ledger 339): `-n 10` **1m34s** in a detached checkout
   outside `.claude`, at a load average of ~0.6 at its start; serial not re-measured. The
   same fixes before the rebase counted the same 5371 in 1m30s at ~6.1, and ledger 339 alone
@@ -566,6 +569,13 @@ validation — that bug was found twice, in `read_gpkg` and `contour_line_segmen
   price of the `-n0` pre-commit check below, not a regression.
   **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction
   can report green while serial catches real failures (see ledger 48).
+- **From a worktree, give `PYTHONPATH` as an ABSOLUTE path** (ledger 344). The PEST
+  end-to-end tests run `python forward_run.py` with the TEMPLATE as working directory, so
+  `PYTHONPATH=src` resolves there, finds nothing, and the forward run imports the venv's
+  EDITABLE install -- the main checkout -- instead of the code under test: measured, a
+  change to `write_named_series_targets` failed there with `TypeError` on the main
+  checkout's signature, and a change inside the library is exercised, in every forward
+  run, by code that does not contain it.
 - **A session writes its temp files in its OWN root, and a leak fails by name** (ledger
   335): `tests/conftest.py` points TMPDIR at `/tmp/myflopy-pytest-*` (one subdirectory
   per xdist worker) and removes it at the end, even after a failure. A test that leaves
@@ -1692,6 +1702,27 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   matched nothing, so `[20, 99]` read cell 20 alone). A partial
   miss of a DRN zone or a head/conc target is a Python warning as well as a log line
   (ledger 288's rule).
+- **The observation route reads what the package DECLARES, by identity** (ledger 344).
+  Lake/SFR/DRN targets took the first `*.csv` in the workspace, in sorted order, whose
+  header held their NAMES -- a GWF head, a LAK `VOLUME`, another lake's stage, a
+  same-named SFR flow, or a STALE copy (a backup; the CSV a reused run directory kept),
+  which froze every PEST realization. `_shared._declared_route` asks FloPy for the
+  owning package's OBS records (`package.obs[i].continuous`): a label counts only when
+  declared as the family's quantity for the target's OWN lake/reach/cell (a number from
+  one, or a boundname via `packagedata`), and `_read_declared_observations` reads only
+  those files, each record BY POSITION (MF6 cuts names to 40 characters; the header is
+  checked, not matched). Refused by name: another quantity only, another id, a label
+  declared twice, a set declared in PART (the route is chosen for the whole set, since
+  the two routes are on different clocks), a missing declared file, and a model with
+  several LAK/SFR/DRN packages unless the targets name one (`package=`, carried into the
+  forward run). `to_flopy_obs` refuses a `kind=` other than the quantity and two names
+  one label once upper-cased. A test double reaching the observation route must answer
+  `model.package(type)` with a package whose `obs[i].continuous.get_data()` holds the
+  records (`tests/test_mf6_pest.py::_declare_observations`); one without `package`
+  declares nothing and reads the file route. A template built before this reads by
+  identity without a rebuild -- its baked forward run calls the library's
+  `simulated_series` -- but cannot pass `package=`, so a model of several packages of
+  the type must be rebuilt.
 - `forward_run.py` — injected forward run: pyEMU's `apply_list_and_array_pars` for params,
   plus post-processors that regenerate head + named-series (lake/SFR/DRN) simulated CSVs.
 - **Run discovery + review**: `model.pest_runs` / `run.pest_runs` (`runs.py`,

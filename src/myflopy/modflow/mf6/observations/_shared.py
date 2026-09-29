@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -158,52 +159,16 @@ def _observation_label(value: str) -> str:
     return normalized or "obs"
 
 
-def _workspace_csv_frames(model) -> list[tuple[Path, pd.DataFrame]]:
-    """Return readable CSV tables from the model workspace.
-
-    This intentionally stays shallow: the canonical observation workflow writes
-    MF6 observation CSVs directly into the active model workspace, so those
-    files are the first place target objects should look when reconstructing
-    simulated series after a run or reload.
-    """
-
-    workspace = getattr(model, "workspace", None)
-    if workspace is None:
-        workspace = getattr(model, "model_output_folder_path", None)
-    if workspace is None:
-        return []
-    workspace = Path(workspace)
-    if not workspace.exists():
-        return []
-
-    frames: list[tuple[Path, pd.DataFrame]] = []
-    for path in sorted(workspace.glob("*.csv")):
-        lower_name = path.name.lower()
-        if "simulated_" in lower_name or "_target_" in lower_name:
-            continue
-        try:
-            frame = pd.read_csv(path)
-        except (OSError, UnicodeDecodeError, pd.errors.EmptyDataError,
-                pd.errors.ParserError):
-            # This scans a workspace for ANY csv that might be observations, so
-            # non-observation csvs are expected: unreadable, empty, wrong
-            # encoding, or not comma-shaped at all. Skipping them is the job.
-            logger.debug("skipping %s: not a readable observation csv", path)
-            continue
-        if frame.empty:
-            continue
-        frames.append((path, frame))
-    return frames
-
-
 def _clean_observation_output_values(values: pd.Series, *, no_value: float = 0.0) -> pd.Series:
     """Normalize MF6 observation CSV values into ordinary numeric series.
 
     MF6 writes an observation it cannot take as a huge number -- ``DNODATA``,
-    3e30, for an inactive lake or reach. For a FLOW that means no contribution,
-    so the default ``no_value=0.0`` stands; an ELEVATION such as a stage has no
-    such reading, and a stage caller passes ``NaN`` (ledger 329: an inactive lake
-    read as a stage of 0.0 ft).
+    3e30, as its STAGE of an inactive lake. For a FLOW that means no
+    contribution, so the default ``no_value=0.0`` stands; an ELEVATION such as a
+    stage has no such reading, and a stage caller passes ``NaN`` (ledger 329: an
+    inactive lake read as a stage of 0.0 ft; ledger 344: the SFR stage reader
+    does too, although MF6 6.8 writes an INACTIVE reach's stage as its bed top,
+    measured, not 3e30).
     """
 
     numeric = pd.to_numeric(values, errors="coerce")
@@ -211,41 +176,525 @@ def _clean_observation_output_values(values: pd.Series, *, no_value: float = 0.0
     return numeric.astype(float)
 
 
-def _find_named_observation_output(
+#: How many characters of an observation name MF6 keeps (its ``LENOBSNAME``): a
+#: longer name is cut, without a word, and the CSV header carries the cut --
+#: measured, MF6 6.8: two 42-character names sharing 40 characters wrote two
+#: columns under one header, each holding its own record's values (ledger 344).
+_MF6_OBSNAME_LENGTH = 40
+
+
+@dataclass(frozen=True)
+class _ObservedQuantity:
+    """What one target family reads on the observation route, and from which package type.
+
+    Attributes
+    ----------
+    owner : str
+        The target class, named in every message (``"LakeStageTargets"``).
+    package_type : str
+        The FloPy package type whose OBS declares the observations (``"lak"``).
+    obstype : str
+        MF6's observation type for the family's quantity, lower-cased
+        (``"stage"``, ``"downstream-flow"``, ``"drn"``).
+    feature : str
+        What a target's id names, for messages: ``"lake"``, ``"reach"``, ``"cell"``.
+    file_route : str
+        What the family reads when no target is declared, for messages.
+    file_route_reads_every_package : bool
+        Whether that file route serves a model carrying several packages of the
+        type: the DRN budget route sums every drain in a zone's cells whichever
+        package holds it; the LAK and SFR files belong to ONE package.
+    """
+
+    owner: str
+    package_type: str
+    obstype: str
+    feature: str
+    file_route: str
+    file_route_reads_every_package: bool = False
+
+    @property
+    def cellid(self) -> bool:
+        """True when a target's id is a ``(layer, cell)`` pair rather than a feature number."""
+
+        return self.feature == "cell"
+
+
+@dataclass(frozen=True)
+class _DeclaredObservation:
+    """One continuous record a package's OBS declares: where MF6 writes it and what it measures.
+
+    Attributes
+    ----------
+    package : str
+        The owning package's name (FloPy's ``package_name``).
+    csv : str
+        The output file as declared, relative to the model's workspace.
+    column : int
+        The record's position among that file's records, from 0: MF6 writes a
+        file's records as its columns, in declaration order, after ``time``.
+    width : int
+        How many records the file declares -- its value columns.
+    obsname : str
+        The observation's name as declared.
+    obstype : str
+        Its MF6 observation type, lower-cased.
+    ident : object
+        Its id as FloPy holds it: a number from one or a boundname (LAK, SFR), a
+        zero-based cellid tuple (DRN).
+    features : tuple
+        What the id names in the package: zero-based lake or reach numbers, or
+        ``(layer, cell)`` pairs. Empty when it names nothing (a boundname no
+        feature carries, or a DRN boundname, which names drains, not a cell).
+    """
+
+    package: str
+    csv: str
+    column: int
+    width: int
+    obsname: str
+    obstype: str
+    ident: Any
+    features: tuple
+
+    def record(self) -> str:
+        """The record as its OBS file reads, and where: `` `drying STAGE 1` in a.csv (package 'lak')``."""
+
+        ident = self.ident
+        if isinstance(ident, (tuple, list, np.ndarray)):
+            ident = "(" + ", ".join(str(int(value)) for value in ident) + ")"
+        return f"`{self.obsname} {self.obstype.upper()} {ident}` in {self.csv} (package {self.package!r})"
+
+
+def _packages_of_type(model, package_type: str) -> list:
+    """Every FloPy package of ``package_type`` in ``model``; ``[]`` when it has none.
+
+    Asked by TYPE: FloPy's ``get_package(name)`` answers a package NAMED like the
+    type before the type itself, so ``model.package("lak")`` on a model holding
+    LAK packages named ``lak`` and ``lak_2`` returns the first alone. The lookup
+    through ``model.package`` comes first because a reloaded run loads its
+    packages there; a model that has none of the type -- or a test double with no
+    ``package`` -- raises ``AttributeError``, and has nothing declared.
+    """
+
+    try:
+        first = model.package(package_type)
+    except AttributeError:
+        return []
+    getter = getattr(getattr(model, "gwf", None), "get_package", None)
+    found = getter(package_type, type_only=True) if getter is not None else first
+    if found is None:
+        return []
+    return list(found) if isinstance(found, (list, tuple)) else [found]
+
+
+def _attached_obs_packages(package) -> list:
+    """The OBS packages attached to one FloPy package (FloPy's child-package list)."""
+
+    container = getattr(package, "obs", None)
+    if container is None:
+        return []
+    attached = []
+    while True:
+        try:
+            attached.append(container[len(attached)])
+        except (ValueError, IndexError):
+            # FloPy's ``MFChildPackages`` raises ValueError past its last package
+            # (a list, IndexError); that is how its length is read.
+            return attached
+
+
+def _declared_features(package, ident, *, cellid: bool) -> tuple:
+    """What a declared id names: feature numbers from 0, or ``(layer, cell)`` pairs."""
+
+    if cellid:
+        if isinstance(ident, (tuple, list, np.ndarray)):
+            try:
+                return (tuple(int(value) for value in ident),)
+            except (TypeError, ValueError):
+                return ()
+        return ()
+    text = str(ident).strip()
+    try:
+        return (int(text) - 1,)  # MF6 numbers lakes and reaches from one
+    except ValueError:
+        pass
+    packagedata = getattr(package, "packagedata", None)
+    data = packagedata.get_data() if packagedata is not None else None
+    if data is None or "boundname" not in (data.dtype.names or ()):
+        return ()
+    key = text.lower()
+    return tuple(
+        int(row[0])
+        for row in data
+        if row["boundname"] is not None and str(row["boundname"]).strip().lower() == key
+    )
+
+
+def _declared_observations(packages, *, cellid: bool) -> list[_DeclaredObservation]:
+    """Every continuous record the OBS packages of ``packages`` declare, resolved."""
+
+    declared: list[_DeclaredObservation] = []
+    for package in packages:
+        name = str(getattr(package, "package_name", "") or "")
+        for obs in _attached_obs_packages(package):
+            continuous = obs.continuous.get_data() or {}
+            for csv, records in continuous.items():
+                rows = list(records)
+                for column, row in enumerate(rows):
+                    declared.append(
+                        _DeclaredObservation(
+                            package=name,
+                            csv=str(csv),
+                            column=column,
+                            width=len(rows),
+                            obsname=str(row[0]).strip(),
+                            obstype=str(row[1]).strip().lower(),
+                            ident=row[2],
+                            features=_declared_features(package, row[2], cellid=cellid),
+                        )
+                    )
+    return declared
+
+
+def _listing(items, *, limit: int = 5) -> str:
+    """Up to ``limit`` items joined by ``"; "``, and a count of the rest."""
+
+    items = list(items)
+    text = "; ".join(str(item) for item in items[:limit])
+    if len(items) > limit:
+        text += f"; and {len(items) - limit} more"
+    return text
+
+
+def _named_package(model, quantity: _ObservedQuantity, package: str):
+    """The FloPy package of the family's type NAMED ``package`` (any case), or a refusal naming the rest."""
+
+    everyone = _packages_of_type(model, quantity.package_type)
+    for candidate in everyone:
+        if str(getattr(candidate, "package_name", "")).strip().lower() == str(package).strip().lower():
+            return candidate
+    held = ", ".join(repr(str(getattr(p, "package_name", ""))) for p in everyone) or "none"
+    raise ValueError(
+        f"{quantity.owner}: package={package!r} names no {quantity.package_type.upper()} "
+        f"package of this model; its {quantity.package_type.upper()} packages: {held}."
+    )
+
+
+def _several_packages(quantity: _ObservedQuantity, packages, reason: str, fix: str) -> ValueError:
+    """The refusal for a set that cannot tell which of several packages of its type it reads."""
+
+    names = ", ".join(repr(str(getattr(package, "package_name", ""))) for package in packages)
+    return ValueError(
+        f"{quantity.owner}: this model carries {len(packages)} {quantity.package_type.upper()} "
+        f"packages ({names}); {reason}. {fix}"
+    )
+
+
+def _declared_route(
     model,
+    quantity: _ObservedQuantity,
+    wanted: dict[str, tuple[str, str, Any]],
     *,
-    expected_columns: dict[str, str],
-    no_value: float = 0.0,
-) -> pd.DataFrame | None:
-    """Find one workspace CSV containing all requested observation columns.
+    package: str | None = None,
+) -> dict[str, _DeclaredObservation] | None:
+    """Which declared observation each target reads, or ``None`` for the file route (ledger 344).
+
+    The observation route used to be chosen, and read, by the SPELLING of a
+    target's name: the first CSV anywhere in the workspace, in sorted order,
+    whose header held every label. So a LAK target read a GWF HEAD column, a LAK
+    VOLUME, an SFR ``DOWNSTREAM-FLOW`` or another lake's stage, and a stale CSV
+    from a previous run or a backup copy froze PEST's simulated value in every
+    realization. It reads the package's DECLARED observations now:
+
+    - a target takes the observation route only when its label is declared, in
+      the package's own OBS, as the family's quantity AND for the target's own
+      lake, reach or cell; declared as another quantity, for another feature, or
+      more than once as the quantity, it RAISES naming the target, its id and
+      the records -- a record of another quantity under the same label is
+      another observation, and is left alone when the quantity's own is there;
+    - the choice is for the whole SET: every target declared, or none -- a set
+      of some of each RAISES naming both groups, because the two routes are on
+      different clocks and a silent flip moved every target of the set;
+    - a set with no target declared takes the family's file route, as before.
 
     Parameters
     ----------
-    expected_columns
-        Mapping from public target names to the raw MF6 observation column names
-        expected in one CSV.
-    no_value
-        What MF6's no-data value (3e30) becomes: ``0.0`` for a flow, ``NaN`` for
-        a stage (see :func:`_clean_observation_output_values`).
+    model : SimulationBase
+        The run model: ``model.package`` finds the packages (a model without it,
+        or without a package of the type, has nothing declared).
+    quantity : _ObservedQuantity
+        The family's package type, observation type and messages.
+    wanted : dict of str to tuple of (str, str, object)
+        Key to ``(target name, label, identity)``: the label MF6 would write (as
+        ``_observation_label`` makes it) and the target's own zero-based lake or
+        reach number, or ``(layer, cell)``. A DRN zone has one key per cell.
+    package : str or None, optional
+        The owning package's NAME, any case: only its observations count. Default
+        ``None``: the model's one package of the type.
+
+    Returns
+    -------
+    dict of str to _DeclaredObservation or None
+        The declared observation per key, or ``None`` when no target is declared.
+
+    Raises
+    ------
+    ValueError
+        As listed above; when ``package`` names no package of the type in the
+        model; when the model carries several packages of the type, ``package``
+        is not given and a label is declared in them; or when the file route
+        would have to read one of several packages (LAK, SFR) or one DRN package
+        apart from the others.
     """
 
-    if not expected_columns:
-        return None
+    everyone = _packages_of_type(model, quantity.package_type)
+    packages = everyone if package is None else [_named_package(model, quantity, package)]
+    declared = _declared_observations(packages, cellid=quantity.cellid)
+    by_label: dict[str, list[_DeclaredObservation]] = {}
+    for observation in declared:
+        by_label.setdefault(observation.obsname.upper(), []).append(observation)
+    hits = {key: by_label.get(str(label).upper(), []) for key, (_name, label, _identity) in wanted.items()}
+    if len(packages) > 1 and any(hits.values()):
+        raise _several_packages(
+            quantity,
+            packages,
+            "the targets' labels are declared in their observations, and "
+            + (
+                f"a {quantity.package_type.upper()} observation measures ONE package's drain in "
+                "its cell"
+                if quantity.cellid
+                else f"a {quantity.feature} number counts within ONE package"
+            ),
+            f"Name the package the targets belong to: {quantity.owner}(..., package=<its name>).",
+        )
 
-    expected_lower = {str(column).strip().lower() for column in expected_columns.values()}
-    for _path, frame in _workspace_csv_frames(model):
-        lower_map = {str(column).strip().lower(): column for column in frame.columns}
-        if not expected_lower.issubset(lower_map):
-            continue
-        time_column = frame.columns[0]
-        result = pd.DataFrame({"time": pd.to_numeric(frame[time_column], errors="coerce")})
-        for name, raw_column in expected_columns.items():
-            actual = lower_map[str(raw_column).strip().lower()]
-            result[str(name)] = _clean_observation_output_values(
-                frame[actual], no_value=no_value
+    chosen: dict[str, _DeclaredObservation] = {}
+    missing: list[str] = []
+    wrong: list[str] = []
+    for key, (name, label, identity) in wanted.items():
+        found = hits[key]
+        own = [observation for observation in found if observation.obstype == quantity.obstype]
+        where = f"target {name!r} ({quantity.feature} {_shown(identity)}, label {str(label).upper()})"
+        if not found:
+            missing.append(key)
+        elif not own:
+            wrong.append(
+                f"{where} is declared as another quantity, not {quantity.obstype.upper()}: "
+                + ", ".join(observation.record() for observation in found)
             )
-        return result
+        elif len(own) > 1:
+            wrong.append(
+                f"{where} is declared {len(own)} times as {quantity.obstype.upper()}: "
+                + ", ".join(observation.record() for observation in own)
+            )
+        elif own[0].features != (identity,):
+            named = ", ".join(_shown(feature) for feature in own[0].features) or "nothing the package has"
+            wrong.append(
+                f"{where} is declared for {quantity.feature} {named}: {own[0].record()}"
+            )
+        else:
+            chosen[key] = own[0]
+    if wrong:
+        raise ValueError(
+            f"{quantity.owner}: a target's observation label names another observation in "
+            f"the {quantity.package_type.upper()} package's own OBS, so the observation route "
+            f"would read something else in its place -- {_listing(wrong)}. Correct the "
+            "target's id, or rename it (or the observation). "
+            + (
+                "A (layer, cell) is zero-based, as FloPy holds a cellid."
+                if quantity.cellid
+                else f"A target's {quantity.feature} number is zero-based; MF6's OBS numbers "
+                "them from one."
+            )
+        )
+    if chosen and missing:
+        targets = list(dict.fromkeys(name for name, _label, _identity in wanted.values()))
+        short = {wanted[key][0] for key in missing}
+        declared_names = [name for name in targets if name not in short]
+        raise ValueError(
+            f"{quantity.owner}: the observation route reads a whole target set or none of it, "
+            f"and {len(declared_names)} of {len(targets)} targets are declared in the "
+            f"{quantity.package_type.upper()} package's observations "
+            f"({_listing(repr(name) for name in declared_names)}) while "
+            f"{_listing(repr(name) for name in targets if name in short)} "
+            f"{'is' if len(short) == 1 else 'are'} not (labels "
+            f"{_listing(str(wanted[key][1]).upper() for key in missing)}). The two routes are "
+            f"on different clocks, so the set would be read from {quantity.file_route} in "
+            "silence. Declare the missing observations (to_flopy_obs / attach_flopy_obs), or "
+            "give each route its own target set."
+        )
+    if chosen:
+        return chosen
+    if len(everyone) > 1 and package is None and not quantity.file_route_reads_every_package:
+        raise _several_packages(
+            quantity,
+            everyone,
+            f"none of the targets is declared in their observations, and {quantity.file_route}, "
+            f"which they would be read from instead, belongs to ONE {quantity.package_type.upper()} "
+            "package",
+            "Declare the targets' observations on the package they belong to, and name it: "
+            f"{quantity.owner}(..., package=<its name>).",
+        )
+    if len(everyone) > 1 and package is not None:
+        raise _several_packages(
+            quantity,
+            everyone,
+            f"package={package!r} declares none of the targets' labels, and "
+            + (
+                f"{quantity.file_route} sums every {quantity.package_type.upper()} package's "
+                "drains in a zone -- it cannot read one package's alone"
+                if quantity.file_route_reads_every_package
+                else f"{quantity.file_route} cannot be chosen by package"
+            ),
+            f"Declare the targets' observations on {package!r}"
+            + (", or drop package= to read every package's drains."
+               if quantity.file_route_reads_every_package else "."),
+        )
     return None
+
+
+def _observation_workspace(model) -> Path:
+    """The directory a model's declared observation files are written in."""
+
+    for attribute in ("workspace", "model_output_folder_path"):
+        value = getattr(model, attribute, None)
+        if value is not None:
+            return Path(value)
+    raise ValueError("The model has no workspace to read its declared observation files from.")
+
+
+def _read_declared_observations(
+    model,
+    chosen: dict[str, _DeclaredObservation],
+    *,
+    owner: str,
+    no_value: float = 0.0,
+) -> pd.DataFrame:
+    """Read each key's declared observation from ITS file and column: ``time`` plus one column per key.
+
+    Only the files the package declares are opened, never a workspace scan: a
+    CSV left by a previous run in a reused directory (``prepare_run(overwrite=True)``
+    keeps MF6's old outputs), a backup copy or another package's file is never
+    read (ledger 344). A record is found by its POSITION -- MF6 writes a file's
+    records as its columns, in declaration order -- and its header is checked
+    against the name MF6 keeps (the first 40 characters, upper-cased), so two
+    names MF6 cuts to one header are still two columns.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        The run model; its workspace holds the files.
+    chosen : dict of str to _DeclaredObservation
+        What :func:`_declared_route` chose, in the order the columns come back.
+    owner : str
+        The target class, for messages.
+    no_value : float, optional
+        What MF6's no-data value (3e30) becomes (see
+        :func:`_clean_observation_output_values`). Default ``0.0``, for a flow.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``time`` (MF6's simulated time, one row per time step) and one float
+        column per key of ``chosen``.
+
+    Raises
+    ------
+    FileNotFoundError
+        When a declared file is not in the workspace.
+    ValueError
+        When a file's columns do not line up with its declared records (a count
+        or a header that differs), or two files hold different times.
+    """
+
+    workspace = _observation_workspace(model)
+    files: dict[str, list[tuple[str, _DeclaredObservation]]] = {}
+    for key, observation in chosen.items():
+        files.setdefault(observation.csv, []).append((key, observation))
+    columns: dict[str, pd.Series] = {}
+    time: pd.Series | None = None
+    time_file = None
+    for csv, entries in files.items():
+        path = workspace / csv
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"{owner}: {entries[0][1].record()} declares its output in {csv}, which is "
+                f"not in {workspace}. MF6 writes it when the model runs; has this workspace "
+                "run since the observation was declared?"
+            )
+        with path.open() as handle:
+            header = [text.strip() for text in handle.readline().rstrip("\r\n").split(",")]
+        try:
+            frame = pd.read_csv(path, header=None, skiprows=1)
+        except pd.errors.EmptyDataError:
+            frame = pd.DataFrame(columns=range(len(header)))
+        width = entries[0][1].width
+        if len(header) != width + 1 or frame.shape[1] != width + 1:
+            raise ValueError(
+                f"{owner}: {path} holds {len(header) - 1} observation column(s) where its OBS "
+                f"declares {width} records ({entries[0][1].package!r}): the file and the "
+                "declaration do not line up."
+            )
+        for key, observation in entries:
+            written = header[observation.column + 1].upper()
+            if written != observation.obsname.upper()[:_MF6_OBSNAME_LENGTH]:
+                raise ValueError(
+                    f"{owner}: column {observation.column + 1} of {path} is headed {written!r} "
+                    f"where {observation.record()} is declared there: the file and the "
+                    "declaration do not line up."
+                )
+            columns[key] = _clean_observation_output_values(
+                frame[observation.column + 1], no_value=no_value
+            )
+        this_time = pd.to_numeric(frame[0], errors="coerce").astype(float).reset_index(drop=True)
+        if time is None:
+            time, time_file = this_time, csv
+        elif not np.array_equal(time.to_numpy(), this_time.to_numpy()):
+            raise ValueError(
+                f"{owner}: the declared observation files {time_file} and {csv} hold different "
+                "times, so their rows cannot be read side by side."
+            )
+    result = pd.DataFrame({"time": time if time is not None else pd.Series(dtype=float)})
+    for key in chosen:
+        result[key] = columns[key].reset_index(drop=True).to_numpy()
+    return result
+
+
+def _refuse_observation_kind(kind, quantity: _ObservedQuantity) -> str:
+    """``kind`` upper-cased, when it is the family's quantity; anything else raises (ledger 344)."""
+
+    written = str(kind).strip().upper()
+    if written != quantity.obstype.upper():
+        raise ValueError(
+            f"{quantity.owner} writes {quantity.obstype.upper()} observations, the quantity it "
+            f"reads back; kind={kind!r} would be declared under the targets' names and refused "
+            "when read (a label declared as another quantity is not the target's). Declare "
+            "another observation type with FloPy directly, under a name of its own."
+        )
+    return written
+
+
+def _refuse_shared_labels(names, quantity: _ObservedQuantity) -> None:
+    """Refuse two target names MF6 would read as one observation label (ledger 344).
+
+    MF6 upper-cases an observation's name, so ``"Pond A"`` and ``"pond-a"`` --
+    written ``Pond_A`` and ``pond_a`` -- are one label: both were accepted, MF6
+    wrote the header ``time,POND_A,POND_A``, and both targets read the first lake.
+    """
+
+    owners: dict[str, list[str]] = {}
+    for name in names:
+        owners.setdefault(_observation_label(name).upper(), []).append(str(name))
+    clashes = {label: named for label, named in owners.items() if len(named) > 1}
+    if clashes:
+        raise ValueError(
+            f"{quantity.owner}: two target names would be written as one MF6 observation label "
+            "(letters and digits only, any case): "
+            + _listing(f"{label} from {', '.join(repr(name) for name in named)}"
+                       for label, named in clashes.items())
+            + ". Rename one of them."
+        )
 
 
 def _ensure_unique_observation_names(

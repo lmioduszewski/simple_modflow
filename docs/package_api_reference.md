@@ -590,9 +590,29 @@ reach reads its outflow) -- the quantity MF6's `DOWNSTREAM-FLOW` observation rep
 a zone's flow is its cells ADDED within that one step. Both flows used to add every
 step a period saved as well: 3.0x at `nstp=3` under `SAVE BUDGET ALL`.
 
-A lake, reach or zone target reads one of two routes: MF6's own observation, when one
-workspace CSV holds a column for every target NAME (the lake or reach id is not
-consulted), else the output file. On the file it reads ONE value per lake per saved
+A lake, reach or zone target reads one of two routes: MF6's own observation, when
+EVERY target of the set is DECLARED in the owning package's OBS, else the output file.
+**Declared means by identity** (ledger 344): a target's label -- its name as
+`to_flopy_obs` writes it -- is declared in the LAK/SFR/DRN package's own OBS as the
+family's quantity (`STAGE`, `DOWNSTREAM-FLOW`, `DRN`) and for the target's own lake,
+reach or cell (a number from one, a boundname resolved through the package's
+`packagedata`, or the cellid). Only the files that OBS names are read, each record
+from its own column. It used to take the first `*.csv` anywhere in the workspace, in
+sorted order, whose header held every NAME: a lake target read another lake's stage, a
+GWF head (`heads.csv` sorts first) or a LAK `VOLUME`; an SFR stage target the
+`DOWNSTREAM-FLOW` of a same-named flow target; and a stale copy -- a backup, or the CSV
+a previous run left in a directory `prepare_run(overwrite=True)` reused -- froze every
+PEST realization at its values. A label declared as another quantity only, for another
+lake, reach or cell, or twice, is REFUSED naming the target and the record; so is a
+set declared in PART (it silently moved the whole set to the file route, on another
+clock); a set with nothing declared reads the file, as before. A model carrying several
+LAK, SFR or DRN packages needs `package=<name>` on the targets (their lake and reach
+numbers each start at 0), carried into PEST's forward run; with none it is refused
+wherever the targets are declared -- and for LAK and SFR always, since their file
+belongs to one package -- while an undeclared DRN zone still sums every package's
+drains. `to_flopy_obs` refuses a `kind=` other than the family's quantity and two
+names MF6 would upper-case to one label (`"Pond A"`, `"pond-a"`). An SFR stage's
+no-data value (3e30) reads `NaN` there, as a lake's does. On the file it reads ONE value per lake per saved
 record and ONE per reach or zone per stress period, at the period's end (ledgers 331,
 336; it had added a lake's copies, one per connected cell, and a period's steps). The
 two routes label `time` differently -- MF6's simulated time, one row per time step,

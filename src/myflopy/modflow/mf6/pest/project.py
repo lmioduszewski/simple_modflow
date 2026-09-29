@@ -1014,7 +1014,8 @@ class PestProject:
                     f"kind='{series_config['kind']}', "
                     f"locations_file='{locations_file}', "
                     f"output_csv='{series_config['output_csv']}', "
-                    f"model_name='{self.model.name}')",
+                    f"model_name='{self.model.name}', "
+                    f"package={series_config.get('package')!r})",
                     is_pre_cmd=False,
                 )
                 continue

@@ -393,6 +393,9 @@ def _prepare_named_series_observations(
             "kind": metadata_kind,
             "locations_file": locations_path.name if locations_path is not None else None,
             "output_csv": simulated_path.name,
+            # The package the targets name (ledger 344), so every realization
+            # reads the observations the base run did.
+            "package": getattr(targets, "package", None),
         },
         "metadata": metadata,
     }

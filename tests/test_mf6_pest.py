@@ -718,25 +718,45 @@ def test_sfr_flow_table_refuses_to_substitute_exchange_for_missing_routing():
     assert 123.0 not in frame["sim_flow"].values    # exchange never leaks in as flow
 
 
-def test_surface_water_targets_prefer_direct_mf6_observation_csvs():
-    model = _fake_surface_water_model()
-    workspace = _project_temp_dir("surface_water_obs_csv_preference")
-    model.workspace = workspace
+def _declare_observations(model, declared):
+    """Give a test double what FloPy exposes of a package's OBS (ledger 344).
+
+    ``model.package(type)`` answers a package whose ``obs[i].continuous.get_data()``
+    is the ``{csv: [(obsname, obstype, id, id2)]}`` FloPy returns -- ids ONE-based,
+    as MF6 numbers lakes and reaches -- and raises ``AttributeError`` for a type the
+    double does not carry, as a real model does.
+    """
+
+    packages = {
+        package_type: SimpleNamespace(
+            package_name=package_type,
+            obs=[SimpleNamespace(continuous=SimpleNamespace(get_data=lambda data=continuous: data))],
+            packagedata=SimpleNamespace(get_data=lambda: None),
+        )
+        for package_type, continuous in declared.items()
+    }
+
+    def package(name):
+        if name not in packages:
+            raise AttributeError(f"Package {name!r} is not attached to model 'fake'.")
+        return packages[name]
+
+    model.package = package
+    return model
+
+
+def _surface_water_observation_csvs(workspace):
+    """MF6-shaped observation CSVs (``time`` first, one column per record, declared order)."""
 
     pd.DataFrame(
-        {
-            "time": [0, 1],
-            "deep_lake": [101.25, 101.75],
-            "shallow_lake": [96.5, 96.0],
-        }
+        {"time": [0, 1], "DEEP_LAKE": [101.25, 101.75], "SHALLOW_LAKE": [96.5, 96.0]}
     ).to_csv(workspace / "gold_lakes.csv", index=False)
-    pd.DataFrame(
-        {
-            "time": [0, 1],
-            "reach_001": [12.4, 11.9],
-        }
-    ).to_csv(workspace / "gold_sfr_stage.csv", index=False)
+    pd.DataFrame({"time": [0, 1], "REACH_001": [12.4, 11.9]}).to_csv(
+        workspace / "gold_sfr_stage.csv", index=False
+    )
 
+
+def _surface_water_targets():
     lake_targets = LakeStageTargets(
         locations={"deep_lake": 0, "shallow_lake": 1},
         values={"per": [0, 1], "deep_lake": [99.5, 100.5], "shallow_lake": [97.75, 96.9]},
@@ -747,6 +767,26 @@ def test_surface_water_targets_prefer_direct_mf6_observation_csvs():
         values={"per": [0, 1], "reach_001": [11.75, 11.0]},
         time_column="per",
     )
+    return lake_targets, sfr_stage_targets
+
+
+def test_surface_water_targets_read_the_packages_declared_observations():
+    """The observation route reads the files the LAK and SFR packages' OBS declare.
+
+    It used to read any workspace CSV whose header held the target names -- this
+    test's own files, with no OBS package at all -- which is how a stale copy, a
+    GWF head or another package's file was read as a lake's stage (ledger 344).
+    """
+
+    model = _fake_surface_water_model()
+    workspace = _project_temp_dir("surface_water_obs_csv_preference")
+    model.workspace = workspace
+    _surface_water_observation_csvs(workspace)
+    _declare_observations(model, {
+        "lak": {"gold_lakes.csv": [("deep_lake", "STAGE", 1, None), ("shallow_lake", "STAGE", 2, None)]},
+        "sfr": {"gold_sfr_stage.csv": [("reach_001", "STAGE", 1, None)]},
+    })
+    lake_targets, sfr_stage_targets = _surface_water_targets()
 
     lake_compare = lake_targets.compare(model)
     assert pytest.approx(
@@ -763,6 +803,23 @@ def test_surface_water_targets_prefer_direct_mf6_observation_csvs():
     assert pytest.approx(
         sfr_stage_compare.loc[sfr_stage_compare["per"] == 1, "sim_stage"].iloc[0]
     ) == 11.9
+
+
+def test_an_undeclared_workspace_csv_is_not_read_as_observations():
+    """The same CSVs with no OBS declaring them: the targets read their packages' own
+    output files (the double's stage tables), never a CSV that merely has the names."""
+
+    model = _fake_surface_water_model()
+    workspace = _project_temp_dir("surface_water_obs_csv_undeclared")
+    model.workspace = workspace
+    _surface_water_observation_csvs(workspace)
+    lake_targets, sfr_stage_targets = _surface_water_targets()
+
+    lake_compare = lake_targets.compare(model)
+    deep = lake_compare.loc[lake_compare["name"] == "deep_lake"].sort_values("per")
+    assert deep["sim_stage"].tolist() == [100.0, 101.0]
+    sfr_stage_compare = sfr_stage_targets.compare(model).sort_values("per")
+    assert sfr_stage_compare["sim_stage"].tolist() == [12.0, 11.5]
 
 
 def test_drn_flow_targets_accept_polygon_zones():

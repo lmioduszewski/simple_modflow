@@ -16,23 +16,38 @@ from myflopy.modflow.mf6.grid.domain import model_domain
 from myflopy.modflow.mf6.grid.geometry import cell_shares, domain_active, miss_reason
 from myflopy.modflow.mf6.observations._shared import (
     _aggregate_named_series,
-    _clean_observation_output_values,
     _copy_frame,
+    _declared_route,
     _default_compare_stats,
     _default_obs_csv_name,
-    _find_named_observation_output,
     _in_grid_crs,
     _measured_periods,
+    _named_package,
     _normalize_compare_time,
     _normalize_named_series_values,
     _observation_label,
+    _ObservedQuantity,
     _placement_note,
+    _read_declared_observations,
+    _refuse_observation_kind,
     _report_missed_features,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
 from myflopy.modflow.mf6.period_end import period_ends
 
 logger = get_logger(__name__)
+
+#: What a seepage zone reads on the observation route: a DRN package's DRN
+#: observations, one per zone cell (ledger 344). The budget route sums every
+#: drain in a zone's cells whichever DRN package holds it.
+_DRN_FLOW = _ObservedQuantity(
+    owner="DrnFlowTargets",
+    package_type="drn",
+    obstype="drn",
+    feature="cell",
+    file_route="the model's cell-budget file",
+    file_route_reads_every_package=True,
+)
 
 
 def _zone_layer(value, name) -> int:
@@ -456,6 +471,15 @@ class DrnFlowTargets:
     shared a number. A zone is summed ONCE over the union of its rows' cells, and
     written to MF6 as one observation per cell.
 
+    **The observation route reads what the DRN package DECLARES** (ledger 344):
+    a zone reads MF6's ``DRN`` observations only when every one of its cells'
+    labels (as :meth:`to_flopy_obs` writes them) is declared in the DRN
+    package's own OBS as a ``DRN`` observation OF THAT CELL, from the file that
+    OBS names; a label declared as another quantity only, for another cell or
+    twice raises, and so does a set of which some zone cells are declared and
+    some are not. It used to read the first workspace CSV whose header held the
+    labels -- a stale copy sorting first froze every PEST realization at it.
+
     Parameters
     ----------
     locations : str, pathlib.Path, GeoDataFrame, DataFrame, Series, dict, list or tuple
@@ -532,6 +556,18 @@ class DrnFlowTargets:
         list/tuple without that column; a list/tuple of another length raises
         ``ValueError``. Ignored for a ``DataFrame``, ``Series`` or CSV path.
         Default ``None``.
+    package : str or None, optional
+        The NAME of the DRN package whose observations the zones read (FloPy's
+        ``package_name``, any case), needed when the model carries several DRN
+        packages and the zones' cells are declared in their observations: a DRN
+        observation measures ONE package's drain in a cell. Default ``None``:
+        the model's one DRN package; with several, reading raises
+        ``ValueError`` naming them when a zone cell's label is declared in any
+        of them, and otherwise the budget route sums every package's drains in
+        each zone, as before. A named package that declares none of the zone
+        cells raises too -- the budget route cannot read one package's drains
+        apart from the others' -- as does a ``package`` the model does not
+        have. :meth:`attach_flopy_obs` attaches to it.
 
     Examples
     --------
@@ -551,6 +587,7 @@ class DrnFlowTargets:
     time_column: str = "time"
     value_column: str = "flow"
     times: list | tuple | pd.Index | pd.Series | None = None
+    package: str | None = None
 
     def __post_init__(self):
         """Normalize the zone definitions and observed discharge into internal tables."""
@@ -840,14 +877,17 @@ class DrnFlowTargets:
         )
         return details.reset_index(drop=True)
 
-    def _obs_column_map(self, model) -> tuple[pd.DataFrame, dict[str, list[str]]]:
-        """The resolved zones and, per zone NAME, the MF6 observation label of each member cell.
+    def _observed(self, model) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+        """The resolved zones, and the observation route's wide table (``None`` for the budget file).
 
-        A zone given as several rows is ONE zone here as on the budget-file route
-        (:func:`_zone_members`): its labels are those of the union of its rows'
-        cells, each once. It was keyed per row by assignment, so the LAST row won
-        and a zone of rows ``[20]`` and ``[21, 27]`` summed cells 21 and 27 only on
-        this route while the budget route summed all three (ledger 336).
+        Each zone cell's label is the one :meth:`to_flopy_obs` writes, from the one
+        :func:`_zone_labels`, and it must be declared in the DRN package's own OBS
+        as a ``DRN`` observation OF THAT CELL (ledger 344); a zone reads the sum of
+        its cells' columns in each time step. A zone given as several rows is ONE
+        zone (:func:`_zone_members`): its labels are those of the union of its
+        rows' cells, each once -- it was keyed per row by assignment, so the LAST
+        row won and a zone of rows ``[20]`` and ``[21, 27]`` summed cells 21 and 27
+        only on this route (ledger 336).
 
         Parameters
         ----------
@@ -856,62 +896,45 @@ class DrnFlowTargets:
 
         Returns
         -------
-        tuple of (pandas.DataFrame, dict of str to list of str)
-            The resolved zones (:meth:`zone_definitions`), and each zone's labels
-            in ascending ``(layer, cell)`` order -- the labels
-            :meth:`to_flopy_obs` writes, from the one :func:`_zone_labels`.
+        tuple of (pandas.DataFrame, pandas.DataFrame or None)
+            The resolved zones (:meth:`zone_definitions`), and ``time`` plus one
+            column per zone -- a zone of no cells reads 0.0 -- or ``None`` when no
+            zone cell is declared.
 
         Raises
         ------
         ValueError
-            As :meth:`zone_definitions`; or when two zones' cells would carry one
-            label (:func:`_zone_labels`).
+            As :meth:`zone_definitions` and :func:`_zone_labels`; and as the
+            observation route refuses (:meth:`simulated_series`).
+        FileNotFoundError
+            When a declared observation file is not in the workspace.
         """
 
         zones = self.zone_definitions(model)
-        zone_columns = {
-            name: [label for label, _cellid in entries]
-            for name, entries in _zone_labels(_zone_members(zones)).items()
+        labels = _zone_labels(_zone_members(zones))
+        wanted = {
+            f"{zone_name}__{index}": (zone_name, label, cellid)
+            for zone_name, entries in labels.items()
+            for index, (label, cellid) in enumerate(entries)
         }
-        return zones, zone_columns
-
-    def _simulated_series_from_obs(self, model) -> pd.DataFrame | None:
-        """Sum per-cell observation-CSV outputs into one wide series per zone, or ``None`` if absent."""
-
-        zones, zone_columns = self._obs_column_map(model)
-        expected = {
-            f"{zone_name}__{index}": column
-            for zone_name, columns in zone_columns.items()
-            for index, column in enumerate(columns)
-        }
-        observed = _find_named_observation_output(model, expected_columns=expected)
-        if observed is None:
-            return None
-
+        chosen = _declared_route(model, _DRN_FLOW, wanted, package=self.package)
+        if chosen is None:
+            return zones, None
+        observed = _read_declared_observations(model, chosen, owner=_DRN_FLOW.owner)
         result = pd.DataFrame({"time": observed["time"]})
-        for zone_name, columns in zone_columns.items():
-            if not columns:
-                result[zone_name] = 0.0
-                continue
-            zone_frame = pd.DataFrame(
-                {
-                    column: _clean_observation_output_values(
-                        observed[f"{zone_name}__{index}"]
-                    )
-                    for index, column in enumerate(columns)
-                }
-            )
-            result[zone_name] = zone_frame.sum(axis=1)
-        return result
+        for zone_name, entries in labels.items():
+            keys = [f"{zone_name}__{index}" for index in range(len(entries))]
+            result[zone_name] = observed.loc[:, keys].sum(axis=1) if keys else 0.0
+        return zones, result
 
     def _compare_from_obs(self, model) -> pd.DataFrame | None:
         """Build the target-vs-simulated compare table from observation output, or ``None``."""
 
-        wide = self._simulated_series_from_obs(model)
+        zones, wide = self._observed(model)
         if wide is None:
             return None
 
-        details = self._zone_details(self.zone_definitions(model))
+        details = self._zone_details(zones)
         simulated = wide.melt(id_vars=["time"], var_name="name", value_name="sim_flow")
         simulated["per"] = simulated["time"]
         simulated = details.merge(simulated, on="name", how="left")
@@ -932,10 +955,13 @@ class DrnFlowTargets:
     def simulated_series(self, model) -> pd.DataFrame:
         """Return one wide simulated-discharge table: a ``time`` column and one column per zone.
 
-        Read from the model's DRN observations when one workspace CSV holds a
-        column for every member cell (MF6's labels, as :meth:`to_flopy_obs` writes
-        them) -- each row is one time step at MF6's simulated time, the zone the
-        sum of its cells in that step -- else from the model's cell-budget file.
+        Read from the DRN package's own ``DRN`` observations when EVERY zone
+        cell's label (as :meth:`to_flopy_obs` writes it) is declared there, for
+        that cell -- only the files that OBS names are read, each record from
+        its own column; each row is one time step at MF6's simulated time, the
+        zone the sum of its cells in that step -- else, when NO zone cell is
+        declared, from the model's cell-budget file (ledger 344; see the class
+        notes for what is refused).
 
         **On the budget-file route a period holds ONE flow per zone: the flow at
         the period's END** (ledger 336), summed over the zone's cells in that
@@ -951,7 +977,8 @@ class DrnFlowTargets:
         model : SimulationBase
             A run model with a DRN package, as ``mf.load_mf6_run(ws)`` or
             ``run.model()`` returns; zones drawn as geometry are resolved against
-            its grid.
+            its grid. The observation route reads the DRN package's declared OBS
+            and the files it names in the model's workspace.
 
         Returns
         -------
@@ -962,10 +989,20 @@ class DrnFlowTargets:
 
         Raises
         ------
+        FileNotFoundError
+            On the observation route, when a file the OBS declares is not in the
+            workspace.
         ValueError
-            On the budget-file route, when a period the budget file saved lacks
-            its final step -- naming the period, the steps saved and the ``SAVE
-            BUDGET LAST`` setting that fixes it, or when the file names a node
+            When a zone cell's label is declared in the DRN's OBS as another
+            quantity only, for another cell or twice as a ``DRN``; when some zone
+            cells of the set are declared and others are not; when the model
+            carries several DRN packages, a zone cell is declared in them and
+            ``package`` does not name one, or ``package`` names one that declares
+            none of them; or when a declared file's columns do not line up with
+            its records (ledger 344). On the budget-file route, when a period
+            the budget file saved lacks its final step -- naming the period, the
+            steps saved and the ``SAVE BUDGET LAST`` setting that fixes it, or
+            when the file names a node
             the model's grid does not have, or a zone names a ``(layer, cell)``
             it does not have (ledger 343); or as :meth:`zone_definitions` (no
             zone landing on an active cell, ledger 211) and :meth:`to_flopy_obs`
@@ -977,11 +1014,10 @@ class DrnFlowTargets:
         >>> series = seeps.simulated_series(model)   # one row per stress period
         """
 
-        observed = self._simulated_series_from_obs(model)
+        zones, observed = self._observed(model)
         if observed is not None:
             return observed
 
-        zones = self.zone_definitions(model)
         frame = self._zone_flow_table(model, zones)
         if frame.empty:
             return pd.DataFrame(columns=["time", *zones["name"].astype(str).tolist()])
@@ -1021,10 +1057,15 @@ class DrnFlowTargets:
 
         Raises
         ------
+        FileNotFoundError
+            As :meth:`simulated_series`: a declared observation file is missing.
         ValueError
-            On the budget-file route, when a period the budget file saved lacks
+            As :meth:`simulated_series`: a zone cell's label declared as
+            something else, a set declared in part, several DRN packages and no
+            ``package``, or a file that does not line up; on the budget-file
+            route, when a period the budget file saved lacks
             its final step or a zone names a ``(layer, cell)`` the model's grid
-            does not have (as :meth:`simulated_series`); or when a target's
+            does not have; or when a target's
             ``time`` is not a whole number, or two rows hold a value for one
             target in one period (the period rule PEST's build reads too, ledger
             340).
@@ -1117,15 +1158,15 @@ class DrnFlowTargets:
             DRN being declared, before any model exists.
         csv_name : str, optional
             The CSV file MF6 writes these observations to -- the dict's one key.
-            Default ``"drn_flow_targets.csv"``. :meth:`simulated_series` reads
-            observations back from a workspace CSV holding a column for every
-            member cell, and skips any file whose name contains ``simulated_`` or
-            ``_target_``.
+            Default ``"drn_flow_targets.csv"``. Any name: :meth:`simulated_series`
+            reads the file the DRN package's OBS declares, whatever it is called
+            (ledger 344).
         kind : str, optional
-            The MF6 observation type written on every record, upper-cased.
-            Default ``"DRN"``, MF6's drain-flow observation, which carries MF6's
-            sign (outflow negative); the observation route of
-            :meth:`simulated_series` sums whatever that CSV holds as the flow.
+            The MF6 observation type written on every record. Must be ``"DRN"``
+            (any case), the default -- MF6's drain-flow observation, which
+            carries MF6's sign (outflow negative) and is the only type the
+            observation route sums as a zone's flow -- and any other raises
+            ``ValueError`` (ledger 344).
 
         Returns
         -------
@@ -1144,13 +1185,15 @@ class DrnFlowTargets:
         Raises
         ------
         ValueError
-            As :meth:`zone_definitions`; or when two zones' cells would carry one
-            label once written (``"a b"`` and ``"a_b"``), naming them.
+            When ``kind`` is not ``"DRN"``; as :meth:`zone_definitions`; or when
+            two zones' cells would carry one label once written (``"a b"`` and
+            ``"a_b"``), naming them.
         """
 
+        kind = _refuse_observation_kind(kind, _DRN_FLOW)
         members = _zone_members(self.zone_definitions(model))
         records = [
-            (label, str(kind).upper(), cellid)
+            (label, kind, cellid)
             for entries in _zone_labels(members).values()
             for label, cellid in entries
         ]
@@ -1174,10 +1217,12 @@ class DrnFlowTargets:
         Parameters
         ----------
         model : SimulationBase or None
-            The model whose FloPy DRN package, ``model.gwf.drn``, receives the
-            OBS package unless ``package`` is given; also passed to
-            :meth:`to_flopy_obs` to resolve the zones. With ``package`` given and
-            every zone's ``cells`` explicit, ``None`` works.
+            The model whose FloPy DRN package receives the OBS package unless
+            ``package`` is given: the one the targets name (their ``package``
+            field, ``ValueError`` when the model has no DRN package of that
+            name), else ``model.gwf.drn``; also passed to :meth:`to_flopy_obs` to
+            resolve the zones. With ``package`` given and every zone's ``cells``
+            explicit, ``None`` works.
         pname : str, optional
             FloPy package name. Default ``"drn_flow_obs"``.
         filename : str or pathlib.Path, optional
@@ -1188,21 +1233,34 @@ class DrnFlowTargets:
             ``filename``'s stem plus ``.csv`` (``"drn_flow_targets.csv"`` for
             the default ``filename``).
         kind : str, optional
-            The MF6 observation type, as in :meth:`to_flopy_obs`. Default
-            ``"DRN"``.
+            The MF6 observation type, as in :meth:`to_flopy_obs`: ``"DRN"``, the
+            default, and nothing else (``ValueError``).
         package : flopy object or None, optional
             The FloPy package (or model) to attach the OBS package to instead of
-            ``model.gwf.drn``. Default ``None``.
+            the one ``model`` resolves (see ``model``). Default ``None``. Reading
+            the observations back needs the targets' own ``package`` field to
+            name it when the model carries several DRN packages.
 
         Returns
         -------
         flopy.mf6.modflow.mfutlobs.ModflowUtlobs
             The observation package.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`to_flopy_obs`; or when the targets name a package the model
+            does not have.
         """
 
         import flopy
 
-        owner = model.gwf.drn if package is None else package
+        if package is not None:
+            owner = package
+        elif self.package is not None:
+            owner = _named_package(model, _DRN_FLOW, self.package)
+        else:
+            owner = model.gwf.drn
         csv_name = _default_obs_csv_name(filename, "drn_flow_targets.csv") if csv_name is None else str(csv_name)
         continuous = self.to_flopy_obs(model, csv_name=csv_name, kind=kind)
         return flopy.mf6.modflow.mfutlobs.ModflowUtlobs(

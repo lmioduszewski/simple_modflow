@@ -12,16 +12,31 @@ import pandas as pd
 from myflopy.modflow.mf6.observations._shared import (
     _aggregate_named_series,
     _copy_frame,
+    _declared_route,
     _default_compare_stats,
     _default_obs_csv_name,
-    _find_named_observation_output,
     _measured_periods,
+    _named_package,
     _normalize_compare_time,
     _normalize_lake_stage_values,
     _observation_label,
+    _ObservedQuantity,
+    _read_declared_observations,
+    _refuse_observation_kind,
+    _refuse_shared_labels,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
 from myflopy.modflow.mf6.period_end import period_ends
+
+#: What a lake target reads on the observation route: a LAK package's STAGE
+#: observations (ledger 344).
+_LAKE_STAGE = _ObservedQuantity(
+    owner="LakeStageTargets",
+    package_type="lak",
+    obstype="stage",
+    feature="lake",
+    file_route="the LAK stage file",
+)
 
 
 def _lake_stage_table(model) -> pd.DataFrame:
@@ -70,8 +85,9 @@ class LakeStageTargets:
     The lake-stage analogue of :class:`HeadTargets`: it pairs named lakes
     (``locations`` -- a ``name -> lake`` mapping, zero-based MF6 lake ids) with
     observed stage ``values`` through time, then aligns them with the model's
-    simulated LAK stage (read from the LAK stage output, or a workspace
-    observation CSV when present). Pass an instance directly to
+    simulated LAK stage (read from the LAK package's own STAGE observations
+    when every target is declared there, else from the LAK stage file). Pass an
+    instance directly to
     ``cal.observe(...)`` for calibration, or call ``.compare(model)`` /
     ``.stats(model)`` to review residuals without a PEST workflow. Omitting
     ``values`` yields an observation *template* useful for capturing simulated
@@ -81,6 +97,16 @@ class LakeStageTargets:
     (ledgers 301, 331) -- the one family the period-end rule cannot reduce yet --
     but a schedule that saves no period's END (``SAVE HEAD FIRST``, ``STEPS``
     short of it) is refused as it is for heads, stages and flows (ledger 336).
+
+    **The observation route reads what the LAK package DECLARES** (ledger 344):
+    a target reads MF6's STAGE observation only when its label (its name as
+    :meth:`to_flopy_obs` writes it) is declared in the LAK package's own OBS as
+    a STAGE of the target's own lake, and only the file that OBS names is read.
+    A label declared as another quantity, for another lake or twice raises,
+    naming the target and the record; so does a set of which some targets are
+    declared and some are not. It used to read the first CSV anywhere in the
+    workspace, in sorted order, whose header held the labels -- a GWF head, a
+    LAK volume, another lake's stage, or a stale copy a previous run left there.
 
     Parameters
     ----------
@@ -122,6 +148,16 @@ class LakeStageTargets:
         list/tuple without that column; a list/tuple of another length raises
         ``ValueError``. Ignored for a ``DataFrame``, ``Series`` or CSV path.
         Default ``None``.
+    package : str or None, optional
+        The NAME of the LAK package the lakes belong to -- FloPy's
+        ``package_name``, as ``model.package_names`` lists it, any case --
+        needed when the model carries several LAK packages, whose lake numbers
+        each start at 0: only that package's STAGE observations are read, and
+        :meth:`attach_flopy_obs` attaches to it. Default ``None``: the model's
+        one LAK package. With several and no ``package``, reading raises
+        ``ValueError`` naming them; so does a ``package`` the model does not
+        have, and a named package that declares none of the targets (the stage
+        file cannot be chosen by package).
 
     Examples
     --------
@@ -139,6 +175,7 @@ class LakeStageTargets:
     time_column: str = "time"
     value_column: str = "stage"
     times: list | tuple | pd.Index | pd.Series | None = None
+    package: str | None = None
 
     #: What a lake with no stage is WRITTEN as in the CSV PEST reads (ledger 329),
     #: by both writers -- the base run and ``write_named_series_targets``, which
@@ -321,22 +358,35 @@ class LakeStageTargets:
             [{"n_lakes": int(len(self._series)), "n_rows": int(len(self._values))}]
         )
 
-    def _obs_column_map(self) -> dict[str, str]:
-        """Map each target name to its MF6 observation label (for matching output CSVs)."""
+    def _observation_route(self, model):
+        """The LAK STAGE observation each target reads, or ``None`` for the stage file (ledger 344)."""
 
-        return {
-            str(name): _observation_label(name)
-            for name in self._series.keys()
-        }
+        return _declared_route(
+            model,
+            _LAKE_STAGE,
+            {name: (name, _observation_label(name), lake) for name, lake in self._series.items()},
+            package=self.package,
+        )
+
+    def _observed(self, model):
+        """The observation route's wide table, or ``None`` when the set reads the stage file."""
+
+        chosen = self._observation_route(model)
+        if chosen is None:
+            return None
+        return _read_declared_observations(model, chosen, owner=_LAKE_STAGE.owner, no_value=np.nan)
 
     def simulated_series(self, model) -> pd.DataFrame:
         """Return one wide simulated-stage table: a ``time`` column and one column per target.
 
-        Read from the model's LAK stage observations when one workspace CSV holds
-        every target's column (MF6's observation labels, as :meth:`to_flopy_obs`
-        writes them), else from ``packages.lak.results.stage``. The two routes
-        label ``time`` differently: the observation route carries MF6's simulated
-        time, the stage-file route the zero-based index of the saved stage record.
+        Read from the LAK package's own STAGE observations when EVERY target's
+        label (its name as :meth:`to_flopy_obs` writes it) is declared there, for
+        the target's own lake -- only the files that OBS names are read, each
+        record from its own column -- else, when NO target is declared, from
+        ``model.lak.results.stage`` (ledger 344; see the class notes for what is
+        refused). The two routes label ``time`` differently: the observation
+        route carries MF6's simulated time, the stage-file route the zero-based
+        index of the saved stage record.
 
         **That index is the stress period only when output control saves one step
         per period, and that step ENDS it** (ledgers 331, 336). Saving several --
@@ -381,8 +431,9 @@ class LakeStageTargets:
         ----------
         model : SimulationBase
             A run model with a LAK package, as ``mf.load_mf6_run(ws)`` or
-            ``run.model()`` returns. The observation route needs its workspace;
-            the stage-file route needs a LAK ``stage_filerecord``.
+            ``run.model()`` returns. The observation route reads the LAK
+            package's declared OBS and the files it names in the model's
+            workspace; the stage-file route needs a LAK ``stage_filerecord``.
 
         Returns
         -------
@@ -395,11 +446,20 @@ class LakeStageTargets:
         Raises
         ------
         AttributeError
-            When no workspace CSV holds the targets and there is no stage file
-            to fall back on: the model has no LAK package ("Package 'lak' is not
-            attached to model ...") or its LAK declares no ``stage_filerecord``.
+            When no target is declared and there is no stage file to fall back
+            on: the model has no LAK package ("Package 'lak' is not attached to
+            model ...") or its LAK declares no ``stage_filerecord``.
+        FileNotFoundError
+            On the observation route, when a file the OBS declares is not in the
+            workspace.
         ValueError
-            On the stage-file route: when a period the stage file saved lacks its
+            When a target's label is declared in the LAK's OBS as another
+            quantity, for another lake or more than once; when some targets of
+            the set are declared and others are not; when the model carries
+            several LAK packages and ``package`` does not name one, or names one
+            that declares none of the targets; or when a declared file's columns
+            do not line up with its records (ledger 344). On the stage-file
+            route: when a period the stage file saved lacks its
             final step -- naming the period, the steps saved and the ``SAVE HEAD
             LAST`` setting that fixes it (ledger 336); or when the rows of one
             lake in one saved record are not copies of one stage -- naming the
@@ -413,9 +473,7 @@ class LakeStageTargets:
         >>> series["pond"].isna()                       # True where the pond is dry
         """
 
-        observed = _find_named_observation_output(
-            model, expected_columns=self._obs_column_map(), no_value=np.nan
-        )
+        observed = self._observed(model)
         if observed is not None:
             return observed
         frame = _lake_stage_table(model)
@@ -475,20 +533,22 @@ class LakeStageTargets:
         Raises
         ------
         AttributeError
-            As :meth:`simulated_series`: no workspace CSV holds the targets and
-            the model has no LAK stage file.
+            As :meth:`simulated_series`: no target is declared and the model has
+            no LAK stage file.
+        FileNotFoundError
+            As :meth:`simulated_series`: a declared observation file is missing.
         ValueError
-            On the stage-file route, when a period the stage file saved lacks its
-            final step or a lake's copies in one record disagree (as
-            :meth:`simulated_series`); or when a target's ``time`` is not a
+            As :meth:`simulated_series`: a target's label declared as something
+            else, a set declared in part, several LAK packages and no
+            ``package``, or a file that does not line up; on the stage-file
+            route, when a period the stage file saved lacks its final step or a
+            lake's copies in one record disagree; or when a target's ``time`` is not a
             whole number, or two rows hold a value for one target in one period
             (the period rule PEST's build reads too, ledger 340).
         """
 
         definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
-        observed = _find_named_observation_output(
-            model, expected_columns=self._obs_column_map(), no_value=np.nan
-        )
+        observed = self._observed(model)
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_stage")
             simulated["per"] = simulated["time"]
@@ -567,28 +627,39 @@ class LakeStageTargets:
         ----------
         csv_name : str, optional
             The CSV file MF6 writes these observations to -- the dict's one key.
-            Default ``"lake_stage_targets.csv"``. :meth:`simulated_series` reads
-            observations back from a workspace CSV holding every target's
-            column, and skips any file whose name contains ``simulated_`` or
-            ``_target_``.
+            Default ``"lake_stage_targets.csv"``. Any name: :meth:`simulated_series`
+            reads the file the LAK package's OBS declares, whatever it is called
+            (ledger 344).
         kind : str, optional
-            The MF6 LAK observation type written on every record, upper-cased.
-            Default ``"STAGE"``. The observation route of :meth:`simulated_series`
-            and :meth:`compare` reads whatever that CSV holds as the stage.
+            The MF6 LAK observation type written on every record. Must be
+            ``"STAGE"`` (any case), the default -- the only type the observation
+            route reads back -- and any other raises ``ValueError``: it wrote,
+            say, a ``VOLUME`` under the targets' names, which that route then
+            read as the stage (ledger 344).
 
         Returns
         -------
         dict of str to list of tuple
-            ``{csv_name: [(label, kind, lake + 1), ...]}``, one record per
+            ``{csv_name: [(label, "STAGE", lake + 1), ...]}``, one record per
             target: its name with every character that is not a letter or digit
             made ``_`` and leading and trailing ``_`` stripped (``"obs"`` if
             nothing is left), and its lake number ONE-based. The shape
             ``ModflowUtlobs(continuous=)`` and a LAK package's ``observations=``
             take.
+
+        Raises
+        ------
+        ValueError
+            When ``kind`` is not ``"STAGE"``, or two target names would be
+            written as one label once MF6 upper-cases it (``"Pond A"`` and
+            ``"pond-a"``: MF6 wrote the header ``POND_A,POND_A`` and both targets
+            read the first lake).
         """
 
+        kind = _refuse_observation_kind(kind, _LAKE_STAGE)
+        _refuse_shared_labels(self._series.keys(), _LAKE_STAGE)
         records = [
-            (_observation_label(name), str(kind).upper(), int(lake_id) + 1)
+            (_observation_label(name), kind, int(lake_id) + 1)
             for name, lake_id in self._series.items()
         ]
         return {str(csv_name): records}
@@ -611,8 +682,10 @@ class LakeStageTargets:
         Parameters
         ----------
         model : SimulationBase
-            The model whose FloPy LAK package, ``model.gwf.lak``, receives the
-            OBS package unless ``package`` is given (a model with no LAK raises
+            The model whose FloPy LAK package receives the OBS package unless
+            ``package`` is given: the one the targets name (their ``package``
+            field, ``ValueError`` when the model has no LAK package of that
+            name), else ``model.gwf.lak`` (a model with no LAK raises
             ``AttributeError`` there). The records themselves need no model.
         pname : str, optional
             FloPy package name. Default ``"lak_obs"``.
@@ -624,22 +697,34 @@ class LakeStageTargets:
             ``filename``'s stem plus ``.csv`` (``"lake_stage_targets.csv"`` for
             the default ``filename``).
         kind : str, optional
-            The MF6 LAK observation type, as in :meth:`to_flopy_obs`. Default
-            ``"STAGE"``.
+            The MF6 LAK observation type, as in :meth:`to_flopy_obs`: ``"STAGE"``,
+            the default, and nothing else (``ValueError``).
         package : flopy object or None, optional
             The FloPy package (or model) to attach the OBS package to instead of
-            ``model.gwf.lak`` -- for a model with several LAK packages, say.
-            Default ``None``.
+            the one ``model`` resolves (see ``model``). Default ``None``. Reading
+            the observations back needs the targets' own ``package`` field to
+            name it when the model carries several LAK packages.
 
         Returns
         -------
         flopy.mf6.modflow.mfutlobs.ModflowUtlobs
             The observation package.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`to_flopy_obs`; or when the targets name a package the model
+            does not have.
         """
 
         import flopy
 
-        owner = model.gwf.lak if package is None else package
+        if package is not None:
+            owner = package
+        elif self.package is not None:
+            owner = _named_package(model, _LAKE_STAGE, self.package)
+        else:
+            owner = model.gwf.lak
         csv_name = _default_obs_csv_name(filename, "lake_stage_targets.csv") if csv_name is None else str(csv_name)
         continuous = self.to_flopy_obs(csv_name=csv_name, kind=kind)
         return flopy.mf6.modflow.mfutlobs.ModflowUtlobs(

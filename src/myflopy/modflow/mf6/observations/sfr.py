@@ -13,17 +13,42 @@ from myflopy.modflow.mf6.observations._shared import (
     _aggregate_named_series,
     _clean_observation_output_values,
     _copy_frame,
+    _declared_route,
     _default_compare_stats,
     _default_obs_csv_name,
-    _find_named_observation_output,
     _measured_periods,
+    _named_package,
     _normalize_compare_time,
     _normalize_named_integer_locations,
     _normalize_named_series_values,
     _observation_label,
+    _ObservedQuantity,
+    _read_declared_observations,
+    _refuse_observation_kind,
+    _refuse_shared_labels,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
 from myflopy.modflow.mf6.period_end import period_ends
+
+#: What a reach-stage target reads on the observation route: an SFR package's
+#: STAGE observations (ledger 344).
+_SFR_STAGE = _ObservedQuantity(
+    owner="SfrStageTargets",
+    package_type="sfr",
+    obstype="stage",
+    feature="reach",
+    file_route="the SFR stage file",
+)
+
+#: What a streamflow target reads there: an SFR package's DOWNSTREAM-FLOW
+#: observations (ledger 344).
+_SFR_FLOW = _ObservedQuantity(
+    owner="SfrFlowTargets",
+    package_type="sfr",
+    obstype="downstream-flow",
+    feature="reach",
+    file_route="the SFR budget file",
+)
 
 
 def _exchange_column(frame: pd.DataFrame) -> str:
@@ -98,6 +123,16 @@ class SfrStageTargets:
     336): on the stage file, the record that ends the period, and a period whose
     final step output control did not save is refused rather than read early.
 
+    **The observation route reads what the SFR package DECLARES** (ledger 344):
+    a target reads MF6's STAGE observation only when its label is declared in
+    the SFR package's own OBS as a STAGE of the target's own reach, from the file
+    that OBS names; declared as another quantity (a ``DOWNSTREAM-FLOW`` under
+    the same name is another observation, and is left alone), for another reach
+    or twice, it raises, and so does a set declared only in part. It used to
+    read the first workspace CSV whose header held the labels: a flow column
+    read as a stage (-93.87 ft), reach 0 for a target naming reach 3. MF6's
+    no-data value (3e30) reads as ``NaN`` there, as a lake's does.
+
     Parameters
     ----------
     locations : dict, pandas.Series, pandas.DataFrame, list, tuple or None, optional
@@ -138,6 +173,15 @@ class SfrStageTargets:
         list/tuple without that column; a list/tuple of another length raises
         ``ValueError``. Ignored for a ``DataFrame``, ``Series`` or CSV path.
         Default ``None``.
+    package : str or None, optional
+        The NAME of the SFR package the reaches belong to (FloPy's
+        ``package_name``, any case), needed when the model carries several SFR
+        packages, whose reach numbers each start at 0: only its observations are
+        read, and :meth:`attach_flopy_obs` attaches to it. Default ``None``: the
+        model's one SFR package. With several and no ``package``, reading raises
+        ``ValueError`` naming them; so does a ``package`` the model does not
+        have, and a named package that declares none of the targets (the stage
+        file cannot be chosen by package).
 
     Examples
     --------
@@ -155,6 +199,7 @@ class SfrStageTargets:
     time_column: str = "time"
     value_column: str = "stage"
     times: list | tuple | pd.Index | pd.Series | None = None
+    package: str | None = None
 
     def __post_init__(self):
         """Normalize the ``name -> reach`` locations and observed values into internal tables."""
@@ -200,20 +245,35 @@ class SfrStageTargets:
 
         return pd.DataFrame([{"n_reaches": int(len(self._locations)), "n_rows": int(len(self._values))}])
 
-    def _obs_column_map(self) -> dict[str, str]:
-        """Map each target name to its MF6 observation label (for matching output CSVs)."""
+    def _observed(self, model):
+        """The observation route's wide table, or ``None`` when the set reads the stage file.
 
-        return {
-            str(name): _observation_label(name)
-            for name in self._locations["name"].astype(str).tolist()
-        }
+        A reach's no-data value (3e30) is ``NaN`` here, as a lake's is: a stage
+        of 0.0 ft is never the reading of "no stage" (ledger 344).
+        """
+
+        chosen = _declared_route(
+            model,
+            _SFR_STAGE,
+            {
+                str(name): (str(name), _observation_label(name), int(reach))
+                for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
+            },
+            package=self.package,
+        )
+        if chosen is None:
+            return None
+        return _read_declared_observations(model, chosen, owner=_SFR_STAGE.owner, no_value=np.nan)
 
     def simulated_series(self, model) -> pd.DataFrame:
         """Return one wide simulated-stage table: a ``time`` column and one column per target.
 
-        Read from the model's SFR stage observations when one workspace CSV holds
-        every target's column (MF6's observation labels, as :meth:`to_flopy_obs`
-        writes them), else from ``packages.sfr.results.stage``. The two routes
+        Read from the SFR package's own STAGE observations when EVERY target's
+        label (its name as :meth:`to_flopy_obs` writes it) is declared there, for
+        the target's own reach -- only the files that OBS names are read, each
+        record from its own column, MF6's no-data value (3e30) as ``NaN`` --
+        else, when NO target is declared, from ``model.sfr.results.stage``
+        (ledger 344; see the class notes for what is refused). The two routes
         label ``time`` differently: the observation route carries MF6's simulated
         time, one row per time step; the stage-file route the zero-based stress
         period.
@@ -234,8 +294,9 @@ class SfrStageTargets:
         ----------
         model : SimulationBase
             A run model with an SFR package, as ``mf.load_mf6_run(ws)`` or
-            ``run.model()`` returns. The observation route needs its workspace;
-            the stage-file route needs an SFR ``stage_filerecord``.
+            ``run.model()`` returns. The observation route reads the SFR
+            package's declared OBS and the files it names in the model's
+            workspace; the stage-file route needs an SFR ``stage_filerecord``.
 
         Returns
         -------
@@ -246,8 +307,17 @@ class SfrStageTargets:
 
         Raises
         ------
+        FileNotFoundError
+            On the observation route, when a file the OBS declares is not in the
+            workspace.
         ValueError
-            On the stage-file route: when a period the stage file saved lacks
+            When a target's label is declared in the SFR's OBS as another
+            quantity only, for another reach or twice as a STAGE; when some
+            targets of the set are declared and others are not; when the model
+            carries several SFR packages and ``package`` does not name one, or
+            names one that declares none of the targets; or when a declared
+            file's columns do not line up with its records (ledger 344). On the
+            stage-file route: when a period the stage file saved lacks
             its final step -- naming the period, the steps saved and the ``SAVE
             HEAD LAST`` setting that fixes it; or when the rows of one reach in
             one saved record are not copies of one stage -- naming the reach, the
@@ -260,7 +330,7 @@ class SfrStageTargets:
         >>> series = targets.simulated_series(model)   # one row per stress period
         """
 
-        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        observed = self._observed(model)
         if observed is not None:
             return observed
         frame = model.sfr.results.stage.get().copy()
@@ -298,15 +368,19 @@ class SfrStageTargets:
 
         Raises
         ------
+        FileNotFoundError
+            As :meth:`simulated_series`: a declared observation file is missing.
         ValueError
-            On the stage-file route, when a period the stage file saved lacks
-            its final step or a reach's copies in one record disagree (as
-            :meth:`simulated_series`); or when a target's ``time`` is not a
-            whole number, or two rows hold a value for one target in one period
-            (the period rule PEST's build reads too, ledger 340).
+            As :meth:`simulated_series`: a target's label declared as something
+            else, a set declared in part, several SFR packages and no
+            ``package``, or a file that does not line up; on the stage-file
+            route, when a period the stage file saved lacks its final step or a
+            reach's copies in one record disagree; or when a target's ``time`` is
+            not a whole number, or two rows hold a value for one target in one
+            period (the period rule PEST's build reads too, ledger 340).
         """
 
-        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        observed = self._observed(model)
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_stage")
             simulated["per"] = simulated["time"]
@@ -379,28 +453,37 @@ class SfrStageTargets:
         ----------
         csv_name : str, optional
             The CSV file MF6 writes these observations to -- the dict's one key.
-            Default ``"sfr_stage_targets.csv"``. :meth:`simulated_series` reads
-            observations back from a workspace CSV holding every target's
-            column, and skips any file whose name contains ``simulated_`` or
-            ``_target_``.
+            Default ``"sfr_stage_targets.csv"``. Any name: :meth:`simulated_series`
+            reads the file the SFR package's OBS declares, whatever it is called
+            (ledger 344).
         kind : str, optional
-            The MF6 SFR observation type written on every record, upper-cased.
-            Default ``"STAGE"``. The observation route of :meth:`simulated_series`
-            and :meth:`compare` reads whatever that CSV holds as the stage.
+            The MF6 SFR observation type written on every record. Must be
+            ``"STAGE"`` (any case), the default -- the only type the observation
+            route reads back as a stage -- and any other raises ``ValueError``
+            (ledger 344).
 
         Returns
         -------
         dict of str to list of tuple
-            ``{csv_name: [(label, kind, reach + 1), ...]}``, one record per
+            ``{csv_name: [(label, "STAGE", reach + 1), ...]}``, one record per
             target: its name with every character that is not a letter or digit
             made ``_`` and leading and trailing ``_`` stripped (``"obs"`` if
             nothing is left), and its reach ONE-based. The shape
             ``ModflowUtlobs(continuous=)`` and an SFR package's
             ``observations=`` take.
+
+        Raises
+        ------
+        ValueError
+            When ``kind`` is not ``"STAGE"``, or two target names would be
+            written as one label once MF6 upper-cases it (``"Gage A"`` and
+            ``"gage-a"``).
         """
 
+        kind = _refuse_observation_kind(kind, _SFR_STAGE)
+        _refuse_shared_labels(self._locations["name"].astype(str), _SFR_STAGE)
         records = [
-            (_observation_label(name), str(kind).upper(), int(reach) + 1)
+            (_observation_label(name), kind, int(reach) + 1)
             for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
         ]
         return {str(csv_name): records}
@@ -423,8 +506,10 @@ class SfrStageTargets:
         Parameters
         ----------
         model : SimulationBase
-            The model whose FloPy SFR package, ``model.gwf.sfr``, receives the
-            OBS package unless ``package`` is given (a model with no SFR raises
+            The model whose FloPy SFR package receives the OBS package unless
+            ``package`` is given: the one the targets name (their ``package``
+            field, ``ValueError`` when the model has no SFR package of that
+            name), else ``model.gwf.sfr`` (a model with no SFR raises
             ``AttributeError`` there). The records themselves need no model.
         pname : str, optional
             FloPy package name. Default ``"sfr_stage_obs"``.
@@ -436,21 +521,34 @@ class SfrStageTargets:
             ``filename``'s stem plus ``.csv`` (``"sfr_stage_targets.csv"`` for
             the default ``filename``).
         kind : str, optional
-            The MF6 SFR observation type, as in :meth:`to_flopy_obs`. Default
-            ``"STAGE"``.
+            The MF6 SFR observation type, as in :meth:`to_flopy_obs`: ``"STAGE"``,
+            the default, and nothing else (``ValueError``).
         package : flopy object or None, optional
             The FloPy package (or model) to attach the OBS package to instead of
-            ``model.gwf.sfr``. Default ``None``.
+            the one ``model`` resolves (see ``model``). Default ``None``. Reading
+            the observations back needs the targets' own ``package`` field to
+            name it when the model carries several SFR packages.
 
         Returns
         -------
         flopy.mf6.modflow.mfutlobs.ModflowUtlobs
             The observation package.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`to_flopy_obs`; or when the targets name a package the model
+            does not have.
         """
 
         import flopy
 
-        owner = model.gwf.sfr if package is None else package
+        if package is not None:
+            owner = package
+        elif self.package is not None:
+            owner = _named_package(model, _SFR_STAGE, self.package)
+        else:
+            owner = model.gwf.sfr
         csv_name = _default_obs_csv_name(filename, "sfr_stage_targets.csv") if csv_name is None else str(csv_name)
         continuous = self.to_flopy_obs(csv_name=csv_name, kind=kind)
         return flopy.mf6.modflow.mfutlobs.ModflowUtlobs(
@@ -479,6 +577,14 @@ class SfrFlowTargets:
     refused rather than read early. A reach's flow is what it sends downstream,
     to the next reach, to a mover or out of the network, as MF6's own
     ``DOWNSTREAM-FLOW`` observation measures it.
+
+    **The observation route reads what the SFR package DECLARES** (ledger 344):
+    a target reads MF6's ``DOWNSTREAM-FLOW`` observation only when its label is
+    declared in the SFR package's own OBS as a ``DOWNSTREAM-FLOW`` of the
+    target's own reach, from the file that OBS names; declared as another
+    quantity only (``SFR``, the stream-aquifer exchange), for another reach or
+    twice, it raises, and so does a set declared only in part. It used to read
+    the first workspace CSV whose header held the labels.
 
     Parameters
     ----------
@@ -521,6 +627,15 @@ class SfrFlowTargets:
         list/tuple without that column; a list/tuple of another length raises
         ``ValueError``. Ignored for a ``DataFrame``, ``Series`` or CSV path.
         Default ``None``.
+    package : str or None, optional
+        The NAME of the SFR package the reaches belong to (FloPy's
+        ``package_name``, any case), needed when the model carries several SFR
+        packages, whose reach numbers each start at 0: only its observations are
+        read, and :meth:`attach_flopy_obs` attaches to it. Default ``None``: the
+        model's one SFR package. With several and no ``package``, reading raises
+        ``ValueError`` naming them; so does a ``package`` the model does not
+        have, and a named package that declares none of the targets (the budget
+        file cannot be chosen by package).
 
     Examples
     --------
@@ -537,6 +652,7 @@ class SfrFlowTargets:
     time_column: str = "time"
     value_column: str = "flow"
     times: list | tuple | pd.Index | pd.Series | None = None
+    package: str | None = None
 
     def __post_init__(self):
         """Normalize the ``name -> reach`` locations and observed flows into internal tables."""
@@ -582,13 +698,21 @@ class SfrFlowTargets:
 
         return pd.DataFrame([{"n_reaches": int(len(self._locations)), "n_rows": int(len(self._values))}])
 
-    def _obs_column_map(self) -> dict[str, str]:
-        """Map each target name to its MF6 observation label (for matching output CSVs)."""
+    def _observed(self, model):
+        """The observation route's wide table, or ``None`` when the set reads the budget file."""
 
-        return {
-            str(name): _observation_label(name)
-            for name in self._locations["name"].astype(str).tolist()
-        }
+        chosen = _declared_route(
+            model,
+            _SFR_FLOW,
+            {
+                str(name): (str(name), _observation_label(name), int(reach))
+                for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
+            },
+            package=self.package,
+        )
+        if chosen is None:
+            return None
+        return _read_declared_observations(model, chosen, owner=_SFR_FLOW.owner)
 
     def _package_flow_table(self, model) -> pd.DataFrame:
         """Each reach's streamflow at each stress period's END, from the SFR budget file.
@@ -716,13 +840,15 @@ class SfrFlowTargets:
     def simulated_series(self, model) -> pd.DataFrame:
         """Return one wide simulated-flow table: a ``time`` column and one column per target.
 
-        Read from the model's SFR flow observations when one workspace CSV holds
-        every target's column (MF6's observation labels, as :meth:`to_flopy_obs`
-        writes them), else from the SFR budget file. The two routes label
-        ``time`` differently: the observation route carries MF6's simulated time,
-        one row per time step, and MF6's own sign (``DOWNSTREAM-FLOW`` is
-        negative); the budget-file route the zero-based stress period, and the
-        flow's magnitude.
+        Read from the SFR package's own ``DOWNSTREAM-FLOW`` observations when
+        EVERY target's label (its name as :meth:`to_flopy_obs` writes it) is
+        declared there, for the target's own reach -- only the files that OBS
+        names are read, each record from its own column -- else, when NO target
+        is declared, from the SFR budget file (ledger 344; see the class notes
+        for what is refused). The two routes label ``time`` differently: the
+        observation route carries MF6's simulated time, one row per time step,
+        and MF6's own sign (``DOWNSTREAM-FLOW`` is negative); the budget-file
+        route the zero-based stress period, and the flow's magnitude.
 
         **On the budget-file route a period holds ONE flow per reach: the flow
         at the period's END** (ledger 336) -- the record that ends the period on
@@ -737,8 +863,9 @@ class SfrFlowTargets:
         ----------
         model : SimulationBase
             A run model with an SFR package, as ``mf.load_mf6_run(ws)`` or
-            ``run.model()`` returns. The observation route needs its workspace;
-            the budget-file route an SFR ``budget_filerecord``.
+            ``run.model()`` returns. The observation route reads the SFR
+            package's declared OBS and the files it names in the model's
+            workspace; the budget-file route needs an SFR ``budget_filerecord``.
 
         Returns
         -------
@@ -749,8 +876,17 @@ class SfrFlowTargets:
 
         Raises
         ------
+        FileNotFoundError
+            On the observation route, when a file the OBS declares is not in the
+            workspace.
         ValueError
-            On the budget-file route, when a period the SFR budget file saved
+            When a target's label is declared in the SFR's OBS as another
+            quantity only, for another reach or twice as a ``DOWNSTREAM-FLOW``;
+            when some targets of the set are declared and others are not; when
+            the model carries several SFR packages and ``package`` does not name
+            one, or names one that declares none of the targets; or when a
+            declared file's columns do not line up with its records (ledger
+            344). On the budget-file route, when a period the SFR budget file saved
             lacks its final step -- naming the period, the steps saved and the
             ``SAVE BUDGET LAST`` setting that fixes it.
 
@@ -760,7 +896,7 @@ class SfrFlowTargets:
         >>> series = targets.simulated_series(model)   # one row per stress period
         """
 
-        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        observed = self._observed(model)
         if observed is not None:
             return observed
 
@@ -799,15 +935,19 @@ class SfrFlowTargets:
 
         Raises
         ------
+        FileNotFoundError
+            As :meth:`simulated_series`: a declared observation file is missing.
         ValueError
-            On the budget-file route, when a period the SFR budget file saved
-            lacks its final step (as :meth:`simulated_series`); or when a
-            target's ``time`` is not a whole number, or two rows hold a value
+            As :meth:`simulated_series`: a target's label declared as something
+            else, a set declared in part, several SFR packages and no
+            ``package``, or a file that does not line up; on the budget-file
+            route, when a period the SFR budget file saved lacks its final step;
+            or when a target's ``time`` is not a whole number, or two rows hold a value
             for one target in one period (the period rule PEST's build reads too,
             ledger 340).
         """
 
-        observed = _find_named_observation_output(model, expected_columns=self._obs_column_map())
+        observed = self._observed(model)
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_flow")
             simulated["per"] = simulated["time"]
@@ -881,29 +1021,38 @@ class SfrFlowTargets:
         ----------
         csv_name : str, optional
             The CSV file MF6 writes these observations to -- the dict's one key.
-            Default ``"sfr_flow_targets.csv"``. :meth:`simulated_series` reads
-            observations back from a workspace CSV holding every target's
-            column, and skips any file whose name contains ``simulated_`` or
-            ``_target_``.
+            Default ``"sfr_flow_targets.csv"``. Any name: :meth:`simulated_series`
+            reads the file the SFR package's OBS declares, whatever it is called
+            (ledger 344).
         kind : str, optional
-            The MF6 SFR observation type written on every record, upper-cased.
-            Default ``"DOWNSTREAM-FLOW"``, which MF6 reports NEGATIVE; the
-            observation route of :meth:`simulated_series` and :meth:`compare`
-            reads whatever that CSV holds, sign included, as the flow.
+            The MF6 SFR observation type written on every record. Must be
+            ``"DOWNSTREAM-FLOW"`` (any case), the default -- which MF6 reports
+            NEGATIVE, and the observation route reads, sign included, as the
+            flow -- and any other raises ``ValueError``: ``kind="SFR"`` wrote the
+            stream-aquifer EXCHANGE under the targets' names, which that route
+            read as streamflow (ledger 344).
 
         Returns
         -------
         dict of str to list of tuple
-            ``{csv_name: [(label, kind, reach + 1), ...]}``, one record per
-            target: its name with every character that is not a letter or digit
-            made ``_`` and leading and trailing ``_`` stripped (``"obs"`` if
-            nothing is left), and its reach ONE-based. The shape
+            ``{csv_name: [(label, "DOWNSTREAM-FLOW", reach + 1), ...]}``, one
+            record per target: its name with every character that is not a
+            letter or digit made ``_`` and leading and trailing ``_`` stripped
+            (``"obs"`` if nothing is left), and its reach ONE-based. The shape
             ``ModflowUtlobs(continuous=)`` and an SFR package's
             ``observations=`` take.
+
+        Raises
+        ------
+        ValueError
+            When ``kind`` is not ``"DOWNSTREAM-FLOW"``, or two target names would
+            be written as one label once MF6 upper-cases it.
         """
 
+        kind = _refuse_observation_kind(kind, _SFR_FLOW)
+        _refuse_shared_labels(self._locations["name"].astype(str), _SFR_FLOW)
         records = [
-            (_observation_label(name), str(kind).upper(), int(reach) + 1)
+            (_observation_label(name), kind, int(reach) + 1)
             for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
         ]
         return {str(csv_name): records}
@@ -926,8 +1075,10 @@ class SfrFlowTargets:
         Parameters
         ----------
         model : SimulationBase
-            The model whose FloPy SFR package, ``model.gwf.sfr``, receives the
-            OBS package unless ``package`` is given (a model with no SFR raises
+            The model whose FloPy SFR package receives the OBS package unless
+            ``package`` is given: the one the targets name (their ``package``
+            field, ``ValueError`` when the model has no SFR package of that
+            name), else ``model.gwf.sfr`` (a model with no SFR raises
             ``AttributeError`` there). The records themselves need no model.
         pname : str, optional
             FloPy package name. Default ``"sfr_flow_obs"``.
@@ -939,21 +1090,34 @@ class SfrFlowTargets:
             ``filename``'s stem plus ``.csv`` (``"sfr_flow_targets.csv"`` for
             the default ``filename``).
         kind : str, optional
-            The MF6 SFR observation type, as in :meth:`to_flopy_obs`. Default
-            ``"DOWNSTREAM-FLOW"``.
+            The MF6 SFR observation type, as in :meth:`to_flopy_obs`:
+            ``"DOWNSTREAM-FLOW"``, the default, and nothing else (``ValueError``).
         package : flopy object or None, optional
             The FloPy package (or model) to attach the OBS package to instead of
-            ``model.gwf.sfr``. Default ``None``.
+            the one ``model`` resolves (see ``model``). Default ``None``. Reading
+            the observations back needs the targets' own ``package`` field to
+            name it when the model carries several SFR packages.
 
         Returns
         -------
         flopy.mf6.modflow.mfutlobs.ModflowUtlobs
             The observation package.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`to_flopy_obs`; or when the targets name a package the model
+            does not have.
         """
 
         import flopy
 
-        owner = model.gwf.sfr if package is None else package
+        if package is not None:
+            owner = package
+        elif self.package is not None:
+            owner = _named_package(model, _SFR_FLOW, self.package)
+        else:
+            owner = model.gwf.sfr
         csv_name = _default_obs_csv_name(filename, "sfr_flow_targets.csv") if csv_name is None else str(csv_name)
         continuous = self.to_flopy_obs(csv_name=csv_name, kind=kind)
         return flopy.mf6.modflow.mfutlobs.ModflowUtlobs(

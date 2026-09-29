@@ -93,7 +93,10 @@ MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, 2026-09-27; H, I 2026-09-29)  before    a
                                                 `<name>_LAY` (MF6 accepts it, Normal
                                                 termination); the reader finds none of
                                                 its labels and reads the budget file
-                                                (times 0, 1, periods)
+                                                (times 0, 1, periods). Since ledger
+                                                344 (f0fe9c7 -> its commit) the
+                                                observation route reads each DECLARED
+                                                record by its column: times 10, 20
 """
 
 from __future__ import annotations
@@ -317,7 +320,7 @@ def section_i(root):
         times = zone.simulated_series(result.model())["time"].tolist()
         return (f"run.success {result.success}; asked {[len(r[0]) for r in records]} "
                 f"characters, MF6 wrote {header[1:]}; the reader's times {times} "
-                "(periods: the budget file)")
+                "(0, 1: the budget file's periods; 10, 20: the observation route's times)")
 
     _attempt("I", "45-character labels", run)
 
