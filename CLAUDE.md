@@ -515,10 +515,11 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5421 passed / 4 skipped**, 2026-09-29, ledger 344 on the PEST-target
-  series 340-343): `-n 10` **1m42s** in a worktree outside `.claude`, at a load average of
-  ~0.8 at its start, with an ABSOLUTE `PYTHONPATH` (next bullet); serial not re-measured.
-  Before it, 5371 passed / 4 skipped (2026-09-28, ledger 316's five build-failure
+- Full suite (**5424 passed / 4 skipped**, 2026-09-29, ledger 345, the review of 344):
+  `-n 10` **1m39s** in a worktree outside `.claude`, at a load average of ~0.3 at its
+  start, with an ABSOLUTE `PYTHONPATH` (next bullet); serial not re-measured. Before it,
+  5421 passed / 4 skipped (ledger 344 on the PEST-target series 340-343): `-n 10` 1m42s
+  at ~0.8. Before it, 5371 passed / 4 skipped (2026-09-28, ledger 316's five build-failure
   fixes and their review, rebased onto ledger 339): `-n 10` **1m34s** in a detached checkout
   outside `.claude`, at a load average of ~0.6 at its start; serial not re-measured. The
   same fixes before the rebase counted the same 5371 in 1m30s at ~6.1, and ledger 339 alone
@@ -1710,16 +1711,19 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   owning package's OBS records (`package.obs[i].continuous`): a label counts only when
   declared as the family's quantity for the target's OWN lake/reach/cell (a number from
   one, or a boundname via `packagedata`), and `_read_declared_observations` reads only
-  those files, each record BY POSITION (MF6 cuts names to 40 characters; the header is
-  checked, not matched). Refused by name: another quantity only, another id, a label
-  declared twice, a set declared in PART (the route is chosen for the whole set, since
-  the two routes are on different clocks), a missing declared file, and a model with
-  several LAK/SFR/DRN packages unless the targets name one (`package=`, carried into the
-  forward run). `to_flopy_obs` refuses a `kind=` other than the quantity and two names
-  one label once upper-cased. A test double reaching the observation route must answer
-  `model.package(type)` with a package whose `obs[i].continuous.get_data()` holds the
-  records (`tests/test_mf6_pest.py::_declare_observations`); one without `package`
-  declares nothing and reads the file route. A template built before this reads by
+  those files, each record BY POSITION, as text or MF6's `BINARY` form (ledger 345; MF6
+  cuts names to 40 characters; the header is checked, not matched). Refused by name:
+  another quantity only, another id, a label declared twice, a set declared in PART
+  (the route is chosen for the whole set, since the two routes are on different
+  clocks), a missing declared file, and a model with several LAK/SFR/DRN packages unless
+  the targets name one (`package=`, carried into the forward run; packages found by
+  TYPE -- FloPy's `get_package("lak")` answers a package NAMED `lak` first, and the
+  stage VIEWS still read that one alone in silence, ledger 345). `to_flopy_obs` refuses
+  a `kind=` other than the quantity and two names one label once upper-cased. A test
+  double reaching the observation route must answer `model.package(type)` with a
+  package whose `obs[i].continuous.get_data()` holds the records
+  (`tests/test_mf6_pest.py::_declare_observations`); one without `package` declares
+  nothing and reads the file route. A template built before this reads by
   identity without a rebuild -- its baked forward run calls the library's
   `simulated_series` -- but cannot pass `package=`, so a model of several packages of
   the type must be rebuilt.

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 344 entries (349 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 345 entries (350 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 345 | The review of ledger 344: a declared observation file MF6 wrote BINARY is read, and 344's two untested halv... | 2026-09-29 |
 | 344 | The observation route reads the package's DECLARED observations, by identity: a lake, reach or zone target... | 2026-09-29 |
 | 343 | The review of ledger 342: a DRN zone cell the grid does not have is refused on the budget route, and MF6 cu... | 2026-09-29 |
 | 342 | A DRN zone is read by layer and cell, once per zone: the budget route matches MF6's node as a... | 2026-09-27 |
@@ -15617,8 +15618,10 @@ same day, which is the useful part of the result.
       **Found, NOT fixed:** `model.fl.<pkg>` / `model.package("<type>")` return ONE package
       when a package is NAMED exactly the type and another is not (FloPy's name-first
       lookup), where their docstrings promise "a list when the model carries several";
-      the LAK/SFR stage VIEWS still fail on a model of several such packages
-      (`AttributeError` on FloPy's list); and running the suite with a RELATIVE
+      ~~the LAK/SFR stage VIEWS still fail on a model of several such packages
+      (`AttributeError` on FloPy's list)~~ (**half right, ledger 345:** only while no
+      package is NAMED like its type -- with `lak` beside `lak_2` they read `lak`'s lake
+      alone, in silence); and running the suite with a RELATIVE
       `PYTHONPATH=src` makes every PEST forward-run subprocess import the EDITABLE
       install (the main checkout) instead of the worktree, because the forward run's
       working directory is the template -- measured: this commit's forward-run tests
@@ -15638,8 +15641,67 @@ same day, which is the useful part of the result.
       `test_an_sfr_stage_no_data_value_reads_nan`; the two `to_flopy_obs` refusals ->
       `test_to_flopy_obs_refuses_two_names_one_label_and_another_kind`; the three
       several-packages refusals -> `test_several_packages_of_a_type_need_the_targets_
-      package`; `package=` in the forward run or in `attach_flopy_obs` ->
+      package`; ~~`package=` in the forward run or in `attach_flopy_obs`~~ `package=` in
+      the forward-run WRITER or in `attach_flopy_obs` (**the call the build writes into
+      `forward_run.py` was untested -- ledger 345**) ->
       `test_the_targets_package_reaches_attach_and_the_pest_forward_run`; reading by
       header instead of position -> `test_names_mf6_cuts_to_one_header_read_their_own_
       columns`; the missing-file refusal -> `test_a_declared_file_that_is_missing_raises`;
       the header check -> `test_a_declared_file_that_does_not_line_up_raises`.
+345. **The review of ledger 344: a declared observation file MF6 wrote BINARY is read, and 344's two untested halves -- the forward run's `package=` and finding the packages by TYPE -- are tested (2026-09-29).**
+      An adversarial review of 344's commit (09a61a4); its id-check and whole-set revert
+      checks were re-done (each fails its named tests).
+      **A `FILEOUT <file> BINARY` block is READ, not refused.** 344 opened every declared
+      file as text, so a LAK OBS written BINARY -- MF6's other output form -- died on
+      `UnicodeDecodeError`, where before 344 the set read the stage file (the name scan
+      globbed `*.csv` only; reproducer section K). `_shared._observation_output_table`
+      tells the two forms apart by the file's first bytes (`cont` against `time`) -- what
+      MF6 WROTE, whatever the declaration says now -- and reads the binary header
+      (precision, `LENOBSNAME`, count, names) and rows by position, through 344's width
+      and header checks; values that do not fill whole rows are refused naming the file
+      (MF6 stopped part way). Measured: MF6 run on the BINARY declaration reads the CSV
+      run's values to the bit. **Judgment call:** read rather than refuse -- the layout
+      is MF6's own (`Obs.f90` `build_headers`, `ObsUtility.f90`), not a guess, and a
+      refusal would stop a correct model 344 had just moved onto this route. FloPy's
+      `Mf6Obs` was not used: it builds a numpy dtype keyed by NAME, which two names MF6
+      cut to one cannot share, and it ends its read in a bare `except`.
+      **The forward run's `package=` is tested END TO END.** 344 recorded "`package=` in
+      the forward run" as failing `test_the_targets_package_reaches_attach_and_the_pest_
+      forward_run`, which calls the writer itself: dropping `package=` from the call the
+      build writes into `forward_run.py` failed no test (measured: the three PEST test
+      modules, 121 tests, green). Every realization of a model with two LAK or DRN
+      packages would then refuse the set the base run read.
+      `test_the_pest_forward_run_reads_the_package_the_targets_name` builds on 344's
+      `two` model and runs `forward_run.py` as PEST++ does.
+      **Finding the packages by TYPE is tested.** Replacing 344's `get_package(type,
+      type_only=True)` by the name lookup failed no test either: the fixture's packages
+      were `lak_a`/`lak_b`, which no name lookup matches. With `lak` beside `lak_2` -- a
+      default-named first package -- the name lookup sees ONE LAK: before 344 `{"pond":
+      0}` read `lak`'s file by sort order and a set with nothing declared read `lak`'s
+      stage file as the model's, in silence (section L, f0fe9c7).
+      `test_a_package_named_like_its_type_does_not_hide_the_others` (its own fixture, so
+      344's `two` and its messages stay as they were).
+      **344's found-not-fixed about the stage VIEWS was half right** (struck through
+      there): they fail on FloPy's list only while no package is named like its type.
+      With `lak` beside `lak_2`, `model.fl.lak` is `lak` alone and
+      `model.lak.results.stage.get()` returns `lak`'s lake alone, labelled `package lak`,
+      `lak_2`'s absent -- measured. Not fixed here: it is ledger 339's accessor, not the
+      observation route, which refuses that model by name.
+      **344's cost, re-measured on a real model:** a copy of the converted Ten Trails run
+      (23 MB EVT, 22 MB RCH list input), `load_mf6_run` + one
+      `DrnFlowTargets.simulated_series` on the budget route: 1.10 s -> 2.40-2.50 s (two
+      runs each, load average ~0.6-0.8) -- FloPy's lazy I/O keeps the full load cheap.
+      **Minor, not changed:** an SFR stage's `NaN` on the observation route (344) would
+      reach PEST's tables unfilled, where a lake's is written 1e30 (ledger 329); MF6's
+      source never writes a no-data value for an SFR STAGE observation (an inactive
+      reach's stage is its bed top, `gwf-sfr.f90`), so no run reaches it. The
+      `attach_flopy_obs(package=<FloPy object>)` argument and the `package=<name>` field
+      share a name with different types, as 344 documented.
+      Reproducer: sections K and L of `docs/reproducers/obs_route_declared_identity.py`
+      (f0fe9c7, 09a61a4 and this tree). Tests: the three above, in
+      `tests/test_obs_route_declared_identity.py`. Each fix reverted alone fails by name:
+      the binary branch -> `test_a_binary_observation_file_is_read_as_mf6_wrote_it`;
+      `package=` dropped from the build's call ->
+      `test_the_pest_forward_run_reads_the_package_the_targets_name` (with its string
+      check removed, the forward run itself exits non-zero); the name lookup in place of
+      the type -> `test_a_package_named_like_its_type_does_not_hide_the_others`.

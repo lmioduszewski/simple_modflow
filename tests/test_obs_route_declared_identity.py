@@ -475,3 +475,121 @@ def test_the_targets_package_reaches_attach_and_the_pest_forward_run(two, tmp_pa
     attached = mf.LakeStageTargets(locations={"other": 0}, package="lak_b").attach_flopy_obs(
         fresh, filename="other.obs")
     assert attached.parent_file.package_name == "lak_b"
+
+
+# -- the review of ledger 344 (ledger 345) -------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def named_like_the_type(tmp_path_factory):
+    """``two`` with the first LAK and DRN named EXACTLY their type (``lak``, ``drn``) --
+    what a second ``mf.lak``/``mf.drn`` beside a default-named first one gives."""
+
+    model, _ = _run(tmp_path_factory.mktemp("named_like_the_type"), [
+        _lake(name="lak", lakes=((DRYING, 114.0, "pa", 100.0),),
+              observations={"a.csv": [("pond", "STAGE", 1)]}),
+        _lake(name="lak_2", lakes=((HELD, 116.0, "pb", 100.0),),
+              observations={"b.csv": [("pond", "STAGE", 1)]}),
+        _drain("drn", [20], {"da.csv": [("s_c20", "DRN", (0, 20))]}, elevation=96.0),
+        _drain("drn_2", [20], {"db.csv": [("s_c20", "DRN", (0, 20))]}, elevation=97.0),
+    ])
+    return model
+
+
+@pytest.mark.slow
+def test_a_package_named_like_its_type_does_not_hide_the_others(named_like_the_type):
+    """FloPy's ``get_package("lak")`` answers the package NAMED ``lak`` before the type,
+    so a lookup by that spelling saw ONE LAK here: ``pond`` read ``lak``'s lake in
+    silence, and a set with nothing declared read ``lak``'s stage file as the model's
+    (ledger 344 found the packages by type; nothing tested it until ledger 345)."""
+
+    model = named_like_the_type
+    a, b = _csv(model, "a.csv"), _csv(model, "b.csv")
+    assert not np.allclose(a["POND"], b["POND"])
+    with pytest.raises(ValueError, match=r"2 LAK packages \('lak', 'lak_2'\).*package=<its name>"):
+        mf.LakeStageTargets(locations={"pond": 0}).simulated_series(model)
+    with pytest.raises(ValueError, match=r"2 LAK packages \('lak', 'lak_2'\); none of the targets"):
+        mf.LakeStageTargets(locations={"x": 0}).simulated_series(model)
+    series = mf.LakeStageTargets(locations={"pond": 0}, package="lak_2").simulated_series(model)
+    np.testing.assert_array_equal(series["pond"], b["POND"])
+    series = mf.LakeStageTargets(locations={"pond": 0}, package="LAK").simulated_series(model)
+    np.testing.assert_array_equal(series["pond"], a["POND"])
+
+    with pytest.raises(ValueError, match=r"2 DRN packages \('drn', 'drn_2'\)"):
+        mf.DrnFlowTargets(locations={"s": [20]}).simulated_series(model)
+    series = mf.DrnFlowTargets(locations={"s": [20]}, package="drn_2").simulated_series(model)
+    np.testing.assert_array_equal(series["s"], _csv(model, "db.csv")["S_C20"])
+
+
+@pytest.mark.slow
+def test_a_binary_observation_file_is_read_as_mf6_wrote_it(declared, tmp_path):
+    """``FILEOUT <file> BINARY`` is MF6's other output form: the reader opened it as
+    text and died on ``UnicodeDecodeError``. MF6 runs the declaration here, and the
+    binary file reads the CSV's values to the bit, by position and header."""
+
+    import subprocess
+
+    copy = tmp_path / "ws"
+    shutil.copytree(declared.workspace, copy)
+    text = (copy / "m.lak.obs").read_text()
+    assert "FILEOUT  lake_stage_targets.csv\n" in text
+    (copy / "m.lak.obs").write_text(
+        text.replace("BEGIN continuous  FILEOUT  lake_stage_targets.csv",
+                     "BEGIN continuous  FILEOUT  lake_stage_targets.bsv  BINARY")
+        .replace("END continuous  FILEOUT  lake_stage_targets.csv", "END continuous"))
+    (copy / "lake_stage_targets.csv").unlink()
+    run = subprocess.run(["mf6"], cwd=copy, capture_output=True, text=True)
+    assert run.returncode == 0, run.stdout[-2000:]
+    assert (copy / "lake_stage_targets.bsv").read_bytes()[:11] == b"cont double"
+
+    csv = _csv(declared, "lake_stage_targets.csv")
+    reloaded = mf.load_mf6_run(copy, verbosity_level=0)
+    series = mf.LakeStageTargets(locations={"drying": 0, "held": 1}).simulated_series(reloaded)
+    np.testing.assert_array_equal(series["time"], TIMES)
+    np.testing.assert_array_equal(series["drying"], csv["DRYING"])
+    np.testing.assert_array_equal(series["held"], 118.0)
+    with pytest.raises(ValueError, match=r"another quantity, not STAGE: `pond VOLUME 1` in lake_stage_targets.bsv"):
+        mf.LakeStageTargets(locations={"pond": 0}).simulated_series(reloaded)
+
+    whole = (copy / "lake_stage_targets.bsv").read_bytes()
+    (copy / "lake_stage_targets.bsv").write_bytes(whole[:-8])
+    with pytest.raises(ValueError, match=r"not a whole number of rows of 5 \(time and 4 records\)"):
+        mf.LakeStageTargets(locations={"drying": 0}).simulated_series(reloaded)
+
+
+@pytest.mark.slow
+def test_the_pest_forward_run_reads_the_package_the_targets_name(two, tmp_path):
+    """The forward run PEST executes must be handed ``package=``. Dropping it from the
+    call the build writes into ``forward_run.py`` failed no test (ledger 345), and every
+    realization of a model with two LAK (or DRN) packages would then refuse the set
+    the base run read. The generated ``forward_run.py`` runs here, as PEST++ runs it."""
+
+    import subprocess
+    import sys
+
+    pytest.importorskip("pyemu")
+    lakes = mf.LakeStageTargets(locations={"pond": 0}, package="lak_b",
+                                values={"time": [10.0], "pond": [112.0]})
+    seeps = mf.DrnFlowTargets(locations={"s": [20]}, package="drn_b",
+                              values=pd.DataFrame({"time": [10.0], "s": [-150.0]}))
+    cal = two.pest("pkg", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
+    cal.observe(lakes)
+    cal.observe(seeps)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("pkg.pst", noptmax=0)
+    template = cal.template_workspace
+    forward = (template / "forward_run.py").read_text()
+    assert "package='lak_b'" in forward and "package='drn_b'" in forward
+    tables = {name: (template / name).read_text() for name in (
+        "stage_simulated_lake_stage.csv", "drn_flow_simulated_drn_flow.csv")}
+
+    subprocess.run([sys.executable, "forward_run.py"], cwd=template, check=True,
+                   capture_output=True, text=True)
+    for name, base in tables.items():
+        assert (template / name).read_text() == base, name
+    np.testing.assert_array_equal(
+        pd.read_csv(template / "stage_simulated_lake_stage.csv")["pond"], _csv(two, "b.csv")["POND"])
+    np.testing.assert_array_equal(
+        pd.read_csv(template / "drn_flow_simulated_drn_flow.csv")["s"], _csv(two, "db.csv")["S_C20"])

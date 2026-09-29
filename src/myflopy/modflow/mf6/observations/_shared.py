@@ -554,6 +554,84 @@ def _declared_route(
     return None
 
 
+def _observation_output_table(path: Path, *, owner: str) -> tuple[list[str], pd.DataFrame]:
+    """One MF6 continuous-observation output file: its header and its rows, by position.
+
+    MF6 writes a continuous block as TEXT (``time,NAME1,NAME2`` then one line per
+    time step) or, when the block is declared ``FILEOUT <file> BINARY``, as a
+    stream: a 100-byte header opening ``cont double`` (or ``cont single``) with
+    ``LENOBSNAME`` in bytes 12-15, the int32 record count, each name blank-padded
+    to ``LENOBSNAME``, then one ``time`` plus one value per record per time step in
+    that precision (``Obs.f90``'s ``build_headers`` and ``ObsUtility.f90``). The two
+    are told apart by the file's first bytes -- ``cont`` against ``time`` -- because
+    that is what MF6 wrote, whatever the declaration now says. A binary file was
+    read as text, and died on ``UnicodeDecodeError`` (ledger 345).
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The output file, as the OBS declares it.
+    owner : str
+        The target class, for messages.
+
+    Returns
+    -------
+    tuple of (list of str, pandas.DataFrame)
+        The header -- ``"time"`` and each record's name as MF6 wrote it -- and the
+        rows, columns numbered from 0 (``time``) in the file's order.
+
+    Raises
+    ------
+    ValueError
+        When a binary file's header cannot be read, or its values do not fill a
+        whole number of rows (MF6 stopped mid-write, or the file is not MF6's).
+    """
+
+    with path.open("rb") as handle:
+        opening = handle.read(4)
+    if opening != b"cont":
+        with path.open() as handle:
+            header = [text.strip() for text in handle.readline().rstrip("\r\n").split(",")]
+        try:
+            frame = pd.read_csv(path, header=None, skiprows=1)
+        except pd.errors.EmptyDataError:
+            frame = pd.DataFrame(columns=range(len(header)))
+        return header, frame
+
+    raw = path.read_bytes()
+    try:
+        control = raw[:100].decode("ascii")
+        precision = control[5:11].strip().lower()
+        length = int(control[11:15])
+        count = int(np.frombuffer(raw, dtype="<i4", count=1, offset=100)[0])
+    except (UnicodeDecodeError, ValueError, IndexError) as error:
+        raise ValueError(
+            f"{owner}: {path} opens like MF6's binary observation output ('cont') but its "
+            f"header cannot be read ({error})."
+        ) from error
+    if precision not in {"single", "double"} or length <= 0 or count < 0:
+        raise ValueError(
+            f"{owner}: {path} opens like MF6's binary observation output but its header "
+            f"reads precision {precision!r}, name length {length}, {count} records."
+        )
+    start = 104 + count * length
+    names = [
+        raw[104 + index * length:104 + (index + 1) * length].decode("ascii", errors="replace").strip()
+        for index in range(count)
+    ]
+    itemsize = 8 if precision == "double" else 4
+    body = raw[start:]
+    if len(body) % ((count + 1) * itemsize):
+        raise ValueError(
+            f"{owner}: {path} holds {len(body)} bytes of {precision}-precision values after "
+            f"its header, not a whole number of rows of {count + 1} (time and {count} "
+            "records): MF6 stopped writing it part way, or it is not MF6's file."
+        )
+    values = np.frombuffer(body, dtype="<f8" if itemsize == 8 else "<f4")
+    frame = pd.DataFrame(values.astype(float).reshape(-1, count + 1))
+    return ["time", *names], frame
+
+
 def _observation_workspace(model) -> Path:
     """The directory a model's declared observation files are written in."""
 
@@ -579,7 +657,9 @@ def _read_declared_observations(
     read (ledger 344). A record is found by its POSITION -- MF6 writes a file's
     records as its columns, in declaration order -- and its header is checked
     against the name MF6 keeps (the first 40 characters, upper-cased), so two
-    names MF6 cuts to one header are still two columns.
+    names MF6 cuts to one header are still two columns. A file MF6 wrote as
+    BINARY (``FILEOUT <file> BINARY``) is read as such, by the same rules
+    (:func:`_observation_output_table`, ledger 345).
 
     Parameters
     ----------
@@ -605,7 +685,8 @@ def _read_declared_observations(
         When a declared file is not in the workspace.
     ValueError
         When a file's columns do not line up with its declared records (a count
-        or a header that differs), or two files hold different times.
+        or a header that differs), two files hold different times, or a binary
+        file cannot be read whole (:func:`_observation_output_table`).
     """
 
     workspace = _observation_workspace(model)
@@ -623,12 +704,7 @@ def _read_declared_observations(
                 f"not in {workspace}. MF6 writes it when the model runs; has this workspace "
                 "run since the observation was declared?"
             )
-        with path.open() as handle:
-            header = [text.strip() for text in handle.readline().rstrip("\r\n").split(",")]
-        try:
-            frame = pd.read_csv(path, header=None, skiprows=1)
-        except pd.errors.EmptyDataError:
-            frame = pd.DataFrame(columns=range(len(header)))
+        header, frame = _observation_output_table(path, owner=owner)
         width = entries[0][1].width
         if len(header) != width + 1 or frame.shape[1] != width + 1:
             raise ValueError(

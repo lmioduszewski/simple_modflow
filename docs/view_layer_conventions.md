@@ -106,8 +106,11 @@ header held their labels, so a GWF head, a LAK volume, another lake's stage, a
 same-named SFR flow or a stale copy was read in their place. What an OBS file holds
 is what the owning package's OBS declares -- each record's type, its id and its
 column -- so a reader asks FloPy for that (`observations._shared._declared_route`) and
-reads only those files, each record by position; the MF6 header names are cut to 40
-characters and only checked.
+reads only those files, each record by position, in whichever form MF6 wrote them (text,
+or binary for a block declared `BINARY` -- told apart by the file's first bytes, ledger
+345); the MF6 header names are cut to 40 characters and only checked. It finds a
+package by TYPE (`get_package(type, type_only=True)`): FloPy's `get_package("lak")`
+answers the package NAMED `lak` first, and hides a `lak_2` beside it.
 
 **A feature's value is ONE number, however many rows repeat it** (ledger 331). The LAK
 stage table carries a lake's stage once per CONNECTED CELL and the SFR stage table a

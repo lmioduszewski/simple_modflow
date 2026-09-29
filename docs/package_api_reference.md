@@ -597,7 +597,8 @@ EVERY target of the set is DECLARED in the owning package's OBS, else the output
 family's quantity (`STAGE`, `DOWNSTREAM-FLOW`, `DRN`) and for the target's own lake,
 reach or cell (a number from one, a boundname resolved through the package's
 `packagedata`, or the cellid). Only the files that OBS names are read, each record
-from its own column. It used to take the first `*.csv` anywhere in the workspace, in
+from its own column -- a CSV, or MF6's binary form for a block declared `BINARY` (ledger
+345). It used to take the first `*.csv` anywhere in the workspace, in
 sorted order, whose header held every NAME: a lake target read another lake's stage, a
 GWF head (`heads.csv` sorts first) or a LAK `VOLUME`; an SFR stage target the
 `DOWNSTREAM-FLOW` of a same-named flow target; and a stale copy -- a backup, or the CSV
@@ -607,7 +608,8 @@ lake, reach or cell, or twice, is REFUSED naming the target and the record; so i
 set declared in PART (it silently moved the whole set to the file route, on another
 clock); a set with nothing declared reads the file, as before. A model carrying several
 LAK, SFR or DRN packages needs `package=<name>` on the targets (their lake and reach
-numbers each start at 0), carried into PEST's forward run; with none it is refused
+numbers each start at 0), carried into PEST's forward run -- the packages are found by
+TYPE, so one NAMED `lak` does not hide a `lak_2` beside it (ledger 345); with none it is refused
 wherever the targets are declared -- and for LAK and SFR always, since their file
 belongs to one package -- while an undeclared DRN zone still sums every package's
 drains. `to_flopy_obs` refuses a `kind=` other than the family's quantity and two

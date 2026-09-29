@@ -61,8 +61,14 @@ filling from 90 ft, three 10-day periods of one step.
      INACTIVE reach's STAGE as its bed top -- 94.7 ft for a reach with STATUS
      INACTIVE, measured, the stage file writing 1e30 -- not 3e30, so this copy is
      edited, not run.)
+  K. (ledger 345) A copy of ``declared`` whose LAK OBS writes ``FILEOUT
+     lake_stage_targets.bsv BINARY``, RUN by MF6 there: ``{"drying": 0, "held": 1}``.
+  L. (ledger 345) ``two``'s LAKs renamed ``lak`` and ``lak_2`` -- the first NAMED
+     exactly its type, as a default-named package is: ``{"pond": 0}``, ``{"x": 0}``
+     (nothing declared), ``{"pond": 0}`` with ``package="lak_2"``.
 
-MEASURED (mf6 6.8.0.dev0, 2026-09-29)        before                   after
+MEASURED (mf6 6.8.0.dev0, 2026-09-29; "before" is f0fe9c7, K and L's "after" ledger 345's tree)
+                                             before                   after
   A  {drying: 0, held: 1}                    t 10/20/30: drying       the same, to the bit
                                              110.239 / 110.0 / 110.0
                                              (dry: the bed), held 118
@@ -113,12 +119,24 @@ MEASURED (mf6 6.8.0.dev0, 2026-09-29)        before                   after
                                              -205.856 / ...           'drn_a', 'drn_b'
      package="drn_b"                         TypeError                db.csv: -155.856 / ...
   J  {down: 3}, 3e30 in period 1             0.0 ft                   NaN
+  K  {drying, held}, BINARY (mf6 rc 0,       the stage FILE, t 0/1/2  t 10/20/30: 110.239 /
+     the file opens b'cont double')          (not a *.csv); 344's     110.0 / 110.0, 118 --
+                                             commit (09a61a4):        the CSV run's values
+                                             UnicodeDecodeError       to the bit
+  L  {pond: 0}, LAK 'lak' + 'lak_2'          a.csv ('lak') by sort    ValueError naming
+                                             order: 111.693 / ...     'lak', 'lak_2'
+     {x: 0}, LAK 'lak' + 'lak_2'             'lak''s stage file, in   ValueError naming both
+                                             silence (FloPy answers   and package= (344 and
+                                             get_package("lak") with  after: found by TYPE)
+                                             the package NAMED lak)
+     package="lak_2"                         TypeError                b.csv: 112.549 / ...
 """
 
 from __future__ import annotations
 
 import pathlib
 import shutil
+import subprocess
 import tempfile
 import warnings
 
@@ -338,6 +356,37 @@ def main():
         (nodata / "sfr_stage_targets.csv").write_text("\n".join(text) + "\n")
         _attempt("J", "{down: 3} with 3e30 in period 1",
                  lambda: SS(locations={"down": 3}).simulated_series(mf.load_mf6_run(nodata, verbosity_level=0)))
+
+        # K: the LAK observations written BINARY, by MF6 (ledger 345).
+        binary = root / "binary"
+        shutil.copytree(model.workspace, binary)
+        obs = (binary / "m.lak.obs").read_text()
+        (binary / "m.lak.obs").write_text(
+            obs.replace("BEGIN continuous  FILEOUT  lake_stage_targets.csv",
+                        "BEGIN continuous  FILEOUT  lake_stage_targets.bsv  BINARY")
+            .replace("END continuous  FILEOUT  lake_stage_targets.csv", "END continuous"))
+        (binary / "lake_stage_targets.csv").unlink()
+        ran = subprocess.run(["mf6"], cwd=binary, capture_output=True, text=True)
+        print(f"   mf6 on the BINARY declaration: return code {ran.returncode}, file opens "
+              f"{(binary / 'lake_stage_targets.bsv').read_bytes()[:11]!r}")
+        _attempt("K", "{drying: 0, held: 1}, BINARY",
+                 lambda: L(locations={"drying": 0, "held": 1}).simulated_series(
+                     mf.load_mf6_run(binary, verbosity_level=0)))
+
+        # L: two packages, one NAMED like its type (ledger 345).
+        named, _ = _run(root / "named", [
+            _lake(name="lak", lakes=((DRYING, 114.0, "pa", 100.0),), observations={"a.csv": [("pond", "STAGE", 1)]}),
+            _lake(name="lak_2", lakes=((HELD, 116.0, "pb", 100.0),), observations={"b.csv": [("pond", "STAGE", 1)]}),
+            _oc(),
+        ])
+        for name in ("a.csv", "b.csv"):
+            print(f"   {name}:", pd.read_csv(pathlib.Path(named.workspace) / name).iloc[:, 1].round(3).tolist())
+        print("   m.lak.stg (package 'lak'):",
+              np.round(mf.load_mf6_run(named.workspace, verbosity_level=0).outputs.lak.stage.get()[:, 0], 3).tolist())
+        _attempt("L", "{pond: 0}, LAK 'lak' and 'lak_2'", lambda: L(locations={"pond": 0}).simulated_series(named))
+        _attempt("L", "{x: 0}, LAK 'lak' and 'lak_2'", lambda: L(locations={"x": 0}).simulated_series(named))
+        _attempt("L", "{pond: 0}, package='lak_2'",
+                 lambda: L(locations={"pond": 0}, package="lak_2").simulated_series(named))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
