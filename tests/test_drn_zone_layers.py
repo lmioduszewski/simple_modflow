@@ -28,6 +28,7 @@ file. Expected values are read from the cell-budget file with FloPy.
 
 from __future__ import annotations
 
+import re
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -317,6 +318,29 @@ def test_a_budget_node_the_grid_does_not_have_is_refused():
                             bud=lambda package: SimpleNamespace(df=budget.copy()))
     with pytest.raises(ValueError, match=r"node\(s\) \[5\].*not cells of this model's grid"):
         mf.DrnFlowTargets(locations={"z": [1]}).simulated_series(model)
+
+
+@pytest.mark.parametrize(
+    ("layer", "cells", "stray"),
+    [(1, [20, 99], "[(1, 99)]"), (5, [20], "[(5, 20)]"), (1, [-1, 20, 21], "[(1, -1)]")],
+    ids=["cell past the layer", "layer below the bottom", "negative cell"],
+)
+def test_a_zone_cell_the_grid_does_not_have_is_refused_on_the_budget_route(toy, layer, cells, stray):
+    """Review of ledger 342 (ledger 343): an explicit pair the grid does not have
+    matched no budget row, so ``[20, 99]`` in layer 1 read cell 20 alone as the zone
+    and layer 5 read nothing -- silently, where MF6 refuses the same cellid on the
+    observation route. A cell the grid has but ``idomain`` removes is not refused:
+    it holds no drain and adds zero."""
+
+    zone = mf.DrnFlowTargets(locations=[{"name": "basin", "layer": layer, "cells": cells}])
+    pattern = rf"'basin' {re.escape(stray)}.*2 layer\(s\) of 36 cells"
+    with pytest.raises(ValueError, match=pattern):
+        zone.simulated_series(toy)
+    with pytest.raises(ValueError, match=pattern):
+        zone.compare(toy)
+    kept = mf.DrnFlowTargets(locations=[{"name": "basin", "layer": 0, "cells": [INACTIVE, DECOY]}])
+    np.testing.assert_allclose(kept.simulated_series(toy)["basin"], _raw(toy, [(0, DECOY)]),
+                               rtol=1e-12)
 
 
 # -- a partial miss is heard ---------------------------------------------------------

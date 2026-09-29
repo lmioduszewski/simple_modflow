@@ -12,7 +12,7 @@ docs claimed that is not so on the observation route.
 
 It uses only the public API, so it measures whichever tree is on ``PYTHONPATH`` -- the
 "before" column below is this script run against ledger 340's commit's ``src``
-(``git archive 3a46332 src | tar -x -C <dir>``, then ``PYTHONPATH=<dir>/src``).
+(``git archive 58988d7 src | tar -x -C <dir>``, then ``PYTHONPATH=<dir>/src``).
 Needs ``mf6``.
 
 THE SETUP. ``pest_handed_targets.py``'s model (imported from it): a 6 x 6 irregular

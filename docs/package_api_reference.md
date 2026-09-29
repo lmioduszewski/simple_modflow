@@ -559,6 +559,10 @@ forward run reads the same drains. A zone's rows may sit in different layers; it
 zone of their union. A row gives explicit `cells` or is resolved from its geometry, and
 one table may mix the two (a missing `cells` entry means "resolve me"); a dict or a list
 of record dicts with a `geometry` key is a geometry zone in the grid's coordinates.
+Explicit cells are taken as given, except that reading the budget file refuses a
+`(layer, cell)` the model's grid does not have (ledger 343): it matched no row, so a zone
+of cells `[20, 99]` on 36-cell layers read cell 20 alone, where MF6 refuses the same
+cellid on the observation route.
 `to_flopy_obs` writes ONE record per zone cell -- `<name>_c<cell>`, or
 `<name>_lay<layer>_c<cell>` for a zone in several layers -- where it wrote one per
 locations ROW (every cell of a zone drawn as two rows twice, under one name, which MF6

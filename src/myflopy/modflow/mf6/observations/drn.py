@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -327,6 +328,58 @@ def _zone_members(zones: pd.DataFrame) -> dict[str, set[tuple[int, int]]]:
     return members
 
 
+def _refuse_cells_off_the_grid(members: dict[str, set[tuple[int, int]]], node_to_lni) -> None:
+    """Refuse a zone ``(layer, cell)`` the model's grid does not have, naming the zones.
+
+    An explicit ``cells`` entry is taken as given, and on the budget-file route a
+    pair the grid does not have -- a cell number past its layer's count, a
+    negative one, a layer below the bottom -- matched no budget row, so the zone
+    summed the cells that DID exist and said nothing: a zone of cells ``[20, 99]``
+    on 36-cell layers read cell 20's flow as the zone's (ledger 343). MF6 refuses
+    such a cellid on the observation route ("outside of the grid"), so the two
+    routes now agree. A cell the grid has but whose ``idomain`` removes is NOT
+    refused: it holds no drain and adds zero, as any covered cell without one does.
+
+    Parameters
+    ----------
+    members : dict of str to set of tuple of (int, int)
+        :func:`_zone_members`.
+    node_to_lni : dict of int to tuple of (int, int)
+        The model's ``node_to_lni``: every cell of its grid as ``(layer, cell)``.
+
+    Raises
+    ------
+    ValueError
+        Naming each zone (the first five) with the pairs (its first five) the
+        grid does not have, and the grid's layers and cells.
+    """
+
+    known = set(node_to_lni.values())
+    stray = {
+        name: sorted(pair for pair in pairs if pair not in known)
+        for name, pairs in members.items()
+    }
+    stray = {name: pairs for name, pairs in stray.items() if pairs}
+    if not stray:
+        return
+    per_layer = Counter(int(layer) for layer, _cell in known)
+    counts = sorted(set(per_layer.values()))
+    shape = (
+        f"{len(per_layer)} layer(s) of {counts[0]} cells, numbered from 0"
+        if len(counts) == 1
+        else "layers " + ", ".join(f"{layer}: {per_layer[layer]} cells" for layer in sorted(per_layer))
+    )
+    listing = "; ".join(
+        f"{name!r} {pairs[:5]}" + (f" and {len(pairs) - 5} more" if len(pairs) > 5 else "")
+        for name, pairs in list(stray.items())[:5]
+    )
+    raise ValueError(
+        "DrnFlowTargets: zone(s) name (layer, cell) pairs this model's grid does not "
+        f"have, zero-based: {listing}. The grid has {shape}; correct the zone's "
+        "`cells` or its `layer`."
+    )
+
+
 def _zone_labels(members: dict[str, set[tuple[int, int]]]) -> dict[str, list[tuple[str, tuple[int, int]]]]:
     """Each zone's MF6 observation labels, one per member cell, and the cellid each names.
 
@@ -411,7 +464,9 @@ class DrnFlowTargets:
         one of two ways. EXPLICIT: a ``cells`` entry holding a list of ints, one
         int or a comma-separated string (``"317, 342"``) -- ZERO-based cell
         numbers within the row's ``layer``, taken as given (an empty list, or
-        ``""``, is a zone of no cells); the ``{name: cells}`` dict and a
+        ``""``, is a zone of no cells), except that reading the budget file
+        refuses a ``(layer, cell)`` the model's grid does not have (ledger 343;
+        MF6 refuses it on the observation route); the ``{name: cells}`` dict and a
         ``Series`` of cells indexed by name are shorthands for it. GEOMETRY: a
         row with no ``cells`` entry (no such column, or a missing value in it)
         and a geometry -- :meth:`zone_definitions` resolves it to the cells it
@@ -725,12 +780,15 @@ class DrnFlowTargets:
         ------
         ValueError
             When a period the budget file saved lacks its final step -- naming
-            the period, the steps saved and ``SAVE BUDGET LAST``; or when the
-            budget names a node the grid does not have.
+            the period, the steps saved and ``SAVE BUDGET LAST``; when the
+            budget names a node the grid does not have; or when a zone names a
+            ``(layer, cell)`` the grid does not have (ledger 343: it matched no
+            row, and the zone summed the rest silently).
         """
 
         budget = self._drn_budget_frame(model)
         members = _zone_members(zones)
+        _refuse_cells_off_the_grid(members, model.node_to_lni)
         names = list(members)
         located = pd.MultiIndex.from_arrays([budget["layer"], budget["cell"]])
         pieces = [
@@ -908,7 +966,8 @@ class DrnFlowTargets:
             On the budget-file route, when a period the budget file saved lacks
             its final step -- naming the period, the steps saved and the ``SAVE
             BUDGET LAST`` setting that fixes it, or when the file names a node
-            the model's grid does not have; or as :meth:`zone_definitions` (no
+            the model's grid does not have, or a zone names a ``(layer, cell)``
+            it does not have (ledger 343); or as :meth:`zone_definitions` (no
             zone landing on an active cell, ledger 211) and :meth:`to_flopy_obs`
             (two zones sharing an observation label).
 
@@ -964,7 +1023,8 @@ class DrnFlowTargets:
         ------
         ValueError
             On the budget-file route, when a period the budget file saved lacks
-            its final step (as :meth:`simulated_series`); or when a target's
+            its final step or a zone names a ``(layer, cell)`` the model's grid
+            does not have (as :meth:`simulated_series`); or when a target's
             ``time`` is not a whole number, or two rows hold a value for one
             target in one period (the period rule PEST's build reads too, ledger
             340).

@@ -1687,7 +1687,9 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   now -- a test double reading the DRN budget must carry that map -- and the snapshot
   carries `layer`. A zone is ONE zone of its rows' pairs, compared once and written to
   MF6 once per cell (`<name>_lay<layer>_c<cell>` when it spans layers); a row with no
-  `cells` entry is resolved from its geometry, so one table may mix the two. A partial
+  `cells` entry is resolved from its geometry, so one table may mix the two, and an
+  explicit pair the grid does not have is refused on the budget route (ledger 343: it
+  matched nothing, so `[20, 99]` read cell 20 alone). A partial
   miss of a DRN zone or a head/conc target is a Python warning as well as a log line
   (ledger 288's rule).
 - `forward_run.py` — injected forward run: pyEMU's `apply_list_and_array_pars` for params,

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 342 entries (347 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 343 entries (348 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 343 | The review of ledger 342: a DRN zone cell the grid does not have is refused on the budget route, and MF6 cu... | 2026-09-29 |
 | 342 | A DRN zone is read by layer and cell, once per zone: the budget route matches MF6's node as a... | 2026-09-27 |
 | 341 | The review of ledger 340: a head or concentration target on no active cell is refused by the PEST build, ta... | 2026-09-27 |
 | 340 | What PEST is handed matches the targets: each target is matched to the row PEST's instruction file reads by... | 2026-09-27 |
@@ -15435,9 +15436,10 @@ same day, which is the useful part of the result.
       from the same line, as it does for 288's.
       **A `layer` that is not a layer is refused** (1.5 was truncated to 1 by `int()`, -1
       indexed from the end); a blank stays 0, as the resolver already read it.
-      **NOT done:** an explicit cell id outside the grid is still taken as given and
+      ~~**NOT done:** an explicit cell id outside the grid is still taken as given and
       matches nothing on the budget route (MF6 refuses it on the observation route).
-      Checking it needs each layer's cell count at every consumer; recorded, not guessed.
+      Checking it needs each layer's cell count at every consumer; recorded, not guessed.~~
+      REFUSED on the budget route since ledger 343, which holds the grid's every cell.
       **For the next commit of the series** (the observation route keyed by period): two of
       the new tests read that route's per-step rows (`iloc[NSTP - 1::NSTP]`) and will move
       with it; the others compare against `len(simulated_series(...))`.
@@ -15461,3 +15463,40 @@ same day, which is the useful part of the result.
       and each refusal (label clash, layer, neither cells nor geometry, stray node) its own
       `test_..._refused` test. Two test doubles (`test_drn_zones_on_faces.py`,
       `test_mf6_pest.py`) now carry `node_to_lni` in MF6's user numbering.
+343. **The review of ledger 342: a DRN zone cell the grid does not have is refused on the budget route, and MF6 cutting an observation name to 40 characters is recorded (2026-09-29).**
+      An adversarial review of 342's commit (6aba608); three of its revert checks were
+      re-done (the pair match, the snapshot's `layer`, `warnings.warn`: each fails its
+      named tests).
+      **An explicit `(layer, cell)` the grid does not have is REFUSED on the budget route**
+      -- overruling 342's recorded "NOT done", whose reason (each layer's cell count needed
+      at every consumer) does not hold: the budget route is the only route that could be
+      silent, and it already holds `model.node_to_lni`, every cell of the grid. MF6
+      refuses such a cellid on the observation route ("Cell2d number in list (100) is
+      outside of the grid"), and what `to_flopy_obs` writes is only ever read back through
+      MF6, so the routes now agree. Measured: a zone of cells `[20, 99]` in layer 1, on
+      36-cell layers, read -1992.36 / -2002.16 -- cell 20 alone -- and `[20]` in layer 5 an
+      empty series, both with no word; each now raises naming the zone, the pairs and the
+      grid's shape. **Judgment call:** a cell
+      the grid HAS whose `idomain` removes is not refused -- it holds no drain and adds
+      zero, as any covered cell without one does (myflopy's build already refuses an
+      OBSERVATION there, ledger 321). One helper, `_refuse_cells_off_the_grid`, called from
+      `_zone_flow_table`; `to_flopy_obs(None)`, `summary()` and `get()` still take the
+      cells as given, since nothing there reads a value.
+      **Found, NOT fixed: MF6 cuts an observation name to 40 characters, silently.**
+      Measured: a zone with a 36-character name reaching two layers is written as three
+      45-character `_lay` labels, and MF6 wrote all three as ONE name, `<name>_LAY`, under
+      Normal termination; the reader, finding none of the labels it asked for, read the
+      budget file. It cannot read a wrong column -- it asks for every label of the set in
+      one CSV -- but the observation route is lost without a word, and `_zone_labels`'
+      clash refusal compares the full labels, not the 40 characters MF6 keeps. 342's `_lay`
+      suffix brings the limit in five characters sooner; `<name>_c<cell>` and the head
+      targets' labels have the same limit. Not refused here: the label map is built on
+      EVERY route, so a refusal there would also stop a model whose budget route reads
+      correctly today, and which of the two to break is a decision, not a fix.
+      Also: the reproducers' "before" instructions named the commits as they were before
+      the 2026-09-29 rebase (9871965, 3a46332); they name 4fbcc03 and 58988d7 now.
+      Reproducer: sections H and I of `docs/reproducers/drn_zone_layer_and_cells.py` (H's
+      "before" is 6aba608). Test:
+      `test_a_zone_cell_the_grid_does_not_have_is_refused_on_the_budget_route` (a cell past
+      the layer, a layer below the bottom, a negative cell), which fails in all three cases
+      with the helper's call removed.

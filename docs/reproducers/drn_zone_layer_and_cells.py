@@ -14,7 +14,8 @@ and a partial miss was said only to a logger nobody hears (ledger 288).
 It uses only the public API (plus the forward run's own writer, which a PEST
 template calls), so it measures whichever tree is on ``PYTHONPATH`` -- the "before"
 column below is this script run against the parent commit's ``src``
-(``git archive 9871965 src | tar -x -C <dir>``, then ``PYTHONPATH=<dir>/src``).
+(``git archive 4fbcc03 src | tar -x -C <dir>``, then ``PYTHONPATH=<dir>/src``);
+for H, added by ledger 343's review, "before" is ledger 342's own commit, 6aba608.
 Needs ``mf6``.
 
 THE SETUP. The 6 x 6 irregular Voronoi grid of ``tests/test_flow_targets_period_end.py``
@@ -43,8 +44,15 @@ route and one named ``basin`` the budget file.
   G. Zones ``in`` (cell 27) and ``out`` (5,000 ft beyond the grid); head targets
      ``IN``/``OUT`` the same: Python warnings raised by ``zone_definitions`` and
      ``match_to_model``.
+  H. (ledger 343) Zone ``basin`` given cells ``[20, 99]`` in layer 1 -- cell 99 is
+     past the 36 cells of a layer -- and cells ``[20]`` in layer 5, on the budget
+     route; then the same pair as a DRN observation MF6 is asked to run.
+  I. (ledger 343, found, not fixed) A zone with a 36-character name reaching two
+     layers -- the decoy cell in layer 0, cells 20 and 21 in layer 1 -- written by
+     ``to_flopy_obs`` as three 45-character labels (``<name>_lay<l>_c<c>``): the column
+     names MF6 writes, and which route ``simulated_series`` then reads.
 
-MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, 2026-09-27)        before              after
+MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, 2026-09-27; H, I 2026-09-29)  before    after
   A  CBC DRN nodes (1-based)                    [21, 57, 58, 64]    the same: USER nodes
                                                                     (reduced would read 20,
                                                                     56, 57, 63 past the
@@ -74,6 +82,18 @@ MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, 2026-09-27)        before              af
                                                 not in index"       per == time
   G  Python warnings, 1 of 2 DRN zones missed   0                   1, naming 'out'
      Python warnings, 1 of 2 head targets       0                   1, naming 'OUT'
+  H  [20, 99], layer 1 (budget route)           -1992.36 / -2002.16 ValueError naming
+                                                -- cell 20 ALONE,   'basin' [(1, 99)] and
+                                                with no word        "2 layer(s) of 36 cells"
+     [20], layer 5 (budget route)               an empty series     the same, [(5, 20)]
+     the pair (1, 99) as an MF6 observation     MF6 refuses it on both trees: "Cell2d
+                                                number in list (100) is outside of the grid"
+  I  the three 45-character labels, as MF6      the same on both trees: all three
+     writes them, and the route read            truncated to ONE 40-character name,
+                                                `<name>_LAY` (MF6 accepts it, Normal
+                                                termination); the reader finds none of
+                                                its labels and reads the budget file
+                                                (times 0, 1, periods)
 """
 
 from __future__ import annotations
@@ -267,6 +287,41 @@ def section_g(model):
         print(f"G  Python warnings, {label}: {len(said)} {said}")
 
 
+def section_h(model, root):
+    for label, layer, cells in (("[20, 99], layer 1", 1, [20, 99]), ("[20], layer 5", 5, [20])):
+        zone = mf.DrnFlowTargets(locations=[{"name": "basin", "layer": layer, "cells": cells}])
+        _attempt("H", f"{label} (budget route)",
+                 lambda zone=zone: _two(zone.simulated_series(model)["basin"])
+                 if len(zone.simulated_series(model)) else "an empty series")
+
+    def run():
+        result = _toy(root / "h", observations={"drn_flow_targets.csv": [
+            ("basin_c99", "DRN", (1, 99))]})
+        errors = [line.strip() for line in result.report if "outside of the grid" in line]
+        return f"run.success {result.success}; {errors[:1]}"
+
+    _attempt("H", "the pair (1, 99) as an MF6 observation", run)
+
+
+def section_i(root):
+    name = "a_zone_name_thirty_six_characters_x"
+    name += "x" * (36 - len(name))
+    zone = mf.DrnFlowTargets(locations=[{"name": name, "layer": 0, "cells": [DECOY]},
+                                        {"name": name, "layer": 1, "cells": [20, 21]}])
+    records = zone.to_flopy_obs(None)["drn_flow_targets.csv"]
+
+    def run():
+        result = _toy(root / "i", observations={"drn_flow_targets.csv": records})
+        header = (pathlib.Path(result.model().workspace) / "drn_flow_targets.csv"
+                  ).read_text().splitlines()[0].split(",")
+        times = zone.simulated_series(result.model())["time"].tolist()
+        return (f"run.success {result.success}; asked {[len(r[0]) for r in records]} "
+                f"characters, MF6 wrote {header[1:]}; the reader's times {times} "
+                "(periods: the budget file)")
+
+    _attempt("I", "45-character labels", run)
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as scratch:
         root = pathlib.Path(scratch)
@@ -278,3 +333,5 @@ if __name__ == "__main__":
         section_e(toy)
         section_f(toy)
         section_g(toy)
+        section_h(toy, root)
+        section_i(root)
