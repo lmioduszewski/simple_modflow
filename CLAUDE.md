@@ -552,7 +552,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5460 passed / 4 skipped**, 2026-09-29, ledger 350 -- flow targets in
+- Full suite (**5474 passed / 4 skipped**, 2026-09-29, the PEST-targets series, ledgers
+  340-351 on top of 339): serial (`-n0`) **7m41s** and `-n 10` **1m38s**, both in a worktree
+  outside `.claude` with an absolute `PYTHONPATH`, the serial one starting at a load average of
+  ~8 as the parallel run ended. Before it, 5460 passed / 4 skipped (ledger 350 -- flow targets in
   MF6's sign): `-n 10` **1m38s** in a worktree outside `.claude`, at a load average of
   ~0.1 at its start (1m43s at ~2.7 after the last docs edits), absolute `PYTHONPATH` (a relative `PYTHONPATH=src` fails the two
   tests that run a PEST `forward_run.py` in its template: the subprocess imports another
