@@ -29,8 +29,12 @@ runs of six 10-day periods (one step each), every lake with a STAGE observation:
               excavated to 82.3456789012345 (`LayerStack.excavate`) under `mf.lak`
               (ledger 325's rule), NEWTON, CHD 60 in the lower layer.
   implicit    the excavated run with `mf.lak(implicit=True)`, MF6's LAK IMPLICIT
-              (ledger 326): the stage is a matrix unknown, held at the bottom by
-              Newton under-relaxation (`lak_nur`) rather than by the clamp.
+              (ledger 326): the stage is a matrix unknown, held at the bottom by the
+              SAME clamp -- `lak_cq` re-runs `lak_solve(update=.false.)`, which raises
+              `xnewpak` to `lakebot` in the solution vector the implicit stage lives in
+              (`gwf-lak.f90`, lak_cq, and lak_solve's `xnewpak < lakebot` guards), before
+              either output is written (read in the source). `lak_nur` acts only
+              under NEWTON UNDER_RELAXATION, and this run's name file reads NEWTON.
 Each on the model LOADED from its files and on the one still in memory from its build.
 
 PART 2 -- the two routes and what compare() and PEST are handed, BEFORE (the old rule

@@ -37,8 +37,12 @@ the stage file -- the two routes on one run:
                 CHD 60 in the lower layer; drawn down dry in periods 1-3.
 ``implicit``    the excavated run with ``mf.lak(implicit=True)`` -- MF6's LAK
                 ``IMPLICIT`` (ledger 326), the formulation the user's pond runs, where
-                the stage is an unknown of the flow matrix and MF6 holds it at the
-                bottom by Newton under-relaxation rather than by the clamp.
+                the stage is an unknown of the flow matrix. The SAME clamp holds it at
+                the bottom: ``lak_cq`` re-runs ``lak_solve(update=.false.)``, which
+                raises ``xnewpak`` to ``lakebot`` in the solution vector the implicit
+                stage lives in, before either output is written. (``lak_nur`` acts
+                only under ``NEWTON UNDER_RELAXATION``; this name file reads
+                ``NEWTON``.)
 
 What each file holds is asserted before it is used, not assumed.
 """

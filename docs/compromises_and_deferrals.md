@@ -16168,8 +16168,13 @@ same day, which is the useful part of the result.
       with BELEV 45 < TELEV 58 (45.0), one with BELEV = TELEV = 55 in a cell 60..40 (40.0,
       not the 55 written), ledger 325's excavated pit (82.3456789), and the same pit under
       LAK `IMPLICIT` (ledger 326, the formulation the user's pond runs: the stage is a
-      matrix unknown, held at the bottom by Newton under-relaxation, `lak_nur`, rather
-      than by the clamp -- the same 82.3456789). Nothing under `src` computed it before
+      matrix unknown, ~~held at the bottom by Newton under-relaxation, `lak_nur`, rather
+      than by the clamp~~ held at the bottom by the SAME clamp -- `lak_cq` re-runs
+      `lak_solve(update=.false.)`, which raises `xnewpak` to `lakebot` in the solution
+      vector the implicit stage lives in before either output is written; `lak_nur` acts
+      only under `NEWTON UNDER_RELAXATION`, and the run's name file reads `NEWTON` (the
+      review of this entry; the mechanism read in `gwf-lak.f90`, the name file measured)
+      -- the same 82.3456789). Nothing under `src` computed it before
       (F5's grep). **Considered and not taken:** attaching STAGE
       observations to PEST's template so MF6 supplies the bottom (F5's option 3) -- it
       rewrites the user's LAK and leaves `compare()` on a model without them reading
@@ -16191,7 +16196,13 @@ same day, which is the useful part of the result.
       was made to verify it; `mf.lak` never writes one (it refuses the types), so only
       `mf.lak.flopy` or an imported model reaches it. The message names the way round: a
       STAGE observation, the observation route. The bottoms are computed only when a lake
-      is dry, so a model with none never reads its discretization for this.
+      is dry, so a model with none never reads its discretization for this. **The cost of
+      refusing only when dry** (the review of this entry, read, not run): PEST's build sees
+      the BASE run, so an embedded lake targeted on the stage-file route builds when it is
+      wet there, and every realization in which it then dries FAILS its forward run with
+      this refusal -- a failed run, which PESTPP-IES removes from the ensemble by its
+      manual, not a wrong number. Refusing such a target at
+      build was not done: it would refuse a lake that never dries in any realization.
       **`build_lak_stage_result_table(masked=)`** (default `True`: every view reads what it
       read) rather than a second read of the raw array aligned to the masked table by
       hand -- one reader keeps the file's record labels, and ledger 348's refusal of a
