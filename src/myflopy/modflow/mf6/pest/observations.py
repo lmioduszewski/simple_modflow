@@ -36,7 +36,11 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
-from myflopy.modflow.mf6.observations._shared import _measured_periods, _shown
+from myflopy.modflow.mf6.observations._shared import (
+    _measured_periods,
+    _period_key_hints,
+    _shown,
+)
 from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.forward_run import (
     _write_conc_target_csv,
@@ -190,7 +194,13 @@ def _zone_weights(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
 
 
 def _locate_targets(
-    frame: pd.DataFrame, simulated: pd.DataFrame, *, owner: str, prefix: str, table: str
+    frame: pd.DataFrame,
+    simulated: pd.DataFrame,
+    *,
+    owner: str,
+    prefix: str,
+    table: str,
+    perlen=None,
 ) -> pd.DataFrame:
     """Each target's row and column in the table PEST reads, found by NUMBER and name.
 
@@ -211,6 +221,10 @@ def _locate_targets(
         The set's observation prefix, for the error.
     table : str
         The table's file name, for the error.
+    perlen : sequence of float or None, optional
+        The model's period lengths, for the error: a key that is a period's END in
+        simulated time -- the observation route's spelling before ledger 346 --
+        is named with the period to key it by. ``None``: no such hint.
 
     Returns
     -------
@@ -258,6 +272,12 @@ def _locate_targets(
         )
     if missing:
         more = len(missing) - 5
+        unplaced = [
+            target.time
+            for target, row in zip(frame.itertuples(index=False), rows, strict=True)
+            if row < 0
+        ]
+        hints = _period_key_hints(pd.unique(pd.Series(unplaced, dtype=object)), perlen)
         raise ValueError(
             f"{_caller(owner, prefix)}: {len(missing)} target(s) match nothing in the "
             f"table PEST reads, {table}, so PEST would never see them: "
@@ -267,8 +287,11 @@ def _locate_targets(
             f"its columns are {', '.join(repr(str(c)) for c in use_cols[:12])}"
             + (" ..." if len(use_cols) > 12 else "")
             + ". A target reads the row whose index EQUALS its time read as a zero-based "
-            "stress period. The build used to skip such a target silently and leave "
-            "the base run's own value in its place (ledger 340)."
+            "stress period -- the observation route's too since ledger 346, where MF6's "
+            "simulated time was the key. "
+            + "".join(f"{hint}. " for hint in hints[:5])
+            + "The build used to skip such a target silently and leave the base run's "
+            "own value in its place (ledger 340)."
         )
     return frame.assign(row=rows, col=cols).reset_index(drop=True)
 
@@ -346,7 +369,8 @@ def _prepare_named_series_observations(
     if weight is not None and not frame.empty:
         frame["weight"] = float(weight)
     located = _locate_targets(
-        frame, simulated_wide, owner=owner, prefix=prefix, table=simulated_path.name
+        frame, simulated_wide, owner=owner, prefix=prefix, table=simulated_path.name,
+        perlen=period_lengths(project.model),
     )
     values_path = None
     if not located.empty:
@@ -549,7 +573,8 @@ def _prepare_point_observations(
 
     frame = _point_target_frame(spec.targets, labels, prefix=spec.prefix)
     located = _locate_targets(
-        frame, simulated, owner=owner, prefix=spec.prefix, table=simulated_path.name
+        frame, simulated, owner=owner, prefix=spec.prefix, table=simulated_path.name,
+        perlen=period_lengths(project.model),
     )
     values_path = project.template_workspace / f"{spec.prefix}_target_values.csv"
     _write_values_snapshot(located, values_path, value_label=value_label)

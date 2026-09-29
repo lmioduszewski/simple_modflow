@@ -207,8 +207,9 @@ def main() -> None:
         print(f"   reach {reach} steps 0/1/2 by period {steps.round(4).to_numpy().tolist()}")
         print(f"   {'':>7} before     {_show(old[reach])}")
         print(f"   {'':>7} after      {_show(series[name])}")
+        # One row per period at its end since ledger 346 (every step, [2::3], before).
         print(f"   {'':>7} observation at each period end "
-              f"{_show(observed[obs_name].to_numpy()[2::3])}")
+              f"{_show(observed[obs_name].to_numpy())}")
     print(f"   time labels: observation {observed['time'].round(3).tolist()}, "
           f"stage file {series['time'].tolist()}")
 

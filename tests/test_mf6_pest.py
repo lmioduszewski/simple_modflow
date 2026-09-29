@@ -746,14 +746,30 @@ def _declare_observations(model, declared):
 
 
 def _surface_water_observation_csvs(workspace):
-    """MF6-shaped observation CSVs (``time`` first, one column per record, declared order)."""
+    """MF6-shaped observation CSVs (``time`` first, one column per record, declared order).
+
+    Two one-day periods of one step each, as MF6 labels them: by the simulated time at
+    the END of each step, 1.0 and 2.0 -- never 0 (:func:`_two_one_day_periods`).
+    """
 
     pd.DataFrame(
-        {"time": [0, 1], "DEEP_LAKE": [101.25, 101.75], "SHALLOW_LAKE": [96.5, 96.0]}
+        {"time": [1.0, 2.0], "DEEP_LAKE": [101.25, 101.75], "SHALLOW_LAKE": [96.5, 96.0]}
     ).to_csv(workspace / "gold_lakes.csv", index=False)
-    pd.DataFrame({"time": [0, 1], "REACH_001": [12.4, 11.9]}).to_csv(
+    pd.DataFrame({"time": [1.0, 2.0], "REACH_001": [12.4, 11.9]}).to_csv(
         workspace / "gold_sfr_stage.csv", index=False
     )
+
+
+def _two_one_day_periods(model):
+    """Give a test double the TDIS the observation route reads its periods from (ledger 346).
+
+    MF6 labels an observation row by simulated time only, so which row ends which
+    stress period is read against ``model.sim.tdis``'s period lengths.
+    """
+
+    model.sim = SimpleNamespace(tdis=SimpleNamespace(
+        perioddata=SimpleNamespace(get_data=lambda: {"perlen": [1.0, 1.0]})))
+    return model
 
 
 def _surface_water_targets():
@@ -778,7 +794,7 @@ def test_surface_water_targets_read_the_packages_declared_observations():
     GWF head or another package's file was read as a lake's stage (ledger 344).
     """
 
-    model = _fake_surface_water_model()
+    model = _two_one_day_periods(_fake_surface_water_model())
     workspace = _project_temp_dir("surface_water_obs_csv_preference")
     model.workspace = workspace
     _surface_water_observation_csvs(workspace)

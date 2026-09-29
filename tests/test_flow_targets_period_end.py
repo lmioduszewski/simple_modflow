@@ -609,40 +609,43 @@ def test_a_live_model_with_hourly_periods_reads_each_periods_end(hourly, tmp_pat
     np.testing.assert_allclose(pd.read_csv(tmp_path / "h.csv")["h"], expected, rtol=1e-12)
 
 
-# -- the observation route (recorded, not changed) ---------------------------------
+# -- the observation route, keyed by period since ledger 346 -------------------------
 
 
 @pytest.mark.slow
-def test_the_observation_route_is_keyed_by_time_and_agrees_at_each_period_end(runs):
-    """Recorded, not changed (ledger 336). MF6 writes a flow observation at every
-    time step, keyed by simulated time; each period's END row equals the budget
-    route's value -- the DRN zone to the bit, the SFR reach with MF6's own NEGATIVE
-    sign, where the budget route reports the magnitude. A target keyed by PERIOD
-    matches no row there (ledger 331's finding, for flows too)."""
+def test_the_observation_route_is_keyed_by_period_and_agrees_at_each_period_end(runs):
+    """MF6 writes a flow observation at every time step, keyed by simulated time; the
+    route hands on the row that ENDS each period, keyed by the period (ledger 346), and
+    it equals the budget route -- the DRN zone to rounding, each of its cells to the bit,
+    the SFR reach with MF6's own NEGATIVE sign, where the budget route reports the magnitude. It handed on every
+    step, so a target keyed by PERIOD matched nothing; one keyed by MF6's time now
+    names the period to key it by."""
 
     model = runs["all"]
     observed_sfr = mf.SfrFlowTargets(locations={"up": 0, "down": len(REACHES) - 1})
     observed_drn = mf.DrnFlowTargets(locations={"seep": DRN_CELLS})
     stream = observed_sfr.simulated_series(model)
     seep = observed_drn.simulated_series(model)
-    assert len(stream) == len(seep) == NPER * NSTP
-    ends = stream.iloc[NSTP - 1::NSTP].reset_index(drop=True)
-    np.testing.assert_allclose(ends["time"], PERLEN * np.arange(1, NPER + 1))
+    assert list(stream["time"]) == list(seep["time"]) == list(range(NPER))
     sfr, drn = _targets()
-    np.testing.assert_allclose(-ends["up"], sfr.simulated_series(model)["a"], rtol=1e-10)
-    np.testing.assert_allclose(-ends["down"], sfr.simulated_series(model)["b"], rtol=1e-10)
-    np.testing.assert_allclose(seep.iloc[NSTP - 1::NSTP]["seep"].to_numpy(),
-                               drn.simulated_series(model)["zone"], rtol=1e-10)
+    np.testing.assert_allclose(-stream["up"], sfr.simulated_series(model)["a"], rtol=1e-10)
+    np.testing.assert_allclose(-stream["down"], sfr.simulated_series(model)["b"], rtol=1e-10)
+    # Each cell is MF6's number on both routes; the zone's sum is added in another order.
+    np.testing.assert_allclose(seep["seep"], drn.simulated_series(model)["zone"], rtol=1e-14)
 
     by_period = mf.DrnFlowTargets(
         locations={"seep": DRN_CELLS},
         values=pd.DataFrame({"time": range(NPER), "seep": -800.0})).compare(model)
-    assert by_period["sim_flow"].isna().all()
+    np.testing.assert_array_equal(by_period["sim_flow"], seep["seep"])
     by_time = mf.DrnFlowTargets(
         locations={"seep": DRN_CELLS},
-        values=pd.DataFrame({"time": [10, 20, 30], "seep": -800.0})).compare(model)
-    np.testing.assert_allclose(by_time["sim_flow"], drn.simulated_series(model)["zone"],
-                               rtol=1e-10)
+        values=pd.DataFrame({"time": [10, 20, 30], "seep": -800.0}))
+    with pytest.raises(ValueError, match=(
+            r"DrnFlowTargets.compare\(...\): the observation route is keyed by zero-based "
+            r"stress period.*periods are 0 \.\. 2; 3 target row\(s\) name none of them.*"
+            r"10 is the end of period 0 in simulated time -- key it 0; 20 is the end of "
+            r"period 1 in simulated time -- key it 1")):
+        by_time.compare(model)
 
 
 @pytest.mark.slow
@@ -657,8 +660,8 @@ def test_a_zone_given_as_several_rows_sums_the_same_cells_on_both_routes(runs):
     observed = mf.DrnFlowTargets(
         locations=pd.DataFrame({"name": ["seep", "seep"], "cells": [[20], [21, 27]]}),
     ).simulated_series(model)
-    assert len(observed) == NPER * NSTP  # the observation route: one row per step
-    np.testing.assert_allclose(observed["seep"].iloc[NSTP - 1::NSTP], expected, rtol=1e-10)
+    assert list(observed["time"]) == list(range(NPER))  # one row per period (ledger 346)
+    np.testing.assert_allclose(observed["seep"], expected, rtol=1e-10)
     budget = mf.DrnFlowTargets(
         locations=pd.DataFrame({"name": ["zone", "zone"], "cells": [[20], [21, 27]]}),
     ).simulated_series(model)

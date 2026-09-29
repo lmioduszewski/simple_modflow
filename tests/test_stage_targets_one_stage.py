@@ -243,8 +243,10 @@ def test_a_lake_reads_its_stage_once_not_once_per_connected_cell(lake_runs):
 def test_the_two_lake_routes_agree_wherever_the_lake_holds_water(lake_runs):
     """The observation route always read the lake itself; the stage-file route now
     reads the same number. They still differ where MF6's two outputs do -- a DRY
-    lake is its bottom in the observation, ``NaN`` in the file (ledger 329) -- and
-    in how ``time`` is labelled (MF6's time against the record index)."""
+    lake is its bottom in the observation, ``NaN`` in the file (ledger 329). Both
+    label ``time`` 0..5 here: the observation route by stress period (ledger 346;
+    it carried MF6's time, 10..60), the stage file by saved record, which is the
+    period at one save per period."""
 
     stage = _lake_stage_file(lake_runs)
     observed = mf.LakeStageTargets(locations={"drying": 0, "held": 1}).simulated_series(lake_runs)
@@ -252,7 +254,7 @@ def test_the_two_lake_routes_agree_wherever_the_lake_holds_water(lake_runs):
     # route is chosen by NAME, so a trailing "_" (dropped from a label) would not do.
     from_file = mf.LakeStageTargets(locations={"a": 0, "b": 1}).simulated_series(lake_runs)
 
-    np.testing.assert_array_equal(observed["time"], 10.0 * np.arange(1, NPER + 1))
+    np.testing.assert_array_equal(observed["time"], np.arange(NPER))
     np.testing.assert_array_equal(from_file["time"], np.arange(NPER))
     wet = np.isfinite(stage[:, 0])
     np.testing.assert_allclose(observed["drying"][wet], from_file["a"][wet], rtol=1e-14)
@@ -284,8 +286,7 @@ def test_the_files_pest_reads_carry_each_lake_once(lake_runs, tmp_path, names):
     """What PEST calibrated against: the base run's CSV and every forward run's."""
 
     stage = _lake_stage_file(lake_runs)
-    # A template (no values): the files are the point, and the observation route's
-    # rows are MF6 times, which a period key does not match (refused, ledger 340).
+    # A template (no values): the files are the point.
     targets = mf.LakeStageTargets(locations=dict(zip(names, (0, 1), strict=True)))
     project = SimpleNamespace(model=lake_runs, template_workspace=tmp_path,
                               pf=SimpleNamespace(add_observations=lambda *a, **k: None))
@@ -383,18 +384,19 @@ def test_a_reach_reads_its_period_end_stage_not_the_sum_of_every_step(sfr_run):
 
 @pytest.mark.slow
 def test_the_two_sfr_routes_agree_at_each_period_end(sfr_run):
-    """The observation route writes every time step at MF6's time; its period-end
-    rows are the stage-file route's rows."""
+    """MF6 writes the observation at every time step, at MF6's time; the route hands
+    on the row that ends each period, keyed by the period (ledger 346), and those rows
+    are the stage-file route's."""
 
     observed = mf.SfrStageTargets(locations={"up": 0, "down": 3}).simulated_series(sfr_run)
     from_file = mf.SfrStageTargets(locations={"a": 0, "b": 3}).simulated_series(sfr_run)
 
-    assert len(observed) == SFR_NPER * SFR_NSTP
-    period_end = observed.iloc[SFR_NSTP - 1::SFR_NSTP].reset_index(drop=True)
-    np.testing.assert_allclose(period_end["time"], 10.0 * np.arange(1, SFR_NPER + 1))
-    assert len(from_file) == SFR_NPER
-    np.testing.assert_allclose(period_end["up"], from_file["a"], rtol=1e-14)
-    np.testing.assert_allclose(period_end["down"], from_file["b"], rtol=1e-14)
+    raw = pd.read_csv(sfr_run.workspace / "sfr_stage_targets.csv", float_precision="round_trip")
+    assert len(raw) == SFR_NPER * SFR_NSTP  # what MF6 wrote: every step
+    assert list(observed["time"]) == list(from_file["time"]) == list(range(SFR_NPER))
+    np.testing.assert_array_equal(observed["up"], raw["UP"].iloc[SFR_NSTP - 1::SFR_NSTP])
+    np.testing.assert_allclose(observed["up"], from_file["a"], rtol=1e-14)
+    np.testing.assert_allclose(observed["down"], from_file["b"], rtol=1e-14)
 
 
 @pytest.mark.slow

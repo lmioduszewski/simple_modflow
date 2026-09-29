@@ -250,6 +250,18 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
     TDIS it reloads. A realization whose output lacks a period's end fails the
     run rather than hand PEST a value from before the period ended.
 
+    **On the observation route that is one row per stress period too** (ledger
+    346): MF6 writes a continuous observation at every time step, and the route
+    handed every step on, so under ATS -- which decides the number of steps at run
+    time -- a realization wrote another number of rows than the base run (12, 13
+    or 14 at K = 10, 1, 2), and PEST, reading each realization by the BASE run's
+    line positions, took the value at t = 23 as the end of the last period without
+    a word. Every realization writes ``nper`` rows now, whatever its steps. A
+    template built on the observation route before that commit expects one line
+    per TIME STEP: with more than one step per period (or ATS) it fails at end of
+    file on its next run and must be rebuilt; with one step per period the rows
+    it reads are the same values under new ``time`` labels, which it skips.
+
     Parameters
     ----------
     kind : {"lake_stage", "sfr_stage", "sfr_flow", "drn_flow"}

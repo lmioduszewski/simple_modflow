@@ -45,9 +45,10 @@ MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, 2026-09-27)          before           aft
                                                 obs_data") and wrote
                                                 pst.obs_data.nans.csv
                                                 into the caller's cwd
-  D  period keys 1, 2 on the observation route  built, weight 1, reading  unchanged (the next
-                                                t = 1 and t = 2: the ENDS commit keys that route
-                                                of periods 0 and 1        by period)
+  D  period keys 1, 2 on the observation route  built, weight 1, reading  unchanged here; since
+                                                t = 1 and t = 2: the ENDS ledger 346 the rows are
+                                                of periods 0 and 1        periods 0, 1, 2, and 1
+                                                                          and 2 read periods 1, 2
 
 "before" is ledger 340's own commit. Its parent (``b46366b``) built the three head
 names -- header ``per,0012,007,NA``, the sorted pivot 340 replaced -- because PEST read
@@ -170,8 +171,9 @@ def section_d(root):
         _cal, pst = _build(daily, root / "d" / "pest", observe=(targets,))
         obs = pst.observation_data
         weighted = obs.loc[obs["weight"] > 0].index.str.extract(r"(time:[\d.]+)$")[0].tolist()
-        return (f"rows at t = {rows}; built, weight > 0 on {weighted} -- the ends of "
-                "periods 0 and 1")
+        # Before ledger 346 the rows were MF6's times (1, 2, 3), so keys 1 and 2 read the
+        # ENDS of periods 0 and 1; since, they are the periods (0, 1, 2).
+        return f"rows at time = {rows}; built, weight > 0 on {weighted}"
 
     _attempt("D", "period keys 1, 2 on the observation route", build)
 

@@ -52,7 +52,9 @@ DRN_CELLS = [20, 21, 27]
 DRYING, HELD = [8, 9], [25, 26]
 LONG_UP = "a" * 39 + "_up"     # 42 characters: MF6 keeps 40, so both head "AAA..._"
 LONG_DOWN = "a" * 39 + "_dn"
-TIMES = [10.0, 20.0, 30.0]
+#: The observation route's rows: one per stress period, at its end (ledger 346). The
+#: three 10-day periods end at MF6's t = 10, 20 and 30, one time step each.
+PERIODS = [0, 1, 2]
 
 
 def _grid():
@@ -177,9 +179,13 @@ def two(tmp_path_factory):
 
 
 def _csv(model, name):
-    """A declared observation file as MF6 wrote it, read with pandas."""
+    """A declared observation file as MF6 wrote it, read with pandas to the last digit.
 
-    return pd.read_csv(f"{model.workspace}/{name}")
+    ``round_trip``, as the reader does since ledger 346: MF6 writes every digit, and
+    pandas' default parser reads some values one unit in the last place off.
+    """
+
+    return pd.read_csv(f"{model.workspace}/{name}", float_precision="round_trip")
 
 
 # -- what a correct declaration reads ------------------------------------------
@@ -192,7 +198,7 @@ def test_a_correctly_declared_set_reads_its_own_columns(declared):
     lakes = _csv(declared, "lake_stage_targets.csv")
     series = mf.LakeStageTargets(locations={"drying": 0, "held": 1}).simulated_series(declared)
     assert list(series.columns) == ["time", "drying", "held"]
-    np.testing.assert_array_equal(series["time"], TIMES)
+    np.testing.assert_array_equal(series["time"], PERIODS)
     np.testing.assert_array_equal(series["drying"], lakes["DRYING"])
     np.testing.assert_array_equal(series["held"], lakes["HELD"])
     np.testing.assert_array_equal(series["held"], 118.0)
@@ -249,7 +255,7 @@ def test_names_mf6_cuts_to_one_header_read_their_own_columns(declared):
     assert header[4] == header[5] == "A" * 39 + "_"
     stage = declared.sfr.results.stage.get()
     series = mf.SfrStageTargets(locations={LONG_UP: 0, LONG_DOWN: 3}).simulated_series(declared)
-    np.testing.assert_array_equal(series["time"], TIMES)
+    np.testing.assert_array_equal(series["time"], PERIODS)
     for name, reach in ((LONG_UP, 0), (LONG_DOWN, 3)):
         np.testing.assert_allclose(
             series[name], stage.loc[stage["reach"] == reach].sort_values("per")["stage"], rtol=1e-12)
@@ -263,7 +269,7 @@ def test_a_target_naming_another_lakes_observation_raises(declared):
     """``drying`` is declared for lake 0: a target claiming lake 1 read lake 0's stage."""
 
     for locations in ({"drying": 1}, {"drying": 1, "held": 0}):
-        targets = mf.LakeStageTargets(locations=locations, values={"time": [10], "drying": [111.0]})
+        targets = mf.LakeStageTargets(locations=locations, values={"time": [0], "drying": [111.0]})
         for read in (targets.simulated_series, targets.compare):
             with pytest.raises(ValueError, match=(
                 r"'drying' \(lake 1, label DRYING\) is declared for lake 0: "
@@ -332,7 +338,7 @@ def test_a_stale_copy_beside_the_declared_file_is_not_read(declared, tmp_path):
 
     copy = tmp_path / "ws"
     shutil.copytree(declared.workspace, copy)
-    live = pd.read_csv(copy / "lake_stage_targets.csv")
+    live = pd.read_csv(copy / "lake_stage_targets.csv", float_precision="round_trip")
     live.assign(DRYING=live["DRYING"] - 20.0, HELD=live["HELD"] - 20.0).loc[
         :, ["time", "DRYING", "HELD"]].to_csv(copy / "archive_lake.csv", index=False)
     reloaded = mf.load_mf6_run(copy, verbosity_level=0)
@@ -342,7 +348,7 @@ def test_a_stale_copy_beside_the_declared_file_is_not_read(declared, tmp_path):
 
     pd.DataFrame({"name": ["drying", "held"], "lake": [0, 1]}).to_csv(copy / "loc.csv", index=False)
     write_named_series_targets("lake_stage", copy / "loc.csv", copy / "fw.csv", sim_ws=copy)
-    written = pd.read_csv(copy / "fw.csv")
+    written = pd.read_csv(copy / "fw.csv", float_precision="round_trip")
     np.testing.assert_array_equal(written["held"], 118.0)
 
 
@@ -469,7 +475,8 @@ def test_the_targets_package_reaches_attach_and_the_pest_forward_run(two, tmp_pa
     write_named_series_targets("lake_stage", tmp_path / config["locations_file"], forward,
                                sim_ws=two.workspace, package=config["package"])
     assert forward.read_text() == (tmp_path / config["output_csv"]).read_text()
-    np.testing.assert_array_equal(pd.read_csv(forward)["pond"], _csv(two, "b.csv")["POND"])
+    np.testing.assert_array_equal(
+        pd.read_csv(forward, float_precision="round_trip")["pond"], _csv(two, "b.csv")["POND"])
 
     fresh = mf.load_mf6_run(two.workspace, verbosity_level=0)
     attached = mf.LakeStageTargets(locations={"other": 0}, package="lak_b").attach_flopy_obs(
@@ -545,7 +552,7 @@ def test_a_binary_observation_file_is_read_as_mf6_wrote_it(declared, tmp_path):
     csv = _csv(declared, "lake_stage_targets.csv")
     reloaded = mf.load_mf6_run(copy, verbosity_level=0)
     series = mf.LakeStageTargets(locations={"drying": 0, "held": 1}).simulated_series(reloaded)
-    np.testing.assert_array_equal(series["time"], TIMES)
+    np.testing.assert_array_equal(series["time"], PERIODS)
     np.testing.assert_array_equal(series["drying"], csv["DRYING"])
     np.testing.assert_array_equal(series["held"], 118.0)
     with pytest.raises(ValueError, match=r"another quantity, not STAGE: `pond VOLUME 1` in lake_stage_targets.bsv"):
@@ -569,9 +576,9 @@ def test_the_pest_forward_run_reads_the_package_the_targets_name(two, tmp_path):
 
     pytest.importorskip("pyemu")
     lakes = mf.LakeStageTargets(locations={"pond": 0}, package="lak_b",
-                                values={"time": [10.0], "pond": [112.0]})
+                                values={"time": [0], "pond": [112.0]})
     seeps = mf.DrnFlowTargets(locations={"s": [20]}, package="drn_b",
-                              values=pd.DataFrame({"time": [10.0], "s": [-150.0]}))
+                              values=pd.DataFrame({"time": [0], "s": [-150.0]}))
     cal = two.pest("pkg", workspace=tmp_path / "pest", start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
     cal.observe(lakes)
@@ -590,6 +597,8 @@ def test_the_pest_forward_run_reads_the_package_the_targets_name(two, tmp_path):
     for name, base in tables.items():
         assert (template / name).read_text() == base, name
     np.testing.assert_array_equal(
-        pd.read_csv(template / "stage_simulated_lake_stage.csv")["pond"], _csv(two, "b.csv")["POND"])
+        pd.read_csv(template / "stage_simulated_lake_stage.csv", float_precision="round_trip")["pond"],
+        _csv(two, "b.csv")["POND"])
     np.testing.assert_array_equal(
-        pd.read_csv(template / "drn_flow_simulated_drn_flow.csv")["s"], _csv(two, "db.csv")["S_C20"])
+        pd.read_csv(template / "drn_flow_simulated_drn_flow.csv", float_precision="round_trip")["s"],
+        _csv(two, "db.csv")["S_C20"])

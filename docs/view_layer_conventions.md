@@ -132,7 +132,14 @@ at `0.04166667`). A period the file saved without its end is REFUSED, naming the
 `SAVE ... LAST` that fixes it. `model.hds`/`conc`/`temp.get()` read it too: under `SAVE
 HEAD FIRST` it returned step 1 of 3 as each period's head. Do not add another "last
 saved step": the flow targets each had their own sum and the forward run its own
-`by_period[kper]`. **The pictures and group tables read `per=N` as the LAST SAVED step
+`by_period[kper]`. **An MF6 continuous-observation file has no record header at all** --
+one row per time step, labelled by simulated time -- so `period_end.period_end_rows`
+finds the row that ends each period and hands its steps to that same check (ledger
+346): each period's time is measured from MF6's OWN previous period end, never from the
+cumulative `perlen` the model holds, which an hourly live model outgrows by 3.3e-9 a
+period (MF6 adds the 8-decimal lengths it read) and would refuse from the fourth. The
+lake, reach and zone targets' observation route is one row per period at its end, like
+every other route, and a file short of a period's end is refused. **The pictures and group tables read `per=N` as the LAST SAVED step
 of period N** (ledger 337, the user's rule) -- not the end-checked rule, deliberately, so
 a run saved with `SAVE HEAD FIRST` still draws -- through ONE function,
 `period_end.last_saved_step(s)`: a map's `per_timestep="last"`, both sections,

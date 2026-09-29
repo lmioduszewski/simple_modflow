@@ -154,8 +154,9 @@ def test_a_zone_below_layer_0_reads_its_own_drains_on_both_routes(toy):
     np.testing.assert_allclose(budget.simulated_series(toy)["basin"], expected, rtol=1e-12)
     observed = mf.DrnFlowTargets(locations=[{"name": "deep", "layer": 1, "cells": ZONE}])
     series = observed.simulated_series(toy)
-    assert len(series) == NPER * NSTP  # the observation route: one row per step
-    np.testing.assert_allclose(series["deep"].iloc[NSTP - 1::NSTP], expected, rtol=1e-10)
+    # The observation route: one row per stress period, at its end (ledger 346).
+    assert list(series["time"]) == list(range(NPER))
+    np.testing.assert_allclose(series["deep"], expected, rtol=1e-10)
 
 
 def test_a_zone_reaching_two_layers_is_one_zone_with_a_label_per_layer(toy):
@@ -172,7 +173,7 @@ def test_a_zone_reaching_two_layers_is_one_zone_with_a_label_per_layer(toy):
         mf.DrnFlowTargets(locations=renamed).simulated_series(toy)["both_b"], expected,
         rtol=1e-12)
     series = mf.DrnFlowTargets(locations=OBSERVED[1:]).simulated_series(toy)
-    np.testing.assert_allclose(series["both"].iloc[NSTP - 1::NSTP], expected, rtol=1e-10)
+    np.testing.assert_allclose(series["both"], expected, rtol=1e-10)
 
 
 @pytest.mark.slow
@@ -237,7 +238,7 @@ def test_the_observation_route_compares_a_zone_given_as_two_rows_once(toy):
     zone = mf.DrnFlowTargets(locations=pd.DataFrame(
         {"name": ["deep", "deep"], "layer": [1, 1], "cells": [[20], [21, 27]]}))
     compare = zone.compare(toy)
-    assert len(compare) == len(zone.simulated_series(toy)) == NPER * NSTP
+    assert len(compare) == len(zone.simulated_series(toy)) == NPER
     assert compare["cells"].iloc[0] == DEEP
 
 

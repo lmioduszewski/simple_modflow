@@ -605,8 +605,9 @@ GWF head (`heads.csv` sorts first) or a LAK `VOLUME`; an SFR stage target the
 a previous run left in a directory `prepare_run(overwrite=True)` reused -- froze every
 PEST realization at its values. A label declared as another quantity only, for another
 lake, reach or cell, or twice, is REFUSED naming the target and the record; so is a
-set declared in PART (it silently moved the whole set to the file route, on another
-clock); a set with nothing declared reads the file, as before. A model carrying several
+set declared in PART (it silently moved the whole set to the file route, which reads
+other numbers -- a dry lake's stage, an SFR flow's sign, the LAK stage file's record
+clock, and until ledger 346 another clock altogether); a set with nothing declared reads the file, as before. A model carrying several
 LAK, SFR or DRN packages needs `package=<name>` on the targets (their lake and reach
 numbers each start at 0), carried into PEST's forward run -- the packages are found by
 TYPE, so one NAMED `lak` does not hide a `lak_2` beside it (ledger 345); with none it is refused
@@ -616,17 +617,27 @@ drains. `to_flopy_obs` refuses a `kind=` other than the family's quantity and tw
 names MF6 would upper-case to one label (`"Pond A"`, `"pond-a"`). An SFR stage's
 no-data value (3e30) reads `NaN` there, as a lake's does. On the file it reads ONE value per lake per saved
 record and ONE per reach or zone per stress period, at the period's end (ledgers 331,
-336; it had added a lake's copies, one per connected cell, and a period's steps). The
-two routes label `time` differently -- MF6's simulated time, one row per time step,
-against the record index (LAK) or the stress period (SFR, DRN) -- and targets must be
-keyed by the route's label: on the observation route a target keyed by period matches
-nothing, which `compare()` shows as `NaN` and the PEST build REFUSES, naming the target
-and the rows the table holds (ledger 340; it used to drop the target silently and leave
-the STARTING model's own flow in its place at weight 1) -- UNLESS a simulated time
-happens to equal the period number, which it then reads in silence: with daily periods
-the key 1 reads `t = 1`, the END of period 0 (ledger 341). Key flow targets by simulated
-time there (`10, 20, 30` for three 10-day periods) until that route is keyed by period.
-The
+336; it had added a lake's copies, one per connected cell, and a period's steps).
+**The observation route is one row per stress period too, at its end, keyed `0 ..
+nper - 1`** (ledger 346, the user's rule). MF6 writes a continuous observation at EVERY
+time step, labelled by simulated time and nothing else, and the route handed every
+step on: a target keyed by period matched nothing (`compare()` gave `NaN`, the PEST
+build refused it -- and before ledger 340 dropped it, leaving the STARTING model's value
+at weight 1), and under ATS the number of rows moved with the parameters (12, 13, 14 at
+K = 10, 1, 2) while PEST reads every realization by the BASE run's line positions -- a
+K = 2 realization read t = 23 as the end of the last period, in silence. Which row ends
+each period is `period_end.period_end_rows`: each period's time is measured from MF6's
+OWN previous period end, because MF6 accumulates the 8-decimal lengths FloPy wrote (an
+hourly live model's ends run 3.3e-9 further ahead of the lengths the model holds every
+period, past the 1e-8 tolerance from the fourth), and each end is checked by the rule
+every route reads. A file short of a period's end -- a run that stopped, a truncated
+copy -- is REFUSED naming the period. Every route now labels `time` by stress period,
+bar the LAK stage FILE, keyed by saved record (below). **A target keyed by MF6's
+simulated time is refused there**, in `compare()` and the build alike, naming the period
+each key ends (`10 is the end of period 0 in simulated time -- key it 0`); one that is
+also a period number -- `1` on daily periods -- cannot be told from one and reads that
+period. PEST templates built on this route at more than one step per period expect a
+line per step and must be rebuilt. The
 observation route's SFR flow also keeps MF6's sign (`DOWNSTREAM-FLOW` is negative)
 where the file route reports the magnitude. On the LAK stage-file route the record
 index IS the period only when output control saves one step per period, the step that

@@ -24,6 +24,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _observation_label,
     _ObservedQuantity,
     _read_declared_observations,
+    _refuse_keys_off_the_periods,
     _refuse_observation_kind,
     _refuse_shared_labels,
 )
@@ -121,7 +122,9 @@ class SfrStageTargets:
 
     A target keyed by stress period reads the stage at that period's END (ledger
     336): on the stage file, the record that ends the period, and a period whose
-    final step output control did not save is refused rather than read early.
+    final step output control did not save is refused rather than read early; on
+    the observation route, MF6's observation at the time step that ends it (ledger
+    346).
 
     **The observation route reads what the SFR package DECLARES** (ledger 344):
     a target reads MF6's STAGE observation only when its label is declared in
@@ -164,7 +167,8 @@ class SfrStageTargets:
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
         ``times`` is applied. :meth:`compare` and the PEST build read it as a
         zero-based stress period, by number (``1.0`` is period 1; a fraction
-        raises), matched on the stage-file route against the period.
+        raises), on both routes (the observation route since ledger 346, where a
+        key naming no period is refused -- MF6's simulated time was its key).
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed stage, matched
         ignoring case. Default ``"stage"``.
@@ -273,10 +277,12 @@ class SfrStageTargets:
         the target's own reach -- only the files that OBS names are read, each
         record from its own column, MF6's no-data value (3e30) as ``NaN`` --
         else, when NO target is declared, from ``model.sfr.results.stage``
-        (ledger 344; see the class notes for what is refused). The two routes
-        label ``time`` differently: the observation route carries MF6's simulated
-        time, one row per time step; the stage-file route the zero-based stress
-        period.
+        (ledger 344; see the class notes for what is refused). Both routes label
+        ``time`` by the zero-based stress period, one row per period at its END:
+        the observation route takes MF6's observation at the time step that ends
+        each period (ledger 346 -- it handed on every step, keyed by MF6's
+        simulated time, so a target keyed by period matched nothing there), and
+        refuses a file that does not end every period the TDIS declares.
 
         **On the stage-file route a period holds ONE stage per reach: the stage at
         the period's END** (ledgers 331, 336) -- the record that ends the period on
@@ -316,7 +322,9 @@ class SfrStageTargets:
             targets of the set are declared and others are not; when the model
             carries several SFR packages and ``package`` does not name one, or
             names one that declares none of the targets; or when a declared
-            file's columns do not line up with its records (ledger 344). On the
+            file's columns do not line up with its records (ledger 344), or it
+            does not end every stress period (a run that stopped, a truncated
+            copy -- ledger 346). On the
             stage-file route: when a period the stage file saved lacks
             its final step -- naming the period, the steps saved and the ``SAVE
             HEAD LAST`` setting that fixes it; or when the rows of one reach in
@@ -348,9 +356,11 @@ class SfrStageTargets:
         ``sim_stage`` comes from the same two routes as :meth:`simulated_series`:
         on the stage-file route, one stage per reach per stress period, the stage
         at the period's END (ledgers 331, 336). Targets are matched on ``per``, read from
-        their ``time`` as a zero-based integer -- compared with MF6's simulated
-        time on the observation route and with the stress period on the
-        stage-file route.
+        their ``time`` as a zero-based integer -- the stress period, on both routes
+        (ledger 346). On the observation route a key naming no period of the model
+        is refused, naming the period each simulated-time key ends: MF6's time
+        (``10, 20, 30``) was that route's key until ledger 346, and such a set
+        would otherwise read ``NaN``.
 
         Parameters
         ----------
@@ -373,7 +383,9 @@ class SfrStageTargets:
         ValueError
             As :meth:`simulated_series`: a target's label declared as something
             else, a set declared in part, several SFR packages and no
-            ``package``, or a file that does not line up; on the stage-file
+            ``package``, or a file that does not line up or does not end every
+            period; on the observation route, when a target's key is no stress
+            period of the model (ledger 346); on the stage-file
             route, when a period the stage file saved lacks its final step or a
             reach's copies in one record disagree; or when a target's ``time`` is
             not a whole number, or two rows hold a value for one target in one
@@ -396,6 +408,10 @@ class SfrStageTargets:
             targets["per"] = _measured_periods(
                 targets, value_column="stage_target", caller="SfrStageTargets.compare(...)"
             )
+            if observed is not None:
+                _refuse_keys_off_the_periods(
+                    targets, observed["time"], model=model, caller="SfrStageTargets.compare(...)"
+                )
             compare = targets.merge(simulated, on=["name", "reach", "per"], how="left")
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_stage"] - compare["stage_target"]
@@ -574,7 +590,8 @@ class SfrFlowTargets:
     **A period's flow is its END-of-period flow** (ledger 336): on the SFR budget
     file, the flow in the time step that ends the period -- never the sum of the
     steps saved -- and a period whose final step output control did not save is
-    refused rather than read early. A reach's flow is what it sends downstream,
+    refused rather than read early; on the observation route, MF6's observation at
+    the time step that ends it (ledger 346). A reach's flow is what it sends downstream,
     to the next reach, to a mover or out of the network, as MF6's own
     ``DOWNSTREAM-FLOW`` observation measures it.
 
@@ -618,7 +635,8 @@ class SfrFlowTargets:
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
         ``times`` is applied. :meth:`compare` and the PEST build read it as a
         zero-based stress period, by number (``1.0`` is period 1; a fraction
-        raises), matched on the budget-file route against the period.
+        raises), on both routes (the observation route since ledger 346, where a
+        key naming no period is refused -- MF6's simulated time was its key).
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed flow, matched
         ignoring case. Default ``"flow"``.
@@ -845,10 +863,13 @@ class SfrFlowTargets:
         declared there, for the target's own reach -- only the files that OBS
         names are read, each record from its own column -- else, when NO target
         is declared, from the SFR budget file (ledger 344; see the class notes
-        for what is refused). The two routes label ``time`` differently: the
-        observation route carries MF6's simulated time, one row per time step,
-        and MF6's own sign (``DOWNSTREAM-FLOW`` is negative); the budget-file
-        route the zero-based stress period, and the flow's magnitude.
+        for what is refused). Both routes label ``time`` by the zero-based stress
+        period, one row per period at its END -- the observation route takes
+        MF6's observation at the time step that ends each period (ledger 346; it
+        handed on every step, keyed by MF6's simulated time) and refuses a file
+        that does not end every period. They differ in sign: the observation
+        route carries MF6's own (``DOWNSTREAM-FLOW`` is negative), the
+        budget-file route the flow's magnitude.
 
         **On the budget-file route a period holds ONE flow per reach: the flow
         at the period's END** (ledger 336) -- the record that ends the period on
@@ -886,7 +907,9 @@ class SfrFlowTargets:
             the model carries several SFR packages and ``package`` does not name
             one, or names one that declares none of the targets; or when a
             declared file's columns do not line up with its records (ledger
-            344). On the budget-file route, when a period the SFR budget file saved
+            344), or it does not end every stress period (a run that stopped, a
+            truncated copy -- ledger 346). On the budget-file route, when a
+            period the SFR budget file saved
             lacks its final step -- naming the period, the steps saved and the
             ``SAVE BUDGET LAST`` setting that fixes it.
 
@@ -915,9 +938,11 @@ class SfrFlowTargets:
         ``sim_flow`` comes from the same two routes as :meth:`simulated_series`:
         on the budget-file route, one flow per reach per stress period, the flow
         at the period's END (ledger 336). Targets are matched on ``per``, read
-        from their ``time`` as a zero-based integer -- compared with the stress
-        period on the budget-file route, and with MF6's simulated time on the
-        observation route, where a target keyed by period matches no row.
+        from their ``time`` as a zero-based integer -- the stress period, on both
+        routes (ledger 346; the observation route was keyed by MF6's simulated
+        time, where a target keyed by period matched no row). On the observation
+        route a key naming no period of the model is refused, naming the period
+        each simulated-time key ends.
 
         Parameters
         ----------
@@ -940,7 +965,9 @@ class SfrFlowTargets:
         ValueError
             As :meth:`simulated_series`: a target's label declared as something
             else, a set declared in part, several SFR packages and no
-            ``package``, or a file that does not line up; on the budget-file
+            ``package``, or a file that does not line up or does not end every
+            period; on the observation route, when a target's key is no stress
+            period of the model (ledger 346); on the budget-file
             route, when a period the SFR budget file saved lacks its final step;
             or when a target's ``time`` is not a whole number, or two rows hold a value
             for one target in one period (the period rule PEST's build reads too,
@@ -963,6 +990,10 @@ class SfrFlowTargets:
             targets["per"] = _measured_periods(
                 targets, value_column="flow_target", caller="SfrFlowTargets.compare(...)"
             )
+            if observed is not None:
+                _refuse_keys_off_the_periods(
+                    targets, observed["time"], model=model, caller="SfrFlowTargets.compare(...)"
+                )
             compare = targets.merge(simulated, on=["name", "reach", "per"], how="left")
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_flow"] - compare["flow_target"]

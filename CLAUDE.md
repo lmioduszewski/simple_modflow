@@ -108,13 +108,17 @@ both sections, `surface`, the section composers, `HeadsPlus.array`, the group's
 `period_end_steps` is it plus the end check. Deliberately NOT the end-checked rule, so a
 `SAVE HEAD FIRST` run still draws. The profile, the noun, `surface` and a group read `per`
 as a saved-RECORD index until then: `per=1` at `nstp=3` drew (1, 0) beside the map's
-(2, 1). The LAK stage file's `per` is still a record index (301's stage clock). STILL OPEN: the OBSERVATION route is still keyed by MF6's simulated
-time, one row per step, so a target keyed by period matches nothing there -- which the
-PEST build now REFUSES by name (ledger 340) where it silently dropped the target and
-anchored the calibration to the starting model at weight 1 -- UNLESS a simulated time
-equals the period number, which it then reads in silence (daily periods: key 1 reads
-`t = 1`, the END of period 0, ledger 341) -- and the
-SFR flow there keeps MF6's NEGATIVE `DOWNSTREAM-FLOW` where the file route reports the
+(2, 1). The LAK stage file's `per` is still a record index (301's stage clock).
+**The OBSERVATION route is one row per period at its end too** (ledger 346): an MF6 OBS
+CSV is every time step labelled by `totim` alone, so `period_end.period_end_rows` finds
+each period's END row -- measuring each period from MF6's OWN previous end, since MF6
+adds FloPy's 8-decimal lengths and a live hourly model outgrows 1e-8 of the cumulative
+`perlen` from the fourth period -- through `period_end_steps`' check; a file short of an
+end is refused, a target keyed by MF6's time (`10, 20, 30`) is refused naming the period,
+and ATS no longer moves the row count PEST's positional `.ins` reads (12/13/14 rows at
+K = 10/1/2 read t = 23 as the last period's end). A time key that is also a period
+(`1` on daily periods) cannot be told apart. STILL OPEN: the SFR flow there keeps MF6's
+NEGATIVE `DOWNSTREAM-FLOW` where the file route reports the
 magnitude. A LAK STAGE-FILE target is keyed by SAVED RECORD (301's `per`-as-record-index),
 the period only at one save per period: at `nstp=3` periods 0-2 read steps 1-3 of period
 0, where head and SFR targets beside it read period end.
@@ -515,8 +519,11 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5424 passed / 4 skipped**, 2026-09-29, ledger 345, the review of 344):
-  `-n 10` **1m39s** in a worktree outside `.claude`, at a load average of ~0.3 at its
+- Full suite (**5434 passed / 4 skipped**, 2026-09-29, ledger 346 -- the observation
+  route keyed by period): `-n 10` **1m40s** in a worktree outside `.claude`, at a load
+  average of ~1.5 at its start, absolute `PYTHONPATH`; serial not re-measured. Before it,
+  5424 passed / 4 skipped (ledger 345, the review of 344):
+  `-n 10` 1m39s in a worktree outside `.claude`, at a load average of ~0.3 at its
   start, with an ABSOLUTE `PYTHONPATH` (next bullet); serial not re-measured. Before it,
   5421 passed / 4 skipped (ledger 344 on the PEST-target series 340-343): `-n 10` 1m42s
   at ~0.8. Before it, 5371 passed / 4 skipped (2026-09-28, ledger 316's five build-failure
@@ -1714,8 +1721,9 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   those files, each record BY POSITION, as text or MF6's `BINARY` form (ledger 345; MF6
   cuts names to 40 characters; the header is checked, not matched). Refused by name:
   another quantity only, another id, a label declared twice, a set declared in PART
-  (the route is chosen for the whole set, since the two routes are on different
-  clocks), a missing declared file, and a model with several LAK/SFR/DRN packages unless
+  (the route is chosen for the whole set, since the two routes do not read the same
+  numbers -- a dry lake, an SFR flow's sign, the LAK stage file's record clock), a
+  missing declared file, and a model with several LAK/SFR/DRN packages unless
   the targets name one (`package=`, carried into the forward run; packages found by
   TYPE -- FloPy's `get_package("lak")` answers a package NAMED `lak` first, and the
   stage VIEWS still read that one alone in silence, ledger 345). `to_flopy_obs` refuses

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 345 entries (350 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 346 entries (351 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 346 | The observation route is one row per stress period, at its end: a lake, reach or zone target keyed by perio... | 2026-09-29 |
 | 345 | The review of ledger 344: a declared observation file MF6 wrote BINARY is read, and 344's two untested halv... | 2026-09-29 |
 | 344 | The observation route reads the package's DECLARED observations, by identity: a lake, reach or zone target... | 2026-09-29 |
 | 343 | The review of ledger 342: a DRN zone cell the grid does not have is refused on the budget route, and MF6 cu... | 2026-09-29 |
@@ -14684,17 +14685,23 @@ same day, which is the useful part of the result.
         time-weighted mean is the call not made here.
       - **The two routes' `time` labels** (the stage-clock family, ledger 301). Measured
         on the reproducer's lake (one step per period) through `compare()` and a PstFrom
-        build: the observation route's `time` is MF6's simulated time (10.0 .. 60.0), the
+        build: the observation route's `time` ~~is~~ WAS MF6's simulated time (10.0 .. 60.0), the
         stage-file route's the saved record's index (LAK) or the stress period (SFR). A
-        target keyed by PERIOD on the observation route matches 0 of 6 rows in
+        target keyed by PERIOD on the observation route ~~matches~~ matched 0 of 6 rows in
         `compare()`, ~~and in the PEST build every observation keeps the base run's
         SIMULATED value as its `obsval`, weight 1 -- the targets silently dropped
         (`_assign_target_values` `continue`s on a name it cannot find). Keyed by MF6's
         time as integers it matches both; as FLOATS (10.0) `compare()` matches and PEST
         does not (`time:10.0` against pyEMU's `time:10`), silently again.~~ **and the
         PEST build REFUSES it by name since ledger 340**, which matches a target to its
-        row by NUMBER, so `10` and `10.0` both match both, and gives every row no target
-        names weight 0. Keyed by period
+        row by NUMBER, ~~so `10` and `10.0` both match both,~~ and gives every row no
+        target names weight 0. **Corrected by ledger 346:** "keyed by MF6's time as
+        integers it matches both" held at the one step per period it was measured at;
+        at more than one, pyEMU wrote `time:10.0` and the integer keys reached nothing in
+        the build before 340 -- it matched `compare()` only. **Since ledger
+        346 the observation route is keyed by PERIOD** -- one row per period, the one that
+        ends it -- so a period key reads in `compare()` and the build alike and a key of
+        MF6's time (`10`, `10.0`) is REFUSED in both, naming the period it ends. Keyed by period
         on the stage-file route both work -- **at ONE saved step per period only.** When
         output control saves several, a LAK stage-file target must be keyed by
         SAVED-RECORD index: keyed by stress period it silently reads a step inside an
@@ -15061,7 +15068,8 @@ same day, which is the useful part of the result.
       under `_reduce_to_period_end` alone turned `per=0` and `per=1` into a `KeyError` and
       left `per=2` reading period 0's end.
       **The observation route, recorded and NOT changed** (the period-end rule does not
-      need it): MF6 writes a flow observation every time step, labelled by simulated time,
+      need it) -- **CHANGED by ledger 346, the user's call: it is one row per period at
+      its end now, keyed by the period, like every other route**: MF6 writes a flow observation every time step, labelled by simulated time,
       and its period-end rows equal the file route -- the DRN zone to the bit, the SFR reach
       with MF6's NEGATIVE sign where the file route reports the magnitude, so a positive
       gauged flow Q matched exactly there reads a residual of -2Q. A target keyed by
@@ -15072,9 +15080,13 @@ same day, which is the useful part of the result.
       realization is pulled back toward the uncalibrated model's flows. Keyed by time
       10/20/30 it matches.~~ and a PEST build REFUSES it, naming it and the rows the
       table holds, and carries every row no target names at weight 0 (ledger 340).
-      Keyed by time 10/20/30 it matches in `compare()` -- and in the build only since
+      ~~Keyed by time 10/20/30 it matches in `compare()` -- and in the build only since
       ledger 340 matches by NUMBER: at `nstp=3` the integer keys had matched none of
-      pyEMU's `time:10.0` rows. Both route defects are open.
+      pyEMU's `time:10.0` rows. Both route defects are open.~~ Keyed by time 10/20/30 it
+      matched in `compare()` ONLY: the build before ledger 340 matched by spelling, and at
+      `nstp=3` the integer keys reached none of pyEMU's `time:10.0` rows (the floats, at
+      `nstp=1`, none of `time:10`). **The period-key defect is RESOLVED by ledger 346** --
+      a period key reads, a time key is refused naming the period; the SFR sign is open.
       **Not built:** a time-weighted mean over the period (the user chose the end); the LAK
       period clock.
       Reproducer: `docs/reproducers/flow_targets_period_end.py` (the toy under five OC
@@ -15303,12 +15315,14 @@ same day, which is the useful part of the result.
       `IesResults._measured_observation_keys` joins on; an older snapshot joins on
       `str(time)` as before. The unused `_load_values_table` and `_normalize_row_labels` --
       the copy of pyEMU's row-label rule -- are deleted, with the package re-export.
-      **Interim, until the observation route is keyed by period** (the next commit of the
+      ~~**Interim, until the observation route is keyed by period** (the next commit of the
       series): its rows are still MF6 simulated times, so a PERIOD key there is refused at
       build where it was dropped -- **unless a simulated time equals the key, which it then
       reads in silence (ledger 341: daily periods, key 1 reads `t = 1`, the END of period
       0)**; a whole MF6 time (`10`, `10.0`) matches in `compare()` and
-      the build alike; a fractional MF6 time (`3.3333`) is refused on every route.
+      the build alike; a fractional MF6 time (`3.3333`) is refused on every route.~~
+      **The interim ENDED with ledger 346:** the observation route is keyed by period, a
+      period key reads there, and a key of MF6's time is refused naming the period it ends.
       Reproducer: `docs/reproducers/pest_handed_targets.py`, run against this tree and the
       parent's `src`. Tests: `tests/test_pest_handed_targets.py`, 11 on real MF6 runs; the
       two-layer column test and the concentration end-to-end now use names out of sorted
@@ -15365,7 +15379,8 @@ same day, which is the useful part of the result.
       the key: with daily periods the rows are `t = 1, 2, 3`, and keys 1 and 2 build at
       weight 1 reading the ENDS of periods 0 and 1 (measured; unchanged since before 340).
       Corrected in CLAUDE.md, `package_api_reference.md` and 340's interim paragraph; the
-      next commit of the series keys that route by period, which is the fix. **Not built:**
+      next commit of the series keys that route by period, which is the fix (DONE: ledger
+      346). **Not built:**
       an interim guard -- a period key and an MF6 time cannot be told apart on that route.
       **Checked and sound** (redone, not taken from 340): reverting the zero weights fails
       the three weight tests, and the sorted base table with the header check off fails the
@@ -15447,7 +15462,8 @@ same day, which is the useful part of the result.
       REFUSED on the budget route since ledger 343, which holds the grid's every cell.
       **For the next commit of the series** (the observation route keyed by period): two of
       the new tests read that route's per-step rows (`iloc[NSTP - 1::NSTP]`) and will move
-      with it; the others compare against `len(simulated_series(...))`.
+      with it; the others compare against `len(simulated_series(...))`. (Moved in ledger
+      346: all three read one row per period now.)
       Reproducer: `docs/reproducers/drn_zone_layer_and_cells.py`, run on this tree and on
       ledger 341's `src`. Tests: `tests/test_drn_zone_layers.py` (15, one MF6 run of a
       two-layer toy with an inactive cell and a layer-0 decoy drain; two PEST builds).
@@ -15500,8 +15516,8 @@ same day, which is the useful part of the result.
       correctly today, and which of the two to break is a decision, not a fix.~~
       **RESOLVED for the lake, reach and zone readers by ledger 344:** they read each
       DECLARED record from its own column, by position, and only check the header against
-      the 40 characters MF6 keeps, so the three labels read the observation route (times
-      10, 20). MF6 still writes one header for the three -- a file a person reads, not
+      the 40 characters MF6 keeps, so the three labels read the observation route (MF6's times
+      10, 20 then; the periods 0, 1 since ledger 346). MF6 still writes one header for the three -- a file a person reads, not
       one myflopy reads by name. The head targets read the head FILE, not this route.
       Also: the reproducers' "before" instructions named the commits as they were before
       the 2026-09-29 rebase (9871965, 3a46332); they name 4fbcc03 and 58988d7 now.
@@ -15545,7 +15561,8 @@ same day, which is the useful part of the result.
       **The route is chosen for the WHOLE set** (the skeptic's correction): every target
       declared, or none. A set of some of each is REFUSED naming both groups -- one added
       undeclared name had moved every target of the set to the file route, on another
-      clock (MF6 time against period or record) and with another dry-lake value. A set
+      clock (MF6 time against period or record -- period against period since ledger 346,
+      bar the LAK stage file's record) and with another dry-lake value. A set
       with nothing declared reads the file route exactly as before; for a DRN zone, one
       label per cell, a zone declared in part is "not declared".
       **Only the declared files are read, each record BY POSITION.** MF6 writes a file's
@@ -15609,8 +15626,8 @@ same day, which is the useful part of the result.
       **Templates:** one built before this reads by identity with no rebuild (its baked
       forward run calls the library's `simulated_series`), but cannot pass `package=`, so
       a model of several packages of the type must be rebuilt.
-      **NOT done:** clocks (the observation route is still keyed by MF6's simulated time --
-      the next commit), signs, the dry-lake value; `from_series`/`from_records` take no
+      **NOT done:** ~~clocks (the observation route is still keyed by MF6's simulated time --
+      the next commit)~~ (keyed by period since ledger 346), signs, the dry-lake value; `from_series`/`from_records` take no
       `package=` (set the attribute on the result); a DRN BOUNDNAME observation is not
       resolved to its drains' cells (refused as another id); clearing MF6's outputs from a
       reused run directory (ledger 191's D5) -- the reader no longer reads an undeclared
@@ -15705,3 +15722,113 @@ same day, which is the useful part of the result.
       `test_the_pest_forward_run_reads_the_package_the_targets_name` (with its string
       check removed, the forward run itself exits non-zero); the name lookup in place of
       the type -> `test_a_package_named_like_its_type_does_not_hide_the_others`.
+346. **The observation route is one row per stress period, at its end: a lake, reach or zone target keyed by period reads there, a key of MF6's simulated time is refused naming the period it ends, and an ATS realization writes the rows PEST's base run did (2026-09-29).**
+      The fourth commit of the PEST-targets series (scoping F1, option A), on the user's
+      rule: a period's value is its END-of-period value, on the observation route too --
+      one row per stress period, taken at its end, keyed by zero-based period like every
+      other route. MF6 writes a continuous observation at EVERY time step, labelled by
+      `totim` and nothing else, and `LakeStageTargets`, `SfrStageTargets`,
+      `SfrFlowTargets` and `DrnFlowTargets` handed every row on. Measured on the toy
+      (`nstp=3`): 9 rows for 3 periods; a period key read `NaN` in `compare()` and was
+      refused at build (340's interim); and under ATS the rows moved with the parameters
+      -- 12, 13, 14 at K = 10, 1, 2 -- while PEST reads each realization by the BASE run's
+      line positions, so a K = 2 realization handed PEST -274.426 and -462.621 as the ends
+      of periods 1 and 2, which are -381.261 and -581.729, without a word.
+      **ONE place, ONE rule.** `_shared._read_declared_observations` -- the reader all four
+      families' observation routes share since ledger 344 -- reduces to the period-end rows,
+      so `simulated_series`, `compare()`, the build's base CSV and every forward run inherit
+      it. Which row ends a period is `period_end.period_end_rows(totim, perlen)`, beside
+      `period_end_steps`, and its `(kstp, kper, pertim)` go THROUGH `period_end_steps`, so
+      `END_RTOL` and the refusal of a missing end are the same rule as every route's. The
+      shared tolerance is one helper, `_end_tolerance`. `period_end_steps` takes a new
+      `fix=` for the refusal's last sentence: output control does not schedule a continuous
+      observation, so `SAVE ... LAST` is the wrong advice there -- the rule is shared, the
+      advice is not.
+      **Each period is measured from MF6's OWN previous end** -- judgment call, measured.
+      MF6 adds the lengths it READ, which FloPy wrote at 8 decimals, so a live model's
+      hourly period ends run 3.33e-9 further ahead of the cumulative length the model holds
+      every period (1.33e-8 at period 3, 2.0e-8 at period 5, reproducer D) and comparing
+      `totim` with the cumulative `perlen` refuses from the fourth period. Differencing
+      keeps the rounding to one period's. A row is in period k while its time into k is at
+      most `perlen` plus the tolerance, and the row that ENDS a period is its last -- so a
+      zero-length period after it, written at the same `totim`, is the next period's.
+      Limits: a last time step shorter than `END_RTOL` of its period, or an ATS first step
+      that short, is read into the wrong period (`END_RTOL`'s own caveat); a `PRECISION
+      SINGLE` binary observation file carries 7 significant digits in its times, which the
+      check does not absorb -- a length not exact in float32 (an hour) can be REFUSED
+      there, loudly (reasoned from the format, not run against MF6).
+      **Refused, each by name:** a file short of a period's end (MF6 stopped inside it, or
+      a copy was cut), naming the period, the steps it holds and where they end; a period
+      with no row; rows past the last period's end (another simulation's file); times that
+      go back or are not numbers; and a model with no TDIS -- judgment call: a test double
+      had fallen back to "the last saved step" elsewhere, but an observation file carries
+      no step labels to fall back to. `tests/test_mf6_pest.py`'s declared-OBS double gained
+      a TDIS and MF6's times (1.0, 2.0 -- it wrote 0, 1, a time MF6 never writes).
+      **A target keyed by MF6's time is REFUSED on this route, naming the period it ends**
+      (`10 is the end of period 0 in simulated time -- key it 0`) -- in `compare()`
+      (`_shared._refuse_keys_off_the_periods`) and in the build, whose `_locate_targets`
+      now names the period for any key that is a period's end, on every route. That was
+      the route's documented key (ledgers 331, 336, CLAUDE.md), and it would otherwise read
+      `NaN` in `compare()` with `stats()` counting one row fewer. **Judgment call: the
+      observation route only.** The FILE routes' `compare()` still answers `NaN` for a
+      period the table lacks (340 refused it at build only), and the LAK stage FILE is
+      keyed by saved record (331's limit), so a periods-only check there would refuse its
+      documented keys. **Limit, stated:** a time key that is also a period -- `1` on daily
+      periods -- cannot be told from one, and reads that period (the END of period 1,
+      where it read the end of period 0 before).
+      **Scope cut:** a sub-period target on this route is no longer expressible; nothing
+      in-tree used one, and the per-step values stay in MF6's CSV.
+      **Callers that read the per-step series for another purpose** -- the spec's (d):
+      `canonical_feature_signals`' `seepage_peak` was the max over every TIME STEP; it is
+      over the stress-period ends now, CHANGED rather than kept -- the head change beside
+      it in the same function was already over period ends (ledger 336), so the two
+      signals are on one clock (canonical testing profile at two steps per period: north
+      1332.889 -> 1327.946, south 894.203 -> 891.231; the master test asserts `> 0`). The
+      canonical_01 notebook plotted the DRN series against "time (days)"; its label and
+      markdown are edited in place, its saved output left as it ran. The master notebook
+      reads only the tables' shapes, canonical_00 the LAST row -- the same value.
+      **A PEST template built on this route at more than one step per period, or under
+      ATS, must be REBUILT:** its instruction file reads a line per time step, so its next
+      forward run fails at end of file -- loudly; at one step per period it reads the same
+      values under new `time` labels, which it skips.
+      **Found in passing and FIXED:** pandas' default float parser read MF6's observation
+      text one unit in the last place off -- 23 of 27 DRN cell values of the toy equal to
+      the budget file, 6 of 9 period-end cells through the route. MF6 writes every digit
+      (`G0`), so `_observation_output_table` reads it `float_precision="round_trip"`: 27
+      of 27, 9 of 9. The zone's SUM still differs from the budget route's by one unit in
+      the last place (another summing order), so the test holds it to 1e-14.
+      **Corrected, not reopened:** 331's and 336's "keyed by time 10/20/30 it matches"
+      held in the build only at one step per period -- before 340 the build matched by
+      spelling, and at `nstp=3` the integer keys reached no `time:10.0` row, matching
+      `compare()` alone (struck and restated there); 340's
+      interim paragraph is struck; 341, 342, 343 and 344 are annotated where they
+      described the per-step route; `_declared_route` said the two routes were "on
+      different clocks", now that they read different NUMBERS (a dry lake, the SFR sign,
+      the LAK stage file's record clock).
+      **Still open:** the SFR flow's sign on this route (the next commit), the dry lake's
+      value (F5), the LAK stage file's record clock (F4).
+      Reproducer: `docs/reproducers/obs_route_period_end.py`, run on this tree and on
+      0c38bf5's `src` (sections A-G; E is `pestpp-glm` NOPTMAX=0 end to end: every family
+      and a head keyed by period, phi 18,754.74 at the base K and 0.0000 at the truth,
+      where 0c38bf5 refuses the build). `flow_targets_period_end.py`,
+      `stage_targets_one_stage.py`, `pest_handed_targets_review.py` and
+      `drn_zone_layer_and_cells.py` read the per-step rows or printed their times; each is
+      updated to say what it measures now. Tests: `tests/test_obs_route_period_end.py`
+      (10; 7 on four real MF6 runs: three steps per period, ATS at K = 10 and 2, six
+      hourly periods read live); the per-step assertions in
+      `test_flow_targets_period_end.py`, `test_drn_zone_layers.py`,
+      `test_stage_targets_one_stage.py` and `test_obs_route_declared_identity.py` now assert
+      one row per period. Each fix reverted alone fails by name: no reduction -> seven of
+      the module's ten, from `test_every_family_reads_one_row_per_period_at_its_end` to
+      `test_a_file_short_of_a_period_end_is_refused_naming_the_period`, and six of the
+      moved tests (`test_the_two_sfr_routes_agree_at_each_period_end` among them); the cumulative
+      rule for the differencing -> `test_hourly_periods_read_live_find_every_period_end`
+      and `test_the_rule_measures_each_period_from_mf6s_own_previous_end`; no absent-period
+      refusal -> the file-short test and `test_a_file_that_is_not_this_simulations_is_
+      refused`; no break at a period's end row -> the rule test (the zero-length period);
+      no time-key refusal -> `test_compare_reads_a_period_key_and_refuses_a_time_key_naming_
+      the_period`; no hint in the build -> `test_the_pest_build_puts_each_period_target_
+      on_its_period_end_row`; the default parser -> `test_the_period_end_rows_are_the_file_
+      routes_values` and seven others that compare the route with MF6's file to the bit
+      (the tests read MF6's CSVs `round_trip` too); no TDIS refusal -> `test_a_model_with_no_tdis_is_refused_on_the_
+      observation_route`.

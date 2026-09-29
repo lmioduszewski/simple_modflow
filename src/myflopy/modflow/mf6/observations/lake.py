@@ -22,6 +22,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _observation_label,
     _ObservedQuantity,
     _read_declared_observations,
+    _refuse_keys_off_the_periods,
     _refuse_observation_kind,
     _refuse_shared_labels,
 )
@@ -97,6 +98,8 @@ class LakeStageTargets:
     (ledgers 301, 331) -- the one family the period-end rule cannot reduce yet --
     but a schedule that saves no period's END (``SAVE HEAD FIRST``, ``STEPS``
     short of it) is refused as it is for heads, stages and flows (ledger 336).
+    On the observation route it is keyed by stress period, one row per period at
+    its end (ledger 346).
 
     **The observation route reads what the LAK package DECLARES** (ledger 344):
     a target reads MF6's STAGE observation only when its label (its name as
@@ -385,8 +388,10 @@ class LakeStageTargets:
         record from its own column -- else, when NO target is declared, from
         ``model.lak.results.stage`` (ledger 344; see the class notes for what is
         refused). The two routes label ``time`` differently: the observation
-        route carries MF6's simulated time, the stage-file route the zero-based
-        index of the saved stage record.
+        route by the zero-based STRESS PERIOD, one row per period -- MF6's
+        observation at the time step that ENDS it (ledger 346; it carried every
+        step, keyed by MF6's simulated time) -- and the stage-file route by the
+        zero-based index of the saved stage record.
 
         **That index is the stress period only when output control saves one step
         per period, and that step ENDS it** (ledgers 331, 336). Saving several --
@@ -458,7 +463,10 @@ class LakeStageTargets:
             the set are declared and others are not; when the model carries
             several LAK packages and ``package`` does not name one, or names one
             that declares none of the targets; or when a declared file's columns
-            do not line up with its records (ledger 344). On the stage-file
+            do not line up with its records (ledger 344). On the observation
+            route, when the file does not END every stress period the TDIS
+            declares -- a run that stopped, a truncated copy -- naming the period
+            (ledger 346). On the stage-file
             route: when a period the stage file saved lacks its
             final step -- naming the period, the steps saved and the ``SAVE HEAD
             LAST`` setting that fixes it (ledger 336); or when the rows of one
@@ -469,7 +477,7 @@ class LakeStageTargets:
         Examples
         --------
         >>> targets = mf.LakeStageTargets(locations={"pond": 0})
-        >>> series = targets.simulated_series(model)   # one row per saved record
+        >>> series = targets.simulated_series(model)   # one row per period, or per saved record
         >>> series["pond"].isna()                       # True where the pond is dry
         """
 
@@ -505,9 +513,12 @@ class LakeStageTargets:
         ``NaN`` where MF6 reports no stage, and so are ``residual`` and
         ``abs_residual``; which lakes that covers depends on the route (ledger
         329). Targets are matched on ``per``, read from their ``time`` as a
-        zero-based integer -- which on the observation route is compared with
-        MF6's simulated time, and on the stage-file route with the index of the
-        saved stage record. That index is the stress period only at one saved step
+        zero-based integer -- which on the observation route is the stress period
+        (ledger 346), and on the stage-file route the index of the saved stage
+        record. On the observation route a key naming no period of the model is
+        refused, naming the period each simulated-time key ends: that route was
+        keyed by MF6's time (``10, 20, 30``) until ledger 346, and such a set would
+        otherwise read ``NaN``. That index is the stress period only at one saved step
         per period: with several, a target keyed by period silently reads a step
         inside an earlier period (measured at ``nstp=3``: periods 0, 1, 2 read
         steps 1, 2, 3 of period 0), unlike ``SfrStageTargets`` and
@@ -540,7 +551,9 @@ class LakeStageTargets:
         ValueError
             As :meth:`simulated_series`: a target's label declared as something
             else, a set declared in part, several LAK packages and no
-            ``package``, or a file that does not line up; on the stage-file
+            ``package``, a file that does not line up or one short of a period's
+            end; on the observation route, when a target's key is no stress period
+            of the model (ledger 346); on the stage-file
             route, when a period the stage file saved lacks its final step or a
             lake's copies in one record disagree; or when a target's ``time`` is not a
             whole number, or two rows hold a value for one target in one period
@@ -567,6 +580,10 @@ class LakeStageTargets:
             targets["per"] = _measured_periods(
                 targets, value_column="stage", caller="LakeStageTargets.compare(...)"
             )
+            if observed is not None:
+                _refuse_keys_off_the_periods(
+                    targets, observed["time"], model=model, caller="LakeStageTargets.compare(...)"
+                )
             if "stage" in targets.columns and "stage_target" not in targets.columns:
                 targets = targets.rename(columns={"stage": "stage_target"})
             compare = targets.merge(simulated, on=["name", "lake", "per"], how="left")

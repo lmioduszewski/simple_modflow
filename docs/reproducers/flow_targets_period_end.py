@@ -33,9 +33,12 @@ WHAT IT MEASURES
   4. ``SAVE HEAD FIRST``: the same decision for heads, SFR stage and LAK stage.
   5. ATS, one declared step per period: the steps MF6 took, and the record read --
      found by ``pertim == perlen``, which ``kstp == nstp - 1`` would have refused.
-  6. The observation route, recorded not changed: its SFR flow is MF6's NEGATIVE
-     ``DOWNSTREAM-FLOW``; a DRN target keyed by PERIOD matches nothing in
-     ``compare()``, and a PEST build keeps the simulated value as its ``obsval``.
+  6. The observation route: its SFR flow is MF6's NEGATIVE ``DOWNSTREAM-FLOW``. When
+     this was measured (ledger 336) a DRN target keyed by PERIOD matched nothing in
+     ``compare()`` and a PEST build kept the simulated value as its ``obsval``; since
+     ledger 346 the route is one row per period at its end, so the period key reads
+     and a key of MF6's time (10, 20, 30) is refused naming the period
+     (``docs/reproducers/obs_route_period_end.py`` measures that change).
   7. The canonical model: the outlet reach and a one-cell DRN zone, before and
      after, and MF6's ``DOWNSTREAM-FLOW`` at each period end.
   8. What the branch's review found, on the toy: (a) ONE-HOUR periods read live --
@@ -202,7 +205,8 @@ def main() -> None:
         else:
             print(f"      before (sum of steps) {_show([sum(v) for v in steps.values()])}")
         print(f"      after                 {_show(series)}")
-        print(f"      MF6's observation at each period end {_show(observed.iloc[NSTP - 1::NSTP])}")
+        # One row per period at its end since ledger 346 ([NSTP - 1::NSTP] of every step before).
+        print(f"      MF6's observation at each period end {_show(observed)}")
 
     print("\n2. SAVE HEAD ALL + SAVE BUDGET LAST: each file's own clock")
     budget_last = _toy(root / "budget_last", [("HEAD", "ALL"), ("BUDGET", "LAST")])
@@ -246,14 +250,15 @@ def main() -> None:
     print(f"   DRN zone read {_show(mf.DrnFlowTargets(locations={'zone': DRN_CELLS}).simulated_series(ats)['zone'])}"
           f"; at each period's last step {_show(ends.values())}")
 
-    print("\n6. the observation route (recorded, not changed)")
-    print(f"   SFR 'up' observation at period ends {_show(observed_sfr['up'].iloc[NSTP - 1::NSTP])} "
+    print("\n6. the observation route (keyed by period since ledger 346)")
+    print(f"   SFR 'up' observation at period ends {_show(observed_sfr['up'])} "
           f"against the budget route {_show(sfr['a'])}")
     for label, times in (("by period", [0, 1, 2]), ("by time", [10, 20, 30])):
-        compare = mf.DrnFlowTargets(
+        targets = mf.DrnFlowTargets(
             locations={"seep": DRN_CELLS},
-            values=pd.DataFrame({"time": times, "seep": -800.0})).compare(toy)
-        print(f"   DRN target keyed {label} {times}: compare() sim_flow {list(compare['sim_flow'].round(2))}")
+            values=pd.DataFrame({"time": times, "seep": -800.0}))
+        print(f"   DRN target keyed {label} {times}: compare() sim_flow "
+              f"{_try(lambda targets=targets: targets.compare(toy)['sim_flow'])[:220]}")
     targets = mf.DrnFlowTargets(locations={"seep": DRN_CELLS},
                                 values=pd.DataFrame({"time": [0, 1, 2], "seep": -800.0}))
     cal = toy.pest("q", workspace=root / "pest", start_datetime="2024-01-01")
@@ -315,7 +320,7 @@ def main() -> None:
           f"{_show(ends['SEEP_C21'] + ends['SEEP_C27'])}; all three "
           f"{_show(ends['SEEP_C20'] + ends['SEEP_C21'] + ends['SEEP_C27'])}")
     series = mf.DrnFlowTargets(locations=rows).simulated_series(toy)
-    print(f"       now {_show(series['seep'].iloc[NSTP - 1::NSTP])}; the budget route "
+    print(f"       now {_show(series['seep'])}; the budget route "
           f"{_show(mf.DrnFlowTargets(locations=rows.assign(name='zone')).simulated_series(toy)['zone'])}")
     first_step = HeadFile(pathlib.Path(head_first.workspace) / "m.hds", precision="double")
     step_one = [float(first_step.get_data(kstpkper=(0, per)).ravel()[22]) for per in range(NPER)]

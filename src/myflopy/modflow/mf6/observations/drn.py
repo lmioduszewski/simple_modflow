@@ -29,6 +29,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _ObservedQuantity,
     _placement_note,
     _read_declared_observations,
+    _refuse_keys_off_the_periods,
     _refuse_observation_kind,
     _report_missed_features,
 )
@@ -463,7 +464,9 @@ class DrnFlowTargets:
     **A period's flow is its END-of-period flow** (ledger 336): the zone's cells
     ADD within the time step that ends the period -- that is what a lumped seepage
     measurement is -- and the steps a period saved do not; a period whose final
-    step output control did not save is refused rather than read early.
+    step output control did not save is refused rather than read early. On the
+    observation route the zone is its cells' observations at the time step that
+    ends each period, keyed by the period (ledger 346).
 
     **A zone's cell is a ``(layer, cell)`` pair, on every route** (ledger 342): the
     budget file names a drain by its model-wide node, and matching that against a
@@ -547,7 +550,8 @@ class DrnFlowTargets:
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
         ``times`` is applied. :meth:`compare` and the PEST build read it as a
         zero-based stress period, by number (``1.0`` is period 1; a fraction
-        raises), matched on the budget-file route against the period.
+        raises), on both routes (the observation route since ledger 346, where a
+        key naming no period is refused -- MF6's simulated time was its key).
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed flow, matched
         ignoring case. Default ``"flow"``.
@@ -887,7 +891,8 @@ class DrnFlowTargets:
         zone (:func:`_zone_members`): its labels are those of the union of its
         rows' cells, each once -- it was keyed per row by assignment, so the LAST
         row won and a zone of rows ``[20]`` and ``[21, 27]`` summed cells 21 and 27
-        only on this route (ledger 336).
+        only on this route (ledger 336). One row per stress period, at its end
+        (ledger 346).
 
         Parameters
         ----------
@@ -897,9 +902,9 @@ class DrnFlowTargets:
         Returns
         -------
         tuple of (pandas.DataFrame, pandas.DataFrame or None)
-            The resolved zones (:meth:`zone_definitions`), and ``time`` plus one
-            column per zone -- a zone of no cells reads 0.0 -- or ``None`` when no
-            zone cell is declared.
+            The resolved zones (:meth:`zone_definitions`), and ``time`` (the
+            zero-based stress period) plus one column per zone -- a zone of no
+            cells reads 0.0 -- or ``None`` when no zone cell is declared.
 
         Raises
         ------
@@ -946,6 +951,9 @@ class DrnFlowTargets:
             targets["per"] = _measured_periods(
                 targets, value_column="flow_target", caller="DrnFlowTargets.compare(...)"
             )
+            _refuse_keys_off_the_periods(
+                targets, wide["time"], model=model, caller="DrnFlowTargets.compare(...)"
+            )
             compare = targets.merge(simulated, on=["name", "per"], how="left")
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_flow"] - compare["flow_target"]
@@ -958,10 +966,11 @@ class DrnFlowTargets:
         Read from the DRN package's own ``DRN`` observations when EVERY zone
         cell's label (as :meth:`to_flopy_obs` writes it) is declared there, for
         that cell -- only the files that OBS names are read, each record from
-        its own column; each row is one time step at MF6's simulated time, the
-        zone the sum of its cells in that step -- else, when NO zone cell is
-        declared, from the model's cell-budget file (ledger 344; see the class
-        notes for what is refused).
+        its own column; each row is one stress period, keyed by the period and
+        read at the time step that ENDS it (ledger 346 -- it was every time step,
+        keyed by MF6's simulated time), the zone the sum of its cells in that
+        step -- else, when NO zone cell is declared, from the model's cell-budget
+        file (ledger 344; see the class notes for what is refused).
 
         **On the budget-file route a period holds ONE flow per zone: the flow at
         the period's END** (ledger 336), summed over the zone's cells in that
@@ -999,7 +1008,9 @@ class DrnFlowTargets:
             carries several DRN packages, a zone cell is declared in them and
             ``package`` does not name one, or ``package`` names one that declares
             none of them; or when a declared file's columns do not line up with
-            its records (ledger 344). On the budget-file route, when a period
+            its records (ledger 344), or it does not end every stress period (a
+            run that stopped, a truncated copy -- ledger 346). On the budget-file
+            route, when a period
             the budget file saved lacks its final step -- naming the period, the
             steps saved and the ``SAVE BUDGET LAST`` setting that fixes it, or
             when the file names a node
@@ -1031,9 +1042,11 @@ class DrnFlowTargets:
         ``sim_flow`` comes from the same two routes as :meth:`simulated_series`:
         on the budget-file route, one flow per zone per stress period, the flow at
         the period's END (ledger 336). Targets are matched on ``per``, read from
-        their ``time`` as a zero-based integer -- compared with the stress period
-        on the budget-file route, and with MF6's simulated time on the
-        observation route, where a target keyed by period matches no row.
+        their ``time`` as a zero-based integer -- the stress period, on both routes
+        (ledger 346; the observation route was keyed by MF6's simulated time,
+        where a target keyed by period matched no row). On the observation route
+        a key naming no period of the model is refused, naming the period each
+        simulated-time key ends.
 
         Parameters
         ----------
@@ -1045,15 +1058,15 @@ class DrnFlowTargets:
         -------
         pandas.DataFrame
             One row per target row (per simulated row -- one per zone and
-            period, or per zone and MF6 time on the observation route -- when the
-            targets hold no values): ``name``, ``time``, ``per``,
+            period, on both routes -- when the targets hold no values): ``name``, ``time``, ``per``,
             ``flow_target``, ``sim_flow``, ``residual`` (simulated minus target),
             ``abs_residual``, and the zone's ``group``, ``weight`` and ``cells``
             -- ONE set per zone however many rows define it, its cells the
             sorted ``(layer, cell)`` pairs MF6 reads. With no values
-            ``flow_target`` and the residuals are ``NaN``, and on the budget-file
-            route ``time`` is the period, equal to ``per`` (it had no ``per``
-            column, so :meth:`residuals` raised ``KeyError``, ledger 342).
+            ``flow_target`` and the residuals are ``NaN``, and ``time`` is the
+            period, equal to ``per`` -- on the budget-file route since ledger 342
+            (it had no ``per`` column, so :meth:`residuals` raised ``KeyError``),
+            on the observation route since ledger 346.
 
         Raises
         ------
@@ -1062,7 +1075,9 @@ class DrnFlowTargets:
         ValueError
             As :meth:`simulated_series`: a zone cell's label declared as
             something else, a set declared in part, several DRN packages and no
-            ``package``, or a file that does not line up; on the budget-file
+            ``package``, or a file that does not line up or does not end every
+            period; on the observation route, when a target's key is no stress
+            period of the model (ledger 346); on the budget-file
             route, when a period the budget file saved lacks
             its final step or a zone names a ``(layer, cell)`` the model's grid
             does not have; or when a target's

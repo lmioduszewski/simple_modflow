@@ -265,6 +265,12 @@ def canonical_feature_signals(model) -> dict[str, object]:
     magnitude of each DRN seepage series. Expects the canonical model's target
     set (``model.targets.heads`` / ``model.targets.drn_flow``).
 
+    Both signals read each stress period's END (ledger 336's rule), so both are
+    taken over the same instants. The seepage peak was the largest over every TIME
+    STEP until ledger 346, while the head change beside it was already over period
+    ends: the canonical DRN targets take the observation route, which handed on
+    every step until it was keyed by period.
+
     Parameters
     ----------
     model : SimulationBase
@@ -276,9 +282,9 @@ def canonical_feature_signals(model) -> dict[str, object]:
     -------
     dict
         ``head_change``: ``{target name: max minus min simulated head}`` in model
-        length units, one entry per head-target column. ``seepage_peak``:
-        ``{series name: largest |flow|}`` over the DRN flow series, in model
-        volume per time.
+        length units, one entry per head-target column, over the stress-period
+        ends. ``seepage_peak``: ``{series name: largest |flow|}`` over the DRN
+        flow series' stress-period ends, in model volume per time.
     """
 
     heads = model.targets.heads.targets.simulated_heads(model)

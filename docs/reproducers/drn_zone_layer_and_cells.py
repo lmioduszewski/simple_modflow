@@ -318,9 +318,10 @@ def section_i(root):
         header = (pathlib.Path(result.model().workspace) / "drn_flow_targets.csv"
                   ).read_text().splitlines()[0].split(",")
         times = zone.simulated_series(result.model())["time"].tolist()
+        # Before ledger 346 the times told the routes apart -- 0, 1 the budget file's
+        # periods, 10, 20 the observation route's MF6 times; since, both are periods.
         return (f"run.success {result.success}; asked {[len(r[0]) for r in records]} "
-                f"characters, MF6 wrote {header[1:]}; the reader's times {times} "
-                "(0, 1: the budget file's periods; 10, 20: the observation route's times)")
+                f"characters, MF6 wrote {header[1:]}; the reader's times {times}")
 
     _attempt("I", "45-character labels", run)
 

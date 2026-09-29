@@ -19,6 +19,11 @@ A period whose end the file does not hold is REFUSED, naming the period, the ste
 output control did save and the setting that fixes it: the value asked for does
 not exist, and an earlier step is a different number.
 
+An MF6 CONTINUOUS OBSERVATION file carries no ``kstp``/``kper`` at all -- one row per
+time step, labelled by simulated time -- so :func:`period_end_rows` works out which
+row ends each period from those times and the TDIS, and hands the result to the same
+check (ledger 346).
+
 Deliberately light -- numpy, pandas and myflopy's logger at import -- because PEST's
 forward run imports it on every model run (``pest/forward_run.py``), where importing
 the observation package would cost ~2.4 s a run for nothing. :func:`period_lengths`
@@ -52,6 +57,17 @@ logger = get_logger(__name__)
 #: when that last step is shorter than 1e-8 of the period (``tsmult=0.5`` over 27+
 #: steps); a FloPy ``float_precision`` set below its default of 8 is not covered.
 END_RTOL = 1e-8
+
+
+def _end_tolerance(length: float) -> float:
+    """How far a time into a period may sit from the period's length and still END it.
+
+    :data:`END_RTOL` of the length, floored at one time unit -- the one tolerance
+    both :func:`period_end_steps` (does this record end its period?) and
+    :func:`period_end_rows` (is this row past its period's end?) apply.
+    """
+
+    return END_RTOL * max(abs(float(length)), 1.0)
 
 
 def saved_steps(reader) -> list[tuple[int, int, float]]:
@@ -175,6 +191,7 @@ def period_end_steps(
     perlen: Sequence[float] | None = None,
     file: str = "the output file",
     saves: str = "BUDGET",
+    fix: str | None = None,
 ) -> dict[int, tuple[int, int]]:
     """The saved record at each stress period's END, refusing a period whose end is missing.
 
@@ -205,6 +222,12 @@ def period_end_steps(
         budget file, ``"HEAD"`` for a head or stage file (LAK and SFR write their
         stage when MF6 saves HEAD), ``"CONCENTRATION"`` or ``"TEMPERATURE"`` for a
         concentration or temperature file -- for the fix the refusal names.
+    fix : str or None, optional
+        The refusal's last sentence: what to do about a missing end. Default
+        ``None`` names ``SAVE <saves> LAST`` in the model's output control, the fix
+        for a binary output file. :func:`period_end_rows` passes its own, because
+        output control does not schedule a continuous observation file -- MF6
+        writes one at every time step -- and ``saves`` is then not read.
 
     Returns
     -------
@@ -258,7 +281,7 @@ def period_end_steps(
                 "returns them."
             )
         length = lengths[kper]
-        if abs(pertim - length) <= END_RTOL * max(abs(length), 1.0):
+        if abs(pertim - length) <= _end_tolerance(length):
             continue
         saved_here = sorted(steps[kper])
         noun = "step" if len(saved_here) == 1 else "steps"
@@ -271,15 +294,149 @@ def period_end_steps(
     if short:
         more = len(short) - 5
         listing = "; ".join(short[:5]) + (f"; and {more} more" if more > 0 else "")
+        if fix is None:
+            fix = (
+                f"Save each period's last step: SAVE {saves} LAST (or ALL) in the model's "
+                f"output control -- mf.oc(saverecord=[..., ('{saves}', 'LAST')])."
+            )
         raise ValueError(
             f"A stress period's END is missing from {file}: {listing} (periods "
             "zero-based, steps one-based as output control counts them). A period's "
             "value is its end-of-period value (ledger 336), which this file does not "
-            "hold, and an earlier step is a different number. Save each period's last "
-            f"step: SAVE {saves} LAST (or ALL) in the model's output control -- "
-            f"mf.oc(saverecord=[..., ('{saves}', 'LAST')])."
+            f"hold, and an earlier step is a different number. {fix}"
         )
     return ends
+
+
+#: What a continuous-observation file short of a period's end means, for the refusal.
+_OBSERVATION_FIX = (
+    "MF6 writes a continuous observation at the end of EVERY time step, whatever output "
+    "control saves, so a file short of a period's end is a run that stopped before it "
+    "(read the model's listing file) or a file cut after MF6 wrote it. Run the model "
+    "to its end."
+)
+
+
+def period_end_rows(
+    totim: Sequence[float],
+    perlen: Sequence[float],
+    *,
+    file: str = "the observation file",
+) -> dict[int, int]:
+    """Which row of an MF6 continuous-observation file ENDS each stress period (ledger 346).
+
+    MF6 writes a continuous observation at the end of every time step, one row per
+    step, labelled by the simulated time ``totim`` and carrying no step or period
+    number. So the rows are assigned to periods here, from those times and the
+    TDIS, and each period's last row is checked for being its END by the one rule
+    every target reads (:func:`period_end_steps`, :data:`END_RTOL`): the observation
+    route is keyed by zero-based stress period, one row per period at its end, like
+    every other route.
+
+    **The time into a period is taken by DIFFERENCING MF6's own clock**, never by
+    comparing ``totim`` with the cumulative ``perlen``: MF6 accumulates the lengths
+    it READ, which FloPy wrote at 8 decimals, so on a live model with hourly
+    periods ``totim`` runs ahead of the cumulative length the model holds by
+    3.3e-9 more every period and outgrows :data:`END_RTOL` from the fourth period
+    (``docs/reproducers/obs_route_period_end.py``). Each period's time is measured
+    from the row that ENDS the period before it -- MF6's own ``totim`` there -- so
+    the rounding never accumulates past one period's.
+
+    Parameters
+    ----------
+    totim : sequence of float
+        The file's ``time`` column: MF6's simulated time at the end of each time
+        step, in file order, in the model's time units. A binary file's times read
+        the same way; a ``PRECISION SINGLE`` one carries 7 significant digits, which
+        the check does not absorb.
+    perlen : sequence of float
+        Each stress period's length from the simulation's TDIS
+        (:func:`period_lengths`), one per period, in the same time units.
+    file : str, default "the observation file"
+        What the file is, for the refusals (``"the observation file drn.csv
+        (package 'drn')"``).
+
+    Returns
+    -------
+    dict of int to int
+        ``{kper: row}``: for EVERY stress period, zero-based and in order, the
+        position (from 0) of the row that ends it.
+
+    Raises
+    ------
+    ValueError
+        When a time is not a number or the times decrease (not MF6's file); when a
+        row lies past the end of the last period (a file from another simulation);
+        when a period's last row does not end it -- the run stopped inside it, or the
+        file was cut -- naming the period, the steps it holds and where the last of
+        them ends (:func:`period_end_steps`); or when a period holds no row at all,
+        naming it and where the file stops.
+
+    Examples
+    --------
+    >>> period_end_rows([10 / 3, 20 / 3, 10.0, 40 / 3, 50 / 3, 20.0], [10.0, 10.0])
+    {0: 2, 1: 5}
+    """
+
+    times = np.asarray(pd.to_numeric(pd.Series(list(totim), dtype=object), errors="coerce"),
+                       dtype=float)
+    if not np.isfinite(times).all():
+        bad = int(np.flatnonzero(~np.isfinite(times))[0])
+        raise ValueError(
+            f"{file} holds a time that is not a number at row {bad + 1}: MF6 labels each "
+            "row of a continuous observation file with its simulated time."
+        )
+    if times.size > 1 and (np.diff(times) < 0).any():
+        bad = int(np.flatnonzero(np.diff(times) < 0)[0]) + 1
+        raise ValueError(
+            f"{file}'s times go back at row {bad + 1} ({float(times[bad - 1])!r} then "
+            f"{float(times[bad])!r}): MF6 writes one row per time step in time order, so this "
+            "is not the file MF6 wrote."
+        )
+    lengths = [float(value) for value in perlen]
+    saved: list[tuple[int, int, float]] = []
+    position: dict[tuple[int, int], int] = {}
+    row = 0
+    start = 0.0
+    for kper, length in enumerate(lengths):
+        kstp = 0
+        while row < times.size and times[row] - start <= length + _end_tolerance(length):
+            pertim = float(times[row] - start)
+            saved.append((kstp, kper, pertim))
+            position[(kstp, kper)] = row
+            kstp += 1
+            row += 1
+            if abs(pertim - length) <= _end_tolerance(length):
+                # The row that ends a period is its last: the next one, even at the
+                # same time (a period of length 0 after it), is the next period's.
+                break
+        if kstp and abs(saved[-1][2] - length) <= _end_tolerance(length):
+            # The period ends on MF6's own clock here; the next one is measured from it.
+            start = float(times[row - 1])
+        else:
+            # No end to measure from: its nominal end, so the periods after it are
+            # still told apart (the check below refuses this one).
+            start += length
+    if row < times.size:
+        raise ValueError(
+            f"{file} holds {times.size - row} row(s) past the end of the simulation's last "
+            f"stress period (t = {float(times[row])!r}, where the {len(lengths)} periods of its "
+            f"TDIS end at {sum(lengths)!r}): it was not written by this simulation."
+        )
+    ends = period_end_steps(saved, perlen=lengths, file=file, fix=_OBSERVATION_FIX)
+    absent = [kper for kper in range(len(lengths)) if kper not in ends]
+    if absent:
+        where = (
+            f"its last row is t = {float(times[-1])!r}, in period {saved[-1][1]}"
+            if saved else "it holds no row at all"
+        )
+        raise ValueError(
+            f"{file} holds no row in stress period(s) "
+            f"{', '.join(str(kper) for kper in absent[:10])}"
+            f"{' ...' if len(absent) > 10 else ''} (zero-based) of the {len(lengths)} its "
+            f"TDIS declares: {where}. {_OBSERVATION_FIX}"
+        )
+    return {kper: position[step] for kper, step in ends.items()}
 
 
 def _told_apart(first: float, second: float) -> tuple[str, str]:
@@ -454,6 +611,7 @@ __all__ = [
     "at_period_end",
     "last_saved_step",
     "last_saved_steps",
+    "period_end_rows",
     "period_end_steps",
     "period_ends",
     "period_lengths",

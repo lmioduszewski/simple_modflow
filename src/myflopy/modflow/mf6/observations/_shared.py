@@ -14,7 +14,13 @@ import pandas as pd
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.geometry import where_they_are
 from myflopy.modflow.mf6.package_registry import agg_for_kind
-from myflopy.modflow.mf6.period_end import at_period_end, period_end_steps, period_ends
+from myflopy.modflow.mf6.period_end import (
+    at_period_end,
+    period_end_rows,
+    period_end_steps,
+    period_ends,
+    period_lengths,
+)
 
 logger = get_logger(__name__)
 
@@ -414,8 +420,10 @@ def _declared_route(
       the records -- a record of another quantity under the same label is
       another observation, and is left alone when the quantity's own is there;
     - the choice is for the whole SET: every target declared, or none -- a set
-      of some of each RAISES naming both groups, because the two routes are on
-      different clocks and a silent flip moved every target of the set;
+      of some of each RAISES naming both groups, because the two routes do not
+      read the same numbers -- MF6 time against period until ledger 346, and
+      still a dry lake's stage, an SFR flow's sign and the LAK stage file's
+      record clock -- and a silent flip moved every target of the set;
     - a set with no target declared takes the family's file route, as before.
 
     Parameters
@@ -519,8 +527,9 @@ def _declared_route(
             f"({_listing(repr(name) for name in declared_names)}) while "
             f"{_listing(repr(name) for name in targets if name in short)} "
             f"{'is' if len(short) == 1 else 'are'} not (labels "
-            f"{_listing(str(wanted[key][1]).upper() for key in missing)}). The two routes are "
-            f"on different clocks, so the set would be read from {quantity.file_route} in "
+            f"{_listing(str(wanted[key][1]).upper() for key in missing)}). The two routes do "
+            "not read the same numbers (a dry lake's stage, an SFR flow's sign, the LAK stage "
+            f"file's record clock), so the set would be read from {quantity.file_route} in "
             "silence. Declare the missing observations (to_flopy_obs / attach_flopy_obs), or "
             "give each route its own target set."
         )
@@ -593,7 +602,11 @@ def _observation_output_table(path: Path, *, owner: str) -> tuple[list[str], pd.
         with path.open() as handle:
             header = [text.strip() for text in handle.readline().rstrip("\r\n").split(",")]
         try:
-            frame = pd.read_csv(path, header=None, skiprows=1)
+            # ``round_trip``: MF6 writes each value with every digit it holds (``G0``),
+            # and pandas' default fast parser read 4 of the 27 DRN values of ledger
+            # 346's toy one unit in the last place off -- the observation route and the
+            # budget file then disagreed about a number MF6 wrote once.
+            frame = pd.read_csv(path, header=None, skiprows=1, float_precision="round_trip")
         except pd.errors.EmptyDataError:
             frame = pd.DataFrame(columns=range(len(header)))
         return header, frame
@@ -649,7 +662,7 @@ def _read_declared_observations(
     owner: str,
     no_value: float = 0.0,
 ) -> pd.DataFrame:
-    """Read each key's declared observation from ITS file and column: ``time`` plus one column per key.
+    """Each key's declared observation at each stress period's END: ``time`` (the period) plus one column per key.
 
     Only the files the package declares are opened, never a workspace scan: a
     CSV left by a previous run in a reused directory (``prepare_run(overwrite=True)``
@@ -661,10 +674,22 @@ def _read_declared_observations(
     BINARY (``FILEOUT <file> BINARY``) is read as such, by the same rules
     (:func:`_observation_output_table`, ledger 345).
 
+    **One row per stress period, the row that ENDS it, keyed by the zero-based
+    period** (ledger 346, the user's rule): MF6 writes a continuous observation at
+    every time step, labelled by simulated time, and the route handed every step
+    on -- so a target keyed by period matched nothing, and under ATS the number of
+    rows, and so what PEST's line-positional instruction file read, moved with the
+    parameters (12, 13 or 14 rows at K = 10, 1, 2; a K = 2 realization read t = 23
+    as the end of the last period). Which row ends each period is
+    :func:`~myflopy.modflow.mf6.period_end.period_end_rows`, checked against the
+    model's TDIS by the rule every route reads, so a file short of a period's end
+    -- a run that stopped, a truncated copy -- is refused naming the period.
+
     Parameters
     ----------
     model : SimulationBase
-        The run model; its workspace holds the files.
+        The run model; its workspace holds the files, and its TDIS
+        (``model.sim.tdis``) says how long each stress period is.
     chosen : dict of str to _DeclaredObservation
         What :func:`_declared_route` chose, in the order the columns come back.
     owner : str
@@ -676,8 +701,9 @@ def _read_declared_observations(
     Returns
     -------
     pandas.DataFrame
-        ``time`` (MF6's simulated time, one row per time step) and one float
-        column per key of ``chosen``.
+        ``time`` -- the zero-based stress period, ``0 .. nper - 1``, every period
+        once -- and one float column per key of ``chosen``, each the value MF6
+        observed at the end of that period.
 
     Raises
     ------
@@ -686,7 +712,10 @@ def _read_declared_observations(
     ValueError
         When a file's columns do not line up with its declared records (a count
         or a header that differs), two files hold different times, or a binary
-        file cannot be read whole (:func:`_observation_output_table`).
+        file cannot be read whole (:func:`_observation_output_table`); when the
+        model has no TDIS to tell the periods by; or when the rows do not end
+        every period the TDIS declares
+        (:func:`~myflopy.modflow.mf6.period_end.period_end_rows`).
     """
 
     workspace = _observation_workspace(model)
@@ -734,7 +763,120 @@ def _read_declared_observations(
     result = pd.DataFrame({"time": time if time is not None else pd.Series(dtype=float)})
     for key in chosen:
         result[key] = columns[key].reset_index(drop=True).to_numpy()
-    return result
+
+    perlen = period_lengths(model)
+    packages = sorted({observation.package for observation in chosen.values()})
+    described = (
+        f"the observation file{'s' if len(files) > 1 else ''} {', '.join(files)} "
+        f"(package{'s' if len(packages) > 1 else ''} {', '.join(repr(p) for p in packages)})"
+    )
+    if perlen is None:
+        raise ValueError(
+            f"{owner}: cannot tell which row of {described} ends each stress period -- "
+            "MF6 labels its rows by simulated time alone, and the model carries no TDIS "
+            "saying how long each period is. The observation route reads one row per "
+            "stress period, at its end (ledger 346)."
+        )
+    rows = period_end_rows(result["time"], perlen, file=described)
+    periods = list(rows)
+    reduced = result.iloc[[rows[per] for per in periods]].reset_index(drop=True)
+    reduced["time"] = periods
+    return reduced
+
+
+def _period_key_hints(keys, perlen) -> list[str]:
+    """For each key that is a stress period's END in simulated time, the period key to use.
+
+    The observation route was keyed by MF6's simulated time until ledger 346, so a
+    target set written for it -- ``10, 20, 30`` for three 10-day periods -- names
+    period ends, not periods. This says which period each such key ends; a key
+    that is no period's end gets no hint.
+
+    Parameters
+    ----------
+    keys : iterable of float
+        The keys that name no stress period of the model.
+    perlen : sequence of float or None
+        Each period's length (:func:`~myflopy.modflow.mf6.period_end.period_lengths`);
+        ``None`` or empty gives no hints.
+
+    Returns
+    -------
+    list of str
+        One ``"10 is the end of period 0 in simulated time -- key it 0"`` per key
+        that is a period's end, in the order given.
+    """
+
+    if not perlen:
+        return []
+    ends = np.cumsum(np.asarray(list(perlen), dtype=float))
+    hints = []
+    for key in keys:
+        number = float(key)
+        # A hint, not a match: a key typed to six or seven figures still names its end.
+        near = np.flatnonzero(np.isclose(ends, number, rtol=1e-6, atol=1e-9))
+        if near.size:
+            period = int(near[0])
+            hints.append(
+                f"{_shown(key)} is the end of period {period} in simulated time -- key it {period}"
+            )
+    return hints
+
+
+def _refuse_keys_off_the_periods(
+    targets: pd.DataFrame,
+    periods,
+    *,
+    model,
+    caller: str,
+) -> None:
+    """Refuse a target keyed by a period the observation route does not have (ledger 346).
+
+    The observation route is one row per stress period now, keyed ``0 .. nper - 1``,
+    where it was one row per time step keyed by MF6's simulated time -- the key its
+    docs taught (``10, 20, 30``). Such a target used to match; now it would match
+    nothing, and ``compare()`` would answer ``NaN`` for it while ``stats()``
+    counted one row fewer. So it is refused, naming the period each simulated-time
+    key ends. A time key that is ALSO a period (``1`` on daily periods) cannot be
+    told from one and reads that period.
+
+    Parameters
+    ----------
+    targets : pandas.DataFrame
+        The target rows, with ``name``, ``time`` (the key as given) and ``per``
+        (read by :func:`_numeric_periods`).
+    periods : iterable of int
+        The periods the route's table holds.
+    model : SimulationBase
+        The run model, whose TDIS gives the hints.
+    caller : str
+        What is reading, named in the error (``"DrnFlowTargets.compare(...)"``).
+
+    Raises
+    ------
+    ValueError
+        When any target's ``per`` is not one of ``periods``, naming up to five by
+        target and key, and the period each simulated-time key ends.
+    """
+
+    held = sorted({int(per) for per in periods})
+    off = targets.loc[~targets["per"].isin(held)]
+    if off.empty:
+        return
+    listing = [
+        f"{_shown(row.name)} at time {_shown(row.time)}"
+        for row in off.loc[:, ["name", "time"]].drop_duplicates().itertuples(index=False)
+    ]
+    hints = _period_key_hints(pd.unique(off["time"]), period_lengths(model))
+    span = f"0 .. {held[-1]}" if held else "none"
+    raise ValueError(
+        f"{caller}: the observation route is keyed by zero-based stress period, one row per "
+        f"period at its end (ledger 346), and this model's periods are {span}; "
+        f"{len(listing)} target row(s) name none of them: {_listing(listing)}. "
+        + (f"{_listing(hints)}. " if hints else "")
+        + "The route was keyed by MF6's simulated time until ledger 346; key each target by "
+        "its stress period, 0, 1, 2, ..."
+    )
 
 
 def _refuse_observation_kind(kind, quantity: _ObservedQuantity) -> str:
