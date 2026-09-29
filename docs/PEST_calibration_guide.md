@@ -166,6 +166,13 @@ at weight 0, holding the base run's own value: reported in every ensemble, never
 history-matched. (Until then each such row carried weight 1, pulling the calibration
 back toward the uncalibrated model at every period nobody measured.)
 
+**A flow target is in MF6's own sign** (ledger 350): an SFR reach's streamflow
+(`SfrFlowTargets`) and a DRN zone's discharge (`DrnFlowTargets`) are water LEAVING the
+reach or the aquifer, which MF6 writes negative, on both routes and in the tables PEST
+reads — so a gauged `Q` is entered as `-Q`. A value above zero can never be matched and
+is refused when the targets are built, naming `-Q`; zero (a dry reach or spring) is
+accepted.
+
 > Weighting matters *a lot* and there is no one-size-fits-all. Pre-process data
 > for information content, use more groups rather than fewer, and aim weights at
 > the model's purpose.

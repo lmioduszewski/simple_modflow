@@ -1072,8 +1072,9 @@ same day, which is the useful part of the result.
       `targets.drn_flow.simulated_series()` reports −1274.9, while a gaining SFR
       reach reported +864 after the (now-to-be-reverted) normalization.
       `pest/forward_run.py` writes that series straight into the PEST simulated
-      CSV, so observed discharge entered as a positive number yields a residual
-      of ~−2550 with no warning.
+      CSV, so ~~observed discharge entered as a positive number yields a residual
+      of ~−2550 with no warning~~ (**CHANGED by ledger 350**: a DRN or SFR flow target
+      above zero is refused when the targets are built, naming `-Q`).
     - Why not fixed yet: DRN was never in the surface-water convention, and its
       display layer and targets are currently consistent *with each other*.
       Normalizing only the targets would CREATE a plot-vs-PEST disagreement.
@@ -1125,10 +1126,13 @@ same day, which is the useful part of the result.
       exchange, so PEST/`compare` surface a *missing* value rather than fitting the
       wrong quantity. Two tests added (`test_mf6_pest.py`): one covers the primary
       FLOW-JA-FACE aggregation path (outbound-sum + TO-MVR), which had **no
-      coverage** before; one asserts the refusal-to-substitute + warning. The
+      coverage** before; one asserts the refusal-to-substitute + warning. ~~The
       mock-only branch (`not hasattr(model, "outputs")`) is left as-is on purpose —
       a real model always exposes `.outputs`, so it never runs in production; only
-      test doubles reach it, and one existing test depends on it. Done: 2026-07-21.
+      test doubles reach it, and one existing test depends on it.~~ (**CHANGED by
+      ledger 350**: that branch read `sfr.results.q`, the stream-aquifer exchange, as
+      the streamflow -- the substitution this entry refused -- and is deleted; the
+      double carries an SFR budget instead.) Done: 2026-07-21.
     - **49b — DEFERRED (`budget.py` `SFRBudget.plot_flows`).** Names an SFR
       reach-to-reach series `riv_flows` (a misnomer — no RIV package is read); the
       unstated "method-shape concern" is that it is the `plot_<noun>()` anti-pattern
@@ -16108,7 +16112,9 @@ same day, which is the useful part of the result.
       `package_api_reference.md`, the PEST guide's residual map (on a DRN zone
       "over-simulated", blue, drains LESS than measured) and `canonical_01`'s
       observation-network cell (its flows were already negative: the canonical targets
-      take the observation route). Ledger 336's and 346's open SFR-sign notes are struck.
+      take the observation route). Ledger 336's and 346's open SFR-sign notes are struck,
+      and (in its review) 49a's decision to keep the mock-only branch and 46's "a
+      positive discharge yields a residual of ~-2550 with no warning".
       **Left as it is:** `IesResults.plot_obs_residuals` colours a DRN zone by
       `simulated - measured` like a head, so in MF6's sign a zone draining too little
       reads "over-simulated" (blue) -- documented in the PEST guide rather than
