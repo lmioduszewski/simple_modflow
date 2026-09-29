@@ -159,7 +159,13 @@ member on its own clock). The results maps do it in their payload builders
 (`package_plotting._rows_drawn_for_period`), every series in
 `SpatialView._series_selection`, and so do `stage_change`, the SFR long profile, the LAK
 `q.budget`, the combined surface-water table, the group stage tables, the group LAK/SFR
-diff maps and `region_heads(per=)`. Each had combined every step the period saved: a map
+diff maps and `region_heads(per=)` -- and, since the review of 348 (ledger 349), the
+TABLES keyed by period: a cell-budget noun's `wide()` (one column per period), the
+package-budget namespaces' `model.lak.budget` / `model.sfr.budget` `summary()`/`wide()`
+(grouping by `kstpkper` keeps every step), and the SFR field profiles
+`sfr.results.stage.profile` / `sfr.results.q.profile`, which drew every step of the
+period, three values a reach at `nstp=3`. `long()` keeps every step: it is indexed by
+`kstpkper`. Each had combined every step the period saved: a map
 or a series ADDED a flow's steps (a LAK exchange at `nstp=3` read -2793 ft3/d where the
 period ends at -587, CHD's 3x the same), averaged a stage's in a series, and painted a
 stage's FIRST step on a map (`agg="first"`, which exists for two connections in one cell,

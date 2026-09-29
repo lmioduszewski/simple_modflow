@@ -38,6 +38,7 @@ from myflopy.modflow.mf6.package_registry import (
 from myflopy.modflow.mf6.package_tables import (
     summarize_input_table,
 )
+from myflopy.modflow.mf6.period_end import at_last_saved_steps
 from myflopy.modflow.utils.datatypes.hover import result_hover
 
 logger = get_logger(__name__)
@@ -117,13 +118,56 @@ class CellBudgetResultsExplorer(SpatialView):
         values: str | None = None,
         agg: str = "sum",
     ) -> pd.DataFrame:
-        """Pivot this result term to one column per stress period."""
+        """Pivot this result term to one column per stress period.
+
+        Each column is ONE value per row of ``index`` per period: the period's LAST
+        saved step on the budget file's own clock (``period_end.at_last_saved_steps``,
+        ledgers 337, 348), the number :meth:`map` draws for that period. It ADDED
+        every step the period saved until the review of ledger 348 -- a CHD
+        ``wide(per=1)`` at ``nstp=3`` under ``SAVE BUDGET ALL`` read -2152.678 beside
+        a ``map(per=1)`` of -452.712. :meth:`long` keeps every saved step.
+
+        Parameters
+        ----------
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep as columns. ``None`` (default) keeps
+            every period the file saved.
+        layer : int or iterable of int or None, optional
+            Zero-based layer(s) to keep. ``None`` (default) keeps every layer.
+        cells : iterable of int or None, optional
+            Zero-based cell numbers (within a layer) to keep. ``None`` (default)
+            keeps every cell.
+        index : list or tuple of str, default ("layer", "cell")
+            Columns of :meth:`get` that label the rows. Naming ``"kstpkper"`` keeps
+            every saved step, one row each, rather than the period's last.
+        values : str or None, optional
+            The column to pivot. ``None`` (default) is this term's value column
+            (:attr:`value_name`, e.g. ``"q_gwf"``).
+        agg : str, default "sum"
+            How several records of ONE step landing on one row of ``index`` are
+            combined -- two drains in one cell add. Never the steps of a period.
+            Any pandas aggregation name.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``index`` columns, then one ``per_<N>`` column per period.
+
+        Raises
+        ------
+        KeyError
+            When ``values`` or an ``index`` column is not in :meth:`get`.
+        """
 
         value_column = self.value_name if values is None else str(values)
         frame = self.get(layer=layer, cells=cells)
         per_values = _normalize_iterable_filter(per)
         if per_values is not None and "per" in frame.columns:
             frame = frame[frame["per"].isin(per_values)]
+        if "kstpkper" in frame.columns and "kstpkper" not in index:
+            # One step per period, its last saved (ledger 348's review): the pivot
+            # below is by PERIOD, and it added every step the period saved.
+            frame = at_last_saved_steps(frame)
         if frame.empty:
             return pd.DataFrame(columns=[*index])
         if value_column not in frame.columns:

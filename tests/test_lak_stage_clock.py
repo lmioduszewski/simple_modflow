@@ -23,6 +23,8 @@ CHD at 50 ft on the west and east edges), ten-day periods:
              three stage records against nine budget records.
 ``stream``   a four-reach stream, three periods of three steps, everything saved
              (the SFR stage and exchange views share the fixes).
+``ats``      the lake of ``steps`` under ATS, one declared step per period and
+             everything saved: MF6 takes four steps a period, decided at run time.
 
 What each file holds is read from the file and asserted before it is used.
 """
@@ -81,7 +83,7 @@ def _run(root, simulation):
     return run.model()
 
 
-def _lake_run(root, *, nstp, saverecord):
+def _lake_run(root, *, nstp, saverecord, ats=False):
     grid, props, edge = _grid()
     interior = [c for c in range(grid.ncpl) if c not in set(edge.tolist())]
     lake = mf.lak.flopy(
@@ -103,8 +105,11 @@ def _lake_run(root, *, nstp, saverecord):
         lake,
         mf.oc(head_filerecord="m.hds", budget_filerecord="m.cbc", saverecord=list(saverecord)),
     ])
+    # ATS: MF6 picks the steps at run time (1, 2, 4 and 3 days here), so a period's
+    # last saved step is found by time, never by its declared step count.
+    timing = {"ats": True, "ats_dt0": 1.0, "ats_dtmin": 0.01, "ats_dtmax": 4.0} if ats else {}
     simulation = mf.simulation(model, name="s", packages=[
-        mf.tdis(nper=len(nstp), perioddata=[(PERLEN, int(n), 1.0) for n in nstp])])
+        mf.tdis(nper=len(nstp), perioddata=[(PERLEN, int(n), 1.0) for n in nstp], **timing)])
     return _run(root, simulation)
 
 
@@ -136,7 +141,7 @@ def _stream_run(root):
 
 @pytest.fixture(scope="module")
 def runs(tmp_path_factory):
-    """The four runs of the module docstring, by name."""
+    """The five runs of the module docstring, by name."""
 
     root = tmp_path_factory.mktemp("lak_stage_clock")
     return {
@@ -145,6 +150,7 @@ def runs(tmp_path_factory):
         "asym": _lake_run(root / "asym", nstp=(3, 3, 3),
                           saverecord=(("HEAD", "LAST"), ("BUDGET", "ALL"))),
         "stream": _stream_run(root / "stream"),
+        "ats": _lake_run(root / "ats", nstp=(1, 1, 1), saverecord=SAVE_ALL, ats=True),
     }
 
 
@@ -419,6 +425,108 @@ def test_the_sfr_stage_and_exchange_views_read_one_step(runs):
     z = _z(model.sfr.results.q.map(per=1))
     rlen = dict(zip(at_end["reach"].astype(int), at_end["rlen"], strict=True))
     np.testing.assert_allclose(z[REACH_CELLS], [q_end[r] / rlen[r] for r in range(4)], rtol=1e-12)
+
+
+# -- the review of ledger 348: the tables and profiles the choke points missed ------
+
+
+@pytest.mark.slow
+def test_the_sfr_field_profiles_draw_one_step_per_reach(runs):
+    """``sfr.results.stage.profile`` and ``sfr.results.q.profile`` held every step
+    period N saved -- three values per reach at ``nstp=3`` -- and their line
+    zig-zagged through them, beside a long profile reading the last step."""
+
+    model = runs["stream"]
+    reader = model.fl.sfr.output.stage()
+    clock = [tuple(int(v) for v in key) for key in reader.get_kstpkper()]
+    data = np.asarray(reader.get_alldata(), dtype=float).reshape(len(clock), -1)
+    stage_end = data[clock.index((2, 1))]
+    q = model.sfr.results.q.get()
+    at_end = q[q["kstpkper"].map(lambda value: tuple(map(int, value))) == (2, 1)]
+    q_end = dict(zip(at_end["reach"].astype(int), at_end["q_gwf"], strict=True))
+    assert len(model.sfr.results.stage.get(per=1)) == 3 * len(REACH_CELLS)  # a filter
+
+    stage = model.sfr.results.stage.profile.get(per=1)
+    assert list(stage["reach"]) == [0, 1, 2, 3]
+    np.testing.assert_array_equal(stage["stage"], stage_end)
+    (line,) = model.sfr.results.stage.profile(per=1).plot().data
+    np.testing.assert_array_equal(line.y, stage_end)
+
+    exchange = model.sfr.results.q.profile.get(per=1)
+    assert list(exchange["reach"]) == [0, 1, 2, 3]
+    np.testing.assert_allclose(exchange["q_gwf"], [q_end[r] for r in range(4)], rtol=1e-12)
+
+
+@pytest.mark.slow
+def test_the_budget_tables_by_period_read_the_number_the_map_draws(runs):
+    """``q.wide()`` and the LAK/SFR ``budget`` namespaces' ``summary``/``wide``
+    pivot or group by PERIOD, and ADDED every step the period saved -- a CHD
+    ``wide(per=1)`` read -2152.678 beside a ``map(per=1)`` of -452.712 once ledger
+    348 moved the map. Grouping by ``kstpkper`` keeps every step."""
+
+    model = runs["steps"]
+    table = model.chd.results.q.get()
+    last = table[table["kstpkper"].map(lambda value: tuple(map(int, value))) == (2, 1)]
+    wide = model.chd.results.q.wide(per=1).set_index("cell")["per_1"]
+    z = _z(model.chd.results.q.map(per=1))
+    for cell, value in zip(last["cell"].astype(int), last["q_gwf"], strict=True):
+        assert wide[cell] == pytest.approx(value, rel=1e-12)
+        assert z[cell] == pytest.approx(value, rel=1e-12)
+    every = model.chd.results.q.wide(per=1, index=("kstpkper", "layer", "cell"))
+    assert len(every) == 3 * len(last)
+
+    flows = _lak_q(model, (2, 1))
+    q_end = sum(q for q, _ in flows.values())
+    area_end = sum(area for _, area in flows.values())
+    summary = model.lak.budget.gwf.summary().set_index("per")
+    assert summary.loc[1, "q"] == pytest.approx(q_end, rel=1e-12)
+    assert summary.loc[1, "flow_area"] == pytest.approx(area_end, rel=1e-12)
+    assert summary.loc[1, "record_count"] == len(flows)
+    assert summary.loc[1, "q_per_area"] == pytest.approx(q_end / area_end, rel=1e-12)
+    budget_view = model.lak.results.q.budget.get(per=1)
+    assert summary.loc[1, "q"] == pytest.approx(budget_view["q_lake"].sum(), rel=1e-12)
+    wide = model.lak.budget.wide(term="GWF").set_index("per")
+    assert wide.loc[1, "GWF"] == pytest.approx(q_end, rel=1e-12)
+    per_step = model.lak.budget.gwf.summary(by=["kstpkper", "lake"])
+    assert len(per_step) == 9
+
+    stream = runs["stream"]
+    rows = stream.sfr.budget.get(term="GWF")
+    step = rows[rows["kstpkper"].map(lambda value: tuple(map(int, value))) == (2, 1)]
+    expected = dict(zip(step["reach"].astype(int), step["q"], strict=True))
+    sfr = stream.sfr.budget.gwf.summary(per=1).set_index("reach")
+    for reach, value in expected.items():
+        assert sfr.loc[reach, "q"] == pytest.approx(value, rel=1e-12)
+    sfr_wide = stream.sfr.budget.wide(term="GWF", per=1).set_index("reach")
+    for reach, value in expected.items():
+        assert sfr_wide.loc[reach, "GWF"] == pytest.approx(value, rel=1e-12)
+
+
+@pytest.mark.slow
+def test_an_ats_lake_reads_each_periods_end_by_time(runs):
+    """Under ATS the steps a period takes are decided at run time, so its end is the
+    record whose ``pertim`` is the period's length -- read by the targets (checked
+    against the TDIS) and by every view (the last saved step), not by the declared
+    ``nstp=1``."""
+
+    model = runs["ats"]
+    saved = saved_steps(model.fl.lak.output.stage())
+    assert len(saved) > NPER  # ATS took several steps a period
+    at = _stage_at(model)
+    ends = {kper: (kstp, kper) for kstp, kper, pertim in saved if pertim == PERLEN}
+    assert sorted(ends) == list(range(NPER)) and all(kstp > 0 for kstp, _ in ends.values())
+    expected = [at[ends[per]] for per in range(NPER)]
+
+    series = mf.LakeStageTargets(locations={"pond": 0}).simulated_series(model)
+    assert list(series["time"]) == list(range(NPER))
+    np.testing.assert_array_equal(series["pond"], expected)
+    stage = model.lak.results.stage
+    cells = sorted(set(stage.get()["cell"]))
+    np.testing.assert_array_equal(_z(stage.map(per=1))[cells], expected[1])
+    # The series takes the mean of the lake's three identical cells: one ulp off.
+    np.testing.assert_allclose(stage.plot().data[0].y, expected, rtol=1e-14)
+    change = model.lak.results.stage_change.get()
+    np.testing.assert_array_equal(change["stage1"], expected[1:])
 
 
 # -- the group and diff tiers --------------------------------------------------------

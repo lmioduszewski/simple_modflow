@@ -996,7 +996,7 @@ Every **noun** is an object; every object answers the same **verbs**. Different 
 | `section()` | spatial nouns | cross-section |
 | `mosaic()` | spatial nouns | small-multiples panel |
 | `animate()` | spatial nouns | animation over stress periods |
-| `long()` / `wide()` / `stack()` | cell-budget fields | frame reshapes |
+| `long()` / `wide()` / `stack()` | cell-budget fields | frame reshapes -- `wide()` is one column per period, at its last saved step (ledger 349); `long()` keeps every step |
 | `__call__(per=)` | period-bound nouns | a fresh view rebound to `per` |
 
 † Exception: `lak.results.q.budget.plot()` currently returns a **matplotlib** figure
@@ -1017,7 +1017,9 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
 - `results.stage` — reach stage (spatial).
 - `results.profile` — the merged multi-field reach profile (`get`/`summary`/`plot`).
 - `results.q.profile` / `results.stage.profile` — single-field reach profiles
-  (`get`/`summary`/`plot`). *The frame is `…profile.get()`, not `…profile()`.*
+  (`get`/`summary`/`plot`), one row per reach at the period's last saved step on the
+  field's own file's clock (ledger 349; they held every step the period saved).
+  *The frame is `…profile.get()`, not `…profile()`.*
 - `budget.<term>` — budget terms: `flow_ja_face`, `gwf`, `ext_inflow`, `ext_outflow`,
   `rain`, `runoff`, `evaporation`, `storage`, `from_mvr`, `to_mvr`, `mvr`,
   `stream_fluxes`, `auxiliary`, `types`.

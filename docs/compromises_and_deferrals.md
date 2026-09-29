@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 348 entries (353 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 349 entries (354 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 349 | The review of ledger 348: the TABLES keyed by period read each period's last saved step too -- a cell-budge... | 2026-09-29 |
 | 348 | A lake's stage file is read on its own clock, and every view that reduces a results table to one value per... | 2026-09-29 |
 | 347 | The review of ledger 346: a time key below `nper` reads as that period in silence on ANY model, not only a... | 2026-09-29 |
 | 346 | The observation route is one row per stress period, at its end: a lake, reach or zone target keyed by perio... | 2026-09-29 |
@@ -15974,10 +15975,11 @@ same day, which is the useful part of the result.
       was re-executed, and no cell's code is wrong. The hover's `_STAGE_UNAVAILABLE`
       swallows the table's new refusal at DEBUG, as it does a missing stage file -- accepted
       for a hover; the table and every other view raise.
-      **Found, not fixed:** `CellBudgetResultsExplorer.wide()` pivots by period with
+      **Found, not fixed:** ~~`CellBudgetResultsExplorer.wide()` pivots by period with
       `aggfunc=agg` (default `sum`) over every saved step, and the package-budget namespaces'
       `summary`/`wide` group by period the same way (code-read, not measured) -- tables with
-      their own `agg=`, left for a decision about what `wide` means; `calcs/calibration.py`'s
+      their own `agg=`, left for a decision about what `wide` means;~~ (**RESOLVED by ledger
+      349**, with the SFR field profiles this entry did not list); `calcs/calibration.py`'s
       legacy `lak_obs` reads every stage record by position; and a PEST build rewrites its
       source run's input files in place (ledger 110's known mutation) -- measured: the DISV
       goes from 133 lines of inline arrays to 25 of `OPEN/CLOSE`, so `RunModel.grid_signature`
@@ -15993,3 +15995,53 @@ same day, which is the useful part of the result.
       the group LAK table (1); the SFR transposed decode (1); the group diff map (1); the
       long profile's exchange (1); `q.budget` (2); the surface-water table (2);
       `region_heads` (1); the group outputs' old pairing (1).
+
+349. **The review of ledger 348: the TABLES keyed by period read each period's last saved step too -- a cell-budget noun's `wide()` and the LAK/SFR budget namespaces' `summary()`/`wide()` -- and so do the SFR field profiles `sfr.results.stage.profile` / `q.profile` (2026-09-29).**
+      348 moved every results map, series and the LAK `q.budget` view onto the last saved
+      step and left, as "found, not fixed", the tables that group or pivot by PERIOD. That
+      split the picture from its table: the map's own docstring sends a reader to `wide()`
+      for "every period side by side as numbers", and at `nstp=3` under `SAVE BUDGET ALL` a
+      CHD `wide(per=1)` read -2152.678 beside `map(per=1)`'s -452.712;
+      `model.lak.budget.gwf.summary()` read q -7873.47 over 94857.75 ft2 and 9 records for
+      period 1 beside `lak.results.q.budget.get(per=1)`'s -1655.72 over 31619.25 and 3
+      (before 348 both halves added the steps, so they agreed). **The decision 348 deferred
+      -- "what `wide` means" -- was already the user's:** a period's value is its END value,
+      for a flow too (336), and `per=N` on a table is its last saved step (337). A column or
+      group keyed by PERIOD is one value per period, so these read
+      `period_end.at_last_saved_steps` before they combine anything, the helper every view
+      reads.
+      **Judgment calls.** Grouping or indexing by `kstpkper` (`by=[..., "kstpkper"]`,
+      `index=(..., "kstpkper")`) keeps every step: the caller asked for steps. A `by=` that
+      leaves out `per` (`["lake", "term"]`) now adds each period's END rather than every
+      step -- a sum of rates either way, and the caller's choice; stated in the docstrings,
+      not refused. `agg=` on `wide()` combines the records of ONE step on one row (two
+      drains in a cell), as on the map since 348. `long()` is untouched: it is indexed by
+      `kstpkper` and keeps every step by design.
+      **The SFR field profiles were outside 348's list and its choke points**: they draw
+      rows rather than combining them, so neither the payload builders nor the series
+      engine saw them, and `profile.get(per=1)` held all three steps of each reach (12 rows
+      for 4), the line zig-zagging through them beside a long profile (348) reading the
+      last step. `SfrReachProfileView.get` reads the field's own file at its last saved
+      step now (the stage file for `stage`, the budget file for the exchange). The field
+      noun's `get(per=N)` stays a FILTER (348's option B).
+      **Checked in 348 and found sound:** three of its reverts redone independently (the
+      OLD table exactly -- no `kstpkper`, `per` the record index -- fails 12 tests across
+      three modules; the hover join 1; `q.budget` 2); an ATS run (one declared step, MF6
+      taking steps of 1, 2, 4 and 3 days) reads each period's end, `pertim == perlen`, on
+      the target route and every stage view -- now a test beside 348's.
+      **Seen, not changed:** the group LAK/SFR exchange `compare()` TABLES
+      (`group/lak.py`, `group/sfr.py`) still merge the members on `kstpkper`, step for
+      step, where the generic group `compare()` reduces to each member's period end (337) --
+      older than 348, and a filter-shaped table rather than a sum.
+      `build_sfr_stage_result_table` casts `layer`/`cell` to int after a LEFT merge with the
+      reach table, so a reach with no cell would raise; the group SFR stage table inherits
+      that since 348 (it read the raw file before) -- code-read, not run.
+      Reproducer: `docs/reproducers/lak_stage_clock.py` section 7, "before" a196f2e's
+      `src`. Tests (`tests/test_lak_stage_clock.py`, a fifth run `ats`):
+      `test_the_budget_tables_by_period_read_the_number_the_map_draws`,
+      `test_the_sfr_field_profiles_draw_one_step_per_reach`,
+      `test_an_ats_lake_reads_each_periods_end_by_time`. Each single-piece revert fails by
+      name: the field profiles keeping every step (1, the profiles test); `wide()`, the LAK
+      namespace's `summary` and `wide`, the SFR namespace's `summary` and `wide` each adding
+      the steps (1 each, the budget-tables test); `per` as the record index fails the ATS
+      test too.

@@ -213,11 +213,34 @@ class SfrReachProfileView:
         return self.per if per is None else int(per)
 
     def get(self, *, per: int | None = None) -> pd.DataFrame:
-        """Return the reach-ordered profile table for the selected period."""
+        """Return the reach-ordered profile table for the selected period.
 
-        frame = self.explorer.get(per=self._period(per))
+        One row per reach-cell, read at the period's LAST saved step on the field's
+        own file's clock -- the stage file for ``stage``, the budget file for the
+        exchange (``period_end.at_last_saved_step``, ledger 337's rule), as
+        ``sfr.results.profile`` beside it reads both. It held EVERY step the period
+        saved until the review of ledger 348, so at ``nstp=3`` under ``SAVE ... ALL``
+        each reach carried three values and :meth:`plot` zig-zagged through them.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period. ``None`` (default) is the period bound to the
+            view (``profile(per=N)``, 0 unless rebound).
+
+        Returns
+        -------
+        pandas.DataFrame
+            The field explorer's rows at that step, sorted by reach and cell; empty
+            when the period has none.
+        """
+
+        period = self._period(per)
+        frame = self.explorer.get(per=period)
         if frame.empty:
             return frame
+        if "kstpkper" in frame.columns:
+            frame = at_last_saved_step(frame, period)
         return frame.sort_values(["reach", "cell"]).reset_index(drop=True)
 
     def summary(self, *, per: int | None = None) -> pd.DataFrame:
@@ -1939,10 +1962,41 @@ class LakBudgetNamespace:
         lakes: Iterable[int] | None = None,
         by: list[str] | tuple[str, ...] | None = None,
     ) -> pd.DataFrame:
-        """Summarize LAK budget terms by selected grouping columns."""
+        """Summarize LAK budget terms by selected grouping columns.
+
+        Each period is its LAST saved step on the LAK budget file's own clock
+        (``period_end.at_last_saved_steps``, ledgers 337, 348): the records of that
+        one step combine, never the steps of a period, as every picture of the
+        period reads it. Every step the period saved was ADDED until the review of
+        ledger 348 -- three steps' flows, and three copies of each connection's
+        area, at ``nstp=3`` under ``SAVE BUDGET ALL``.
+
+        Parameters
+        ----------
+        term : str or iterable of str or None, optional
+            LAK budget term(s) to keep (``"GWF"``, ``["GWF", "STORAGE"]``, any
+            case). ``None`` (default) keeps every term the file holds.
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep. ``None`` (default) keeps every one.
+        lakes : iterable of int or None, optional
+            Zero-based lake number(s) to keep. ``None`` (default) keeps every one.
+        by : list or tuple of str or None, optional
+            Columns to group by. ``None`` (default) is ``["per", "lake", "term"]``.
+            Naming ``"kstpkper"`` keeps every saved step, one group each, rather than
+            each period's last.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``by`` columns, ``record_count``, the summed ``q`` (model flow
+            units, in the sign the package's budget file records) and the summed
+            extra columns the term carries.
+        """
 
         frame = self.get(term=term, per=per, lakes=lakes)
         group_columns = list(by) if by is not None else ["per", "lake", "term"]
+        if "kstpkper" in frame.columns and "kstpkper" not in group_columns:
+            frame = at_last_saved_steps(frame)
         if frame.empty:
             columns = [*group_columns, "record_count", "q"]
             return pd.DataFrame(columns=columns)
@@ -1978,9 +2032,42 @@ class LakBudgetNamespace:
         index: list[str] | tuple[str, ...] = ("per", "lake"),
         values: str = "q",
     ) -> pd.DataFrame:
-        """Pivot the long LAK budget table to one wide table by term."""
+        """Pivot the long LAK budget table to one wide table by term.
+
+        Each ``per`` row is the period's LAST saved step on the LAK budget file's own
+        clock (``period_end.at_last_saved_steps``, ledgers 337, 348); every step the
+        period saved was ADDED until the review of ledger 348.
+
+        Parameters
+        ----------
+        term : str or iterable of str or None, optional
+            LAK budget term(s) to keep as columns. ``None`` (default) keeps every
+            term the file holds.
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep. ``None`` (default) keeps every one.
+        lakes : iterable of int or None, optional
+            Zero-based lake number(s) to keep. ``None`` (default) keeps every one.
+        index : list or tuple of str, default ("per", "lake")
+            Columns labelling the rows. Naming ``"kstpkper"`` keeps every saved
+            step, one row each, rather than each period's last.
+        values : str, default "q"
+            The column to pivot; records of one step on one row add.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``index`` columns, then one column per term. Empty when nothing
+            matches.
+
+        Raises
+        ------
+        KeyError
+            When ``values`` is not a column of the budget table.
+        """
 
         frame = self.get(term=term, per=per, lakes=lakes)
+        if "kstpkper" in frame.columns and "kstpkper" not in index:
+            frame = at_last_saved_steps(frame)
         if frame.empty:
             return pd.DataFrame()
         if values not in frame.columns:
@@ -2173,10 +2260,40 @@ class SfrBudgetNamespace:
         reaches: Iterable[int] | None = None,
         by: list[str] | tuple[str, ...] | None = None,
     ) -> pd.DataFrame:
-        """Summarize SFR budget terms by selected grouping columns."""
+        """Summarize SFR budget terms by selected grouping columns.
+
+        Each period is its LAST saved step on the SFR budget file's own clock
+        (``period_end.at_last_saved_steps``, ledgers 337, 348): the records of that
+        one step combine, never the steps of a period, as every picture of the
+        period reads it. Every step the period saved was ADDED until the review of
+        ledger 348 -- three steps' flows at ``nstp=3`` under ``SAVE BUDGET ALL``.
+
+        Parameters
+        ----------
+        term : str or iterable of str or None, optional
+            SFR budget term(s) to keep (``"GWF"``, ``["GWF", "STORAGE"]``, any
+            case). ``None`` (default) keeps every term the file holds.
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep. ``None`` (default) keeps every one.
+        reaches : iterable of int or None, optional
+            Zero-based reach number(s) to keep. ``None`` (default) keeps every one.
+        by : list or tuple of str or None, optional
+            Columns to group by. ``None`` (default) is ``["per", "reach", "term"]``.
+            Naming ``"kstpkper"`` keeps every saved step, one group each, rather than
+            each period's last.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``by`` columns, ``record_count``, the summed ``q`` (model flow
+            units, in the sign the package's budget file records) and the summed
+            extra columns the term carries.
+        """
 
         frame = self.get(term=term, per=per, reaches=reaches)
         group_columns = list(by) if by is not None else ["per", "reach", "term"]
+        if "kstpkper" in frame.columns and "kstpkper" not in group_columns:
+            frame = at_last_saved_steps(frame)
         if frame.empty:
             columns = [*group_columns, "record_count", "q"]
             return pd.DataFrame(columns=columns)
@@ -2214,9 +2331,42 @@ class SfrBudgetNamespace:
         index: list[str] | tuple[str, ...] = ("per", "reach"),
         values: str = "q",
     ) -> pd.DataFrame:
-        """Pivot the long SFR budget table to one wide table by term."""
+        """Pivot the long SFR budget table to one wide table by term.
+
+        Each ``per`` row is the period's LAST saved step on the SFR budget file's own
+        clock (``period_end.at_last_saved_steps``, ledgers 337, 348); every step the
+        period saved was ADDED until the review of ledger 348.
+
+        Parameters
+        ----------
+        term : str or iterable of str or None, optional
+            SFR budget term(s) to keep as columns. ``None`` (default) keeps every
+            term the file holds.
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep. ``None`` (default) keeps every one.
+        reaches : iterable of int or None, optional
+            Zero-based reach number(s) to keep. ``None`` (default) keeps every one.
+        index : list or tuple of str, default ("per", "reach")
+            Columns labelling the rows. Naming ``"kstpkper"`` keeps every saved
+            step, one row each, rather than each period's last.
+        values : str, default "q"
+            The column to pivot; records of one step on one row add.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``index`` columns, then one column per term. Empty when nothing
+            matches.
+
+        Raises
+        ------
+        KeyError
+            When ``values`` is not a column of the budget table.
+        """
 
         frame = self.get(term=term, per=per, reaches=reaches)
+        if "kstpkper" in frame.columns and "kstpkper" not in index:
+            frame = at_last_saved_steps(frame)
         if frame.empty:
             return pd.DataFrame()
         if values not in frame.columns:

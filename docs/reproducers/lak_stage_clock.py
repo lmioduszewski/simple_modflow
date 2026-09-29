@@ -31,6 +31,9 @@ periods.
   4. The same under SAVE HEAD LAST + SAVE BUDGET ALL: the two files' clocks.
   5. SFR: stage map / plot, the long profile's exchange, q map; the group SFR table.
   6. The group LAK table and diff, and region_heads(per=1).
+  7. The review of ledger 348 (ledger 349): the TABLES keyed by period -- a cell-budget
+     noun's wide(), the LAK/SFR budget namespaces' summary()/wide() -- and the SFR
+     field profiles. Its "before" is a196f2e's src (348 itself).
 
 MEASURED (mf6 6.8.0.dev0, 2026-09-29), before (12b3a57) -> after. Period ends of the
 lake (steps): 101.228206, 100.366551, 100.098692 (records 2, 5, 8 of 9).
@@ -73,8 +76,21 @@ lake (steps): 101.228206, 100.366551, 100.098692 (records 2, 5, 8 of 9).
      diff summary n                  6 (records paired by index across nstp=3 and
                                      1/3/2) -> 3
      region_heads(per=1)             9 rows, steps (0..2, 1) -> 3 rows, (2, 1)
+  7  (before is a196f2e, 348)
+     chd q.wide(per=1) at cell 0     -2152.678 (three steps added, beside a map(per=1)
+                                     of -452.712 since 348) -> -452.712
+     lak.budget.gwf.summary() per 1  q -7873.47, flow_area 94857.75, 9 records,
+                                     q/area -0.08300292 -> -1655.72, 31619.25, 3,
+                                     -0.05236442 (q.budget.get(per=1) since 348)
+     lak.budget.wide(term="GWF")     -7873.47 -> -1655.72
+     sfr.budget.gwf.summary(per=1)   reach 0 -364.31 (-128.305 - 119.818 - 116.188)
+                                     -> -116.188
+     sfr stage.profile.get(per=1)    12 rows, reach 0 at three steps 102.026218,
+                                     102.157103, 102.212593 -> 4 rows, 102.212593
+     sfr q.profile.get(per=1)        12 rows, reach 0 128.274, 119.799, 116.158 ->
+                                     4 rows, 116.158
 
-Why each is so, and what was decided: ledger 348.
+Why each is so, and what was decided: ledger 348 (sections 1-6) and 349 (section 7).
 """
 
 from __future__ import annotations
@@ -326,6 +342,32 @@ def _measure(root: pathlib.Path) -> None:
     _show("region_heads('west', per=1) rows, steps", lambda: (
         len(steps.region_heads("west", per=1)),
         sorted(set(map(str, steps.region_heads("west", per=1)["kstpkper"])))))
+
+    print("\n7. the tables keyed by period, and the SFR field profiles (the review, 349)")
+    _show(f"chd q.wide(per=1) at cell {edge_cell}", lambda: round(float(
+        steps.chd.results.q.wide(per=1).set_index("cell")["per_1"][edge_cell]), 3))
+    at_end = _step(q, (2, 1))
+    print(f"   {'lake q_lake, flow_area summed at (2, 1)':<44} "
+          f"{round(float(at_end['q_lake'].sum()), 2)}, {round(float(at_end['flow_area'].sum()), 2)}")
+
+    def _lak_summary():
+        row = steps.lak.budget.gwf.summary().set_index("per").loc[1]
+        return (round(float(row["q"]), 2), round(float(row["flow_area"]), 2),
+                int(row["record_count"]), round(float(row["q_per_area"]), 8))
+    _show("lak.budget.gwf.summary() per 1: q, area, n, q/a", _lak_summary)
+    _show("lak.budget.wide(term='GWF') per 1", lambda: round(float(
+        steps.lak.budget.wide(term="GWF").set_index("per")["GWF"][1]), 2))
+    sb = stream.sfr.budget.get(term="GWF")
+    print(f"   {'sfr budget GWF reach 0, steps 1/2/3 of per 1':<44} "
+          f"{_r([_step(sb, (k, 1)).set_index('reach')['q'][0] for k in range(3)], 3)}")
+    _show("sfr.budget.gwf.summary(per=1) reach 0", lambda: round(float(
+        stream.sfr.budget.gwf.summary(per=1).set_index("reach")["q"][0]), 3))
+    _show("sfr stage.profile.get(per=1) rows, reach 0", lambda: (
+        len(stream.sfr.results.stage.profile.get(per=1)),
+        _r(stream.sfr.results.stage.profile.get(per=1).query("reach == 0")["stage"])))
+    _show("sfr q.profile.get(per=1) rows, reach 0", lambda: (
+        len(stream.sfr.results.q.profile.get(per=1)),
+        _r(stream.sfr.results.q.profile.get(per=1).query("reach == 0")["q_gwf"], 3)))
 
 
 if __name__ == "__main__":

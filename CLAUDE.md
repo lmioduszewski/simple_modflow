@@ -118,9 +118,13 @@ through `period_end.at_last_saved_step(s)`** (ledger 348) -- before ANY rows com
 the results maps chose the step in the payload builders, every series in
 `SpatialView._series_selection`, and `stage_change`, the SFR long profile, the LAK
 `q.budget`, the surface-water table, the group stage tables and diff maps and
-`region_heads(per=)` likewise. They had ADDED a period's saved steps (a LAK exchange
-map at `nstp=3` read -2793 ft3/d for -587) or painted its FIRST (`agg="first"`).
-`get(per=N)` stays a FILTER: every step of period N.
+`region_heads(per=)` likewise -- and so do the TABLES keyed by period (ledger 349):
+`q.wide()`, `model.lak.budget`/`model.sfr.budget` `summary()`/`wide()` (grouping by
+`kstpkper` keeps every step) and the SFR field profiles. They had ADDED a period's
+saved steps (a LAK exchange map at `nstp=3` read -2793 ft3/d for -587; once the map
+moved, a CHD `wide(per=1)` read -2152.678 beside its map's -452.712) or painted its
+FIRST (`agg="first"`). `get(per=N)` stays a FILTER: every step of period N; `long()`
+keeps every step.
 **The OBSERVATION route is one row per period at its end too** (ledger 346): an MF6 OBS
 CSV is every time step labelled by `totim` alone, so `period_end.period_end_rows` finds
 each period's END row -- measuring each period from MF6's OWN previous end, since MF6
@@ -532,9 +536,10 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5451 passed / 4 skipped**, 2026-09-29, ledger 348 -- the LAK stage clock):
-  `-n 10` **1m34s** in a worktree outside `.claude`, at a load average of ~0.5 at its
-  start, absolute `PYTHONPATH`; serial not re-measured. Before it, 5437 passed / 4 skipped
+- Full suite (**5454 passed / 4 skipped**, 2026-09-29, ledger 349 -- the review of 348):
+  `-n 10` **1m38s** in a worktree outside `.claude`, at a load average of ~0.5 at its
+  start, absolute `PYTHONPATH`; serial not re-measured. Before it, 5451 passed / 4 skipped
+  (ledger 348 -- the LAK stage clock): `-n 10` 1m34s at ~0.5. Before it, 5437 passed / 4 skipped
   (ledger 347 -- the review of 346): `-n 10` 1m38s at ~0.2. Before it, 5434 passed / 4 skipped
   (ledger 346 -- the observation route keyed by period): `-n 10` 1m40s at ~1.5. Before it,
   5424 passed / 4 skipped (ledger 345, the review of 344):
