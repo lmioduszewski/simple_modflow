@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from myflopy.modflow.mf6.package_registry import packages_of_type
 from myflopy.viz import mpl_axes
 
 
@@ -149,34 +150,43 @@ def _source_without_observation_packages(model):
 
 
 def _repair_split_lak_packages(simulation) -> None:
-    """Repair FloPy-split LAK connection numbering and local connection counts."""
+    """Repair FloPy-split LAK connection numbering and local connection counts.
+
+    EVERY LAK package of each model, found by type (ledger 352): FloPy's
+    ``get_package("lak")`` answers a package NAMED ``lak`` alone beside ``lak_2``,
+    and a list of ``lak_a``/``lak_b``.
+    """
 
     for model_name in simulation.model_names:
         model = simulation.get_model(model_name)
         if not hasattr(model, "get_package"):
             continue
-        package = model.get_package("lak")
-        if package is None:
-            continue
-        connectiondata = package.connectiondata.get_data()
-        packagedata = package.packagedata.get_data()
-        if connectiondata is None or packagedata is None:
-            continue
+        for package in packages_of_type(model, "lak"):
+            _repair_split_lak_package(package)
 
-        repaired_connections = connectiondata.copy()
-        lake_ids = np.asarray(repaired_connections["ifno"], dtype=int)
-        counts: dict[int, int] = {}
-        for lake_id in np.unique(lake_ids):
-            indices = np.flatnonzero(lake_ids == int(lake_id))
-            repaired_connections["iconn"][indices] = np.arange(len(indices), dtype=int)
-            counts[int(lake_id)] = int(len(indices))
 
-        repaired_packagedata = packagedata.copy()
-        for index, lake_id in enumerate(np.asarray(repaired_packagedata["ifno"], dtype=int)):
-            repaired_packagedata["nlakeconn"][index] = counts.get(int(lake_id), 0)
+def _repair_split_lak_package(package) -> None:
+    """Repair one split LAK package's connection numbering and connection counts."""
 
-        package.connectiondata.set_data(repaired_connections)
-        package.packagedata.set_data(repaired_packagedata)
+    connectiondata = package.connectiondata.get_data()
+    packagedata = package.packagedata.get_data()
+    if connectiondata is None or packagedata is None:
+        return
+
+    repaired_connections = connectiondata.copy()
+    lake_ids = np.asarray(repaired_connections["ifno"], dtype=int)
+    counts: dict[int, int] = {}
+    for lake_id in np.unique(lake_ids):
+        indices = np.flatnonzero(lake_ids == int(lake_id))
+        repaired_connections["iconn"][indices] = np.arange(len(indices), dtype=int)
+        counts[int(lake_id)] = int(len(indices))
+
+    repaired_packagedata = packagedata.copy()
+    for index, lake_id in enumerate(np.asarray(repaired_packagedata["ifno"], dtype=int)):
+        repaired_packagedata["nlakeconn"][index] = counts.get(int(lake_id), 0)
+
+    package.connectiondata.set_data(repaired_connections)
+    package.packagedata.set_data(repaired_packagedata)
 
 
 def _carry_lak_implicit(source, split) -> list[str]:
@@ -221,11 +231,24 @@ def _carry_lak_implicit(source, split) -> list[str]:
 
 
 def _lake_column_groups(model) -> tuple[np.ndarray, ...]:
-    """Return the unique model-grid columns occupied by each physical lake."""
+    """Return the unique model-grid columns occupied by each physical lake.
 
-    package = model.get_package("lak")
-    if package is None:
-        return ()
+    Every lake of EVERY LAK package, found by type (ledger 352): a lake number counts
+    within its package, so each package's lakes are grouped on their own. FloPy's
+    ``get_package("lak")`` answered the package NAMED ``lak`` alone beside ``lak_2``,
+    so ``lak_2``'s lakes could be split across partitions.
+    """
+
+    return tuple(
+        group
+        for package in packages_of_type(model, "lak")
+        for group in _one_package_lake_columns(model, package)
+    )
+
+
+def _one_package_lake_columns(model, package) -> tuple[np.ndarray, ...]:
+    """The unique grid columns of each lake of ONE LAK package."""
+
     connectiondata = package.connectiondata.get_data()
     if connectiondata is None or not len(connectiondata):
         return ()
@@ -264,7 +287,17 @@ def _mover_column_groups(model) -> tuple[np.ndarray, ...]:
 
         if isinstance(package_name, bytes):
             package_name = package_name.decode()
-        package = model.get_package(str(package_name))
+        # An MVR record names its package by NAME, which MF6 matches exactly; FloPy's
+        # get_package falls back to the TYPE, and answers several with a list (ledger 352).
+        key = str(package_name).strip().lower()
+        package = next(
+            (
+                candidate
+                for candidate in model.get_package() or ()
+                if str(getattr(candidate, "package_name", "") or "").strip().lower() == key
+            ),
+            None,
+        )
         if package is None:
             return set()
         package_type = str(package.package_type).lower()

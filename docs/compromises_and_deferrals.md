@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 351 entries (356 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 352 entries (357 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 352 | Several packages of one type are found by TYPE and never read as one in silence: `model.fl.<pkg>` and... | 2026-09-30 |
 | 351 | A DRY lake is calibrated against its BOTTOM on both routes: the stage-file route reads the file raw and put... | 2026-09-29 |
 | 350 | A flow target is compared in MF6's own sign on both routes: the SFR budget route reads MF6's negative... | 2026-09-29 |
 | 349 | The review of ledger 348: the TABLES keyed by period read each period's last saved step too -- a cell-budge... | 2026-09-29 |
@@ -15669,13 +15670,14 @@ same day, which is the useful part of the result.
       resolved to its drains' cells (refused as another id); clearing MF6's outputs from a
       reused run directory (ledger 191's D5) -- the reader no longer reads an undeclared
       file, but the directory still holds it.
-      **Found, NOT fixed:** `model.fl.<pkg>` / `model.package("<type>")` return ONE package
+      **Found, NOT fixed:** ~~`model.fl.<pkg>` / `model.package("<type>")` return ONE package
       when a package is NAMED exactly the type and another is not (FloPy's name-first
       lookup), where their docstrings promise "a list when the model carries several";
-      ~~the LAK/SFR stage VIEWS still fail on a model of several such packages
+      the LAK/SFR stage VIEWS still fail on a model of several such packages
       (`AttributeError` on FloPy's list)~~ (**half right, ledger 345:** only while no
       package is NAMED like its type -- with `lak` beside `lak_2` they read `lak`'s lake
-      alone, in silence); and running the suite with a RELATIVE
+      alone, in silence) (**RESOLVED by ledger 352:** found by type, the views refuse
+      several by name, `model.lak(package=...)` picks one); and running the suite with a RELATIVE
       `PYTHONPATH=src` makes every PEST forward-run subprocess import the EDITABLE
       install (the main checkout) instead of the worktree, because the forward run's
       working directory is the template -- measured: this commit's forward-run tests
@@ -15739,8 +15741,8 @@ same day, which is the useful part of the result.
       there): they fail on FloPy's list only while no package is named like its type.
       With `lak` beside `lak_2`, `model.fl.lak` is `lak` alone and
       `model.lak.results.stage.get()` returns `lak`'s lake alone, labelled `package lak`,
-      `lak_2`'s absent -- measured. Not fixed here: it is ledger 339's accessor, not the
-      observation route, which refuses that model by name.
+      `lak_2`'s absent -- measured. ~~Not fixed here: it is ledger 339's accessor, not the
+      observation route, which refuses that model by name.~~ **RESOLVED by ledger 352.**
       **344's cost, re-measured on a real model:** a copy of the converted Ten Trails run
       (23 MB EVT, 22 MB RCH list input), `load_mf6_run` + one
       `DrnFlowTargets.simulated_series` on the budget route: 1.10 s -> 2.40-2.50 s (two
@@ -16245,3 +16247,124 @@ same day, which is the useful part of the result.
         `test_lake_bottoms_is_mf6s_own_stage_at_every_dry_record[vertical]`;
       - every lake asked instead of the dry ones, or the embedded refusal removed: 1 each,
         `test_an_embedded_lake_is_refused_by_name_and_only_when_it_is_asked_for`.
+352. **Several packages of one type are found by TYPE and never read as one in silence: `model.fl.<pkg>` and `model.package(<type>)` answer every package of the type, a view whose rows are CELLS reads every package's records tagged `pname`, a view of one package's FEATURES refuses several with `SeveralPackagesError`, and `model.lak(package=...)` picks one (2026-09-30).**
+      Ledger 344's found-not-fixed, corrected by 345. FloPy's `get_package(name)` answers a
+      package NAMED like its argument before it looks at types, and ledger 339's accessors
+      asked it by a bare type string. Measured on the two-of-each toy
+      (`docs/reproducers/packages_by_type.py`): beside `lak_2`, `model.fl.lak` and
+      `model.package("lak")` were `lak` alone and `model.lak.results.stage.get()` read
+      `lak`'s lake (cells 8, 9) as the model's, `lak_2`'s absent without a word; with
+      `lak_a`/`lak_b` every LAK and SFR view died on `'list' object has no attribute
+      'nlakes'`. **Found here, and worse:** the budget-file reader under every cell-budget
+      view (`build_budget_result_table`) kept the FIRST record of each saved time. On the
+      user's Ten Trails run (`hm_mounding_new_lak`, RIV `riv` + `crisp`, read-only)
+      `model.riv.results.q`, `model.budget.riv`, `wide()` and the RIV maps held `riv`
+      alone -- 500 of 1,021 river cells, -208,680.73 of -448,427.27 ft3/d in period 0:
+      53.46% of the river exchange gone. Its `paknam=` never matched either (MF6 writes the
+      MODEL's name in `paknam`, the package's in `paknam2`), so every read fell back to
+      FloPy's first-substring `text=`.
+      **ONE rule, `package_registry.model_packages_of_type`** (and `packages_of_type` on a
+      FloPy model or simulation; array-form RCHA/EVTA are RCH/EVT on both sides):
+      `SimulationBase._packages_of_type` (a `LoadedMf6Run` loads first), `model.package`,
+      `model.fl.<pkg>`, the observation targets' `_packages_of_type`/`_named_package` and
+      `package_tables._packages_of` all go through it; `one_package`, `package_named`,
+      `checked_package_name` and `package_outputs` beside it (import layer 0, so no module
+      moved layer).
+      **`model.package(s)` is a TYPE first, then a package's exact NAME, on the model and
+      then its simulation** -- judgment call: FloPy's filename and name-PREFIX fallbacks are
+      dropped (`"dis"` answered a DISV; nothing in src, tests or examples relied on it).
+      The package named like its type beside others has no name-only spelling there:
+      `model.package("lak")` is the type (the user's rule) and `model.package("lak")[0]` or
+      FloPy's `get_package("lak", name_only=True)` is that package -- a keyword was not added.
+      `model.fl.<pkg>` is TYPE only, never a name. **Trap:** a property raising
+      `AttributeError` makes Python retry `__getattr__`, whose name lookup answered a GHB
+      NAMED `lak` for `model.fl.lak` on a model with no LAK -- `FlopyPackages.__getattr__`
+      re-raises the type's refusal for its typed names.
+      **Cells or features decides it.** A view whose rows are CELLS reads every package of
+      the type, each row's `pname` naming its package (MF6 superposes them): a list BC's
+      inputs (already, ledger 229) and results, `model.budget.<term>`, UZF's result terms,
+      `model.surface_water`. A view whose rows are one package's numbered FEATURES -- LAK
+      lakes, SFR reaches, UZF cells by `ifno` -- reads ONE package through `one_package`,
+      which refuses several naming each and the spelling. **Judgment call, the spelling:
+      `model.lak(package="lak_2")`** -- calling the package namespace, keyword-only, a
+      package NAME in any case, checked at the call (a name, never the type:
+      `model.lak(package="lak")` is the package named `lak`), `model.sfr`/`model.uzf`
+      alike and `model.outputs.<pkg>(package=...)` for the files. Chosen over `package=` on
+      every verb (about fifty signatures) and over `model.lak["lak_2"]` (no completion); it
+      is the targets' own keyword and the `view(per=)` call's shape. Each explorer holds
+      `package` and hands it to every builder below it; a builder with none reads the
+      unbound `model.outputs.<pkg>` exactly as before.
+      **`SeveralPackagesError` is a `LookupError`, NOT a `ValueError`** -- judgment call,
+      against the house habit of `ValueError` subclasses: the group and diff tiers treat
+      `ValueError` as "package missing" (`PACKAGE_TABLE_UNAVAILABLE`), and measured with a
+      `ValueError` the diff's LAK geometry read NO connection on either toy model and
+      reported the two lake networks `identical`, in silence. Exported as
+      `mf.SeveralPackagesError`.
+      **UZF is both:** its inputs are one package's (`ifno`); its results are cell terms,
+      every UZF package's unless one is named, and `DATA-SAT` (NPF's) is never filtered by
+      a UZF package. **The combined surface-water view** reads every LAK and SFR package,
+      and a type the model lacks adds no rows -- a BEHAVIOUR CHANGE: an SFR-only model raised
+      `AttributeError` on its LAK half, where a LAK-only one read.
+      **The budget-file reader** selects records by the term's EXACT name and, for a bound
+      view, the writing package's `paknam2`; every cell-results table gains `pname` (a
+      schema change: `None` for a record no package wrote, such as `STO-SS`). **NOT pinned
+      by a test:** the exact match itself. The substring hazard the old comment named --
+      "RCH" inside "UZF-GWRCH" on a model declaring UZF first -- was measured NOT to occur:
+      MF6 wrote `RCH` before `UZF-GWRCH` regardless (reproducer D), so reverting to the
+      substring match fails nothing; a test would pin a file MF6 does not write. The
+      array-form rule it needs IS pinned (`test_array_bcs`, 2 tests).
+      **`model.packages.summary(detail="data")` and `mosaic()`** looked explorers up by
+      package NAME: `CRISP` read blank and `RIV` counted both packages' records; a second
+      LAK raised out of `mosaic()`. Each row is its own package now; a LAK, SFR or UZF
+      package is one panel, a list BC's type one panel.
+      **The sweep (item 3), every reader that asked for "the" package of a type:**
+      `attach_flopy_obs`' default owner was FloPy's `model.gwf.<type>` (the OBS went on
+      `lak` beside `lak_2`) -- one helper, `_owning_package`, refusing several with the
+      targets' `ValueError`; artifact capture (`build_package_artifact`) takes an exact NAME
+      first -- judgment call: an artifact is one package and the legacy builders capture
+      the one they just built by its name, beside another of its type -- then a type of
+      one, refusing several (FloPy's list reached the type check as type `''`); the model
+      splitter's lake grouping and LAK repair cover every LAK package; the mover's lookup is
+      exact-name (an MVR record names a package); the legacy `model.inputs` helpers, the
+      legacy stage arrays in `budget_tables` and `SFRBudget.plot_flows` read one package or
+      refuse. **Reviewed, unchanged:** lookups of a single-instance type (NPF, IC, STO, OC,
+      DIS/DISV/DISU, TDIS, MVR, MST -- FloPy's GWF flags, measured: `multi-package` only for
+      CHD, DRN, EVT, GHB, LAK, MAW, RCH, RIV, SFR, UZF, WEL, their array/grid forms, API and
+      the GWF-GWF exchange), and
+      the canonical builders, whose model has one of each by construction.
+      **NOT done:** the group and diff tiers have no spelling for one of several -- they
+      REFUSE such a model by name (pinned), and a `group.packages.lak(package=)` was not
+      built. The observation targets' file route could now read a named LAK/SFR package,
+      but a named package with nothing declared is still refused ("cannot be chosen by
+      package", 344). A one-package table's `package` column is the type, with no `pname`
+      (the call names its package). `model.bud(pkg)`, the legacy wrapper, still matches by
+      substring (it reads every package's records). `_declared_length_unit`'s
+      `getattr(gwf, "dis")` still prefix-matches a DISV (a single-instance read of units).
+      **Test doubles:** `test_mf6_pest`'s fake surface-water model and its LAK attach test
+      answered FloPy's `gwf.<type>`; they answer `package(type)` now (`_answering_by_type`),
+      the contract 344 documented for a double.
+      Reproducer: `docs/reproducers/packages_by_type.py` (sections A-F: both toy models,
+      the RIV records, UZF declared first, `paknam=`, Ten Trails when present), run on
+      89364c2's `src` and on this tree. Tests: `tests/test_packages_by_type.py` (15; two real
+      MF6 runs of the toy, `lak`/`lak_2`/`sfr`/`sfr_2`/`riv`/`crisp`/`uzf`/`uzf_2` and the
+      `_a`/`_b` names, plus one GHB named `lak`), each reading MF6's files with FloPy for
+      the truth. Each piece reverted alone fails by name (19 mutations, baseline and
+      restore green): the name-first `model.package` ->
+      `test_model_fl_and_package_answer_by_type[named_like_the_type]` and
+      `test_a_string_is_a_type_or_a_name_never_a_prefix`; name-first `model.fl` -> both
+      params and `test_a_package_merely_named_like_a_type_is_not_that_type`; the
+      `__getattr__` guard -> that and the prefix test; the first-record reader ->
+      `test_every_package_of_a_cell_term_is_read_from_the_budget_file`; picking the first of
+      several -> `test_a_one_package_view_refuses_several_naming_them_and_the_spelling` (both)
+      and `test_the_diff_tier_refuses_several_rather_than_reading_none`; a `ValueError`
+      subclass -> the diff test; the summary or mosaic by name ->
+      `test_the_all_packages_table_and_mosaic_take_each_package`; the attach owner ->
+      `test_attach_flopy_obs_takes_the_named_package_or_refuses_several`; the artifact by
+      FloPy, or by type before name ->
+      `test_an_artifact_is_one_package_by_name_and_a_type_of_several_is_refused`; the lake
+      groups -> `test_split_lake_groups_cover_every_lak_package`; the surface-water packages
+      -> `test_the_combined_surface_water_view_reads_every_lak_and_sfr_package`; a bound UZF
+      result, LAK stage or SFR exchange reading every package ->
+      `test_each_named_package_reads_its_own_files`; the outputs' spelling -> the refusal
+      test (both); the unchecked name -> `test_a_package_name_is_checked_at_the_call`. The
+      exact-name match alone survives (above).

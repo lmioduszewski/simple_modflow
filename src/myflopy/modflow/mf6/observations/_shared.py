@@ -13,7 +13,11 @@ import pandas as pd
 
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.geometry import where_they_are
-from myflopy.modflow.mf6.package_registry import agg_for_kind
+from myflopy.modflow.mf6.package_registry import (
+    agg_for_kind,
+    model_packages_of_type,
+    package_named,
+)
 from myflopy.modflow.mf6.period_end import (
     at_period_end,
     period_end_rows,
@@ -352,23 +356,15 @@ class _DeclaredObservation:
 def _packages_of_type(model, package_type: str) -> list:
     """Every FloPy package of ``package_type`` in ``model``; ``[]`` when it has none.
 
-    Asked by TYPE: FloPy's ``get_package(name)`` answers a package NAMED like the
-    type before the type itself, so ``model.package("lak")`` on a model holding
-    LAK packages named ``lak`` and ``lak_2`` returns the first alone. The lookup
-    through ``model.package`` comes first because a reloaded run loads its
-    packages there; a model that has none of the type -- or a test double with no
-    ``package`` -- raises ``AttributeError``, and has nothing declared.
+    Asked by TYPE, through the one rule every reader shares
+    (``package_registry.model_packages_of_type``, ledger 352): FloPy's
+    ``get_package(name)`` answers a package NAMED like the type before the type
+    itself, so on a model holding LAK packages named ``lak`` and ``lak_2`` a name
+    lookup returns the first alone. A test double without the model's lookup answers
+    through ``model.package``; one with no ``package`` has nothing declared.
     """
 
-    try:
-        first = model.package(package_type)
-    except AttributeError:
-        return []
-    getter = getattr(getattr(model, "gwf", None), "get_package", None)
-    found = getter(package_type, type_only=True) if getter is not None else first
-    if found is None:
-        return []
-    return list(found) if isinstance(found, (list, tuple)) else [found]
+    return model_packages_of_type(model, package_type)
 
 
 def _attached_obs_packages(package) -> list:
@@ -453,15 +449,47 @@ def _listing(items, *, limit: int = 5) -> str:
 def _named_package(model, quantity: _ObservedQuantity, package: str):
     """The FloPy package of the family's type NAMED ``package`` (any case), or a refusal naming the rest."""
 
+    try:
+        return package_named(model, quantity.package_type, package)
+    except ValueError as error:
+        raise ValueError(f"{quantity.owner}: {error}") from None
+
+
+def _owning_package(model, quantity: _ObservedQuantity, package: str | None):
+    """The FloPy package a target set's OBS attaches to (``attach_flopy_obs``'s default).
+
+    The package the targets NAME (``package``, any case), else the model's only
+    package of the family's type, found by TYPE. It was FloPy's
+    ``model.gwf.<type>``, which answers a package NAMED like the type first: beside
+    ``lak_2`` the OBS went on ``lak`` in silence, and with ``lak_a``/``lak_b`` FloPy
+    handed back a list (ledger 352).
+
+    Raises
+    ------
+    AttributeError
+        When the model has no package of the type.
+    ValueError
+        When ``package`` names none of them, or the model carries several and the
+        targets name none.
+    """
+
+    if package is not None:
+        return _named_package(model, quantity, package)
     everyone = _packages_of_type(model, quantity.package_type)
-    for candidate in everyone:
-        if str(getattr(candidate, "package_name", "")).strip().lower() == str(package).strip().lower():
-            return candidate
-    held = ", ".join(repr(str(getattr(p, "package_name", ""))) for p in everyone) or "none"
-    raise ValueError(
-        f"{quantity.owner}: package={package!r} names no {quantity.package_type.upper()} "
-        f"package of this model; its {quantity.package_type.upper()} packages: {held}."
-    )
+    if not everyone:
+        raise AttributeError(
+            f"{quantity.owner}: model {getattr(model, 'name', '?')!r} has no "
+            f"{quantity.package_type.upper()} package to attach observations to."
+        )
+    if len(everyone) > 1:
+        raise _several_packages(
+            quantity,
+            everyone,
+            "an observation package attaches to ONE of them",
+            f"Name it: {quantity.owner}(..., package=<its name>), or pass the FloPy package "
+            "itself as attach_flopy_obs(package=...).",
+        )
+    return everyone[0]
 
 
 def _several_packages(quantity: _ObservedQuantity, packages, reason: str, fix: str) -> ValueError:

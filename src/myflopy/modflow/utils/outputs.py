@@ -10,16 +10,44 @@ import pandas as pd
 
 from myflopy.modflow.mf6.budget import LakBudget, SFRBudget
 from myflopy.modflow.mf6.headsplus import _is_sentinel
+from myflopy.modflow.mf6.package_registry import checked_package_name, one_package
 from myflopy.modflow.mf6.period_end import saved_steps
+
+
+def _output_package(model: SimulationBase, package_type: str, package: str | None):
+    """The one package an output reader reads, refused by name as ``model.outputs`` spells it.
+
+    ``package`` is a package NAME, or ``None`` for the model's only package of the
+    type; several with none named raise ``SeveralPackagesError`` naming
+    ``model.outputs.<type>(package=...)`` (ledger 352).
+    """
+
+    return one_package(
+        model, package_type, package,
+        spelling=f"model.outputs.{package_type}(package={{name!r}})",
+    )
+
+
+def _named_output_package(model: SimulationBase, package_type: str, package: str) -> str:
+    """``model.outputs.<type>(package=...)``'s argument, checked at the call: the package's own name."""
+
+    return checked_package_name(
+        model, package_type, package, spelling=f"model.outputs.{package_type}(package=...)"
+    )
 
 
 class LakStageOutput:
     """Lake stage output accessor hosted under ``model.outputs.lak``."""
 
-    def __init__(self, model: SimulationBase):
-        """Bind the lake stage-output accessor to ``model``."""
+    def __init__(self, model: SimulationBase, package: str | None = None):
+        """Bind the lake stage-output accessor to ``model``'s LAK package ``package``.
+
+        ``package`` is the package's NAME, or ``None`` for the model's only LAK
+        package (ledger 352).
+        """
 
         self.model = model
+        self.package = package
 
     def get(self, *, masked: bool = True) -> np.ndarray:
         """Return the LAK stage file as one row per saved record and one column per lake.
@@ -58,6 +86,9 @@ class LakStageOutput:
         AttributeError
             If the model has no LAK package, or the package declares no
             ``stage_filerecord`` (FloPy's ``output.stage()`` is then ``None``).
+        SeveralPackagesError
+            If the model carries several LAK packages and this reader names none:
+            ``model.outputs.lak(package="lak_2").stage.get()`` (ledger 352).
 
         Examples
         --------
@@ -66,8 +97,9 @@ class LakStageOutput:
         >>> dry = raw == -1e30                              # dry, not inactive
         """
 
-        nlakes = self.model.fl.lak.nlakes.data
-        stages = self.model.fl.lak.output.stage()
+        lak = _output_package(self.model, "lak", self.package)
+        nlakes = lak.nlakes.data
+        stages = lak.output.stage()
         values = np.asarray(stages.get_alldata(), dtype=float).reshape(-1, nlakes)
         if masked:
             values[_is_sentinel(values)] = np.nan
@@ -94,6 +126,8 @@ class LakStageOutput:
         AttributeError
             If the model has no LAK package, or the package declares no
             ``stage_filerecord``.
+        SeveralPackagesError
+            If the model carries several LAK packages and this reader names none.
 
         Examples
         --------
@@ -101,23 +135,33 @@ class LakStageOutput:
         [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2)]
         """
 
-        reader = self.model.fl.lak.output.stage()
+        reader = _output_package(self.model, "lak", self.package).output.stage()
         return [(kstp, kper) for kstp, kper, _pertim in saved_steps(reader)]
 
 
 class SFRStageOutput:
     """Stream stage output accessor hosted under ``model.outputs.sfr``."""
 
-    def __init__(self, model: SimulationBase):
-        """Bind the stream stage-output accessor to ``model``."""
+    def __init__(self, model: SimulationBase, package: str | None = None):
+        """Bind the stream stage-output accessor to ``model``'s SFR package ``package``.
+
+        ``package`` is the package's NAME, or ``None`` for the model's only SFR
+        package (ledger 352).
+        """
 
         self.model = model
+        self.package = package
 
     def get(self):
-        """Return a reach-by-saved-timestep dataframe of stream stage output."""
+        """Return a reach-by-saved-timestep dataframe of stream stage output.
 
-        nreaches = self.model.fl.sfr.nreaches.data
-        reader = self.model.fl.sfr.output.stage()
+        Raises ``SeveralPackagesError`` on a model with several SFR packages when
+        this reader names none: ``model.outputs.sfr(package="sfr_2").stage.get()``.
+        """
+
+        sfr = _output_package(self.model, "sfr", self.package)
+        nreaches = sfr.nreaches.data
+        reader = sfr.output.stage()
         kstpkpers = [tuple(value) for value in reader.get_kstpkper()]
         stages = reader.get_alldata()
         stage_data = stages.reshape(len(kstpkpers), nreaches).transpose()
@@ -128,18 +172,46 @@ class SFRStageOutput:
 
 
 class LakOutputData:
-    """Namespace for LAK-specific output helpers."""
+    """Namespace for LAK-specific output helpers: one LAK package's files.
 
-    def __init__(self, model: SimulationBase):
-        """Bind the LAK output namespace (``.bud`` / ``.stage``) to ``model``."""
+    ``model.outputs.lak`` reads the model's only LAK package;
+    ``model.outputs.lak(package="lak_2")`` names one of several (ledger 352).
+    """
+
+    def __init__(self, model: SimulationBase, package: str | None = None):
+        """Bind the LAK output namespace (``.bud`` / ``.stage``) to ``model``'s LAK package ``package``."""
 
         self.model = model
+        self.package = package
+
+    def __call__(self, *, package: str) -> LakOutputData:
+        """The same namespace, reading the LAK package NAMED ``package``.
+
+        Parameters
+        ----------
+        package : str
+            A LAK package's name (FloPy's ``package_name``), any case -- on a model
+            holding ``lak`` and ``lak_2``, ``"lak"`` is the package named ``lak``.
+            Checked here: a name that is no LAK package raises ``ValueError``
+            naming the model's LAK packages.
+
+        Returns
+        -------
+        LakOutputData
+            Reading that package's stage and budget files.
+
+        Examples
+        --------
+        >>> model.outputs.lak(package="lak_2").stage.get(masked=False)
+        """
+
+        return LakOutputData(self.model, _named_output_package(self.model, "lak", package))
 
     @property
     def bud(self):
         """Return the LAK package-output budget accessor."""
 
-        return LakBudget(self.model)
+        return LakBudget(self.model, self.package)
 
     @property
     def stage(self):
@@ -152,22 +224,49 @@ class LakOutputData:
         ``outputs`` namespace.
         """
 
-        return LakStageOutput(self.model)
+        return LakStageOutput(self.model, self.package)
 
 
 class SFROutputData:
-    """Namespace for SFR-specific output helpers."""
+    """Namespace for SFR-specific output helpers: one SFR package's files.
 
-    def __init__(self, model: SimulationBase):
-        """Bind the SFR output namespace (``.bud`` / ``.stage``) to ``model``."""
+    ``model.outputs.sfr`` reads the model's only SFR package;
+    ``model.outputs.sfr(package="sfr_2")`` names one of several (ledger 352).
+    """
+
+    def __init__(self, model: SimulationBase, package: str | None = None):
+        """Bind the SFR output namespace (``.bud`` / ``.stage``) to ``model``'s SFR package ``package``."""
 
         self.model = model
+        self.package = package
+
+    def __call__(self, *, package: str) -> SFROutputData:
+        """The same namespace, reading the SFR package NAMED ``package``.
+
+        Parameters
+        ----------
+        package : str
+            An SFR package's name (FloPy's ``package_name``), any case. Checked
+            here: a name that is no SFR package raises ``ValueError`` naming the
+            model's SFR packages.
+
+        Returns
+        -------
+        SFROutputData
+            Reading that package's stage and budget files.
+
+        Examples
+        --------
+        >>> model.outputs.sfr(package="sfr_2").bud.get("GWF")
+        """
+
+        return SFROutputData(self.model, _named_output_package(self.model, "sfr", package))
 
     @property
     def bud(self):
         """Return the SFR package-output budget accessor."""
 
-        return SFRBudget(self.model)
+        return SFRBudget(self.model, self.package)
 
     @property
     def stage(self):
@@ -178,16 +277,43 @@ class SFROutputData:
         ``outputs`` namespace.
         """
 
-        return SFRStageOutput(self.model)
+        return SFRStageOutput(self.model, self.package)
 
 class UzfOutputData:
-    """Namespace for UZF-specific output helpers."""
+    """Namespace for UZF-specific output helpers: one UZF package's.
 
-    def __init__(self, model: SimulationBase):
-        """Bind the UZF output namespace to ``model``."""
+    ``model.outputs.uzf`` reads the model's only UZF package;
+    ``model.outputs.uzf(package="uzf_2")`` names one of several (ledger 352).
+    """
+
+    def __init__(self, model: SimulationBase, package: str | None = None):
+        """Bind the UZF output namespace to ``model``'s UZF package ``package``."""
 
         self.model = model
+        self.package = package
         self._ifno_to_cellid = None
+
+    def __call__(self, *, package: str) -> UzfOutputData:
+        """The same namespace, reading the UZF package NAMED ``package``.
+
+        Parameters
+        ----------
+        package : str
+            A UZF package's name (FloPy's ``package_name``), any case. Checked
+            here: a name that is no UZF package raises ``ValueError`` naming the
+            model's UZF packages.
+
+        Returns
+        -------
+        UzfOutputData
+            Reading that package.
+
+        Examples
+        --------
+        >>> model.outputs.uzf(package="uzf_2").ifno_to_cellid
+        """
+
+        return UzfOutputData(self.model, _named_output_package(self.model, "uzf", package))
 
     @property
     def ifno_to_cellid(self):
@@ -195,7 +321,8 @@ class UzfOutputData:
 
         if self._ifno_to_cellid is None:
             if self.model.modelgrid.grid_type == 'vertex':
-                ifno_to_cellid = pd.DataFrame(self.model.fl.uzf.packagedata.get_data().cellid.tolist())
+                uzf = _output_package(self.model, "uzf", self.package)
+                ifno_to_cellid = pd.DataFrame(uzf.packagedata.get_data().cellid.tolist())
                 ifno_to_cellid.index.name = 'ifno'
                 ifno_to_cellid.columns = ['layer', 'cellid']
                 self._ifno_to_cellid = ifno_to_cellid

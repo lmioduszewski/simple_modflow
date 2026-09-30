@@ -16,6 +16,8 @@ from myflopy.modflow.mf6.lak_implicit import ModflowGwflakImplicit
 from myflopy.modflow.mf6.package_registry import (
     _PACKAGE_EXPLORER_SPECS,
     advanced_output_filerecords,
+    package_name_of,
+    packages_of_type,
 )
 
 
@@ -316,18 +318,39 @@ def _restore_rows(rows: list[list[Any]], *, tuple_indices: tuple[int, ...] = ())
 
 
 def _resolve_package(model, package_name: str):
-    """Resolve a package from a model or simulation by common name variants."""
+    """The ONE package an artifact captures: a package's exact NAME, else its TYPE.
 
-    package = model.gwf.get_package(package_name)
-    if package is None:
-        package = getattr(model.gwf, package_name.lower(), None)
-    if package is None and getattr(model, "sim", None) is not None:
-        package = model.sim.get_package(package_name)
-    if package is None and getattr(model, "sim", None) is not None:
-        package = getattr(model.sim, package_name.lower(), None)
-    if package is None:
-        raise FileNotFoundError(f"Package '{package_name}' not found on model '{model.name}'.")
-    return package
+    NAME first, because an artifact is one package and the builders capture the one
+    they just built by the name they gave it -- possibly beside another of its type
+    (``riv`` beside ``crisp``). A string no package is named is a TYPE, and must
+    find exactly one package: several are REFUSED naming them (ledger 352). FloPy's
+    ``get_package`` answered a type with a list, which reached the type check below
+    as package type ``''`` and was refused as unsupported; FloPy's filename and
+    name-prefix matches are gone. The model first, then its simulation.
+    """
+
+    load_all = getattr(model, "load_all", None)
+    if callable(load_all):
+        load_all()
+    key = str(package_name).strip().lower()
+    simulation = getattr(model, "sim", None)
+    owners = [model.gwf] + ([simulation] if simulation is not None else [])
+    for owner in owners:
+        for package in owner.get_package() or ():
+            if package_name_of(package).strip().lower() == key:
+                return package
+    for owner in owners:
+        typed = packages_of_type(owner, key)
+        if len(typed) > 1:
+            names = ", ".join(repr(package_name_of(package)) for package in typed)
+            raise ValueError(
+                f"Model '{model.name}' carries {len(typed)} {key.upper()} packages "
+                f"({names}), and an artifact captures ONE package: pass its name as "
+                "package_name=."
+            )
+        if typed:
+            return typed[0]
+    raise FileNotFoundError(f"Package '{package_name}' not found on model '{model.name}'.")
 
 
 def _deep_merge_dicts(base: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:

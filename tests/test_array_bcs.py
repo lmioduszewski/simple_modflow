@@ -296,10 +296,13 @@ def test_the_results_tier_reads_an_array_package(array_run):
 
 @pytest.mark.slow
 def test_the_budget_record_is_matched_by_package_name(array_run):
-    """FloPy matches `text=` by first-hit SUBSTRING, and "RCH" is inside "RCHA".
+    """An array RCH writes its budget records as "RCHA", which the RCH term must read.
 
-    It is also inside "UZF-GWRCH", so a model declaring UZF first would have had
-    `packages.rch.results.q` quietly return UZF's recharge term.
+    FloPy's `get_data(text=...)` matches the first record name CONTAINING the text,
+    and "RCH" is inside "RCHA" and "UZF-GWRCH" too; the reader matches the term
+    exactly now, with MF6's array forms read as their type (ledger 352). A model
+    declaring UZF before RCH was measured NOT to reach UZF's term: MF6 wrote "RCH"
+    before "UZF-GWRCH" in the file regardless.
     """
 
     frame = array_run.rch.results.q.get()

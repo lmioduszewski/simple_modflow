@@ -160,6 +160,23 @@ def _build_two_cell_pest_forward_model(name: str, workspace: Path):
     return model, vor
 
 
+def _answering_by_type(packages):
+    """``model.package`` for a test double: the package of each TYPE, as a model answers.
+
+    What the observation targets and the one-package views ask (ledger 352:
+    ``package_registry.model_packages_of_type`` falls back to it for a model without
+    the real lookup). A type the double does not carry raises ``AttributeError``, as
+    a model does. It stood in for FloPy's name-first ``model.gwf.<type>`` before.
+    """
+
+    def package(name):
+        if name not in packages:
+            raise AttributeError(f"Package {name!r} is not attached to model 'fake'.")
+        return packages[name]
+
+    return package
+
+
 def _fake_model_with_heads():
     vor = _two_cell_vor_clockwise()
     index = pd.MultiIndex.from_tuples(
@@ -177,6 +194,7 @@ def _fake_surface_water_model():
     # (ledger 351), and the one VERTICAL connection each lake has, which labels its cell.
     lake_stage = np.array([[100.0, 97.5], [101.0, 97.0]])
     lak = SimpleNamespace(
+        package_name="lak",
         nlakes=SimpleNamespace(data=2),
         connectiondata=SimpleNamespace(get_data=lambda: pd.DataFrame(
             {"ifno": [0, 1], "cellid": [(0, 0), (0, 1)], "claktype": ["VERTICAL"] * 2})),
@@ -217,7 +235,7 @@ def _fake_surface_water_model():
         vor=vor,
         # MF6's user numbering of a one-layer, two-cell grid: what a budget node means.
         node_to_lni={0: (0, 0), 1: (0, 1)},
-        gwf=SimpleNamespace(lak="lak_owner", sfr="sfr_owner", drn="drn_owner"),
+        package=_answering_by_type({"lak": lak, "sfr": "sfr_owner", "drn": "drn_owner"}),
         fl=SimpleNamespace(lak=lak),
         sfr=SimpleNamespace(
             results=SimpleNamespace(
@@ -517,7 +535,8 @@ def test_lake_stage_targets_can_build_and_attach_flopy_obs(monkeypatch):
     ]
 
     calls = {}
-    fake_model = SimpleNamespace(gwf=SimpleNamespace(lak=object()))
+    lake = object()
+    fake_model = SimpleNamespace(name="fake", package=_answering_by_type({"lak": lake}))
 
     def _fake_obs(owner, pname, continuous, filename):
         calls["owner"] = owner
@@ -529,7 +548,7 @@ def test_lake_stage_targets_can_build_and_attach_flopy_obs(monkeypatch):
     monkeypatch.setattr("flopy.mf6.modflow.mfutlobs.ModflowUtlobs", _fake_obs)
     package = targets.attach_flopy_obs(fake_model, filename="cumb_lak.obs", csv_name="lak_obs.csv")
     assert package.filename == "cumb_lak.obs"
-    assert calls["owner"] is fake_model.gwf.lak
+    assert calls["owner"] is lake
     assert calls["continuous"] == obs_dict
 
 

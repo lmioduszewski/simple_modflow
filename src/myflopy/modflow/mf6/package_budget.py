@@ -27,6 +27,13 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_term_filter,
     split_cellid_columns,
 )
+from myflopy.modflow.mf6.package_registry import (
+    _package_type_name,
+    model_packages_of_type,
+    one_package,
+    package_name_of,
+    package_outputs,
+)
 from myflopy.modflow.mf6.package_tables import (
     build_sfr_reach_table,
 )
@@ -140,55 +147,68 @@ def build_budget_result_table(
     budget_text: str,
     package_name: str,
     value_name: str = "q",
+    packages: Iterable[str] | None = None,
 ) -> pd.DataFrame:
     """Return a normalized cell-result table from one budget record type.
 
+    EVERY record of the term is read -- one per package per saved time -- each row
+    tagged with the package that wrote it (``pname``, MF6's ``paknam2``). It read
+    the FIRST record of each time alone, so a second DRN package's flows were
+    absent from ``model.drn.results.q`` in silence (ledger 352, measured: ``drn_2``'s
+    -199.79 ft3/d on cell 21 missing beside ``drn``'s -207.02 on cell 20).
+
+    Records are matched on the term EXACTLY -- MF6's array-form ``RCHA``/``EVTA``
+    records counting as ``RCH``/``EVT`` (``package_registry._package_type_name``).
+    FloPy's ``get_data(text=...)`` takes the first record NAME containing the text
+    ("RCH" is inside "UZF-GWRCH"), and the ``paknam=`` meant to pin it never matched
+    -- MF6 writes the MODEL's name there and the package's in ``paknam2`` -- so every
+    read fell back to the text alone, and the answer rested on the file's record
+    order. Measured, that order did not bite: MF6 wrote ``RCH`` before ``UZF-GWRCH``
+    on a model declaring UZF first. Matching exactly no longer depends on it.
+
     Parameters
     ----------
-    model
+    model : SimulationBase
         Live or file-backed model object.
-    budget_text
-        Binary budget record name such as ``"RCH"`` or ``"UZF-GWRCH"``.
-    package_name
-        Logical package name reported in the normalized table.
-    value_name
+    budget_text : str
+        Budget record name such as ``"RCH"`` or ``"UZF-GWRCH"``, any case; matched
+        whole against the file's record names, after MF6's array forms are read
+        as their type.
+    package_name : str
+        Logical package name reported in the table's ``package`` column (the
+        type: ``"drn"``); it selects nothing.
+    value_name : str, default "q"
         Public column name to use for the normalized budget quantity.
+    packages : iterable of str or None, optional
+        Package NAMES whose records to read, compared with each record's
+        ``paknam2`` stripped and upper-cased -- the one package a LAK/SFR/UZF view
+        reads. Default ``None`` reads every package's.
 
     Returns
     -------
     pandas.DataFrame
-        Tidy DataFrame with ``kstpkper``, zero-based ``per``, ``layer``,
-        ``cell``, and the normalized result field.
+        Tidy DataFrame with ``model``, ``package``, ``pname`` (the writing package's
+        name, upper-cased as MF6 writes it; ``None`` for a record no package wrote,
+        such as ``STO-SS``), ``kstpkper``, zero-based ``per``, ``layer``, ``cell``
+        and the normalized result field, one row per record entry, in file order.
     """
 
     reader = model._get_budget_reader()
+    headers = reader.recordarray
+    wanted = _package_type_name(str(budget_text).strip())
+    texts = {raw: _package_type_name(raw.decode().strip()) for raw in set(headers["text"].tolist())}
+    selected = np.isin(headers["text"], [raw for raw, text in texts.items() if text == wanted])
+    if packages is not None:
+        names = {str(name).strip().upper() for name in packages}
+        owners = {raw: raw.decode().strip().upper() for raw in set(headers["paknam2"].tolist())}
+        selected &= np.isin(headers["paknam2"], [raw for raw, name in owners.items() if name in names])
+
     frames: list[pd.DataFrame] = []
-    for kstpkper in model._get_budget_kstpkper():
-        # `paknam=` as well as `text=`. FloPy resolves `text` by FIRST-HIT
-        # SUBSTRING match, and "RCH" is a substring of both "RCHA" and
-        # "UZF-GWRCH" -- so a model declaring UZF before RCH would have
-        # `packages.rch.results.q` silently return UZF's recharge term. Naming
-        # the package makes the match deliberate rather than lucky.
-        try:
-            records = reader.get_data(
-                text=budget_text, paknam=package_name, kstpkper=kstpkper
-            )
-        except ValueError as error:
-            # FloPy RAISES when the package name is absent rather than returning
-            # nothing, and a budget file legitimately may not carry one (an older
-            # run, or a package whose record is named for the term rather than the
-            # package). Fall back to the text-only match, which is what this did
-            # before -- less precise, never worse.
-            logger.debug(
-                "budget record for %r carries no package name; matching on text alone: %s",
-                package_name,
-                error,
-            )
-            records = reader.get_data(text=budget_text, kstpkper=kstpkper)
-        if not records:
-            continue
+    for index in np.flatnonzero(selected):
+        header = headers[index]
+        kstpkper = (int(header["kstp"]) - 1, int(header["kper"]) - 1)
         frame = _model_budget_record_frame(
-            model, records[0], budget_text=budget_text
+            model, reader.get_record(int(index)), budget_text=budget_text
         )
         if frame.empty:
             continue
@@ -206,8 +226,9 @@ def build_budget_result_table(
         frame["cell"] = cells
         frame["model"] = model.name
         frame["package"] = str(package_name).lower()
-        frame["kstpkper"] = [tuple(int(value) for value in kstpkper)] * len(frame)
-        frame["per"] = int(kstpkper[1])
+        frame["pname"] = header["paknam2"].decode().strip().upper() or None
+        frame["kstpkper"] = [kstpkper] * len(frame)
+        frame["per"] = kstpkper[1]
         if value_name != "q" and "q" in frame.columns:
             # TRUE rename (drop FloPy's raw "q"): the public column carries the
             # reference frame in its name (q_gwf / q_lake). Renaming rather than
@@ -218,7 +239,7 @@ def build_budget_result_table(
 
     if not frames:
         return pd.DataFrame(
-            columns=["model", "package", "kstpkper", "per", "layer", "cell", value_name]
+            columns=["model", "package", "pname", "kstpkper", "per", "layer", "cell", value_name]
         )
 
     combined = pd.concat(frames, ignore_index=True)
@@ -226,15 +247,22 @@ def build_budget_result_table(
         combined[column] = combined[column].astype(int)
     combined = _coerce_numeric_like_columns(
         combined,
-        exclude={"model", "package", "kstpkper"},
+        exclude={"model", "package", "pname", "kstpkper"},
     )
     return combined
 
 
-def build_sfr_stage_result_table(model: SimulationBase) -> pd.DataFrame:
-    """Return a normalized table of SFR stage results by reach and period."""
+def build_sfr_stage_result_table(model: SimulationBase, *, package: str | None = None) -> pd.DataFrame:
+    """Return a normalized table of SFR stage results by reach and period.
 
-    stage_frame = model.outputs.sfr.stage.get().copy()
+    ``package`` names the SFR package (any case); ``None``, the default, is the
+    model's only one -- several raise ``SeveralPackagesError`` naming
+    ``model.sfr(package=...)``, because each package numbers its own reaches
+    (ledger 352).
+    """
+
+    one_package(model, "sfr", package)  # several and none named: refused by the view's spelling
+    stage_frame = package_outputs(model, "sfr", package).stage.get().copy()
     stage_frame.index.name = "reach"
     stage_long = stage_frame.reset_index().melt(
         id_vars="reach", var_name="kstpkper", value_name="stage"
@@ -245,7 +273,7 @@ def build_sfr_stage_result_table(model: SimulationBase) -> pd.DataFrame:
     )
     stage_long["per"] = stage_long["kstpkper"].apply(lambda value: int(value[1]))
 
-    reach_table = build_sfr_reach_table(model)
+    reach_table = build_sfr_reach_table(model, package=package)
     stage_long = stage_long.merge(reach_table, on="reach", how="left")
     stage_long["model"] = model.name
     stage_long["package"] = "sfr"
@@ -269,7 +297,7 @@ def build_sfr_stage_result_table(model: SimulationBase) -> pd.DataFrame:
 
 
 def build_sfr_long_profile_table(
-    model: SimulationBase, *, per: int = 0, value_name: str = "q_gwf"
+    model: SimulationBase, *, per: int = 0, value_name: str = "q_gwf", package: str | None = None
 ) -> pd.DataFrame:
     """Return one merged SFR long-profile table for a selected stress period.
 
@@ -288,6 +316,9 @@ def build_sfr_long_profile_table(
     value_name : str, default "q_gwf"
         Name given to the exchange column (MF6's raw aquifer-referenced ``q``);
         ``"q"`` keeps the raw name.
+    package : str or None, optional
+        The SFR package's NAME, any case. Default ``None``: the model's only SFR
+        package -- several raise ``SeveralPackagesError`` (ledger 352).
 
     Returns
     -------
@@ -303,7 +334,8 @@ def build_sfr_long_profile_table(
         nothing in ``per`` -- naming the periods it has.
     """
 
-    packagedata = pd.DataFrame(model.fl.sfr.packagedata.get_data()).copy()
+    sfr = one_package(model, "sfr", package)
+    packagedata = pd.DataFrame(sfr.packagedata.get_data()).copy()
     packagedata = split_cellid_columns(packagedata)
     if "ifno" in packagedata.columns:
         packagedata = packagedata.rename(columns={"ifno": "reach"})
@@ -320,7 +352,7 @@ def build_sfr_long_profile_table(
         packagedata.get("rtp"), errors="coerce"
     ) - pd.to_numeric(packagedata.get("rbth"), errors="coerce")
 
-    reach_table = build_sfr_reach_table(model)
+    reach_table = build_sfr_reach_table(model, package=package)
     packagedata = packagedata.merge(
         reach_table,
         on=["reach", "layer", "cell", "rlen"],
@@ -331,7 +363,7 @@ def build_sfr_long_profile_table(
     # the stage file follows SAVE HEAD, the budget file SAVE BUDGET. The exchange
     # ADDED every step the period saved until ledger 348 -- about 2x at the canonical
     # profile's two steps per period -- beside a stage taken from the last step.
-    stage = build_sfr_stage_result_table(model)
+    stage = build_sfr_stage_result_table(model, package=package)
     stage = (
         at_last_saved_step(stage, per)
         .loc[:, ["reach", "stage"]]
@@ -339,7 +371,7 @@ def build_sfr_long_profile_table(
         .reset_index(drop=True)
     )
 
-    q_frame = build_sfr_budget_result_table(model, budget_text="SFR", value_name="q")
+    q_frame = build_sfr_budget_result_table(model, budget_text="SFR", value_name="q", package=package)
     if not q_frame.empty:
         q_frame = (
             at_last_saved_step(q_frame, per)
@@ -406,6 +438,7 @@ def build_sfr_budget_result_table(
     *,
     budget_text: str = "SFR",
     value_name: str = "q",
+    package: str | None = None,
 ) -> pd.DataFrame:
     """Return the SFR exchange-result table with reach ids attached.
 
@@ -414,13 +447,24 @@ def build_sfr_budget_result_table(
     so a NEGATIVE value means the reach gains water from the aquifer. It is not
     normalized -- ``ResultSpec.reference_frame`` declares the frame so plots can
     orient their colours, and the column is presented as ``q_gwf`` downstream.
+
+    ONE package's records: ``package`` names it (any case), ``None`` -- the default
+    -- is the model's only SFR package, and several raise ``SeveralPackagesError``,
+    because each numbers its own reaches (ledger 352). It read the first ``SFR``
+    record of each time, whichever package wrote it, and joined it to the reaches
+    of the package FloPy's name-first lookup found.
     """
 
+    if package is None and not model_packages_of_type(model, "sfr"):
+        names = []  # no SFR package, so no SFR record: the empty table, as before
+    else:
+        names = [package_name_of(one_package(model, "sfr", package))]
     frame = build_budget_result_table(
         model,
         budget_text=budget_text,
         package_name="sfr",
         value_name=value_name,
+        packages=names,
     )
     if frame.empty:
         return pd.DataFrame(
@@ -436,7 +480,7 @@ def build_sfr_budget_result_table(
             ]
         )
 
-    reach_map = build_sfr_reach_table(model)
+    reach_map = build_sfr_reach_table(model, package=package)
     frame = frame.merge(
         reach_map, on=["layer", "cell"], how="left", suffixes=("", "_pkg")
     )
@@ -478,7 +522,9 @@ def build_sfr_budget_result_table(
     return frame[ordered + remaining]
 
 
-def build_lak_stage_result_table(model: SimulationBase, *, masked: bool = True) -> pd.DataFrame:
+def build_lak_stage_result_table(
+    model: SimulationBase, *, masked: bool = True, package: str | None = None
+) -> pd.DataFrame:
     """Return a normalized table of LAK stage results mapped to connected cells.
 
     One row per saved stage record per connected cell, each carrying the lake's one
@@ -508,6 +554,12 @@ def build_lak_stage_result_table(model: SimulationBase, *, masked: bool = True) 
         Passed to ``model.outputs.lak.stage.get``: ``True`` makes MF6's two
         no-stage sentinels ``NaN``; ``False`` keeps -1e30 (dry) and +1e30
         (inactive) as MF6 wrote them. Every view reads the default.
+    package : str or None, optional
+        The LAK package's NAME, any case. Default ``None``: the model's only LAK
+        package -- several raise ``SeveralPackagesError`` naming
+        ``model.lak(package=...)``, because each package numbers its own lakes
+        (ledger 352: FloPy's name-first lookup read the one NAMED ``lak`` beside
+        ``lak_2`` as the model's, and the other lake vanished from the table).
 
     Returns
     -------
@@ -521,17 +573,21 @@ def build_lak_stage_result_table(model: SimulationBase, *, masked: bool = True) 
     ------
     AttributeError
         If the model has no LAK package or it declares no ``stage_filerecord``.
+    SeveralPackagesError
+        If the model carries several LAK packages and ``package`` names none.
     ValueError
-        When the stage file's saved times do not line up with its records -- a
+        When ``package`` names no LAK package; when the stage file's saved times
+        do not line up with its records -- a
         count that differs from the stage array's rows -- naming both: the records
         cannot be labelled, and zipping them would put a stage at the wrong time
         (ledger 301's rule, "a reader whose records do not line up must RAISE").
     """
 
-    stage_output = model.outputs.lak.stage
+    lak = one_package(model, "lak", package)
+    stage_output = package_outputs(model, "lak", package).stage
     stage_array = np.asarray(stage_output.get(masked=masked), dtype=float)
     saved = stage_output.kstpkper()
-    nlakes = int(model.fl.lak.nlakes.data)
+    nlakes = int(lak.nlakes.data)
     records = stage_array.reshape(-1, nlakes)
     if len(saved) != records.shape[0]:
         raise ValueError(
@@ -546,7 +602,7 @@ def build_lak_stage_result_table(model: SimulationBase, *, masked: bool = True) 
     stage_long["per"] = stage_long["kstpkper"].map(lambda value: int(value[1]))
     stage_long["lake"] = stage_long["lake"].astype(int)
 
-    connectiondata = pd.DataFrame(model.fl.lak.connectiondata.get_data()).copy()
+    connectiondata = pd.DataFrame(lak.connectiondata.get_data()).copy()
     connectiondata = split_cellid_columns(connectiondata)
     if "ifno" in connectiondata.columns:
         connectiondata = connectiondata.rename(columns={"ifno": "lake"})
@@ -566,8 +622,13 @@ def build_lak_budget_result_table(
     *,
     budget_text: str = "GWF",
     value_name: str = "q",
+    package: str | None = None,
 ) -> pd.DataFrame:
     """Return a normalized LAK exchange-result table with connection geometry.
+
+    ONE package's budget file and connections: ``package`` names it (any case),
+    ``None`` -- the default -- is the model's only LAK package, and several raise
+    ``SeveralPackagesError``, because each numbers its own lakes (ledger 352).
 
     Notes
     -----
@@ -590,7 +651,8 @@ def build_lak_budget_result_table(
     """
 
     del budget_text
-    frame = model.outputs.lak.bud.get("GWF").copy()
+    lak = one_package(model, "lak", package)
+    frame = package_outputs(model, "lak", package).bud.get("GWF").copy()
     if frame.empty:
         return pd.DataFrame(
             columns=[
@@ -631,7 +693,7 @@ def build_lak_budget_result_table(
         # a missed bare-"q" read fails loudly. See ResultSpec.reference_frame.
         frame = frame.rename(columns={"q": value_name})
 
-    connectiondata = pd.DataFrame(model.fl.lak.connectiondata.get_data()).copy()
+    connectiondata = pd.DataFrame(lak.connectiondata.get_data()).copy()
     connectiondata = split_cellid_columns(connectiondata)
     if "ifno" in connectiondata.columns:
         connectiondata = connectiondata.rename(columns={"ifno": "lake"})
@@ -789,6 +851,7 @@ def build_lak_budget_term_table(
     model: SimulationBase,
     *,
     term: str | Iterable[str] | None = None,
+    package: str | None = None,
 ) -> pd.DataFrame:
     """Return one canonical long dataframe of LAK package-output budget terms.
 
@@ -800,6 +863,9 @@ def build_lak_budget_term_table(
         Optional single term or iterable of terms to include. Terms follow the
         MF6 package-output identifiers such as ``"GWF"``, ``"STORAGE"``, or
         ``"TO-MVR"``.
+    package
+        The LAK package's NAME, any case. Default ``None``: the model's only LAK
+        package -- several raise ``SeveralPackagesError`` (ledger 352).
 
     Returns
     -------
@@ -812,9 +878,9 @@ def build_lak_budget_term_table(
     """
 
     requested_terms = _normalize_term_filter(term)
-    available_terms = [
-        str(value).strip().upper() for value in model.outputs.lak.bud.types
-    ]
+    one_package(model, "lak", package)  # several and none named: refused by the view's spelling
+    budget = package_outputs(model, "lak", package).bud
+    available_terms = [str(value).strip().upper() for value in budget.types]
     selected_terms = (
         available_terms
         if requested_terms is None
@@ -825,7 +891,7 @@ def build_lak_budget_term_table(
     for current_term in selected_terms:
         if current_term == "GWF":
             frame = build_lak_budget_result_table(
-                model, budget_text=current_term, value_name="q"
+                model, budget_text=current_term, value_name="q", package=package
             ).copy()
             if frame.empty:
                 continue
@@ -838,7 +904,7 @@ def build_lak_budget_term_table(
         # used to warn and hand back a raw record list when the clocks
         # disagreed, and the guard that caught that here CONTINUED -- dropping
         # the term with no signal (measured: STORAGE 38 rows -> 0). Ledger 301.
-        frame = model.outputs.lak.bud.get(current_term).copy()
+        frame = budget.get(current_term).copy()
         if frame.empty:
             continue
         frame = _normalize_budget_nodes(frame)
@@ -907,19 +973,24 @@ def build_sfr_budget_term_table(
     model: SimulationBase,
     *,
     term: str | Iterable[str] | None = None,
+    package: str | None = None,
 ) -> pd.DataFrame:
-    """Return one canonical long dataframe of SFR package-output budget terms."""
+    """Return one canonical long dataframe of SFR package-output budget terms.
+
+    ``package`` names the SFR package (any case); ``None``, the default, is the
+    model's only one -- several raise ``SeveralPackagesError`` (ledger 352).
+    """
 
     requested_terms = _normalize_term_filter(term)
-    available_terms = [
-        str(value).strip().upper() for value in model.outputs.sfr.bud.types
-    ]
+    one_package(model, "sfr", package)  # several and none named: refused by the view's spelling
+    budget = package_outputs(model, "sfr", package).bud
+    available_terms = [str(value).strip().upper() for value in budget.types]
     selected_terms = (
         available_terms
         if requested_terms is None
         else [value for value in available_terms if value in requested_terms]
     )
-    reach_table = build_sfr_reach_table(model)
+    reach_table = build_sfr_reach_table(model, package=package)
 
     frames: list[pd.DataFrame] = []
     for current_term in selected_terms:
@@ -927,7 +998,7 @@ def build_sfr_budget_term_table(
         # used to warn and hand back a raw record list when the clocks
         # disagreed, and the guard that caught that here CONTINUED -- dropping
         # the term with no signal (measured: STORAGE 38 rows -> 0). Ledger 301.
-        frame = model.outputs.sfr.bud.get(current_term).copy()
+        frame = budget.get(current_term).copy()
         if frame.empty:
             continue
         frame = _normalize_budget_nodes(frame)
@@ -1055,9 +1126,21 @@ def build_surface_water_exchange_cell_table(
     include_packages = _normalize_surface_water_include(include)
     frames: list[pd.DataFrame] = []
 
+    # EVERY LAK and SFR package (ledger 352): the rows are CELLS, so several packages
+    # combine as MF6 superposes them -- each package's reaches or lakes joined within
+    # it, then the flows and lengths or areas of one cell add. The reach and lake
+    # numbers are dropped by the groupby below, so no package's numbering leaks. A
+    # type the model does not carry adds no rows: an SFR-only model raised
+    # AttributeError on the LAK half, where a LAK-only one read (the SFR half read
+    # the budget file, which simply held no SFR record).
     if "sfr" in include_packages:
-        sfr_frame = build_sfr_budget_result_table(
-            model, budget_text="SFR", value_name="q"
+        sfr_packages = model_packages_of_type(model, "sfr")
+        sfr_frame = _concat_packages(
+            build_sfr_budget_result_table(
+                model, budget_text="SFR", value_name="q",
+                package=package_name_of(sfr) if len(sfr_packages) > 1 else None,
+            )
+            for sfr in sfr_packages
         )
         # One step per period, its last saved (ledger 348): the groupby below is by
         # PERIOD, and it added every step the period saved.
@@ -1087,8 +1170,13 @@ def build_surface_water_exchange_cell_table(
             frames.append(grouped)
 
     if "lak" in include_packages:
-        lak_frame = build_lak_budget_result_table(
-            model, budget_text="GWF", value_name="q"
+        lak_packages = model_packages_of_type(model, "lak")
+        lak_frame = _concat_packages(
+            build_lak_budget_result_table(
+                model, budget_text="GWF", value_name="q",
+                package=package_name_of(lak) if len(lak_packages) > 1 else None,
+            )
+            for lak in lak_packages
         )
         lak_frame = at_last_saved_steps(
             _filter_normalized_table(lak_frame, per=per, layer=layer, cells=None)
@@ -1139,7 +1227,16 @@ def build_surface_water_exchange_cell_table(
     return combined.reset_index(drop=True)
 
 
-def build_lak_stage_change_table(model: SimulationBase) -> pd.DataFrame:
+def _concat_packages(frames) -> pd.DataFrame:
+    """One table of several packages' tables (empty when there are none)."""
+
+    frames = [frame for frame in frames if not frame.empty]
+    return pd.concat(frames, ignore_index=True, sort=False) if frames else pd.DataFrame(
+        columns=["model", "package", "kstpkper", "per", "layer", "cell"]
+    )
+
+
+def build_lak_stage_change_table(model: SimulationBase, *, package: str | None = None) -> pd.DataFrame:
     """Return per-transition lake-stage changes for one model.
 
     The resulting table carries one row per lake and stress-period transition,
@@ -1157,6 +1254,9 @@ def build_lak_stage_change_table(model: SimulationBase) -> pd.DataFrame:
     ----------
     model : SimulationBase
         A run model with a LAK package declaring a ``stage_filerecord``.
+    package : str or None, optional
+        The LAK package's NAME, any case. Default ``None``: the model's only LAK
+        package -- several raise ``SeveralPackagesError`` (ledger 352).
 
     Returns
     -------
@@ -1173,7 +1273,7 @@ def build_lak_stage_change_table(model: SimulationBase) -> pd.DataFrame:
         not line up with its records.
     """
 
-    stage_table = at_last_saved_steps(build_lak_stage_result_table(model))
+    stage_table = at_last_saved_steps(build_lak_stage_result_table(model, package=package))
     if stage_table.empty:
         return pd.DataFrame(
             columns=[

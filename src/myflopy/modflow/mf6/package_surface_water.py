@@ -46,8 +46,11 @@ from myflopy.modflow.mf6.package_plotting import (
     resolve_noun_hover,
 )
 from myflopy.modflow.mf6.package_registry import (
+    checked_package_name,
     get_default_budget_term,
     get_package_result_spec,
+    one_package,
+    package_outputs,
 )
 from myflopy.modflow.mf6.package_results import (
     CellBudgetResultsExplorer,
@@ -89,6 +92,18 @@ _STAGE_UNAVAILABLE = (
     AttributeError, TypeError, ValueError, EOFError, OSError,
     MFDataException, FlopyException,
 )
+
+
+def _budget_file(model, package_type: str, package: str | None):
+    """One LAK or SFR package's budget-file reader, refused by the VIEW's spelling.
+
+    ``package`` is the package's NAME, ``None`` the model's only one; several and
+    none named raise ``SeveralPackagesError`` naming ``model.<type>(package=...)``
+    (ledger 352), before ``model.outputs`` could name its own spelling.
+    """
+
+    one_package(model, package_type, package)
+    return package_outputs(model, package_type, package).bud
 
 
 def _join_feature_stage(frame, stage_table, *, per=None):
@@ -144,11 +159,16 @@ def _join_feature_stage(frame, stage_table, *, per=None):
     return joined
 
 
-def join_sfr_stage(model, frame, *, per=None):
-    """Add SFR reach stage to an exchange frame; a no-op if stage is unavailable."""
+def join_sfr_stage(model, frame, *, per=None, package=None):
+    """Add SFR reach stage to an exchange frame; a no-op if stage is unavailable.
+
+    ``package`` names the SFR package whose stage file is read (``None``: the
+    model's only one); several packages and none named still raise
+    ``SeveralPackagesError`` -- not a missing stage, and not swallowed (ledger 352).
+    """
 
     try:
-        stage_table = build_sfr_stage_result_table(model)
+        stage_table = build_sfr_stage_result_table(model, package=package)
     except _STAGE_UNAVAILABLE:
         logger.debug(
             "no SFR stage for %s; the exchange hover will omit it",
@@ -158,11 +178,16 @@ def join_sfr_stage(model, frame, *, per=None):
     return _join_feature_stage(frame, stage_table, per=per)
 
 
-def join_lak_stage(model, frame, *, per=None):
-    """Add lake stage to an exchange frame; a no-op if stage is unavailable."""
+def join_lak_stage(model, frame, *, per=None, package=None):
+    """Add lake stage to an exchange frame; a no-op if stage is unavailable.
+
+    ``package`` names the LAK package whose stage file is read (``None``: the
+    model's only one); several packages and none named still raise
+    ``SeveralPackagesError`` -- not a missing stage, and not swallowed (ledger 352).
+    """
 
     try:
-        stage_table = build_lak_stage_result_table(model)
+        stage_table = build_lak_stage_result_table(model, package=package)
     except _STAGE_UNAVAILABLE:
         logger.debug(
             "no lake stage for %s; the exchange hover will omit it",
@@ -322,14 +347,16 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         *,
         budget_text: str = "SFR",
         value_name: str = "q_gwf",
+        package: str | None = None,
     ):
         """Bind an SFR budget-result explorer (defaults to the ``SFR`` term's ``q_gwf``).
 
         ``value_name`` is the emitted column (``q_gwf`` -- the SFR exchange is
         aquifer-referenced); the accessor stays ``results.q`` via ``result_name``.
+        ``package`` is the SFR package's NAME (``None``: the model's only one).
         """
 
-        super().__init__(model, "sfr", budget_text, value_name, result_name="q")
+        super().__init__(model, "sfr", budget_text, value_name, result_name="q", package=package)
 
     def get(
         self,
@@ -344,6 +371,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             self.model,
             budget_text=self.budget_text,
             value_name=self.value_name,
+            package=self.package,
         )
         return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
 
@@ -621,7 +649,9 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         del agg
         refuse_noun_parameters(self.label, self.value_name, trace_kwargs)
         hover = resolve_noun_hover(hover, trace_kwargs)
-        selected = join_sfr_stage(self.model, self.get(per=per, layer=layer), per=per)
+        selected = join_sfr_stage(
+            self.model, self.get(per=per, layer=layer), per=per, package=self.package
+        )
         values, cell_hover = build_sfr_q_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
@@ -851,14 +881,16 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         *,
         budget_text: str = "GWF",
         value_name: str = "q_lake",
+        package: str | None = None,
     ):
         """Bind a LAK budget-result explorer (defaults to the ``GWF`` exchange ``q_lake``).
 
         ``value_name`` is the emitted column (``q_lake`` -- LAK's exchange is
         feature-referenced); the accessor stays ``results.q`` via ``result_name``.
+        ``package`` is the LAK package's NAME (``None``: the model's only one).
         """
 
-        super().__init__(model, "lak", budget_text, value_name, result_name="q")
+        super().__init__(model, "lak", budget_text, value_name, result_name="q", package=package)
 
     def get(
         self,
@@ -874,6 +906,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             self.model,
             budget_text=self.budget_text,
             value_name=self.value_name,
+            package=self.package,
         )
         frame = _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
         connection_types = _normalize_connection_type_filter(connection_type)
@@ -1157,6 +1190,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             self.model,
             self.get(per=per, layer=layer, connection_type=connection_type),
             per=per,
+            package=self.package,
         )
         values, cell_hover = build_lak_q_map_payload(
             selected,
@@ -1330,19 +1364,26 @@ class LakStageResultsExplorer(StageResultsExplorer):
     """LAK stage explorer -- the unified grammar's ``plot()`` draws one line
     per lake by stress period (replaced the old ``plot_timeseries``)."""
 
-    def __init__(self, model: SimulationBase):
-        """Bind a LAK stage-result explorer using the lake stage table builder."""
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind a LAK stage-result explorer using the lake stage table builder.
 
-        super().__init__(model, "lak", build_lak_stage_result_table)
+        ``package`` is the LAK package's NAME (``None``: the model's only one).
+        """
+
+        super().__init__(model, "lak", build_lak_stage_result_table, package=package)
 
 
 class LakStageChangeExplorer:
     """Explorer for lake-stage changes between stress periods."""
 
-    def __init__(self, model: SimulationBase):
-        """Bind the lake stage-change explorer to ``model``."""
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the lake stage-change explorer to ``model``'s LAK package ``package``.
+
+        ``package`` is the package's NAME (``None``: the model's only LAK).
+        """
 
         self.model = model
+        self.package = package
 
     def get(
         self,
@@ -1353,7 +1394,7 @@ class LakStageChangeExplorer:
     ) -> pd.DataFrame:
         """Return stage-change rows for one lake and/or one period transition."""
 
-        frame = build_lak_stage_change_table(self.model)
+        frame = build_lak_stage_change_table(self.model, package=self.package)
         if lake is not None:
             frame = frame.loc[frame["lake"] == int(lake)].copy()
         if per0 is not None:
@@ -1457,10 +1498,14 @@ class LakStageChangeExplorer:
 class LakConnectionsExplorer:
     """Explorer for LAK connection geometry and exchange interface area."""
 
-    def __init__(self, model: SimulationBase):
-        """Bind the LAK connection-geometry explorer to ``model``."""
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the LAK connection-geometry explorer to ``model``'s LAK package ``package``.
+
+        ``package`` is the package's NAME (``None``: the model's only LAK).
+        """
 
         self.model = model
+        self.package = package
 
     def get(
         self,
@@ -1471,7 +1516,7 @@ class LakConnectionsExplorer:
     ) -> pd.DataFrame:
         """Return the normalized LAK connection table."""
 
-        frame = build_lak_connection_table(self.model)
+        frame = build_lak_connection_table(self.model, package=self.package)
         frame = _filter_normalized_table(frame, per=None, layer=layer, cells=cells)
         if lake is not None and "lake" in frame.columns:
             frame = frame.loc[frame["lake"] == int(lake)].copy()
@@ -1823,10 +1868,13 @@ class LakConnectionsExplorer:
 class SfrStageResultsExplorer(StageResultsExplorer):
     """SFR stage explorer with reach-profile helpers."""
 
-    def __init__(self, model: SimulationBase):
-        """Bind an SFR stage-result explorer using the reach stage table builder."""
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind an SFR stage-result explorer using the reach stage table builder.
 
-        super().__init__(model, "sfr", build_sfr_stage_result_table)
+        ``package`` is the SFR package's NAME (``None``: the model's only one).
+        """
+
+        super().__init__(model, "sfr", build_sfr_stage_result_table, package=package)
 
     @property
     def profile(self) -> SfrReachProfileView:
@@ -1870,22 +1918,26 @@ class LakResultsNamespace(FieldMappable):
 
         return ["q", "stage"]
 
-    def __init__(self, model: SimulationBase):
-        """Bind the LAK results namespace to ``model``."""
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the LAK results namespace to ``model``'s LAK package ``package``.
+
+        ``package`` is the package's NAME (``None``: the model's only LAK).
+        """
 
         self.model = model
+        self.package = package
 
     @property
     def stage(self) -> LakStageResultsExplorer:
         """Return the lake stage explorer mapped to connected cells."""
 
-        return LakStageResultsExplorer(self.model)
+        return LakStageResultsExplorer(self.model, package=self.package)
 
     @property
     def stage_change(self) -> LakStageChangeExplorer:
         """Return the lake-stage change explorer."""
 
-        return LakStageChangeExplorer(self.model)
+        return LakStageChangeExplorer(self.model, package=self.package)
 
     @property
     def q(self) -> LakBudgetResultsExplorer:
@@ -1897,24 +1949,29 @@ class LakResultsNamespace(FieldMappable):
 
         budget_text, value_name = get_default_budget_term("lak") or ("GWF", "q_lake")
         return LakBudgetResultsExplorer(
-            self.model, budget_text=budget_text, value_name=value_name
+            self.model, budget_text=budget_text, value_name=value_name, package=self.package
         )
 
 
 class LakBudgetNamespace:
     """Namespace for all MF6-defined LAK package-output budget terms."""
 
-    def __init__(self, model: SimulationBase):
-        """Bind the LAK budget-term namespace to ``model``."""
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the LAK budget-term namespace to ``model``'s LAK package ``package``.
+
+        ``package`` is the package's NAME (``None``: the model's only LAK).
+        """
 
         self.model = model
+        self.package = package
 
     @property
     def types(self) -> list[str]:
         """Return the LAK package-output budget term names available for the model."""
 
         return [
-            str(value).strip().upper() for value in self.model.outputs.lak.bud.types
+            str(value).strip().upper()
+            for value in _budget_file(self.model, "lak", self.package).types
         ]
 
     def get(
@@ -1937,7 +1994,7 @@ class LakBudgetNamespace:
             Optional iterable of zero-based lake ids to keep.
         """
 
-        frame = build_lak_budget_term_table(self.model, term=term)
+        frame = build_lak_budget_term_table(self.model, term=term, package=self.package)
         if per is not None:
             if isinstance(per, Iterable) and not isinstance(per, (str, bytes)):
                 periods = {int(value) for value in per}
@@ -2213,17 +2270,22 @@ class LakBudgetNamespace:
 class SfrBudgetNamespace:
     """Namespace for all MF6-defined SFR package-output budget terms."""
 
-    def __init__(self, model: SimulationBase):
-        """Bind the SFR budget-term namespace to ``model``."""
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the SFR budget-term namespace to ``model``'s SFR package ``package``.
+
+        ``package`` is the package's NAME (``None``: the model's only SFR).
+        """
 
         self.model = model
+        self.package = package
 
     @property
     def types(self) -> list[str]:
         """Return the SFR package-output budget term names available for the model."""
 
         return [
-            str(value).strip().upper() for value in self.model.outputs.sfr.bud.types
+            str(value).strip().upper()
+            for value in _budget_file(self.model, "sfr", self.package).types
         ]
 
     def get(
@@ -2235,7 +2297,7 @@ class SfrBudgetNamespace:
     ) -> pd.DataFrame:
         """Return a canonical long dataframe of SFR package-output budget terms."""
 
-        frame = build_sfr_budget_term_table(self.model, term=term)
+        frame = build_sfr_budget_term_table(self.model, term=term, package=self.package)
         if per is not None:
             if isinstance(per, Iterable) and not isinstance(per, (str, bytes)):
                 periods = {int(value) for value in per}
@@ -2532,11 +2594,15 @@ class SfrProfileView:
     feeds ``plot``.
     """
 
-    def __init__(self, model: SimulationBase, *, per: int = 0):
-        """Bind the profile view to ``model`` at stress period ``per``."""
+    def __init__(self, model: SimulationBase, *, per: int = 0, package: str | None = None):
+        """Bind the profile view to ``model`` at stress period ``per``.
+
+        ``package`` is the SFR package's NAME (``None``: the model's only SFR).
+        """
 
         self.model = model
         self.per = int(per)
+        self.package = package
 
     def __repr__(self) -> str:
         """Show the bound period, since it is the view's only state."""
@@ -2546,7 +2612,7 @@ class SfrProfileView:
     def __call__(self, *, per: int) -> SfrProfileView:
         """Return an equivalent view bound to stress period ``per``."""
 
-        return type(self)(self.model, per=per)
+        return type(self)(self.model, per=per, package=self.package)
 
     def _period(self, per: int | None) -> int:
         """Resolve an explicit ``per`` against the period bound to this view."""
@@ -2556,7 +2622,7 @@ class SfrProfileView:
     def get(self, *, per: int | None = None) -> pd.DataFrame:
         """Return the merged reach-ordered profile table."""
 
-        return build_sfr_long_profile_table(self.model, per=self._period(per))
+        return build_sfr_long_profile_table(self.model, per=self._period(per), package=self.package)
 
     def summary(self, *, per: int | None = None) -> pd.DataFrame:
         """Return a compact digest of the profile's stage and exchange fields."""
@@ -2761,16 +2827,20 @@ class SfrResultsNamespace(FieldMappable):
 
         return ["q", "stage"]
 
-    def __init__(self, model: SimulationBase):
-        """Bind the SFR results namespace to ``model``."""
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the SFR results namespace to ``model``'s SFR package ``package``.
+
+        ``package`` is the package's NAME (``None``: the model's only SFR).
+        """
 
         self.model = model
+        self.package = package
 
     @property
     def stage(self) -> StageResultsExplorer:
         """Return the stream stage explorer mapped to reach cells."""
 
-        return SfrStageResultsExplorer(self.model)
+        return SfrStageResultsExplorer(self.model, package=self.package)
 
     @property
     def q(self) -> SfrBudgetResultsExplorer:
@@ -2778,7 +2848,7 @@ class SfrResultsNamespace(FieldMappable):
 
         budget_text, value_name = get_default_budget_term("sfr") or ("SFR", "q_gwf")
         return SfrBudgetResultsExplorer(
-            self.model, budget_text=budget_text, value_name=value_name
+            self.model, budget_text=budget_text, value_name=value_name, package=self.package
         )
 
     @property
@@ -2791,7 +2861,7 @@ class SfrResultsNamespace(FieldMappable):
         the field-level ones cover a single field.
         """
 
-        return SfrProfileView(self.model)
+        return SfrProfileView(self.model, package=self.package)
 
     # -- backing methods for the pre-view spellings ---------------------------
     # ``profile`` replaced two older names when the derived tables became view
@@ -3584,11 +3654,16 @@ class SurfaceWaterInputsNamespace(FieldMappable):
     verbs take ``field=`` as sugar over them.
     """
 
-    def __init__(self, model: SimulationBase, package_name: str):
-        """Bind a LAK or SFR inputs namespace to ``model`` (``package_name`` lowercased)."""
+    def __init__(self, model: SimulationBase, package_name: str, *, package: str | None = None):
+        """Bind a LAK or SFR inputs namespace to ``model`` (``package_name``, the type, lowercased).
+
+        ``package`` is the one package's NAME (``None``: the model's only package of
+        the type).
+        """
 
         self.model = model
         self.package_name = str(package_name).lower()
+        self.package = package
 
     @property
     def _default_field(self) -> str:
@@ -3616,7 +3691,7 @@ class SurfaceWaterInputsNamespace(FieldMappable):
             else build_sfr_input_table
         )
         return _filter_normalized_table(
-            builder(self.model), per=per, layer=layer, cells=cells
+            builder(self.model, package=self.package), per=per, layer=layer, cells=cells
         )
 
     @property
@@ -3672,63 +3747,142 @@ class SurfaceWaterInputsNamespace(FieldMappable):
 
 
 class LakPackageExplorer:
-    """Top-level LAK package explorer namespace."""
+    """Top-level LAK package explorer namespace: ONE LAK package's views.
 
-    def __init__(self, model: SimulationBase):
-        """Bind the top-level LAK explorer (inputs/connections/budget/results) to ``model``."""
+    ``model.lak`` reads the model's only LAK package. A model carrying several --
+    a second ``mf.lak`` beside a default-named first one gives ``lak`` and
+    ``lak_2`` -- has every view refuse with ``SeveralPackagesError`` naming them,
+    and ``model.lak(package="lak_2")`` is the one spelling that picks one: a lake
+    is numbered within its package, so no view may choose (ledger 352).
+    """
+
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the top-level LAK explorer (inputs/connections/budget/results) to ``model``.
+
+        ``package`` is the LAK package's NAME; ``None``, the default, is the model's
+        only one. Spell it ``model.lak(package=...)``, which checks the name.
+        """
 
         self.model = model
+        self.package = package
+
+    def __call__(self, *, package: str) -> LakPackageExplorer:
+        """The LAK views of the ONE LAK package named ``package``.
+
+        Parameters
+        ----------
+        package : str
+            A LAK package's name (FloPy's ``package_name``), any case. On a model
+            holding ``lak`` and ``lak_2``, ``"lak"`` is the package NAMED ``lak`` --
+            never the type. Checked here: no LAK package of that name raises
+            ``ValueError`` naming the model's, and a non-string ``TypeError``.
+
+        Returns
+        -------
+        LakPackageExplorer
+            ``inputs``, ``connections``, ``budget`` and ``results``, each reading
+            that package's lakes, connections and output files alone.
+
+        Examples
+        --------
+        >>> model.lak(package="lak_2").results.stage.get()
+        >>> model.lak(package="lak_2").results.q.map(per=1)
+        >>> model.lak(package="LAK").budget.get(term="STORAGE")     # any case
+        """
+
+        return LakPackageExplorer(
+            self.model,
+            package=checked_package_name(self.model, "lak", package, spelling="model.lak(package=...)"),
+        )
 
     @property
     def inputs(self) -> SurfaceWaterInputsNamespace:
         """Return mapped LAK starting-stage, connection, and period inputs."""
 
-        return SurfaceWaterInputsNamespace(self.model, "lak")
+        return SurfaceWaterInputsNamespace(self.model, "lak", package=self.package)
 
     @property
     def connections(self) -> LakConnectionsExplorer:
         """Return LAK connection-geometry exploration helpers."""
 
-        return LakConnectionsExplorer(self.model)
+        return LakConnectionsExplorer(self.model, package=self.package)
 
     @property
     def budget(self) -> LakBudgetNamespace:
         """Return LAK package-output budget helpers for all MF6-defined terms."""
 
-        return LakBudgetNamespace(self.model)
+        return LakBudgetNamespace(self.model, package=self.package)
 
     @property
     def results(self) -> LakResultsNamespace:
         """Return the LAK result exploration namespace."""
 
-        return LakResultsNamespace(self.model)
+        return LakResultsNamespace(self.model, package=self.package)
 
 
 class SfrPackageExplorer:
-    """Top-level SFR package explorer namespace."""
+    """Top-level SFR package explorer namespace: ONE SFR package's views.
 
-    def __init__(self, model: SimulationBase):
-        """Bind the top-level SFR explorer (inputs/budget/results) to ``model``."""
+    ``model.sfr`` reads the model's only SFR package. On a model carrying several,
+    every view refuses with ``SeveralPackagesError`` naming them, and
+    ``model.sfr(package="sfr_2")`` is the one spelling that picks one: a reach is
+    numbered within its package (ledger 352).
+    """
+
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the top-level SFR explorer (inputs/budget/results) to ``model``.
+
+        ``package`` is the SFR package's NAME; ``None``, the default, is the model's
+        only one. Spell it ``model.sfr(package=...)``, which checks the name.
+        """
 
         self.model = model
+        self.package = package
+
+    def __call__(self, *, package: str) -> SfrPackageExplorer:
+        """The SFR views of the ONE SFR package named ``package``.
+
+        Parameters
+        ----------
+        package : str
+            An SFR package's name (FloPy's ``package_name``), any case -- never the
+            type. Checked here: no SFR package of that name raises ``ValueError``
+            naming the model's, and a non-string ``TypeError``.
+
+        Returns
+        -------
+        SfrPackageExplorer
+            ``inputs``, ``budget`` and ``results``, each reading that package's
+            reaches and output files alone.
+
+        Examples
+        --------
+        >>> model.sfr(package="sfr_2").results.stage.get()
+        >>> model.sfr(package="sfr_2").results.profile.plot(per=2)
+        """
+
+        return SfrPackageExplorer(
+            self.model,
+            package=checked_package_name(self.model, "sfr", package, spelling="model.sfr(package=...)"),
+        )
 
     @property
     def inputs(self) -> SurfaceWaterInputsNamespace:
         """Return mapped SFR reach-hydraulic and period inputs."""
 
-        return SurfaceWaterInputsNamespace(self.model, "sfr")
+        return SurfaceWaterInputsNamespace(self.model, "sfr", package=self.package)
 
     @property
     def budget(self) -> SfrBudgetNamespace:
         """Return SFR package-output budget helpers for all MF6-defined terms."""
 
-        return SfrBudgetNamespace(self.model)
+        return SfrBudgetNamespace(self.model, package=self.package)
 
     @property
     def results(self) -> SfrResultsNamespace:
         """Return the SFR result exploration namespace."""
 
-        return SfrResultsNamespace(self.model)
+        return SfrResultsNamespace(self.model, package=self.package)
 
 
 class SurfaceWaterPackageExplorer:

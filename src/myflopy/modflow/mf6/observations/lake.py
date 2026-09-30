@@ -16,11 +16,11 @@ from myflopy.modflow.mf6.observations._shared import (
     _default_compare_stats,
     _default_obs_csv_name,
     _measured_periods,
-    _named_package,
     _normalize_compare_time,
     _normalize_lake_stage_values,
     _observation_label,
     _ObservedQuantity,
+    _owning_package,
     _read_declared_observations,
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
@@ -778,8 +778,9 @@ class LakeStageTargets:
             The model whose FloPy LAK package receives the OBS package unless
             ``package`` is given: the one the targets name (their ``package``
             field, ``ValueError`` when the model has no LAK package of that
-            name), else ``model.gwf.lak`` (a model with no LAK raises
-            ``AttributeError`` there). The records themselves need no model.
+            name), else the model's only LAK package, found by type (several
+            raise ``ValueError`` naming them and ``package=``, none
+            ``AttributeError``; ledger 352). The records themselves need no model.
         pname : str, optional
             FloPy package name. Default ``"lak_obs"``.
         filename : str, optional
@@ -814,10 +815,8 @@ class LakeStageTargets:
 
         if package is not None:
             owner = package
-        elif self.package is not None:
-            owner = _named_package(model, _LAKE_STAGE, self.package)
         else:
-            owner = model.gwf.lak
+            owner = _owning_package(model, _LAKE_STAGE, self.package)
         csv_name = _default_obs_csv_name(filename, "lake_stage_targets.csv") if csv_name is None else str(csv_name)
         continuous = self.to_flopy_obs(csv_name=csv_name, kind=kind)
         return flopy.mf6.modflow.mfutlobs.ModflowUtlobs(

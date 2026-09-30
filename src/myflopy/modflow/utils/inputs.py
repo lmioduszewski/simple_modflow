@@ -13,9 +13,37 @@ from myflopy.modflow.mf6.package_plotting import (
     refuse_noun_parameters,
     resolve_noun_hover,
 )
+from myflopy.modflow.mf6.package_registry import (
+    SeveralPackagesError,
+    model_packages_of_type,
+    one_package,
+    package_name_of,
+)
 from myflopy.modflow.utils.datatypes.choros import Choro
 
 logger = get_logger(__name__)
+
+
+def _legacy_list_package(model: SimulationBase, package_type: str):
+    """The ONE list package (RCH, DRN) a legacy helper here reads, by TYPE (ledger 352).
+
+    These read FloPy's ``model.gwf.<type>``, which answers a package NAMED like the
+    type first -- beside a second package of the type it read that one alone, in
+    silence. Several are refused, naming the view that reads every package.
+    """
+
+    found = model_packages_of_type(model, package_type)
+    if len(found) == 1:
+        return found[0]
+    kind = package_type.upper()
+    if not found:
+        raise AttributeError(f"Model {getattr(model, 'name', '?')!r} has no {kind} package.")
+    names = ", ".join(repr(package_name_of(package)) for package in found)
+    raise SeveralPackagesError(
+        f"Model {getattr(model, 'name', '?')!r} carries {len(found)} {kind} packages ({names}), "
+        f"and this legacy helper reads ONE. model.{package_type}.inputs reads every one, each "
+        "row tagged with its package's name (pname)."
+    )
 
 
 class Inputs:
@@ -59,7 +87,7 @@ class UzfInput:
             model cells, indexed by cell ID.
         :rtype: pd.Series
         """
-        uzf = self.model.gwf.uzf
+        uzf = one_package(self.model, "uzf")  # several: refused, naming model.uzf(package=...)
         ncpl = self.model.modelgrid.ncpl
         packagedata = pd.DataFrame(uzf.packagedata.get_data()).set_index('ifno')
 
@@ -380,7 +408,7 @@ class RchInput:
         """The RCH stress-period-data table for ``per`` indexed by cell number."""
 
         per = self.per if per is None else per
-        df = pd.DataFrame(self.model.gwf.rch.stress_period_data.data[per])
+        df = pd.DataFrame(_legacy_list_package(self.model, "rch").stress_period_data.data[per])
         df['cellid'] = df['cellid'].apply(lambda x: x[1])  # extract cell numbers
         df = df.set_index('cellid')
         return df
@@ -395,7 +423,7 @@ class RchInput:
         model = self.model
         vor = model.vor
 
-        df = pd.DataFrame(model.gwf.rch.stress_period_data.data[per])
+        df = pd.DataFrame(_legacy_list_package(model, "rch").stress_period_data.data[per])
         df['cellid'] = df['cellid'].apply(lambda x: x[1])  # extract cell numbers
         df = df.set_index('cellid')
         c_hov = df.reindex(list(range(vor.ncpl)), fill_value=0)  # insert missing cell nums
@@ -423,5 +451,5 @@ class DrnInput:
         model = self.model
         vor = model.vor
 
-        drn_cells = pd.DataFrame(model.gwf.drn.stress_period_data.data[per])['cellid'].apply(lambda x: x[1]).to_list()
+        drn_cells = pd.DataFrame(_legacy_list_package(model, "drn").stress_period_data.data[per])['cellid'].apply(lambda x: x[1]).to_list()
         return vor.plot.map(select=drn_cells)

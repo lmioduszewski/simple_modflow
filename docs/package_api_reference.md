@@ -398,9 +398,11 @@ release-group boundnames; without them it names the fix and offers
   `fields` and `results` you can draw. Cheap by default (registry + package list,
   no package data read); `summary(detail="data")` adds `records`, `periods` and
   `layers` — the last of which tells you a package occupies no layer 0 *before*
-  you draw an empty map of it.
+  you draw an empty map of it. Each row counts its OWN package (ledger 352: `CRISP`
+  read blank and `RIV` counted both).
 - `model.packages.mosaic()` — every mappable package drawn as one grid;
-  `packages=[...]` to restrict it.
+  `packages=[...]` to restrict it. A LAK, SFR or UZF package is a panel each; a list
+  BC's panel is its type's, holding every package of it.
 
 - `mf.ModelContext(grid=, domain=, surfaces=, dates=)` — attaches to the **model**
   (`mf.gwf(..., context=ctx)`); carries the grid/idomain/surfaces the GIS-aware helpers use.
@@ -1017,6 +1019,28 @@ model.<pkg>.<inputs|results>.<noun>.<verb>()
 `summary()` and `mosaic()`. Group and diff scopes still read
 `group.packages.<pkg>` / `diff.packages.<pkg>` (ledger 339).
 
+**Several packages of one type** (ledger 352) -- Ten Trails' `riv` beside `crisp`, a
+second `mf.lak` beside a default-named `lak`:
+
+- `model.fl.<pkg>` and `model.package("<type>")` answer by TYPE: the one package, or a
+  LIST of every package of the type in model order (`[lak, lak_2]`), whatever the
+  packages are named. FloPy's own lookup answered the package NAMED `lak` alone.
+  `model.package(s)` takes a type first, then a package's exact name (`"lak_2"`,
+  `"crisp"`); FloPy's filename and name-prefix fallbacks are gone (`"dis"` matched a
+  DISV).
+- A view whose rows are **cells** reads EVERY package of its type, each row tagged
+  with its package's name in `pname`: a list BC's `inputs` and `results.q`,
+  `model.budget.<term>`, UZF's `results`, `model.surface_water`. The budget-file
+  reader under the results kept only the first record of each saved time, so
+  `crisp` (53% of Ten Trails' river exchange) was absent from `model.riv.results.q`.
+- A view whose rows are one package's numbered **features** -- LAK's lakes, SFR's
+  reaches, UZF's cells by `ifno` -- reads ONE package. On a model carrying several,
+  every such view raises `mf.SeveralPackagesError` naming them and the one spelling
+  that picks one: **`model.lak(package="lak_2")`** (and `model.sfr(package=...)`,
+  `model.uzf(package=...)`, `model.outputs.lak(package=...)`) -- a package NAME, any
+  case, checked at the call, never a type (`model.lak(package="lak")` is the package
+  named `lak`).
+
 Every **noun** is an object; every object answers the same **verbs**. Different plot
 *types* are different verbs — `plot()` is not a dispatcher.
 
@@ -1033,6 +1057,7 @@ Every **noun** is an object; every object answers the same **verbs**. Different 
 | `animate()` | spatial nouns | animation over stress periods |
 | `long()` / `wide()` / `stack()` | cell-budget fields | frame reshapes -- `wide()` is one column per period, at its last saved step (ledger 349); `long()` keeps every step |
 | `__call__(per=)` | period-bound nouns | a fresh view rebound to `per` |
+| `__call__(package=)` | `model.lak` / `model.sfr` / `model.uzf` / `model.outputs.<pkg>` | the same views of ONE named package (ledger 352) |
 
 † Exception: `lak.results.q.budget.plot()` currently returns a **matplotlib** figure
 (the `viz.Fig` conversion is deferred — ledger 52). Derived-table nouns (`profile`,
@@ -1046,8 +1071,9 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   `evt.inputs.rate`, `rch.inputs.recharge`) — each a spatial field noun.
 - `results.q` — the groundwater exchange (spatial). The `.get()` column names its
   reference frame: **`q_gwf`** (aquifer `.cbc` record; negative = the feature gains).
+  Every package of the type, each row's `pname` naming its own (ledger 352).
 
-**SFR** (`model.sfr`):
+**SFR** (`model.sfr`; `model.sfr(package="sfr_2")` on a model of several, ledger 352):
 - `results.q` — stream↔aquifer exchange (spatial; `q_gwf`).
 - `results.stage` — reach stage (spatial).
 - `results.profile` — the merged multi-field reach profile (`get`/`summary`/`plot`).
@@ -1059,7 +1085,7 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   `rain`, `runoff`, `evaporation`, `storage`, `from_mvr`, `to_mvr`, `mvr`,
   `stream_fluxes`, `auxiliary`, `types`.
 
-**LAK** (`model.lak`):
+**LAK** (`model.lak`; `model.lak(package="lak_2")` on a model of several, ledger 352):
 - `results.q` — lake↔aquifer exchange (spatial; column **`q_lake`**, feature-referenced,
   negative = the lake loses).
 - `results.q.budget` — exchange summarized by connection type (`get`/`summary`/`plot`).
@@ -1077,7 +1103,10 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   `runoff`, `evaporation`, `storage`, `from_mvr`, `to_mvr`, `mvr`, `withdrawal`,
   `constant`, `lake_fluxes`, `auxiliary`, `types`.
 
-**UZF** (`model.uzf`): `results.gwrch`, `results.sat`, `results.fields`.
+**UZF** (`model.uzf`): `results.gwrch`, `results.sat`, `results.fields`. With several
+UZF packages the inputs (keyed by `ifno`) refuse unless one is named --
+`model.uzf(package="uzf_2")` -- while the results, cell terms, read every UZF package's
+records tagged `pname` unless one is named (ledger 352).
 
 **Static arrays** (`model.npf` / `.ic` / `.sto`): one noun per STORED array --
 `npf.k`/`k22`/`k33`, `ic.strt`, `sto.ss`/`sy`. Plus two DERIVED nouns on `npf` (ledger

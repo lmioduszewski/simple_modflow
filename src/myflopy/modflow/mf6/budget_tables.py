@@ -13,7 +13,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.boundaries import Boundaries
 from myflopy.modflow.mf6.package_explorer_utils import _model_budget_record_frame
-from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, one_package
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 if TYPE_CHECKING:
@@ -314,16 +314,18 @@ def package_output_df(
 def lake_stage_array(model: SimulationBase):
     """Return LAK stage output reshaped to ``(nper, nlakes)``."""
 
-    nlakes = model.fl.lak.nlakes.data
-    stages = model.fl.lak.output.stage()
+    lak = one_package(model, "lak")  # the model's only LAK, or refused by name (ledger 352)
+    nlakes = lak.nlakes.data
+    stages = lak.output.stage()
     return stages.get_alldata().reshape(-1, nlakes)
 
 
 def sfr_stage_df(model: SimulationBase) -> pd.DataFrame:
     """Return SFR stage output as a reach-by-period dataframe."""
 
-    nreaches = model.fl.sfr.nreaches.data
-    stages = model.fl.sfr.output.stage().get_alldata()
+    sfr = one_package(model, "sfr")  # the model's only SFR, or refused by name (ledger 352)
+    nreaches = sfr.nreaches.data
+    stages = sfr.output.stage().get_alldata()
     data = stages.reshape(model.nper, nreaches).transpose()
     frame = pd.DataFrame(data)
     frame.index.name = "reaches"

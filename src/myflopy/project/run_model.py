@@ -870,21 +870,24 @@ class LoadedMf6Run(SimulationBase):
         Parameters
         ----------
         package_names : str or list, tuple or set of str
-            A package name or type (e.g. ``"chd"``, ``"npf"``), or several;
-            lower-cased and looked up with FloPy's ``get_package`` on the model,
+            A package TYPE or NAME (e.g. ``"chd"``, ``"npf"``, ``"lak_2"``), or
+            several; lower-cased and looked up as
+            :meth:`SimulationBase.package <myflopy.modflow.mf6.simulation.base.SimulationBase.package>`
+            does -- by TYPE first, then a package's exact NAME, on the model and
             then on the simulation (so ``"tdis"`` and ``"ims"`` resolve too).
 
         Returns
         -------
         flopy.mf6.mfpackage.MFPackage or list or dict
-            For one name, what FloPy's ``get_package`` returns for it (a list
-            when the model has several packages of that type). For two or more
-            names, a dict of lower-cased name to that result.
+            For one string, the package, or a list of every package of the type
+            when a TYPE matches several (ledger 352). For two or more, a dict of
+            lower-cased string to that result.
 
         Raises
         ------
         AttributeError
-            When a name matches no package in the model or the simulation.
+            When a string matches no package type or name in the model or the
+            simulation.
         """
 
         normalized = self._normalize_package_names(package_names)
@@ -892,14 +895,14 @@ class LoadedMf6Run(SimulationBase):
             self._ensure_packages_loaded(normalized)
             return {name: self.package(name) for name in normalized}
 
-        package_name = normalized[0]
-        self._ensure_packages_loaded([package_name])
-        package = self._gwf.get_package(package_name)
-        if package is None and self._sim is not None:
-            package = self._sim.get_package(package_name)
-        if package is None:
-            raise AttributeError(f"Package {package_name!r} is not available in run '{self.name}'.")
-        return package
+        self._ensure_packages_loaded(normalized)
+        return super().package(normalized[0])
+
+    def _packages_of_type(self, package_type: str) -> list:
+        """Every FloPy package of TYPE ``package_type``, loading the run's packages first."""
+
+        self._ensure_packages_loaded([package_type])
+        return super()._packages_of_type(package_type)
 
     def _get_budget_reader(self):
         """Return the binary cell-budget reader without loading FloPy core packages."""

@@ -112,6 +112,7 @@ if TYPE_CHECKING:
         SfrFlowTargets,
         SfrStageTargets,
     )
+    from myflopy.modflow.mf6.package_registry import SeveralPackagesError
     from myflopy.modflow.mf6.parallel import (
         ParallelCompatibilityError,
         ParallelEnvironment,
@@ -432,6 +433,7 @@ _EXPORTS = {
         "ParallelCompatibilityError",
     ),
     "ParallelEnvironment": ("myflopy.modflow.mf6.parallel", "ParallelEnvironment"),
+    "SeveralPackagesError": ("myflopy.modflow.mf6.package_registry", "SeveralPackagesError"),
     "ParallelModelWorkflow": ("myflopy.modflow.mf6.parallel", "ParallelModelWorkflow"),
     "ParallelSplitResults": ("myflopy.modflow.mf6.parallel", "ParallelSplitResults"),
     "ParallelSplitRun": ("myflopy.modflow.mf6.parallel", "ParallelSplitRun"),

@@ -55,6 +55,8 @@ class CellBudgetResultsExplorer(SpatialView):
         value_name: str,
         result_name: str | None = None,
         label: str | None = None,
+        *,
+        package: str | None = None,
     ):
         """Bind one cell-based result term: its MF6 ``budget_text`` and output column.
 
@@ -68,9 +70,15 @@ class CellBudgetResultsExplorer(SpatialView):
         the package-grammar spelling, which is right for ``results.<field>`` but
         wrong for a model-budget term reached through ``model.budget.<term>`` --
         that is not a package result and should not claim to be one.
+
+        ``package`` is one package's NAME: only the records it wrote are read (a
+        LAK/SFR/UZF view bound by ``model.lak(package=...)``). ``None``, the
+        default, reads every package's records of the term, each row tagged with its
+        ``pname`` (ledger 352).
         """
 
         self.model = model
+        self.package = package
         self.package_name = str(package_name).lower()
         self.budget_text = str(budget_text)
         self.value_name = str(value_name)
@@ -95,6 +103,7 @@ class CellBudgetResultsExplorer(SpatialView):
             budget_text=self.budget_text,
             package_name=self.package_name,
             value_name=self.value_name,
+            packages=None if self.package is None else [self.package],
         )
         return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
 
@@ -584,10 +593,15 @@ class StageResultsExplorer(SpatialView):
     #: value label + series column for the unified grammar
     value_name = "stage"
 
-    def __init__(self, model: SimulationBase, package_name: str, builder):
-        """Bind a stage result explorer; ``builder(model)`` yields its normalized table."""
+    def __init__(self, model: SimulationBase, package_name: str, builder, *, package: str | None = None):
+        """Bind a stage result explorer; ``builder(model, package=package)`` yields its table.
+
+        ``package`` is the one package's NAME the view reads, ``None`` the model's
+        only package of the type (ledger 352).
+        """
 
         self.model = model
+        self.package = package
         self.package_name = str(package_name).lower()
         self._builder = builder
 
@@ -612,7 +626,7 @@ class StageResultsExplorer(SpatialView):
         last saved step.
         """
 
-        frame = self._builder(self.model)
+        frame = self._builder(self.model, package=self.package)
         return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
 
     def summary(self) -> pd.DataFrame:
@@ -1065,10 +1079,17 @@ class UzfResultsNamespace(FieldMappable):
         names = self.fields["field"].tolist()
         return names or ["gwrch", "sat"]
 
-    def __init__(self, model: SimulationBase):
-        """Bind the UZF results namespace to ``model``."""
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the UZF results namespace to ``model``.
+
+        ``package`` is one UZF package's NAME (``model.uzf(package=...)``): the
+        ``UZF-*`` terms then read only the records it wrote. ``None``, the default,
+        reads every UZF package's -- the rows are cells, each tagged with its
+        ``pname`` (ledger 352).
+        """
 
         self.model = model
+        self.package = package
 
     @property
     def fields(self) -> pd.DataFrame:
@@ -1131,9 +1152,14 @@ class UzfResultsNamespace(FieldMappable):
             raise AttributeError(
                 f"{type(self).__name__!s} has no UZF result field {field_name!r}"
             )
+        # Only a record the UZF package WROTE is one package's: `DATA-SAT` is NPF's
+        # saturation, one record whoever asks, so a bound package filters it out of
+        # nothing.
+        written_by_uzf = str(result_spec.budget_text).upper().startswith("UZF-")
         return CellBudgetResultsExplorer(
             self.model, "uzf", result_spec.budget_text, result_spec.value_name,
             result_name=field_name,
+            package=self.package if written_by_uzf else None,
         )
 
     def __getattr__(self, field_name: str) -> CellBudgetResultsExplorer:

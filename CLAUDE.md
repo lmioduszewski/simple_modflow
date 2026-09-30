@@ -82,6 +82,23 @@ only the all-packages `summary()`/`mosaic()`; group and diff still read
 is an object, every object answers the same verbs** (`get`/`summary`/`plot`, plus
 `map`/`section`/`mosaic`/`animate` for spatial nouns). Never add a `foo()` + `plot_foo()`
 method pair; add a view class exposed as a noun property.
+**Several packages of one type are found by TYPE and never picked in silence** (ledger
+352; Ten Trails carries RIV `riv` + `crisp`). FloPy's `get_package("lak")` answers a
+package NAMED `lak` first, so `model.fl.lak`/`model.package("lak")` returned `lak` alone
+beside `lak_2` and every LAK view read its lake as the model's. ONE rule now:
+`package_registry.model_packages_of_type` (RCHA/EVTA count as RCH/EVT) -- `model.fl.<pkg>`
+is a LIST of several, `model.package(s)` a type then an exact name (no filename or
+prefix fallback). Views whose rows are CELLS read every package, each row's `pname`
+naming it -- the budget-file reader kept each time's FIRST record, so `crisp` (53% of the
+river exchange) was absent from `model.riv.results.q` -- and match a term EXACTLY by
+`paknam2` (the `paknam=` it tried never matched: MF6 writes the model's name there).
+Views of one package's FEATURES (LAK lakes, SFR reaches, UZF `ifno`) go through
+`one_package`: several raise `mf.SeveralPackagesError` naming them and the ONE spelling
+`model.lak(package="lak_2")` (`model.sfr`/`model.uzf`/`model.outputs.<pkg>` alike), and
+each explorer passes `package` to every builder below it. It is a `LookupError` ON
+PURPOSE: the group/diff tiers catch `ValueError` as "package missing". Trap: a property
+raising `AttributeError` makes Python retry `__getattr__` -- `FlopyPackages` re-raises
+the type's refusal there, or `model.fl.lak` answered a GHB NAMED `lak`.
 **Several records on ONE cell combine by what the number IS** (ledger 297,
 2026-09-22): `FieldSpec.kind` -- `extensive` (a flux or conductance; MF6 superposes
 them, so they ADD), `elevation`, `intensive` -- and `agg` is DERIVED from it, never
@@ -552,10 +569,12 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5474 passed / 4 skipped**, 2026-09-29, the PEST-targets series, ledgers
-  340-351 on top of 339): serial (`-n0`) **7m41s** and `-n 10` **1m38s**, both in a worktree
-  outside `.claude` with an absolute `PYTHONPATH`, the serial one starting at a load average of
-  ~8 as the parallel run ended. Before it, 5460 passed / 4 skipped (ledger 350 -- flow targets in
+- Full suite (**5489 passed / 4 skipped**, 2026-09-30, ledger 352 -- several packages of one
+  type): serial (`-n0`) **7m37s** and `-n 10` **1m33s**, both in a detached checkout outside
+  `.claude` with an absolute `PYTHONPATH`, the parallel one starting at a load average of ~3.4
+  and the serial one at ~7 as the parallel run ended. Before it, 5474 passed / 4 skipped
+  (2026-09-29, the PEST-targets series, ledgers 340-351 on top of 339): serial (`-n0`) 7m41s
+  and `-n 10` 1m38s, the serial one starting at a load average of ~8. Before it, 5460 passed / 4 skipped (ledger 350 -- flow targets in
   MF6's sign): `-n 10` **1m38s** in a worktree outside `.claude`, at a load average of
   ~0.1 at its start (1m43s at ~2.7 after the last docs edits), absolute `PYTHONPATH` (a relative `PYTHONPATH=src` fails the two
   tests that run a PEST `forward_run.py` in its template: the subprocess imports another
@@ -1768,8 +1787,8 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   stage file's record clock until ledger 348), a
   missing declared file, and a model with several LAK/SFR/DRN packages unless
   the targets name one (`package=`, carried into the forward run; packages found by
-  TYPE -- FloPy's `get_package("lak")` answers a package NAMED `lak` first, and the
-  stage VIEWS still read that one alone in silence, ledger 345). `to_flopy_obs` refuses
+  TYPE -- FloPy's `get_package("lak")` answers a package NAMED `lak` first; the stage
+  VIEWS read that one alone in silence until ledger 352). `to_flopy_obs` refuses
   a `kind=` other than the quantity and two names one label once upper-cased. A test
   double reaching the observation route must answer `model.package(type)` with a
   package whose `obs[i].continuous.get_data()` holds the records

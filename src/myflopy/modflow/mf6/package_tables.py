@@ -18,7 +18,12 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_iterable_filter,
     split_cellid_columns,
 )
-from myflopy.modflow.mf6.package_registry import _package_type_name
+from myflopy.modflow.mf6.package_registry import (
+    model_packages_of_type,
+    one_package,
+    package_name_of,
+    package_outputs,
+)
 
 #: What "build a normalized table for this package on this model" can raise
 #: when the package is absent, empty, or in a form this tier cannot read.
@@ -105,25 +110,16 @@ def _packages_of(model, package_name) -> list:
 
     A TYPE -- ``"rch"`` -- is every package of it, array form included: MF6 has one
     recharge package, and ``RCHA`` is FloPy's class for its array form. Anything
-    else is one package's own NAME -- ``"rch_array"``. A duck-typed model with no
-    package list answers through ``model.package``, as before.
+    else is one package's own NAME -- ``"rch_array"``. Both through the model's own
+    lookup (``model_packages_of_type``, then ``model.package``, ledger 352), which a
+    duck-typed model answers too.
     """
 
-    load_all = getattr(model, "load_all", None)
-    if callable(load_all):
-        load_all()
-    packagelist = getattr(getattr(model, "gwf", None), "packagelist", None)
-    if packagelist is None:
-        found = model.package(package_name)
-        return list(found) if isinstance(found, list) else [found]
-    wanted = str(package_name).upper()
-    typed = [package for package in packagelist if _package_type_name(package.package_type) == wanted]
+    typed = model_packages_of_type(model, package_name)
     if typed:
         return typed
-    named = [package for package in packagelist if str(package.package_name).upper() == wanted]
-    if named:
-        return named
-    return [model.package(package_name)]  # raises, naming what is not there
+    found = model.package(package_name)  # a NAME, or raises naming what is not there
+    return list(found) if isinstance(found, list) else [found]
 
 
 def _one_package_table(model, package, package_name, *, per, layer_values, cell_values) -> pd.DataFrame:
@@ -260,6 +256,7 @@ def build_uzf_field_input_table(
     per: int | None = None,
     layer: int | Iterable[int] | None = None,
     cells: Iterable[int] | None = None,
+    package: str | None = None,
 ) -> pd.DataFrame:
     """Return a normalized table for one UZF perioddata field.
 
@@ -269,6 +266,10 @@ def build_uzf_field_input_table(
         Live or file-backed model object.
     field_name
         Perioddata field name such as ``"finf"``.
+    package : str or None, optional
+        The UZF package's NAME, any case. Default ``None``: the model's only UZF
+        package -- several raise ``SeveralPackagesError`` naming them, because
+        ``ifno`` numbers the UZF cells within ONE package (ledger 352).
 
     Returns
     -------
@@ -277,22 +278,24 @@ def build_uzf_field_input_table(
         and the requested field.
     """
 
-    package = model.package("uzf")
+    uzf = one_package(model, "uzf", package)
+    name = package_name_of(uzf)
     layer_values = _normalize_iterable_filter(layer)
     cell_values = _normalize_iterable_filter(cells)
+    # Keyed by the PACKAGE too: two UZF packages each have a `finf` (ledger 352).
+    cache_key = ("uzf_field_input_table", str(field_name).lower(), name.lower())
     if per is None and layer_values is None and cell_values is None:
-        cache_key = ("uzf_field_input_table", str(field_name).lower())
         cached = _get_package_explorer_cache(model).get(cache_key)
         if cached is not None:
             return cached.copy()
-    ifno_to_cellid = model.outputs.uzf.ifno_to_cellid
+    ifno_to_cellid = package_outputs(model, "uzf", package).ifno_to_cellid
     layer_lookup = ifno_to_cellid["layer"].to_numpy()
     cell_lookup = ifno_to_cellid["cellid"].to_numpy()
     frames: list[pd.DataFrame] = []
     if per is not None:
-        period_items = [(int(per), package.perioddata.get_data(key=int(per)))]
+        period_items = [(int(per), uzf.perioddata.get_data(key=int(per)))]
     else:
-        period_items = package.perioddata.get_data().items()
+        period_items = uzf.perioddata.get_data().items()
     for period, data in period_items:
         if data is None or len(data) == 0:
             continue
@@ -347,9 +350,7 @@ def build_uzf_field_input_table(
         combined[column] = combined[column].astype(int)
     combined = _coerce_numeric_like_columns(combined, exclude={"model", "package"})
     if per is None and layer_values is None and cell_values is None:
-        _get_package_explorer_cache(model)[
-            ("uzf_field_input_table", str(field_name).lower())
-        ] = combined.copy()
+        _get_package_explorer_cache(model)[cache_key] = combined.copy()
     return combined
 
 
@@ -359,10 +360,17 @@ def build_uzf_field_input_wide_table(
     *,
     layer: int | Iterable[int] | None = None,
     cells: Iterable[int] | None = None,
+    package: str | None = None,
 ) -> pd.DataFrame:
-    """Return a compact wide UZF table with one row per UZF record/cell."""
+    """Return a compact wide UZF table with one row per UZF record/cell.
 
-    cache_key = ("uzf_field_input_wide_table", str(field_name).lower())
+    ``package`` names the UZF package (any case); ``None``, the default, is the
+    model's only one -- several raise ``SeveralPackagesError`` (ledger 352).
+    """
+
+    uzf = one_package(model, "uzf", package)
+    name = package_name_of(uzf)
+    cache_key = ("uzf_field_input_wide_table", str(field_name).lower(), name.lower())
     layer_values = _normalize_iterable_filter(layer)
     cell_values = _normalize_iterable_filter(cells)
     if layer_values is None and cell_values is None:
@@ -370,8 +378,7 @@ def build_uzf_field_input_wide_table(
         if cached is not None:
             return cached.copy()
 
-    package = model.package("uzf")
-    ifno_to_cellid = model.outputs.uzf.ifno_to_cellid.copy()
+    ifno_to_cellid = package_outputs(model, "uzf", package).ifno_to_cellid.copy()
     ifno_to_cellid.index.name = "ifno"
     base = ifno_to_cellid.reset_index().rename(columns={"cellid": "cell"})
     if layer_values is not None:
@@ -382,7 +389,7 @@ def build_uzf_field_input_wide_table(
         return pd.DataFrame(columns=["ifno", "layer", "cell"])
 
     wide = base.set_index("ifno").copy()
-    period_items = package.perioddata.get_data().items()
+    period_items = uzf.perioddata.get_data().items()
     for period, data in period_items:
         if data is None or len(data) == 0:
             continue
@@ -410,10 +417,15 @@ def build_uzf_field_input_wide_table(
     return wide
 
 
-def build_sfr_reach_table(model: SimulationBase) -> pd.DataFrame:
-    """Return per-reach geometry metadata used by SFR tables and profiles."""
+def build_sfr_reach_table(model: SimulationBase, *, package: str | None = None) -> pd.DataFrame:
+    """Return per-reach geometry metadata used by SFR tables and profiles.
 
-    packagedata = pd.DataFrame(model.fl.sfr.packagedata.get_data()).copy()
+    ``package`` names the SFR package (any case); ``None``, the default, is the
+    model's only one -- several raise ``SeveralPackagesError``, because each
+    package numbers its own reaches (ledger 352).
+    """
+
+    packagedata = pd.DataFrame(one_package(model, "sfr", package).packagedata.get_data()).copy()
     packagedata = split_cellid_columns(packagedata)
     if "ifno" in packagedata.columns:
         packagedata = packagedata.rename(columns={"ifno": "reach"})
@@ -444,8 +456,12 @@ def build_sfr_reach_table(model: SimulationBase) -> pd.DataFrame:
     ].drop_duplicates()
 
 
-def build_lak_connection_table(model: SimulationBase) -> pd.DataFrame:
+def build_lak_connection_table(model: SimulationBase, *, package: str | None = None) -> pd.DataFrame:
     """Return a normalized table of LAK connection geometry by cell.
+
+    ``package`` names the LAK package (any case); ``None``, the default, is the
+    model's only one -- several raise ``SeveralPackagesError``, because each
+    package numbers its own lakes (ledger 352).
 
     Notes
     -----
@@ -460,7 +476,7 @@ def build_lak_connection_table(model: SimulationBase) -> pd.DataFrame:
     exchange between the lake and groundwater.
     """
 
-    connectiondata = pd.DataFrame(model.fl.lak.connectiondata.get_data()).copy()
+    connectiondata = pd.DataFrame(one_package(model, "lak", package).connectiondata.get_data()).copy()
     if connectiondata.empty:
         return pd.DataFrame(
             columns=[
@@ -579,7 +595,9 @@ def _cell_top_and_bottom(model: SimulationBase):
     return lookup
 
 
-def lake_bottoms(model: SimulationBase, *, lakes: Iterable[int] | None = None) -> pd.Series:
+def lake_bottoms(
+    model: SimulationBase, *, lakes: Iterable[int] | None = None, package: str | None = None
+) -> pd.Series:
     """Each lake's BOTTOM as MF6 computes it: the stage MF6 gives a DRY lake.
 
     MF6 derives a lake's bottom (``lakebot``) from its connections and writes it
@@ -608,13 +626,16 @@ def lake_bottoms(model: SimulationBase, *, lakes: Iterable[int] | None = None) -
     Parameters
     ----------
     model : SimulationBase
-        A model with one LAK package (``model.fl.lak``) and a DIS, DISV or DISU
-        package; run or not -- nothing here reads an output file.
+        A model with a LAK package and a DIS, DISV or DISU package; run or not --
+        nothing here reads an output file.
     lakes : iterable of int or None, optional
         The lakes to compute, as zero-based MF6 lake numbers (each passed through
         ``int``). Default ``None``: every lake of the package, ``0 ..
         nlakes - 1``. Only the lakes asked for are checked, so an EMBEDDED lake
         (below) refuses only when it is one of them.
+    package : str or None, optional
+        The LAK package's NAME, any case. Default ``None``: the model's only LAK
+        package (ledger 352).
 
     Returns
     -------
@@ -625,10 +646,13 @@ def lake_bottoms(model: SimulationBase, *, lakes: Iterable[int] | None = None) -
     Raises
     ------
     AttributeError
-        When the model has no LAK package, or several (FloPy then hands back a
-        list), or no discretization package.
+        When the model has no LAK package, or no discretization package.
+    SeveralPackagesError
+        When the model carries several LAK packages and ``package`` names none
+        (``package_registry.one_package``).
     ValueError
-        When a lake asked for is not a lake of the package, has no connection,
+        When ``package`` names no LAK package of the model; when a lake asked for
+        is not a lake of the package, has no connection,
         or connects ``EMBEDDEDH``/``EMBEDDEDV``: MF6 takes an embedded lake's
         bottom from its cell's bottom and then from the leading all-zero rows of
         its lake TABLE (``lak_read_table``), which this does not read. MF6's
@@ -642,7 +666,7 @@ def lake_bottoms(model: SimulationBase, *, lakes: Iterable[int] | None = None) -
     Name: lake_bottom, dtype: float64
     """
 
-    lak = model.fl.lak
+    lak = one_package(model, "lak", package)
     nlakes = int(lak.nlakes.get_data())
     wanted = list(range(nlakes)) if lakes is None else [int(lake) for lake in lakes]
     unknown = [lake for lake in wanted if not 0 <= lake < nlakes]
@@ -686,17 +710,22 @@ def lake_bottoms(model: SimulationBase, *, lakes: Iterable[int] | None = None) -
     return pd.Series(bottoms, name="lake_bottom", dtype=float).rename_axis("lake")
 
 
-def build_sfr_input_table(model: SimulationBase) -> pd.DataFrame:
-    """Return normalized static and stress-period SFR inputs mapped to cells."""
+def build_sfr_input_table(model: SimulationBase, *, package: str | None = None) -> pd.DataFrame:
+    """Return normalized static and stress-period SFR inputs mapped to cells.
 
-    base = pd.DataFrame(model.fl.sfr.packagedata.get_data()).copy()
+    ``package`` names the SFR package (any case); ``None``, the default, is the
+    model's only one -- several raise ``SeveralPackagesError`` (ledger 352).
+    """
+
+    sfr = one_package(model, "sfr", package)
+    base = pd.DataFrame(sfr.packagedata.get_data()).copy()
     base = split_cellid_columns(base)
     if "ifno" in base.columns:
         base = base.rename(columns={"ifno": "reach"})
     base["reach"] = pd.to_numeric(base["reach"], errors="coerce").astype(int)
     base["layer"] = pd.to_numeric(base["layer"], errors="coerce").astype(int)
     base["cell"] = pd.to_numeric(base["cell"], errors="coerce").astype(int)
-    settings = _numeric_period_settings(model.fl.sfr, id_column="ifno", nper=model.nper)
+    settings = _numeric_period_settings(sfr, id_column="ifno", nper=model.nper)
     frames = []
     for period in range(int(model.nper)):
         frame = base.copy()
@@ -713,11 +742,16 @@ def build_sfr_input_table(model: SimulationBase) -> pd.DataFrame:
     )
 
 
-def build_lak_input_table(model: SimulationBase) -> pd.DataFrame:
-    """Return normalized static and stress-period LAK inputs mapped to connection cells."""
+def build_lak_input_table(model: SimulationBase, *, package: str | None = None) -> pd.DataFrame:
+    """Return normalized static and stress-period LAK inputs mapped to connection cells.
 
-    connections = build_lak_connection_table(model)
-    packagedata = pd.DataFrame(model.fl.lak.packagedata.get_data()).copy()
+    ``package`` names the LAK package (any case); ``None``, the default, is the
+    model's only one -- several raise ``SeveralPackagesError`` (ledger 352).
+    """
+
+    lak = one_package(model, "lak", package)
+    connections = build_lak_connection_table(model, package=package)
+    packagedata = pd.DataFrame(lak.packagedata.get_data()).copy()
     if "ifno" in packagedata.columns:
         packagedata = packagedata.rename(columns={"ifno": "lake"})
     packagedata["lake"] = pd.to_numeric(packagedata["lake"], errors="coerce").astype(
@@ -726,7 +760,7 @@ def build_lak_input_table(model: SimulationBase) -> pd.DataFrame:
     base = connections.merge(
         packagedata, on="lake", how="left", suffixes=("", "_package")
     )
-    settings = _numeric_period_settings(model.fl.lak, id_column="number", nper=model.nper)
+    settings = _numeric_period_settings(lak, id_column="number", nper=model.nper)
     frames = []
     for period in range(int(model.nper)):
         frame = base.copy()

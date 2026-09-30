@@ -16,7 +16,11 @@ from myflopy._logging import get_logger
 from myflopy.areas import Area, live_areas, saved_areas
 from myflopy.library import AoiLibrary
 from myflopy.modflow.mf6.lak_implicit import warn_if_implicit_unsupported
-from myflopy.modflow.mf6.package_registry import _package_type_name
+from myflopy.modflow.mf6.package_registry import (
+    _package_type_name,
+    package_name_of,
+    packages_of_type,
+)
 from myflopy.modflow.mf6.simulation.accessors import (
     field_reader,
     get_all_conc,
@@ -103,6 +107,24 @@ def _model_config():
     return ModelConfig
 
 
+def _type_then_name(typed: list, owner, key: str):
+    """``model.package``'s answer on one FloPy model or simulation, or ``None``.
+
+    ``typed`` is the owner's packages of TYPE ``key``: the one, or a list of several
+    (FloPy's convention). With none, the owner's package NAMED ``key`` exactly (any
+    case) -- never FloPy's filename or name-prefix matches (ledger 352).
+    """
+
+    if typed:
+        return typed[0] if len(typed) == 1 else list(typed)
+    named = [
+        package
+        for package in (owner.get_package() or ())
+        if package_name_of(package).strip().lower() == key
+    ]
+    return named[0] if named else None
+
+
 
 class FlopyPackages:
     """The model's FloPy package objects: ``model.fl.drn``, ``model.fl.npf``, ...
@@ -111,11 +133,14 @@ class FlopyPackages:
     ``model.drn.results.q.get()``); ``model.fl.drn`` is the FloPy object the
     model was built with, for its data (``model.fl.drn.stress_period_data``).
 
-    The ten registry packages are typed properties so an editor completes them;
-    any other package the model or its simulation carries -- ``npf``, ``ic``,
-    ``sto``, ``disv``, ``oc``, ``tdis``, ``ims`` -- resolves by name through
-    :meth:`SimulationBase.package`, which raises ``AttributeError`` naming the
-    model when there is no such package.
+    The ten registry packages are typed properties so an editor completes them,
+    each found by TYPE alone: the model's one package of the type, or a list of
+    every one, in model order, when it carries several -- whatever they are named
+    (ledger 352: FloPy's own lookup answered a package NAMED ``lak`` before the
+    type, so beside ``lak_2`` it returned ``lak`` alone). A model with none raises
+    ``AttributeError`` naming it. Any other name -- ``npf``, ``ic``, ``sto``,
+    ``disv``, ``oc``, ``tdis``, ``ims``, or a package's own name such as ``lak_2``
+    -- resolves through :meth:`SimulationBase.package`: a type first, then a name.
 
     Parameters
     ----------
@@ -130,6 +155,11 @@ class FlopyPackages:
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_"):
             raise AttributeError(name)
+        if isinstance(getattr(type(self), name, None), property):
+            # A typed property raised AttributeError -- the model has none of its type --
+            # and Python retries the name HERE. The name lookup below would answer a
+            # package merely NAMED `lak` for `model.fl.lak`; re-raise the type's refusal.
+            return self._model._flopy_of_type(name)
         return self._model.package(name)
 
     def __dir__(self) -> list[str]:
@@ -143,61 +173,61 @@ class FlopyPackages:
     def chd(self) -> flopy.mf6.ModflowGwfchd | list[flopy.mf6.ModflowGwfchd]:
         """FloPy's CHD package -- a list when the model carries several."""
 
-        return self._model.package("chd")
+        return self._model._flopy_of_type("chd")
 
     @property
     def drn(self) -> flopy.mf6.ModflowGwfdrn | list[flopy.mf6.ModflowGwfdrn]:
         """FloPy's DRN package -- a list when the model carries several."""
 
-        return self._model.package("drn")
+        return self._model._flopy_of_type("drn")
 
     @property
     def ghb(self) -> flopy.mf6.ModflowGwfghb | list[flopy.mf6.ModflowGwfghb]:
         """FloPy's GHB package -- a list when the model carries several."""
 
-        return self._model.package("ghb")
+        return self._model._flopy_of_type("ghb")
 
     @property
     def riv(self) -> flopy.mf6.ModflowGwfriv | list[flopy.mf6.ModflowGwfriv]:
         """FloPy's RIV package -- a list when the model carries several."""
 
-        return self._model.package("riv")
+        return self._model._flopy_of_type("riv")
 
     @property
     def wel(self) -> flopy.mf6.ModflowGwfwel | list[flopy.mf6.ModflowGwfwel]:
         """FloPy's WEL package -- a list when the model carries several."""
 
-        return self._model.package("wel")
+        return self._model._flopy_of_type("wel")
 
     @property
     def rch(self) -> flopy.mf6.ModflowGwfrch | list[flopy.mf6.ModflowGwfrch]:
         """FloPy's RCH package -- a list when the model carries several."""
 
-        return self._model.package("rch")
+        return self._model._flopy_of_type("rch")
 
     @property
     def evt(self) -> flopy.mf6.ModflowGwfevt | list[flopy.mf6.ModflowGwfevt]:
         """FloPy's EVT package -- a list when the model carries several."""
 
-        return self._model.package("evt")
+        return self._model._flopy_of_type("evt")
 
     @property
     def uzf(self) -> flopy.mf6.ModflowGwfuzf | list[flopy.mf6.ModflowGwfuzf]:
         """FloPy's UZF package -- a list when the model carries several."""
 
-        return self._model.package("uzf")
+        return self._model._flopy_of_type("uzf")
 
     @property
     def sfr(self) -> flopy.mf6.ModflowGwfsfr | list[flopy.mf6.ModflowGwfsfr]:
         """FloPy's SFR package -- a list when the model carries several."""
 
-        return self._model.package("sfr")
+        return self._model._flopy_of_type("sfr")
 
     @property
     def lak(self) -> flopy.mf6.ModflowGwflak | list[flopy.mf6.ModflowGwflak]:
         """FloPy's LAK package -- a list when the model carries several."""
 
-        return self._model.package("lak")
+        return self._model._flopy_of_type("lak")
 
 
 class SimulationBase:
@@ -1010,41 +1040,84 @@ class SimulationBase:
         Parameters
         ----------
         package_names : str or list of str or tuple of str or set of str
-            One package name or type such as ``"rch"``, or a list/tuple/set of
-            them. Each is lower-cased (through ``str``) and looked up with FloPy's
-            ``get_package`` on the model first, then on the simulation (so ``"tdis"``
-            or ``"ims"`` resolve too). A collection returns a ``dict`` keyed by the
-            lower-cased names, each value looked up the same way.
+            One package TYPE or NAME such as ``"rch"`` or ``"lak_2"``, or a
+            list/tuple/set of them. Each is lower-cased (through ``str``) and looked
+            up by TYPE first -- every package of that MF6 type, array-form RCHA/EVTA
+            counting as RCH/EVT -- then as a package's exact NAME (any case), on the
+            model and then on its simulation (so ``"tdis"`` and ``"ims"`` resolve
+            too). A collection returns a ``dict`` keyed by the lower-cased strings,
+            each value looked up the same way.
 
         Returns
         -------
         flopy.mf6.mfpackage.MFPackage or list or dict
-            The package; FloPy's list when the name matches several (see Notes);
-            a ``dict`` of those when ``package_names`` is a collection.
+            The package; a list of every package of the type, in model order, when
+            a TYPE matches several; a ``dict`` of those when ``package_names`` is a
+            collection.
 
         Raises
         ------
         AttributeError
-            If a name resolves to no package on the model or the simulation.
+            If a string names no package type or package on the model or the
+            simulation.
 
         Notes
         -----
-        FloPy's ``get_package`` returns a LIST when a model carries more than one
-        package of a type -- two CHDs give a two-element list, verified. The
-        typed accessors below say so in their return annotation rather than
-        promising a single package they cannot guarantee.
+        Asked by TYPE before NAME (ledger 352). FloPy's ``get_package`` asks the NAME
+        first, so on a model holding LAK packages named ``lak`` and ``lak_2`` it
+        answered ``"lak"`` with the one named ``lak`` -- and a type's other packages
+        vanished from every reader built on this. FloPy's filename and name-PREFIX
+        fallbacks are gone too: ``"dis"`` on a DISV model prefix-matched the DISV.
+        The package NAMED like its type beside others is one element of the type's
+        list (``model.package("lak")[0]``, or FloPy's
+        ``model.gwf.get_package("lak", name_only=True)``); every other name is
+        itself: ``model.package("lak_2")``.
+
+        Examples
+        --------
+        >>> model.package("npf")                       # MF6 allows one NPF
+        >>> [p.package_name for p in model.package("lak")]
+        ['lak', 'lak_2']
+        >>> model.package("lak_2").package_name
+        'lak_2'
+        >>> model.package(["npf", "tdis"])             # dict keyed by the strings
         """
 
         if isinstance(package_names, (list, tuple, set)):
             return {str(name).lower(): self.package(str(name)) for name in package_names}
 
         package_name = str(package_names).lower()
-        package = self.gwf.get_package(package_name)
-        if package is None and getattr(self, "sim", None) is not None:
-            package = self.sim.get_package(package_name)
+        package = _type_then_name(self._packages_of_type(package_name), self.gwf, package_name)
+        simulation = getattr(self, "sim", None)
+        if package is None and simulation is not None:
+            package = _type_then_name(packages_of_type(simulation, package_name), simulation, package_name)
         if package is None:
             raise AttributeError(f"Package {package_name!r} is not attached to model '{self.name}'.")
         return package
+
+    def _packages_of_type(self, package_type: str) -> list:
+        """Every FloPy package of TYPE ``package_type`` in this model, in model order.
+
+        The one lookup behind ``model.fl.<pkg>``, :meth:`package` and
+        ``package_registry.model_packages_of_type`` (ledger 352). A file-backed run
+        loads its packages first (:class:`~myflopy.project.run_model.LoadedMf6Run`).
+        """
+
+        return packages_of_type(self.gwf, package_type)
+
+    def _flopy_of_type(self, package_type: str):
+        """``model.fl.<pkg>``: the one package of the type, a list of several, by TYPE only.
+
+        Never by name -- a package NAMED ``lak`` of another type is not a LAK -- and
+        ``AttributeError`` naming the model when it has none.
+        """
+
+        found = self._packages_of_type(package_type)
+        if not found:
+            raise AttributeError(
+                f"Model '{self.name}' has no {str(package_type).upper()} package."
+            )
+        return found[0] if len(found) == 1 else found
 
     def load_all(self):
         """Eagerly load all model data.

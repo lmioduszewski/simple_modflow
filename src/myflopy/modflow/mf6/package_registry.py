@@ -689,6 +689,7 @@ __all__ = [
     "FieldSpec",
     "PackageExplorerSpec",
     "ResultSpec",
+    "SeveralPackagesError",
     "get_default_budget_term",
     "get_default_group_compare_colorscale",
     "get_default_package_colorscale",
@@ -709,3 +710,285 @@ def _package_type_name(package_type: str) -> str:
 
     upper = str(package_type).upper()
     return {"RCHA": "RCH", "EVTA": "EVT"}.get(upper, upper)
+
+
+# -- a model's packages, found by TYPE (ledger 352) ----------------------------------
+# FloPy's `get_package(name)` answers a package NAMED like its argument before it looks
+# at types, so on a model holding LAK packages named `lak` and `lak_2` a lookup of "lak"
+# returned `lak` alone -- `model.fl.lak`, `model.package("lak")`, and through them every
+# LAK view, which read `lak`'s lake as the model's in silence. Every "the packages of
+# this type" read goes through `packages_of_type` / `model_packages_of_type`, and every
+# view that reads ONE package through `one_package`.
+
+
+class SeveralPackagesError(LookupError):
+    """A view that reads ONE package was asked of a model carrying several of its type.
+
+    Raised by the LAK, SFR and UZF views (``model.lak.results.stage.get()``, ...) and
+    their readers (``model.outputs.lak``) on a model with two or more packages of the
+    type and none named. The message names every package and the spelling that picks
+    one -- ``model.lak(package="lak_2")``.
+
+    A ``LookupError``, deliberately NOT a ``ValueError``: the tiers that tolerate a
+    MISSING package catch ``ValueError`` among others
+    (``package_tables.PACKAGE_TABLE_UNAVAILABLE``, the group and diff tiers), and one
+    catching this would compare a two-LAK model as having no LAK at all, in silence.
+
+    Examples
+    --------
+    >>> try:
+    ...     model.lak.results.stage.get()
+    ... except mf.SeveralPackagesError as error:
+    ...     print(error)          # names 'lak', 'lak_2' and model.lak(package=...)
+    """
+
+
+def packages_of_type(owner, package_type: str) -> list:
+    """Every package of TYPE ``package_type`` a FloPy model or simulation holds.
+
+    Asked by type ALONE -- never by name first, as FloPy's ``get_package`` does -- and
+    by MF6's type: FloPy's array-form ``rcha``/``evta`` classes are RCH/EVT
+    (:func:`_package_type_name`), on either side, so ``"rch"`` finds a list RCH and an
+    array one both.
+
+    Parameters
+    ----------
+    owner : flopy.mf6.MFModel or flopy.mf6.MFSimulation
+        What holds the packages; its ``get_package()`` (no name) lists them all.
+    package_type : str
+        An MF6 package type, any case -- ``"lak"``, ``"RCH"``, ``"rcha"``, ``"ims"``.
+
+    Returns
+    -------
+    list
+        The FloPy packages of that type, in the order the owner holds them; ``[]``
+        when it holds none.
+
+    Examples
+    --------
+    >>> [p.package_name for p in packages_of_type(model.gwf, "lak")]
+    ['lak', 'lak_2']
+    """
+
+    wanted = _package_type_name(package_type)
+    held = owner.get_package() or ()
+    return [
+        package
+        for package in held
+        if _package_type_name(getattr(package, "package_type", "") or "") == wanted
+    ]
+
+
+def model_packages_of_type(model, package_type: str) -> list:
+    """Every FloPy package of TYPE ``package_type`` in a myflopy model; ``[]`` when none.
+
+    The one rule behind ``model.fl.<pkg>``, ``model.package(<type>)``, the
+    one-package views (:func:`one_package`), the tables that read every package of a
+    type, and the observation targets' package lookup.
+
+    Parameters
+    ----------
+    model : SimulationBase or duck-typed model
+        A myflopy model: its ``_packages_of_type`` loads a file-backed run's packages
+        first. A test double without it answers through ``model.package(type)``
+        (one package, a list, or ``AttributeError`` for none).
+    package_type : str
+        An MF6 package type, any case (see :func:`packages_of_type`).
+
+    Returns
+    -------
+    list
+        The model's FloPy packages of that type, in model order.
+    """
+
+    own = getattr(model, "_packages_of_type", None)
+    if callable(own):
+        return list(own(package_type))
+    try:
+        found = model.package(package_type)
+    except AttributeError:
+        return []
+    if found is None:
+        return []
+    return list(found) if isinstance(found, (list, tuple)) else [found]
+
+
+def package_name_of(package) -> str:
+    """A FloPy package's own name (``package_name``), as FloPy holds it; ``""`` for none."""
+
+    return str(getattr(package, "package_name", "") or "")
+
+
+def package_named(model, package_type: str, package: str, *, everyone: list | None = None):
+    """The model's package of TYPE ``package_type`` NAMED ``package`` (any case).
+
+    Parameters
+    ----------
+    model : SimulationBase or duck-typed model
+        The model (see :func:`model_packages_of_type`).
+    package_type : str
+        The MF6 package type the name must belong to.
+    package : str
+        A package NAME, FloPy's ``package_name``, compared stripped and lower-cased.
+        Never a type: on a model holding ``lak`` and ``lak_2``, ``"lak"`` is the
+        package named ``lak``.
+    everyone : list or None, optional
+        The model's packages of the type when the caller already has them. Default
+        ``None`` looks them up.
+
+    Returns
+    -------
+    flopy.mf6.mfpackage.MFPackage
+        The one package of the type bearing that name.
+
+    Raises
+    ------
+    ValueError
+        When no package of the type bears the name, naming the ones that do exist.
+    """
+
+    everyone = model_packages_of_type(model, package_type) if everyone is None else everyone
+    wanted = str(package).strip().lower()
+    for candidate in everyone:
+        if package_name_of(candidate).strip().lower() == wanted:
+            return candidate
+    held = ", ".join(repr(package_name_of(p)) for p in everyone) or "none"
+    raise ValueError(
+        f"package={package!r} names no {str(package_type).upper()} package of model "
+        f"{getattr(model, 'name', '?')!r}; its {str(package_type).upper()} packages: {held}."
+    )
+
+
+def checked_package_name(model, package_type: str, package, *, spelling: str) -> str:
+    """A ``package=`` argument checked where it is given: the named package's own name.
+
+    Behind ``model.lak(package=...)`` and ``model.outputs.lak(package=...)`` (ledger
+    352), so a typo raises at the call rather than at the first read.
+
+    Parameters
+    ----------
+    model : SimulationBase or duck-typed model
+        The model (see :func:`model_packages_of_type`).
+    package_type : str
+        The MF6 package type the name must belong to.
+    package : str
+        The argument: a package NAME, any case.
+    spelling : str
+        The call, for the ``TypeError`` -- ``"model.lak(package=...)"``.
+
+    Returns
+    -------
+    str
+        The package's ``package_name`` as FloPy holds it.
+
+    Raises
+    ------
+    TypeError
+        When ``package`` is not a non-empty string.
+    ValueError
+        When no package of the type bears the name (:func:`package_named`).
+    """
+
+    if not isinstance(package, str) or not package.strip():
+        raise TypeError(
+            f"{spelling} takes a {str(package_type).upper()} package's name, not {package!r}."
+        )
+    return package_name_of(package_named(model, package_type, package))
+
+
+def one_package(model, package_type: str, package: str | None = None, *, spelling: str | None = None):
+    """The ONE FloPy package of ``package_type`` a one-package view reads.
+
+    A LAK, SFR or UZF view reads one package's lakes, reaches or UZF cells -- they are
+    numbered within their package -- so on a model with several it must be told which.
+    It never picks one itself (ledger 352).
+
+    Parameters
+    ----------
+    model : SimulationBase or duck-typed model
+        The model (see :func:`model_packages_of_type`).
+    package_type : str
+        ``"lak"``, ``"sfr"`` or ``"uzf"`` -- any MF6 package type, any case.
+    package : str or None, optional
+        The package's NAME (FloPy's ``package_name``), any case: that package, or
+        ``ValueError`` naming the ones the model has. Default ``None``: the model's
+        only package of the type.
+    spelling : str or None, optional
+        How a caller names the package, quoted by the refusal with ``{name}`` standing
+        for each package's name. Default ``"model.<type>(package={name!r})"`` -- a
+        view's spelling; ``model.outputs`` passes its own.
+
+    Returns
+    -------
+    flopy.mf6.mfpackage.MFPackage
+        The package.
+
+    Raises
+    ------
+    AttributeError
+        When the model has no package of the type -- what FloPy's lookup raised, so a
+        tier that tolerates an absent package still does.
+    SeveralPackagesError
+        When ``package`` is ``None`` and the model carries several packages of the
+        type, naming each and the spelling that picks it.
+    ValueError
+        When ``package`` names no package of the type.
+
+    Examples
+    --------
+    >>> one_package(model, "lak").package_name                  # one LAK
+    'lak'
+    >>> one_package(model, "lak", "LAK_2").package_name         # any case
+    'lak_2'
+    """
+
+    everyone = model_packages_of_type(model, package_type)
+    if package is not None:
+        return package_named(model, package_type, package, everyone=everyone)
+    kind = str(package_type).upper()
+    if not everyone:
+        raise AttributeError(
+            f"Model {getattr(model, 'name', '?')!r} has no {kind} package."
+        )
+    if len(everyone) == 1:
+        return everyone[0]
+    spelling = spelling or f"model.{str(package_type).lower()}(package={{name!r}})"
+    names = [package_name_of(p) for p in everyone]
+    features = _NUMBERED_FEATURES.get(kind, "features")
+    raise SeveralPackagesError(
+        f"Model {getattr(model, 'name', '?')!r} carries {len(everyone)} {kind} packages "
+        f"({', '.join(repr(name) for name in names)}), and this reads ONE package's "
+        f"{features}, which each package numbers from 1. Name the package: "
+        + " or ".join(spelling.format(name=name) for name in names)
+        + "."
+    )
+
+
+def package_outputs(model, package_type: str, package: str | None = None):
+    """``model.outputs.<type>`` for ONE package: bound to ``package`` when one is named.
+
+    The unbound namespace reads the model's only package of the type, so a reader
+    that has already refused several (:func:`one_package`, whose refusal names the
+    VIEW's spelling) reads the files exactly as it did before ledger 352.
+
+    Parameters
+    ----------
+    model : SimulationBase or duck-typed model
+        The model; its ``outputs`` namespace is read.
+    package_type : str
+        ``"lak"``, ``"sfr"`` or ``"uzf"``.
+    package : str or None, optional
+        The package's NAME, or ``None`` for the model's only one.
+
+    Returns
+    -------
+    LakOutputData or SFROutputData or UzfOutputData
+        ``model.outputs.<type>``, or ``model.outputs.<type>(package=package)``.
+    """
+
+    namespace = getattr(model.outputs, package_type)
+    return namespace if package is None else namespace(package=package)
+
+
+#: What a one-package view's rows are, per type, for :func:`one_package`'s refusal.
+_NUMBERED_FEATURES = {"LAK": "lakes", "SFR": "reaches", "UZF": "UZF cells"}

@@ -22,11 +22,11 @@ from myflopy.modflow.mf6.observations._shared import (
     _default_obs_csv_name,
     _in_grid_crs,
     _measured_periods,
-    _named_package,
     _normalize_compare_time,
     _normalize_named_series_values,
     _observation_label,
     _ObservedQuantity,
+    _owning_package,
     _placement_note,
     _read_declared_observations,
     _refuse_flows_leaving_the_frame,
@@ -1257,7 +1257,9 @@ class DrnFlowTargets:
             The model whose FloPy DRN package receives the OBS package unless
             ``package`` is given: the one the targets name (their ``package``
             field, ``ValueError`` when the model has no DRN package of that
-            name), else ``model.gwf.drn``; also passed to :meth:`to_flopy_obs` to
+            name), else the model's only DRN package, found by type (several
+            raise ``ValueError`` naming them and ``package=``, none
+            ``AttributeError``; ledger 352); also passed to :meth:`to_flopy_obs` to
             resolve the zones. With ``package`` given and every zone's ``cells``
             explicit, ``None`` works.
         pname : str, optional
@@ -1294,10 +1296,8 @@ class DrnFlowTargets:
 
         if package is not None:
             owner = package
-        elif self.package is not None:
-            owner = _named_package(model, _DRN_FLOW, self.package)
         else:
-            owner = model.gwf.drn
+            owner = _owning_package(model, _DRN_FLOW, self.package)
         csv_name = _default_obs_csv_name(filename, "drn_flow_targets.csv") if csv_name is None else str(csv_name)
         continuous = self.to_flopy_obs(model, csv_name=csv_name, kind=kind)
         return flopy.mf6.modflow.mfutlobs.ModflowUtlobs(

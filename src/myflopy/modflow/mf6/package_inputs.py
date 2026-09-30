@@ -529,11 +529,16 @@ class CellPackageInputFieldExplorer(SpatialView):
 class UzfFieldInputsExplorer(SpatialView):
     """Normalized explorer for one UZF perioddata field."""
 
-    def __init__(self, model: SimulationBase, field_name: str):
-        """Bind an explorer to one UZF perioddata field (e.g. ``finf``, ``pet``)."""
+    def __init__(self, model: SimulationBase, field_name: str, *, package: str | None = None):
+        """Bind an explorer to one UZF perioddata field (e.g. ``finf``, ``pet``).
+
+        ``package`` is the UZF package's NAME (``None``: the model's only one;
+        several raise ``SeveralPackagesError``, ledger 352).
+        """
 
         self.model = model
         self.field_name = str(field_name)
+        self.package = package
 
     #: This explorer is UZF-only by construction, but the hover helper asks every
     #: explorer the same question, so it answers it the same way.
@@ -554,6 +559,7 @@ class UzfFieldInputsExplorer(SpatialView):
             per=per,
             layer=layer,
             cells=cells,
+            package=self.package,
         )
         return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
 
@@ -580,6 +586,7 @@ class UzfFieldInputsExplorer(SpatialView):
             self.field_name,
             layer=layer,
             cells=cells,
+            package=self.package,
         )
 
     def map(
@@ -918,10 +925,14 @@ class UzfInputsNamespace(FieldMappable):
 
     _default_field = "finf"
 
-    def __init__(self, model: SimulationBase):
-        """Bind the UZF inputs namespace to ``model``."""
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the UZF inputs namespace to ``model``'s UZF package ``package``.
+
+        ``package`` is the package's NAME (``None``: the model's only UZF).
+        """
 
         self.model = model
+        self.package = package
 
     def _field_names(self) -> list[str]:
         """The registry-declared UZF perioddata field names."""
@@ -981,7 +992,7 @@ class UzfInputsNamespace(FieldMappable):
             raise AttributeError(
                 f"{type(self).__name__!s} has no UZF input field {field_name!r}"
             )
-        return UzfFieldInputsExplorer(self.model, field_spec.name)
+        return UzfFieldInputsExplorer(self.model, field_spec.name, package=self.package)
 
     def __getattr__(self, field_name: str) -> UzfFieldInputsExplorer:
         """Return a registry-backed UZF perioddata field explorer."""

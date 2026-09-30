@@ -27,6 +27,7 @@ from myflopy.modflow.mf6.package_plotting import (
     resolve_noun_hover,
 )
 from myflopy.modflow.mf6.package_registry import (
+    checked_package_name,
     get_package_explorer_spec,
 )
 from myflopy.modflow.mf6.package_results import (
@@ -202,24 +203,61 @@ class NpfPackageExplorer(StaticArrayPackageExplorer):
 
 
 class UzfPackageExplorer:
-    """Top-level UZF package explorer namespace."""
+    """Top-level UZF package explorer namespace: ONE UZF package's inputs.
 
-    def __init__(self, model: SimulationBase):
-        """Bind the top-level UZF explorer (``.inputs`` / ``.results``) to ``model``."""
+    The inputs are keyed by ``ifno``, which each UZF package numbers from 1, so on
+    a model carrying several they refuse with ``SeveralPackagesError`` naming them,
+    and ``model.uzf(package="uzf_2")`` is the one spelling that picks one (ledger
+    352). The results are budget terms on CELLS: unbound, every UZF package's
+    records are read, each row tagged with its ``pname``; bound, that package's.
+    """
+
+    def __init__(self, model: SimulationBase, *, package: str | None = None):
+        """Bind the top-level UZF explorer (``.inputs`` / ``.results``) to ``model``.
+
+        ``package`` is the UZF package's NAME; ``None``, the default, is the model's
+        only one. Spell it ``model.uzf(package=...)``, which checks the name.
+        """
 
         self.model = model
+        self.package = package
+
+    def __call__(self, *, package: str) -> UzfPackageExplorer:
+        """The UZF views of the ONE UZF package named ``package``.
+
+        Parameters
+        ----------
+        package : str
+            A UZF package's name (FloPy's ``package_name``), any case -- never the
+            type. Checked here: no UZF package of that name raises ``ValueError``
+            naming the model's, and a non-string ``TypeError``.
+
+        Returns
+        -------
+        UzfPackageExplorer
+            ``inputs`` and ``results`` reading that package alone.
+
+        Examples
+        --------
+        >>> model.uzf(package="uzf_2").inputs.finf.map(per=0)
+        """
+
+        return UzfPackageExplorer(
+            self.model,
+            package=checked_package_name(self.model, "uzf", package, spelling="model.uzf(package=...)"),
+        )
 
     @property
     def inputs(self) -> UzfInputsNamespace:
         """Return the UZF input exploration namespace."""
 
-        return UzfInputsNamespace(self.model)
+        return UzfInputsNamespace(self.model, package=self.package)
 
     @property
     def results(self) -> UzfResultsNamespace:
         """Return the UZF result exploration namespace."""
 
-        return UzfResultsNamespace(self.model)
+        return UzfResultsNamespace(self.model, package=self.package)
 
 
 class HfbResultsExplorer:
@@ -1257,7 +1295,14 @@ class ModelPackages:
         blank = {"records": None, "periods": "", "layers": ""}
         if not row["mappable"] or row["kind"] == "static_array":
             return blank
-        explorer = self._explorer_or_none(str(row["package"]).lower())
+        # The row's own package, found by what it IS (ledger 352). The explorer was
+        # looked up by the row's NAME, so a package not named like its type
+        # (`LAK_A`, `DRN_2`) counted blank, and `DRN` counted `DRN_2`'s records
+        # too. A one-package view (LAK, SFR, UZF) is narrowed to the row; a table
+        # of every package of the type keeps the row's `pname`.
+        explorer = self._explorer_or_none(str(row["type"]).lower())
+        if callable(explorer):
+            explorer = explorer(package=str(row["package"]))
         inputs = getattr(explorer, "inputs", None)
         if inputs is None:
             return blank
@@ -1278,6 +1323,8 @@ class ModelPackages:
             # WHEN something is off, so it must survive one bad package.
             logger.debug("summary: %r records unreadable", row["package"])
             return blank
+        if "pname" in frame.columns:
+            frame = frame[frame["pname"].astype(str).str.upper() == str(row["package"]).upper()]
 
         def _uniq(column):
             if column not in frame.columns:
@@ -1296,13 +1343,17 @@ class ModelPackages:
 
         The combinator over :meth:`summary` -- it draws what that table says is
         mappable. Record packages contribute their default input field; array
-        packages contribute their first declared array.
+        packages contribute their first declared array. A LAK, SFR or UZF package
+        is one panel each, drawn through ``model.lak(package=...)``; a list
+        boundary's panel is its TYPE's ``inputs.map()``, which draws every package
+        of the type, so two DRN packages are one ``drn`` panel (ledger 352).
 
         Parameters
         ----------
         packages : list of str, optional
-            Restrict to these packages. Default: everything ``summary()`` marks
-            mappable.
+            Restrict to these packages, by name (``summary()``'s ``package``
+            column, any case); a list boundary's name draws its type's panel.
+            Default: everything ``summary()`` marks mappable.
         ncols : int, default 3
             Grid width.
         title : str, optional
@@ -1333,12 +1384,25 @@ class ModelPackages:
         # name instead of being swallowed below as "could not be drawn" for every
         # package, and a LIST is one per panel (ledger 311).
         extent = kwargs.pop("extent", None)
+        # Each package by what it IS (ledger 352): the explorer was looked up by the
+        # package's NAME, so `lak_2` or `drn_2` was skipped as having none, and `lak`
+        # drew itself as the model's LAK.
+        types = dict(zip(table["package"].str.lower(), table["type"].str.lower(), strict=True))
+        drawn_types = set()
         panels = []
         for name in wanted:
-            explorer = self._explorer_or_none(name)
+            package_type = types.get(name, name)
+            explorer = self._explorer_or_none(package_type)
             if explorer is None:
                 logger.debug("mosaic: no explorer for %r, skipping", name)
                 continue
+            if callable(explorer):
+                explorer = explorer(package=name)  # one LAK/SFR/UZF package, one panel
+            elif package_type in drawn_types:
+                continue  # its type's panel, drawn already, holds it
+            else:
+                drawn_types.add(package_type)
+                name = package_type
             drawer = getattr(getattr(explorer, "inputs", None), "map", None)
             if drawer is None and name in self._STATIC_ARRAY_PACKAGES:
                 declared = explorer.declared_fields

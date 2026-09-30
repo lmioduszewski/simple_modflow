@@ -48,6 +48,7 @@ from myflopy.modflow.mf6.budget_tables import (
 from myflopy.modflow.mf6.budget_tables import (
     raw_budget as _raw_budget,
 )
+from myflopy.modflow.mf6.package_registry import one_package
 
 #: Model-budget records MF6 names for the process rather than for the package
 #: that wrote them, so a package-name lookup can never find them.
@@ -259,21 +260,33 @@ class Budget:
 
 
 class LakBudget:
-    """Access the LAK package's package-output budget file for one model."""
+    """Access one LAK package's package-output budget file for one model."""
 
-    def __init__(self, model: SimulationBase):
-        """Create one LAK budget accessor for ``model``."""
+    def __init__(self, model: SimulationBase, package: str | None = None):
+        """Create one LAK budget accessor for ``model``'s LAK package ``package``.
+
+        ``package`` is the package's NAME, or ``None`` for the model's only LAK
+        package; with several, reading raises ``SeveralPackagesError`` naming
+        ``model.outputs.lak(package=...)`` (ledger 352).
+        """
         self.model = model
+        self.package = package
+
+    def _package(self):
+        """The LAK package this budget reads (``package_registry.one_package``)."""
+        return one_package(
+            self.model, "lak", self.package, spelling="model.outputs.lak(package={name!r})"
+        )
 
     @property
     def types(self):
         """Return record types available in the LAK budget output file."""
-        return _package_output_types(self.model.fl.lak)
+        return _package_output_types(self._package())
 
     @property
     def budget(self):
         """Return the raw FloPy LAK package-output budget reader."""
-        return _package_output_budget(self.model.fl.lak)
+        return _package_output_budget(self._package())
 
     def get(self, bud_type: str = None, return_df: bool = True):
         """Return LAK budget data for one output record type.
@@ -304,7 +317,7 @@ class LakBudget:
             )
         if return_df is False:
             return self.budget.get_data(text=bud_type)
-        return _package_output_df(self.model, self.model.fl.lak, bud_type=bud_type)
+        return _package_output_df(self.model, self._package(), bud_type=bud_type)
 
 
 class LakStage:
@@ -315,9 +328,9 @@ class LakStage:
     """
 
     def __init__(self, model: SimulationBase):
-        """Create one LAK stage accessor for ``model``."""
+        """Create one LAK stage accessor for ``model`` (its only LAK package)."""
         self.model = model
-        self.nlakes = self.model.fl.lak.nlakes.data
+        self.nlakes = one_package(self.model, "lak").nlakes.data
 
     def get(self):
         """Return ``model.outputs.lak.stage.get()``: one row per saved record, one
@@ -326,22 +339,38 @@ class LakStage:
 
 
 class SFRBudget:
-    """Access the SFR package's package-output budget file for one model."""
+    """Access one SFR package's package-output budget file for one model."""
 
-    def __init__(self, model: SimulationBase):
-        """Create one SFR budget accessor for ``model``."""
+    def __init__(self, model: SimulationBase, package: str | None = None):
+        """Create one SFR budget accessor for ``model``'s SFR package ``package``.
+
+        ``package`` is the package's NAME, or ``None`` for the model's only SFR
+        package; with several, reading raises ``SeveralPackagesError`` naming
+        ``model.outputs.sfr(package=...)`` (ledger 352).
+        """
         self.model = model
-        self.nreaches = self.model.fl.sfr.nreaches.data
+        self.package = package
+
+    def _package(self):
+        """The SFR package this budget reads (``package_registry.one_package``)."""
+        return one_package(
+            self.model, "sfr", self.package, spelling="model.outputs.sfr(package={name!r})"
+        )
+
+    @property
+    def nreaches(self):
+        """The package's reach count (``NREACHES``)."""
+        return self._package().nreaches.data
 
     @property
     def types(self):
         """Return record types available in the SFR budget output file."""
-        return _package_output_types(self.model.fl.sfr)
+        return _package_output_types(self._package())
 
     @property
     def budget(self):
         """Return the raw FloPy SFR package-output budget reader."""
-        return _package_output_budget(self.model.fl.sfr)
+        return _package_output_budget(self._package())
 
     def get(self, bud_type: str = None, return_df: bool = True):
         """Return SFR budget data for one output record type.
@@ -372,7 +401,7 @@ class SFRBudget:
             )
         if return_df is False:
             return self.budget.get_data(text=bud_type)
-        return _package_output_df(self.model, self.model.fl.sfr, bud_type=bud_type)
+        return _package_output_df(self.model, self._package(), bud_type=bud_type)
 
     def plot_flows(
             self,
@@ -404,7 +433,7 @@ class SFRBudget:
         flows: pd.DataFrame = self.get('flow')
         flows = flows.set_index(['kstpkper', 'node'], drop=True)
         stream_flows = []
-        reaches = pd.DataFrame(self.model.gwf.sfr.packagedata.get_data())["rno"].tolist()
+        reaches = pd.DataFrame(self._package().packagedata.get_data())["rno"].tolist()
         for stpper in kstpkper:
             riv_flows = flows.loc[idxx[stpper, reaches], :]
             riv_flows = riv_flows[riv_flows.q < 0].q / cfs
@@ -429,9 +458,9 @@ class SFRStage:
     """
 
     def __init__(self, model: SimulationBase):
-        """Create one SFR stage accessor for ``model``."""
+        """Create one SFR stage accessor for ``model`` (its only SFR package)."""
         self.model = model
-        self.nreaches = self.model.fl.sfr.nreaches.data
+        self.nreaches = one_package(self.model, "sfr").nreaches.data
 
     def get(self):
         """Return a reach-by-period dataframe of stream stage output."""

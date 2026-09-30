@@ -116,8 +116,26 @@ column -- so a reader asks FloPy for that (`observations._shared._declared_route
 reads only those files, each record by position, in whichever form MF6 wrote them (text,
 or binary for a block declared `BINARY` -- told apart by the file's first bytes, ledger
 345); the MF6 header names are cut to 40 characters and only checked. It finds a
-package by TYPE (`get_package(type, type_only=True)`): FloPy's `get_package("lak")`
-answers the package NAMED `lak` first, and hides a `lak_2` beside it.
+package by TYPE (`package_registry.model_packages_of_type`, the one rule every reader
+shares since ledger 352): FloPy's `get_package("lak")` answers the package NAMED `lak`
+first, and hides a `lak_2` beside it.
+
+**Several packages of one type: decide whether your rows are CELLS or FEATURES**
+(ledger 352). Never ask FloPy for "the" package by a type string (`get_package("lak")`,
+`model.gwf.lak`, the old `model.fl.lak`): it answers a package NAMED like the type
+first, and a list when none is. Ask `package_registry.model_packages_of_type(model,
+type)` for every package, or `one_package(model, type, package)` for one.
+- A view whose rows are **cells** (a list BC's inputs and budget terms, `model.budget`,
+  UZF's result terms, the combined surface-water exchange) reads EVERY package of the
+  type and tags each row with its package's name in `pname`; MF6 superposes them.
+- A view whose rows are one package's **numbered features** (lakes, reaches, UZF
+  `ifno`) reads ONE package through `one_package`, which raises
+  `SeveralPackagesError` naming them and the spelling that picks one --
+  `model.lak(package=...)`, reached by calling the package namespace -- and the
+  explorer passes its `package` to every builder below it. It is a `LookupError`,
+  not a `ValueError`, so a tier that tolerates a MISSING package cannot swallow it.
+- A budget-file read selects records by the term's EXACT name and by the writing
+  package's `paknam2`, never FloPy's first-substring `get_data(text=...)`.
 
 **A feature's value is ONE number, however many rows repeat it** (ledger 331). The LAK
 stage table carries a lake's stage once per CONNECTED CELL and the SFR stage table a
@@ -510,9 +528,11 @@ model.<pkg>.<inputs|results>.<noun>.<verb>()
 
 `model.<pkg>` is myflopy's view of one package; **FloPy's own package object is
 `model.fl.<pkg>`** (`model.fl.drn.stress_period_data`; any other package by name --
-`model.fl.npf`, `model.fl.disv`). `model.packages` holds what spans packages --
-`summary()` and `mosaic()`. Group and diff scopes still read
-`group.packages.<pkg>` / `diff.packages.<pkg>` (ledger 339).
+`model.fl.npf`, `model.fl.disv`) -- by TYPE, a list when the model carries several
+(ledger 352). `model.packages` holds what spans packages -- `summary()` and
+`mosaic()`. Group and diff scopes still read `group.packages.<pkg>` /
+`diff.packages.<pkg>` (ledger 339). On a model with several LAK, SFR or UZF packages,
+`model.lak(package="lak_2")` names the one a view reads.
 
 - **`<pkg>`** — the package: `sfr`, `lak`, `chd`, `riv`, `evt`, …
 - **`<inputs|results>`** — declared inputs, or simulated results.

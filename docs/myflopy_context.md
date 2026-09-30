@@ -140,6 +140,7 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 | Capability | Status | Where |
 |---|---|---|
 | Package explorers (`model.<pkg>.inputs/.results`, normalized tables + maps) | ✅ | `package_explorer.py` facade over the `package_*` family; registry in `package_registry.py` |
+| Several packages of one type (`riv` + `crisp`, `lak` + `lak_2`) | ✅ | ledger 352: `model.fl.<pkg>` / `model.package(<type>)` answer by TYPE (a list of several); cell views read every package tagged `pname`; LAK/SFR/UZF views read ONE, refuse several with `mf.SeveralPackagesError`, picked by `model.lak(package="lak_2")`. One rule: `package_registry.model_packages_of_type` / `one_package`. NOT built: a group/diff spelling (those tiers refuse such a model by name) |
 | Single-model config inspector (`model.config.settings/ims/tdis/section`) | ✅ | `project/model_config.py`, `simulation/base.py` |
 | **ONE `diff()` verb** — `model.diff(other)` / `group.diff()`, reference-star N-way | ✅ | `project/model_diff.py` (setup: packages + config + LAK/SFR connections), `project/model_results_diff.py` (heads, budget, per-package q, UZF, stage, MVR) |
 | Grouped multi-model access (`group.hds/conc/temp/bud/packages`, member + Δ maps) | ✅ | `project/group/` (`ModelGroup`; facade `model_group.py`) — full single↔group symmetry, transport fields included as of 2026-07-27 |
