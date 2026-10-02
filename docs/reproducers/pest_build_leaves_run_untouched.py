@@ -38,10 +38,17 @@ three cells, one head target. Built from a scratch working directory.
      ``load_mf6_run`` + ``k`` constant + one head target; the staging split (copy /
      load + externalize) is read from the build's own INFO log line. ``--large`` adds the
      same for a real run directory.
+  E. (ledger 357, the review of 356) A's model run under a RELATIVE path from a scratch
+     working directory -- every canonical PEST notebook's ``Path('../artifacts/...')`` --
+     built into the DEFAULT, therefore relative, template; then built again, reporting
+     whether the first build's ``PstFrom.log`` (in the template since 356) was closed
+     before the rebuild deleted the template. "During" is d8b297d's ``src`` (ledger 356).
 
 MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, FloPy 3.10.0, 2026-10-02)       before          after
   A  run directory: files changed / added / removed                 12 / 22 / 0     0 / 0 / 0
-     (7 of the 12 with their arrays moved out; the others re-stamped by FloPy)
+     (7 of the 12 with their arrays moved out; the others re-stamped by FloPy -- only
+     when the build writes in a later SECOND than the run did, so 7 to 12: the review
+     measured 7 / 22 / 0)
      m.disv lines after the build (502 before it)                     30              502
      model object: storage entries changed                            18              0
      working directory after the build                           PstFrom.log        empty
@@ -61,8 +68,19 @@ MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, FloPy 3.10.0, 2026-10-02)       before   
                                                                no file for 'k')
        of which the copy / loading and externalizing it                              0.09 s / 5.4 s
      (load average 0.2-1.0; every copy on tmpfs)
+     review (ledger 357), one build each, load average 0.1-1.3:   31.27 s          10.16 s
+  E  (before / during: d8b297d / after: ledger 357)
+     build                                                 before: built   during: CRASH
+                                                           FileNotFoundError moving the log
+                                                           to rel/p/runs/r.pest/s1 -- the
+                                                           template was made INSIDE the
+                                                           staging copy    after: built
+     run directory: changed / added / removed                   7 / 22 / 0     0 / 0 / 0
+     working directory after the build                  PstFrom.log, rel      rel
+     template's MF6 = source run, byte for byte                    yes            yes
+     second build: the first build's log closed first             no             yes
 
-Why each is so, and what was decided: ledger 356.
+Why each is so, and what was decided: ledgers 356 and 357.
 """
 
 from __future__ import annotations
@@ -137,7 +155,7 @@ def _run(root: Path, *, inflow):
     return run
 
 
-def _calibrate(model, workspace: Path):
+def _calibrate(model, workspace: Path | None):
     cal = model.pest("s1", workspace=workspace, start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), capture=True)
     cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
@@ -273,6 +291,36 @@ def section_c(root: Path, source: Path):
     _report_template(cal, crash, external, root / "c_rerun")
 
 
+def section_e(root: Path):
+    print("E. relative paths, as every canonical notebook gives them; then a second build")
+    working = root / "e_cwd"
+    working.mkdir()
+    previous = os.getcwd()
+    os.chdir(working)
+    try:
+        run = _run(Path("rel"), inflow=5.0)
+        model = run.model()
+        _report("model workspace, as the run gives it", model.workspace)
+        before = _tree(run.workspace)
+        try:
+            cal, crash = _calibrate(model, None), None
+        except Exception as error:  # noqa: BLE001 - a reproducer reports whatever the tree raised
+            # An OSError's second path is the destination it could not reach.
+            detail = getattr(error, "filename2", None) or str(error).splitlines()[0][:100]
+            cal, crash = None, f"CRASH {type(error).__name__}: {detail}"
+        _report("run directory: files changed / added / removed", _tree_change(before, _tree(run.workspace)))
+        _report("working directory after the build", sorted(p.name for p in working.iterdir()))
+        # Resolved while the working directory is still the one the paths are relative to.
+        _report_template(cal, crash, Path(run.workspace).resolve(), root / "e_rerun")
+        if cal is not None:
+            _report("default template (relative)", cal.template_workspace)
+            first = getattr(cal.pf.logger, "f", None)
+            _quietly(cal.build, "s1.pst", noptmax=0)
+            _report("second build: the first's log closed", getattr(first, "closed", None))
+    finally:
+        os.chdir(previous)
+
+
 class _StagingLog(logging.Handler):
     """Collects the build's own INFO line saying how long the staging took."""
 
@@ -357,7 +405,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--large", type=Path, default=None, help="a real run directory to time (copied first)")
     parser.add_argument("--canonical", default="full", choices=["full", "validation", "testing", "none"])
-    parser.add_argument("--sections", default="ABCD")
+    parser.add_argument("--sections", default="ABCDE")
     parser.add_argument("--repeat", type=int, default=2, help="timed builds per model in D")
     args = parser.parse_args()
     print(f"myflopy: {mf.__file__}")
@@ -368,6 +416,8 @@ def main() -> None:
             section_b(root)
         if "C" in args.sections and source is not None:
             section_c(root, source)
+        if "E" in args.sections:
+            section_e(root)
         if "D" in args.sections:
             section_d(root, canonical=args.canonical, large=args.large, repeat=args.repeat)
 

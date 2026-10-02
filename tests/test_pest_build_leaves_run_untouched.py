@@ -95,8 +95,10 @@ def _run(root: Path, *, inflow=5.0):
     return run
 
 
-def _calibrate(model, workspace: Path, *, name="s1"):
-    """A calibration of k (scalar: relayered), CHD (a list target) and k33 pilot points, built."""
+def _calibrate(model, workspace: Path | None, *, name="s1"):
+    """A calibration of k (scalar: relayered), CHD (a list target) and k33 pilot points, built.
+
+    ``workspace=None`` is ``model.pest``'s default, ``<model workspace>.pest/<name>``."""
 
     cal = model.pest(name, workspace=workspace, start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), capture=True)
@@ -390,6 +392,54 @@ def test_nothing_is_written_into_the_working_directory(tmp_path, monkeypatch):
     assert "finished: setting up dirs" in log, "the log's copy step was lost in the move"
     assert "style parameters for file(s)" in log, "nothing logged after the move"
     assert not cal._staging_workspace().exists()
+
+
+def test_a_relative_model_workspace_builds_its_template_where_it_names(tmp_path, monkeypatch):
+    """Every canonical PEST notebook runs its model under ``Path('../artifacts/...')``,
+    so the model's workspace -- and the default template beside it -- are RELATIVE.
+    ``PstFrom`` is constructed with the staging directory as the working directory, and
+    the template path was resolved INSIDE that: it was made in the staging copy and
+    deleted with it, and the build died moving the log (``FileNotFoundError``) -- ledger
+    357, the review of 356. The template is where its relative path names, from the
+    caller's working directory, which holds nothing else."""
+
+    monkeypatch.chdir(tmp_path)
+    run = _run(Path("rel"))
+    model = run.model()
+    assert not Path(model.workspace).is_absolute(), "the fixture must give a relative workspace"
+    before = _tree(run.workspace)
+
+    cal = _calibrate(model, None)
+    template = cal.template_workspace
+
+    assert not template.is_absolute()
+    assert template.resolve() == (tmp_path / "rel" / "p" / "runs" / "r.pest" / "s1").resolve()
+    assert (template / "s1.pst").is_file() and has_implicit(template / "m.lak")
+    assert "style parameters for file(s)" in (template / "PstFrom.log").read_text()
+    assert not cal._staging_workspace().exists()
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["rel"]
+    _assert_same_tree(before, _tree(run.workspace))
+    _assert_same_answers(run.workspace, _run_again(template, tmp_path / "rerun"))
+
+
+def test_a_second_build_closes_the_first_builds_log_before_deleting_its_template(tmp_path):
+    """The log has lived IN the template since ledger 356, and a rebuild of one
+    project deletes the template first, while the first ``PstFrom`` still held its log
+    open -- which Windows refuses to delete (reasoned from Windows' file semantics, not
+    run here). The rebuild closes it first (ledger 357), and logs to its own."""
+
+    run = _run(tmp_path)
+    cal = _calibrate(run.model(), tmp_path / "pest")
+    first = cal.pf.logger.f
+    assert not first.closed
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("s1.pst", noptmax=0)
+
+    assert first.closed, "the first build's PstFrom.log is still open in the template it deletes"
+    assert not cal.pf.logger.f.closed
+    assert "style parameters for file(s)" in (cal.template_workspace / "PstFrom.log").read_text()
 
 
 def test_a_model_never_written_is_refused_and_its_directory_left_alone(tmp_path):

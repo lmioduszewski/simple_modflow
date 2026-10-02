@@ -20,7 +20,8 @@ create files you may want to clean up from time to time.
 - `mp3du_test_tmp/`
   Older MP3DU temp workspace.
 - `PstFrom.log` and `examples/mf6/notebooks/PstFrom.log`
-  Generated PEST logs from local experiments.
+  Generated PEST logs from local experiments, left by PEST builds before ledger 356; a build
+  now writes its `PstFrom.log` into the PEST template, never the working directory.
 - `.build-tmp/` and `pytest-cache-files*/`
   Local scratch space from packaging/tests.
 

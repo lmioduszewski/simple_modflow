@@ -1781,7 +1781,11 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   built object) and an array target on a run opened with `mf.load_mf6_run` whose arrays
   were inline (loaded lazily: NPF never loaded, so nothing was externalized and the build
   found no file for `k`; with pilot points, no base array). pyEMU opens `PstFrom.log` in the CWD; it is built with
-  the staging dir as cwd and the log moved into the template. Cost: canonical full
+  the staging dir as cwd and the log moved into the template. **Resolve every path BEFORE
+  that `chdir`** (ledger 357): the template's was resolved inside it, so a RELATIVE model
+  workspace -- every calibrating notebook's `Path('../artifacts/...')` -- built its
+  template inside the staging copy and died; tests under `tmp_path` (absolute) never saw
+  it. A rebuild closes the previous build's log before deleting the template. Cost: canonical full
   (100x100x4) 31 s -> 9 s -- externalizing a LOADED simulation is far cheaper than a built
   one (23.9 s vs 2.0 s on the validation profile); the copy itself 0.03-0.09 s on tmpfs.
 - **Observations** accepted directly by `cal.observe(...)`/`cal.forecast(...)`: `HeadTargets`,

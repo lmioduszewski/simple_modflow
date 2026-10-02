@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 356 entries (361 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 357 entries (362 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 357 | The review of ledger 356: a PEST build from a RELATIVE model workspace -- every canonical PEST notebook's... | 2026-10-02 |
 | 356 | A PEST build leaves the source run and the model object untouched: it stages a copy of the run directory be... | 2026-10-02 |
 | 355 | The review of ledgers 353-354: a reach TARGET's pictures are stage views -- its time series, cross plot and... | 2026-10-02 |
 | 354 | The test suite makes a relative `PYTHONPATH` absolute when it starts, so every subprocess a test runs -- PE... | 2026-10-02 |
@@ -16601,8 +16602,14 @@ same day, which is the useful part of the result.
       **`PstFrom.log`:** pyEMU's `PstFrom.__init__` opens it in the working directory, no
       argument moves it. `PstFrom` is constructed with the staging directory as the
       working directory (`_working_directory`, a process-wide `chdir` restored in a
-      `finally`; every path made absolute first), then the log's handle is closed, the file
+      `finally`; ~~every path made absolute first~~ -- **NOT SO until ledger 357**: the
+      template's path was resolved INSIDE the block, against the staging directory, so a
+      RELATIVE template -- the default for every canonical notebook's relative model
+      workspace -- was made inside the staging copy and deleted with it, and the build
+      died moving the log), then the log's handle is closed, the file
       moved into the template and reopened for appending, so `pf.draw` keeps writing to it.
+      (A REBUILD deleted the template while the first build's handle on that log was still
+      open, which Windows refuses; closed first since ledger 357.)
       Judgment call: `chdir` over replacing `pyemu.Logger` for the call -- both are
       process-wide, and `chdir` leans only on what pyEMU does (write to the working
       directory). The move reads pyEMU's `Logger.f`/`.filename`; were those to change, the
@@ -16651,3 +16658,48 @@ same day, which is the useful part of the result.
       removal -> `..._a_failed_build...` and `test_nothing...`; the `mfsim.nam` refusal ->
       `test_a_model_never_written_is_refused_and_its_directory_left_alone`.
       `test_transport_parameters.py`'s relayer stub now hands over a staged simulation.
+357. **The review of ledger 356: a PEST build from a RELATIVE model workspace -- every canonical PEST notebook's `Path('../artifacts/...')` -- builds again, and a rebuild closes the first build's log before deleting the template that holds it (2026-10-02).**
+      **Found by running the build, not by reading it:** `_build_pstfrom` evaluated
+      `self.template_workspace.resolve()` INSIDE `_working_directory(staging)`, so a relative
+      template resolved against the STAGING directory: `PstFrom` built the template inside
+      the staging copy, the `finally` deleted it, and the build died first, moving the log
+      to the relative path that did not exist (`FileNotFoundError: ... -> 'rel/p/runs/r.pest/s1/PstFrom.log'`).
+      A relative template is the DEFAULT whenever the model's workspace is relative
+      (`default_pest_root` keeps it so), which is canonical_04, 05, 06 and 07,
+      `demo_ies_uncertainty` and the fast tour -- every notebook that calibrates. No test
+      caught it: every test builds under `tmp_path`, which is absolute. Both paths are
+      resolved before the `chdir` now, and the log is moved to the resolved template.
+      **The rebuild:** since 356 the log lives IN the template, and a second `build()` on one
+      project deletes the template (`_clear_stale_template`, then
+      `PstFrom(remove_existing=True)`) while the first `cal.pf` still held the log open.
+      Linux deletes it regardless; Windows refuses to delete an open file, which 356's own
+      log move already reasoned from -- so the rebuild closes the previous log first
+      (`_release_pyemu_log`). **Reasoned, not measured**: there is no Windows machine here;
+      what is measured is that the handle is closed.
+      **What the review checked and found sound** (each run, not read): the canonical
+      TRANSPORT demo (testing profile: GWF + GWT, SFR, LAK, UZF, MVR, five OBS families)
+      calibrated on `k`, `porosity` (scalar, relayered), `recharge` and `k33` pilot points
+      -- a58a8c3 rewrote 39 run files and added 132, d8b297d none; MF6 run directly in each
+      template matched the source run byte for byte on all 21 output files (heads, both CBCs,
+      UCN, LAK/SFR stage and budget, MVR, every OBS CSV), with the same hashes on both trees,
+      and the two `.pst` files hold identical parameter and observation data; every target
+      family (head, SFR flow and stage, DRN zone, lake stage) plus a `drn` list parameter
+      left the run untouched; an explicit `workspace=` inside the run left the run's own
+      files unchanged and added only the template; the cost (canonical full, one build each)
+      31.27 s on a58a8c3 against 10.16 s on d8b297d. Two of 356's revert checks redone:
+      `keep_implicit` out of the staged load fails the same 4 tests, and the `s2` test fix
+      reverted is reported by the working-directory guard. 356's "12 changed" in the run
+      directory is clock-dependent -- 7 always, up to 5 more re-stamped only when the build
+      writes in a later second than the run did; the review measured 7.
+      **Not changed:** the staging copy carries the run's MF6 OUTPUT files (a CBC is most of
+      a large run) into the staging directory and then the template, a second full copy of
+      the run on disk while the build runs (356 says so); leaving them out is an
+      optimization this review did not measure. The `chdir` stays process-wide: a build
+      run from a second THREAD of the same process would move the first's working
+      directory for the constructor's duration -- nothing in myflopy builds from threads.
+      Reproducer: `docs/reproducers/pest_build_leaves_run_untouched.py` section E (on
+      a58a8c3, d8b297d and this tree). Tests (`tests/test_pest_build_leaves_run_untouched.py`,
+      now 14): `test_a_relative_model_workspace_builds_its_template_where_it_names` fails
+      with the template resolved inside the block again, and
+      `test_a_second_build_closes_the_first_builds_log_before_deleting_its_template` fails
+      without `_release_pyemu_log`.

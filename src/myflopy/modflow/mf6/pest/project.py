@@ -746,11 +746,18 @@ class PestProject:
         if spatial_reference is None:
             spatial_reference = getattr(staged_model(self, self.model.name), "modelgrid", None)
 
+        # Both resolved HERE, against the caller's working directory, never inside
+        # the block: there a relative path resolves against the STAGING directory,
+        # so a relative template -- the default whenever the model's workspace is
+        # relative, as in every canonical notebook's `Path('../artifacts/...')` --
+        # was made inside the staging copy and deleted with it (review of ledger
+        # 356, ledger 357).
         staging = Path(staging).resolve()
+        template = self.template_workspace.resolve()
         with _working_directory(staging):
             self.pf = PstFrom(
                 original_d=staging,
-                new_d=self.template_workspace.resolve(),
+                new_d=template,
                 remove_existing=True,
                 longnames=self.longnames,
                 spatial_reference=spatial_reference,
@@ -758,10 +765,10 @@ class PestProject:
                 start_datetime=self.start_datetime,
                 echo=False,
             )
-        self._adopt_pyemu_log(staging / PYEMU_LOG)
+        self._adopt_pyemu_log(staging / PYEMU_LOG, template)
 
-    def _adopt_pyemu_log(self, opened_at: Path) -> None:
-        """Move ``PstFrom``'s open log into the template and keep it logging there.
+    def _adopt_pyemu_log(self, opened_at: Path, template: Path) -> None:
+        """Move ``PstFrom``'s open log into ``template`` and keep it logging there.
 
         The handle is closed before the move -- Windows refuses to move or delete
         an open file -- and reopened for appending, so ``pf.draw`` and the rest of
@@ -776,11 +783,27 @@ class PestProject:
         if handle is None or not Path(opened_at).is_file():
             return
         handle.close()
-        destination = self.template_workspace / PYEMU_LOG
+        destination = Path(template) / PYEMU_LOG
         os.replace(opened_at, destination)
         # The logger owns this handle for the life of `cal.pf`, as pyEMU's own did.
         logger.f = open(destination, "a")  # noqa: SIM115
         logger.filename = str(destination)
+
+    def _release_pyemu_log(self) -> None:
+        """Close the previous build's ``PstFrom`` log, which lives in the template a rebuild deletes.
+
+        Since ledger 356 the log is IN the template, and a second ``build()`` on one
+        project removes the template first (``_clear_stale_template``, then
+        ``PstFrom(remove_existing=True)``); the previous ``cal.pf`` still held the file
+        open, which Windows refuses to delete (ledger 357 -- reasoned from Windows'
+        file semantics, not measured: there is no Windows machine here). That
+        ``cal.pf`` is replaced by the rebuild; a rebuild that fails after this has
+        already deleted the template the old ``cal.pf`` described.
+        """
+
+        handle = getattr(getattr(self.pf, "logger", None), "f", None)
+        if handle is not None and not getattr(handle, "closed", True):
+            handle.close()
 
     def _staging_workspace(self) -> Path:
         """Where the build stages its copy of the run: ``<template>.staging``, beside the template."""
@@ -1315,6 +1338,7 @@ class PestProject:
 
         target_name = Path(filename).name if filename else f"{self.name}.pst"
         self._refuse_shared_prefixes()
+        self._release_pyemu_log()
         self._clear_stale_template()
         staging = self._staging_workspace()
         try:
