@@ -577,11 +577,14 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5569 passed / 4 skipped**, 2026-10-02, the PEST-build series, ledgers
-  356-360 -- the build reads the run only, observation groups, and a build deletes its
-  workspace only when a build wrote it): serial (`-n0`) **7m41s** and `-n 10` **1m40s**, both
-  in a worktree outside `.claude` with a RELATIVE `PYTHONPATH=src`, the parallel one starting
-  at a load average of ~2.5 and the serial one at ~8.9 as the parallel run ended. Before it,
+- Full suite (**5583 passed / 4 skipped**, 2026-10-02, the PEST-build series, ledgers
+  356-361 -- the build reads the run only, observation groups, a build deletes its
+  workspace only when a build wrote it, and a parallel run its master and workers only
+  when they are copies of its template): serial (`-n0`) **7m41s** and `-n 10` **1m34s**,
+  both in a checkout outside `.claude` with a RELATIVE `PYTHONPATH=src`, the parallel one
+  starting at a load average of ~0.4 and the serial one at ~10 as the parallel run ended.
+  Before it, 5569 passed / 4
+  skipped (ledger 360): serial 7m41s and `-n 10` 1m40s, at ~8.9 and ~2.5. Before that,
   5516 passed / 4 skipped (ledgers 353-355 -- SFR stage views
   masked, the suite's `PYTHONPATH` made absolute, and their review): serial (`-n0`)
   **7m47s** and `-n 10` **1m36s**, both in a worktree outside `.claude` with a RELATIVE
@@ -1797,17 +1800,23 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `model.pest(name, workspace=W)` makes `W` the template, and `build()` used to `rmtree` it
   WHATEVER it held, and `PstFrom(remove_existing=True)` again: `W` = a Project root
   deleted the model's own run. The template and `<W>.staging` are now deleted only when
-  absent, empty, or carrying the `.myflopy_pest_build.json` the build writes into each,
+  absent, empty, or carrying the `myflopy_pest_build.json` the build writes into each,
   naming the directory's RESOLVED path -- so a COPY (pyEMU's IES master and workers, a
   backup) is not taken for one; a template built before 360 counts only when its metadata
-  names this calibration and this run and it sits where `model.pest(name)` puts it.
-  Anything else is REFUSED (`FileExistsError`), checked before anything is deleted, and
-  `PstFrom` gets `remove_existing=False`. A `W` that is, contains or sits inside the run
-  directory is refused (`ValueError`) at `model.pest(...)` and at `build()` whatever
-  markers it holds -- ledger 107's allowance of a template inside the run is gone. NOT
-  guarded: `run_ies`/`prior(workers=N)` -- pyEMU's `start_workers` removes `master_dir`
-  (default `<template parent>/<name>_ies_master`) and `worker_0..N-1` beside it,
-  whatever they hold.
+  names this calibration and this run and it IS where `model.pest(name)` puts it (ledger
+  361: the NAME alone was compared, so a `cp -r` backup was deleted). **The marker is
+  VISIBLE on purpose** (361): as a dot-file it survived `rm W/*`, and a folder emptied that
+  way and refilled was deleted by the next build. Anything else is REFUSED
+  (`FileExistsError`), checked before anything is deleted, and `PstFrom` gets
+  `remove_existing=False`. A `W` that is, contains or sits inside the run directory is
+  refused (`ValueError`) at `model.pest(...)` and at `build()` whatever markers it holds --
+  ledger 107's allowance of a template inside the run is gone. **The parallel RUN is
+  guarded the same way** (361): pyEMU's `start_workers` removes `master_dir` (default
+  `<template parent>/<name>_ies_master`) and `worker_0..N-1` beside it whatever they hold,
+  so `run_ies`/`prior(workers=N)` first requires each to be absent, empty, or a COPY of
+  THIS template -- pyEMU copies the marker, which names the template. Every calibration of
+  one model shares `<model>.pest/` as its worker root, so a second calibration's run
+  deleted the first's workers, live or not; that is refused now.
 - **Observations** accepted directly by `cal.observe(...)`/`cal.forecast(...)`: `HeadTargets`,
   `LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets` (or their
   pre-built `*ObservationSpec`). All are wired into the native build + forward run.

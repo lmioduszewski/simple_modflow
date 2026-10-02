@@ -9,7 +9,7 @@ the model's own run was deleted, and the build then failed with "No MF6 simulati
 the same way.
 
 A build now deletes each of the two only when it is absent, empty, or one a previous
-build wrote there in that role -- marked by the ``.myflopy_pest_build.json`` the build
+build wrote there in that role -- marked by the ``myflopy_pest_build.json`` the build
 writes into it, naming the directory -- and refuses ``W`` (or its staging directory)
 that is, contains or sits inside the run directory whatever it holds. Everything is
 checked before anything is deleted, and ``PstFrom`` deletes nothing itself.
@@ -191,6 +191,26 @@ def test_a_workspace_whose_staging_directory_is_the_run_is_refused(tmp_path):
     assert _tree(run) == before
 
 
+def test_a_staging_directory_linked_to_the_run_is_refused_even_marked(tmp_path):
+    """``W.staging`` a symbolic link to the run, the run carrying a staging marker that
+    names it: judged by the path as linked, the run read as a staging directory a build
+    wrote and was deleted. The link is resolved before the overlap is judged."""
+
+    model = _model(tmp_path)
+    run = Path(model.workspace)
+    _write_build_marker(run, "staging")
+    (tmp_path / "tmpl.staging").symlink_to(run, target_is_directory=True)
+    before = _tree(run)
+
+    with pytest.raises(ValueError, match=r"its staging directory .*IS the model's run directory"):
+        model.pest("cal", workspace=tmp_path / "tmpl", start_datetime="2024-01-01")
+    cal = _calibration(model, tmp_path / "elsewhere")
+    cal.template_workspace = tmp_path / "tmpl"
+    with pytest.raises(ValueError, match=r"its staging directory .*IS the model's run directory"):
+        _build(cal)
+    assert _tree(run) == before
+
+
 def test_a_user_folder_where_the_staging_copy_goes_is_refused(tmp_path):
     """``W`` absent, ``W.staging`` a folder of the user's: it was deleted, used and
     removed. Refused before ``W`` is made."""
@@ -269,6 +289,76 @@ def test_a_workspace_that_is_a_file_is_refused(tmp_path):
     assert path.read_text(encoding="utf-8") == "not a folder\n"
 
 
+def test_a_template_emptied_with_a_glob_and_refilled_is_refused(tmp_path):
+    """``rm W/*`` -- or a file manager's select-all delete, which skips hidden files --
+    empties a template of everything it SHOWS. The marker was a dot-file, so it
+    survived, and the next build deleted the user's files put there since (ledger
+    361). It is a visible file now: emptied with the rest, the folder is refused."""
+
+    model = _model(tmp_path)
+    workspace = tmp_path / "calib"
+    _build(_calibration(model, workspace))
+    for entry in workspace.iterdir():
+        if not entry.name.startswith("."):   # what `rm calib/*` removes
+            shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+    (workspace / "survey.csv").write_text("name,head\nW,8.6\n", encoding="utf-8")
+    (workspace / "report.docx").write_bytes(b"the user's report")
+    before = _tree(workspace)
+
+    with pytest.raises(FileExistsError, match="no myflopy PEST build wrote it"):
+        _build(_calibration(model, workspace))
+    assert _tree(workspace) == before
+
+
+@pytest.mark.parametrize("given", [".", ""])
+def test_a_workspace_with_no_name_of_its_own_is_the_folder_it_names(tmp_path, monkeypatch, given):
+    """``workspace="."`` (or ``""``) is the working directory. Its staging directory was
+    named from the path AS GIVEN, which has no name, and the build died on
+    ``PosixPath('.') has an empty name``; it is named from the resolved template now,
+    so the working directory is judged like any other folder -- refused here, holding
+    the user's files, naming the spelling (ledger 361)."""
+
+    model = _model(tmp_path)
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "wells.csv").write_text("name,x,y\nW,1,2\n", encoding="utf-8")
+    monkeypatch.chdir(data)
+
+    with pytest.raises(FileExistsError, match="already holds 1 entry") as refused:
+        _build(_calibration(model, given))
+    assert "workspace=<a new or empty folder>" in str(refused.value)
+    assert _tree(data) == {"wells.csv": hashlib.sha256(b"name,x,y\nW,1,2\n").hexdigest()}
+    assert not (tmp_path / "data.staging").exists()
+
+
+def test_the_file_system_root_is_refused_naming_the_spelling(tmp_path):
+    model = _model(tmp_path)
+    with pytest.raises(ValueError, match=r"CONTAINS the model's run directory") as refused:
+        model.pest("cal", workspace="/", start_datetime="2024-01-01")
+    assert "workspace=<a new or empty folder>" in str(refused.value)
+
+
+def test_a_template_pstfrom_refused_after_copying_it_is_rebuilt_next_time(tmp_path):
+    """``PstFrom`` copies the staging directory into the template and only then
+    refuses a run holding ``org/`` (one made in a copy of a template). The template it
+    left carried the STAGING copy's marker, so the next build refused it as a folder no
+    build wrote. It is marked as the template when ``PstFrom`` fails (ledger 361)."""
+
+    model = _model(tmp_path)
+    run = Path(model.workspace)
+    workspace = tmp_path / "calib"
+    (run / "org").mkdir()
+    (run / "org" / "left.txt").write_text("from a template\n", encoding="utf-8")
+    with pytest.raises(Exception, match="'org' subdir already exists"):
+        _build(_calibration(model, workspace))
+    assert workspace.is_dir() and not (tmp_path / "calib.staging").exists()
+
+    shutil.rmtree(run / "org")
+    cal = _calibration(model, workspace)
+    _build(cal)
+    _assert_built_at(cal, workspace)
+
+
 # -- used: absent, empty, and a template a build wrote ------------------------------------
 
 
@@ -317,10 +407,11 @@ def test_an_empty_folder_is_used(tmp_path):
 
 def test_a_template_built_before_the_marker_is_rebuilt_only_as_this_calibrations(tmp_path):
     """A template built before ledger 360 has no marker. It is cleared when its
-    ``myflopy_pest_metadata.json`` names THIS calibration and this run and it is named
-    as ``model.pest(name)`` names one -- the template a re-run notebook cell meets
-    after the upgrade. A copy of it under another calibration's name (an IES master
-    is ``<name>_ies_master``) is not."""
+    ``myflopy_pest_metadata.json`` names THIS calibration and this run and it IS the
+    directory ``model.pest(name)`` builds it in -- the template a re-run notebook cell
+    meets after the upgrade. A copy of it anywhere else is not: under another
+    calibration's name (an IES master is ``<name>_ies_master``), or under its own
+    name in another folder, as ``cp -r`` makes a backup (ledger 361)."""
 
     model = _model(tmp_path)
     default = Path(model.workspace).parent / "r.pest" / "cal"
@@ -337,6 +428,15 @@ def test_a_template_built_before_the_marker_is_rebuilt_only_as_this_calibrations
     with pytest.raises(FileExistsError, match="no myflopy PEST build wrote it"):
         _build(_calibration(model, master))
     assert _tree(master) == before
+    # A backup `cp -r` keeps the template's NAME: only the directory's name was
+    # compared until ledger 361, so this copy -- results and all -- was deleted.
+    backup = tmp_path / "backups" / "cal"
+    shutil.copytree(default, backup)
+    (backup / "cal.phi.actual.csv").write_text("iteration,mean\n0,1.0\n", encoding="utf-8")
+    backup_before = _tree(backup)
+    with pytest.raises(FileExistsError, match="no myflopy PEST build wrote it"):
+        _build(_calibration(model, backup))
+    assert _tree(backup) == backup_before
 
     cal = _calibration(model, None)
     _build(cal)
@@ -365,6 +465,122 @@ def test_the_staging_copy_is_marked_as_the_builds_while_the_build_runs(tmp_path,
     cal = _calibration(model, tmp_path / "tmpl")
     _build(cal)
 
+    # It says what it is to whoever finds it; the rest is what a build reads.
+    assert "may DELETE the directory" in seen.pop("note")
     assert seen == {"written_by": "myflopy PEST build", "role": "staging",
                     "directory": str((tmp_path / "tmpl.staging").resolve())}
     _assert_built_at(cal, tmp_path / "tmpl")
+
+
+# -- the parallel run: pyEMU's master and worker directories (ledger 361) ------------------
+#
+# `start_workers` DELETES `master_dir` and `worker_0..N-1` in its parent whenever they
+# exist, then copies the template into each. These run pyEMU's own `start_workers`, with
+# `true` as the PEST++ executable -- it exits at once, so the run "finishes" without PEST
+# -- and the results reader stubbed: what is measured is what pyEMU deletes.
+
+_TRUE = shutil.which("true")
+needs_true = pytest.mark.skipif(_TRUE is None, reason="needs a `true` executable on PATH")
+
+
+@pytest.fixture
+def _no_results_reader(monkeypatch):
+    """The run's results are not read: `true` wrote none."""
+
+    import myflopy.modflow.mf6.pest.ies as ies
+
+    monkeypatch.setattr(ies, "IesResults", lambda workspace, **_: Path(workspace))
+
+
+def _built(tmp_path, name="cal"):
+    model = _model(tmp_path)
+    cal = _calibration(model, None, name=name)
+    _build(cal)
+    return model, cal
+
+
+@needs_true
+def test_a_master_dir_holding_the_users_files_is_refused_before_pyemu_starts(tmp_path, _no_results_reader):
+    """``master_dir=`` a folder of the user's -- "collect the results in my results
+    folder" -- was deleted by pyEMU and the template copied in its place."""
+
+    _, cal = _built(tmp_path)
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "earlier_run.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    before = _tree(results)
+
+    with pytest.raises(FileExistsError, match="not a copy of this calibration's template") as refused:
+        cal.run_ies(workers=2, master_dir=results, exe="true")
+    message = str(refused.value)
+    assert "master_dir=<a new or empty folder>" in message and "delete it yourself" in message
+    assert _tree(results) == before
+
+
+@needs_true
+def test_a_users_worker_folder_beside_the_master_is_refused(tmp_path, _no_results_reader):
+    """The workers go in the master's PARENT as ``worker_0``.. -- a folder of the user's
+    named so was deleted."""
+
+    _, cal = _built(tmp_path)
+    worker = cal.template_workspace.parent / "worker_1"
+    worker.mkdir()
+    (worker / "mine.txt").write_text("the user's\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match=r"worker directory \S*worker_1 already holds 1 entry"):
+        cal.run_ies(workers=2, exe="true")
+    assert (worker / "mine.txt").read_text(encoding="utf-8") == "the user's\n"
+    assert not (cal.template_workspace.parent / "cal_ies_master").exists()
+
+
+@needs_true
+def test_another_calibrations_workers_are_refused_as_a_run_that_may_be_going(tmp_path, _no_results_reader):
+    """Every calibration of one model shares ``<model>.pest/`` as its worker root in the
+    default layout, so a second calibration's parallel run deleted the first's workers
+    -- while it ran, if it was running. A copy of ANOTHER template is refused."""
+
+    model, first = _built(tmp_path, name="first")
+    worker = first.template_workspace.parent / "worker_0"
+    shutil.copytree(first.template_workspace, worker)   # what start_workers makes of it
+    before = _tree(worker)
+    second = _calibration(model, None, name="second")
+    _build(second)
+
+    with pytest.raises(FileExistsError, match="another calibration's template may be"):
+        second.prior(workers=2, exe="true")
+    assert _tree(worker) == before
+
+
+@needs_true
+@pytest.mark.parametrize("where", ["run", "template", "inside template", "its own worker"])
+def test_a_master_over_the_run_or_the_template_is_refused(tmp_path, _no_results_reader, where):
+    model, cal = _built(tmp_path)
+    run, template = Path(model.workspace), cal.template_workspace
+    master, match = {
+        "run": (run, "IS the model's run directory"),
+        "template": (template, "IS this calibration's template"),
+        "inside template": (template / "master", "sits INSIDE this calibration's template"),
+        "its own worker": (tmp_path / "w" / "worker_1", "is also one of its worker directories"),
+    }[where]
+    (tmp_path / "w").mkdir()
+    before_run, before_template = _tree(run), _tree(template)
+    with pytest.raises(ValueError, match=match):
+        cal.run_ies(workers=2, master_dir=master, exe="true")
+    assert _tree(run) == before_run and _tree(template) == before_template
+
+
+@needs_true
+def test_a_master_and_workers_this_calibration_left_are_replaced(tmp_path, _no_results_reader):
+    """A previous run of THIS calibration -- a copy pyEMU made of its template, marker
+    and all -- is cleared, results included, as it always was."""
+
+    _, cal = _built(tmp_path)
+    root = cal.template_workspace.parent
+    master, worker = root / "cal_ies_master", root / "worker_0"
+    for copy in (master, worker):
+        shutil.copytree(cal.template_workspace, copy)
+        (copy / "cal.phi.actual.csv").write_text("iteration,mean\n0,1.0\n", encoding="utf-8")
+
+    assert cal.run_ies(workers=2, exe="true") == master
+    assert (master / "cal.pst").is_file() and not (master / "cal.phi.actual.csv").exists()
+    assert not worker.exists()   # made again, and cleaned up by pyEMU when the run ended

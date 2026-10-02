@@ -72,11 +72,21 @@ STAGING_SUFFIX = ".staging"
 #: directory it was written for and that directory's role: the one sign by which a
 #: later build may DELETE that directory (ledger 360). A build deletes a directory
 #: only when it is absent, empty, or carries this file naming it -- a folder the build
-#: did not write is refused, whatever else it holds.
-BUILD_MARKER = ".myflopy_pest_build.json"
+#: did not write is refused, whatever else it holds. VISIBLE, not a dot-file (ledger
+#: 361): a hidden marker survived ``rm <template>/*`` and Finder's select-all delete,
+#: so a folder emptied that way and refilled with the user's files still carried it,
+#: and the next build deleted them.
+BUILD_MARKER = "myflopy_pest_build.json"
 
 #: The ``written_by`` value of a :data:`BUILD_MARKER`.
 _MARKER_WRITER = "myflopy PEST build"
+
+#: What a :data:`BUILD_MARKER` says about itself, for the person who finds one.
+_MARKER_NOTE = (
+    "Written by a myflopy PEST build. While this file names this directory, a later "
+    "build may DELETE the directory and everything in it (ledger 360). Delete this "
+    "file to keep the directory from being deleted."
+)
 
 logger = get_logger(__name__)
 
@@ -144,27 +154,58 @@ def _write_build_marker(directory: Path, role: str) -> None:
     directory = Path(directory).resolve()
     (directory / BUILD_MARKER).write_text(
         json.dumps(
-            {"written_by": _MARKER_WRITER, "role": role, "directory": str(directory)},
+            {
+                "written_by": _MARKER_WRITER,
+                "role": role,
+                "directory": str(directory),
+                "note": _MARKER_NOTE,
+            },
             indent=2,
         ),
         encoding="utf-8",
     )
 
 
-def _written_by_a_build(directory: Path, role: str) -> bool:
-    """Whether ``directory`` (resolved) holds a :data:`BUILD_MARKER` naming it, in ``role``."""
+def _build_marker(directory: Path) -> dict | None:
+    """The :data:`BUILD_MARKER` in ``directory``, or ``None`` when it holds no readable one."""
 
     try:
-        marker = json.loads((directory / BUILD_MARKER).read_text(encoding="utf-8"))
+        marker = json.loads((Path(directory) / BUILD_MARKER).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         # Absent, a directory, unreadable, not UTF-8 or not JSON: no build wrote it.
-        return False
+        return None
+    if not isinstance(marker, dict) or marker.get("written_by") != _MARKER_WRITER:
+        return None
+    return marker
+
+
+def _written_by_a_build(directory: Path, role: str, *, naming: Path | None = None) -> bool:
+    """Whether ``directory`` holds a :data:`BUILD_MARKER` in ``role`` naming ``naming``.
+
+    ``naming`` defaults to ``directory`` itself (resolved by the caller): the directory a
+    build wrote. Another path asks whether ``directory`` is a COPY of the one named --
+    pyEMU's ``start_workers`` copies a template, marker and all, into the IES master and
+    each worker (ledger 361).
+    """
+
+    marker = _build_marker(directory)
     return (
-        isinstance(marker, dict)
-        and marker.get("written_by") == _MARKER_WRITER
+        marker is not None
         and marker.get("role") == role
-        and marker.get("directory") == str(directory)
+        and marker.get("directory") == str(directory if naming is None else naming)
     )
+
+
+def _relation(directory: Path, other: Path) -> str | None:
+    """How resolved ``directory`` overlaps resolved ``other``: ``"IS"``, ``"CONTAINS"``, ``"sits INSIDE"`` or ``None``."""
+
+    if directory == other:
+        return "IS"
+    if other.is_relative_to(directory):
+        return "CONTAINS"
+    if directory.is_relative_to(other):
+        return "sits INSIDE"
+    return None
 
 
 @contextlib.contextmanager
@@ -261,10 +302,11 @@ class PestProject:
         it, and the staging directory it makes beside it, ``<workspace>.staging``
         (removed again when the build ends) -- each ONLY when it is absent, empty,
         or a directory a previous build wrote there in that role, which the build
-        marks with a ``.myflopy_pest_build.json`` naming the directory (a template
-        built before that file existed counts when its
-        ``myflopy_pest_metadata.json`` names this ``name`` and this run directory
-        and the directory is named as the default names it). So re-running
+        marks with a ``myflopy_pest_build.json`` naming the directory -- a visible
+        file, so emptying the folder removes it too (a template built before that
+        file existed counts when it IS the default template directory and its
+        ``myflopy_pest_metadata.json`` names this ``name`` and this run directory;
+        ledger 361). So re-running
         :meth:`build` on the same ``workspace`` rebuilds it, a serial
         :meth:`run_ies`/:meth:`prior`'s output in it included, while an existing
         folder a build did not write -- a Project root, a data folder, a copy of a
@@ -782,25 +824,24 @@ class PestProject:
 
         run = self.original_workspace.resolve()
         template = self.template_workspace.resolve()
-        staging = self._staging_workspace().resolve()
-        for directory, what in (
-            (template, "it"),
-            (staging, f"its staging directory {staging}"),
-        ):
-            if directory == run:
-                relation = "IS the model's run directory"
-            elif run.is_relative_to(directory):
-                relation = f"CONTAINS the model's run directory {run}"
-            elif directory.is_relative_to(run):
-                relation = f"sits INSIDE the model's run directory {run}"
-            else:
+        checks = [(template, "it")]
+        # The staging directory only once the template passes: the file-system root has
+        # no staging directory to name, and it contains every run.
+        if _relation(template, run) is None:
+            # Resolved itself too: `<template>.staging` may be a link to the run.
+            staging = self._staging_workspace().resolve()
+            checks.append((staging, f"its staging directory {staging}"))
+        for directory, what in checks:
+            relation = _relation(directory, run)
+            if relation is None:
                 continue
             raise ValueError(
                 f"Refusing to build calibration {self.name!r} at workspace="
-                f"{str(self.template_workspace)!r}: {what} {relation}. A build deletes "
-                "its workspace and the staging directory beside it, then copies the run "
-                "directory into them, so the run would be deleted, or copied into "
-                "itself.\n\n" + self._where_to_build_instead()
+                f"{str(self.template_workspace)!r}: {what} {relation} the "
+                f"model's run directory" + ("" if relation == "IS" else f" {run}")
+                + ". A build deletes its workspace and the staging directory beside it, "
+                "then copies the run directory into them, so the run would be deleted, "
+                "or copied into itself.\n\n" + self._where_to_build_instead()
             )
 
     def _clearance(self, directory: Path, role: str) -> str:
@@ -852,15 +893,28 @@ class PestProject:
     def _a_template_built_before_the_marker(self, directory: Path) -> bool:
         """A template a build wrote before :data:`BUILD_MARKER` existed: THIS calibration's, by its metadata.
 
-        It has no marker (a marker, present, decides alone), it is named as
-        ``model.pest(name)`` names a template, and its ``myflopy_pest_metadata.json``
-        records this project's name and this model's run directory -- so an IES
-        master or worker copy (named otherwise) and another calibration's template
-        are not taken for it (ledger 360).
+        It has no marker (a marker, present, decides alone), it IS the directory
+        ``model.pest(name)`` builds this calibration's template in, and its
+        ``myflopy_pest_metadata.json`` records this project's name and this model's run
+        directory -- so another calibration's template, and a COPY of this one anywhere
+        else (an IES master, or a backup ``cp -r`` kept under its own name), are not
+        taken for it (ledger 360). Until ledger 361 only the directory's NAME was
+        compared, so a backup named as the template was deleted when given as
+        ``workspace=``.
         """
 
-        if os.path.lexists(directory / BUILD_MARKER) or directory.name != _pest_run_slug(self.name):
+        if os.path.lexists(directory / BUILD_MARKER) or directory != self._default_template().resolve():
             return False
+        return self._metadata_names_this_calibration(directory)
+
+    def _metadata_names_this_calibration(self, directory: Path) -> bool:
+        """Whether ``directory``'s ``myflopy_pest_metadata.json`` names this project and this run directory.
+
+        What a template a build wrote before ledger 360 -- and every copy pyEMU made of
+        it -- carries in place of a :data:`BUILD_MARKER`; where it counts, the caller
+        has already pinned the directory's location.
+        """
+
         try:
             metadata = json.loads((directory / METADATA_FILENAME).read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -943,19 +997,30 @@ class PestProject:
         # 356, ledger 357).
         staging = Path(staging).resolve()
         template = self.template_workspace.resolve()
-        with _working_directory(staging):
-            self.pf = PstFrom(
-                original_d=staging,
-                new_d=template,
-                # `_clear_stale_template` removed what may be removed; anything still
-                # there is refused by pyEMU rather than deleted (ledger 360).
-                remove_existing=False,
-                longnames=self.longnames,
-                spatial_reference=spatial_reference,
-                zero_based=self.zero_based,
-                start_datetime=self.start_datetime,
-                echo=False,
-            )
+        try:
+            with _working_directory(staging):
+                self.pf = PstFrom(
+                    original_d=staging,
+                    new_d=template,
+                    # `_clear_stale_template` removed what may be removed; anything still
+                    # there is refused by pyEMU rather than deleted (ledger 360).
+                    remove_existing=False,
+                    longnames=self.longnames,
+                    spatial_reference=spatial_reference,
+                    zero_based=self.zero_based,
+                    start_datetime=self.start_datetime,
+                    echo=False,
+                )
+        except BaseException:
+            # `PstFrom` copies the staging directory into the template FIRST and can
+            # refuse after -- a run holding `org/` or `mult/` (one made in a copy of a
+            # template) does. That template is this build's: it carries the staging
+            # copy's own marker, naming THIS staging directory, which nothing but
+            # pyEMU's copy of it can. Marked as the template, the next build clears it
+            # rather than refusing a folder this build wrote (ledger 361).
+            if _written_by_a_build(template, "staging", naming=staging):
+                _write_build_marker(template, "template")
+            raise
         # First, so a build that fails from here on leaves a template the next one may clear.
         _write_build_marker(template, "template")
         self._adopt_pyemu_log(staging / PYEMU_LOG, template)
@@ -999,9 +1064,20 @@ class PestProject:
             handle.close()
 
     def _staging_workspace(self) -> Path:
-        """Where the build stages its copy of the run: ``<template>.staging``, beside the template."""
+        """Where the build stages its copy of the run: ``<template>.staging``, beside the template.
 
-        template = self.template_workspace
+        Named from the RESOLVED template (ledger 361): ``workspace="."`` or ``""`` has no
+        name of its own, and ``x/..`` named ``x/...staging``, INSIDE ``x``. A template
+        with no name at all -- the file-system root -- is refused naming the spelling.
+        """
+
+        template = self.template_workspace.resolve()
+        if not template.name:
+            raise ValueError(
+                f"Refusing to build calibration {self.name!r} at workspace="
+                f"{str(self.template_workspace)!r}: it is the root of the file system.\n\n"
+                + self._where_to_build_instead()
+            )
         return template.with_name(f"{template.name}{STAGING_SUFFIX}")
 
     def _stage_model(self) -> Path:
@@ -1768,7 +1844,14 @@ class PestProject:
             Master directory for a parallel run; ``None`` (default) uses
             ``<name>_ies_master`` beside the template workspace, which is where
             ``model.pest_runs`` looks. The workers are created in its parent
-            directory. Unused by a serial run.
+            directory, as ``worker_0`` .. ``worker_<workers-1>``. Unused by a
+            serial run. **pyEMU deletes the master and worker directories before
+            it copies the template into them** (ledger 361), so each must be
+            absent, empty, or a copy of THIS calibration's template -- a master or
+            worker a previous run of it left, deleted with its results; anything
+            else is refused before pyEMU starts (``FileExistsError``), and a
+            master or worker that is, contains or sits inside the run directory
+            or the template is refused whatever it holds (``ValueError``).
         exe : str, optional
             PEST++ IES executable name, default ``"pestpp-ies"`` (a trailing
             ``.exe`` is dropped). When the model's MF6 executable resolves to an
@@ -1793,7 +1876,14 @@ class PestProject:
         ------
         ValueError
             When :meth:`build` has not run, or ``cal.pst`` has been put in
-            ``regularization`` mode, which PESTPP-IES cannot parse.
+            ``regularization`` mode, which PESTPP-IES cannot parse; or, for a
+            parallel run, when the master or a worker directory is, contains or
+            sits inside the run directory or the template, or the master is named
+            as one of its own workers (ledger 361).
+        FileExistsError
+            For a parallel run, before pyEMU starts, when the master or a worker
+            directory is a file or a non-empty folder that is not a copy of this
+            calibration's template (ledger 361): pyEMU would delete it.
         """
 
         from myflopy.modflow.mf6.pest.ies import IesResults
@@ -1852,7 +1942,9 @@ class PestProject:
         master_dir : str or pathlib.Path or None, optional
             Master directory for a parallel run. ``None`` (default) uses
             ``<name>_prior_master`` beside the template workspace, which is where
-            ``model.pest_runs`` looks. Unused by a serial run.
+            ``model.pest_runs`` looks; the workers are created in its parent
+            directory. Unused by a serial run. What pyEMU deletes there, and what
+            is refused, is as for :meth:`run_ies`'s ``master_dir`` (ledger 361).
         exe : str, optional
             PEST++ IES executable, default ``"pestpp-ies"``, resolved as in
             :meth:`run_ies`.
@@ -1871,7 +1963,11 @@ class PestProject:
         ------
         ValueError
             When :meth:`build` has not run, or ``cal.pst`` has been put in
-            ``regularization`` mode.
+            ``regularization`` mode; or as :meth:`run_ies` raises it for a
+            parallel run's master and worker directories (ledger 361).
+        FileExistsError
+            As :meth:`run_ies` raises it, for a parallel run's master and worker
+            directories (ledger 361).
         """
 
         from myflopy.modflow.mf6.pest.ies import IesResults
@@ -2016,6 +2112,113 @@ class PestProject:
             return None
         return pd.concat(columns, axis=1)
 
+    def _refuse_what_start_workers_would_delete(
+        self, master: Path, workers: int, *, method: str, default: bool
+    ) -> None:
+        """Refuse a parallel run whose master or worker directories hold anything but a copy of this template.
+
+        pyEMU's ``start_workers`` DELETES ``master_dir`` and ``worker_0`` ..
+        ``worker_<workers-1>`` in its parent (the ``worker_root`` this passes) whenever
+        they exist, whatever they hold, then copies the template into each. Before
+        ledger 361 nothing checked them: a ``master_dir=`` naming a folder of the
+        user's, or the run directory, was deleted, and in the DEFAULT layout every
+        calibration of one model shares ``<model>.pest/`` as its worker root, so a
+        second calibration's parallel run deleted the first's workers while it ran.
+
+        A run deletes only one that is absent, empty, or a COPY of this calibration's
+        template -- pyEMU copies the template's :data:`BUILD_MARKER` with it, naming
+        the template, so a master or worker a previous run of THIS calibration left
+        counts and another calibration's does not. A copy of a template built before
+        ledger 360 has no marker; it counts in the default layout (``master_dir``
+        omitted) when its metadata names this calibration and this run. Everything is
+        checked before pyEMU is started.
+
+        Raises
+        ------
+        ValueError
+            When the master or a worker directory is, contains or sits inside the run
+            directory or the template, or the master is one of its own workers.
+        FileExistsError
+            When one is a file, or a non-empty directory that is not a copy of this
+            calibration's template, naming it, what it holds and the spelling to use.
+        """
+
+        run = self.original_workspace.resolve()
+        template = self.template_workspace.resolve()
+        master = Path(master)
+        directories = [("master directory", master.resolve())] + [
+            ("worker directory", (master.parent / f"worker_{index}").resolve())
+            for index in range(workers)
+        ]
+        default_master = (
+            self.template_workspace.parent
+            / f"{self.name}_{'ies_master' if method == 'run_ies' else 'prior_master'}"
+        )
+        lines = ["Run it somewhere else:"]
+        if not default:
+            lines.append(
+                f"    cal.{method}(workers={workers}, ...)   # the default: {default_master}, "
+                "its workers beside it"
+            )
+        lines.append(
+            f"    cal.{method}(workers={workers}, master_dir=<a new or empty folder>, ...)"
+            f"   # its workers go beside it, worker_0 .. worker_{workers - 1}"
+        )
+        instead = "\n".join(lines)
+        where = f"Refusing to start {method}(workers={workers}): the "
+        deletes = (
+            "pyEMU's start_workers DELETES the master directory and worker_0 .. "
+            f"worker_{workers - 1} beside it whenever they exist, whatever they hold, then "
+            "copies the template into each."
+        )
+
+        for what, directory in directories:
+            for other, whose in (
+                (run, "the model's run directory"),
+                (template, "this calibration's template"),
+            ):
+                relation = _relation(directory, other)
+                if relation is not None:
+                    raise ValueError(
+                        f"{where}{what} {directory} {relation} {whose}"
+                        + ("" if relation == "IS" else f" {other}")
+                        + f". {deletes}\n\n{instead}"
+                    )
+        if directories[0][1] in {directory for _, directory in directories[1:]}:
+            raise ValueError(
+                f"{where}master directory {directories[0][1]} is also one of its worker "
+                f"directories, worker_0 .. worker_{workers - 1}. {deletes}\n\n{instead}"
+            )
+
+        for what, directory in directories:
+            if not os.path.lexists(directory):
+                continue
+            if not directory.is_dir():
+                raise FileExistsError(
+                    f"{where}{what} {directory} is a FILE. {deletes}\n\n{instead}"
+                )
+            entries = sorted(entry.name for entry in directory.iterdir())
+            if not entries or _written_by_a_build(directory, "template", naming=template):
+                continue
+            if (
+                default
+                and not os.path.lexists(directory / BUILD_MARKER)
+                and self._metadata_names_this_calibration(directory)
+            ):
+                continue
+            shown = ", ".join(entries[:5]) + (" ..." if len(entries) > 5 else "")
+            raise FileExistsError(
+                f"{where}{what} {directory} already holds {len(entries)} "
+                f"entr{'y' if len(entries) == 1 else 'ies'} ({shown}), and it is not a "
+                f"copy of this calibration's template: its {BUILD_MARKER} would name "
+                f"{template}. {deletes} So a run deletes only one that is absent, empty, "
+                "or a copy pyEMU made of THIS template; a copy of another calibration's "
+                "template may be that calibration's run, still going.\n\n"
+                + instead
+                + f"\nIf {directory} is an old master or worker directory you no longer "
+                "need, delete it yourself."
+            )
+
     def _launch_pestpp_ies(
         self,
         *,
@@ -2033,6 +2236,16 @@ class PestProject:
 
         if self.pst is None:
             raise ValueError("Call build() before running PESTPP-IES.")
+        parallel = bool(workers and int(workers) > 1)
+        if parallel:
+            master = Path(master_dir) if master_dir else self.template_workspace.parent / f"{self.name}_{master_suffix}"
+            # Before anything is written or started: pyEMU deletes these (ledger 361).
+            self._refuse_what_start_workers_would_delete(
+                master,
+                int(workers),
+                method="run_ies" if master_suffix == "ies_master" else "prior",
+                default=not master_dir,
+            )
         case = f"{self.name}.pst"
         self.pst.pestpp_options["ies_num_reals"] = int(reals)
         if not noise:
@@ -2049,8 +2262,7 @@ class PestProject:
 
         exe_name, exe_dir = self._resolve_pestpp(exe)
         pyemu = self.pyemu or _import_pyemu()
-        if workers and int(workers) > 1:
-            master = Path(master_dir) if master_dir else self.template_workspace.parent / f"{self.name}_{master_suffix}"
+        if parallel:
             with self._augmented_path(exe_dir):
                 pyemu.os_utils.start_workers(
                     str(self.template_workspace),

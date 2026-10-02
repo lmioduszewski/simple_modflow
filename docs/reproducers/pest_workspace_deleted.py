@@ -40,6 +40,36 @@ MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, FloPy 3.10.0, 2026-10-02)      before    
   E  W = an empty folder                 built                               built
   F  W.staging = a user folder           DELETED, then used and removed      refused, FileExistsError;
                                                                              byte-identical
+
+THE REVIEW OF LEDGER 360 (ledger 361). "Before" is f4817ce's ``src`` (ledger 360), the
+same way. I-L start a parallel run with ``true`` as the PEST++ executable -- it exits at
+once, so pyEMU's ``start_workers`` does everything but run PEST -- and the results reader
+stubbed.
+
+  G. ``W`` = a template the previous build wrote, emptied with ``rm W/*`` (which skips
+     dot-files) and refilled with two files of the user's.
+  H. ``W`` = a ``cp -r`` backup of a template built before ledger 360 (no marker),
+     kept under its own name, ``cal``, in another folder.
+  I. ``run_ies(workers=2, master_dir=<a results folder holding a file of the user's>)``.
+  J. ``run_ies(workers=2)`` with a folder of the user's named ``worker_1`` beside the
+     default master.
+  K. Two calibrations of one model: the second's ``prior(workers=2)``, with the first's
+     ``worker_0`` (a copy of its template, as ``start_workers`` makes) beside it.
+  L. ``run_ies(workers=2, master_dir=<the run directory>)``.
+
+MEASURED (same versions, 2026-10-02)              before (f4817ce)                    after
+  G  emptied with rm *, refilled         the 2 user files DELETED, template  refused, FileExistsError;
+                                         rebuilt (dot marker survived)       byte-identical
+  H  cp -r backup of a pre-360 template  rebuilt: 3 of its 42 files gone or  refused, FileExistsError;
+                                         rewritten, cal.phi.actual.csv one   byte-identical
+  I  master_dir = a results folder       the user's file DELETED, the        refused, FileExistsError;
+                                         template copied in                  byte-identical
+  J  a user's worker_1 beside it         DELETED                             refused, FileExistsError;
+                                                                             byte-identical
+  K  another calibration's worker_0      DELETED (0 of 42 files left)        refused, FileExistsError;
+                                                                             byte-identical
+  L  master_dir = the run directory      9 of its 14 files replaced by the   refused, ValueError;
+                                         template's, 28 added                byte-identical
 """
 
 from __future__ import annotations
@@ -48,6 +78,7 @@ import contextlib
 import hashlib
 import io
 import json
+import shutil
 import tempfile
 import warnings
 from pathlib import Path
@@ -87,14 +118,14 @@ def _run(root: Path):
     return run
 
 
-def _build(model, workspace: Path):
-    cal = model.pest("cal", workspace=workspace, start_datetime="2024-01-01")
+def _build(model, workspace: Path | None, *, name: str = "cal"):
+    cal = model.pest(name, workspace=workspace, start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0))
     cal.observe(mf.HeadTargets(
         locations=pd.DataFrame({"name": ["W"], "cell": [5], "layer": [0]}),
         values=pd.DataFrame({"time": [0], "W": [8.6]}),
     ))
-    _quietly(cal.build, "cal.pst", noptmax=0)
+    _quietly(cal.build, f"{name}.pst", noptmax=0)
     return cal
 
 
@@ -104,6 +135,18 @@ def _tree(directory: Path) -> dict[str, str]:
         return {}
     return {str(p.relative_to(directory)): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(directory.rglob("*")) if p.is_file()}
+
+
+def _state(watched: Path, before: dict[str, str]) -> str:
+    """What became of ``watched``, whose files were ``before``: kept means the same bytes."""
+
+    after = _tree(watched)
+    if not watched.exists():
+        return f"{watched.name} DELETED (0 of {len(before)} files left)"
+    if before == after:
+        return f"{watched.name} byte-identical ({len(after)} files)"
+    kept = sum(after.get(path) == digest for path, digest in before.items())
+    return f"{watched.name} CHANGED ({kept} of {len(before)} files kept, {len(after)} now)"
 
 
 def _attempt(model, workspace: Path, watched: Path, scratch: Path) -> str:
@@ -117,15 +160,27 @@ def _attempt(model, workspace: Path, watched: Path, scratch: Path) -> str:
         outcome = f"{type(error).__name__}: {first[:150]}"
     else:
         outcome = f"built ({len(cal.pst.par_names)} par, {cal.pst.nobs} obs)"
-    after = _tree(watched)
-    if not watched.exists():
-        state = f"{watched.name} DELETED (0 of {len(before)} files left)"
-    elif before == after:
-        state = f"{watched.name} byte-identical ({len(after)} files)"
+    return f"{outcome}\n       {_state(watched, before)}"
+
+
+def _attempt_run(method, watched: Path, scratch: Path, **kwargs) -> str:
+    """Start a parallel run with ``true`` as PEST++ (it exits at once, so pyEMU's
+    ``start_workers`` does everything but run PEST); say what happened to ``watched``."""
+
+    import myflopy.modflow.mf6.pest.ies as ies
+
+    reader, ies.IesResults = ies.IesResults, (lambda workspace, **_: Path(workspace))
+    before = _tree(watched)
+    try:
+        _quietly(method, exe="true", **kwargs)
+    except Exception as error:  # noqa: BLE001 - a reproducer reports whatever either tree raised
+        first = str(error).splitlines()[0].replace(str(scratch), "<tmp>")
+        outcome = f"{type(error).__name__}: {first[:150]}"
     else:
-        kept = len(before.keys() & after.keys())
-        state = f"{watched.name} CHANGED ({kept} of {len(before)} files kept, {len(after)} now)"
-    return f"{outcome}\n       {state}"
+        outcome = "ran"
+    finally:
+        ies.IesResults = reader
+    return f"{outcome}\n       {_state(watched, before)}"
 
 
 def main():
@@ -146,7 +201,7 @@ def main():
 
         root = scratch / "C"
         model = _run(root).model()
-        (root / ".myflopy_pest_build.json").write_text(json.dumps(
+        (root / "myflopy_pest_build.json").write_text(json.dumps(
             {"written_by": "myflopy PEST build", "role": "template",
              "directory": str(root.resolve())}), encoding="utf-8")
         print("C  W = root (contains the run), marker forged\n    ", _attempt(model, root, root, scratch))
@@ -169,6 +224,65 @@ def main():
         staging.mkdir()
         (staging / "mine.txt").write_text("the user's\n", encoding="utf-8")
         print("F  W.staging = a user folder\n    ", _attempt(model, root / "tmpl", staging, scratch))
+
+        # -- the review of ledger 360 (ledger 361): G-H the build, I-L the parallel run --
+
+        root = scratch / "G"
+        model = _run(root).model()
+        template = root / "calib"
+        _build(model, template)
+        for entry in template.iterdir():
+            if not entry.name.startswith("."):   # what `rm calib/*` removes
+                shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+        (template / "survey.csv").write_text("name,head\nW,8.6\n", encoding="utf-8")
+        (template / "report.txt").write_text("the user's report\n", encoding="utf-8")
+        print("G  W = a template emptied with `rm W/*`, refilled with 2 user files\n    ",
+              _attempt(model, template, template, scratch))
+
+        root = scratch / "H"
+        model = _run(root).model()
+        default = _build(model, None).template_workspace
+        for marker in default.glob("*myflopy_pest_build.json"):
+            marker.unlink()   # a template built before ledger 360
+        backup = root / "backups" / "cal"
+        shutil.copytree(default, backup)
+        (backup / "cal.phi.actual.csv").write_text("iteration,mean\n0,1.0\n", encoding="utf-8")
+        print("H  W = a `cp -r` backup of a pre-360 template, under its own name elsewhere\n    ",
+              _attempt(model, backup, backup, scratch))
+
+        root = scratch / "I"
+        model = _run(root).model()
+        cal = _build(model, None)
+        results = root / "results"
+        results.mkdir()
+        (results / "earlier_run.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        print("I  run_ies(workers=2, master_dir=<a results folder of the user's>)\n    ",
+              _attempt_run(cal.run_ies, results, scratch, workers=2, master_dir=results))
+
+        root = scratch / "J"
+        model = _run(root).model()
+        cal = _build(model, None)
+        worker = cal.template_workspace.parent / "worker_1"
+        worker.mkdir()
+        (worker / "mine.txt").write_text("the user's\n", encoding="utf-8")
+        print("J  run_ies(workers=2), a user folder `worker_1` beside the default master\n    ",
+              _attempt_run(cal.run_ies, worker, scratch, workers=2))
+
+        root = scratch / "K"
+        model = _run(root).model()
+        first = _build(model, None, name="first")
+        worker = first.template_workspace.parent / "worker_0"
+        shutil.copytree(first.template_workspace, worker)   # what start_workers makes of it
+        second = _build(model, None, name="second")
+        print("K  a 2nd calibration's prior(workers=2) beside the 1st's worker_0\n    ",
+              _attempt_run(second.prior, worker, scratch, workers=2))
+
+        root = scratch / "L"
+        model = _run(root).model()
+        cal = _build(model, None)
+        run = Path(model.workspace)
+        print("L  run_ies(workers=2, master_dir=<the run directory>)\n    ",
+              _attempt_run(cal.run_ies, run, scratch, workers=2, master_dir=run))
 
 
 if __name__ == "__main__":

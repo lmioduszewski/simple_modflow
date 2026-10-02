@@ -321,7 +321,8 @@ template, not in your working directory.
 directory -- `<model workspace>.pest/<name>` by default, or the `workspace=` you pass --
 and the staging directory beside it (`<template>.staging`). It deletes each **only when
 it is absent, empty, or one a previous build wrote there**: a build writes a
-`.myflopy_pest_build.json` into it, naming the directory. So re-running `cal.build()`, or
+`myflopy_pest_build.json` into it, naming the directory -- a visible file, so a folder
+you empty (`rm <template>/*`) loses it with the rest. So re-running `cal.build()`, or
 a fresh `model.pest(name)` on the same workspace, rebuilds the template -- the output of a
 serial `run_ies`/`prior` in it included -- while any other folder (a Project root, a data
 folder, a copy of a template such as an IES master directory) is refused with
@@ -329,7 +330,8 @@ folder, a copy of a template such as an IES master directory) is refused with
 `workspace=` that is, contains or sits inside the model's run directory is refused with
 `ValueError` whatever it holds, at `model.pest(...)`. Leave `workspace=` out, or pass a
 new or empty folder. A template built before this rule has no marker: it is rebuilt when
-it is this calibration's, at the place `model.pest(name)` puts it; delete any other
+it is this calibration's, at the place `model.pest(name)` puts it (ledger 361: a copy of
+it anywhere else, a backup under the same name included, is not); delete any other
 yourself.
 
 ---
@@ -371,6 +373,19 @@ print(ies.settings)
 Defaults make `cal.run_ies()` a valid first call. Production knobs (localization,
 covariance re-inflation, bad-phi filtering) pass straight through as keyword
 arguments when you need them.
+
+**What a parallel run deletes** (ledger 361). With `workers=N`, pyEMU's
+`start_workers` deletes the master directory -- `<name>_ies_master` (or
+`<name>_prior_master`) beside the template, or the `master_dir=` you pass -- and
+`worker_0` .. `worker_<N-1>` in that directory's parent, whenever they exist, then copies
+the template into each. myflopy checks them first: each must be absent, empty, or a COPY
+of this calibration's template (a master or worker a previous run of it left, deleted
+with its results, as always). A folder of yours there, or another calibration's workers
+-- every calibration of one model shares `<model>.pest/` as its worker root, so they may
+be its run, still going -- is refused with `FileExistsError` before pyEMU starts, and a
+master or worker that is, contains or sits inside the run directory or the template is
+refused with `ValueError`. Pass `master_dir=` a new or empty folder whose parent holds
+no `worker_*` folders of anyone else's.
 
 ### The DBTL loop
 

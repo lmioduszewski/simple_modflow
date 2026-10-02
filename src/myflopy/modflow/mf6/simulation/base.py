@@ -587,7 +587,7 @@ class SimulationBase:
             :attr:`pest_runs` finds it. **A build deletes it, and the staging
             directory beside it** (``<template>.staging``), **only when each is
             absent, empty, or one a previous build wrote there** -- marked by the
-            ``.myflopy_pest_build.json`` the build writes into it -- so
+            ``myflopy_pest_build.json`` the build writes into it -- so
             re-running ``build()`` rebuilds it, while an existing folder no build
             wrote (a Project root, a data folder) is refused with
             ``FileExistsError`` and left as it was (ledger 360). A ``workspace``
