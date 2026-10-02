@@ -239,6 +239,18 @@ pst = cal.build("calib.pst", noptmax=0)   # noptmax=0 = "run once, compute resid
 `noptmax=0` is the universal first check: run the model once through PEST and make
 sure the plumbing works before launching anything long.
 
+**The build only reads your run** (ledger 356). It copies the run directory to a
+staging directory beside the template, loads the simulation from that copy, stores
+every array and list there in external files (the form pyEMU's multipliers act on)
+and hands that to PEST; the run's files and the model object you called
+`model.pest(...)` on are left exactly as they were, and the staging copy is removed
+when the build ends. Two consequences: the model must have been **written and run**
+(its directory holds `mfsim.nam`, and its output files are where the base
+observations come from) -- a model never written is refused -- and the template is
+made from the run's FILES, so an edit made to the model object in memory after the
+run does not reach PEST: write and re-run first. pyEMU's `PstFrom.log` lands in the
+template, not in your working directory.
+
 ---
 
 ## 5. History matching with ensembles (PESTPP-IES)

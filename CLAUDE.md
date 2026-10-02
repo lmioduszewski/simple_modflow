@@ -673,6 +673,13 @@ validation — that bug was found twice, in `read_gpkg` and `contour_line_segmen
   a 16 GB tmpfs with a per-user quota: when it is full EVERY write the user makes there
   fails, Claude Code's own tool output included (commands return "Exit code 1" with
   nothing printed).
+- **Nor in the WORKING directory** (ledger 356): the controller lists the directory
+  pytest started in before any worker starts, and an entry the run adds there (bar
+  `.pytest-work`, `.pytest_cache`, `__pycache__`) fails the run under a red "left in the
+  working directory" section. Session-level, not per test: xdist workers share that
+  directory. It caught pyEMU's `PstFrom.log` and an empty `s2/` from a
+  `SimulationSpec.build()` called with no workspace (which makes `./<name>`, as
+  documented) -- pass one under `tmp_path`.
 - Tests share ONE session-scoped canonical model on
   `CanonicalModelConfig.testing()` (21×21, smallest contract-complete profile —
   all 15 packages + 5 obs families). Weekly CI re-runs everything on the 50×50
@@ -1758,6 +1765,25 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `model.pest(name, start_datetime=...)`** (the front door — defaults the workspace to
   `<model workspace>.pest/<name>` — a SIBLING of the model dir, ledger 107), not by
   importing `PestProject` directly.
+- **A build only READS the run and never touches the model object** (ledger 356, the
+  user's call). `build()` copies the run directory to `<template>.staging`, loads the
+  simulation from THAT (`MFSimulation.load` + `keep_implicit` -- FloPy's loader drops LAK
+  `IMPLICIT`, ledger 326), relayers (ledger 110) and externalizes it there, hands it to
+  `PstFrom`, and removes it, failure included. It used to do all of that to the CALLER's
+  model and write it into the run directory (every input rewritten, 22 files added on
+  the test toy; 18 storage entries of the object changed). Everything the build reads off
+  a FloPy model goes through ONE helper, `native_parameters.staged_model` -- the recipe
+  arrays, the pilot points' base array and cell centres, the default spatial reference;
+  do not read `project.model.gwf` there. **The run's FILES win over the object**: the base
+  observations come from its OUTPUT files, so an in-memory edit after the run is not in
+  the template, and a model never written is REFUSED (no `mfsim.nam`). Two old-build
+  crashes went with it: a lake with empty period blocks (FloPy died externalizing the
+  built object) and an array target on a run opened with `mf.load_mf6_run` whose arrays
+  were inline (loaded lazily: NPF never loaded, so nothing was externalized and the build
+  found no file for `k`; with pilot points, no base array). pyEMU opens `PstFrom.log` in the CWD; it is built with
+  the staging dir as cwd and the log moved into the template. Cost: canonical full
+  (100x100x4) 31 s -> 9 s -- externalizing a LOADED simulation is far cheaper than a built
+  one (23.9 s vs 2.0 s on the validation profile); the copy itself 0.03-0.09 s on tmpfs.
 - **Observations** accepted directly by `cal.observe(...)`/`cal.forecast(...)`: `HeadTargets`,
   `LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets` (or their
   pre-built `*ObservationSpec`). All are wired into the native build + forward run.

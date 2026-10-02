@@ -285,12 +285,80 @@ def model_name_for(project, recipe: _Recipe) -> str:
     return project.model.name
 
 
-def flopy_model_for(project, recipe: _Recipe):
-    """The FloPy model object whose packages this recipe reads."""
+def staged_model(project, model_name: str):
+    """One model of the simulation the build STAGED from the run's files.
 
-    if recipe.model == "transport":
-        return project.model.sim.get_model(resolve_transport_model_name(project))
-    return project.model.gwf
+    ``PestProject.build`` loads the simulation from its staging copy of the run
+    (``project._staged_simulation``), and everything the build reads off a FloPy
+    model -- a recipe's package array (:func:`relayer_array_target`, the
+    pilot-point base array), the cell centres pilot points are placed on, the
+    default spatial reference -- is read THERE: the numbers the template's model
+    holds, as written to its files. They were read off ``project.model``, the
+    caller's object, until ledger 356, and the relayering changed that object's
+    storage.
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built; its ``_staged_simulation`` is read.
+    model_name : str
+        The model's name in that simulation (the flow model's, or a transport
+        sibling's from :func:`model_name_for`).
+
+    Returns
+    -------
+    flopy.mf6.MFModel
+        The staged model.
+
+    Raises
+    ------
+    RuntimeError
+        Outside ``build()``, when there is no staged simulation to read.
+    KeyError
+        When the run's files hold no model of that name, naming the ones they hold.
+    """
+
+    simulation = getattr(project, "_staged_simulation", None)
+    if simulation is None:
+        raise RuntimeError(
+            f"Model {model_name!r} is read from the copy of the run PestProject.build() "
+            "stages, and none is staged: call this during build()."
+        )
+    model = simulation.get_model(model_name)
+    if model is None:
+        raise KeyError(
+            f"The run's files hold no model named {model_name!r} (they hold "
+            f"{list(simulation.model_names)}); the PEST build reads the model from them."
+        )
+    return model
+
+
+def flopy_model_for(project, recipe: _Recipe):
+    """The FloPy model whose packages this recipe reads: the build's STAGED copy's.
+
+    See :func:`staged_model`; a transport target's model is the GWT sibling.
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built.
+    recipe : _Recipe
+        The target's recipe; its ``model`` says flow or transport.
+
+    Returns
+    -------
+    flopy.mf6.MFModel
+        The staged model, as :func:`staged_model` returns it.
+
+    Raises
+    ------
+    RuntimeError
+        Outside ``build()``.
+    KeyError
+        When the run's files hold no model of that name.
+    """
+
+    return staged_model(project, model_name_for(project, recipe))
 
 
 def relayer_array_target(project, recipe: _Recipe) -> bool:
@@ -308,12 +376,17 @@ def relayer_array_target(project, recipe: _Recipe) -> bool:
     shape ``npf_k`` already has (``<model>.mst_porosity_layer1.txt`` ...), which
     MF6 reads identically.
 
-    Skipped when the array is **already** stored one per layer (which every
-    build after the first sees, and which ``npf_k`` starts out as) and when the
-    model has a single layer -- there a whole-grid file already has exactly
-    ``ncpl`` values, so pyEMU is happy and splitting it would be busywork.
-    ``store_internal()`` first because FloPy refuses to make EXTERNAL data
-    layered, which is the state a model loaded from a previous run is in.
+    It acts on the simulation the build STAGED (:func:`flopy_model_for`), never on
+    the caller's model, whose storage it used to change (ledger 110, struck by
+    ledger 356).
+
+    Skipped when the array is **already** stored one per layer (which ``npf_k``
+    starts out as, and which a run whose arrays an earlier build externalized
+    holds) and when the model has a single layer -- there a whole-grid file
+    already has exactly ``ncpl`` values, so pyEMU is happy and splitting it would
+    be busywork. ``store_internal()`` first because FloPy refuses to make
+    EXTERNAL data layered, which is the state a run whose arrays are in external
+    files is loaded in.
     """
 
     if recipe.family != "array" or not recipe.package or not recipe.variable:

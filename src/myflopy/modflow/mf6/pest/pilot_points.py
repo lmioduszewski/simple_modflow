@@ -30,28 +30,52 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     _select_layer_files,
     flopy_model_for,
     model_name_for,
+    staged_model,
 )
 
 
-def _cell_centers(model) -> tuple[np.ndarray, np.ndarray]:
-    """The model grid's cell-center ``(x, y)`` coordinate arrays, flattened."""
+def _cell_centers(gwf) -> tuple[np.ndarray, np.ndarray]:
+    """A FloPy model's grid's cell-center ``(x, y)`` coordinate arrays, flattened."""
 
-    grid = model.gwf.modelgrid
+    grid = gwf.modelgrid
     return (
         np.asarray(grid.xcellcenters, dtype=float).reshape(-1),
         np.asarray(grid.ycellcenters, dtype=float).reshape(-1),
     )
 
 
-def place_pilot_points(model, *, pp_space=None, pp_points=None) -> pd.DataFrame:
+def place_pilot_points(model, gwf, *, pp_space=None, pp_points=None) -> pd.DataFrame:
     """Return a pilot-point table (``ppname, x, y``) for the model grid.
 
     ``pp_points`` (a GeoDataFrame, an array, or a list of ``(x, y)``) places
     points explicitly. Otherwise ``pp_space`` lays a regular net at a spacing of
-    ``pp_space`` median-cell-widths and keeps the cell nearest each net node.
+    ``pp_space`` median-cell-widths -- the width from ``model.vor``'s cell areas
+    -- and keeps the cell of ``gwf`` (the build's STAGED flow model, ledger 356)
+    nearest each net node.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        The calibrated model; only ``model.vor.gdf_vorPolys`` is read, for the
+        median cell width, and only when ``pp_points`` is ``None``.
+    gwf : flopy.mf6.ModflowGwf
+        The FloPy flow model whose ``modelgrid`` cell centres the net is snapped
+        to -- the build's staged copy, whose centres are the template's as written.
+    pp_space : int or None, optional
+        Net spacing in median cell widths, truncated with ``int``; ``None`` or
+        ``0`` means ``5``. Ignored when ``pp_points`` is given.
+    pp_points : geopandas.GeoDataFrame or array_like or None, optional
+        Explicit point locations -- Point geometries, or ``(x, y)`` pairs
+        reshapable to ``(n, 2)`` -- in the grid's own coordinates, taken as given.
+        Default ``None`` lays the net.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Columns ``ppname`` (``pp0000``, ...), ``x`` and ``y``, one row per point.
     """
 
-    xc, yc = _cell_centers(model)
+    xc, yc = _cell_centers(gwf)
     if pp_points is not None:
         if hasattr(pp_points, "geometry"):
             pts = np.array([(geom.x, geom.y) for geom in pp_points.geometry], dtype=float)
@@ -94,7 +118,9 @@ def _base_array_for(project, spec) -> np.ndarray:
     """The model array a pilot-point spec's multipliers scale, shape ``(nlay, ncpl)``.
 
     Read from the package/variable the recipe declares, so pilot points work on
-    any array target rather than silently interpolating against NPF K.
+    any array target rather than silently interpolating against NPF K -- in the
+    simulation the build STAGED from the run's files, the one the template is
+    copied from, not the caller's model object (ledger 356).
     """
 
     recipe = spec.recipe
@@ -135,8 +161,11 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
     for name in files:
         _flatten_array_file(Path(project.template_workspace) / name)
 
-    pp = place_pilot_points(project.model, pp_space=spec.pp_space, pp_points=spec.pp_points)
-    xc, yc = _cell_centers(project.model)
+    # The cell centres the template's model holds, as written to its files: the
+    # build's staged copy, not the caller's object (ledger 356).
+    gwf = staged_model(project, project.model.name)
+    pp = place_pilot_points(project.model, gwf, pp_space=spec.pp_space, pp_points=spec.pp_points)
+    xc, yc = _cell_centers(gwf)
     # The array the multipliers scale, resolved FROM THE RECIPE. This used to be
     # a hardcoded `project.model.gwf.npf.k`, which meant every target other than
     # `k` was interpolated against the horizontal-K field and then written to its

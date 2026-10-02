@@ -96,6 +96,8 @@ def pytest_configure(config):
         os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", tempfile.gettempdir())
         root = tempfile.mkdtemp(prefix="myflopy-pytest-")
         os.environ[_SESSION_TEMP_ROOT] = root
+        # Before any worker starts: what the working directory holds now.
+        config._working_entries = set(os.listdir(config.invocation_params.dir))
     os.environ["TMPDIR"] = root
     tempfile.tempdir = None                 # forget a root computed before this
 
@@ -131,11 +133,36 @@ def _leaves_nothing_in_the_temp_dir():
         )
 
 
+#: Entries a run may add to the working directory: pytest's own and this file's
+#: `tmp_path` root (`_pytest_temp_root`).
+_WORKING_ENTRIES_ALLOWED = {".pytest-work", ".pytest_cache", "__pycache__"}
+
+
+def _working_leftovers(config) -> list[str]:
+    """What the run added to the directory pytest was started in (ledger 356).
+
+    PEST builds left pyEMU's ``PstFrom.log`` there and a test left an empty ``s2/``
+    (a ``SimulationSpec.build()`` with no workspace makes ``./<name>``), both in the
+    repository root. Checked once, at the end: the directory is shared by every xdist
+    worker, so a per-test check could blame one test for another's entry.
+    """
+
+    before = getattr(config, "_working_entries", None)
+    if before is None:
+        return []
+    now = set(os.listdir(config.invocation_params.dir))
+    return sorted(now - before - _WORKING_ENTRIES_ALLOWED)
+
+
 def pytest_sessionfinish(session, exitstatus):
-    """Fail the run if anything is left in the session's temp root; then remove it."""
+    """Fail the run if anything is left in the session's temp root or the working directory."""
 
     if getattr(session.config, "workerinput", None) is not None:
         return
+    working = _working_leftovers(session.config)
+    if working:
+        session.config._working_leftovers = working
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
     root = os.environ.get(_SESSION_TEMP_ROOT)
     if not root or not os.path.isdir(root):
         return
@@ -153,6 +180,16 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    working = getattr(config, "_working_leftovers", None)
+    if working:
+        terminalreporter.section("left in the working directory", red=True)
+        terminalreporter.line(
+            f"The run added these to {config.invocation_params.dir}, where nothing "
+            "should be written -- give the call a workspace under tmp_path (ledger 356):"
+        )
+        for entry in working:
+            terminalreporter.line(f"  {entry}")
+        terminalreporter.stats.setdefault("working-directory leaks", []).extend(working)
     left = getattr(config, "_temp_leftovers", None)
     if not left:
         return

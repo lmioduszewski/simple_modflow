@@ -7,11 +7,17 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
+import time
 import warnings
 from pathlib import Path
 
+import flopy
+
+from myflopy._logging import get_logger
 from myflopy._optional import require
+from myflopy.modflow.mf6.lak_implicit import keep_implicit
 from myflopy.modflow.mf6.observations import (
     ConcTargets,
     DrnFlowTargets,
@@ -26,6 +32,7 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     NativeParameterSpec,
     add_native_parameter,
     relayer_array_target,
+    staged_model,
 )
 from myflopy.modflow.mf6.pest.observations import (
     finalize_observations,
@@ -53,6 +60,15 @@ from myflopy.modflow.mf6.pest.specs import (
 from myflopy.modflow.mf6.pest.summary import PestSettings
 
 METADATA_FILENAME = "myflopy_pest_metadata.json"
+
+#: The log ``PstFrom`` opens in the working directory; the build moves it into the template.
+PYEMU_LOG = "PstFrom.log"
+
+#: Appended to the template directory's NAME for the build's staging copy of the
+#: run (ledger 356): a sibling of the template, removed when the build ends.
+STAGING_SUFFIX = ".staging"
+
+logger = get_logger(__name__)
 
 # Pre-built observation specs accepted by observe()/forecast() as-is.
 _OBSERVATION_SPEC_TYPES = (
@@ -108,6 +124,23 @@ def build_forward_run_command(template_workspace: Path, interpreter: str) -> str
     return "./run_forward.sh"
 
 
+@contextlib.contextmanager
+def _working_directory(path: Path):
+    """Run a block with ``path`` as the working directory, restoring the old one after.
+
+    For ``PstFrom``'s constructor only: it opens ``PstFrom.log`` in the working
+    directory and takes no argument to put it elsewhere (ledger 356). The working
+    directory is the PROCESS's, so every path the block uses must be absolute.
+    """
+
+    previous = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 def _import_pyemu():
     """Import pyEMU lazily with a workflow-oriented error message."""
 
@@ -160,11 +193,15 @@ class PestProject:
         ``.sim`` (the FloPy simulation), ``.gwf``, ``.name``,
         ``.workspace`` and, for ``pp_space=`` pilot points, any ``zones=`` and
         head or concentration targets given by cell id, ``.vor``. Its workspace
-        is what ``PstFrom``
-        copies: :meth:`build` first REWRITES the simulation there with every
-        array and list stored in external files
-        (``set_all_data_external``), and observation targets read the model's
-        current output at build time.
+        -- the RUN directory, which must hold the simulation's files
+        (``mfsim.nam``) -- is READ, never written: :meth:`build` copies it to a
+        staging directory beside the template, loads the simulation from that
+        copy and stores every array and list there in external files
+        (``set_all_data_external``), so the run's files and this object are
+        left exactly as they were (ledger 356). The template is made from the
+        run's FILES, not from this object: an edit made to it in memory after
+        the run is not in the template. Observation targets read the run's
+        output files at build time.
     name : str
         Project name (``str()`` is applied). It names the default template
         directory (each run of characters outside ``A-Za-z0-9_.-`` becomes one
@@ -177,10 +214,12 @@ class PestProject:
         Directory for the generated PEST template workspace. Default ``None``
         uses ``<model workspace>.pest/<name>``, a sibling of the model
         directory where ``model.pest_runs`` finds it. It is DELETED and
-        recreated when :meth:`build` runs. A directory inside the model
-        workspace is refused by :meth:`build` (``RuntimeError``) unless its
-        parent directory is empty once it is removed, because ``PstFrom``
-        would copy the workspace into itself.
+        recreated when :meth:`build` runs, which also makes and then removes
+        a staging directory beside it, ``<workspace>.staging``. A directory
+        inside the model workspace is refused by :meth:`build`
+        (``RuntimeError``) unless its parent directory is empty once it is
+        removed, because the build would copy the workspace into itself; one
+        it accepts is the one way a build writes into the run directory.
     start_datetime : str or pandas.Timestamp
         Simulation start date (e.g. ``"2020-01-01"``), passed to
         ``PstFrom(start_datetime=...)``, which parses it to a datetime to place
@@ -190,8 +229,11 @@ class PestProject:
     spatial_reference : object, optional
         Cell spatial reference passed to ``PstFrom(spatial_reference=...)``,
         which ``grid``-style parameters and ``correlation=`` geostatistics
-        locate cells with. Default ``None`` uses ``model.gwf.modelgrid`` at
-        :meth:`build`.
+        locate cells with. Default ``None`` uses, at :meth:`build`, the
+        ``modelgrid`` of the flow model the build loads from its staging copy of
+        the run -- ``model.gwf.modelgrid``'s mesh with the coordinates the run's
+        files hold (FloPy writes them to 8 decimals), as the template's model
+        reads them.
     zero_based : bool, optional
         Passed to ``PstFrom(zero_based=...)``: whether the index columns of the
         model's list files count from zero. Default ``False``, because MF6
@@ -249,6 +291,10 @@ class PestProject:
         self._parameter_frames: dict[str, object] = {}
         self._registered_geostructs: dict[str, object] = {}
         self._forward_run_config: dict = {}
+        # The simulation LOADED from the build's staging copy of the run, while
+        # `build()` runs; every recipe that reads a package's array reads it here,
+        # never off `self.model` (ledger 356).
+        self._staged_simulation = None
         self.pyemu = None
         self.pf = None
         self.pst = None
@@ -616,24 +662,22 @@ class PestProject:
             f"pre-built observation spec; got {type(targets).__name__}."
         )
 
-    def _ensure_original_workspace(self):
-        """Ensure MF6 input files exist before creating the PEST template."""
-
-        self.original_workspace.mkdir(parents=True, exist_ok=True)
-        self.model.sim.write_simulation(silent=True)
-
     def _clear_stale_template(self):
         """Make sure the PEST template directory is not copied into itself.
 
-        ``PstFrom`` copies ``original_workspace`` wholesale into
-        ``template_workspace``. If the template lives INSIDE the workspace being
-        copied, ``shutil.copytree`` descends into the destination it is
-        currently filling -- ``pest/<name>/pest/<name>/pest/...`` -- until it
-        dies of recursion. Measured 2026-07-28: re-running a calibration cell
-        left a 17 GB tree 40 levels deep. ``PstFrom``'s own
-        ``remove_existing=True`` does not help -- it clears the destination,
-        which is not what recurses. Nor is deleting just this run's template
-        enough: an EMPTY subdirectory still gets walked.
+        The build copies ``original_workspace`` wholesale -- into a staging
+        directory beside the template since ledger 356, which ``PstFrom`` then
+        copies into ``template_workspace``; before that ``PstFrom`` copied it
+        directly. If the template lives INSIDE the workspace being copied,
+        ``shutil.copytree`` descended into the destination it was filling --
+        ``pest/<name>/pest/<name>/pest/...`` -- until it died of recursion.
+        Measured 2026-07-28: re-running a calibration cell left a 17 GB tree 40
+        levels deep. ``PstFrom``'s own ``remove_existing=True`` does not help --
+        it clears the destination, which is not what recurses. Nor is deleting
+        just this run's template enough: an EMPTY subdirectory still gets
+        walked. The staging copy skips the template and the staging directory
+        themselves, but every OTHER calibration under the same parent would
+        still ride into each new template.
 
         **The default no longer lands there** (ledger 107): it is now
         ``<model workspace>.pest/<name>``, a sibling of the copied tree, so this
@@ -645,8 +689,6 @@ class PestProject:
         -- so if any exist the copy cannot be made safe here and this raises
         rather than exploding later.
         """
-
-        import shutil
 
         template = self.template_workspace
         if template.exists():
@@ -681,30 +723,142 @@ class PestProject:
             "or point workspace= anywhere outside the model directory."
         )
 
-    def _build_pstfrom(self):
-        """Instantiate the underlying ``pyemu.utils.PstFrom`` object."""
+    def _build_pstfrom(self, staging: Path):
+        """Instantiate the underlying ``pyemu.utils.PstFrom`` object over the staged copy.
 
-        self._clear_stale_template()
+        ``PstFrom`` opens its log as ``PstFrom.log`` in the CURRENT WORKING
+        DIRECTORY, unconditionally (``pyemu.Logger("PstFrom.log")`` in its
+        ``__init__``), so every build left one in the caller's directory -- the
+        repository root, after a test run. It is constructed with the staging
+        directory as the working directory, and the log is then moved into the
+        template, where the rest of the run's files are (ledger 356).
+        """
+
         self.pyemu = _import_pyemu()
         from pyemu.utils.pst_from import PstFrom
 
         # Spatial reference enables geostatistical (grid / pilot-point)
         # parameters. Default to the model's (DISV/Voronoi) modelgrid -- pyEMU
-        # reads cell centroids from it to build spatially-correlated parameters.
+        # reads cell centroids from it to build spatially-correlated parameters --
+        # the STAGED model's, whose centres are the template's as written to its
+        # files (ledger 356).
         spatial_reference = self.spatial_reference
         if spatial_reference is None:
-            spatial_reference = getattr(self.model.gwf, "modelgrid", None)
+            spatial_reference = getattr(staged_model(self, self.model.name), "modelgrid", None)
 
-        self.pf = PstFrom(
-            original_d=self.original_workspace,
-            new_d=self.template_workspace,
-            remove_existing=True,
-            longnames=self.longnames,
-            spatial_reference=spatial_reference,
-            zero_based=self.zero_based,
-            start_datetime=self.start_datetime,
-            echo=False,
+        staging = Path(staging).resolve()
+        with _working_directory(staging):
+            self.pf = PstFrom(
+                original_d=staging,
+                new_d=self.template_workspace.resolve(),
+                remove_existing=True,
+                longnames=self.longnames,
+                spatial_reference=spatial_reference,
+                zero_based=self.zero_based,
+                start_datetime=self.start_datetime,
+                echo=False,
+            )
+        self._adopt_pyemu_log(staging / PYEMU_LOG)
+
+    def _adopt_pyemu_log(self, opened_at: Path) -> None:
+        """Move ``PstFrom``'s open log into the template and keep it logging there.
+
+        The handle is closed before the move -- Windows refuses to move or delete
+        an open file -- and reopened for appending, so ``pf.draw`` and the rest of
+        the build keep writing to the same log. pyEMU's ``Logger`` keeps the file
+        as its plain ``f`` and ``filename`` attributes; were they to move, the log
+        stays in the staging directory and goes with it, which still writes
+        nothing into the caller's directory.
+        """
+
+        logger = getattr(self.pf, "logger", None)
+        handle = getattr(logger, "f", None)
+        if handle is None or not Path(opened_at).is_file():
+            return
+        handle.close()
+        destination = self.template_workspace / PYEMU_LOG
+        os.replace(opened_at, destination)
+        # The logger owns this handle for the life of `cal.pf`, as pyEMU's own did.
+        logger.f = open(destination, "a")  # noqa: SIM115
+        logger.filename = str(destination)
+
+    def _staging_workspace(self) -> Path:
+        """Where the build stages its copy of the run: ``<template>.staging``, beside the template."""
+
+        template = self.template_workspace
+        return template.with_name(f"{template.name}{STAGING_SUFFIX}")
+
+    def _stage_model(self) -> Path:
+        """Copy the run directory to a staging directory and make PEST's model of it there.
+
+        Everything the build changes is changed in the COPY (ledger 356): the
+        simulation is loaded from it, each declared array target is re-stored one
+        array per layer (``relayer_array_target``), every array and list is moved
+        into an external file, and the result is written back into the copy, which
+        ``PstFrom`` then copies into the template. The run directory is only read,
+        and ``self.model`` is never touched -- before, all of this was done to the
+        caller's model object and written into the run directory.
+
+        The copy is the run's FILES, which is what its output files -- the base
+        observations PEST reads -- were computed from. FloPy's loader drops LAK
+        ``IMPLICIT`` without a word (ledger 326), so the loaded simulation goes
+        through ``keep_implicit``, as myflopy's own loaders do.
+
+        Returns
+        -------
+        pathlib.Path
+            The staging directory.
+
+        Raises
+        ------
+        FileNotFoundError
+            When the run directory holds no ``mfsim.nam``: the template is made
+            from the run's files, and a model never written has none.
+        """
+
+        source = self.original_workspace
+        if not (source / "mfsim.nam").is_file():
+            raise FileNotFoundError(
+                f"No MF6 simulation in {source} (no mfsim.nam). A PEST build makes its "
+                "template from the run's own files -- the files its outputs, which the "
+                "observations read, were computed from -- and never writes into the run "
+                "directory. Write and run the model first (`run.execute()`, or "
+                "`model.sim.write_simulation()` then `model.sim.run_simulation()`)."
+            )
+        staging = self._staging_workspace()
+        if staging.exists():
+            shutil.rmtree(staging)
+        started = time.perf_counter()
+        own = {staging.resolve(), self.template_workspace.resolve()}
+        own_names = {path.name for path in own}
+
+        def _skip_own(directory, names):
+            """An explicit ``workspace=`` inside the run puts both of these inside the copy."""
+
+            return [
+                name for name in names
+                if name in own_names and (Path(directory) / name).resolve() in own
+            ]
+
+        # Not `symlinks=True` (PstFrom's own copy): FloPy writes the staged inputs
+        # back, and through a link that would write into whatever it points at.
+        shutil.copytree(source, staging, ignore=_skip_own)
+        copied = time.perf_counter()
+        simulation = flopy.mf6.MFSimulation.load(sim_ws=str(staging), verbosity_level=0)
+        keep_implicit(simulation)
+        self._staged_simulation = simulation
+        # Before externalizing, not after: a griddata array supplied as a scalar
+        # writes one whole-grid file that pyEMU cannot index against a DISV
+        # spatial reference. See `relayer_array_target`.
+        for spec in self._native_parameter_specs:
+            relayer_array_target(self, spec.recipe)
+        simulation.set_all_data_external()
+        simulation.write_simulation(silent=True)
+        logger.info(
+            "Staged %s for PEST in %s: copied in %.2f s, loaded and externalized in %.2f s",
+            source, staging, copied - started, time.perf_counter() - copied,
         )
+        return staging
 
     @contextlib.contextmanager
     def _quiet_pyemu_context(self):
@@ -924,18 +1078,6 @@ class PestProject:
             if "apply_list_and_array_pars" not in str(command)
         ]
 
-    def _ensure_external_model(self):
-        """Write MF6 inputs as external array/list files for native PstFrom."""
-
-        self.original_workspace.mkdir(parents=True, exist_ok=True)
-        # Before externalizing, not after: a griddata array supplied as a scalar
-        # writes one whole-grid file that pyEMU cannot index against a DISV
-        # spatial reference. See `relayer_array_target`.
-        for spec in self._native_parameter_specs:
-            relayer_array_target(self, spec.recipe)
-        self.model.sim.set_all_data_external()
-        self.model.sim.write_simulation(silent=True)
-
     def _resolve_exe(self) -> str:
         """Return a forward-run-usable MF6 command (absolute path when found)."""
 
@@ -1105,14 +1247,26 @@ class PestProject:
     def build(self, filename: str | Path | None = None, *, noptmax: int = 0):
         """Compile the declarations into a runnable PEST(++) control file.
 
-        In order it: writes the model inputs as external array/list files
-        (``set_all_data_external``); creates a ``pyemu.utils.PstFrom`` over the
-        model workspace; registers every :meth:`parameterize` call natively
-        (``pf.add_parameters``) and every :meth:`observe`/:meth:`forecast` set;
-        adds the MF6 run command and the observation post-processors to
-        ``forward_run.py``; and builds the ``.pst``. The multiplier machinery is
-        pyEMU's own ``apply_list_and_array_pars`` in the forward run, so parameter
+        In order it: copies the run directory to a staging directory beside the
+        template, loads the simulation from that copy and writes it back with
+        every array and list in an external file (``set_all_data_external``);
+        creates a ``pyemu.utils.PstFrom`` over the staged copy; registers every
+        :meth:`parameterize` call natively (``pf.add_parameters``) and every
+        :meth:`observe`/:meth:`forecast` set; adds the MF6 run command and the
+        observation post-processors to ``forward_run.py``; builds the ``.pst``;
+        and removes the staging directory. The multiplier machinery is pyEMU's
+        own ``apply_list_and_array_pars`` in the forward run, so parameter
         application is handled by pyEMU rather than hand-rolled code.
+
+        **The run directory and the model object are left exactly as they were**
+        (ledger 356): the build reads the run's files and output, and writes only
+        into the template (and the staging directory it removes). It used to
+        re-store the caller's model's arrays and write the simulation back into the
+        run directory, inline arrays turned into external files. The template is
+        made from the run's FILES -- the inputs its output files, which the base
+        observations are read from, were computed from -- so an edit made to
+        ``model`` in memory after the run does not reach it. pyEMU's
+        ``PstFrom.log`` is written into the template, not the working directory.
 
         After this call the workspace contains a self-contained PEST setup:
         the ``.pst``, ``forward_run.py``, template/instruction files, and the
@@ -1151,38 +1305,51 @@ class PestProject:
             name one target in one period; when two sets share a prefix; or when
             a head or concentration ``simulated_values`` table's columns are not
             the forward run's, in its order (ledger 340).
+        FileNotFoundError
+            When the model's workspace holds no ``mfsim.nam``: the template is
+            made from the run's files, and a model never written has none.
+        RuntimeError
+            When ``workspace=`` sits inside the model workspace beside another
+            calibration, which the copy would carry into the template.
         """
 
         target_name = Path(filename).name if filename else f"{self.name}.pst"
         self._refuse_shared_prefixes()
-        self._ensure_external_model()
-        self._build_pstfrom()
-        self._prepare_observation_specs()
-        with self._quiet_pyemu_context():
-            for spec in self._native_parameter_specs:
-                if spec.recipe.family == "array" and spec.style == "pilotpoints":
-                    add_pilot_point_parameter(self, spec)
-                else:
-                    add_native_parameter(self, spec)
-                if spec.capture:
-                    self._add_capture_field_observations(spec)
-        self.pf.mod_sys_cmds.append(self._resolve_exe())
-        self._drop_unused_multiplier_apply()
-        self._attach_native_observation_postprocessors()
-        self._write_project_metadata(filename=target_name)
-        with self._quiet_pyemu_context():
-            self.pst = self.pf.build_pst(filename=target_name)
-        if self._pilot_point_frames:
-            register_pilot_point_parameters(self)
-        self.pst.model_command = [
-            build_forward_run_command(self.template_workspace, sys.executable)
-        ]
-        finalize_observations(self, self._prepared_observations)
-        self._apply_forecasts()
-        self._finalize_capture_fields()
-        self.pst.control_data.noptmax = int(noptmax)
-        with self._quiet_pyemu_context():
-            self.pst.write(self.template_workspace / target_name, version=2)
+        self._clear_stale_template()
+        staging = self._staging_workspace()
+        try:
+            self._stage_model()
+            self._build_pstfrom(staging)
+            self._prepare_observation_specs()
+            with self._quiet_pyemu_context():
+                for spec in self._native_parameter_specs:
+                    if spec.recipe.family == "array" and spec.style == "pilotpoints":
+                        add_pilot_point_parameter(self, spec)
+                    else:
+                        add_native_parameter(self, spec)
+                    if spec.capture:
+                        self._add_capture_field_observations(spec)
+            self.pf.mod_sys_cmds.append(self._resolve_exe())
+            self._drop_unused_multiplier_apply()
+            self._attach_native_observation_postprocessors()
+            self._write_project_metadata(filename=target_name)
+            with self._quiet_pyemu_context():
+                self.pst = self.pf.build_pst(filename=target_name)
+            if self._pilot_point_frames:
+                register_pilot_point_parameters(self)
+            self.pst.model_command = [
+                build_forward_run_command(self.template_workspace, sys.executable)
+            ]
+            finalize_observations(self, self._prepared_observations)
+            self._apply_forecasts()
+            self._finalize_capture_fields()
+            self.pst.control_data.noptmax = int(noptmax)
+            with self._quiet_pyemu_context():
+                self.pst.write(self.template_workspace / target_name, version=2)
+        finally:
+            # The template holds everything the staging copy was made for.
+            self._staged_simulation = None
+            shutil.rmtree(staging, ignore_errors=True)
         return self.pst
 
     def settings(self) -> PestSettings:

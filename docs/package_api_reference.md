@@ -724,6 +724,13 @@ start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(.
 `model.pest_runs` or `run.pest_runs`. **`model.pest(...)` is the front door** — it
 fills `start_datetime` from TDIS and puts the run where `pest_runs` will find it.
 `mf.PestProject(...)` can be constructed directly, but that is the advanced path.
+**`cal.build()` only READS the run** (ledger 356): it stages a copy of the run directory
+beside the template (`<template>.staging`, removed when the build ends), loads the
+simulation from it -- keeping LAK `IMPLICIT` -- and re-stores arrays per layer and in
+external files there, never in the run or on the model object. The template is the
+run's FILES (the inputs its output, which the observations read, came from), so a model
+never written is refused and an in-memory edit after the run does not reach it; pyEMU's
+`PstFrom.log` goes into the template.
 
 **Reviewing a run** (`IesResults`, from `cal.run_ies(...)` or
 `model.pest_runs[i].review()`) — `IesResults` is a flat class, not the

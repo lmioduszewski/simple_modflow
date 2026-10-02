@@ -137,7 +137,12 @@ def _relayer_stub(*, layered, nlay, values):
             model_type="gwf6"
         ),
     )
-    return SimpleNamespace(model=SimpleNamespace(sim=simulation)), calls
+    # The relayering reads the simulation the build STAGED, never `model.sim`
+    # (ledger 356); the transport sibling is still FOUND through `model.sim`.
+    project = SimpleNamespace(
+        model=SimpleNamespace(sim=simulation, name="flow"), _staged_simulation=simulation
+    )
+    return project, calls
 
 
 def test_relayering_is_skipped_when_it_would_be_wrong_or_pointless():
@@ -146,7 +151,9 @@ def test_relayering_is_skipped_when_it_would_be_wrong_or_pointless():
     data layered (``Converting external file data into layered data currently
     not support``). Relayering unconditionally therefore broke every
     second-build-on-one-model, which is exactly the capability ledger 107 was
-    restoring.
+    restoring. Since ledger 356 a build no longer externalizes the run itself, so
+    the state is reached by a run whose arrays are in external files, staged as
+    they are.
 
     Also skipped for a single-layer model: a whole-grid file there already holds
     exactly ``ncpl`` values, so pyEMU indexes it fine.

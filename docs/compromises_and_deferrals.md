@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 355 entries (360 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 356 entries (361 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 356 | A PEST build leaves the source run and the model object untouched: it stages a copy of the run directory be... | 2026-10-02 |
 | 355 | The review of ledgers 353-354: a reach TARGET's pictures are stage views -- its time series, cross plot and... | 2026-10-02 |
 | 354 | The test suite makes a relative `PYTHONPATH` absolute when it starts, so every subprocess a test runs -- PE... | 2026-10-02 |
 | 353 | A reach with no stage is a gap in every SFR stage VIEW: MF6's -1e30 (dry) and +1e30 (inactive) are masked o... | 2026-10-02 |
@@ -286,7 +287,7 @@
 | 113 | The relayering of ledger 110 broke the second build on one model, and the fix reads a private FloPy attribute | 2026-07-29 |
 | 112 | The transport demo now perturbs porosity too, and ships head targets | 2026-07-29 |
 | 111 | `layers=` was silently ignored, and is now an error | 2026-07-29 |
-| 110 | `parameterize("porosity")` re-stores the model's griddata one array per layer, mutating the FloPy model | 2026-07-29 |
+| 110 | `parameterize("porosity")` re-stores the model's griddata one array per layer, mutating the FloPy model --... | 2026-07-29 |
 | 109 | `plot_obs_residuals` warns about mixed units rather than refusing them | 2026-07-29 |
 | 108 | Two of my own `canonical_07` test assertions fought the way notebooks are actually used | 2026-07-28 |
 | 107 | PstFrom copied the PEST template into itself; guarded, with a real capability limit | 2026-07-28 |
@@ -2431,8 +2432,8 @@ same day, which is the useful part of the result.
        Deferred as a real design question, not an oversight.
 
 110. **`parameterize("porosity")` re-stores the model's griddata one array per
-     layer, mutating the FloPy model (2026-07-29).** Closes the porosity half of
-     ledger 103.
+     layer, ~~mutating the FloPy model~~ -- in the build's staging copy of the run
+     since ledger 356 (2026-07-29).** Closes the porosity half of ledger 103.
      - MST porosity is supplied as a scalar (`ModflowGwtmst(gwt, porosity=0.25)`),
        so `set_all_data_external()` writes ONE file of `nlay * ncpl` values with no
        LAYERED keyword. pyEMU cannot parameterize that on a Voronoi grid:
@@ -2444,13 +2445,17 @@ same day, which is the useful part of the result.
        `set_data` on every declared ARRAY target before externalizing, giving
        porosity the shape `npf_k` already had (`..._layer1.txt` ...). Same numbers,
        and MF6 reads it identically; a test asserts the values survive.
-     - **The compromise: this mutates the user's model object.** `_ensure_external_model`
+     - ~~**The compromise: this mutates the user's model object.** `_ensure_external_model`
        already calls `set_all_data_external()` on it, so the model was never left
        untouched by `build()` -- but this changes the STORAGE SHAPE of a package the
-       user configured, which the previous call did not. Applied unconditionally to
-       declared array targets rather than guessed at, because `make_layered()` is
-       idempotent (verified on the already-layered `npf_k`) and detecting
-       "needs relayering" from FloPy's API is not reliable.
+       user configured, which the previous call did not.~~ **UNDONE 2026-10-02 (ledger
+       356):** the build copies the run directory to a staging directory beside the
+       template, loads the simulation from that copy, and relayers and externalizes
+       THERE; the user's model object and run directory are left exactly as they
+       were (a test hashes the run and fingerprints every dataset's storage). Applied
+       unconditionally to declared array targets rather than guessed at, because
+       `make_layered()` is idempotent (verified on the already-layered `npf_k`) and
+       detecting "needs relayering" from FloPy's API is not reliable.
      - Latent bug fixed in passing: a flow model built with a scalar `k` hit the same
        pyEMU `IndexError`. Not just a transport concern.
      - ~~Not done: `style="pilotpoints"` on transport (refused).~~ **That refusal was
@@ -2492,8 +2497,10 @@ same day, which is the useful part of the result.
 113. **The relayering of ledger 110 broke the second build on one model, and the
      fix reads a private FloPy attribute (2026-07-29).**
      - Found by the ledger-107 coexistence test, not by inspection.
-       `_ensure_external_model` calls `set_all_data_external()` on every build,
-       so on build #2 the arrays are EXTERNAL and FloPy refuses `make_layered()`
+       `_ensure_external_model` ~~calls~~ called `set_all_data_external()` on every
+       build -- on the run itself, until ledger 356 staged a copy; a run whose arrays
+       are in external files is the state it leaves now --
+       so on build #2 the arrays ~~are~~ were EXTERNAL and FloPy refuses `make_layered()`
        (`Converting external file data into layered data currently not
        support`). Relayering unconditionally therefore broke exactly the
        capability ledger 107 was restoring. My "idempotent" claim in 110 was
@@ -2511,7 +2518,8 @@ same day, which is the useful part of the result.
        resolving the stale file instead would point every parameter at values
        MODFLOW no longer reads, and the calibration would run happily against
        them. The stale file is left in place rather than deleted — this code
-       should not remove files from a user's model directory.
+       should not remove files from a user's model directory. (Since ledger 356 it is
+       left in the staging copy and the template; the run directory is not written.)
 
 114. **`Run.pest_runs` now scans the whole run directory (2026-07-29).**
      - It scanned `<run workspace>/pest`. With the default at
@@ -16539,3 +16547,107 @@ same day, which is the useful part of the result.
       `tests/test_sfr_stage_sentinels.py`. Each piece reverted alone fails it by name: the
       whole mask (the time series), the cross plot's (`len(model) == 14`, read 18), the
       period MAE's (`assert_allclose`), the baseline's (the `Baseline` line).
+356. **A PEST build leaves the source run and the model object untouched: it stages a copy of the run directory beside the template, loads the simulation from that copy (keeping LAK `IMPLICIT`), relayers and externalizes THERE, and hands it to `PstFrom`; pyEMU's `PstFrom.log` lands in the template, and a test run leaves nothing in the working directory (2026-10-02).**
+      The user's call. `build()` ran `relayer_array_target` on the CALLER's model (ledger
+      110), then `set_all_data_external()` and `write_simulation()` into the RUN directory,
+      which `PstFrom(original_d=...)` copied. Measured on the reproducer's toy (two layers,
+      an `IMPLICIT` lake, scalar K): every input file of the run rewritten -- 7 with their
+      arrays moved out into 22 new files, `m.disv` 502 lines to 30 -- and 18 storage
+      entries of the model object changed. PEST's iterations never needed it: they run
+      in the template and its worker copies.
+      **What ships.** `PestProject._stage_model` copies the run directory to
+      `<template>.staging` (skipping the template and itself, for a `workspace=` inside
+      the run), loads it with `MFSimulation.load` + `keep_implicit` (FloPy's loader drops
+      `IMPLICIT`, ledger 326 -- the route `Run.open` and `mf.load_mf6_run` take), relayers
+      and externalizes it there and writes it back; `PstFrom` copies THAT, and the staging
+      directory is removed in a `finally`, a failed build included. Everything the build
+      reads off a FloPy model goes through ONE helper, `native_parameters.staged_model`:
+      `flopy_model_for` (the relayering, the pilot-point base array), the pilot points'
+      cell centres and the default `spatial_reference`; a model name the files lack is
+      refused naming the ones they hold. List targets and capture files were
+      already read in the template. What still reads the caller's objects, read-only: the
+      observations (the run's OUTPUT files), `model.vor` (zones, a `pp_space` net, target
+      locations) and the transport sibling's NAME.
+      **Judgment call: the run's FILES win over the object in memory.** The base
+      observations PEST reads -- every weight-0 `obsval` -- come from the run's output
+      files, which the run's input files produced; a template written from an object
+      edited after the run would pair inputs with outputs they did not produce, and writing
+      the object anywhere means moving its simulation path (FloPy repoints every package)
+      and running FloPy's block writer, which edits its headers. So an in-memory edit after
+      the run is not in the template (tested), and a model never written -- no `mfsim.nam`
+      -- is REFUSED by name, where the build used to write it into the run directory.
+      **Not built:** detecting such an edit. FloPy writes 8 significant digits, so equality
+      needs a tolerance, and only the parameterized arrays could be compared cheaply -- a
+      partial check reading as a whole one.
+      **Judgment call: the pilot points' cell centres and the default spatial reference
+      are the STAGED grid's** -- the template's DISV as written (8 decimals), which is what
+      the old build used too (its externalization made FloPy rebuild the object's grid from
+      the files); the object's own grid differs from it by ~1e-9 ft. Measured, old against
+      new template: every file the same but for FloPy's header time stamps, keyword case and
+      trailing blanks (a LOADED package writes `vertical`/`inflow`, a built one
+      `VERTICAL`/`INFLOW`), `PstFrom.log` and the run-specific `run.json`/listing files;
+      `par_data` the same rows in another order. MF6 run directly in the template answers
+      as the source run did, byte for byte -- heads, cell budget, LAK stage and LAK budget
+      (binary and CSV) -- on both trees (heads SHA-256 `d6ff442748604d56` on each).
+      **Two old-build crashes went with it**, measured on the parent: a lake with EMPTY
+      period blocks (`mf.lak` with no per-period setting) died in FloPy's
+      `set_all_data_external` on the built object (`MFDataException` on LAK `perioddata`)
+      after writing 21 files into the run directory -- the copy LOADED from the files
+      externalizes; and a run with inline arrays opened with `mf.load_mf6_run` is loaded
+      LAZILY, so the old build found no NPF to relayer or externalize and refused `k`
+      (`FileNotFoundError: No external input file found`) -- on the toy and on a real 411 MB
+      Ten Trails run -- and with pilot points died in `_base_array_for`. The staged copy is
+      loaded whole.
+      **`PstFrom.log`:** pyEMU's `PstFrom.__init__` opens it in the working directory, no
+      argument moves it. `PstFrom` is constructed with the staging directory as the
+      working directory (`_working_directory`, a process-wide `chdir` restored in a
+      `finally`; every path made absolute first), then the log's handle is closed, the file
+      moved into the template and reopened for appending, so `pf.draw` keeps writing to it.
+      Judgment call: `chdir` over replacing `pyemu.Logger` for the call -- both are
+      process-wide, and `chdir` leans only on what pyEMU does (write to the working
+      directory). The move reads pyEMU's `Logger.f`/`.filename`; were those to change, the
+      log stays in the staging directory and goes with it -- still nothing in the caller's.
+      **`s2/`** was `tests/test_with_grid.py::test_an_edited_package_is_refused_with_a_sentence_you_can_act_on`:
+      `SimulationSpec.build()` with no workspace makes `./<name>`, as documented, and the
+      refusal it tests comes after. It builds under `tmp_path` now; the library default is
+      unchanged. **Guard:** `tests/conftest.py` lists the directory pytest started in
+      before any worker starts, and the run FAILS naming what it added (bar `.pytest-work`,
+      `.pytest_cache`, `__pycache__`), under "left in the working directory". Session-level,
+      not per test: xdist workers share that directory, so a per-test check would blame one
+      test for another's file. Revert check: the test's old call left `s2` and the run
+      exited 1; a probe test writing `LEAK_PROBE.txt` likewise.
+      **Cost** (g; load average 0.2-1.0): the canonical FULL profile (100 x 100 x 4, 6
+      periods, a 115 MB run) built 31.2 / 30.4 s before and 9.4 / 9.2 s after -- the copy
+      0.03 s, loading and externalizing the copy 8.4 s. The build got FASTER because FloPy
+      externalizes a LOADED simulation's lists far more cheaply than a built one's:
+      profiled on the validation profile, `set_all_data_external` on the built object took
+      23.9 s (125,415 `load_list_line` calls) against 2.0 s on the loaded copy, plus 1.9 s
+      to load it and 3.1 s to write it. A 411 MB Ten Trails run (mostly a 340 MB budget
+      file): 8.3 / 8.2 s, the copy 0.09 s, loading and externalizing 5.4 s; the old build
+      crashed (above). The toy: 0.32 s before, 0.29 s after. Every copy was measured on
+      tmpfs; a disk copy costs more, and the build needs room for a second copy of the run
+      while it runs.
+      **Not changed:** an explicit `workspace=` INSIDE the run directory is still allowed
+      when nothing else is there (`_clear_stale_template`, ledger 107) -- the one way a build
+      still writes into the run; and refused beside another calibration, which the copy
+      would carry into each template. A template built before this is unaffected: it holds
+      what this build writes.
+      Reproducer: `docs/reproducers/pest_build_leaves_run_untouched.py` (sections A-C on
+      this tree and on a58a8c3's `src`; D times the canonical model and `--large <run>`).
+      Tests: `tests/test_pest_build_leaves_run_untouched.py` (12); on a58a8c3's `src` 10 of
+      them fail -- all but the `[inflow]` answer test and the forward-run multiplier test,
+      which hold on both trees (and the working-directory guard reports the old build's
+      `PstFrom.log`). Each piece reverted alone fails by name: the staging (the old
+      in-place build) -> 8, `..._every_file_of_the_run_directory...`,
+      `..._model_object_as_it_was`, `..._load_mf6_run_builds_its_array_targets`,
+      `..._already_external`, `..._not_an_edit_made_in_memory...`, `[empty_lake_periods]`,
+      `..._spatial_reference_read_the_staged_grid` and `..._a_failed_build...`;
+      `keep_implicit` -> both `..._keeps_implicit[...]`, `..._load_mf6_run...` and
+      `..._already_external`; the log's `chdir` and move ->
+      `test_nothing_is_written_into_the_working_directory` (and the guard); the staged grid
+      for pilot points and the spatial reference ->
+      `test_pilot_points_and_the_spatial_reference_read_the_staged_grid`; `flopy_model_for`
+      on the object -> 10 of 12, among them `..._model_object_as_it_was`; the `finally`
+      removal -> `..._a_failed_build...` and `test_nothing...`; the `mfsim.nam` refusal ->
+      `test_a_model_never_written_is_refused_and_its_directory_left_alone`.
+      `test_transport_parameters.py`'s relayer stub now hands over a staged simulation.

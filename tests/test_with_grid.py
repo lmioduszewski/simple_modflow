@@ -287,7 +287,9 @@ def test_an_edited_package_is_refused_with_a_sentence_you_can_act_on(tmp_path):
     assert rows["chd"] == "unverifiable", rows
 
     with pytest.raises(ValueError) as caught:
-        moved.build()
+        # A workspace, not the default: `build()` with none makes `./s2` in the
+        # working directory -- the repository root, after a test run (ledger 356).
+        moved.build(tmp_path / "s2")
     message = str(caught.value)
 
     assert "EDITED after the library resolved them" in message
