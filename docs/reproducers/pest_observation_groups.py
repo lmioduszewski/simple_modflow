@@ -34,6 +34,14 @@ a forecast P labelled ``North``, with a placeholder value.
      measured markers of each; then the same run with its groups set as this tree
      writes them (W2 and W1 ``north``, W10 ``south``), reviewed by the tree on
      ``PYTHONPATH``.
+  D. (Added with ledger 359.) The heads, a lake and an SFR stage set, all UNLABELLED, so
+     their groups are the default prefixes ``hds``, ``stage`` and ``sfr_stage``; a
+     phi-factor file tagging each (``pestpp-ies`` NOPTMAX=1, 4 reals). Then the same
+     with the lake set registered under ``prefix="lake"``.
+  E. (Added with ledger 359.) W2/W1 labelled ``Regulatory wells`` -- PEST names a
+     regularization group ``regul...`` -- through pestpp-glm NOPTMAX=0 and pestpp-ies
+     NOPTMAX=-1; then ``cal.write()``, which lets pyEMU pick the file version, holding a
+     219-character group and one with ``.`` and ``:``, through pestpp-glm.
 
 MEASURED (mf6 6.8.0.dev0, PEST++ 5.2.16, pyEMU 1.4.0, 2026-10-02)
                                                  before (592d430)      after
@@ -70,6 +78,16 @@ MEASURED (mf6 6.8.0.dev0, PEST++ 5.2.16, pyEMU 1.4.0, 2026-10-02)
                                               94 (one line through
                                               two wells); south 95,
                                               96, 97
+
+  D  (this tree, ledger 359) tags hds/stage/sfr_stage on the default groups: exit 1,
+     "group 'SFR_STAGE' mapped to multiple tags: SFR_STAGE STAGE" -- every tag that
+     matches ``stage`` is inside ``sfr_stage`` too, so the lake's group cannot be given
+     a fraction of its own; with the lake set under prefix "lake", tags hds/lake/sfr_stage:
+     exit 0.
+  E  (this tree) regulatory_wells 324.021 and south 100.843 in pestpp-glm's .rec and in
+     pestpp-ies's base phi.group.csv -- an ordinary group in estimation mode, the same
+     phi as `north` in A. cal.write() wrote VERSION 1; pestpp-glm exit 0, the 219-character
+     group 100.843 and north.wells:a 324.021.
 
 "before" in C draws every observation of a group as a red "measured" triangle: 101.962
 and 101.847 are the base run's own heads in the period W2 and W1 were NOT measured,
@@ -302,6 +320,72 @@ def section_c(model, root):
         print(f"     {title}: {values}")
 
 
+def section_d(model, root):
+    """The DEFAULT prefixes as phi-factor groups: a lake set's ``stage`` is inside an SFR
+    set's ``sfr_stage``, so no tag can match the lake's group alone (ledger 359)."""
+
+    print("D  ies_phi_factor_file on the default prefixes (pestpp-ies NOPTMAX=1, 4 reals):")
+    for label, lake_prefix, text in (
+        ("defaults", None, "hds,0.5\nstage,0.25\nsfr_stage,0.25\n"),
+        ("lake_renamed", "lake", "hds,0.5\nlake,0.25\nsfr_stage,0.25\n"),
+    ):
+        cal = _calibration(model, root / f"d_{label}", "d")
+        cal.observe(_heads([None, None, None]))
+        cal.observe(mf.LakeStageTargets(locations={"pond": 0}, values=pd.DataFrame(
+            {"time": [1.0, 2.0], "pond": [99.0, 98.0]})), prefix=lake_prefix)
+        cal.observe(mf.SfrStageTargets(locations={"r1": 1}, values=pd.DataFrame(
+            {"time": [0.0, 1.0], "r1": [95.0, 96.0]})))
+        pst = _built(cal, "d")
+        work = pathlib.Path(cal.template_workspace)
+        (work / "phifac.csv").write_text(text)
+        pst.control_data.noptmax = 1
+        pst.pestpp_options.update({"ies_num_reals": 4, "ies_phi_factor_file": "phifac.csv"})
+        pst.write(str(work / "d.pst"), version=2)
+        done = subprocess.run([IES, "d.pst"], cwd=work, capture_output=True, text=True, timeout=900)
+        rec = (work / "d.rec").read_text() if (work / "d.rec").exists() else ""
+        said = sorted({line.strip() for line in (rec + done.stdout).splitlines()
+                       if "tags" in line and "rror" in line})
+        groups = sorted(set(pst.observation_data.loc[pst.observation_data["weight"] > 0, "obgnme"]))
+        print(f"     {label}: measured groups {groups}; exit {done.returncode} {said[:1]}")
+
+
+def section_e(model, root):
+    """Two more names the build writes, through PEST++ (ledger 359): a label starting
+    PEST's ``regul`` prefix, and ``cal.write()``'s version-1 file, which pyEMU picks for a
+    small problem, holding a long group with ``.`` and ``:``."""
+
+    cal = _calibration(model, root / "e_regul", "e")
+    cal.observe(_heads(["Regulatory wells", "Regulatory wells", "South"]))
+    _built(cal, "e")
+    work = pathlib.Path(cal.template_workspace)
+    print("E  a 'regul...' group (estimation mode), base phi by group:")
+    for exe in (GLM, IES):
+        pst = pyemu.Pst(str(work / "e.pst"))
+        pst.control_data.noptmax = -1 if exe == IES else 0
+        pst.pestpp_options["ies_num_reals"] = 3
+        pst.write(str(work / "e.pst"), version=2)
+        done = subprocess.run([exe, "e.pst"], cwd=work, capture_output=True, text=True, timeout=600)
+        if exe == IES:
+            table = pd.read_csv(work / "e.phi.group.csv")
+            base = table.loc[table["par_realization"].astype(str) == "base"].iloc[0]
+            found = [(group, round(float(base[group]), 3)) for group in ("regulatory_wells", "south")]
+        else:
+            found = CONTRIBUTION.findall((work / "e.rec").read_text())
+        print(f"     {pathlib.Path(exe).name}: exit {done.returncode} {found}")
+    cal = _calibration(model, root / "e_v1", "v")
+    cal.observe(_heads(["North.Wells:A", "North.Wells:A", "Very Long Group Label " * 10]))
+    _built(cal, "v")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        written = cal.write("v1.pst")
+    version = "version 2" if "* observation data external" in written.read_text() else "version 1"
+    done = subprocess.run([GLM, "v1.pst"], cwd=cal.template_workspace, capture_output=True,
+                          text=True, timeout=600)
+    found = CONTRIBUTION.findall((pathlib.Path(cal.template_workspace) / "v1.rec").read_text())
+    print(f"   cal.write() -> {version}; pestpp-glm exit {done.returncode}; "
+          f"{[(group if len(group) < 30 else f'{len(group)} chars', phi) for group, phi in found]}")
+
+
 def main():
     root = pathlib.Path(tempfile.mkdtemp(prefix="pest_groups_"))
     try:
@@ -309,6 +393,8 @@ def main():
         section_a(model, root)
         section_b(model, root)
         section_c(model, root)
+        section_d(model, root)
+        section_e(model, root)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

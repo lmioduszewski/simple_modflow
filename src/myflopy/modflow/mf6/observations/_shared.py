@@ -67,7 +67,11 @@ def _shown(value) -> str:
 
 
 def _is_blank(value) -> bool:
-    """True for an entry that means "not measured": missing, or empty or blank text."""
+    """True for an entry that means "not given": missing, or empty or blank text.
+
+    One rule for a target VALUE (blank = not measured) and a group LABEL (blank =
+    no label: the set's own PEST group, ledger 358/359).
+    """
 
     if isinstance(value, str):
         return not value.strip()

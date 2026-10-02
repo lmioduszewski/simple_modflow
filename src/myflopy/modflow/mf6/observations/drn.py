@@ -21,6 +21,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _default_compare_stats,
     _default_obs_csv_name,
     _in_grid_crs,
+    _is_blank,
     _measured_periods,
     _normalize_compare_time,
     _normalize_named_series_values,
@@ -555,8 +556,8 @@ class DrnFlowTargets:
         ``group_column`` says; a missing or blank label puts them in the set's
         prefix (``drn_flow``). A zone given as several rows carrying DIFFERENT
         labels is refused by the build -- one zone is one observation per
-        period -- and rows with no label take the others' (so does
-        :meth:`compare`, which reads the first row's).
+        period -- and rows with no label take the others', in the build and in
+        :meth:`compare` alike (ledger 359).
     weight_column : str or None, optional
         Column of ``locations`` holding each zone's observation weight, renamed
         ``weight``. Default ``"weight"``; ``None`` or an absent column leaves it
@@ -888,20 +889,34 @@ class DrnFlowTargets:
         What :meth:`compare` joins to each simulated row, on both routes. The
         observation route joined the zone table's ROWS, so a zone given as two
         rows doubled every comparison row and ``stats`` counted each residual
-        twice.
+        twice. A zone given as several rows takes its ``group`` and ``weight``
+        from the first row that carries one, as the PEST build does
+        (``pest.observations._zone_groups`` / ``_zone_weights``, which refuse
+        rows that DISAGREE): it took the first row's, so a zone whose first row
+        was unlabelled read ``<NA>`` here and its label in PEST (ledger 359).
         """
 
-        details = pd.DataFrame(
-            [
-                {
-                    "name": str(row.name),
-                    "group": getattr(row, "group", pd.NA),
-                    "weight": getattr(row, "weight", np.nan),
-                }
-                for row in zones.itertuples(index=False)
-            ],
-            columns=["name", "group", "weight"],
-        ).drop_duplicates(subset="name")
+        rows = [
+            {
+                "name": str(row.name),
+                "group": getattr(row, "group", pd.NA),
+                "weight": getattr(row, "weight", np.nan),
+            }
+            for row in zones.itertuples(index=False)
+        ]
+        group: dict[str, object] = {}
+        weight: dict[str, float] = {}
+        for row in rows:
+            if not _is_blank(row["group"]):
+                group.setdefault(row["name"], row["group"])
+            number = pd.to_numeric(pd.Series([row["weight"]]), errors="coerce").iloc[0]
+            if pd.notna(number):
+                weight.setdefault(row["name"], float(number))
+        details = pd.DataFrame(rows, columns=["name", "group", "weight"]).drop_duplicates(subset="name")
+        details["group"] = pd.Series(
+            [group.get(name, pd.NA) for name in details["name"]], index=details.index, dtype=object
+        )
+        details["weight"] = [weight.get(name, np.nan) for name in details["name"]]
         members = _zone_members(zones)
         details["cells"] = pd.Series(
             [sorted(members[name]) for name in details["name"]], index=details.index, dtype=object

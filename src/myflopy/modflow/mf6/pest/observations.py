@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.observations._shared import (
+    _is_blank,
     _measured_periods,
     _period_key_hints,
     _shown,
@@ -89,6 +90,11 @@ _INEQUALITY_GROUP_STARTS = ("l_", "less", "g_", "greater")
 #: targets, the periods a forecast set does not forecast: ``<prefix>`` + this.
 UNMEASURED_GROUP_SUFFIX = "_unmeasured"
 
+#: What ``Series.astype(str)`` writes for a MISSING label -- ``NaN``, ``None``,
+#: ``pd.NA`` -- compared lower-cased. Read as a label, it made a group named
+#: ``nan`` of every target left unlabelled (ledger 359), so it is refused.
+_STRINGIFIED_MISSING = frozenset({"nan", "none", "<na>"})
+
 
 def pest_group_name(label: str) -> str:
     """The PEST observation group a group label or a set prefix names.
@@ -118,7 +124,8 @@ def pest_group_name(label: str) -> str:
 def _label_text(label) -> str | None:
     """A target's group label as stripped text, ``None`` when it carries none.
 
-    Missing (``None``, ``NaN``, ``pd.NA``) and blank text are no label.
+    Missing (``None``, ``NaN``, ``pd.NA``) and blank text are no label -- the
+    one rule a blank target VALUE follows too (``_shared._is_blank``).
 
     Raises
     ------
@@ -129,12 +136,10 @@ def _label_text(label) -> str | None:
         holding a blank as floats).
     """
 
+    if _is_blank(label):
+        return None
     if isinstance(label, str):
-        return label.strip() or None
-    if label is None or label is pd.NA:
-        return None
-    if isinstance(label, (float, np.floating)) and np.isnan(label):
-        return None
+        return label.strip()
     raise TypeError(type(label).__name__)
 
 
@@ -249,7 +254,8 @@ def _zone_groups(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
 
     A zone is ONE observation per period, so it is in one group: a zone given as
     several rows carrying different labels is refused, as different weights are
-    (:func:`_zone_weights`). Rows with no label defer to the ones that have one.
+    (:func:`_zone_weights`). Rows with no label defer to the ones that have one --
+    as ``DrnFlowTargets.compare()`` reads them (``_zone_details``, ledger 359).
     """
 
     locations = targets.locations_gdf
@@ -258,8 +264,7 @@ def _zone_groups(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
     table = pd.DataFrame(
         {"name": locations["name"].astype(str), "group": locations["group"].astype(object)}
     )
-    blank = table["group"].map(lambda label: isinstance(label, str) and not label.strip())
-    table = table.loc[table["group"].notna() & ~blank]
+    table = table.loc[~table["group"].map(_is_blank).astype(bool)]
     if table.empty:
         return frame["group"]
     spread = table.groupby("name")["group"].agg(
@@ -1031,6 +1036,7 @@ def _label_groups(prepared: list[dict], owned: dict[str, str], others: set[str])
 
     labels: dict[str, dict[str, list[str]]] = {}
     not_text: list[str] = []
+    stringified: list[str] = []
     for item in prepared:
         frame = item["target_frame"]
         prefix = str(item["prefix"])
@@ -1053,6 +1059,10 @@ def _label_groups(prepared: list[dict], owned: dict[str, str], others: set[str])
             if text is None:
                 groups.append(item["prefix_group"])
                 continue
+            if text.lower() in _STRINGIFIED_MISSING:
+                stringified.append(f"{_shown(name)} in set {prefix!r}: {text!r}")
+                groups.append(None)
+                continue
             group = pest_group_name(text)
             labels.setdefault(group, {}).setdefault(text, []).append(
                 f"{_shown(name)} in set {prefix!r}"
@@ -1060,13 +1070,29 @@ def _label_groups(prepared: list[dict], owned: dict[str, str], others: set[str])
             groups.append(group)
         frame["obgnme"] = groups
 
+    # A text column that keeps a blank BLANK: `astype(str)` writes it 'nan'.
+    as_text = (
+        "`frame['group'].astype('string')` -- `.astype('Int64').astype('string')` for "
+        "whole-number ids, which writes 1.0 as '1'"
+    )
     if not_text:
+        not_text = list(dict.fromkeys(not_text))
         raise ValueError(
             f"{len(not_text)} target(s) carry a group label that is not text: "
-            + _listed(dict.fromkeys(not_text))
+            + _listed(not_text)
             + ". A target's group is its PEST observation group (ledger 358), and a "
-            "group is a NAME: give the column as text (`frame['group'].astype(str)`, "
-            "or labels such as 'zone1'), or leave it blank for the set's own group."
+            f"group is a NAME: give the column as text that keeps a blank blank ({as_text}; "
+            "`astype(str)` writes a blank as 'nan', ledger 359), or labels such as "
+            "'zone1', or leave it blank for the set's own group."
+        )
+    if stringified:
+        stringified = list(dict.fromkeys(stringified))
+        raise ValueError(
+            f"{len(stringified)} target(s) carry the group label 'nan', 'None' or "
+            "'<NA>': " + _listed(stringified) + ". That is what `astype(str)` writes for a "
+            "MISSING label, so it would make one group of every target left unlabelled "
+            f"(ledger 359). Keep a blank blank -- {as_text} -- so those targets are in "
+            "their set's own group, or give the group another name."
         )
     nameless = [group_texts for group, group_texts in labels.items() if not re.search(r"[a-z0-9]", group)]
     if nameless:
@@ -1151,7 +1177,9 @@ def assign_observation_groups(obs: pd.DataFrame, prepared: list[dict]) -> None:
     Raises
     ------
     ValueError
-        When a label is not text (a number, a bool); holds no letter or digit;
+        When a label is not text (a number, a bool); is ``nan``, ``None`` or
+        ``<NA>`` in any case -- what ``astype(str)`` writes for a missing label
+        (ledger 359); holds no letter or digit;
         becomes a group PESTPP-IES reads as an inequality (``l_``, ``less``,
         ``g_``, ``greater``); becomes a group the build gives a set's unlabeled
         targets or unmeasured rows, or the control file already holds; or when

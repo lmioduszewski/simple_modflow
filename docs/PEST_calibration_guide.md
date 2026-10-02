@@ -216,8 +216,11 @@ are two groups. (pyEMU used to name every simulated column a group of its own,
 `oname:hds_otype:lst_usecol:w1`, so a group was one well.)
 
 `build()` refuses a label it cannot use, naming it: one that is **not text** (a group
-column of numbers — use `frame["group"].astype(str)` or names like `"zone1"`), one with
-no letter or digit, one taking a group the build gives a set (`hds`,
+column of numbers — use `frame["group"].astype("string")`, or
+`.astype("Int64").astype("string")` for whole-number ids, or names like `"zone1"`); the
+text **`nan`, `None` or `<NA>`**, which is what `astype(str)` writes for a MISSING label
+and would make one group of every well you left unlabelled (ledger 359); one with no
+letter or digit, one taking a group the build gives a set (`hds`,
 `stage_unmeasured`, ...), and **two different labels that become one name**
 (`"North"` and `"north"`, `"north wells"` and `"north_wells"` — one is very likely a
 typo). Surrounding whitespace is not part of a label. A DRN zone given as several rows
@@ -250,7 +253,11 @@ Measured on PEST++ 5.2.16: a tag matches ANYWHERE in a group's name (`orth` took
 stops IES ("group 'SOUTH' not identified with any tags"), and so does a group two tags
 match (`north` and `nor`: "mapped to multiple tags") — while the zero-weight
 `*_unmeasured` groups need none. So name groups so that none contains another's name
-(`north` and `north_deep` cannot be given separate fractions).
+(`north` and `north_deep` cannot be given separate fractions). **Two of the default
+prefixes break that rule:** a lake set's `stage` is inside an SFR set's `sfr_stage`, so
+every tag matching the lake's group matches the stream's too and PESTPP-IES stops
+("group 'SFR_STAGE' mapped to multiple tags") — register the lakes under another
+prefix, `cal.observe(lakes, prefix="lake")`, and tag `lake` (measured, ledger 359).
 
 ### Noise and structural error
 
@@ -376,7 +383,7 @@ Each cycle, look at these. myflopy gives one method per item:
 ies.plot_phi()                  # did misfit drop? quickly early but not TOO quickly (overfit)?
 ies.plot_phi_distribution()     # spread of phi: prior vs posterior — collapse to ~0 = overfitting
 ies.plot_vs_obs()               # prior(grey)/posterior(blue) vs measured(red), one panel per location
-ies.plot_vs_obs(groups=["deep"])  # ...only the locations measured in your "deep" group
+ies.plot_vs_obs(groups=["deep"])  # ...only the locations measured in group "deep" (the name the pst holds: "north_wells" for "North Wells")
 ies.plot_phi_contributions()    # which observation groups make up the misfit (visibility weighting)
 ies.plot_parameters_at_bounds() # % of parameters pinned at bounds — prior too tight / compensating?
 ies.forecasts()                 # prior→posterior uncertainty table for every forecast

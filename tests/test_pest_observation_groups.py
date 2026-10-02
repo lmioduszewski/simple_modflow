@@ -19,7 +19,9 @@ a stream, a three-cell DRN zone and a lake); the review tests run PESTPP-IES on 
 
 from __future__ import annotations
 
+import re
 import shutil
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -171,6 +173,39 @@ def test_a_label_taking_a_group_the_build_gives_a_set_is_refused(toy, tmp_path, 
         _build(toy, tmp_path / "pest", observe=(_heads([label, "a", "b"]), pond), forecast=(fore,))
 
 
+@pytest.mark.parametrize("label", ["nan", "None", "<NA>"])
+def test_the_label_astype_str_writes_for_a_blank_is_refused(toy, tmp_path, label):
+    """``astype(str)`` -- the spelling the not-text refusal used to advise -- writes
+    a missing label as ``'nan'``/``'None'``/``'<NA>'``, which made a group of that
+    name of every well left unlabelled (ledger 359)."""
+
+    with pytest.raises(ValueError, match=(
+            r"1 target\(s\) carry the group label 'nan', 'None' or '<NA>': 'W10' in set "
+            r"'hds': '" + re.escape(label) + r"'.*what `astype\(str\)` writes for a MISSING")):
+        _build(toy, tmp_path / "pest", observe=(_heads(["north", "north", label]),))
+
+
+def test_the_not_text_refusals_advice_keeps_a_blank_label_in_the_sets_group(toy, tmp_path):
+    """A zone id column read with a blank is floats. The refusal names a spelling,
+    and that spelling must keep the blank well in its set's group: the advice was
+    ``astype(str)``, which put it in a group named ``nan`` (ledger 359)."""
+
+    locations = pd.DataFrame(
+        {"name": ["W2", "W1", "W10"], "cell": [1, 2, 34], "layer": 0, "group": [1.0, 1.0, np.nan]}
+    )
+    with pytest.raises(ValueError, match=(
+            r"^2 target\(s\) carry a group label that is not text: 'W2' in set 'hds': 1\.0 "
+            r"\(float\); 'W1' in set 'hds': 1\.0 \(float\)\..*"
+            r"`\.astype\('Int64'\)\.astype\('string'\)`")):
+        _build(toy, tmp_path / "refused", observe=(mf.HeadTargets(locations=locations, values=HEADS),))
+
+    advised = locations.assign(group=locations["group"].astype("Int64").astype("string"))
+    _cal, pst = _build(toy, tmp_path / "advised", observe=(mf.HeadTargets(locations=advised, values=HEADS),))
+    obs = pst.observation_data
+    assert _members(obs, "1") == sorted(_measured(obs, "w2") + _measured(obs, "w1"))
+    assert _members(obs, "hds") == _measured(obs, "w10")
+
+
 def test_a_zone_given_two_labels_is_refused(toy, tmp_path):
     zone = mf.DrnFlowTargets(
         locations=pd.DataFrame({
@@ -180,6 +215,62 @@ def test_a_zone_given_two_labels_is_refused(toy, tmp_path):
     )
     with pytest.raises(ValueError, match=r"'zone' \('seeps', 'springs'\).*DIFFERENT group labels"):
         _build(toy, tmp_path / "pest", observe=(zone,))
+
+
+def test_a_zone_whose_first_row_is_unlabelled_reads_one_label_in_compare_and_in_pest(toy, tmp_path):
+    """Rows with no label take the others' in the build; ``compare()`` read the FIRST
+    row's, so it showed ``<NA>`` -- and no weight -- for a zone PEST put in ``seeps``
+    at weight 2 (ledger 359)."""
+
+    zone = mf.DrnFlowTargets(
+        locations=pd.DataFrame({
+            "name": ["zone", "zone"], "cells": [DRN_CELLS[:2], DRN_CELLS[2:]],
+            "group": [None, "Seeps"], "weight": [np.nan, 2.0],
+        }),
+        values=pd.DataFrame({"time": [2.0], "zone": [-3.0]}),
+    )
+    compared = zone.compare(toy)
+    assert list(compared["group"]) == ["Seeps"]
+    assert list(compared["weight"]) == [2.0]
+    _cal, pst = _build(toy, tmp_path / "pest", observe=(zone,))
+    measured = pst.observation_data.loc[_measured(pst.observation_data, "zone", "drn_flow")]
+    assert list(measured["obgnme"]) == ["seeps"]
+    assert list(measured["weight"]) == [2.0]
+
+
+def test_a_concentration_targets_label_is_its_group(tmp_path):
+    """``ConcTargets`` shares ``_point_target_frame`` with heads, through the same
+    assignment: a labelled well's measured observations are in its label, an
+    unlabelled one's in ``conc``, and the forecast set's in its prefix."""
+
+    from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig
+    from myflopy.modflow.mf6.canonical_transport import build_canonical_transport_calibration_demo
+
+    with warnings.catch_warnings():
+        # The canonical lake is known unexcavated (tests/conftest.py, ledger 325).
+        warnings.filterwarnings("ignore", message=r"mf\.lak: lake\(s\) NOT excavated")
+        demo = build_canonical_transport_calibration_demo(
+            tmp_path / "model", config=CanonicalModelConfig.testing()
+        )
+    source = demo.conc_targets
+    locations = source.locations_gdf.loc[:, ["name", "layer", "cell"]].reset_index(drop=True)
+    plume = set(locations["name"].iloc[::2])
+    locations["group"] = [("Plume Core" if name in plume else None) for name in locations["name"]]
+    cal = demo.model.pest("conc_groups", start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.05, 2.0), physical=(0.01, 300.0))
+    cal.observe(mf.ConcTargets(locations=locations, values=source.to_wide()))
+    cal.forecast(demo.forecast_targets)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        obs = cal.build("conc_groups.pst", noptmax=0).observation_data
+
+    measured = obs.loc[obs["weight"] > 0]
+    assert set(measured["obgnme"]) == {"plume_core", "conc"}
+    for name, group in zip(measured.index, measured["obgnme"], strict=True):
+        well = re.search(r"usecol:(.+)_per:", name).group(1)
+        assert group == ("plume_core" if well in {w.lower() for w in plume} else "conc"), name
+    assert set(obs.loc[obs["weight"] == 0, "obgnme"]) <= {"conc_unmeasured", "fore1", "fore1_unmeasured"}
+    assert (obs.loc[cal.pst.pestpp_options["forecasts"].split(","), "obgnme"] == "fore1").all()
 
 
 # -- PESTPP-IES and the review ---------------------------------------------------

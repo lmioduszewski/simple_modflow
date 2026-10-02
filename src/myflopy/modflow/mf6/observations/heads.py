@@ -137,11 +137,14 @@ class HeadTargets:
         weight, by your groups. A missing or blank label puts it in the set's
         prefix (``hds``, ``conc``); a period with no value is in
         ``<prefix>_unmeasured`` whatever the label, and a forecast is in its set's
-        prefix. The build refuses a label that is not text (a number), holds no
-        letter or digit, starts as PESTPP-IES reads an inequality (``l_``,
-        ``less``, ``g_``, ``greater``), takes a group the build gives a set
-        (``hds``, ``stage_unmeasured``, ...), or becomes the same name as a
-        different label (``"North"`` and ``"north"``) -- naming each.
+        prefix. The build refuses a label that is not text (a number: give the
+        column as ``astype("string")``, which keeps a blank blank), is ``nan``,
+        ``None`` or ``<NA>`` (what ``astype(str)`` writes for a missing label,
+        ledger 359), holds no letter or digit, starts as PESTPP-IES reads an
+        inequality (``l_``, ``less``, ``g_``, ``greater``), takes a group the
+        build gives a set (``hds``, ``stage_unmeasured``, ...), or becomes the
+        same name as a different label (``"North"`` and ``"north"``) -- naming
+        each.
     weight_column : str or None, optional
         Column of ``locations`` holding a per-location observation weight,
         carried as ``weight``. When ``cal.observe(...)`` builds the PEST control

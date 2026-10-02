@@ -794,7 +794,9 @@ class IesResults:
         Parameters
         ----------
         groups : list of str or None, optional
-            Observation groups to draw (any case): the locations whose measured
+            Observation groups to draw (any case), named as the control file
+            holds them -- ``north_wells`` for a label ``"North Wells"``, as
+            :meth:`phi_contributions` lists them: the locations whose measured
             observations are in one of them. Default ``None``: every location
             with a measured observation, up to ``max_locations``.
         max_locations : int, optional
@@ -1439,7 +1441,9 @@ class IesResults:
         Parameters
         ----------
         groups : list of str or None, optional
-            Observation groups to draw (any case): the locations whose measured
+            Observation groups to draw (any case), named as the control file
+            holds them -- ``north_wells`` for a label ``"North Wells"``, as
+            :meth:`phi_contributions` lists them: the locations whose measured
             observations are in one of them. Default ``None``: every location
             with a measured observation, up to ``max_locations``.
         max_locations : int, optional

@@ -1814,12 +1814,16 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `<prefix>_unmeasured` and a forecast in its prefix -- so a user's group holds exactly
   what was measured under it. pyEMU named every column a group of its own, so a group was
   one well. REFUSED by name: a label that is not text (a number -- deliberately not "no
-  label"), no letter or digit, a set's group name, two labels becoming one name
+  label"; the advice is `astype("string")`, which keeps a blank blank), the TEXT
+  `nan`/`None`/`<NA>` (ledger 359: `astype(str)`, the first advice, wrote a blank so and
+  made a group `nan` of every unlabelled well), no letter or digit, a set's group name, two labels becoming one name
   (`North`/`north`), and a label OR PREFIX starting `l_`/`less`/`g_`/`greater`, which
   PESTPP-IES reads as an INEQUALITY on the bare start (`lessard`, `greaterville`;
   measured: phi 0 where the same data scored 424.864; PESTPP-GLM at NOPTMAX=0 does not).
   No length limit (PEST++ 5.2.16 read 5000 characters); a comma or `"` breaks the
-  version-2 file. Lake/SFR targets have no label column -- split them by prefix. **The
+  version-2 file. Lake/SFR targets have no label column -- split them by prefix (and the
+  lake default `stage` sits inside `sfr_stage`, so a phi-factor file cannot tag the two
+  apart until one is re-prefixed, ledger 359). **The
   review draws one time series per target LOCATION** (`IesResults._location_panels`, a
   column found by pyEMU's `<base>_<index>:<value>` name), never per group, and marks only
   MEASURED observations -- per group it drew a group of wells as one zig-zag line, and

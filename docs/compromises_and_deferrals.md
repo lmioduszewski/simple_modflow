@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 358 entries (363 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 359 entries (364 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 359 | The review of ledger 358: a group label `astype(str)` wrote for a blank (`nan`, `None`, `<NA>`) is refused,... | 2026-10-02 |
 | 358 | A target's group is its PEST observation group: a measured observation is in its target's `group` label mad... | 2026-10-02 |
 | 357 | The review of ledger 356: a PEST build from a RELATIVE model workspace -- every canonical PEST notebook's... | 2026-10-02 |
 | 356 | A PEST build leaves the source run and the model object untouched: it stages a copy of the run directory be... | 2026-10-02 |
@@ -16736,13 +16737,16 @@ same day, which is the useful part of the result.
       a captured field's) -- judgment call: even a label equal to its OWN set's prefix, which
       would name the same group, because one rule reads better than an exception; and a DRN
       zone given as several rows carrying different labels, as different weights already
-      were (rows without a label take the others'; `compare()` still reads the first row's).
+      were (rows without a label take the others'; ~~`compare()` still reads the first
+      row's~~ -- `compare()` reads them so too since ledger 359).
       **A label that is not text is REFUSED -- a DEVIATION from the spec**, which said such a
       label "counts as no label". A numeric group column is the ordinary shape of a zone id
       read from a CSV or a GeoPackage, and pandas reads one with a blank as floats; counting
       it as no label would have put every such target in the prefix group in silence, the
-      class of drop ledgers 340-351 removed. The refusal names `.astype(str)`. Missing
-      (`None`, `NaN`, `pd.NA`) and blank text are no label.
+      class of drop ledgers 340-351 removed. ~~The refusal names `.astype(str)`.~~ **Amended
+      in ledger 359:** that advice wrote a blank as `'nan'` and made a group of it; the
+      refusal names `.astype("string")` now, and the text `nan`/`None`/`<NA>` is refused.
+      Missing (`None`, `NaN`, `pd.NA`) and blank text are no label.
       **Rows no target measures and forecasts** -- the decision the spec left open (c): every
       row of a set no target measures (an unmeasured period, a blank target, a period a
       forecast set does not forecast) is in `<prefix>_unmeasured`, and a forecast in its
@@ -16774,8 +16778,8 @@ same day, which is the useful part of the result.
       did, so they read the user's groups with no change.
       **Templates:** nothing in the forward run changed; a template built before keeps one
       group per column, runs, and reviews as before -- rebuild it to get the groups.
-      **Not tested end to end:** `ConcTargets` (it shares `_point_target_frame` and the
-      assignment with heads, which are).
+      ~~**Not tested end to end:** `ConcTargets` (it shares `_point_target_frame` and the
+      assignment with heads, which are).~~ **Tested in ledger 359.**
       Reproducer: `docs/reproducers/pest_observation_groups.py` (A and C on 592d430's `src`
       and this tree; B is PEST++ alone). Tests: `tests/test_pest_observation_groups.py`, 19,
       on the handed-targets toy (`run_toy`, factored out of that module's fixture), the
@@ -16795,3 +16799,55 @@ same day, which is the useful part of the result.
       parent's `ies.py` (`test_the_review_draws_one_series_per_location_not_per_group` and
       both `test_a_run_built_before_this_commit_reviews_per_location_too` cases -- the
       `before_340` one on the zero-weight markers).
+
+359. **The review of ledger 358: a group label `astype(str)` wrote for a blank (`nan`, `None`, `<NA>`) is refused, and the not-text refusal names `astype("string")`, which keeps a blank blank; `DrnFlowTargets.compare()` reads a zone's label and weight as the build does; a lake set's default `stage` cannot be tagged apart from `sfr_stage` in a phi-factor file; `ConcTargets` is tested end to end (2026-10-02).**
+      An adversarial review of 112dfdc. **The refusal's own advice mis-grouped in silence**
+      -- measured on the toy: a zone-id column read with a blank (`1.0, 1.0, NaN`) is
+      refused as not text, naming `frame['group'].astype(str)`; following it wrote the blank
+      as the TEXT `'nan'`, and the unlabelled well W10 was measured in a group named `nan`
+      instead of `hds` -- the silent misgrouping 358 refused numbers to prevent. The advice
+      is now `.astype("string")` (pandas' string dtype keeps a blank `<NA>`) or
+      `.astype("Int64").astype("string")` for whole-number ids, and a label whose text is
+      `nan`, `None` or `<NA>` in any case -- what `astype(str)` writes for `NaN`, `None`,
+      `pd.NA` -- is REFUSED by name. Judgment call: a group genuinely named "None" is
+      refused too; it is one rename away, where a `nan` group is a calibration run
+      before anyone sees it. The not-text count counted ROWS ("4 target(s)" over two
+      wells); it counts targets. One rule for "no label": `_shared._is_blank`, the rule a
+      blank target VALUE already followed, replaces the copy in `_label_text` and the
+      zone check.
+      **A DRN zone given as several rows** -- 358 made the build take a label from the
+      first row carrying one, while `compare()` (`_zone_details`) took the FIRST row's,
+      label and weight alike: a zone `[None, "Seeps"]` weighted `[NaN, 2.0]` read `<NA>`
+      and no weight in `compare()`, `seeps` at weight 2 in PEST. Both read the first row
+      that carries one now; `compare()` still does not refuse rows that disagree (a view,
+      not a build).
+      **The default prefixes as phi-factor groups -- documented, not changed.** PESTPP-IES
+      matches a tag anywhere in a group's name (358), and a lake set's default group
+      `stage` is inside an SFR set's `sfr_stage`, so every tag matching the lake's group
+      matches the stream's: tags `hds`/`stage`/`sfr_stage` stop PESTPP-IES 5.2.16, "group
+      'SFR_STAGE' mapped to multiple tags", and with the lakes under `prefix="lake"` it runs
+      (reproducer section D). **Not done:** renaming the lake default, which is every lake
+      observation's NAME (`oname:stage_...`) and so every stored run and forecast list; and
+      checking a phi-factor file before `run_ies` -- PEST++ refuses it by name, and
+      `pyemu.os_utils.run` raises on its exit. The guide, the API reference and CLAUDE.md
+      say to re-prefix.
+      **Checked and found sound:** every family's `obgnme` (heads, conc, lake, SFR stage and
+      flow, DRN; a valueless and a placeholder forecast); a label `Regulatory wells` (PEST's
+      `regul` prefix) scores as an ordinary group in PESTPP-IES and PESTPP-GLM estimation
+      mode, 324.021, as the same wells did as `north`; `cal.write()` writes VERSION 1 (pyEMU
+      picks it for a small problem) and pestpp-glm reads a 219-character group and
+      `north.wells:a` from it (reproducer section E). Not reproducible from the tree: three
+      local, untracked IES runs built before 340 (the `canonical_fast_tour`, `bearcreek`
+      and `demo_ies` artifacts) reviewed to the same panels, markers, phi contributions and
+      residual map on 592d430 and 358.
+      **Not done:** `groups=` on the review takes the group NAME as the pst holds it
+      (`north_wells`), not the label as typed -- running the label through
+      `pest_group_name` would import layer 8 (`pest.observations`) into layer 5
+      (`pest.ies`); the docstrings say so instead.
+      Tests (`tests/test_pest_observation_groups.py`), each failing by name on revert:
+      the stringified-missing refusal off (`test_the_label_astype_str_writes_for_a_blank_is_refused`,
+      all three); the old advice and row count
+      (`test_the_not_text_refusals_advice_keeps_a_blank_label_in_the_sets_group`); the old
+      `_zone_details` (`test_a_zone_whose_first_row_is_unlabelled_reads_one_label_in_compare_and_in_pest`);
+      a concentration label dropped in `_point_target_frame`
+      (`test_a_concentration_targets_label_is_its_group`).
