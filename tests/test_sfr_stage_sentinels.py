@@ -14,7 +14,9 @@ where the stage file is read -- ``model.outputs.sfr.stage.get()`` -- with
 
 **A reach TARGET is NOT masked** (the user: leave SFR targets as they are):
 ``SfrStageTargets``' stage-file route reads the file raw, so a dry reach still reads
--1e30 there and in the files PEST reads. The last three tests pin that.
+-1e30 there and in the files PEST reads; the three target tests pin that. A target's
+PICTURES are stage views, though (ledger 355): its time series, cross plot and period
+MAE leave the reach out while ``compare()`` keeps the number -- the last test.
 
 Every MF6-backed test reads ``sfr_stage_runs``: two runs of one small model -- a 6 x
 6 irregular Voronoi grid of ~100 ft cells, one confined layer (top 110, bottom 0, K
@@ -412,3 +414,60 @@ def test_the_observation_route_reads_the_streambed_top_where_the_file_has_no_sta
     np.testing.assert_allclose(
         series[[f"r{reach}" for reach in range(NREACH)]].to_numpy().T[wet], raw[wet],
         rtol=1e-9)
+
+
+# -- the targets' PICTURES: a gap, the numbers kept (ledger 355) -------------------
+
+
+def _target_lines(figure, backend) -> dict[str, np.ndarray]:
+    """Every line or marker set of a calibration picture, by legend label, as floats."""
+
+    if backend == "plotly":
+        return {trace.name: np.asarray(trace.y, dtype=float) for trace in figure.data}
+    lines = {line.get_label(): np.asarray(line.get_ydata(), dtype=float)
+             for line in figure.axes[0].get_lines()}
+    for collection in figure.axes[0].collections:  # the cross plot's scatter
+        lines[collection.get_label()] = np.asarray(collection.get_offsets(), dtype=float)[:, 1]
+    return lines
+
+
+@pytest.mark.parametrize("backend", ["plotly", "mpl"])
+def test_a_reach_targets_pictures_leave_a_reach_without_a_stage_blank(sfr_stage_runs, backend):
+    """A target's pictures are SFR stage pictures (the user: "the plots for SFR should
+    just not plot a stage if the reach is dry"), while its ``compare()`` keeps MF6's
+    -1e30 and +1e30 for PEST. The time series drew -1e30, the cross plot's 1:1 line
+    ran from -1e30 to +1e30 and the period MAE read 1e30; a baseline model's line
+    too."""
+
+    from myflopy.modflow.mf6.observations import BoundSfrStageTargets
+
+    dry, wet = sfr_stage_runs["dry"], sfr_stage_runs["wet"]
+    raw = _raw(dry)
+    locations = {"a": 0, "b": INACTIVE, "c": 4}
+    targets = mf.SfrStageTargets(
+        locations=locations,
+        values=pd.DataFrame({"time": range(NPER), **{name: 101.0 for name in locations}}))
+    bound = BoundSfrStageTargets(dry, targets)
+    compare = bound.compare()
+    assert int((compare["sim_stage"].abs() >= 1e29).sum()) == len(DRY_PERIODS) + 1
+    real = raw[np.abs(raw) < 1e29]
+
+    for name, reach in locations.items():
+        lines = _target_lines(bound.plot.timeseries(name, backend=backend), backend)
+        np.testing.assert_array_equal(lines["Model"], _no_stage(raw)[reach])
+    against_dry = _target_lines(
+        BoundSfrStageTargets(wet, targets).plot.timeseries("a", baseline=dry, backend=backend),
+        backend)
+    np.testing.assert_array_equal(against_dry["Baseline"], _no_stage(raw)[0])
+
+    lines = _target_lines(bound.plot.obs_vs_sim(backend=backend), backend)
+    model = lines["Model"]
+    assert len(model) == len(locations) * NPER - (len(DRY_PERIODS) + 1)
+    assert real.min() <= model.min() and model.max() <= real.max()
+    assert 100.0 <= lines["1:1 line"].min() and lines["1:1 line"].max() <= real.max()
+
+    mae = _target_lines(bound.plot.residuals_by_period(backend=backend), backend)["Model MAE"]
+    expected = (np.abs(_no_stage(raw)[list(locations.values())] - 101.0)
+                .mean(axis=0, where=np.abs(raw[list(locations.values())]) < 1e29))
+    np.testing.assert_allclose(mae, expected, rtol=1e-12)
+    assert np.isfinite(mae).all() and mae.max() < 10.0

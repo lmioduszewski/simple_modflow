@@ -275,7 +275,10 @@ series, both profiles, the q hover, `canonical_sfr_signals`, group, diff -- leav
 blank. **SFR TARGETS were left as they were**: `SfrStageTargets`' file route reads the file
 RAW (`build_sfr_stage_result_table(masked=False)`), so a dry reach still reaches PEST as
 -1e30, while MF6's STAGE observation reports the streambed top there (dry AND, measured,
-inactive) -- the two routes differ at such a reach.
+inactive) -- the two routes differ at such a reach. **A target's PICTURES are stage views**
+(ledger 355): `CalibrationPlot`'s `timeseries`/`obs_vs_sim`/`residuals_by_period` blank a
+simulated `|value| >= 1e29` (`calibration._blank_no_value`) while `compare()` keeps it --
+its 1:1 line ran from -1e30 to +1e30.
 **Highlighting cells is `map(select=...)`, on EVERY scope** (ledger 160,
 2026-08-29) -- cell indices, a boolean mask, a registered region name, a vector
 file, or a geometry. It draws a **dissolved-boundary outline** by default, NOT
@@ -574,10 +577,12 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5514 passed / 4 skipped**, 2026-10-02, ledgers 353-354 -- SFR stage views
-  masked, the suite's `PYTHONPATH` made absolute): `-n 10` **1m42s** in a worktree outside
-  `.claude` with a RELATIVE `PYTHONPATH=src` (ledger 354), at a load average of ~3.4 at its
-  start; serial not re-measured. Before it, 5489 passed / 4 skipped (2026-09-30, ledger 352 --
+- Full suite (**5516 passed / 4 skipped**, 2026-10-02, ledgers 353-355 -- SFR stage views
+  masked, the suite's `PYTHONPATH` made absolute, and their review): serial (`-n0`)
+  **7m47s** and `-n 10` **1m36s**, both in a worktree outside `.claude` with a RELATIVE
+  `PYTHONPATH=src` (ledger 354), the parallel one starting at a load average of ~1.1. Before
+  it, 5514 passed / 4 skipped (ledgers 353-354): `-n 10` 1m42s at ~3.4, serial not
+  re-measured. Before it, 5489 passed / 4 skipped (2026-09-30, ledger 352 --
   several packages of one type): serial (`-n0`) **7m37s** and `-n 10` **1m33s**, both in a
   detached checkout outside `.claude` with an absolute `PYTHONPATH`, the parallel one starting
   at a load average of ~3.4 and the serial one at ~7 as the parallel run ended. Before it,

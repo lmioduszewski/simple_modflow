@@ -27,6 +27,10 @@ WHAT IT MEASURES
      the exchange hover, ``canonical_sfr_signals``, and the group diff summary.
   3. The targets, which do NOT change: the stage-file route still reads -1e30, and
      the observation route reads the streambed top, at a reach with no stage.
+  4. The targets' pictures (ledger 355): ``compare()`` keeps -1e30/+1e30, and the time
+     series, the cross plot and the period MAE leave the reach out. Run on f64c838's
+     ``src`` this prints the "before": the line at -1e30, the 1:1 line from -1e30 to
+     +1e30, a period MAE of 1e30.
 """
 
 from __future__ import annotations
@@ -88,6 +92,20 @@ def _run(root: pathlib.Path, *, drying: bool):
     return run.model()
 
 
+def _raw_file(model) -> np.ndarray:
+    """The stage file as MF6 wrote it, ``(reach, record)``, on this tree or on f64c838.
+
+    ``masked=`` arrived with ledger 353; before it ``get()`` WAS the raw file, which
+    is what lets this script run on f64c838's ``src`` and print the "before" there.
+    """
+
+    try:
+        frame = model.outputs.sfr.stage.get(masked=False)
+    except TypeError:  # f64c838: no masked= -- get() is the raw file
+        frame = model.outputs.sfr.stage.get()
+    return frame.to_numpy(dtype=float)
+
+
 def _show(values) -> str:
     return "[" + ", ".join("nan" if np.isnan(v) else f"{v:.4g}" for v in values) + "]"
 
@@ -103,7 +121,7 @@ def main() -> None:
 def _measure(root: pathlib.Path) -> None:
     dry = _run(root / "dry", drying=True)
     wet = _run(root / "wet", drying=False)
-    raw = dry.outputs.sfr.stage.get(masked=False).to_numpy(dtype=float)  # (reach, record)
+    raw = _raw_file(dry)  # (reach, record)
 
     print("1. what MF6 writes (rows = reaches 0..4, columns = periods 0..5)")
     for reach, row in enumerate(raw):
@@ -142,7 +160,7 @@ def _measure(root: pathlib.Path) -> None:
           f"maximum_depth {signals['maximum_depth']:.4g}")
 
     diff = mf.ModelGroup({"wet": wet, "dry": dry}, reference="wet").diff()
-    raw_wet = wet.outputs.sfr.stage.get(masked=False).to_numpy(dtype=float)
+    raw_wet = _raw_file(wet)
     old = (raw - raw_wet).ravel()  # the old summary read the raw stage table
     print(f"   group diff summary before: n {old.size}, max |d| {np.abs(old).max():.3g}, "
           f"mean |d| {np.abs(old).mean():.3g}")
@@ -158,6 +176,24 @@ def _measure(root: pathlib.Path) -> None:
     obs_route = mf.SfrStageTargets(locations={"r0": 0, "r3": 3}).simulated_series(dry)
     print(f"   observation route, reach 0: {_show(obs_route['r0'])} (bed top {BED_TOP[0]})")
     print(f"   observation route, reach 3: {_show(obs_route['r3'])} (bed top {BED_TOP[3]:.4g})")
+
+    print("\n4. the targets' PICTURES (ledger 355): compare() keeps the number, the picture a gap")
+    from myflopy.modflow.mf6.observations import BoundSfrStageTargets
+
+    targets = mf.SfrStageTargets(
+        locations={"a": 0, "b": 3, "c": 4},
+        values=pd.DataFrame({"time": range(NPER), "a": 101.0, "b": 101.0, "c": 101.0}))
+    bound = BoundSfrStageTargets(dry, targets)
+    compare = bound.compare()
+    print(f"   compare() sim_stage range: {compare['sim_stage'].min():.4g} .. "
+          f"{compare['sim_stage'].max():.4g}")
+    series = {t.name: np.asarray(t.y, float) for t in bound.plot.timeseries("a").data}
+    print(f"   timeseries('a') Model line: {_show(series['Model'])}")
+    cross = {t.name: np.asarray(t.y, float) for t in bound.plot.obs_vs_sim().data}
+    print(f"   obs_vs_sim 1:1 line: {cross['1:1 line'].min():.4g} .. {cross['1:1 line'].max():.4g}"
+          f"; points drawn {cross['Model'].size} of {len(compare)}")
+    mae = {t.name: np.asarray(t.y, float) for t in bound.plot.residuals_by_period().data}
+    print(f"   residuals_by_period MAE: {_show(mae['Model MAE'])}")
 
 
 if __name__ == "__main__":

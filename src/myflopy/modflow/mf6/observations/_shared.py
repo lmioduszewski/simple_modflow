@@ -1838,9 +1838,11 @@ def _stage_at_period_end(
     model : SimulationBase
         The run model the table was read from.
     frame : pandas.DataFrame
-        ``model.lak.results.stage.get()`` or ``model.sfr.results.stage.get()``:
-        ``kstpkper``, ``per``, ``id_column`` and ``stage``. A table without
-        ``kstpkper`` (a test double's) keeps every row.
+        The stage file read RAW, as a target reads it -- each family's
+        ``_calibration_stage_table`` (``build_lak_stage_result_table`` /
+        ``build_sfr_stage_result_table`` with ``masked=False``; ledgers 351, 353),
+        never the masked stage VIEW: ``kstpkper``, ``per``, ``id_column`` and
+        ``stage``. A table without ``kstpkper`` (a test double's) keeps every row.
     reader : callable
         Takes no arguments and returns the stage file's open FloPy reader
         (``lambda: model.fl.lak.output.stage()``); called only when the model has

@@ -693,7 +693,9 @@ they were when the SFR stage views were masked). `SfrStageTargets`' stage-file r
 the file RAW -- MF6's -1e30 for a dry reach, +1e30 for an inactive one, in `compare()` and
 in PEST's files -- while its observation route reads MF6's STAGE observation, which
 reports the reach's streambed top for a dry and (measured) an inactive reach. The two
-routes of one reach differ there.
+routes of one reach differ there. The target's `.plot` pictures do not draw the -1e30:
+`timeseries` leaves a gap, `obs_vs_sim` leaves the point out of the plot, its 1:1 line
+and its statistics, and `residuals_by_period` out of the period's mean (ledger 355).
 
 **A target's `time` is a zero-based stress period, read by NUMBER, one rule for
 `compare()` and the PEST build** (`_shared._numeric_periods`, ledger 340): `1.0` is
@@ -1086,7 +1088,8 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   profiles, blank on its maps and in the `results.q` hover; `model.outputs.sfr.stage.get(masked=False)`
   is the raw file and the one place dry and inactive differ (ledger 353, as LAK's 329).
   A reach TARGET reads it raw and was left as it was: a dry reach is -1e30 on
-  `SfrStageTargets`' stage-file route.
+  `SfrStageTargets`' stage-file route -- in `compare()`, while the target's `.plot`
+  pictures (`timeseries`/`obs_vs_sim`/`residuals_by_period`) leave it out (ledger 355).
 - `results.profile` — the merged multi-field reach profile (`get`/`summary`/`plot`).
 - `results.q.profile` / `results.stage.profile` — single-field reach profiles
   (`get`/`summary`/`plot`), one row per reach at the period's last saved step on the

@@ -113,7 +113,12 @@ inherit it. **The SFR TARGETS were left as they were**: `SfrStageTargets` reads 
 RAW, so a dry reach is -1e30 in `compare()` and in PEST's files on the stage-file route,
 while its observation route reads MF6's STAGE observation, which reports the streambed
 top for a dry and (measured) an inactive reach. No dry-reach rule was decided for
-calibration, unlike a lake's bottom.
+calibration, unlike a lake's bottom. **A target's PICTURE is a stage view, though**
+(ledger 355): the calibration time series, cross plot and period MAE
+(`CalibrationPlot.from_timeseries`/`from_obs_vs_sim`/`from_residuals_by_period`, which
+every bound target's `.plot` reaches) blank a simulated value that is MODFLOW's no-value
+marker, by the same `_is_sentinel` rule, and leave `compare()` alone -- the cross plot's
+1:1 line ran from -1e30 to +1e30.
 
 **A reader opens the file its package DECLARES, never one found by its contents**
 (ledger 344). The observation targets took the first `*.csv` in the workspace whose

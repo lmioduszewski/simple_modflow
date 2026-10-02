@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 354 entries (359 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 355 entries (360 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 355 | The review of ledgers 353-354: a reach TARGET's pictures are stage views -- its time series, cross plot and... | 2026-10-02 |
 | 354 | The test suite makes a relative `PYTHONPATH` absolute when it starts, so every subprocess a test runs -- PE... | 2026-10-02 |
 | 353 | A reach with no stage is a gap in every SFR stage VIEW: MF6's -1e30 (dry) and +1e30 (inactive) are masked o... | 2026-10-02 |
 | 352 | Several packages of one type are found by TYPE and never read as one in silence: `model.fl.<pkg>` and... | 2026-09-30 |
@@ -16386,7 +16387,9 @@ same day, which is the useful part of the result.
       masks both through `headsplus._is_sentinel` by default and takes `masked=False`
       for the raw file; `build_sfr_stage_result_table(masked=)` passes it on, the shape
       `build_lak_stage_result_table` has. A table keeps the ROW with a `NaN`.
-      **Every reader of the SFR stage file, enumerated** (grep the read, not the rule):
+      **Every reader of the SFR stage file, enumerated** (grep the read, not the rule)
+      (**all but one, ledger 355:** a target's `.plot` pictures read it through
+      `compare()` and still drew -1e30; they leave it out now):
       the explorer `results.stage` (`get`/`summary`/`map`/`plot`/`mosaic`/`animate`), the
       field profile `results.stage.profile`, the long profile `results.profile`
       (`build_sfr_long_profile_table`), the exchange hover (`join_sfr_stage`, single and
@@ -16491,3 +16494,48 @@ same day, which is the useful part of the result.
       `test_a_relative_entry_is_resolved_as_python_resolves_it`, holds the rewrite to the
       interpreter's own resolution. Under an absolute `PYTHONPATH`, or none, all three pass
       with or without the rewrite: there is nothing to rewrite.
+355. **The review of ledgers 353-354: a reach TARGET's pictures are stage views -- its time series, cross plot and period MAE leave a simulated no-value out while `compare()` keeps it -- and the SFR reproducer runs on the tree before 353 (2026-10-02).**
+      353 masked every SFR stage VIEW and kept `SfrStageTargets` reading the file raw, so
+      `compare()` holds -1e30 (dry) and +1e30 (inactive) on the stage-file route -- and
+      every picture of a target is drawn FROM `compare()`. Measured on 353's toy (targets
+      at reaches 0, 3 and 4, 101.0 ft): `model.targets.sfr_stage.plot.timeseries("a")`
+      drew -1e30 three times, `obs_vs_sim()`'s 1:1 line ran from -1e30 to +1e30 with all
+      18 points drawn, and `residuals_by_period()` read 3.3e29 / 6.7e29 / 3.3e29 for
+      periods 1-3. The user's words were about the PLOTS ("the plots for SFR should just
+      not plot a stage if the reach is dry") and the targets' NUMBERS ("leave SFR as is"),
+      and a calibration picture is a plot, so **the picture blanks it and the number
+      stays**: `calibration._blank_no_value` makes a simulated `|value| >= 1e29`
+      (`headsplus._is_sentinel`) `NaN` inside `CalibrationPlot.from_timeseries` (model and
+      baseline), `from_obs_vs_sim` (left out of the points, the 1:1 line and the
+      statistics) and `from_residuals_by_period` (an `abs_residual` that size is left out
+      of its period's mean). After: a gap, the 1:1 line 101..105.4 with 14 of 18 points,
+      the MAE 2.936 / 4.387 / 2.936. `compare()`, `simulated_series` and both CSVs PEST
+      reads are byte-for-byte what 353 left (the reproducer's part 3; a test asserts
+      `compare()` still holds the four sentinels).
+      **Judgment call:** in `CalibrationPlot`, not in the SFR target's `.plot` -- the
+      three constructors are what every bound target's `.plot` (LAK stage, SFR
+      stage/flow, DRN flow) and `HeadTargets`' plots reach, so a no-value is never drawn
+      as a value on any of them. Nothing else moves: a LAK target's dry lake is its
+      bottom and an inactive one `NaN` (ledger 351), and a flow target's no-data is 0.0.
+      **NOT done:** the observation route draws MF6's STAGE observation, the streambed
+      top, at a dry reach -- a real elevation, as a LAK target draws a dry lake's bottom;
+      telling it from a wet stage needs the reach's `rtp`, which a compare table does not
+      carry. `IesResults`' ensemble pictures draw what PEST read, -1e30 included -- PEST's
+      own numbers, left as the user left the targets.
+      **Also in this review:** `docs/reproducers/sfr_stage_sentinels.py` called
+      `get(masked=False)`, which raised `TypeError` on f64c838, so 353's "the reproducer's
+      part 3 prints the same series on f64c838" could not be run as written; it falls back
+      to `get()` (the raw file there) and now prints the before from the OLD CODE -- every
+      "after" line on f64c838 equals the hand-applied "before", and part 3 is identical on
+      both trees. `_shared._stage_at_period_end`'s `frame` said the stage VIEW; both
+      families pass the raw `_calibration_stage_table` (351, 353). Found and checked, not
+      changed: a wet run's every SFR view, and the dry run's target series and `compare()`
+      on both routes, are identical on f64c838 and 353 (pickled and compared); ledger
+      354's rewrite resolves `""` to the start directory as the interpreter does (which
+      dedupes it), passes under `-n 3`, and from `tests/` with `PYTHONPATH=../src`.
+      Reproducer: `docs/reproducers/sfr_stage_sentinels.py` part 4 (run on f64c838's
+      `src` it prints the before). Test:
+      `test_a_reach_targets_pictures_leave_a_reach_without_a_stage_blank[plotly|mpl]` in
+      `tests/test_sfr_stage_sentinels.py`. Each piece reverted alone fails it by name: the
+      whole mask (the time series), the cross plot's (`len(model) == 14`, read 18), the
+      period MAE's (`assert_allclose`), the baseline's (the `Baseline` line).

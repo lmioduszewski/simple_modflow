@@ -17,6 +17,7 @@ from pandas import IndexSlice as idxx
 
 from myflopy import viz as f
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 
 logger = get_logger(__name__)
 
@@ -77,6 +78,45 @@ def _require_compare_columns(frame: pd.DataFrame, required: set[str], *, caller:
     if missing:
         raise ValueError(f"{caller} requires columns: {', '.join(sorted(missing))}")
     return frame.copy()
+
+
+def _blank_no_value(frame: pd.DataFrame, columns) -> tuple[pd.DataFrame, int]:
+    """``frame`` with MODFLOW's no-value markers in ``columns`` made ``NaN``, and how many.
+
+    A compare table carries what a target READ, and on an SFR target's stage-file
+    route that is the stage file raw: -1e30 for a DRY reach, +1e30 for an INACTIVE
+    one (ledger 353 -- the user kept SFR targets as they were). A picture of it is
+    a stage view, and a stage view leaves a reach with no stage blank (the user:
+    "the plots for SFR should just not plot a stage if the reach is dry"), so the
+    calibration pictures blank it by the head file's rule, ``headsplus._is_sentinel``
+    (``|value| >= 1e29``) -- the cross plot's 1:1 line ran from -1e30 to +1e30, the
+    time series drew -1e30 and the period MAE read 1e30 (ledger 355). Only the
+    PICTURE changes: ``compare()`` and the files PEST reads keep the number.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        A compare-style table; it is copied, never edited.
+    columns : iterable of str
+        The value columns to blank (a simulated value, an absolute residual);
+        a name the frame does not carry is skipped.
+
+    Returns
+    -------
+    tuple of (pandas.DataFrame, int)
+        The copy, and the number of values blanked.
+    """
+
+    blanked = frame.copy()
+    count = 0
+    for column in columns:
+        if column not in blanked.columns:
+            continue
+        values = pd.to_numeric(blanked[column], errors="coerce")
+        no_value = _is_sentinel(values.to_numpy(dtype=float))
+        count += int(no_value.sum())
+        blanked[column] = values.mask(no_value)
+    return blanked, count
 
 
 def _describe_empty_pairing(
@@ -310,32 +350,43 @@ class CalibrationPlot(f.Fig):
         """Build a target-vs-simulated cross plot from compare-style DataFrames.
 
         ``backend`` selects ``"plotly"`` (interactive, default) or
-        ``"matplotlib"`` (static matplotlib/seaborn).
+        ``"matplotlib"`` (static matplotlib/seaborn). A simulated value that is
+        MODFLOW's no-value marker (``|value| >= 1e29``: a dry or inactive SFR
+        reach on a stage target's stage-file route) is not drawn and is left out
+        of the 1:1 line and the statistics (ledger 355); the compare table is not
+        changed.
         """
 
-        checked = _require_compare_columns(
-            compare,
-            {target_column, simulated_column},
-            caller="CalibrationPlot.from_obs_vs_sim(...)",
+        checked, blanked = _blank_no_value(
+            _require_compare_columns(
+                compare,
+                {target_column, simulated_column},
+                caller="CalibrationPlot.from_obs_vs_sim(...)",
+            ),
+            [simulated_column],
         )
         frame = checked.dropna(subset=[target_column, simulated_column])
-        empty_note = (
-            _warn_empty_cross_plot(
-                _describe_empty_pairing(checked, target_column, simulated_column),
-                caller="CalibrationPlot.from_obs_vs_sim(...)",
-            )
-            if frame.empty
-            else None
-        )
+        empty_note = None
+        if frame.empty:
+            reason = _describe_empty_pairing(checked, target_column, simulated_column)
+            if blanked:
+                reason += (
+                    f" {blanked} simulated values were MODFLOW's no-value marker "
+                    "(|value| >= 1e29: a dry or inactive feature) and are not drawn."
+                )
+            empty_note = _warn_empty_cross_plot(reason, caller="CalibrationPlot.from_obs_vs_sim(...)")
 
         baseline = None
         values = [frame[target_column], frame[simulated_column]]
         if baseline_compare is not None:
-            baseline = _require_compare_columns(
-                baseline_compare,
-                {target_column, simulated_column},
-                caller="CalibrationPlot.from_obs_vs_sim(..., baseline_compare=...)",
-            ).dropna(subset=[target_column, simulated_column])
+            baseline = _blank_no_value(
+                _require_compare_columns(
+                    baseline_compare,
+                    {target_column, simulated_column},
+                    caller="CalibrationPlot.from_obs_vs_sim(..., baseline_compare=...)",
+                ),
+                [simulated_column],
+            )[0].dropna(subset=[target_column, simulated_column])
             values.extend([baseline[target_column], baseline[simulated_column]])
         merged_values = pd.concat(values, axis=0).dropna()
         one_to_one = (float(merged_values.min()), float(merged_values.max())) if not merged_values.empty else None
@@ -438,13 +489,19 @@ class CalibrationPlot(f.Fig):
         """Build a time-series plot of targets and simulated heads for one target.
 
         ``backend`` selects ``"plotly"`` (interactive, default) or
-        ``"matplotlib"`` (static matplotlib/seaborn).
+        ``"matplotlib"`` (static matplotlib/seaborn). A simulated value that is
+        MODFLOW's no-value marker (``|value| >= 1e29``: a dry or inactive SFR
+        reach on a stage target's stage-file route) is a gap in the line, the
+        model's and the baseline's (ledger 355); the compare table is not changed.
         """
 
-        frame = _require_compare_columns(
-            compare,
-            {"name", "time", target_column, simulated_column},
-            caller="CalibrationPlot.from_timeseries(...)",
+        frame, _ = _blank_no_value(
+            _require_compare_columns(
+                compare,
+                {"name", "time", target_column, simulated_column},
+                caller="CalibrationPlot.from_timeseries(...)",
+            ),
+            [simulated_column],
         )
         names = frame["name"].astype(str)
         if name is None:
@@ -462,10 +519,13 @@ class CalibrationPlot(f.Fig):
 
         baseline = None
         if baseline_compare is not None:
-            baseline = _require_compare_columns(
-                baseline_compare,
-                {"name", "time", simulated_column},
-                caller="CalibrationPlot.from_timeseries(..., baseline_compare=...)",
+            baseline, _ = _blank_no_value(
+                _require_compare_columns(
+                    baseline_compare,
+                    {"name", "time", simulated_column},
+                    caller="CalibrationPlot.from_timeseries(..., baseline_compare=...)",
+                ),
+                [simulated_column],
             )
             baseline_names = baseline["name"].astype(str)
             baseline = _sort_compare_by_time(baseline.loc[baseline_names.str.lower() == key].copy())
@@ -526,14 +586,22 @@ class CalibrationPlot(f.Fig):
         """Build a by-period residual summary plot from compare-style data.
 
         ``backend`` selects ``"plotly"`` (interactive, default) or
-        ``"matplotlib"`` (static matplotlib/seaborn).
+        ``"matplotlib"`` (static matplotlib/seaborn). A residual against
+        MODFLOW's no-value marker (``|abs_residual| >= 1e29``: a dry or inactive
+        SFR reach on a stage target's stage-file route) is left out of its
+        period's mean, and a period with nothing else is a gap (ledger 355); the
+        compare table is not changed.
         """
 
         def _period_mae(data, caller):
             """Per-period mean absolute residual from a compare frame, sorted by time."""
 
+            checked, _ = _blank_no_value(
+                _require_compare_columns(data, {"time", "abs_residual"}, caller=caller),
+                ["abs_residual"],
+            )
             stats = (
-                _require_compare_columns(data, {"time", "abs_residual"}, caller=caller)
+                checked
                 .groupby("time")
                 .agg(mae=("abs_residual", "mean"))
                 .reset_index()

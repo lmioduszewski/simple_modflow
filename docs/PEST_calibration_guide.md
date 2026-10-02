@@ -186,7 +186,8 @@ never go below it. **A dry stream reach is NOT treated that way** (ledger 353): 
 `SfrStageTargets` reading the stage FILE, a reach that goes dry reads MF6's -1e30 in the
 tables PEST reads -- the magnitude that stalled PESTPP-IES for a lake (ledger 351) --
 while on its observation route MF6's STAGE observation gives the streambed top. The SFR
-stage PICTURES leave a dry reach blank; the targets were left as they were.
+stage PICTURES leave a dry reach blank -- the targets' own `.plot` pictures too (ledger
+355) -- while the targets' numbers were left as they were.
 
 > Weighting matters *a lot* and there is no one-size-fits-all. Pre-process data
 > for information content, use more groups rather than fewer, and aim weights at
