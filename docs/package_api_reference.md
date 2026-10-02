@@ -748,7 +748,11 @@ simulation from it -- keeping LAK `IMPLICIT` -- and re-stores arrays per layer a
 external files there, never in the run or on the model object. The template is the
 run's FILES (the inputs its output, which the observations read, came from), so a model
 never written is refused and an in-memory edit after the run does not reach it; pyEMU's
-`PstFrom.log` goes into the template.
+`PstFrom.log` goes into the template. **A build deletes the template and its staging
+directory only when each is absent, empty, or one a build wrote** (ledger 360: marked by
+a `.myflopy_pest_build.json` naming it); any other `workspace=` folder is refused with
+`FileExistsError`, and one that is, contains or sits inside the run directory with
+`ValueError`, whatever it holds.
 
 **Reviewing a run** (`IesResults`, from `cal.run_ies(...)` or
 `model.pest_runs[i].review()`) — `IesResults` is a flat class, not the

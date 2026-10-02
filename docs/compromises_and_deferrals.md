@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 359 entries (364 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 360 entries (365 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 360 | A PEST build deletes its `workspace=` only when a build wrote it there: the template and its staging direct... | 2026-10-02 |
 | 359 | The review of ledger 358: a group label `astype(str)` wrote for a blank (`nan`, `None`, `<NA>`) is refused,... | 2026-10-02 |
 | 358 | A target's group is its PEST observation group: a measured observation is in its target's `group` label mad... | 2026-10-02 |
 | 357 | The review of ledger 356: a PEST build from a RELATIVE model workspace -- every canonical PEST notebook's... | 2026-10-02 |
@@ -2376,10 +2377,12 @@ same day, which is the useful part of the result.
        destination is inside the source, so an EMPTY `pest/` is enough.
        `PstFrom`'s own `remove_existing=True` does not help — it clears the
        destination, which is not what recurses.
-     - What ships: `_clear_stale_template` removes this run's template and, if that
+     - ~~What ships: `_clear_stale_template` removes this run's template and, if that
        leaves `pest/` empty, removes `pest/` too — restoring exactly the state a
        first-ever build sees. Measured: three consecutive rebuilds stay at nesting 1
-       and 15 MB.
+       and 15 MB.~~ **SUPERSEDED 2026-10-02 by ledger 360**: a template anywhere inside
+       the run directory is REFUSED, whatever it holds, and nothing there is deleted --
+       which keeps this entry's guarantee (no copy into itself) without deleting.
      - ~~**The limit:** a second, differently-named calibration at the DEFAULT
        location could not be made safe this way, so `model.pest_runs` with several
        runs required explicit workspaces.~~ **CLOSED 2026-07-29** by the proper fix
@@ -2399,8 +2402,12 @@ same day, which is the useful part of the result.
        masters must stay SIBLINGS of the template (`runs.py` globs
        `template_dir.parent`); break that and a finished run silently lists as
        "built (not run)".
-     - `_clear_stale_template` is kept for an explicit `workspace=` inside the model
-       directory, and finally has a test — it had none.
+     - ~~`_clear_stale_template` is kept for an explicit `workspace=` inside the model
+       directory, and finally has a test — it had none.~~ **SUPERSEDED by ledger 360**:
+       such a `workspace=` is refused at `model.pest(...)` and at `build()`, and
+       `_clear_stale_template` deletes only a directory a build wrote; the test
+       (`test_a_template_inside_the_copied_workspace_is_refused_and_nothing_deleted`)
+       now pins the refusal.
 
 108. **Two of my own `canonical_07` test assertions fought the way notebooks are
      actually used (2026-07-28).**
@@ -16637,11 +16644,12 @@ same day, which is the useful part of the result.
       crashed (above). The toy: 0.32 s before, 0.29 s after. Every copy was measured on
       tmpfs; a disk copy costs more, and the build needs room for a second copy of the run
       while it runs.
-      **Not changed:** an explicit `workspace=` INSIDE the run directory is still allowed
+      ~~**Not changed:** an explicit `workspace=` INSIDE the run directory is still allowed
       when nothing else is there (`_clear_stale_template`, ledger 107) -- the one way a build
       still writes into the run; and refused beside another calibration, which the copy
-      would carry into each template. A template built before this is unaffected: it holds
-      what this build writes.
+      would carry into each template.~~ **SUPERSEDED by ledger 360**: refused whatever it
+      holds, so a build never writes into the run. A template built before this is
+      unaffected: it holds what this build writes.
       Reproducer: `docs/reproducers/pest_build_leaves_run_untouched.py` (sections A-C on
       this tree and on a58a8c3's `src`; D times the canonical model and `--large <run>`).
       Tests: `tests/test_pest_build_leaves_run_untouched.py` (12); on a58a8c3's `src` 10 of
@@ -16851,3 +16859,71 @@ same day, which is the useful part of the result.
       `_zone_details` (`test_a_zone_whose_first_row_is_unlabelled_reads_one_label_in_compare_and_in_pest`);
       a concentration label dropped in `_point_target_frame`
       (`test_a_concentration_targets_label_is_its_group`).
+
+360. **A PEST build deletes its `workspace=` only when a build wrote it there: the template and its staging directory are deleted only when absent, empty, or carrying the `.myflopy_pest_build.json` a build writes into each naming the directory; any other folder is refused before anything is deleted, and a `workspace=` that is, contains or sits inside the run directory is refused whatever it holds (2026-10-02).**
+      Found by the review of ledger 359; present long before a58a8c3. `model.pest(name,
+      workspace=W)` makes `W` the template, and `build()` deleted it WHATEVER it held --
+      `_clear_stale_template` ran `shutil.rmtree(W)`, then pyEMU's
+      `PstFrom(remove_existing=True)` removed it again -- and the staging directory beside
+      it (`W.staging`, ledger 356) the same way. Measured on the reproducer's toy, on
+      5376c7c's `src`: `W` = the Project root holding the run deleted all 14 of its files,
+      and the build then died "No MF6 simulation in .../runs/r"; a data folder's two files
+      were deleted and the template built over them; a user folder at `W.staging` was
+      deleted; `W` = a folder CONTAINING the run deleted it.
+      **What ships.** `_clear_stale_template` checks BOTH directories before deleting
+      EITHER: absent -> nothing; empty -> `rmdir` (which refuses, rather than deletes, if a
+      file appeared since); a build's -> `rmtree`; anything else -> `FileExistsError` naming
+      the directory, up to five of its entries, the default `model.pest(name)` (unless that
+      is the refused one) and "a new or empty folder". A template or staging directory that
+      IS, CONTAINS or sits INSIDE the run directory is refused (`ValueError`) at
+      `model.pest(...)` and again at `build()`, markers or not. `PstFrom` gets
+      `remove_existing=False`, so pyEMU deletes nothing; the staging directory is `mkdir`ed
+      (never deleted) and marked BEFORE the run is copied in, and the build's `finally`
+      removes it only when it carries that mark -- a folder that appears there after the
+      check survives the failed build; the template is marked the moment `PstFrom` has
+      copied it, before anything else the build does can fail.
+      `model.pest` names `workspace=` on its signature now -- it was in `**kwargs`.
+      **Judgment call: a marker FILE naming the directory's RESOLVED path, not
+      `myflopy_pest_metadata.json`.** The metadata is written at the END of a build, so a
+      build failing midway would leave an unmarked template the next build refuses; and a
+      marker that named nothing would pass a COPY -- pyEMU's `start_workers` copies the
+      template whole into `<name>_ies_master` and each worker, and a master copy at another
+      calibration's default place was cleared when the path check was reverted
+      (`test_a_copy_of_a_template_is_not_taken_for_one`). Cost: a template whose whole tree
+      was MOVED is refused once (the message says to delete it yourself). Not closed: a
+      build killed DURING `PstFrom`'s copy into the template leaves an unmarked template,
+      refused the same way.
+      **Judgment call: a template built before the marker is cleared only as THIS
+      calibration's** -- no marker, its metadata naming this project and this run
+      directory, and named as `model.pest(name)` names one (`<slug>`) -- the template a
+      re-run notebook cell meets after the upgrade. Any other pre-360 template (an
+      explicit `workspace=` of another name, a master copy) is refused once.
+      **Changed:** ledger 107 allowed an explicit `workspace=` inside the model directory
+      when its parent held nothing else, deleting the template and the parent; ledger 356
+      called that "the one way a build still writes into the run". Both refused now (struck
+      and restated there). `_skip_own` in the staging copy stays -- a symbolic link inside the
+      run can still lead the copy to the template or staging directory -- and now also skips
+      a marker the run itself holds (a run made in a copy of a template), which would
+      overwrite the staging directory's own.
+      **Not fixed (same class, the RUN path, not the build):** `run_ies`/`prior(workers=N)`
+      hand pyEMU's `start_workers` `master_dir` -- default `<template parent>/<name>_ies_master`,
+      or the caller's `master_dir=` -- and `worker_root=` its parent; pyEMU REMOVES
+      `master_dir` and every `worker_0..N-1` there if they exist, whatever they hold.
+      Reproducer: `docs/reproducers/pest_workspace_deleted.py` (sections A-F, on 5376c7c's
+      `src` and on this tree). Tests: `tests/test_pest_workspace_deleted_only_when_built.py`
+      (14) and `tests/test_mf6_pest.py::test_a_template_inside_the_copied_workspace_is_refused_and_nothing_deleted`
+      (ledger 107's test, rewritten: it pinned the deletion). Each piece reverted alone fails
+      by name: the old `_clear_stale_template` with `remove_existing=True` -> 11 of the 15
+      (the rebuilt, default, empty-folder and staging-marker tests hold on both);
+      the run-overlap refusal (both calls) -> the project-root, holding-the-run,
+      staging-is-the-run and ledger-107 tests; at `build()` only -> the project-root and
+      ledger-107 tests; the template marker unwritten -> the rebuilt, default-rebuilt,
+      empty-folder, pre-marker and staging-marker tests; the marker's path unchecked ->
+      `test_a_copy_of_a_template_is_not_taken_for_one`; the pre-marker rule off, or its name
+      check -> `test_a_template_built_before_the_marker_is_rebuilt_only_as_this_calibrations`;
+      `remove_existing=True` -> `test_pstfrom_itself_deletes_nothing`; the staging directory
+      unchecked -> `test_a_user_folder_where_the_staging_copy_goes_is_refused`; the staging
+      marker unwritten, or the run's marker copied over it ->
+      `test_the_staging_copy_is_marked_as_the_builds_while_the_build_runs`; the `finally`'s
+      unconditional `rmtree`, or `_stage_model`'s old `rmtree` before the `mkdir` ->
+      `test_a_folder_that_appears_where_the_staging_copy_goes_is_not_deleted`.

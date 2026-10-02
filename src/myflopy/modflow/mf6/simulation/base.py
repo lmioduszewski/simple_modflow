@@ -544,7 +544,14 @@ class SimulationBase:
 
         return find_model_pest_runs(self.workspace, model_name=self.name, model=self)
 
-    def pest(self, name: str, *, start_datetime: str | None = None, **kwargs):
+    def pest(
+        self,
+        name: str,
+        *,
+        start_datetime: str | None = None,
+        workspace: str | Path | None = None,
+        **kwargs,
+    ):
         """Start a PEST/PEST++ calibration of this model.
 
         This is the write-side companion to :attr:`pest_runs` (the read side):
@@ -574,9 +581,22 @@ class SimulationBase:
             reads it from the model's TDIS ``start_date_time``; when that is unset
             too, ``ValueError`` is raised, so pass it explicitly for a model without
             one.
+        workspace : str or pathlib.Path or None, optional
+            The template directory ``build()`` writes. Default ``None`` uses
+            ``<workspace>.pest/<slug>``, beside the model directory, where
+            :attr:`pest_runs` finds it. **A build deletes it, and the staging
+            directory beside it** (``<template>.staging``), **only when each is
+            absent, empty, or one a previous build wrote there** -- marked by the
+            ``.myflopy_pest_build.json`` the build writes into it -- so
+            re-running ``build()`` rebuilds it, while an existing folder no build
+            wrote (a Project root, a data folder) is refused with
+            ``FileExistsError`` and left as it was (ledger 360). A ``workspace``
+            that is, contains or sits inside this model's run directory is refused
+            here with ``ValueError``, whatever it holds. See
+            :class:`~myflopy.modflow.mf6.pest.PestProject` for the full rule.
         **kwargs
             Forwarded to :class:`~myflopy.modflow.mf6.pest.PestProject`
-            (``workspace``, ``spatial_reference``, ``zero_based``, ``longnames``).
+            (``spatial_reference``, ``zero_based``, ``longnames``).
 
         Returns
         -------
@@ -593,7 +613,9 @@ class SimulationBase:
                     "start_datetime could not be read from the model's TDIS; "
                     "pass start_datetime=... explicitly (e.g. '2020-01-01')."
                 )
-        return PestProject(self, name, start_datetime=start_datetime, **kwargs)
+        return PestProject(
+            self, name, start_datetime=start_datetime, workspace=workspace, **kwargs
+        )
 
     def _tdis_start_datetime(self) -> str | None:
         """The TDIS ``start_date_time`` as a string, or ``None`` if unset."""

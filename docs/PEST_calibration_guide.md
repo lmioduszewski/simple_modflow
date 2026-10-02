@@ -317,6 +317,21 @@ made from the run's FILES, so an edit made to the model object in memory after t
 run does not reach PEST: write and re-run first. pyEMU's `PstFrom.log` lands in the
 template, not in your working directory.
 
+**What a build deletes** (ledger 360). Every build deletes and rewrites the template
+directory -- `<model workspace>.pest/<name>` by default, or the `workspace=` you pass --
+and the staging directory beside it (`<template>.staging`). It deletes each **only when
+it is absent, empty, or one a previous build wrote there**: a build writes a
+`.myflopy_pest_build.json` into it, naming the directory. So re-running `cal.build()`, or
+a fresh `model.pest(name)` on the same workspace, rebuilds the template -- the output of a
+serial `run_ies`/`prior` in it included -- while any other folder (a Project root, a data
+folder, a copy of a template such as an IES master directory) is refused with
+`FileExistsError`, naming it and what it holds, before anything is deleted. A
+`workspace=` that is, contains or sits inside the model's run directory is refused with
+`ValueError` whatever it holds, at `model.pest(...)`. Leave `workspace=` out, or pass a
+new or empty folder. A template built before this rule has no marker: it is rebuilt when
+it is this calibration's, at the place `model.pest(name)` puts it; delete any other
+yourself.
+
 ---
 
 ## 5. History matching with ensembles (PESTPP-IES)

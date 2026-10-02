@@ -68,6 +68,16 @@ PYEMU_LOG = "PstFrom.log"
 #: run (ledger 356): a sibling of the template, removed when the build ends.
 STAGING_SUFFIX = ".staging"
 
+#: The file a build writes into its template, and into its staging copy, naming the
+#: directory it was written for and that directory's role: the one sign by which a
+#: later build may DELETE that directory (ledger 360). A build deletes a directory
+#: only when it is absent, empty, or carries this file naming it -- a folder the build
+#: did not write is refused, whatever else it holds.
+BUILD_MARKER = ".myflopy_pest_build.json"
+
+#: The ``written_by`` value of a :data:`BUILD_MARKER`.
+_MARKER_WRITER = "myflopy PEST build"
+
 logger = get_logger(__name__)
 
 # Pre-built observation specs accepted by observe()/forecast() as-is.
@@ -122,6 +132,39 @@ def build_forward_run_command(template_workspace: Path, interpreter: str) -> str
     wrapper.write_text(f'#!/bin/sh\nexec "{interpreter}" forward_run.py "$@"\n')
     wrapper.chmod(0o755)
     return "./run_forward.sh"
+
+
+def _write_build_marker(directory: Path, role: str) -> None:
+    """Mark ``directory`` as one a build wrote, in ``role`` (``"template"`` / ``"staging"``).
+
+    The file names the directory's RESOLVED path, so a copy of it -- an IES master or
+    worker directory, a backup -- is not taken for it (ledger 360).
+    """
+
+    directory = Path(directory).resolve()
+    (directory / BUILD_MARKER).write_text(
+        json.dumps(
+            {"written_by": _MARKER_WRITER, "role": role, "directory": str(directory)},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _written_by_a_build(directory: Path, role: str) -> bool:
+    """Whether ``directory`` (resolved) holds a :data:`BUILD_MARKER` naming it, in ``role``."""
+
+    try:
+        marker = json.loads((directory / BUILD_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # Absent, a directory, unreadable, not UTF-8 or not JSON: no build wrote it.
+        return False
+    return (
+        isinstance(marker, dict)
+        and marker.get("written_by") == _MARKER_WRITER
+        and marker.get("role") == role
+        and marker.get("directory") == str(directory)
+    )
 
 
 @contextlib.contextmanager
@@ -211,15 +254,27 @@ class PestProject:
         (``<name>_ies_master`` / ``<name>_prior_master``), and the run as
         ``model.pest_runs`` lists it.
     workspace : str or pathlib.Path or None, optional
-        Directory for the generated PEST template workspace. Default ``None``
-        uses ``<model workspace>.pest/<name>``, a sibling of the model
-        directory where ``model.pest_runs`` finds it. It is DELETED and
-        recreated when :meth:`build` runs, which also makes and then removes
-        a staging directory beside it, ``<workspace>.staging``. A directory
-        inside the model workspace is refused by :meth:`build`
-        (``RuntimeError``) unless its parent directory is empty once it is
-        removed, because the build would copy the workspace into itself; one
-        it accepts is the one way a build writes into the run directory.
+        The PEST template directory :meth:`build` writes. Default ``None`` uses
+        ``<model workspace>.pest/<slug>`` (the slug as ``name`` describes), a
+        sibling of the model directory where ``model.pest_runs`` finds it.
+        **What a build deletes** (ledger 360): this directory and everything in
+        it, and the staging directory it makes beside it, ``<workspace>.staging``
+        (removed again when the build ends) -- each ONLY when it is absent, empty,
+        or a directory a previous build wrote there in that role, which the build
+        marks with a ``.myflopy_pest_build.json`` naming the directory (a template
+        built before that file existed counts when its
+        ``myflopy_pest_metadata.json`` names this ``name`` and this run directory
+        and the directory is named as the default names it). So re-running
+        :meth:`build` on the same ``workspace`` rebuilds it, a serial
+        :meth:`run_ies`/:meth:`prior`'s output in it included, while an existing
+        folder a build did not write -- a Project root, a data folder, a copy of a
+        template -- is refused (``FileExistsError``, naming it and what it holds)
+        and left exactly as it was. Everything is checked before anything is
+        deleted. A ``workspace`` (or its staging directory) that IS, CONTAINS or
+        sits INSIDE the model's run directory is refused here and by
+        :meth:`build` (``ValueError``) whatever it holds, because the build would
+        delete the run or copy it into itself (ledger 107). Both refusals name the
+        default and "a new or empty folder" as the spelling to use instead.
     start_datetime : str or pandas.Timestamp
         Simulation start date (e.g. ``"2020-01-01"``), passed to
         ``PstFrom(start_datetime=...)``, which parses it to a datetime to place
@@ -261,8 +316,10 @@ class PestProject:
         ``<model workspace>.pest/<name>`` -- a SIBLING of the model directory, so
         the calibration lives beside the model it calibrates, is
         auto-discoverable via ``model.pest_runs`` / ``run.pest_runs``, and is
-        not inside the tree ``PstFrom`` copies (ledger 107). See the class
-        docstring for the full reference.
+        not inside the tree the build copies (ledger 107). A ``workspace`` that
+        is, contains or sits inside the model's run directory is refused here
+        (``ValueError``, ledger 360). See the class docstring for the full
+        reference, including what :meth:`build` deletes.
         """
 
         self.model = model
@@ -275,6 +332,8 @@ class PestProject:
             # gets copied into itself (ledger 107).
             workspace = default_pest_root(self.original_workspace) / _pest_run_slug(name)
         self.template_workspace = Path(workspace)
+        # Refused here, the earliest it can be, and again by `build()` (ledger 360).
+        self._refuse_a_workspace_over_the_run()
         self.start_datetime = start_datetime
         self.spatial_reference = spatial_reference
         self.zero_based = bool(zero_based)
@@ -687,66 +746,171 @@ class PestProject:
             f"pre-built observation spec; got {type(targets).__name__}."
         )
 
-    def _clear_stale_template(self):
-        """Make sure the PEST template directory is not copied into itself.
+    def _default_template(self) -> Path:
+        """The template ``model.pest(name)`` builds into: ``<model workspace>.pest/<slug>``."""
 
-        The build copies ``original_workspace`` wholesale -- into a staging
-        directory beside the template since ledger 356, which ``PstFrom`` then
-        copies into ``template_workspace``; before that ``PstFrom`` copied it
-        directly. If the template lives INSIDE the workspace being copied,
-        ``shutil.copytree`` descended into the destination it was filling --
-        ``pest/<name>/pest/<name>/pest/...`` -- until it died of recursion.
-        Measured 2026-07-28: re-running a calibration cell left a 17 GB tree 40
-        levels deep. ``PstFrom``'s own ``remove_existing=True`` does not help --
-        it clears the destination, which is not what recurses. Nor is deleting
-        just this run's template enough: an EMPTY subdirectory still gets
-        walked. The staging copy skips the template and the staging directory
-        themselves, but every OTHER calibration under the same parent would
-        still ride into each new template.
+        return default_pest_root(self.original_workspace) / _pest_run_slug(self.name)
 
-        **The default no longer lands there** (ledger 107): it is now
-        ``<model workspace>.pest/<name>``, a sibling of the copied tree, so this
-        returns early and several named calibrations coexist freely. What
-        remains is the guard for an explicit ``workspace=`` that the caller put
-        inside the model directory. There it removes this run's template and, if
-        that leaves the parent empty, removes the parent too. Other calibrations
-        are never deleted -- their IES master directories hold finished results
-        -- so if any exist the copy cannot be made safe here and this raises
-        rather than exploding later.
+    def _where_to_build_instead(self) -> str:
+        """The spellings a refusal names: the default (unless it IS the refused one) or a new folder."""
+
+        default = self._default_template()
+        lines = ["Build it somewhere else:"]
+        if default.resolve() != self.template_workspace.resolve():
+            lines.append(
+                f"    model.pest({self.name!r}, ...)   # the default, beside the model: {default}"
+            )
+        lines.append(
+            f"    model.pest({self.name!r}, workspace=<a new or empty folder>, ...)"
+        )
+        return "\n".join(lines)
+
+    def _refuse_a_workspace_over_the_run(self) -> None:
+        """Refuse a template or staging directory that is, contains or sits inside the run directory.
+
+        A build deletes both directories and copies the run directory into them, so
+        one that contains the run deletes it, and one inside it copies the run into
+        itself -- ``pest/<name>/pest/<name>/...``, 17 GB 40 levels deep (ledger 107).
+        Refused whatever the directory holds, a build's marker included (ledger 360).
+        Called when the project is made and again by :meth:`build`.
+
+        Raises
+        ------
+        ValueError
+            Naming the directory, the run directory and the spelling to use instead.
         """
 
-        template = self.template_workspace
-        if template.exists():
-            shutil.rmtree(template, ignore_errors=True)
-
-        pest_root = template.parent
-        try:
-            inside = pest_root.resolve().is_relative_to(
-                self.original_workspace.resolve()
+        run = self.original_workspace.resolve()
+        template = self.template_workspace.resolve()
+        staging = self._staging_workspace().resolve()
+        for directory, what in (
+            (template, "it"),
+            (staging, f"its staging directory {staging}"),
+        ):
+            if directory == run:
+                relation = "IS the model's run directory"
+            elif run.is_relative_to(directory):
+                relation = f"CONTAINS the model's run directory {run}"
+            elif directory.is_relative_to(run):
+                relation = f"sits INSIDE the model's run directory {run}"
+            else:
+                continue
+            raise ValueError(
+                f"Refusing to build calibration {self.name!r} at workspace="
+                f"{str(self.template_workspace)!r}: {what} {relation}. A build deletes "
+                "its workspace and the staging directory beside it, then copies the run "
+                "directory into them, so the run would be deleted, or copied into "
+                "itself.\n\n" + self._where_to_build_instead()
             )
-        except (OSError, ValueError):  # pragma: no cover - defensive
-            inside = False
-        if not inside or not pest_root.is_dir():
-            return
 
-        siblings = sorted(entry.name for entry in pest_root.iterdir())
-        if not siblings:
-            # Empty now -- remove it so the copy sees no `pest/` at all.
-            shutil.rmtree(pest_root, ignore_errors=True)
-            return
+    def _clearance(self, directory: Path, role: str) -> str:
+        """How a build may clear ``directory`` (resolved): ``"absent"``, ``"empty"`` or ``"built"``.
 
-        raise RuntimeError(
-            f"Cannot build this calibration at {template}: it sits inside the "
-            f"model workspace that PstFrom copies, and {pest_root} still holds "
-            f"{len(siblings)} other PEST run(s) ({', '.join(siblings[:5])}"
-            f"{' ...' if len(siblings) > 5 else ''}). Copying would nest the "
-            "workspace inside itself until it exhausts the disk.\n\n"
-            "Drop the explicit workspace= to use the default, which sits beside "
-            f"the model rather than inside it:\n"
-            f"    model.pest({self.name!r}, ...)   # -> "
-            f"{default_pest_root(self.original_workspace) / _pest_run_slug(self.name)}\n"
-            "or point workspace= anywhere outside the model directory."
+        ``"built"`` is a directory a previous build wrote in ``role`` -- its
+        :data:`BUILD_MARKER` names it -- or, for the template, one built before the
+        marker existed (:meth:`_a_template_built_before_the_marker`). Anything else
+        is refused.
+
+        Raises
+        ------
+        FileExistsError
+            When ``directory`` is a file, or a non-empty directory no build wrote,
+            naming it, what it holds and the spelling to use instead.
+        """
+
+        if not os.path.lexists(directory):
+            return "absent"
+        where = (
+            f"Refusing to build calibration {self.name!r} at workspace="
+            f"{str(self.template_workspace)!r}: "
+            + ("it" if role == "template" else f"the staging directory beside it, {directory},")
         )
+        if not directory.is_dir():
+            raise FileExistsError(
+                f"{where} is a FILE, and a build replaces it with a directory.\n\n"
+                + self._where_to_build_instead()
+            )
+        entries = sorted(entry.name for entry in directory.iterdir())
+        if not entries:
+            return "empty"
+        if _written_by_a_build(directory, role):
+            return "built"
+        if role == "template" and self._a_template_built_before_the_marker(directory):
+            return "built"
+        shown = ", ".join(entries[:5]) + (" ..." if len(entries) > 5 else "")
+        raise FileExistsError(
+            f"{where} already holds {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} "
+            f"({shown}), and no myflopy PEST build wrote it: it has no {BUILD_MARKER} "
+            f"naming it. A build DELETES its {role} directory and everything in it, so "
+            f"it deletes only one that is absent, empty, or a {role} directory a "
+            "previous build wrote there.\n\n"
+            + self._where_to_build_instead()
+            + f"\nIf {directory} is an old {role} directory you no longer need, delete "
+            "it yourself."
+        )
+
+    def _a_template_built_before_the_marker(self, directory: Path) -> bool:
+        """A template a build wrote before :data:`BUILD_MARKER` existed: THIS calibration's, by its metadata.
+
+        It has no marker (a marker, present, decides alone), it is named as
+        ``model.pest(name)`` names a template, and its ``myflopy_pest_metadata.json``
+        records this project's name and this model's run directory -- so an IES
+        master or worker copy (named otherwise) and another calibration's template
+        are not taken for it (ledger 360).
+        """
+
+        if os.path.lexists(directory / BUILD_MARKER) or directory.name != _pest_run_slug(self.name):
+            return False
+        try:
+            metadata = json.loads((directory / METADATA_FILENAME).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return (
+            isinstance(metadata, dict)
+            and metadata.get("project_name") == self.name
+            and metadata.get("original_workspace") == str(self.original_workspace.resolve())
+        )
+
+    def _clear_stale_template(self):
+        """Delete the template and staging directories a previous build wrote -- and nothing else.
+
+        A build writes its template at ``template_workspace`` and stages its copy of
+        the run beside it (``<template>.staging``), so before it starts both must be
+        gone. It deletes a directory only when it is absent, EMPTY, or one a
+        previous build wrote in that role -- its :data:`BUILD_MARKER` names it, or,
+        for a template built before the marker existed, its metadata names this
+        calibration and this run (ledger 360). Everything is checked before anything
+        is deleted, and ``PstFrom`` is made with ``remove_existing=False``, so it
+        deletes nothing itself. Before ledger 360 ``workspace=`` was deleted
+        WHATEVER it held -- a Project root holding the model's own run, the user's
+        home -- by this method and again by ``PstFrom(remove_existing=True)``.
+
+        A directory that is, contains or sits inside the run directory is refused
+        whatever it holds (:meth:`_refuse_a_workspace_over_the_run`): one inside it
+        is what copied the template into itself until the disk filled (ledger 107),
+        one containing it would delete the run.
+
+        Raises
+        ------
+        ValueError
+            From :meth:`_refuse_a_workspace_over_the_run`.
+        FileExistsError
+            From :meth:`_clearance`: a directory no build wrote is in the way.
+        """
+
+        self._refuse_a_workspace_over_the_run()
+        cleared = [
+            (directory, self._clearance(directory, role))
+            for directory, role in (
+                (self.template_workspace.resolve(), "template"),
+                (self._staging_workspace().resolve(), "staging"),
+            )
+        ]
+        for directory, clearance in cleared:
+            if clearance == "empty":
+                directory.rmdir()   # refuses, rather than deletes, if a file appeared since
+            elif clearance == "built":
+                shutil.rmtree(directory)
 
     def _build_pstfrom(self, staging: Path):
         """Instantiate the underlying ``pyemu.utils.PstFrom`` object over the staged copy.
@@ -783,13 +947,17 @@ class PestProject:
             self.pf = PstFrom(
                 original_d=staging,
                 new_d=template,
-                remove_existing=True,
+                # `_clear_stale_template` removed what may be removed; anything still
+                # there is refused by pyEMU rather than deleted (ledger 360).
+                remove_existing=False,
                 longnames=self.longnames,
                 spatial_reference=spatial_reference,
                 zero_based=self.zero_based,
                 start_datetime=self.start_datetime,
                 echo=False,
             )
+        # First, so a build that fails from here on leaves a template the next one may clear.
+        _write_build_marker(template, "template")
         self._adopt_pyemu_log(staging / PYEMU_LOG, template)
 
     def _adopt_pyemu_log(self, opened_at: Path, template: Path) -> None:
@@ -818,8 +986,8 @@ class PestProject:
         """Close the previous build's ``PstFrom`` log, which lives in the template a rebuild deletes.
 
         Since ledger 356 the log is IN the template, and a second ``build()`` on one
-        project removes the template first (``_clear_stale_template``, then
-        ``PstFrom(remove_existing=True)``); the previous ``cal.pf`` still held the file
+        project removes the template first (``_clear_stale_template``; before ledger
+        360 ``PstFrom(remove_existing=True)`` too); the previous ``cal.pf`` still held the file
         open, which Windows refuses to delete (ledger 357 -- reasoned from Windows'
         file semantics, not measured: there is no Windows machine here). That
         ``cal.pf`` is replaced by the rebuild; a rebuild that fails after this has
@@ -874,23 +1042,33 @@ class PestProject:
                 "`model.sim.write_simulation()` then `model.sim.run_simulation()`)."
             )
         staging = self._staging_workspace()
-        if staging.exists():
-            shutil.rmtree(staging)
         started = time.perf_counter()
+        # `_clear_stale_template` has cleared it; were anything there now, this
+        # raises rather than deleting it (ledger 360). Marked BEFORE the copy, so a
+        # build that dies copying leaves a directory the next build may clear.
+        staging.mkdir(parents=True)
+        _write_build_marker(staging, "staging")
         own = {staging.resolve(), self.template_workspace.resolve()}
         own_names = {path.name for path in own}
 
         def _skip_own(directory, names):
-            """An explicit ``workspace=`` inside the run puts both of these inside the copy."""
+            """Never copy the template, the staging directory or a build's marker.
+
+            Both directories sit outside the run directory -- the build refuses one
+            that does not (ledger 360) -- but a symbolic link inside the run can still
+            lead the copy to them. A marker the run holds (a run made in a copy of a
+            template) would overwrite the staging directory's own.
+            """
 
             return [
                 name for name in names
-                if name in own_names and (Path(directory) / name).resolve() in own
+                if name == BUILD_MARKER
+                or (name in own_names and (Path(directory) / name).resolve() in own)
             ]
 
         # Not `symlinks=True` (PstFrom's own copy): FloPy writes the staged inputs
         # back, and through a link that would write into whatever it points at.
-        shutil.copytree(source, staging, ignore=_skip_own)
+        shutil.copytree(source, staging, ignore=_skip_own, dirs_exist_ok=True)
         copied = time.perf_counter()
         simulation = flopy.mf6.MFSimulation.load(sim_ws=str(staging), verbosity_level=0)
         keep_implicit(simulation)
@@ -1295,7 +1473,10 @@ class PestProject:
     def build(self, filename: str | Path | None = None, *, noptmax: int = 0):
         """Compile the declarations into a runnable PEST(++) control file.
 
-        In order it: copies the run directory to a staging directory beside the
+        In order it: deletes the template and staging directories a previous
+        build wrote (and refuses, deleting nothing, when either is a folder no
+        build wrote -- see ``workspace=`` on :class:`PestProject`, ledger 360);
+        copies the run directory to a staging directory beside the
         template, loads the simulation from that copy and writes it back with
         every array and list in an external file (``set_all_data_external``);
         creates a ``pyemu.utils.PstFrom`` over the staged copy; registers every
@@ -1354,13 +1535,18 @@ class PestProject:
             a head or concentration ``simulated_values`` table's columns are not
             the forward run's, in its order (ledger 340); or when a target's
             group label, or a set's prefix, cannot be its PEST observation group
-            (ledger 358; see :meth:`observe`).
+            (ledger 358; see :meth:`observe`). Also, before anything is deleted,
+            when ``workspace=`` or the staging directory beside it is, contains or
+            sits inside the model's run directory, whatever it holds (ledger 360).
         FileNotFoundError
             When the model's workspace holds no ``mfsim.nam``: the template is
             made from the run's files, and a model never written has none.
-        RuntimeError
-            When ``workspace=`` sits inside the model workspace beside another
-            calibration, which the copy would carry into the template.
+        FileExistsError
+            When ``workspace=``, or the staging directory beside it, is a file or
+            a non-empty folder no build wrote (ledger 360): the build deletes both
+            directories first, so it refuses rather than delete what it did not
+            write, before anything is deleted. Use the default, a new or empty
+            folder, or delete it yourself.
         """
 
         target_name = Path(filename).name if filename else f"{self.name}.pst"
@@ -1398,9 +1584,12 @@ class PestProject:
             with self._quiet_pyemu_context():
                 self.pst.write(self.template_workspace / target_name, version=2)
         finally:
-            # The template holds everything the staging copy was made for.
+            # The template holds everything the staging copy was made for. Removed only
+            # as the copy THIS build made and marked: a build that failed before making
+            # it -- or on finding a folder already there -- leaves that folder alone.
             self._staged_simulation = None
-            shutil.rmtree(staging, ignore_errors=True)
+            if _written_by_a_build(staging.resolve(), "staging"):
+                shutil.rmtree(staging, ignore_errors=True)
         return self.pst
 
     def settings(self) -> PestSettings:

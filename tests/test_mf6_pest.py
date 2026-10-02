@@ -1261,17 +1261,19 @@ def test_a_legacy_run_copied_into_a_template_is_not_listed_twice(tmp_path):
     ]
 
 
-def test_a_template_inside_the_copied_workspace_still_refuses_to_nest(tmp_path):
-    """`_clear_stale_template` had no test at all, and it is what stands between
-    a rebuild and the 17 GB recursion of ledger 107.
+def test_a_template_inside_the_copied_workspace_is_refused_and_nothing_deleted(tmp_path):
+    """`_clear_stale_template` is what stands between a rebuild and the 17 GB
+    recursion of ledger 107.
 
-    The default no longer lands inside the copied tree, so this drives the case
-    that remains: an explicit `workspace=` under the model directory, with
-    another calibration already there. Deleting that one is not an option -- its
-    IES master holds finished results -- so the build must refuse.
+    Until ledger 360 it removed a template under the model directory -- and, when
+    that left its parent empty, the parent too -- refusing only beside another
+    calibration, whose IES master holds finished results. A template anywhere inside
+    the run directory is now refused WHATEVER it holds, a build's own marker
+    included, and nothing is deleted: not the template, not its parent, not the
+    other calibration.
     """
 
-    from myflopy.modflow.mf6.pest.project import PestProject
+    from myflopy.modflow.mf6.pest.project import PestProject, _write_build_marker
 
     model_workspace = tmp_path / "model"
     model_workspace.mkdir()
@@ -1282,25 +1284,28 @@ def test_a_template_inside_the_copied_workspace_still_refuses_to_nest(tmp_path):
     project.original_workspace = model_workspace
     project.template_workspace = pest_root / "second"
 
-    # Alone in the directory: the stale template AND the now-empty parent go, so
-    # the copy sees no `pest/` at all -- an EMPTY one is enough to recurse.
+    # Alone in the directory, and marked as a template a build wrote: refused, kept.
     project.template_workspace.mkdir(parents=True)
+    _write_build_marker(project.template_workspace, "template")
     (project.template_workspace / "leftover.txt").write_text("x", encoding="utf-8")
-    project._clear_stale_template()
-    assert not pest_root.exists()
+    with pytest.raises(ValueError, match="sits INSIDE the model's run directory"):
+        project._clear_stale_template()
+    assert (project.template_workspace / "leftover.txt").is_file()
 
-    # With somebody else's finished run there, refuse rather than delete it.
+    # Beside somebody else's finished run: refused, and that run is kept.
     _write_stub_run(pest_root / "first", "first")
-    project.template_workspace.mkdir(parents=True)
-    with pytest.raises(RuntimeError, match="still holds 1 other PEST run"):
+    with pytest.raises(ValueError, match=r"model\.pest\('second', \.\.\.\)"):
         project._clear_stale_template()
     assert (pest_root / "first").exists(), "another run's results were deleted"
 
-    # The default location is outside the copied tree, so it never gets here.
+    # The default location is outside the copied tree: a template a build wrote
+    # there is cleared, and nothing under the model directory is touched.
     project.template_workspace = tmp_path / "model.pest" / "second"
     project.template_workspace.mkdir(parents=True)
+    _write_build_marker(project.template_workspace, "template")
     project._clear_stale_template()
-    assert (pest_root / "first").exists()
+    assert not project.template_workspace.exists()
+    assert (pest_root / "first").exists() and (pest_root / "second" / "leftover.txt").is_file()
 
 
 def test_two_named_calibrations_on_one_model_coexist_at_the_default_location():
