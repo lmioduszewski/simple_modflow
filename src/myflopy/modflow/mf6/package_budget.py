@@ -252,17 +252,61 @@ def build_budget_result_table(
     return combined
 
 
-def build_sfr_stage_result_table(model: SimulationBase, *, package: str | None = None) -> pd.DataFrame:
-    """Return a normalized table of SFR stage results by reach and period.
+def build_sfr_stage_result_table(
+    model: SimulationBase, *, masked: bool = True, package: str | None = None
+) -> pd.DataFrame:
+    """Return a normalized table of SFR stage results by reach and saved step.
 
-    ``package`` names the SFR package (any case); ``None``, the default, is the
-    model's only one -- several raise ``SeveralPackagesError`` naming
-    ``model.sfr(package=...)``, because each package numbers its own reaches
-    (ledger 352).
+    One row per reach per saved stage record, labelled from the stage file's OWN
+    record headers: ``kstpkper`` is the ``(kstp, kper)`` a record names and ``per``
+    its stress period. A view that wants one value per period reads each period's
+    last saved step (``period_end.at_last_saved_steps``).
+
+    ``stage`` is ``NaN`` wherever MF6 wrote no stage -- a DRY reach (-1e30 in the
+    stage file: its depth is zero) or an INACTIVE one (+1e30, ``STATUS
+    INACTIVE``) -- because it is read through ``model.outputs.sfr.stage.get()``,
+    which masks both by the head file's rule (ledger 353, LAK's ledger 329 for
+    SFR). The row stays, so a dry period is a gap in every view built on this
+    table, never a missing record. ``masked=False`` keeps the two numbers, which is
+    what ``SfrStageTargets`` reads: the user kept a reach TARGET as it was, so a
+    dry reach still reaches it as -1e30.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        A run model with an SFR package declaring a ``stage_filerecord``.
+    masked : bool, default True
+        Passed to ``model.outputs.sfr.stage.get``: ``True`` makes MF6's two
+        no-stage sentinels ``NaN``; ``False`` keeps -1e30 (dry) and +1e30
+        (inactive) as MF6 wrote them. Every view reads the default.
+    package : str or None, optional
+        The SFR package's NAME, any case. Default ``None``: the model's only SFR
+        package -- several raise ``SeveralPackagesError`` naming
+        ``model.sfr(package=...)``, because each package numbers its own reaches
+        (ledger 352).
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``model``, ``package`` (``"sfr"``), ``kstpkper`` (zero-based tuple),
+        ``per`` (zero-based stress period), ``reach`` (zero-based), ``layer``,
+        ``cell``, ``rlen``, ``distance_start``, ``distance_mid``,
+        ``distance_end`` (model length units along the network) and ``stage``
+        (model length units; ``NaN`` where MF6 wrote none, or its -1e30/+1e30
+        under ``masked=False``).
+
+    Raises
+    ------
+    AttributeError
+        If the model has no SFR package or it declares no ``stage_filerecord``.
+    SeveralPackagesError
+        If the model carries several SFR packages and ``package`` names none.
+    ValueError
+        When ``package`` names no SFR package.
     """
 
     one_package(model, "sfr", package)  # several and none named: refused by the view's spelling
-    stage_frame = package_outputs(model, "sfr", package).stage.get().copy()
+    stage_frame = package_outputs(model, "sfr", package).stage.get(masked=masked).copy()
     stage_frame.index.name = "reach"
     stage_long = stage_frame.reset_index().melt(
         id_vars="reach", var_name="kstpkper", value_name="stage"

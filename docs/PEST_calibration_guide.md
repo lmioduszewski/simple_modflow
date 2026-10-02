@@ -182,7 +182,11 @@ stage file, which PESTPP-IES could not recover from: its lambda stayed near 1e57
 stopped calibrating.) Only a lake set `STATUS INACTIVE` has no stage, and is written
 1e30. So a lake you OBSERVED dry is a target AT its bottom: `lake_bottoms(model)` in
 `myflopy.modflow.mf6.package_tables` gives the number MF6 uses, and a simulated stage can
-never go below it.
+never go below it. **A dry stream reach is NOT treated that way** (ledger 353): with
+`SfrStageTargets` reading the stage FILE, a reach that goes dry reads MF6's -1e30 in the
+tables PEST reads -- the magnitude that stalled PESTPP-IES for a lake (ledger 351) --
+while on its observation route MF6's STAGE observation gives the streambed top. The SFR
+stage PICTURES leave a dry reach blank; the targets were left as they were.
 
 > Weighting matters *a lot* and there is no one-size-fits-all. Pre-process data
 > for information content, use more groups rather than fewer, and aim weights at

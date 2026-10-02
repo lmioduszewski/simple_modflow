@@ -31,6 +31,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _stage_at_period_end,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
+from myflopy.modflow.mf6.package_budget import build_sfr_stage_result_table
 from myflopy.modflow.mf6.period_end import period_ends
 
 #: What a reach-stage target reads on the observation route: an SFR package's
@@ -54,6 +55,38 @@ _SFR_FLOW = _ObservedQuantity(
 )
 
 
+def _calibration_stage_table(model) -> pd.DataFrame:
+    """The SFR stage table a reach TARGET reads: the stage file RAW, a dry reach -1e30.
+
+    The stage VIEWS read the file masked -- a dry (-1e30) or inactive (+1e30) reach is
+    a gap (ledger 353) -- and a target does not: the user kept SFR targets as they
+    were, so this reads ``build_sfr_stage_result_table(model, masked=False)`` and a
+    dry reach reaches ``compare()`` and the files PEST reads as the -1e30 MF6 wrote,
+    exactly as before the views were masked. (A lake target reads its file raw too,
+    and gives a dry lake its bottom -- ledger 351; no rule was decided for a reach.)
+
+    Parameters
+    ----------
+    model : SimulationBase
+        A run model with one SFR package declaring a ``stage_filerecord``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        :func:`~myflopy.modflow.mf6.package_budget.build_sfr_stage_result_table`'s
+        columns, ``stage`` as MF6 wrote it, model length units.
+
+    Raises
+    ------
+    AttributeError
+        As the table builder: no SFR package, or no stage file.
+    SeveralPackagesError
+        As the table builder: the model carries several SFR packages.
+    """
+
+    return build_sfr_stage_result_table(model, masked=False)
+
+
 def _sfr_stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
     """The SFR stage file read at each period's END, by the rule both stage families share.
 
@@ -66,7 +99,7 @@ def _sfr_stage_at_period_end(model, frame: pd.DataFrame) -> pd.DataFrame:
     model : SimulationBase
         The run model the table was read from.
     frame : pandas.DataFrame
-        ``model.sfr.results.stage.get()``.
+        :func:`_calibration_stage_table`'s rows (the stage file, raw).
 
     Returns
     -------
@@ -117,6 +150,13 @@ class SfrStageTargets:
     read the first workspace CSV whose header held the labels: a flow column
     read as a stage (-93.87 ft), reach 0 for a target naming reach 3. MF6's
     no-data value (3e30) reads as ``NaN`` there, as a lake's does.
+
+    **A reach with no water surface is NOT a gap here** (ledger 353, the user's
+    call): the stage VIEWS read the stage file masked, a dry (-1e30) or inactive
+    (+1e30) reach left blank, while a target reads it RAW, so on the stage-file
+    route a dry reach is -1e30 in :meth:`compare` and in the files PEST reads, as
+    it always was. MF6's STAGE observation reports the reach's streambed top for
+    a dry reach and, measured, for an inactive one, so the two routes differ there.
 
     Parameters
     ----------
@@ -258,7 +298,7 @@ class SfrStageTargets:
         label (its name as :meth:`to_flopy_obs` writes it) is declared there, for
         the target's own reach -- only the files that OBS names are read, each
         record from its own column, MF6's no-data value (3e30) as ``NaN`` --
-        else, when NO target is declared, from ``model.sfr.results.stage``
+        else, when NO target is declared, from the SFR stage file read RAW
         (ledger 344; see the class notes for what is refused). Both routes label
         ``time`` by the zero-based stress period, one row per period at its END:
         the observation route takes MF6's observation at the time step that ends
@@ -275,8 +315,12 @@ class SfrStageTargets:
         saved step per period that ends it (``SAVE HEAD LAST``, or one time step)
         reads as before; a period whose final step was not saved (``FIRST``,
         ``STEPS`` short of it) is refused, because its end-of-period stage does not
-        exist in the file. A dry reach is still MF6's -1e30 on this route: SFR's
-        stage is not masked yet (ledger 329).
+        exist in the file. **A dry reach is MF6's -1e30 on this route, and an
+        inactive one +1e30**: the stage VIEWS leave both a gap (ledger 353), and a
+        target reads the file raw because the user kept SFR targets as they were.
+        The observation route reads MF6's STAGE observation there instead, which
+        is the reach's streambed top for a dry reach and -- measured -- for an
+        inactive one too, so the two routes differ at such a reach.
 
         Parameters
         ----------
@@ -323,7 +367,7 @@ class SfrStageTargets:
         observed = self._observed(model)
         if observed is not None:
             return observed
-        frame = model.sfr.results.stage.get().copy()
+        frame = _calibration_stage_table(model)
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
         frame = _sfr_stage_at_period_end(model, frame)
@@ -380,7 +424,7 @@ class SfrStageTargets:
             simulated["per"] = simulated["time"]
             simulated = self._locations.merge(simulated, on="name", how="left")
         else:
-            simulated = _sfr_stage_at_period_end(model, model.sfr.results.stage.get().copy())
+            simulated = _sfr_stage_at_period_end(model, _calibration_stage_table(model))
             simulated = self._locations.merge(simulated, on="reach", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
             compare = simulated.rename(columns={"per": "time"}).copy()

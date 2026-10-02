@@ -268,9 +268,14 @@ the lowest; EMBEDDED refused -- its bottom is its table's). 1e30 there stalled P
 Exact on a model LOADED from its files; a model still in memory is off by FloPy's
 8-decimal write (<= 5e-9). What PEST reads for an INACTIVE lake is 1e30, every row kept:
 PEST++ fails a run on an empty field, on `nan` and on a missing row, and reads an extra
-column as the wrong one (`docs/reproducers/pest_no_value_fields.py`). SFR's stage FILE is
-NOT masked yet (its STAGE observation's 3e30 reads `NaN` in `SfrStageTargets`, ledger 344),
-and `SfrStageTargets`' file route still reads a dry reach's -1e30 as a stage.
+column as the wrong one (`docs/reproducers/pest_no_value_fields.py`). **A reach with no
+stage is a gap too** (ledger 353, the user's call): `model.outputs.sfr.stage.get()` masks
+SFR's -1e30 (dry) and +1e30 (inactive) the same way, so every SFR stage VIEW -- maps,
+series, both profiles, the q hover, `canonical_sfr_signals`, group, diff -- leaves it
+blank. **SFR TARGETS were left as they were**: `SfrStageTargets`' file route reads the file
+RAW (`build_sfr_stage_result_table(masked=False)`), so a dry reach still reaches PEST as
+-1e30, while MF6's STAGE observation reports the streambed top there (dry AND, measured,
+inactive) -- the two routes differ at such a reach.
 **Highlighting cells is `map(select=...)`, on EVERY scope** (ledger 160,
 2026-08-29) -- cell indices, a boolean mask, a registered region name, a vector
 file, or a geometry. It draws a **dissolved-boundary outline** by default, NOT

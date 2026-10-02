@@ -152,19 +152,62 @@ class SFRStageOutput:
         self.model = model
         self.package = package
 
-    def get(self):
-        """Return a reach-by-saved-timestep dataframe of stream stage output.
+    def get(self, *, masked: bool = True) -> pd.DataFrame:
+        """Return the SFR stage file as one row per reach and one column per saved record.
 
-        Raises ``SeveralPackagesError`` on a model with several SFR packages when
-        this reader names none: ``model.outputs.sfr(package="sfr_2").stage.get()``.
+        MF6 writes a reach with no water surface as a number, not NaN: -1e30 for a
+        DRY reach (its depth is zero) and +1e30 for an INACTIVE one (``STATUS
+        INACTIVE``) -- ``gwf-sfr.f90``'s ``sfr_ot_dv``, the two numbers a lake's
+        stage file carries. By default both become ``NaN``, by the head file's rule
+        (``headsplus._is_sentinel``, ``|value| >= 1e29``), so every stage view
+        built on this -- ``model.sfr.results.stage``, its maps, series and
+        profiles, the long profile, the exchange hover, the group and diff tiers
+        -- leaves a gap where a reach has no stage rather than drawing one 1e30 ft
+        away (ledger 353; LAK's is ledger 329).
+
+        Parameters
+        ----------
+        masked : bool, default True
+            Replace MF6's two no-stage sentinels (-1e30 dry, +1e30 inactive) with
+            ``NaN``. ``False`` returns the file exactly as MF6 wrote it, which is
+            the only way to tell a dry reach from an inactive one -- and what
+            ``SfrStageTargets``' stage-file route reads, so a dry reach still
+            reaches a calibration as -1e30 there (the user's call: a reach TARGET
+            stays as it was; only the pictures leave the gap).
+
+        Returns
+        -------
+        pandas.DataFrame
+            Float stage in model length units, indexed by zero-based reach (index
+            name ``"reaches"``), one column per saved stage record, labelled by
+            the zero-based ``(kstp, kper)`` in the stage file's own record headers
+            (column-axis name ``"kstpkper"``). MF6 writes the file whenever it
+            saves HEAD, so a column is a saved step, not necessarily a period.
+
+        Raises
+        ------
+        AttributeError
+            If the model has no SFR package, or the package declares no
+            ``stage_filerecord`` (FloPy's ``output.stage()`` is then ``None``).
+        SeveralPackagesError
+            If the model carries several SFR packages and this reader names none:
+            ``model.outputs.sfr(package="sfr_2").stage.get()`` (ledger 352).
+
+        Examples
+        --------
+        >>> stage = model.outputs.sfr.stage.get()           # NaN where a reach is dry
+        >>> raw = model.outputs.sfr.stage.get(masked=False)
+        >>> dry = raw == -1e30                               # dry, not inactive
         """
 
         sfr = _output_package(self.model, "sfr", self.package)
         nreaches = sfr.nreaches.data
         reader = sfr.output.stage()
         kstpkpers = [tuple(value) for value in reader.get_kstpkper()]
-        stages = reader.get_alldata()
-        stage_data = stages.reshape(len(kstpkpers), nreaches).transpose()
+        stages = np.asarray(reader.get_alldata(), dtype=float)
+        stage_data = stages.reshape(len(kstpkpers), nreaches).transpose().copy()
+        if masked:
+            stage_data[_is_sentinel(stage_data)] = np.nan
         frame = pd.DataFrame(stage_data, columns=kstpkpers)
         frame.index.name = "reaches"
         frame.columns.name = "kstpkper"
@@ -272,9 +315,10 @@ class SFROutputData:
     def stage(self):
         """Return the SFR stage output accessor.
 
-        The returned helper exposes ``get()`` so existing code can follow the
-        same pattern as other output helpers while keeping stage logic under the
-        ``outputs`` namespace.
+        The returned helper exposes ``get()`` -- the stage file as a reach-by-record
+        frame, ``NaN`` where a reach is dry or inactive (``masked=False`` for the raw
+        file, ledger 353) -- so existing code can follow the same pattern as other
+        output helpers while keeping stage logic under the ``outputs`` namespace.
         """
 
         return SFRStageOutput(self.model, self.package)

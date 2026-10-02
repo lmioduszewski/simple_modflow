@@ -201,12 +201,14 @@ def _fake_surface_water_model():
     )
     lak_stage_output = SimpleNamespace(
         get=lambda *, masked=True: lake_stage.copy(), kstpkper=lambda: [(0, 0), (0, 1)])
-    sfr_stage = pd.DataFrame(
-        {
-            "per": [0, 1],
-            "reach": [0, 0],
-            "stage": [12.0, 11.5],
-        }
+    # The SFR stage file as MF6 writes it -- one row per reach, one column per saved
+    # record, labelled by the file's own (kstp, kper) -- which a reach target reads
+    # RAW (ledger 353), and the package's one reach, which labels its cell.
+    sfr_stage = pd.DataFrame([[12.0, 11.5]], columns=[(0, 0), (0, 1)])
+    sfr = SimpleNamespace(
+        package_name="sfr",
+        packagedata=SimpleNamespace(get_data=lambda: pd.DataFrame(
+            {"ifno": [0], "cellid": [(0, 0)], "rlen": [1.0]})),
     )
     # The SFR budget file's routing, in MF6's own sign (ledger 350): reach 0 (node 1)
     # sends 1.25 then 1.5 on to reach 1 (node 2) -- negative, water leaving it -- and
@@ -235,11 +237,10 @@ def _fake_surface_water_model():
         vor=vor,
         # MF6's user numbering of a one-layer, two-cell grid: what a budget node means.
         node_to_lni={0: (0, 0), 1: (0, 1)},
-        package=_answering_by_type({"lak": lak, "sfr": "sfr_owner", "drn": "drn_owner"}),
-        fl=SimpleNamespace(lak=lak),
+        package=_answering_by_type({"lak": lak, "sfr": sfr, "drn": "drn_owner"}),
+        fl=SimpleNamespace(lak=lak, sfr=sfr),
         sfr=SimpleNamespace(
             results=SimpleNamespace(
-                stage=SimpleNamespace(get=lambda: sfr_stage.copy()),
                 q=SimpleNamespace(get=lambda: sfr_exchange.copy()),
             )
         ),
@@ -249,7 +250,8 @@ def _fake_surface_water_model():
                 bud=SimpleNamespace(
                     get=lambda text: sfr_routing.copy() if text == "FLOW-JA-FACE" else None,
                     types=["    FLOW-JA-FACE"],
-                )
+                ),
+                stage=SimpleNamespace(get=lambda *, masked=True: sfr_stage.copy()),
             )
         ),
     )
@@ -668,8 +670,8 @@ def test_named_surface_water_and_drn_targets_are_model_bound_and_plot_ready(monk
     model.targets.sfr_flow.attach_flopy_obs(filename="sfr_flow.obs")
     model.targets.drn_flow.attach_flopy_obs(filename="drn_flow.obs")
 
-    assert calls["sfr_stage.obs"]["owner"] == "sfr_owner"
-    assert calls["sfr_flow.obs"]["owner"] == "sfr_owner"
+    assert calls["sfr_stage.obs"]["owner"] is model.package("sfr")
+    assert calls["sfr_flow.obs"]["owner"] is model.package("sfr")
     assert calls["drn_flow.obs"]["owner"] == "drn_owner"
     assert calls["sfr_flow.obs"]["continuous"]["sfr_flow.csv"] == [
         ("reach_001", "DOWNSTREAM-FLOW", 1)

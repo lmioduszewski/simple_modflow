@@ -474,15 +474,24 @@ def test_copies_that_disagree_are_refused_naming_the_lake_the_record_and_the_spr
         targets.compare(stub_lake_model(table))
 
 
-def test_an_sfr_stage_is_an_elevation_in_the_series_and_in_compare():
+def test_an_sfr_stage_is_an_elevation_in_the_series_and_in_compare(monkeypatch):
     """MF6's SFR table has one row per reach per record, so a sum and the one value
     agree there and only a table with copies tells the kinds apart: a reach's two
-    rows in one record are refused, not added."""
+    rows in one record are refused, not added. The double hands over the RAW stage
+    table, which is what a reach target reads (ledger 353: the views are masked, a
+    target is not)."""
+
+    from myflopy.modflow.mf6.observations import sfr as sfr_module
 
     table = pd.DataFrame({"kstpkper": [(0, 0), (0, 0)], "per": [0, 0], "reach": [2, 2],
                           "stage": [95.0, 96.0]})
-    stage = SimpleNamespace(get=lambda: table.copy())
-    model = SimpleNamespace(sfr=SimpleNamespace(results=SimpleNamespace(stage=stage)))
+
+    def build(model, *, masked=True):
+        assert masked is False, "a reach target reads the RAW stage file (ledger 353)"
+        return table.copy()
+
+    monkeypatch.setattr(sfr_module, "build_sfr_stage_result_table", build)
+    model = SimpleNamespace()
     targets = mf.SfrStageTargets(locations={"gage": 2})
     with pytest.raises(ValueError, match=r"reach 2 at per=0: 2 rows span 95\.\.96"):
         targets.simulated_series(model)

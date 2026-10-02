@@ -319,31 +319,39 @@ def canonical_sfr_signals(model, *, per: int = 0) -> dict[str, object]:
         ``model.sfr.results.profile`` and
         ``model.sfr.budget.flow_ja_face``.
     per : int, optional
-        Zero-based stress period to summarize. Default 0. The stage and the
-        routed flows come from the last saved time step of that period; the
-        exchange ``q_gwf`` is the profile table's, which SUMS the period's saved
-        budget steps (measured: at ``nstp=2`` with ``SAVE BUDGET ALL`` it is the
-        two steps added). A period the run does not have is not refused: every
-        reach then reads dry and the depth and flow entries are NaN.
+        Zero-based stress period to summarize. Default 0. The stage, the
+        exchange ``q_gwf`` and the routed flows each come from the last saved
+        time step of that period on their own file's clock (the profile table's
+        exchange SUMMED the period's saved budget steps until ledger 348).
 
     Returns
     -------
     dict
         ``reach_count``, ``wet_reach_count``, ``dry_reach_count`` (a reach is
-        wet when its stage is finite and above -1e20); ``minimum_depth`` /
-        ``maximum_depth`` (stage minus streambed top over wet reaches, model
+        wet when the profile holds a stage for it: MF6's -1e30 for a DRY reach
+        and +1e30 for an INACTIVE one are ``NaN`` there, ledger 353 -- an
+        inactive reach's +1e30 counted as wet before, at a depth of 1e30);
+        ``minimum_depth`` / ``maximum_depth`` (stage minus streambed top over
+        wet reaches, model
         length units, NaN if none is wet); ``losing_reach_count`` /
         ``gaining_reach_count`` (reach-to-aquifer exchange ``q_gwf`` above
         +1e-6 / below -1e-6); ``minimum_routed_flow`` / ``maximum_routed_flow``
         (magnitudes of the reach-to-reach flows, model volume per time, NaN if
         none).
+
+    Raises
+    ------
+    ValueError
+        When the run saved nothing in ``per`` -- naming the periods it has (the
+        profile table's refusal; measured, where this said every reach would
+        read dry).
     """
 
     profile = model.sfr.results.profile.get(per=per)
     stage = profile["stage"].to_numpy(dtype=float)
     streambed_top = profile["streambed_top"].to_numpy(dtype=float)
     exchange = profile["q_gwf"].to_numpy(dtype=float)
-    wet = np.isfinite(stage) & (stage > -1.0e20)
+    wet = np.isfinite(stage)  # a dry or inactive reach is NaN in the profile (ledger 353)
     depth = np.where(wet, stage - streambed_top, np.nan)
 
     routing = model.sfr.budget.flow_ja_face.get(per=per)

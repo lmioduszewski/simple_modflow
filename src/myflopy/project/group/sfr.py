@@ -322,8 +322,8 @@ class GroupSfrStageResults(_GroupSpatialView):
         -------
         pandas.DataFrame
             ``model``, ``kstpkper`` (the step read, zero-based), ``per``, ``reach``
-            and ``stage`` (model length units; SFR's stage file is NOT masked, so a
-            dry reach is MF6's -1e30, ledger 329).
+            and ``stage`` (model length units, ``NaN`` where a reach has none --
+            dry or inactive, ledger 353).
         """
 
         rows: list[pd.DataFrame] = []

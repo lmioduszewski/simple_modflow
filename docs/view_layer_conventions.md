@@ -103,9 +103,17 @@ reports for it, by MF6's rule (`package_tables.lake_bottoms`) -- because PEST ne
 number that moves continuously as a lake empties, and 1e30 stalled PESTPP-IES. Only an
 INACTIVE lake is no-value there. A view keeps the gap; do not route a view through the
 target's table, or a target through the masked one.
-**SFR's stage file is NOT masked** (a dry reach is -1e30 too, by MF6's source); it is
-the same change, not made here. Its STAGE observation's no-data value (3e30) reads
-`NaN` in `SfrStageTargets` since ledger 344, as a lake's does.
+**A reach with no stage is a gap the same way** (ledger 353, the user's call: "the plots
+for SFR should just not plot a stage if the reach is dry"). SFR's stage file carries the
+same two numbers -- -1e30 for a DRY reach (depth zero), +1e30 for an INACTIVE one --
+and `model.outputs.sfr.stage.get()` masks both where it reads the file, `masked=False`
+for the raw one, so `results.stage` and its maps and series, the long profile and the
+field profile, the exchange hover, `canonical_sfr_signals`, the group tier and the diff
+inherit it. **The SFR TARGETS were left as they were**: `SfrStageTargets` reads the file
+RAW, so a dry reach is -1e30 in `compare()` and in PEST's files on the stage-file route,
+while its observation route reads MF6's STAGE observation, which reports the streambed
+top for a dry and (measured) an inactive reach. No dry-reach rule was decided for
+calibration, unlike a lake's bottom.
 
 **A reader opens the file its package DECLARES, never one found by its contents**
 (ledger 344). The observation targets took the first `*.csv` in the workspace whose

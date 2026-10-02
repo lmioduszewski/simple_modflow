@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 352 entries (357 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 353 entries (358 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 353 | A reach with no stage is a gap in every SFR stage VIEW: MF6's -1e30 (dry) and +1e30 (inactive) are masked o... | 2026-10-02 |
 | 352 | Several packages of one type are found by TYPE and never read as one in silence: `model.fl.<pkg>` and... | 2026-09-30 |
 | 351 | A DRY lake is calibrated against its BOTTOM on both routes: the stage-file route reads the file raw and put... | 2026-09-29 |
 | 350 | A flow target is compared in MF6's own sign on both routes: the SFR budget route reads MF6's negative... | 2026-09-29 |
@@ -14075,8 +14076,9 @@ same day, which is the useful part of the result.
       statistics over rows where BOTH models have a stage and adds `n_one_sided`, the rows
       where exactly one does; any such row fails `within_tolerance`, and two dry lakes
       agree. With nothing comparable the statistics are `NaN` and the argmax `-1` (the old
-      0.0 branch was unreachable). This reaches the SFR stage diff too, where nothing is
-      `NaN` yet, so SFR's numbers do not move.
+      0.0 branch was unreachable). This reaches the SFR stage diff too~~, where nothing is
+      `NaN` yet, so SFR's numbers do not move~~ (**a reach with no stage is `NaN` there
+      since ledger 353**, so it counts in `n_one_sided` the same way).
       **The observation route read an inactive lake as a stage of 0.0 ft.**
       `_clean_observation_output_values` turned MF6's 3e30 into 0.0 for every observation,
       right for a flow and wrong for an elevation. It takes `no_value=` now (default 0.0,
@@ -14090,11 +14092,14 @@ same day, which is the useful part of the result.
       route gives a dry lake MF6's bottom, `package_tables.lake_bottoms` replicating
       `lakebot`, and the two routes read one number.
       **NOT done:**
-      - **SFR's stage is not masked.** A dry reach is -1e30 too (MF6's `sfr_ot_dv`, read,
+      - ~~**SFR's stage is not masked.** A dry reach is -1e30 too (MF6's `sfr_ot_dv`, read,
         not measured here), through `SFRStageOutput`, `build_sfr_stage_result_table` and
-        the SFR stage explorer~~, and `SfrStageTargets`' observation route still reads 3e30
-        as 0.0~~ (**RESOLVED for the observation route by ledger 344: `NaN`, as LAK's**).
-        The same change; kept to LAK because that is what was asked.
+        the SFR stage explorer~~ (~~and `SfrStageTargets`' observation route still reads
+        3e30 as 0.0~~ -- **RESOLVED for the observation route by ledger 344: `NaN`, as
+        LAK's**). ~~The same change; kept to LAK because that is what was asked.~~
+        **RESOLVED for the views by ledger 353** (measured: -1e30 dry, +1e30 inactive), the
+        same change; `SfrStageTargets`' stage-file route reads the file RAW, the user's
+        call, so a dry reach still reaches it as -1e30.
       - `budget_tables.lake_stage_array`, ledger 301's dead duplicate, still returns the raw
         file; nothing calls it.
       - The stage-clock family (ledger 301) is untouched: `per` is still the record index.
@@ -16222,7 +16227,9 @@ same day, which is the useful part of the result.
       stage file by record (`outputs.lak.stage.get(masked=)`, `.kstpkper()`) and the LAK
       connections (`fl.lak`) -- with no lake dry, so its numbers do not move.
       **NOT done:** `SfrStageTargets`' file route still reads a dry reach's -1e30 as a
-      stage (329's open SFR item; no rule was decided for a reach). An observed-dry target
+      stage (329's open SFR item; no rule was decided for a reach -- **and the user left it
+      so in ledger 353**, which masked the SFR stage VIEWS and read the target's file raw).
+      An observed-dry target
       as a `less_` inequality at the bottom (F5 measured that PESTPP-IES honours the group
       and pestpp-glm does not at NOPTMAX 0) is not offered: not measured here, and the
       guide says only that the bottom is the number.
@@ -16368,3 +16375,82 @@ same day, which is the useful part of the result.
       `test_each_named_package_reads_its_own_files`; the outputs' spelling -> the refusal
       test (both); the unchecked name -> `test_a_package_name_is_checked_at_the_call`. The
       exact-name match alone survives (above).
+353. **A reach with no stage is a gap in every SFR stage VIEW: MF6's -1e30 (dry) and +1e30 (inactive) are masked once, where the SFR stage file is read, by the head file's rule -- and the SFR TARGETS read the file raw, as they did (2026-10-02).**
+      The user's call: "the plots for SFR should just not plot a stage if the reach is
+      dry" -- and leave SFR as it is for calibration. Ledger 329's open SFR item, the
+      same change: MF6's `sfr_ot_dv` writes DHDRY (-1e30) where a reach's depth is zero
+      and DHNOFLO (+1e30) where `iboundpak` is 0 (`STATUS INACTIVE`) -- read in
+      `gwf-sfr.f90`, and measured on the toy below. `model.outputs.sfr.stage.get()`
+      masks both through `headsplus._is_sentinel` by default and takes `masked=False`
+      for the raw file; `build_sfr_stage_result_table(masked=)` passes it on, the shape
+      `build_lak_stage_result_table` has. A table keeps the ROW with a `NaN`.
+      **Every reader of the SFR stage file, enumerated** (grep the read, not the rule):
+      the explorer `results.stage` (`get`/`summary`/`map`/`plot`/`mosaic`/`animate`), the
+      field profile `results.stage.profile`, the long profile `results.profile`
+      (`build_sfr_long_profile_table`), the exchange hover (`join_sfr_stage`, single and
+      group `q.map`), `GroupSfrStageResults` (`get`/`compare`/`map`/`plot`), the diff's
+      `StageResultDiff`, `canonical_sfr_signals` and the legacy `budget.SFRStage` all read
+      through the masked default; `SfrStageTargets` reads `masked=False`
+      (`observations/sfr._calibration_stage_table`). Nothing new was needed downstream:
+      ledger 329's `_aggregate_leaving_gaps` already serves the series and both map
+      payloads, the diff's `n_one_sided` already counts a one-sided `NaN`, and the hover
+      formats a `NaN` as blank. SFR has no stage-change table.
+      **Measured on the toy** (`docs/reproducers/sfr_stage_sentinels.py`, the "before" also
+      run on f64c838's `src`): a 6 x 6 Voronoi grid, five reaches above the water table,
+      reaches 0-2 dry in periods 1-3 and reach 3 inactive in period 2. Before: the reach-0
+      series drew -1e30 three times; `map(per=1)`'s colour range ran -1e30..105.4 and
+      `map(per=2)`'s -1e30..1e30; the long profile drew -1e30 for reaches 0-2 and +1e30
+      for reach 3; the `q.map(per=2)` hover printed "−1e+30 ft" and "1e+30 ft";
+      `canonical_sfr_signals(per=2)` counted the INACTIVE reach WET, 2 wet reaches with a
+      `maximum_depth` of 1e+30; the group diff summary read n 30, max |d| 1e+30, mean
+      3.33e+29, `n_one_sided` 0. After: gaps in the series, colour range 0..105.4 (0 is the
+      default `fill_value` backdrop), `NaN` in both profiles, a blank hover, 1 wet reach at
+      5.787, and n 20 with `n_one_sided` 10, max |d| 0.
+      **The call made, the user's: a reach TARGET is not a view, and it was not changed.**
+      `SfrStageTargets`' stage-file route reads the file raw, so a dry reach reads -1e30
+      and an inactive one +1e30 in `simulated_series`, `compare()` and both CSVs PEST
+      reads -- the values it read before (the reproducer's part 3 prints the same series
+      on f64c838 and on this tree; a test pins them against the raw file). A
+      lake target gives a dry lake its bottom (ledger 351); no such rule was decided for a
+      reach. **The two routes of one reach still differ there:** MF6's SFR STAGE
+      observation writes the stage MF6 holds -- the streambed top for a dry reach (100.0,
+      99.9, 99.8) and, as ledger 344 measured, for an inactive one (99.7) -- where the file
+      writes the sentinels.
+      **`canonical_sfr_signals`' docstring corrected in passing:** it said the profile's
+      exchange SUMS a period's saved steps (stale since ledger 348, which reads the last
+      step) and that a period the run lacks "is not refused: every reach then reads dry" --
+      measured, it raises `ValueError` naming the periods it has. Its wet test is
+      `np.isfinite(stage)` now; the old `> -1e20` guard is redundant on a masked profile
+      (reverting it alone fails nothing, so it is a simplification, not a fix).
+      **Test doubles:** `test_mf6_pest`'s fake surface-water model answered the SFR stage
+      VIEW (`sfr.results.stage`); it answers what the table builder reads now -- the raw
+      stage file by record (`outputs.sfr.stage.get(masked=)`) and the package's reach
+      (`package("sfr").packagedata`) -- with no reach dry, so its numbers do not move. Its
+      SFR OBS owner was the string `"sfr_owner"`; it is that package object, and the attach
+      test asserts identity. `test_stage_targets_one_stage`'s SFR stub monkeypatches the
+      builder and asserts `masked is False`, as its LAK stub does.
+      **NOT done:**
+      - `budget_tables.sfr_stage_df` still returns the raw file -- a dead duplicate like
+        329's `lake_stage_array`: nothing in `src`, `tests` or `examples` calls it, and it
+        reshapes by `model.nper`, so it is wrong under more than one saved step a period.
+      - A dry-reach calibration rule (the streambed top, as MF6's observation reports) --
+        the user left SFR targets as they are.
+      Reproducer: `docs/reproducers/sfr_stage_sentinels.py`. Tests:
+      `tests/test_sfr_stage_sentinels.py` (22; two real MF6 runs). Each revert fails by name:
+      - the mask removed from `SFRStageOutput.get`: 19, every view test --
+        `test_the_stage_file_is_nan_exactly_where_mf6_wrote_no_stage`,
+        `test_the_stage_table_keeps_every_row_and_blanks_the_dry_ones`,
+        `test_a_stage_map_is_blank_where_a_reach_has_no_stage[1|2]`,
+        `test_a_stage_map_is_blank_there_under_every_documented_aggregation` (all six),
+        `test_mosaic_and_animate_colour_real_stages_only`,
+        `test_a_stage_series_leaves_a_gap_on_a_day_with_no_stage[plotly|mpl]`,
+        `test_the_long_profile_and_the_stage_profile_leave_a_dry_reach_blank`,
+        `test_the_exchange_map_hover_has_no_stage_at_a_reach_without_one[1|2]`,
+        `test_an_inactive_reach_is_not_counted_wet_by_the_stream_signals`,
+        `test_the_group_stage_views_leave_the_same_gaps` and
+        `test_a_stage_diff_counts_a_one_sided_dry_reach_instead_of_averaging_it` -- while
+        the three target tests pass, as they must;
+      - the target reading the masked table: 3,
+        `test_a_reach_target_reads_the_raw_stage_file_as_before`,
+        `test_the_files_pest_reads_still_hold_the_raw_stage_at_a_dry_reach` and
+        `test_stage_targets_one_stage.py::test_an_sfr_stage_is_an_elevation_in_the_series_and_in_compare`.

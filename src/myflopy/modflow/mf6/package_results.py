@@ -728,9 +728,9 @@ class StageResultsExplorer(SpatialView):
             Value given to cells this package does not connect to. Pass
             ``float("nan")`` to leave them uncoloured, which is almost always
             clearer for stage: zero is a real elevation, and a plain 0.0 backdrop
-            will dominate the colour scale. A cell a lake DOES connect to is blank,
-            never ``fill_value``, while that lake has no stage -- dry or inactive,
-            ``NaN`` in :meth:`get` (ledger 329).
+            will dominate the colour scale. A cell a lake or reach DOES connect
+            to is blank, never ``fill_value``, while it has no stage -- dry or
+            inactive, ``NaN`` in :meth:`get` (ledgers 329, 353).
         agg : {'first', 'mean', 'min', 'max', 'last', 'sum'}, default 'first'
             How several connections landing in ONE cell, at the one step drawn,
             are reduced to one number. ``first`` suits a shared water level; use ``mean`` when two

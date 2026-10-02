@@ -582,13 +582,13 @@ class StageResultDiff(_ResultDiffBase):
     ) -> pd.DataFrame:
         """One row per model: max/mean/RMSE Δstage, the worst feature/period, within tolerance.
 
-        A lake with no stage -- dry or inactive, ``NaN`` in the stage table
-        (ledger 329) -- has no Δstage to average. The statistics run over the rows
-        where BOTH models have a stage, and ``n`` counts those. ``n_one_sided``
-        counts the rows where exactly one of them does: one model's lake is dry
-        where the other's holds water, a difference no number measures, so any
-        such row makes ``within_tolerance`` False. Rows where neither has a stage
-        agree and count in neither column.
+        A lake or reach with no stage -- dry or inactive, ``NaN`` in the stage
+        table (ledgers 329, 353) -- has no Δstage to average. The statistics run
+        over the rows where BOTH models have a stage, and ``n`` counts those.
+        ``n_one_sided`` counts the rows where exactly one of them does: one model's
+        lake or reach is dry where the other's holds water, a difference no number
+        measures, so any such row makes ``within_tolerance`` False. Rows where
+        neither has a stage agree and count in neither column.
 
         Parameters
         ----------

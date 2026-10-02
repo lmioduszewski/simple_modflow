@@ -463,7 +463,8 @@ class SFRStage:
         self.nreaches = one_package(self.model, "sfr").nreaches.data
 
     def get(self):
-        """Return a reach-by-period dataframe of stream stage output."""
+        """Return ``model.outputs.sfr.stage.get()``: one row per reach, one column per
+        saved record, ``NaN`` where a reach is dry or inactive (ledger 353)."""
         return self.model.outputs.sfr.stage.get()
 
 

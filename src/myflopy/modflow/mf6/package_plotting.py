@@ -840,8 +840,9 @@ def _aggregate_leaving_gaps(by, aggregation):
     """``by.agg(aggregation)``, with a group that holds no value at all left ``NaN``.
 
     pandas sums an all-``NaN`` group to 0.0, so a lake with no stage (``NaN`` in
-    the stage table, ledger 329) was drawn at 0 ft by any ``sum`` -- in a series
-    and on a map, where it also stretched the colour range down to 0.
+    the stage table, ledger 329; a reach's too since ledger 353) was drawn at 0 ft
+    by any ``sum`` -- in a series and on a map, where it also stretched the colour
+    range down to 0.
     ``mean``/``first``/``min``/``max`` already give ``NaN``; a counting
     aggregation's 0 is a real answer and is left alone. A tuple, not a set, so an
     unhashable aggregation (a list) still compares.
