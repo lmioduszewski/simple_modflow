@@ -158,6 +158,12 @@ class SfrStageTargets:
     it always was. MF6's STAGE observation reports the reach's streambed top for
     a dry reach and, measured, for an inactive one, so the two routes differ there.
 
+    **In a PEST build, its measured observations are in the set's prefix group**
+    (``sfr_stage``, or the prefix ``observe(..., prefix=)`` names; ledger 358): a
+    reach target carries no group label, so to see two sets of reaches apart in
+    PEST++'s phi by group, register them as two sets under two prefixes. Its
+    unmeasured periods are in ``<prefix>_unmeasured``.
+
     Parameters
     ----------
     locations : dict, pandas.Series, pandas.DataFrame, list, tuple or None, optional
@@ -638,6 +644,12 @@ class SfrFlowTargets:
     quantity only (``SFR``, the stream-aquifer exchange), for another reach or
     twice, it raises, and so does a set declared only in part. It used to read
     the first workspace CSV whose header held the labels.
+
+    **In a PEST build, its measured observations are in the set's prefix group**
+    (``sfr_flow``, or the prefix ``observe(..., prefix=)`` names; ledger 358): a
+    reach target carries no group label, so to see two sets of reaches apart in
+    PEST++'s phi by group, register them as two sets under two prefixes. Its
+    unmeasured periods are in ``<prefix>_unmeasured``.
 
     Parameters
     ----------

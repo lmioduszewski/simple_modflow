@@ -548,7 +548,15 @@ class DrnFlowTargets:
         Column of ``locations`` holding a group label, renamed ``group``.
         Default ``"group"``; ``None`` or an absent column leaves ``group``
         ``pandas.NA``. Carried into :meth:`get`, :meth:`compare`,
-        :meth:`residuals` and the zone table a PEST build writes.
+        :meth:`residuals` and the zone table a PEST build writes. It is the
+        PEST observation group of the zone's MEASURED observations (ledger
+        358), made a PEST name and refused as
+        :class:`~myflopy.modflow.mf6.observations.heads.HeadTargets`'
+        ``group_column`` says; a missing or blank label puts them in the set's
+        prefix (``drn_flow``). A zone given as several rows carrying DIFFERENT
+        labels is refused by the build -- one zone is one observation per
+        period -- and rows with no label take the others' (so does
+        :meth:`compare`, which reads the first row's).
     weight_column : str or None, optional
         Column of ``locations`` holding each zone's observation weight, renamed
         ``weight``. Default ``"weight"``; ``None`` or an absent column leaves it

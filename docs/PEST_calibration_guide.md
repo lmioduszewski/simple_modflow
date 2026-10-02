@@ -193,6 +193,65 @@ stage PICTURES leave a dry reach blank -- the targets' own `.plot` pictures too 
 > for information content, use more groups rather than fewer, and aim weights at
 > the model's purpose.
 
+### Observation groups: your `group` labels (ledger 358)
+
+**A target's group is its PEST observation group.** `HeadTargets`, `ConcTargets` and
+`DrnFlowTargets` read a `group` column from their locations (`group_column=`; `groups=`
+on `HeadTargets.from_cells`), and every MEASURED observation of a target is put in the
+group its label names:
+
+| what the observation is | its PEST group (`obgnme`) |
+|---|---|
+| measured, its target labelled `"North Wells"` | `north_wells` — lower-cased, every run of characters other than letters, digits, `_`, `.`, `:`, `-` one `_` |
+| measured, no label (missing or blank) | the set's prefix: `hds`, `conc`, `stage`, `sfr_stage`, `sfr_flow`, `drn_flow` (or the `prefix=` you passed) |
+| a period no target measures, a blank target | `<prefix>_unmeasured` (weight 0) |
+| a forecast | the forecast set's prefix (`fore1`, ...); the set's other periods `fore1_unmeasured` |
+
+So PEST++ reports phi by YOUR groups — and, with no labels at all, by data type, since
+each set is its own group. Zero-weight rows and forecasts never join a group of yours,
+so a group's membership is exactly what was measured under its label. Lake and SFR
+targets carry no label: their measured observations are in their set's prefix, and two
+sets registered under two prefixes (`cal.observe(north_lakes, prefix="north_lakes")`)
+are two groups. (pyEMU used to name every simulated column a group of its own,
+`oname:hds_otype:lst_usecol:w1`, so a group was one well.)
+
+`build()` refuses a label it cannot use, naming it: one that is **not text** (a group
+column of numbers — use `frame["group"].astype(str)` or names like `"zone1"`), one with
+no letter or digit, one taking a group the build gives a set (`hds`,
+`stage_unmeasured`, ...), and **two different labels that become one name**
+(`"North"` and `"north"`, `"north wells"` and `"north_wells"` — one is very likely a
+typo). Surrounding whitespace is not part of a label. A DRN zone given as several rows
+must carry one label. **A group whose name starts with `l_`, `less`, `g_` or
+`greater` is refused too**, and so is a set prefix that does: PESTPP-IES reads such a
+group as an INEQUALITY (`less...`: simulated at most the target; `greater...`: at
+least), matching on the bare start, so `"Greater Seattle"` or `"lessard"` would score 0
+wherever the model is on the allowed side of the target — measured,
+`docs/reproducers/pest_observation_groups.py`. (PESTPP-GLM at NOPTMAX=0 reads them as
+ordinary groups; PESTPP-IES does not.)
+
+**Using the groups with PEST++.** Phi by group is in `pestpp-glm`'s `.rec`
+("Contribution to phi from observation group ...") and in `pestpp-ies`'s
+`<case>.phi.group.csv`, one column per group, and `ies.phi_contributions()` /
+`plot_phi_contributions()` / `plot_conflict()` read the same groups. To balance data
+types, give PESTPP-IES a **phi-factor file** — one `tag,fraction` line per group — and
+it rescales the weights so each tag's share of phi is its fraction:
+
+```python
+wells = gpd.read_file("wells.gpkg")          # its `group` column: "shallow" / "deep"
+cal.observe(mf.HeadTargets(locations=wells, values=heads))
+cal.observe(mf.DrnFlowTargets(locations=springs, values=seepage))   # springs' group: "springs"
+cal.build()
+(cal.template_workspace / "phi_factors.csv").write_text("shallow,0.4\ndeep,0.4\nsprings,0.2\n")
+ies = cal.run_ies(reals=50, iterations=3, ies_phi_factor_file="phi_factors.csv")
+```
+
+Measured on PEST++ 5.2.16: a tag matches ANYWHERE in a group's name (`orth` took
+`north`), every NONZERO-weight group must be matched by exactly one tag — an untagged one
+stops IES ("group 'SOUTH' not identified with any tags"), and so does a group two tags
+match (`north` and `nor`: "mapped to multiple tags") — while the zero-weight
+`*_unmeasured` groups need none. So name groups so that none contains another's name
+(`north` and `north_deep` cannot be given separate fractions).
+
 ### Noise and structural error
 
 Two error sources live in the residuals: (1) **measurement noise** (instruments,
@@ -316,7 +375,8 @@ Each cycle, look at these. myflopy gives one method per item:
 ```python
 ies.plot_phi()                  # did misfit drop? quickly early but not TOO quickly (overfit)?
 ies.plot_phi_distribution()     # spread of phi: prior vs posterior — collapse to ~0 = overfitting
-ies.plot_vs_obs()               # prior(grey)/posterior(blue) vs measured(red) — does blue bracket red?
+ies.plot_vs_obs()               # prior(grey)/posterior(blue) vs measured(red), one panel per location
+ies.plot_vs_obs(groups=["deep"])  # ...only the locations measured in your "deep" group
 ies.plot_phi_contributions()    # which observation groups make up the misfit (visibility weighting)
 ies.plot_parameters_at_bounds() # % of parameters pinned at bounds — prior too tight / compensating?
 ies.forecasts()                 # prior→posterior uncertainty table for every forecast

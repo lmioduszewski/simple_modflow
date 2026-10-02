@@ -19,6 +19,13 @@ rules about that table (ledger 340):
   forecast set but the ones forecast -- history-matched the calibration back to
   the uncalibrated model (ledger 81's build-side note). Its value stays the base
   run's, so ensembles still report it.
+* **A target's group is its PEST observation group** (ledger 358): a measured
+  observation's ``obgnme`` is its target's ``group`` label made a PEST group name
+  (:func:`pest_group_name`), else its set's prefix; every other row of a set --
+  unmeasured, or a period nobody forecast -- is ``<prefix>_unmeasured``, and a
+  forecast is ``<prefix>``, so neither ever joins a user's group. pyEMU gave each
+  simulated column a group of its own, so every well was a group of one and
+  PEST++'s phi-by-group could not see the user's grouping.
 
 Head and concentration tables are written, base run and every forward run alike,
 by ONE writer (``forward_run._write_head_target_csv`` / ``_write_conc_target_csv``),
@@ -58,11 +65,77 @@ from myflopy.modflow.mf6.pest.specs import (
 
 #: The columns of a prepared set's ``target_frame``: who the target is, the column
 #: of the simulated table it reads, its key as given and as a period, its value
-#: (``NaN`` = blank: unmeasured, or a forecast without a placeholder) and weight.
-_TARGET_COLUMNS = ["name", "column", "time", "per", "value", "weight"]
+#: (``NaN`` = blank: unmeasured, or a forecast without a placeholder), weight and
+#: group label as given (``<NA>``: none; lake and SFR targets carry none).
+_TARGET_COLUMNS = ["name", "column", "time", "per", "value", "weight", "group"]
 
 #: An observation name in a PEST instruction line: ``!name!``.
 _INSTRUCTION_NAME = re.compile(r"!([^!]+)!")
+
+#: Every run of characters a PEST group name does not keep -- anything but a
+#: lower-case letter, a digit, ``_``, ``.``, ``:`` and ``-`` -- becomes one ``_``.
+#: PEST++ 5.2.16 refuses the version-2 control file over a comma or a double
+#: quote in a group name, and whitespace splits a classic (version-1) one
+#: (``docs/reproducers/pest_observation_groups.py``).
+_GROUP_NAME_DROPS = re.compile(r"[^a-z0-9_.:\-]+")
+
+#: A group whose name starts with one of these is an INEQUALITY to PESTPP-IES --
+#: ``l_``/``less`` "simulated at most", ``g_``/``greater`` "at least" -- matched on
+#: the bare start (``lessard`` and ``greaterville`` too): a measured group read so
+#: scores 0 wherever the inequality holds (measured, PEST++ 5.2.16, ledger 358).
+_INEQUALITY_GROUP_STARTS = ("l_", "less", "g_", "greater")
+
+#: The group of a set's rows no target measures -- unmeasured periods, blank
+#: targets, the periods a forecast set does not forecast: ``<prefix>`` + this.
+UNMEASURED_GROUP_SUFFIX = "_unmeasured"
+
+
+def pest_group_name(label: str) -> str:
+    """The PEST observation group a group label or a set prefix names.
+
+    Lower-cased (pyEMU lower-cases every name it reads), stripped, and every run
+    of characters other than letters, digits, ``_``, ``.``, ``:`` and ``-``
+    turned into one ``_`` -- so ``"North Wells"`` is ``north_wells``. No length
+    limit is applied: PEST++ 5.2.16 read a 5000-character group name from the
+    version-2 control file myflopy writes, and pyEMU's own per-column groups
+    (``oname:hds_otype:lst_usecol:w1``) are already past classic PEST's 12.
+
+    Parameters
+    ----------
+    label : str
+        The text: a target's ``group`` label, or an observation set's prefix.
+
+    Returns
+    -------
+    str
+        The group name. Two labels may give one name (``"North"``, ``"north"``);
+        :func:`assign_observation_groups` refuses that.
+    """
+
+    return _GROUP_NAME_DROPS.sub("_", str(label).strip().lower())
+
+
+def _label_text(label) -> str | None:
+    """A target's group label as stripped text, ``None`` when it carries none.
+
+    Missing (``None``, ``NaN``, ``pd.NA``) and blank text are no label.
+
+    Raises
+    ------
+    TypeError
+        When the label is anything else that is not text -- a number, a bool: a
+        PEST group is a name, and reading ``1`` as ``"1"`` and ``1.0`` as
+        ``"1.0"`` would make one zone two groups (pandas reads an integer column
+        holding a blank as floats).
+    """
+
+    if isinstance(label, str):
+        return label.strip() or None
+    if label is None or label is pd.NA:
+        return None
+    if isinstance(label, (float, np.floating)) and np.isnan(label):
+        return None
+    raise TypeError(type(label).__name__)
 
 
 def _write_frame(frame: pd.DataFrame, path: Path):
@@ -166,8 +239,44 @@ def _named_series_targets(targets, *, value_column: str, prefix: str) -> pd.Data
             "per": per,
             "value": values[value_column].astype(float),
             "weight": np.nan,
+            "group": pd.Series(pd.NA, index=values.index, dtype=object),
         }
     ).reset_index(drop=True)
+
+
+def _zone_groups(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
+    """Each DRN zone's group label, from its location rows; refuse a zone given two.
+
+    A zone is ONE observation per period, so it is in one group: a zone given as
+    several rows carrying different labels is refused, as different weights are
+    (:func:`_zone_weights`). Rows with no label defer to the ones that have one.
+    """
+
+    locations = targets.locations_gdf
+    if "group" not in locations.columns or frame.empty:
+        return frame["group"]
+    table = pd.DataFrame(
+        {"name": locations["name"].astype(str), "group": locations["group"].astype(object)}
+    )
+    blank = table["group"].map(lambda label: isinstance(label, str) and not label.strip())
+    table = table.loc[table["group"].notna() & ~blank]
+    if table.empty:
+        return frame["group"]
+    spread = table.groupby("name")["group"].agg(
+        lambda labels: len({str(label).strip() for label in labels})
+    )
+    if (spread > 1).any():
+        zones = ", ".join(
+            f"{name!r} ({', '.join(sorted(map(repr, set(table.loc[table['name'] == name, 'group']))))})"
+            for name in spread[spread > 1].index[:5]
+        )
+        raise ValueError(
+            f"{_caller(type(targets).__name__, prefix)}: zone(s) {zones} are given as "
+            "several rows carrying DIFFERENT group labels, and one zone is one "
+            "observation per period in one PEST observation group (ledger 358). Give "
+            "each zone's rows the same group."
+        )
+    return frame["name"].map(table.groupby("name")["group"].first()).astype(object)
 
 
 def _zone_weights(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
@@ -334,13 +443,20 @@ def _prepared_item(
 
 
 def _write_values_snapshot(located: pd.DataFrame, path: Path, *, value_label: str) -> Path:
-    """The ``<prefix>_target_values.csv`` review reads: each target's key, value and period."""
+    """The ``<prefix>_target_values.csv`` review reads: each target's key, value and period.
+
+    It names the simulated column each target reads (``column``: a well screened
+    in two layers is two), and once the control file is built each target's
+    observation (``obsnme``, ledger 340) and PEST observation group (``obgnme``,
+    ledger 358) -- what ``IesResults`` draws one time series per location from.
+    """
 
     snapshot = located.loc[:, ["time", "name", "value", "per"]].rename(
         columns={"value": value_label}
     )
-    if "obsnme" in located.columns:
-        snapshot["obsnme"] = located["obsnme"].to_numpy()
+    for column in ("obsnme", "column", "obgnme"):
+        if column in located.columns:
+            snapshot[column] = located[column].to_numpy()
     return _write_frame(snapshot, path)
 
 
@@ -366,6 +482,7 @@ def _prepare_named_series_observations(
     frame = _named_series_targets(targets, value_column=value_column, prefix=prefix)
     if metadata_kind == "drn_flow":
         frame["weight"] = _zone_weights(targets, frame, prefix=prefix)
+        frame["group"] = _zone_groups(targets, frame, prefix=prefix)
     if weight is not None and not frame.empty:
         frame["weight"] = float(weight)
     located = _locate_targets(
@@ -523,7 +640,11 @@ def _point_target_frame(targets, labels: pd.DataFrame, *, prefix: str) -> pd.Dat
     joined = (
         values.drop(columns=["name"], errors="ignore")
         .assign(per=per.to_numpy())
-        .merge(labels.loc[:, ["name_key", "name", "obsname", "weight"]], on="name_key", how="inner")
+        .merge(
+            labels.loc[:, ["name_key", "name", "obsname", "weight", "group"]],
+            on="name_key",
+            how="inner",
+        )
     )
     return pd.DataFrame(
         {
@@ -533,6 +654,7 @@ def _point_target_frame(targets, labels: pd.DataFrame, *, prefix: str) -> pd.Dat
             "per": joined["per"].astype(int),
             "value": joined["head_target"].astype(float),
             "weight": pd.to_numeric(joined["weight"]).astype(float),
+            "group": joined["group"].astype(object),
         }
     ).reset_index(drop=True)
 
@@ -850,8 +972,210 @@ def _instruction_names(path: Path, *, shape: tuple[int, int]) -> list[list[str]]
     return rows[1:]
 
 
+def _listed(entries, limit: int = 5) -> str:
+    """Up to ``limit`` entries joined, and how many more."""
+
+    entries = list(entries)
+    more = len(entries) - limit
+    return "; ".join(entries[:limit]) + (f"; and {more} more" if more > 0 else "")
+
+
+def _set_groups(prepared: list[dict], others: set[str]) -> dict[str, str]:
+    """Each set's own two groups, ``<prefix>`` and ``<prefix>_unmeasured``; refuse a clash.
+
+    Stamps ``prefix_group`` and ``unmeasured_group`` on each item and returns what
+    each such name is (for a refusal naming a label that takes one).
+    """
+
+    owned: dict[str, str] = {}
+    for item in prepared:
+        prefix = str(item["prefix"])
+        own = pest_group_name(prefix)
+        where = f"observation set {prefix!r}"
+        if not re.search(r"[a-z0-9]", own):
+            raise ValueError(
+                f"The {where}: a set's prefix is the PEST observation group of its "
+                "targets that carry no group label (ledger 358), and this one holds no "
+                "letter or digit. Pass observe(targets, prefix=...) a name."
+            )
+        if own.startswith(_INEQUALITY_GROUP_STARTS):
+            raise ValueError(
+                f"The {where}: a set's prefix is the PEST observation group of its "
+                f"targets that carry no group label (ledger 358), and PESTPP-IES reads a "
+                f"group whose name starts with {', '.join(map(repr, _INEQUALITY_GROUP_STARTS))} "
+                f"as an INEQUALITY, so {own!r} would score 0 wherever the model is on the "
+                "allowed side of a target, not when it meets it. Pass a prefix that does "
+                "not start so."
+            )
+        item["prefix_group"] = own
+        item["unmeasured_group"] = own + UNMEASURED_GROUP_SUFFIX
+        for name, what in (
+            (own, f"the group of {where}'s targets with no group label"),
+            (own + UNMEASURED_GROUP_SUFFIX, f"the group of {where}'s rows no target measures"),
+        ):
+            clash = owned.get(name) or (
+                f"a group the control file already holds ({name!r})" if name in others else None
+            )
+            if clash:
+                raise ValueError(
+                    f"Two observation groups would share the name {name!r}: {what}, and "
+                    f"{clash}. Give the sets prefixes that do not become one group name "
+                    "(ledger 358)."
+                )
+            owned[name] = what
+    return owned
+
+
+def _label_groups(prepared: list[dict], owned: dict[str, str], others: set[str]) -> None:
+    """Each measured target's group, in ``target_frame["obgnme"]``; refuse a label that cannot be one."""
+
+    labels: dict[str, dict[str, list[str]]] = {}
+    not_text: list[str] = []
+    for item in prepared:
+        frame = item["target_frame"]
+        prefix = str(item["prefix"])
+        if item.get("is_forecast"):
+            frame["obgnme"] = item["prefix_group"]
+            continue
+        groups = []
+        for name, value, label in zip(frame["name"], frame["value"], frame["group"], strict=True):
+            if pd.isna(value):
+                groups.append(item["unmeasured_group"])
+                continue
+            try:
+                text = _label_text(label)
+            except TypeError:
+                not_text.append(
+                    f"{_shown(name)} in set {prefix!r}: {label!r} ({type(label).__name__})"
+                )
+                groups.append(None)
+                continue
+            if text is None:
+                groups.append(item["prefix_group"])
+                continue
+            group = pest_group_name(text)
+            labels.setdefault(group, {}).setdefault(text, []).append(
+                f"{_shown(name)} in set {prefix!r}"
+            )
+            groups.append(group)
+        frame["obgnme"] = groups
+
+    if not_text:
+        raise ValueError(
+            f"{len(not_text)} target(s) carry a group label that is not text: "
+            + _listed(dict.fromkeys(not_text))
+            + ". A target's group is its PEST observation group (ledger 358), and a "
+            "group is a NAME: give the column as text (`frame['group'].astype(str)`, "
+            "or labels such as 'zone1'), or leave it blank for the set's own group."
+        )
+    nameless = [group_texts for group, group_texts in labels.items() if not re.search(r"[a-z0-9]", group)]
+    if nameless:
+        raise ValueError(
+            "Group label(s) "
+            + ", ".join(repr(text) for texts in nameless for text in texts)
+            + " hold no letter or digit, so they name no PEST observation group "
+            "(ledger 358). Give each a name, or leave it blank for the set's own group."
+        )
+    inequality = sorted(group for group in labels if group.startswith(_INEQUALITY_GROUP_STARTS))
+    if inequality:
+        raise ValueError(
+            "Group label(s) "
+            + ", ".join(repr(text) for group in inequality for text in labels[group])
+            + f" become PEST group(s) {', '.join(map(repr, inequality))}, and PESTPP-IES "
+            f"reads a group whose name starts with "
+            f"{', '.join(map(repr, _INEQUALITY_GROUP_STARTS))} as an INEQUALITY: its "
+            "targets would score 0 wherever the model is on the allowed side of them, "
+            "not when it meets them (ledger 358). Name the groups otherwise."
+        )
+    taken = [
+        f"{', '.join(map(repr, labels[group]))} becomes {group!r}, which is "
+        + (owned.get(group) or "a group the control file already holds")
+        for group in sorted(labels)
+        if group in owned or group in others
+    ]
+    if taken:
+        raise ValueError(
+            "Group label(s) take a name the build gives another group: "
+            + _listed(taken)
+            + ". A set's targets with no label are grouped under its prefix and its "
+            "unmeasured rows under '<prefix>_unmeasured' (ledger 358); name the group "
+            "otherwise, or leave those targets unlabeled."
+        )
+    merged = [
+        f"{' and '.join(repr(text) for text in texts)} both become {group!r} "
+        f"({'; '.join(where[0] for where in texts.values())})"
+        for group, texts in sorted(labels.items())
+        if len(texts) > 1
+    ]
+    if merged:
+        raise ValueError(
+            "Two different group labels become one PEST observation group: "
+            + _listed(merged)
+            + ". A group name is lower-cased, and every run of characters other than "
+            "letters, digits, '_', '.', ':' and '-' becomes one '_' (ledger 358), so "
+            "one of these is very likely a typo of the other. Spell each group one way."
+        )
+
+
+def assign_observation_groups(obs: pd.DataFrame, prepared: list[dict]) -> None:
+    """Give every observation of every target set its PEST observation group (ledger 358).
+
+    * A history-matching target WITH a value -- a measured observation -- is in
+      its target's ``group`` label, made a PEST group name by
+      :func:`pest_group_name`; with no label (missing, or blank text) it is in
+      its set's prefix (``hds``, ``stage``, ``sfr_flow``, ...), so phi splits by
+      data type out of the box.
+    * A forecast target is in its set's prefix (``fore1``, ...); its label is not
+      read.
+    * Every other row of a set -- a period no target measures, a blank target, a
+      period a forecast set does not forecast -- is in ``<prefix>_unmeasured``.
+
+    So a user's group holds exactly the observations measured under its label:
+    zero-weight rows and forecasts never join one. pyEMU named each simulated
+    column's observations a group of their own (``oname:hds_otype:lst_usecol:w1``),
+    so a group was one well and PEST++'s phi by group could not see the user's
+    grouping. Observations no set owns (captured parameter fields) keep theirs.
+
+    Parameters
+    ----------
+    obs : pandas.DataFrame
+        The control file's observation data, indexed by name; its ``obgnme`` is
+        rewritten for every observation the sets read.
+    prepared : list of dict
+        The prepared sets, as :func:`finalize_observations` completes them: each
+        with ``observation_names`` (every observation its instruction file reads),
+        ``forecast_names`` for a forecast, and ``target_frame`` with ``obsnme``.
+        Each item gains ``prefix_group`` and ``unmeasured_group``, and its
+        ``target_frame`` an ``obgnme`` column.
+
+    Raises
+    ------
+    ValueError
+        When a label is not text (a number, a bool); holds no letter or digit;
+        becomes a group PESTPP-IES reads as an inequality (``l_``, ``less``,
+        ``g_``, ``greater``); becomes a group the build gives a set's unlabeled
+        targets or unmeasured rows, or the control file already holds; or when
+        two different labels become one group name -- naming them. Also when a
+        set's prefix holds no letter or digit, starts as an inequality, or
+        becomes a group another set's does.
+    """
+
+    in_sets = {name for item in prepared for name in item["observation_names"]}
+    others = set(obs.loc[~obs.index.isin(in_sets), "obgnme"].astype(str).str.lower())
+    owned = _set_groups(prepared, others)
+    _label_groups(prepared, owned, others)
+    for item in prepared:
+        obs.loc[item["observation_names"], "obgnme"] = item["unmeasured_group"]
+        frame = item["target_frame"]
+        if item.get("is_forecast"):
+            obs.loc[item["forecast_names"], "obgnme"] = item["prefix_group"]
+            continue
+        valued = frame.loc[frame["value"].notna()]
+        obs.loc[valued["obsnme"], "obgnme"] = valued["obgnme"].to_numpy(dtype=object)
+
+
 def finalize_observations(project, prepared: list[dict]):
-    """Give each set's observations their targets' values and weights, and every other row weight 0.
+    """Give each set's observations their targets' values, weights and groups; every other row weight 0.
 
     Runs after the control file is built. For each prepared set it reads which
     observation the instruction file takes from each cell of the set's table
@@ -867,8 +1191,10 @@ def finalize_observations(project, prepared: list[dict]):
       row of its table -- its locations at every period, the only reading under
       which declaring it forecasts anything.
 
-    The ``<prefix>_target_values.csv`` snapshot is rewritten with each target's
-    observation name, which is what the review joins on.
+    Then every observation of every set gets its group
+    (:func:`assign_observation_groups`, ledger 358), and the
+    ``<prefix>_target_values.csv`` snapshot is rewritten with each target's
+    observation name and group, which is what the review joins on.
 
     Parameters
     ----------
@@ -882,7 +1208,8 @@ def finalize_observations(project, prepared: list[dict]):
     ------
     ValueError
         When an instruction file does not line up with its table, or names an
-        observation the control file does not hold.
+        observation the control file does not hold; or when a group label cannot
+        be a PEST group (:func:`assign_observation_groups`).
     """
 
     obs = project.pst.observation_data
@@ -898,6 +1225,7 @@ def finalize_observations(project, prepared: list[dict]):
                 f"{len(absent)} observation(s) the control file does not hold "
                 f"({', '.join(absent[:3])}), so the two were not built together."
             )
+        item["observation_names"] = every
         obs.loc[every, "weight"] = 0.0
 
         frame = item["target_frame"]
@@ -916,5 +1244,9 @@ def finalize_observations(project, prepared: list[dict]):
                 )
             obs.loc[valued["obsnme"], "obsval"] = valued["value"].to_numpy(dtype=float)
             obs.loc[valued["obsnme"], "weight"] = valued["weight"].fillna(1.0).to_numpy(dtype=float)
+    assign_observation_groups(obs, prepared)
+    for item in prepared:
         if item.get("values_path") is not None:
-            _write_values_snapshot(frame, item["values_path"], value_label=item["value_label"])
+            _write_values_snapshot(
+                item["target_frame"], item["values_path"], value_label=item["value_label"]
+            )

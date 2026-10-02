@@ -717,6 +717,21 @@ it forecasts every row. The head and concentration tables are written by ONE wri
 the base run and every forward run, and two sets under one prefix are refused. A PEST
 template built before this bakes the old forward run and must be rebuilt.
 
+**A target's `group` label is its PEST observation group** (ledger 358). A head,
+concentration or DRN-zone target's `group` (`group_column=`) puts each of its MEASURED
+observations in that group, made a PEST name -- lower-cased, every run of characters
+other than letters, digits, `_`, `.`, `:`, `-` one `_` (`"North Wells"` is
+`north_wells`); with no label (missing or blank) it is in its set's prefix (`hds`,
+`stage`, `sfr_flow`, ...), so phi splits by data type out of the box. Every row no target
+measures is in `<prefix>_unmeasured` and a forecast in its set's prefix (`fore1`), so
+neither joins a group of yours. Lake and SFR targets carry no label: a second set under
+another prefix is a second group. `cal.build()` refuses, naming it, a label that is not
+text, holds no letter or digit, takes a group the build gives a set, starts as
+PESTPP-IES reads an INEQUALITY (`l_`, `less`, `g_`, `greater` -- a set prefix too), or
+becomes the same name as a different label (`"North"`, `"north"`); a DRN zone's rows
+carry one label. pyEMU used to give every simulated column a group of its own, so a
+group was one well. The PEST guide shows the groups with PEST++'s phi-factor file.
+
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
 `mf.LakeStageTargets`, `mf.DrnFlowTargets`. Calibration: `model.pest(name,
 start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(...)` /
@@ -738,8 +753,8 @@ never written is refused and an in-memory edit after the run does not reach it; 
 
 | data | figure | what it answers |
 | --- | --- | --- |
-| `phi`, `phi_contributions()` | `plot_phi()`, `plot_phi_distribution()`, `plot_phi_contributions()` | did misfit drop, and which group owns it |
-| `conflict()` | `plot_conflict()`, `plot_prior_vs_obs()`, `plot_vs_obs()` | is the prior wide enough; does the posterior bracket the data |
+| `phi`, `phi_contributions()` | `plot_phi()`, `plot_phi_distribution()`, `plot_phi_contributions()` | did misfit drop, and which group owns it (your `group` labels since ledger 358) |
+| `conflict()` | `plot_conflict()`, `plot_prior_vs_obs()`, `plot_vs_obs()` | is the prior wide enough; does the posterior bracket the data -- the two `*_vs_obs` draw one panel per target LOCATION (`groups=` keeps the locations measured in those groups, `max_locations=` caps them), `plot_conflict` one bar per group |
 | `parameters_at_bounds()` | `plot_parameters_at_bounds()` | is the prior too tight |
 | `sensitivity(forecast=…)` | `plot_sensitivity(forecast=…)` | what the data informed, and what drives a forecast — ensemble-based, **not** CSS |
 | `forecasts()`, `forecast(name)` | `forecast(name).plot()` | the payoff: posterior prediction spread |

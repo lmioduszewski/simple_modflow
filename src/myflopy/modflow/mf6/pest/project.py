@@ -560,6 +560,20 @@ class PestProject:
         entered as ``-Q`` -- the targets refuse a value above zero when they are
         built, which scored ``-2Q`` at a perfect fit.
 
+        **A target's group is its PEST observation group** (ledger 358): each
+        measured observation is in the group its target's ``group`` label names
+        (a head, concentration or DRN-zone target's ``group_column``), made a PEST
+        name -- lower-cased, every run of characters other than letters, digits,
+        ``_``, ``.``, ``:`` and ``-`` one ``_`` -- and one with no label is in the
+        set's prefix (``hds``, ``stage``, ...), so PEST++ reports phi by your
+        groups, and by data type out of the box. Every row no target measures is
+        in ``<prefix>_unmeasured``, so it never joins a group of yours. A label
+        that is not text, holds no letter or digit, starts as PESTPP-IES reads an
+        inequality (``l_``, ``less``, ``g_``, ``greater``), takes a group the
+        build gives a set, or becomes the same name as a different label makes
+        :meth:`build` raise, naming it. pyEMU used to give each simulated column
+        a group of its own, so a group was one well.
+
         Parameters
         ----------
         targets : target set or observation spec
@@ -575,8 +589,13 @@ class PestProject:
             Observation-name prefix. ``None`` (default) uses the target kind's
             own prefix (``"hds"``, ``"conc"``, ``"stage"``, ``"sfr_stage"``,
             ``"sfr_flow"``, ``"drn_flow"``). Pass distinct prefixes to register
-            more than one set of the same kind. IGNORED when ``targets`` is
-            already a spec: the spec's own ``prefix`` is used.
+            more than one set of the same kind. It is also, made a PEST name,
+            the observation group of the set's targets with no group label --
+            so two sets under two prefixes are two groups -- and with
+            ``_unmeasured`` added the group of its unmeasured rows; one starting
+            ``l_``, ``less``, ``g_`` or ``greater`` (an inequality to
+            PESTPP-IES) makes :meth:`build` raise (ledger 358). IGNORED when
+            ``targets`` is already a spec: the spec's own ``prefix`` is used.
 
         Returns
         -------
@@ -609,6 +628,11 @@ class PestProject:
         NO values forecasts every row of its table: its locations at every
         period.
 
+        A forecast is in its set's prefix as its PEST observation group
+        (``fore1``, ...), and the set's other rows in ``<prefix>_unmeasured``
+        (ledger 358): a forecast never joins a group of measured observations,
+        and its targets' ``group`` labels are not read.
+
         Parameters
         ----------
         targets : target set or observation spec
@@ -626,7 +650,8 @@ class PestProject:
             names never collide with calibration observations. IGNORED when
             ``targets`` is already a spec: the spec's own ``prefix`` is used,
             which for a default-built spec is the same as a calibration set's
-            (``"hds"``, ...).
+            (``"hds"``, ...). It is the forecasts' observation group, refused as
+            :meth:`observe`'s is.
 
         Returns
         -------
@@ -1325,9 +1350,11 @@ class PestProject:
             simulated table (naming it and the rows the table has), or a head or
             concentration target's location lands on no active cell (ledger
             341); when a target's ``time`` is not a whole number, or two values
-            name one target in one period; when two sets share a prefix; or when
+            name one target in one period; when two sets share a prefix; when
             a head or concentration ``simulated_values`` table's columns are not
-            the forward run's, in its order (ledger 340).
+            the forward run's, in its order (ledger 340); or when a target's
+            group label, or a set's prefix, cannot be its PEST observation group
+            (ledger 358; see :meth:`observe`).
         FileNotFoundError
             When the model's workspace holds no ``mfsim.nam``: the template is
             made from the run's files, and a model never written has none.

@@ -55,9 +55,13 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
         Column of ``locations`` holding each location's zero-based model layer.
         Default ``"layer"``; ``None`` or an absent column means layer 0.
     group_column : str or None, optional
-        Column of ``locations`` holding an observation-group label, carried as
-        ``group`` (a label only; it does not set PEST's observation group).
-        Default ``"group"``; ``None`` or absent leaves ``<NA>``.
+        Column of ``locations`` holding each location's observation-group label,
+        carried as ``group``. Default ``"group"``; ``None`` or absent leaves
+        ``<NA>``. It is the PEST observation group of the location's MEASURED
+        observations (ledger 358), made a PEST name and refused as
+        :class:`~myflopy.modflow.mf6.observations.heads.HeadTargets`'
+        ``group_column`` says; a missing or blank label puts them in the set's
+        prefix (``conc``).
     weight_column : str or None, optional
         Column of ``locations`` holding a per-location PEST weight, carried as
         ``weight``; a value that is not ``NaN`` becomes the weight of each of

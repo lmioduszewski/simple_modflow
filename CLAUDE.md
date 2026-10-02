@@ -1806,6 +1806,26 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   writer (the pivot SORTED its columns: PEST read W1's head as W10's in every
   realization); the named-series forward run reloads the calibrated model BY NAME.
   **A template built before this bakes the old forward run and must be rebuilt.**
+- **A target's `group` label is its PEST observation group** (ledger 358, the user's
+  call). `assign_observation_groups` (in `pest/observations.py`, run by
+  `finalize_observations`) puts a MEASURED observation in its label made a PEST name
+  (`pest_group_name`: lower-cased, every run of characters but `[a-z0-9_.:-]` one `_`),
+  an unlabelled one in its set's PREFIX, every row no target measures in
+  `<prefix>_unmeasured` and a forecast in its prefix -- so a user's group holds exactly
+  what was measured under it. pyEMU named every column a group of its own, so a group was
+  one well. REFUSED by name: a label that is not text (a number -- deliberately not "no
+  label"), no letter or digit, a set's group name, two labels becoming one name
+  (`North`/`north`), and a label OR PREFIX starting `l_`/`less`/`g_`/`greater`, which
+  PESTPP-IES reads as an INEQUALITY on the bare start (`lessard`, `greaterville`;
+  measured: phi 0 where the same data scored 424.864; PESTPP-GLM at NOPTMAX=0 does not).
+  No length limit (PEST++ 5.2.16 read 5000 characters); a comma or `"` breaks the
+  version-2 file. Lake/SFR targets have no label column -- split them by prefix. **The
+  review draws one time series per target LOCATION** (`IesResults._location_panels`, a
+  column found by pyEMU's `<base>_<index>:<value>` name), never per group, and marks only
+  MEASURED observations -- per group it drew a group of wells as one zig-zag line, and
+  the old per-column review drew every zero-weight row as a red "measured" triangle at
+  the base run's value. A run built before keeps one group per column and still reviews.
+  `phi_contributions`/`plot_conflict` read the user's groups unchanged.
 - **A DRN zone's cell is a `(layer, cell)` pair, on every route** (ledger 342). A
   cell-budget record names a drain by MF6's model-wide USER node (`layer * ncpl + cell`
   on a DISV, past an inactive cell too -- pinned by `tests/test_drn_zone_layers.py`);

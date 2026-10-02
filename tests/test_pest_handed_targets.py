@@ -83,6 +83,16 @@ def _run(root: Path, simulation):
 def toy(tmp_path_factory):
     """The model in the module docstring, run."""
 
+    return run_toy(tmp_path_factory.mktemp("pest_handed"))
+
+
+def run_toy(root: Path):
+    """The model in the module docstring, run under ``root``; its run model.
+
+    A function as well as the fixture, so another module's fixture can run the same
+    model (``tests/test_pest_observation_groups.py``).
+    """
+
     grid, props, edge = _grid_and_edges()
     last = len(REACHES) - 1
     stream = mf.sfr.flopy(
@@ -115,7 +125,7 @@ def toy(tmp_path_factory):
     ])
     simulation = mf.simulation(model, name="s", packages=[
         mf.tdis(nper=NPER, perioddata=[(PERLEN, NSTP, 1.0)] * NPER)])
-    return _run(tmp_path_factory.mktemp("pest_handed"), simulation).model()
+    return _run(root, simulation).model()
 
 
 def _build(model, workspace: Path, *, observe=(), forecast=()):

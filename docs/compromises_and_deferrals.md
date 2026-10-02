@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 357 entries (362 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 358 entries (363 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 358 | A target's group is its PEST observation group: a measured observation is in its target's `group` label mad... | 2026-10-02 |
 | 357 | The review of ledger 356: a PEST build from a RELATIVE model workspace -- every canonical PEST notebook's... | 2026-10-02 |
 | 356 | A PEST build leaves the source run and the model object untouched: it stages a copy of the run directory be... | 2026-10-02 |
 | 355 | The review of ledgers 353-354: a reach TARGET's pictures are stage views -- its time series, cross plot and... | 2026-10-02 |
@@ -15330,8 +15331,9 @@ same day, which is the useful part of the result.
       **Every row no target names carries weight 0** -- every family and route, its
       `obsval` left at the base run's value so ensembles still report it; a target's weight
       is its own, else 1.0. That is F1-W1 and G2, and it closes ledger 81's build-side note.
-      **Not done** -- scope cut, the user's call left open: moving those rows into a sibling
-      obs group; `IesResults`' `weight > 0` filter already tells them apart.
+      ~~**Not done** -- scope cut, the user's call left open: moving those rows into a sibling
+      obs group; `IesResults`' `weight > 0` filter already tells them apart.~~ **Done in
+      ledger 358:** those rows are in their set's `<prefix>_unmeasured` group.
       **Forecasts** -- judgment calls. A forecast is the rows its targets NAME, all at
       weight 0 and listed in `forecasts`; a placeholder value is written as the `obsval`
       and a blank keeps the base run's -- for a forecast the KEY says what to predict, so a
@@ -16703,3 +16705,93 @@ same day, which is the useful part of the result.
       with the template resolved inside the block again, and
       `test_a_second_build_closes_the_first_builds_log_before_deleting_its_template` fails
       without `_release_pyemu_log`.
+358. **A target's group is its PEST observation group: a measured observation is in its target's `group` label made a PEST name, else in its set's prefix; every row no target measures is in `<prefix>_unmeasured` and a forecast in `<prefix>`; a label PEST++ cannot hold, or reads as an INEQUALITY, is refused; and the IES review draws one time series per target LOCATION (2026-10-02).**
+      The user's call (2026-10-02). `HeadTargets`, `ConcTargets` and `DrnFlowTargets` carried
+      a `group` label documented as "a label only": pyEMU named each simulated column's
+      observations a group of their own (`oname:hds_otype:lst_usecol:w1`), so a group was one
+      well and PEST++'s phi by group -- and a phi-factor file -- could not see the grouping.
+      ONE function, `pest/observations.assign_observation_groups`, run by
+      `finalize_observations`, names every observation of every set.
+      **The name** (`pest_group_name`) -- judgment call: lower-cased, stripped, every run of
+      characters outside `[a-z0-9_.:-]` one `_`. Measured on PEST++ 5.2.16: a comma or a double
+      quote stops pestpp-glm on the version-2 file myflopy writes; a space, `/`, `#`, `'`, `!`
+      and 5000 characters are read -- so NO length limit (pyEMU's own groups were already past
+      classic PEST's 12); whitespace is replaced anyway because it splits a version-1 file,
+      and non-ASCII letters become `_` for the same portability, unmeasured as a failure.
+      **The INEQUALITY trap, measured:** PESTPP-IES reads a group whose name STARTS `l_`,
+      `less`, `g_` or `greater` -- on the bare start, `lessard` and `greaterville` included --
+      as "simulated at most / at least the target": heads above their targets scored phi 0
+      in `greater_n` where `north` scored 424.864, and targets above the heads scored 0 in
+      `less_n` against 2377.88; `ln`, `lt_n`, `gt_n`, `l-n`, `north_less` are ordinary.
+      PESTPP-GLM at NOPTMAX=0 reads them all as ordinary. Such a label is REFUSED, and so is a
+      set PREFIX starting so, because a prefix is a group name now: before, every group began
+      `oname:`, so `observe(prefix="less_x")` was harmless and would have turned into an
+      inequality in silence. **Not built:** deliberate inequality observations -- a target is
+      an equality everywhere else (`compare()`); `cal.pst.observation_data.obgnme` can be
+      edited after `build()` by someone who wants one.
+      **Refused, naming the labels:** two DIFFERENT labels becoming one name (`"North"` and
+      `"north"` -- the spec's rule; surrounding whitespace is not part of a label, judgment
+      call); a label with no letter or digit; a label taking a name the build gives a set
+      (`<prefix>`, `<prefix>_unmeasured`, or a group the control file already holds, such as
+      a captured field's) -- judgment call: even a label equal to its OWN set's prefix, which
+      would name the same group, because one rule reads better than an exception; and a DRN
+      zone given as several rows carrying different labels, as different weights already
+      were (rows without a label take the others'; `compare()` still reads the first row's).
+      **A label that is not text is REFUSED -- a DEVIATION from the spec**, which said such a
+      label "counts as no label". A numeric group column is the ordinary shape of a zone id
+      read from a CSV or a GeoPackage, and pandas reads one with a blank as floats; counting
+      it as no label would have put every such target in the prefix group in silence, the
+      class of drop ledgers 340-351 removed. The refusal names `.astype(str)`. Missing
+      (`None`, `NaN`, `pd.NA`) and blank text are no label.
+      **Rows no target measures and forecasts** -- the decision the spec left open (c): every
+      row of a set no target measures (an unmeasured period, a blank target, a period a
+      forecast set does not forecast) is in `<prefix>_unmeasured`, and a forecast in its
+      set's prefix (`fore1`); a forecast's label is not read. So a user's group holds exactly
+      what was measured under it. **Considered and not taken:** leaving those rows in pyEMU's
+      per-column groups -- PEST++ then reports a zero column per unmeasured well in
+      `<case>.phi.group.csv` (measured: one per such column, against one per set). Neither
+      needs a phi-factor tag: a zero-weight group needs none (measured). A measured target
+      the user weighted 0 stays in its label's group -- it is measured.
+      **Lake and SFR targets have no group column -- a DEVIATION from the spec's premise**
+      that every target class takes `group_column=`; only the three above do. Their measured
+      observations are in their set's prefix, so a second set under a second prefix is a
+      second group. **Not built:** a `group_column` on them (a new parameter on three
+      classes whose `{name: id}` dict form has nowhere to carry it).
+      **The review draws one time series per target LOCATION**
+      (`IesResults._location_panels`): a location is a simulated COLUMN, found from pyEMU's
+      own naming `<base>_<index>:<value>` -- the base IS the per-column group a run built
+      before this commit carries, so such a run reviews as it did -- titled from the values
+      snapshot's `obsnme` join (ledger 340), which now also carries `column` and `obgnme`.
+      Drawn per group, a group of two wells was ONE line through both (measured: `north`
+      93, 91, 92, 94). Found in passing and fixed with it: the old panel drew every
+      observation of its group as a red "measured" triangle, so since ledger 340 each
+      unmeasured period showed the base run's own head as data (101.962 and 101.847 on the
+      toy); markers are now the MEASURED observations only, through `_is_measured` (weight
+      above 0 and joined to the snapshot), which `obs_residuals` now uses too -- one rule.
+      `max_groups` became `max_locations` on `plot_vs_obs`, `plot_prior_vs_obs` and `report`
+      (no alias: the user is the sole user); `groups=` keeps the locations measured in those
+      groups. `phi_contributions`, `conflict` and `plot_conflict` group by `obgnme` as they
+      did, so they read the user's groups with no change.
+      **Templates:** nothing in the forward run changed; a template built before keeps one
+      group per column, runs, and reviews as before -- rebuild it to get the groups.
+      **Not tested end to end:** `ConcTargets` (it shares `_point_target_frame` and the
+      assignment with heads, which are).
+      Reproducer: `docs/reproducers/pest_observation_groups.py` (A and C on 592d430's `src`
+      and this tree; B is PEST++ alone). Tests: `tests/test_pest_observation_groups.py`, 19,
+      on the handed-targets toy (`run_toy`, factored out of that module's fixture), the
+      review ones on a PESTPP-IES prior run. Revert checks, each failing by name: no group
+      assignment (`test_a_measured_observation_is_in_its_targets_group_and_nothing_else_joins_it`,
+      `test_a_target_with_no_label_or_a_blank_one_is_in_its_sets_prefix`,
+      `test_pestpp_ies_reports_phi_under_the_users_groups`,
+      `test_the_review_draws_one_series_per_location_not_per_group`); unmeasured rows left
+      in pyEMU's groups (the first and the PESTPP-IES test); a forecast taking its label,
+      whitespace counted as part of a label (the first); merged labels allowed
+      (`test_two_labels_that_become_one_group_name_are_refused_naming_both`); inequality
+      labels allowed (`test_a_label_pestpp_ies_reads_as_an_inequality_is_refused`, all four);
+      the prefix check (`test_a_set_prefix_pestpp_ies_reads_as_an_inequality_is_refused`);
+      a number as no label (`test_a_label_that_is_not_text_is_refused_naming_it`, all three);
+      a set's group name allowed (`test_a_label_taking_a_group_the_build_gives_a_set_is_refused`,
+      all three); a zone's labels unchecked (`test_a_zone_given_two_labels_is_refused`); the
+      parent's `ies.py` (`test_the_review_draws_one_series_per_location_not_per_group` and
+      both `test_a_run_built_before_this_commit_reviews_per_location_too` cases -- the
+      `before_340` one on the zero-weight markers).

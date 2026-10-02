@@ -655,62 +655,198 @@ class IesResults:
         obs["_time"] = [_parse_time(name) for name in obs.index]
         return obs
 
-    def plot_vs_obs(self, *, groups: list[str] | None = None, max_groups: int = 12,
-                    iteration: int | None = None, backend: str = "plotly"):
-        """Plot prior and posterior ensembles against the measured observations.
+    # The simulated COLUMN an observation belongs to: pyEMU names a list-style
+    # observation "<column base>_<index>:<value>" ("oname:hds_otype:lst_usecol:w1"
+    # + "_per:0"), and that base is the group pyEMU gave every observation of the
+    # column -- the only group a run built before ledger 358 has.
+    _COLUMN_BASE_RE = re.compile(r"^(?P<base>.+)_[^_:]+:[^_:]+$")
 
-        For every nonzero-weight observation group (one timeseries each), grey
-        lines are the prior ensemble, blue lines the posterior, and red markers
-        the measured values (with the noise ensemble shaded when available).
-        A good fit means the blue lines bracket the red markers.
+    def _target_snapshot(self) -> pd.DataFrame:
+        """Every target the run recorded by its observation: ``obsnme`` -> set, target, column.
+
+        Read from each set's ``<prefix>_target_values.csv``, which names each
+        target's observation since ledger 340 and its simulated ``column`` since
+        ledger 358. Empty for a run older than both.
+        """
+
+        frames = []
+        for entry in self.observation_sets:
+            values_file = entry.get("values_file")
+            path = self.workspace / str(values_file) if values_file else None
+            if path is None or not path.exists():
+                continue
+            table = pd.read_csv(path, dtype={"name": str, "column": str})
+            if "obsnme" not in table.columns:
+                continue
+            frames.append(pd.DataFrame({
+                "obsnme": table["obsnme"].astype(str).str.strip().str.lower(),
+                "prefix": str(entry.get("prefix", "")),
+                "target": (
+                    table["column"] if "column" in table.columns else table["name"]
+                ).astype(str),
+            }))
+        if not frames:
+            return pd.DataFrame(columns=["obsnme", "prefix", "target"])
+        return pd.concat(frames, ignore_index=True).drop_duplicates("obsnme").set_index("obsnme")
+
+    def _is_measured(self, obs: pd.DataFrame) -> pd.Series:
+        """Which observations are measured, history-matched targets.
+
+        Weight above zero, and -- when the run recorded what it targeted
+        (:meth:`_measured_observation_keys`) -- one of those: a run built before
+        ledger 340 left every row no target named at weight 1 and the base run's
+        own value, which is no measurement.
+        """
+
+        weighted = obs["weight"].astype(float) > 0
+        measured = self._measured_observation_keys()
+        if measured is None:
+            return weighted
+        keys, names = measured
+        parsed = obs.index.to_series().str.extract(self._OBS_NAME_RE)
+        joined = [
+            str(name).lower() in names
+            or (str(prefix).lower(), str(location).lower(), str(time).lower()) in keys
+            for name, prefix, location, time in zip(
+                obs.index, parsed["prefix"], parsed["location"], parsed["time"], strict=True
+            )
+        ]
+        return weighted & pd.Series(joined, index=obs.index)
+
+    def _location_panels(self, groups, max_locations: int) -> list[dict]:
+        """One time series per target LOCATION with a measured observation, in control-file order.
+
+        A location is one simulated COLUMN (``_COLUMN_BASE_RE``): its every
+        observation, measured or not, in time order, so the ensemble draws the
+        whole series. Since ledger 358 a group holds every location measured
+        under its label, so a group is no longer one location: drawn per group,
+        a group of three wells was one line zig-zagging between them.
 
         Parameters
         ----------
-        groups
-            Observation group names to plot. Defaults to all nonzero-weight
-            groups (capped at ``max_groups``).
-        max_groups
-            Maximum number of groups to draw when ``groups`` is not given.
-        iteration
-            Posterior iteration to plot (default: the highest available).
-        backend
-            ``"plotly"`` (interactive, default) or ``"matplotlib"`` (static
-            matplotlib/seaborn).
+        groups : sequence of str or None
+            Observation groups to keep (any case): a location is kept when its
+            measured observations are in one. ``None``: every location.
+        max_locations : int
+            The most panels returned, the first in control-file order.
+
+        Returns
+        -------
+        list of dict
+            ``title``, ``names`` (time-ordered), ``times`` and ``measured`` (a
+            boolean array over ``names``) per location.
         """
 
         obs = self._observation_metadata()
-        nnz_groups = list(self.pst.nnz_obs_groups)
-        chosen = groups if groups is not None else nnz_groups[:max_groups]
-        if not chosen:
-            raise ValueError("No nonzero-weight observation groups to plot.")
+        measured = self._is_measured(obs)
+        base = obs.index.to_series().str.extract(self._COLUMN_BASE_RE)["base"]
+        base = base.fillna(obs["obgnme"].astype(str))
+        group = obs["obgnme"].astype(str).str.lower()
+        wanted = None if groups is None else {str(name).strip().lower() for name in groups}
+        snapshot = self._target_snapshot()
+        panels = []
+        for column in pd.unique(base[measured]):
+            members = base.index[base == column]
+            hits = members[measured.loc[members].to_numpy()]
+            their_groups = list(dict.fromkeys(group.loc[hits]))
+            if wanted is not None and not wanted.intersection(their_groups):
+                continue
+            known = snapshot.index.intersection(hits)
+            if len(known):
+                row = snapshot.loc[known[0]]
+                title = f"{row['prefix']}: {row['target']}"
+                if their_groups != [str(column).lower()]:
+                    title += f" [{', '.join(their_groups)}]"
+            else:
+                title = str(column)
+            frame = obs.loc[members].sort_values("_time", kind="stable")
+            panels.append({
+                "title": title,
+                "names": frame.index.tolist(),
+                "times": frame["_time"].to_numpy(),
+                "measured": measured.loc[frame.index].to_numpy(dtype=bool),
+            })
+            if len(panels) >= int(max_locations):
+                break
+        return panels
+
+    def plot_vs_obs(self, *, groups: list[str] | None = None, max_locations: int = 12,
+                    iteration: int | None = None, backend: str = "plotly"):
+        """Plot prior and posterior ensembles against the measured observations.
+
+        One panel per target LOCATION -- a well, a reach, a lake, a DRN zone --
+        that has a measured observation: grey lines are the prior ensemble and
+        blue lines the posterior through every period the run saved, and red
+        markers the measured values. A good fit means the blue lines bracket the
+        red markers. Each panel is titled with its observation set's prefix, the
+        target and, in brackets, its observation group.
+
+        A panel was one observation GROUP until ledger 358, which was one
+        location only because pyEMU gave every simulated column a group of its
+        own; a target's group is now its PEST group, so a group of several wells
+        drew one line through all of them. A run built before that -- one group
+        per column -- draws the same panels, titled by target where its values
+        snapshot names its observations (ledger 340) and by the group otherwise.
+        Its markers are its MEASURED observations only: the panel drew every
+        observation of its group as one, so each period nobody measured showed
+        the base run's own value as data.
+
+        Parameters
+        ----------
+        groups : list of str or None, optional
+            Observation groups to draw (any case): the locations whose measured
+            observations are in one of them. Default ``None``: every location
+            with a measured observation, up to ``max_locations``.
+        max_locations : int, optional
+            The most panels drawn, the first locations in control-file order.
+            Default 12.
+        iteration : int or None, optional
+            Posterior iteration to plot. Default ``None``: the highest available.
+        backend : str, optional
+            ``"plotly"`` (interactive, default) or ``"matplotlib"`` (static).
+
+        Returns
+        -------
+        plotly.graph_objects.Figure or matplotlib.figure.Figure
+            One row per location.
+
+        Raises
+        ------
+        ValueError
+            When no location has a measured observation (in ``groups``).
+        """
+
+        panels = self._location_panels(groups, max_locations)
+        if not panels:
+            raise ValueError(
+                "No measured, nonzero-weight observation to plot"
+                + (f" in groups {list(groups)}." if groups is not None else ".")
+            )
 
         prior = self.prior._df
         posterior = self.obs_ensemble(iteration if iteration is not None else self.posterior_iteration)._df
+        obsval = self.pst.observation_data["obsval"]
+        titles = [panel["title"] for panel in panels]
 
         if _normalize_backend(backend) == "matplotlib":
-            fig, axes = viz.mpl_axes(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
-            for ax, group in zip(axes[:, 0], chosen, strict=False):
-                group_obs = obs.loc[obs["obgnme"] == group].sort_values("_time")
-                names = group_obs.index.tolist()
-                times = group_obs["_time"].to_numpy()
+            fig, axes = viz.mpl_axes(len(panels), 1, figsize=(8, 2.6 * len(panels)), squeeze=False)
+            for ax, panel in zip(axes[:, 0], panels, strict=False):
+                names, times, hit = panel["names"], panel["times"], panel["measured"]
                 for real in prior.index:
                     ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color=_MPL_PRIOR, lw=0.8, alpha=0.4)
                 for real in posterior.index:
                     ax.plot(times, posterior.loc[real, names].to_numpy(dtype=float), color=_MPL_POST, lw=0.8, alpha=0.5)
-                ax.plot(times, group_obs["obsval"].to_numpy(dtype=float), "^", color=_MPL_MEAS, ms=7)
-                ax.set_title(group, loc="left", fontsize=9)
+                ax.plot(times[hit], obsval.loc[names].to_numpy(dtype=float)[hit], "^", color=_MPL_MEAS, ms=7)
+                ax.set_title(panel["title"], loc="left", fontsize=9)
                 ax.set_ylabel("value")
             axes[-1, 0].set_xlabel("time")
             fig.suptitle("Simulated ensemble vs measured observations")
             fig.tight_layout()
             return fig
 
-        fig = viz.subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False)
-        for row, group in enumerate(chosen, start=1):
-            group_obs = obs.loc[obs["obgnme"] == group].copy()
-            group_obs = group_obs.sort_values("_time")
-            names = group_obs.index.tolist()
-            times = group_obs["_time"].to_numpy()
+        fig = viz.subplots(rows=len(panels), cols=1, subplot_titles=titles, shared_xaxes=False)
+        for row, panel in enumerate(panels, start=1):
+            names, times, hit = panel["names"], panel["times"], panel["measured"]
             first = True
             for real in prior.index:
                 fig.add_scatter(x=times, y=prior.loc[real, names].to_numpy(dtype=float), mode="lines",
@@ -723,11 +859,11 @@ class IesResults:
                                 line=dict(color=_POST_COLOR, width=1), row=row, col=1,
                                 name="posterior", legendgroup="posterior", showlegend=first and row == 1, hoverinfo="skip")
                 first = False
-            fig.add_scatter(x=times, y=group_obs["obsval"].to_numpy(dtype=float), mode="markers",
+            fig.add_scatter(x=times[hit], y=obsval.loc[names].to_numpy(dtype=float)[hit], mode="markers",
                             marker=dict(color=_MEAS_COLOR, size=8, symbol="triangle-up"), row=row, col=1,
                             name="measured", legendgroup="measured", showlegend=row == 1)
         fig.update_layout(title="Simulated ensemble vs measured observations",
-                          dragmode="pan", height=260 * len(chosen))
+                          dragmode="pan", height=260 * len(panels))
         return fig
 
     def forecast(self, name) -> IesForecast:
@@ -1275,7 +1411,7 @@ class IesResults:
             index=names,
         )
 
-    def plot_prior_vs_obs(self, *, groups: list[str] | None = None, max_groups: int = 12,
+    def plot_prior_vs_obs(self, *, groups: list[str] | None = None, max_locations: int = 12,
                           show_conflict: bool = True, coverage: float = 1.0, backend: str = "plotly"):
         """Plot the prior ensemble (grey spaghetti) against the measured data.
 
@@ -1296,64 +1432,85 @@ class IesResults:
           set reaches it. Fix the model / bounds / weights before history
           matching -- don't try to calibrate your way out of it.
 
+        One panel per target LOCATION with a measured observation, as
+        :meth:`plot_vs_obs` draws them (ledger 358); :meth:`plot_conflict`
+        summarizes the same test by observation group.
+
         Parameters
         ----------
-        groups
-            Observation groups to plot (default: all nonzero-weight groups,
-            capped at ``max_groups``).
-        max_groups
-            Maximum number of groups when ``groups`` is not given.
-        show_conflict
-            Highlight observations in prior-data conflict (default ``True``).
-        coverage
-            Passed to :meth:`conflict` for the conflict test.
-        backend
-            ``"plotly"`` (interactive, default) or ``"matplotlib"``.
+        groups : list of str or None, optional
+            Observation groups to draw (any case): the locations whose measured
+            observations are in one of them. Default ``None``: every location
+            with a measured observation, up to ``max_locations``.
+        max_locations : int, optional
+            The most panels drawn, the first locations in control-file order.
+            Default 12.
+        show_conflict : bool, optional
+            Mark the measured observations in prior-data conflict (orange ``x``).
+            Default ``True``.
+        coverage : float, optional
+            Passed to :meth:`conflict`: the central fraction of the prior
+            ensemble counted as reachable. Default ``1.0``, its full range.
+        backend : str, optional
+            ``"plotly"`` (interactive, default) or ``"matplotlib"`` (static).
+
+        Returns
+        -------
+        plotly.graph_objects.Figure or matplotlib.figure.Figure
+            One row per location.
+
+        Raises
+        ------
+        ValueError
+            When no location has a measured observation (in ``groups``).
         """
 
-        obs = self._observation_metadata()
-        nnz_groups = list(self.pst.nnz_obs_groups)
-        chosen = groups if groups is not None else nnz_groups[:max_groups]
-        if not chosen:
-            raise ValueError("No nonzero-weight observation groups to plot.")
+        panels = self._location_panels(groups, max_locations)
+        if not panels:
+            raise ValueError(
+                "No measured, nonzero-weight observation to plot"
+                + (f" in groups {list(groups)}." if groups is not None else ".")
+            )
         prior = self.prior._df
+        obsval = self.pst.observation_data["obsval"]
         conflict = self.conflict(coverage=coverage) if show_conflict else None
 
-        def _group_data(group):
-            """The time-ordered observation names/times/ensembles for one observation group."""
+        def _panel_data(panel):
+            """The time-ordered names/times, measured markers and conflict flags of one location."""
 
-            group_obs = obs.loc[obs["obgnme"] == group].sort_values("_time")
-            names = group_obs.index.tolist()
-            times = group_obs["_time"].to_numpy()
-            measured = group_obs["obsval"].to_numpy(dtype=float)
+            names, hit = panel["names"], panel["measured"]
+            measured = obsval.loc[names].to_numpy(dtype=float)[hit]
+            times = panel["times"][hit]
             if conflict is not None:
-                flags = conflict["in_conflict"].reindex(names).fillna(False).to_numpy(dtype=bool)
+                kept = [name for name, flag in zip(names, hit, strict=True) if flag]
+                flags = conflict["in_conflict"].reindex(kept).fillna(False).to_numpy(dtype=bool)
             else:
-                flags = np.zeros(len(names), dtype=bool)
-            return names, times, measured, flags
+                flags = np.zeros(len(times), dtype=bool)
+            return names, panel["times"], times, measured, flags
 
         if _normalize_backend(backend) == "matplotlib":
-            fig, axes = viz.mpl_axes(len(chosen), 1, figsize=(8, 2.6 * len(chosen)), squeeze=False)
-            for ax, group in zip(axes[:, 0], chosen, strict=False):
-                names, times, measured, flags = _group_data(group)
+            fig, axes = viz.mpl_axes(len(panels), 1, figsize=(8, 2.6 * len(panels)), squeeze=False)
+            for ax, panel in zip(axes[:, 0], panels, strict=False):
+                names, line_times, times, measured, flags = _panel_data(panel)
                 for real in prior.index:
-                    ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color=_MPL_PRIOR, lw=0.8, alpha=0.4)
+                    ax.plot(line_times, prior.loc[real, names].to_numpy(dtype=float), color=_MPL_PRIOR, lw=0.8, alpha=0.4)
                 ax.plot(times[~flags], measured[~flags], "^", color=_MPL_MEAS, ms=7, label="measured")
                 if flags.any():
                     ax.plot(times[flags], measured[flags], "X", color=_MPL_CONFLICT, ms=10, label="prior-data conflict")
-                ax.set_title(group, loc="left", fontsize=9)
+                ax.set_title(panel["title"], loc="left", fontsize=9)
                 ax.set_ylabel("value")
             axes[-1, 0].set_xlabel("time")
             fig.suptitle("Prior ensemble vs measured observations")
             fig.tight_layout()
             return fig
 
-        fig = viz.subplots(rows=len(chosen), cols=1, subplot_titles=chosen, shared_xaxes=False)
-        for row, group in enumerate(chosen, start=1):
-            names, times, measured, flags = _group_data(group)
+        fig = viz.subplots(rows=len(panels), cols=1, subplot_titles=[panel["title"] for panel in panels],
+                           shared_xaxes=False)
+        for row, panel in enumerate(panels, start=1):
+            names, line_times, times, measured, flags = _panel_data(panel)
             first = True
             for real in prior.index:
-                fig.add_scatter(x=times, y=prior.loc[real, names].to_numpy(dtype=float), mode="lines",
+                fig.add_scatter(x=line_times, y=prior.loc[real, names].to_numpy(dtype=float), mode="lines",
                                 line=dict(color=_PRIOR_COLOR, width=1), row=row, col=1,
                                 name="prior", legendgroup="prior", showlegend=first and row == 1, hoverinfo="skip")
                 first = False
@@ -1365,7 +1522,7 @@ class IesResults:
                                 marker=dict(color=_CONFLICT_COLOR, size=11, symbol="x"),
                                 row=row, col=1, name="prior-data conflict", legendgroup="conflict", showlegend=row == 1)
         fig.update_layout(title="Prior ensemble vs measured observations",
-                          dragmode="pan", height=260 * len(chosen))
+                          dragmode="pan", height=260 * len(panels))
         return fig
 
     def plot_conflict(self, *, coverage: float = 1.0, backend: str = "plotly"):
@@ -2042,22 +2199,12 @@ class IesResults:
         obs["obsval"] = obs["obsval"].astype(float)
         obs["weight"] = obs["weight"].astype(float)
 
-        measured = self._measured_observation_keys()
-        if measured is not None:
-            keys, names = measured
-            obs = obs.loc[[
-                str(name).lower() in names or key in keys
-                for name, key in zip(
-                    obs.index,
-                    zip(obs["prefix"], obs["location"], obs["time"], strict=True),
-                    strict=True,
-                )
-            ]]
-        # Zero weight means PEST did not history-match it: forecasts (which
-        # `cal.forecast` registers as ordinary observation sets, so they arrive
-        # here looking like head targets) and deliberately silenced targets. A
-        # misfit map must not draw either as if the model had been fitted to it.
-        obs = obs.loc[obs["weight"] > 0]
+        # Only the measured targets (`_is_measured`): a row no target named, and a
+        # zero weight -- forecasts, which `cal.forecast` registers as ordinary
+        # observation sets so they arrive here looking like head targets, and
+        # deliberately silenced targets. A misfit map must not draw either as if
+        # the model had been fitted to it.
+        obs = obs.loc[self._is_measured(obs)]
 
         summary = obs.groupby(["prefix", "location"], as_index=False).agg(
             measured=("obsval", "mean"),
@@ -2305,7 +2452,7 @@ class IesResults:
             pestpp_options=options,
         )
 
-    def report(self, html_path, *, max_groups: int = 6) -> Path:
+    def report(self, html_path, *, max_locations: int = 6) -> Path:
         """Write a single self-contained HTML report of the headline IES plots.
 
         Bundles, in order: phi convergence, the phi distribution, the
@@ -2318,6 +2465,16 @@ class IesResults:
         :meth:`plot_field_mosaic`, :meth:`plot_obs_residuals`,
         :meth:`plot_prior_vs_obs` and :meth:`plot_conflict`. Call those directly.
 
+        Parameters
+        ----------
+        html_path : str or pathlib.Path
+            The HTML file to write, overwritten when it exists; its directory
+            must exist. The plotly library is loaded from a CDN, so the page
+            needs a network connection to draw.
+        max_locations : int, optional
+            The most target locations the ensemble-vs-observation figure draws
+            (:meth:`plot_vs_obs`'s ``max_locations``). Default 6.
+
         Returns
         -------
         pathlib.Path
@@ -2327,7 +2484,7 @@ class IesResults:
         html_path = Path(html_path)
         figures = [self.plot_phi(), self.plot_phi_distribution()]
         try:
-            figures.append(self.plot_vs_obs(max_groups=max_groups))
+            figures.append(self.plot_vs_obs(max_locations=max_locations))
         except ValueError:
             pass
         for diagnostic in (self.plot_phi_contributions, self.plot_parameters_at_bounds):

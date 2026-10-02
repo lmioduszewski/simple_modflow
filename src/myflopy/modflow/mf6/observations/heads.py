@@ -124,11 +124,24 @@ class HeadTargets:
         A target only matches a cell that is ACTIVE in its own layer
         (:meth:`match_to_model`).
     group_column : str or None, optional
-        Column of ``locations`` holding an observation-group label, carried as
-        ``group`` into :meth:`get`, :meth:`residuals`, :meth:`summary`'s
-        ``n_groups`` and the PEST locations snapshot. It is a label only: it
-        does not set PEST's observation group. Default ``"group"``; ``None`` or
-        an absent column leaves ``group`` as ``<NA>``.
+        Column of ``locations`` holding each location's observation-group label,
+        carried as ``group`` into :meth:`get`, :meth:`residuals`,
+        :meth:`summary`'s ``n_groups`` and the PEST locations snapshot. Default
+        ``"group"``; ``None`` or an absent column leaves ``group`` as ``<NA>``.
+        **It is the PEST observation group** (ledger 358): when
+        ``cal.observe(...)`` builds the control file, each MEASURED observation
+        at the location is in the group the label names -- lower-cased, and
+        every run of characters other than letters, digits, ``_``, ``.``,
+        ``:`` and ``-`` turned into one ``_`` (``"North Wells"`` is
+        ``north_wells``), so phi is reported, and PEST++'s phi-factor file can
+        weight, by your groups. A missing or blank label puts it in the set's
+        prefix (``hds``, ``conc``); a period with no value is in
+        ``<prefix>_unmeasured`` whatever the label, and a forecast is in its set's
+        prefix. The build refuses a label that is not text (a number), holds no
+        letter or digit, starts as PESTPP-IES reads an inequality (``l_``,
+        ``less``, ``g_``, ``greater``), takes a group the build gives a set
+        (``hds``, ``stage_unmeasured``, ...), or becomes the same name as a
+        different label (``"North"`` and ``"north"``) -- naming each.
     weight_column : str or None, optional
         Column of ``locations`` holding a per-location observation weight,
         carried as ``weight``. When ``cal.observe(...)`` builds the PEST control
@@ -274,10 +287,12 @@ class HeadTargets:
             applies to every cell and ``None`` means 0; a list, tuple, array or
             ``Series`` must have one entry per cell (``ValueError``).
         groups : object, sequence or None, optional
-            Observation-group label per target (see the constructor's
-            ``group_column``). A scalar, a string included, applies to every
+            Observation-group label per target -- its PEST observation group
+            (see the constructor's ``group_column``, which says how a label
+            becomes a group name and which labels a PEST build refuses: anything
+            but text among them). A scalar, a string included, applies to every
             cell; a sequence must have one entry per cell. Default ``None``
-            leaves ``group`` as ``<NA>``.
+            leaves ``group`` as ``<NA>``: the set's prefix in PEST.
         weights : float, sequence of float or None, optional
             PEST observation weight per target (see the constructor's
             ``weight_column``). A scalar applies to every cell; a sequence must
