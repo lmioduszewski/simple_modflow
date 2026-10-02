@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 353 entries (358 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 354 entries (359 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 354 | The test suite makes a relative `PYTHONPATH` absolute when it starts, so every subprocess a test runs -- PE... | 2026-10-02 |
 | 353 | A reach with no stage is a gap in every SFR stage VIEW: MF6's -1e30 (dry) and +1e30 (inactive) are masked o... | 2026-10-02 |
 | 352 | Several packages of one type are found by TYPE and never read as one in silence: `model.fl.<pkg>` and... | 2026-09-30 |
 | 351 | A DRY lake is calibrated against its BOTTOM on both routes: the stage-file route reads the file raw and put... | 2026-09-29 |
@@ -15683,11 +15684,12 @@ same day, which is the useful part of the result.
       package is NAMED like its type -- with `lak` beside `lak_2` they read `lak`'s lake
       alone, in silence) (**RESOLVED by ledger 352:** found by type, the views refuse
       several by name, `model.lak(package=...)` picks one); and running the suite with a RELATIVE
-      `PYTHONPATH=src` makes every PEST forward-run subprocess import the EDITABLE
+      `PYTHONPATH=src` ~~makes~~ made every PEST forward-run subprocess import the EDITABLE
       install (the main checkout) instead of the worktree, because the forward run's
       working directory is the template -- measured: this commit's forward-run tests
       failed with `TypeError: ... unexpected keyword argument 'package'` until the path
-      was absolute.
+      was absolute (**RESOLVED by ledger 354:** the suite makes every relative entry
+      absolute when it starts).
       Reproducer: `docs/reproducers/obs_route_declared_identity.py` (sections A-J, run on
       this tree and on f0fe9c7's `src`). Tests: `tests/test_obs_route_declared_identity.py`
       (16; real MF6 runs of the reproducer's three models) and the rewritten pair in
@@ -16454,3 +16456,38 @@ same day, which is the useful part of the result.
         `test_a_reach_target_reads_the_raw_stage_file_as_before`,
         `test_the_files_pest_reads_still_hold_the_raw_stage_at_a_dry_reach` and
         `test_stage_targets_one_stage.py::test_an_sfr_stage_is_an_elevation_in_the_series_and_in_compare`.
+354. **The test suite makes a relative `PYTHONPATH` absolute when it starts, so every subprocess a test runs -- PEST's forward run in its template among them -- imports the myflopy under test (2026-10-02).**
+      Ledger 344's found-not-fixed, and CLAUDE.md's standing advice to give `PYTHONPATH`
+      as an ABSOLUTE path from a worktree. Python resolves a relative entry against the
+      directory a process STARTS in (measured: `PYTHONPATH=":src::rel/x"` puts the start
+      directory, `<start>/src` and `<start>/rel/x` on `sys.path`). The session resolved
+      `src` against the worktree; a child started elsewhere -- `python forward_run.py`
+      in a PEST template -- resolved it there, found nothing, and imported the venv's
+      EDITABLE install, the main checkout (`docs/reproducers/relative_pythonpath_subprocess.py`
+      prints both files). `tests/conftest.py`'s `pytest_configure` rewrites each relative
+      entry against `config.invocation_params.dir` (`_absolute_pythonpath`: an empty
+      entry is that directory, an absolute one and the order are kept), before xdist
+      spawns a worker -- the workers inherit it -- and before any test runs a process.
+      **Judgment call:** the rewrite lives in the suite, not the library. The forward run
+      could pin its own `sys.path` instead, but a template must run on another machine,
+      where the path that built it means nothing; the hazard is a test's child reading
+      another checkout, which only the test session can see. A script run BY HAND outside
+      pytest still resolves its own relative `PYTHONPATH` against its own start directory,
+      which is the directory it was started in -- what a person running it expects.
+      Measured: with the rewrite, the full suite under `PYTHONPATH=src` from a worktree
+      passes (5514 / 4 skipped, `-n 10`), among them ledger 345's
+      `test_the_pest_forward_run_reads_the_package_the_targets_name` and 344's
+      `test_the_targets_package_reaches_attach_and_the_pest_forward_run`. The forward-run
+      tests themselves are not the guard: a worktree whose library matches the main
+      checkout's passes them either way, so they detect the hazard only when the two
+      differ in what a forward run calls.
+      Tests: `tests/test_subprocess_imports_the_code_under_test.py` (3). With the rewrite
+      removed and the suite run from the worktree under `PYTHONPATH=src`, serially and
+      under `-n 3`, two fail by name --
+      `test_a_subprocess_started_elsewhere_imports_the_myflopy_under_test` (its message
+      names the child's `/home/lukem/python/simple_modflow/src/myflopy/__init__.py` against
+      the session's worktree file) and
+      `test_every_pythonpath_entry_the_session_hands_on_is_absolute`; the third,
+      `test_a_relative_entry_is_resolved_as_python_resolves_it`, holds the rewrite to the
+      interpreter's own resolution. Under an absolute `PYTHONPATH`, or none, all three pass
+      with or without the rewrite: there is nothing to rewrite.

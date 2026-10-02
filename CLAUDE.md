@@ -574,23 +574,27 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5489 passed / 4 skipped**, 2026-09-30, ledger 352 -- several packages of one
-  type): serial (`-n0`) **7m37s** and `-n 10` **1m33s**, both in a detached checkout outside
-  `.claude` with an absolute `PYTHONPATH`, the parallel one starting at a load average of ~3.4
-  and the serial one at ~7 as the parallel run ended. Before it, 5474 passed / 4 skipped
+- Full suite (**5514 passed / 4 skipped**, 2026-10-02, ledgers 353-354 -- SFR stage views
+  masked, the suite's `PYTHONPATH` made absolute): `-n 10` **1m42s** in a worktree outside
+  `.claude` with a RELATIVE `PYTHONPATH=src` (ledger 354), at a load average of ~3.4 at its
+  start; serial not re-measured. Before it, 5489 passed / 4 skipped (2026-09-30, ledger 352 --
+  several packages of one type): serial (`-n0`) **7m37s** and `-n 10` **1m33s**, both in a
+  detached checkout outside `.claude` with an absolute `PYTHONPATH`, the parallel one starting
+  at a load average of ~3.4 and the serial one at ~7 as the parallel run ended. Before it,
+  5474 passed / 4 skipped
   (2026-09-29, the PEST-targets series, ledgers 340-351 on top of 339): serial (`-n0`) 7m41s
   and `-n 10` 1m38s, the serial one starting at a load average of ~8. Before it, 5460 passed / 4 skipped (ledger 350 -- flow targets in
   MF6's sign): `-n 10` **1m38s** in a worktree outside `.claude`, at a load average of
-  ~0.1 at its start (1m43s at ~2.7 after the last docs edits), absolute `PYTHONPATH` (a relative `PYTHONPATH=src` fails the two
-  tests that run a PEST `forward_run.py` in its template: the subprocess imports another
-  checkout's myflopy); serial not re-measured. Before it, 5454 passed / 4 skipped
+  ~0.1 at its start (1m43s at ~2.7 after the last docs edits), absolute `PYTHONPATH` (a relative `PYTHONPATH=src` failed the two
+  tests that run a PEST `forward_run.py` in its template then: the subprocess imported another
+  checkout's myflopy -- fixed by ledger 354); serial not re-measured. Before it, 5454 passed / 4 skipped
   (ledger 349 -- the review of 348): `-n 10` 1m38s at ~0.5. Before it, 5451 passed / 4 skipped
   (ledger 348 -- the LAK stage clock): `-n 10` 1m34s at ~0.5. Before it, 5437 passed / 4 skipped
   (ledger 347 -- the review of 346): `-n 10` 1m38s at ~0.2. Before it, 5434 passed / 4 skipped
   (ledger 346 -- the observation route keyed by period): `-n 10` 1m40s at ~1.5. Before it,
   5424 passed / 4 skipped (ledger 345, the review of 344):
   `-n 10` 1m39s in a worktree outside `.claude`, at a load average of ~0.3 at its
-  start, with an ABSOLUTE `PYTHONPATH` (next bullet); serial not re-measured. Before it,
+  start, with an ABSOLUTE `PYTHONPATH` (the bullet below); serial not re-measured. Before it,
   5421 passed / 4 skipped (ledger 344 on the PEST-target series 340-343): `-n 10` 1m42s
   at ~0.8. Before it, 5371 passed / 4 skipped (2026-09-28, ledger 316's five build-failure
   fixes and their review, rebased onto ledger 339): `-n 10` **1m34s** in a detached checkout
@@ -643,13 +647,18 @@ validation — that bug was found twice, in `read_gpkg` and `contour_line_segmen
   price of the `-n0` pre-commit check below, not a regression.
   **Verify sign/column changes with `-n0`** — a session-fixture/xdist interaction
   can report green while serial catches real failures (see ledger 48).
-- **From a worktree, give `PYTHONPATH` as an ABSOLUTE path** (ledger 344). The PEST
-  end-to-end tests run `python forward_run.py` with the TEMPLATE as working directory, so
-  `PYTHONPATH=src` resolves there, finds nothing, and the forward run imports the venv's
-  EDITABLE install -- the main checkout -- instead of the code under test: measured, a
-  change to `write_named_series_targets` failed there with `TypeError` on the main
-  checkout's signature, and a change inside the library is exercised, in every forward
-  run, by code that does not contain it.
+- **A relative `PYTHONPATH` is fine: the suite makes it absolute** (ledger 354, which
+  retires 344's "give it as an ABSOLUTE path"). Python resolves a relative entry against
+  the directory a process STARTS in, and the PEST end-to-end tests run `python
+  forward_run.py` with the TEMPLATE as working directory, so `PYTHONPATH=src` resolved
+  there, found nothing, and the forward run imported the venv's EDITABLE install -- the
+  main checkout -- instead of the code under test (measured in 344: `TypeError` on the
+  main checkout's signature). `tests/conftest.py`'s `pytest_configure` now rewrites every
+  relative entry against the directory pytest was started in, before any xdist worker or
+  test starts a process, and `tests/test_subprocess_imports_the_code_under_test.py` fails
+  naming both files if a child imports another myflopy. A script you run BY HAND outside
+  pytest (a reproducer, a notebook kernel started elsewhere) still resolves its own
+  relative `PYTHONPATH` against its own start directory.
 - **A session writes its temp files in its OWN root, and a leak fails by name** (ledger
   335): `tests/conftest.py` points TMPDIR at `/tmp/myflopy-pytest-*` (one subdirectory
   per xdist worker) and removes it at the end, even after a failure. A test that leaves

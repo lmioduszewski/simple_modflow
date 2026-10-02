@@ -52,8 +52,40 @@ _TEMP_ENTRIES_ALLOWED = {
 _SESSION_TEMP_ROOT = "MYFLOPY_PYTEST_TEMP_ROOT"
 
 
+# --- Every subprocess imports the myflopy under test (ledger 354) ------------
+# Python resolves a RELATIVE `PYTHONPATH` entry against the directory a process
+# STARTS in. The session's own `sys.path` holds `src` resolved against the
+# directory pytest was started from; a test that starts a child elsewhere -- PEST's
+# `forward_run.py` runs with its TEMPLATE as working directory -- hands the child
+# the same relative string, which resolves there, finds nothing, and the child
+# imports the venv's EDITABLE install (the main checkout) instead of the code under
+# test (ledger 344: a forward run died on the main checkout's signature). So the
+# controller rewrites every relative entry to the absolute path its own
+# interpreter resolved, before any test or xdist worker starts a process; the
+# workers inherit it.
+
+
+def _absolute_pythonpath(value: str, start: str) -> str:
+    """``value``, a ``PYTHONPATH``, with every relative entry made absolute against ``start``.
+
+    An empty entry means ``start`` itself, as Python reads one; an absolute entry is
+    kept as written. The order is kept, so the import search order does not move.
+    """
+
+    return os.pathsep.join(
+        entry if os.path.isabs(entry) else os.path.abspath(os.path.join(start, entry))
+        for entry in value.split(os.pathsep)
+    )
+
+
 def pytest_configure(config):
     import tempfile
+
+    pythonpath = os.environ.get("PYTHONPATH")
+    if pythonpath:
+        os.environ["PYTHONPATH"] = _absolute_pythonpath(
+            pythonpath, str(config.invocation_params.dir)
+        )
 
     worker = getattr(config, "workerinput", None)
     shared = os.environ.get(_SESSION_TEMP_ROOT)
