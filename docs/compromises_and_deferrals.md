@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 361 entries (366 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 362 entries (367 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 362 | A strike/dip surface is the geological plane, evaluated at pixel centres; a dip outside [0, 90) is refused | 2026-10-11 |
 | 361 | The review of ledger 360: the build's marker is a VISIBLE `myflopy_pest_build.json`; a template built befor... | 2026-10-02 |
 | 360 | A PEST build deletes its `workspace=` only when a build wrote it there: the template and its staging direct... | 2026-10-02 |
 | 359 | The review of ledger 358: a group label `astype(str)` wrote for a blank (`nan`, `None`, `<NA>`) is refused,... | 2026-10-02 |
@@ -15271,6 +15272,9 @@ same day, which is the useful part of the result.
       rest were listed for the user. Fixing one means correcting its entry too (e.g.
       `mf.sfr`'s per-stream `rainfall` mapping, documented as landing on the stream's
       first reach).
+      ~~`vor.get_raster_from_strike_dip` documented as "not the geological strike/dip
+      plane", its normal as not that plane's, its pixels as upper-left corners and its
+      default file as frozen at import~~ -- fixed, entries rewritten (ledger 362).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17004,3 +17008,31 @@ same day, which is the useful part of the result.
       `worker_1`, another calibration's workers, and the four over the run or template);
       a copy of this template not accepted ->
       `test_a_master_and_workers_this_calibration_left_are_replaced`.
+
+362. **A strike/dip surface is the geological plane, evaluated at pixel centres; a dip outside [0, 90) is refused (2026-10-11).**
+      `get_raster_from_strike_dip` / `get_normal_from_strike_and_dip` (module functions in
+      `grid/surfaces.py` and the `VoronoiGridPlus` methods over them). **The convention,
+      chosen** (the field geologist's, and the only reading that makes `strike` a strike):
+      azimuths in degrees clockwise from north (+y); the plane dips toward `strike + 90`
+      (right-hand rule), descends at `tan(dip)` per unit distance that way, is level along
+      the strike, and passes through `known_point`; the normal is the plane's UPWARD UNIT
+      normal, `[sin(dip) cos(strike), -sin(dip) sin(strike), cos(dip)]`, and the raster is
+      solved from it, so one function holds the orientation. Before, the surface fell
+      TOWARD azimuth `strike` by `sin(2 dip)/2` (0.5 at dip 45 for `tan` 1.0; dip 80 read as
+      dip 10) and a level plane's "normal" was `[0, 1, 0]`: every surface written so far
+      changes -- no caller in `src/`, `examples/`, the notebooks or `docs/` used either.
+      **Refused, not guessed:** `dip >= 90` (a vertical plane has no z(x, y); `tan(90)` is
+      inf), a negative dip (the message names `strike + 180, -dip`, the same plane), and a
+      non-finite or non-number strike/dip. A strike is any finite angle, taken modulo 360.
+      **Each pixel holds the plane at its CENTRE** (ledger 314's registration): it held the
+      upper-left corner, half a pixel of slope off (2.5 ft at 10 ft pixels on slope 0.5).
+      **`output_filename` defaults to `raster.tif` in the working directory at the CALL**
+      (it was frozen at import) and a `str` is accepted (a `str` used to be written and then
+      dropped by the sampler, which only reads `Path`s).
+      Reproducer: `docs/reproducers/strike_dip_plane.py`. Tests:
+      `tests/test_strike_dip_plane.py` -- the old normal restored fails the 20 plane, 20
+      normal and the level-plane cases; corner registration fails 12 plane cases (the strike-315 ones survive:
+      the corner shift runs along their strike) and
+      `test_a_cell_sample_carries_no_half_pixel_offset`; the import-time default fails both
+      `test_the_default_output_file_is_in_the_working_directory_at_the_call` cases; dropping
+      the `Path()` coercion fails `test_a_str_output_filename_is_written_and_sampled`.

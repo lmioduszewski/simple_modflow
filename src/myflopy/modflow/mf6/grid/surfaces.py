@@ -403,32 +403,114 @@ def get_domain(vor):
     return vor.gdf_vorPolys.union_all()
 
 
-def get_normal_from_strike_and_dip(strike: int, dip: int) -> np.ndarray:
+def _strike_dip_degrees(strike: float, dip: float) -> tuple[float, float]:
+    """Check a strike/dip pair and return it as floats, in degrees.
+
+    One rule for both strike/dip functions (ledger 362): a finite strike of
+    any value (it is an azimuth, so ``370`` is ``10``) and a dip in ``[0, 90)``.
+    A dip of 90 is a vertical plane, whose elevation is not a function of x and y,
+    so no raster can hold it; a negative dip is the same plane as its strike
+    turned 180 degrees, and is refused naming that spelling rather than guessed.
     """
-    Return the normal vector of a plane defined by strike and dip.
+    for name, value in (("strike", strike), ("dip", dip)):
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)):
+            raise TypeError(f"{name} must be a number of degrees; got {value!r} ({type(value).__name__}).")
+        if not np.isfinite(value):
+            raise ValueError(f"{name} must be finite; got {value!r}.")
+    strike, dip = float(strike), float(dip)
+    if dip < 0.0:
+        raise ValueError(
+            f"dip={dip!r} is negative; a dip is measured down from the horizontal, in [0, 90). "
+            f"A plane dipping the other way is strike={(strike + 180.0) % 360.0!r}, "
+            f"dip={-dip!r} (the right-hand rule: it dips toward strike + 90)."
+        )
+    if dip >= 90.0:
+        raise ValueError(
+            f"dip={dip!r} is not in [0, 90): a dip of 90 degrees is a vertical plane, "
+            "whose elevation is not a function of x and y, so no raster can hold it."
+        )
+    return strike, dip
+
+
+def get_normal_from_strike_and_dip(strike: float, dip: float) -> np.ndarray:
+    """Return the upward unit normal of the plane with this strike and dip.
+
+    Convention (ledger 362): azimuths in degrees clockwise from north (+y);
+    the plane dips toward ``strike + 90`` (the right-hand rule), descending at
+    ``tan(dip)`` per unit horizontal distance in that direction, and is level
+    along the strike. With the dip direction ``(cos(strike), -sin(strike))`` the
+    normal is ``[sin(dip) * cos(strike), -sin(dip) * sin(strike), cos(dip)]``:
+    perpendicular to the strike line and to the dip line, unit length, and
+    ``[0, 0, 1]`` for a level plane.
+
+    Parameters
+    ----------
+    strike : float
+        Strike azimuth in degrees clockwise from north (+y). Any finite value
+        (taken modulo 360).
+    dip : float
+        Dip in degrees below the horizontal, in ``[0, 90)``; anything else raises
+        ``ValueError`` naming it (90 is a vertical plane).
+
+    Returns
+    -------
+    numpy.ndarray
+        Shape ``(3,)``, ``(x, y, z)``, unit length, ``z >= 0``.
     """
+    strike, dip = _strike_dip_degrees(strike, dip)
     strike_rad = np.radians(strike)
-    dip_rad = np.radians(90 - dip)
+    dip_rad = np.radians(dip)
     return np.array(
         [
-            np.sin(dip_rad) * np.sin(strike_rad),
             np.sin(dip_rad) * np.cos(strike_rad),
+            -np.sin(dip_rad) * np.sin(strike_rad),
             np.cos(dip_rad),
         ]
-    )
+    ) + 0.0  # no negative zero: a level plane reads [0, 0, 1]
 
 
 def get_raster_from_strike_dip(
     vor,
-    strike: int,
-    dip: int,
+    strike: float,
+    dip: float,
     known_point: tuple,
-    pixel_size: int = 1,
-    output_filename: Path = Path.cwd().joinpath('raster.tif'),
+    pixel_size: float = 1,
+    output_filename: str | Path | None = None,
 ) -> gpd.GeoDataFrame:
+    """Write the strike/dip plane as a raster over the grid and sample it onto the cells.
+
+    The plane is the geological one (ledger 362): it passes through
+    ``known_point`` at its elevation, is level along ``strike`` and descends at
+    ``tan(dip)`` per unit distance toward ``strike + 90`` -- see
+    :func:`get_normal_from_strike_and_dip`, whose normal it is built on. Each
+    pixel holds the plane at the pixel's CENTRE (ledger 314's registration), so
+    sampling it adds no half-pixel offset.
+
+    Parameters
+    ----------
+    vor : VoronoiGridPlus
+        The grid whose domain the raster covers and whose cells are sampled.
+    strike : float
+        Strike azimuth in degrees clockwise from north (+y); any finite value.
+    dip : float
+        Dip in degrees below the horizontal, in ``[0, 90)``; anything else raises.
+    known_point : tuple of float
+        ``(x, y, elevation)`` the plane passes through, ``x``/``y`` in the grid's
+        coordinates.
+    pixel_size : float, optional
+        Pixel side in model length units; the domain's bounds are snapped outward
+        to multiples of it. Default ``1``.
+    output_filename : str or pathlib.Path, optional
+        Where the GeoTIFF is written, overwriting any file there. Default
+        ``raster.tif`` in the working directory at the CALL.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        :func:`get_raster_vals_at_centroids`' frame, with the samples in ``elev``.
     """
-    Generate a raster for a sloping plane and sample it at Voronoi centroids.
-    """
+    normal = get_normal_from_strike_and_dip(strike, dip)
+    output_filename = Path.cwd() / 'raster.tif' if output_filename is None else Path(output_filename)
     domain = get_domain(vor)
     min_x, min_y, max_x, max_y = domain.bounds
 
@@ -437,23 +519,21 @@ def get_raster_from_strike_dip(
     min_y = np.floor(min_y / pixel_size) * pixel_size
     max_y = np.ceil(max_y / pixel_size) * pixel_size
 
-    width = int((max_x - min_x) / pixel_size)
-    height = int((max_y - min_y) / pixel_size)
+    width = int(round((max_x - min_x) / pixel_size))
+    height = int(round((max_y - min_y) / pixel_size))
 
-    dip_rad = np.radians(90 - dip)
-    normal = get_normal_from_strike_and_dip(strike, dip)
     transform = from_origin(min_x, max_y, pixel_size, pixel_size)
 
-    x_coords = min_x + np.arange(width) * pixel_size
-    y_coords = max_y - np.arange(height) * pixel_size
+    # Pixel CENTRES: pixel (r, c) spans [min_x + c*p, min_x + (c+1)*p] (ledger 314).
+    x_coords = min_x + (np.arange(width) + 0.5) * pixel_size
+    y_coords = max_y - (np.arange(height) + 0.5) * pixel_size
     x_grid, y_grid = np.meshgrid(x_coords, y_coords)
 
     known_x, known_y, known_elevation = known_point
-    point_vectors = np.stack([x_grid - known_x, y_grid - known_y, np.zeros_like(x_grid)], axis=-1)
-
-    norm_normal = np.linalg.norm(normal)
-    distance_along_normal = np.dot(point_vectors, normal) / norm_normal
-    elevation_data = known_elevation - distance_along_normal * np.cos(dip_rad)
+    # The plane n . (p - p0) = 0, solved for z.
+    elevation_data = known_elevation - (
+        normal[0] * (x_grid - known_x) + normal[1] * (y_grid - known_y)
+    ) / normal[2]
 
     with rasterio.open(
         output_filename,

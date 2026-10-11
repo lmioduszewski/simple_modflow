@@ -1451,47 +1451,52 @@ class VoronoiGridPlus(VoronoiGrid):
 
     def get_raster_from_strike_dip(
         self,
-        strike: int,
-        dip: int,
+        strike: float,
+        dip: float,
         known_point: tuple,
-        pixel_size: int = 1,
-        output_filename: Path = Path.cwd().joinpath('raster.tif'),
+        pixel_size: float = 1,
+        output_filename: str | Path | None = None,
     ):
-        """Write a sloping-plane raster over the grid, then sample it onto the cells.
+        """Write a strike/dip plane as a raster over the grid, then sample it onto the cells.
 
         The GeoTIFF covers the grid's domain snapped outward to whole pixels (one
         float32 band, in the grid's :attr:`crs`) and is then read back by
         :meth:`get_raster_vals_at_centroids` with its defaults (area-weighted).
 
-        **The plane is not the geological strike/dip plane.** Measured: the
-        elevation falls toward azimuth ``strike`` (degrees clockwise from +y; ``90``
-        falls to the east) by ``sin(2 * dip) / 2`` per unit of horizontal distance,
-        and is level at right angles to it. That is close to ``tan(dip)`` only for
-        shallow dips -- ``dip=45`` gives 0.5 where ``tan`` gives 1.0, and ``dip=80``
-        gives 0.171, the same as ``dip=10``.
+        **The plane is the geological strike/dip plane** (ledger 362).
+        Azimuths are degrees clockwise from north (+y), and the right-hand rule
+        holds: the plane dips toward ``strike + 90``. It passes through
+        ``known_point`` at its elevation, is level along the strike line, and
+        descends at ``tan(dip)`` per unit of horizontal distance in the dip
+        direction -- ``strike=0, dip=45`` falls 1 ft per ft to the east. It is
+        built on :meth:`get_normal_from_strike_and_dip`. Each pixel holds the plane
+        at the pixel's CENTRE (ledger 314's registration), so the sampled cells
+        carry no half-pixel offset.
 
         Parameters
         ----------
         strike : float
-            Azimuth, in degrees clockwise from +y (north), of the direction the
-            surface falls toward -- not a strike line, along which it would be level.
+            Strike azimuth, in degrees clockwise from north (+y): the horizontal
+            line along which the plane is level. Any finite value (taken modulo
+            360); a non-number raises ``TypeError``.
         dip : float
-            Angle in degrees setting the fall per unit distance, ``sin(2 * dip) / 2``
-            (see above).
+            Dip, in degrees below the horizontal, toward ``strike + 90``. Must lie
+            in ``[0, 90)``: a negative dip raises ``ValueError`` naming the strike
+            turned 180 degrees that spells it, and ``90`` or more raises (a vertical
+            plane has no elevation as a function of x and y). ``0`` is level at
+            the known elevation.
         known_point : tuple of float
             ``(x, y, elevation)`` the plane passes through: ``x``/``y`` in the grid's
             coordinates, ``elevation`` in the units the raster should carry. Must
             unpack to exactly three values.
         pixel_size : float, optional
             The raster's pixel side, in model length units; the domain's bounds are
-            snapped outward to multiples of it. Default ``1``. The plane is evaluated
-            at each pixel's upper-left corner, not its centre.
-        output_filename : pathlib.Path, optional
-            Where the GeoTIFF is written, overwriting any file there. Must be a
-            ``pathlib.Path``: a ``str`` is written, then cannot be sampled (see
-            :meth:`get_raster_vals_at_centroids`). Default ``raster.tif`` in the
-            working directory at the time myflopy was IMPORTED (the default is
-            evaluated once, at import), not at the call.
+            snapped outward to multiples of it. Default ``1``. The plane is
+            evaluated at each pixel's centre.
+        output_filename : str or pathlib.Path, optional
+            Where the GeoTIFF is written, overwriting any file there. Default
+            ``None``: ``raster.tif`` in the working directory at the time of the
+            CALL.
 
         Returns
         -------
@@ -1895,27 +1900,30 @@ class VoronoiGridPlus(VoronoiGrid):
         return surface_get_domain(self)
 
     @staticmethod
-    def get_normal_from_strike_and_dip(strike: int, dip: int) -> np.array:
-        """Return a unit vector from an azimuth and an inclination.
+    def get_normal_from_strike_and_dip(strike: float, dip: float) -> np.ndarray:
+        """Return the upward unit normal of the plane with this strike and dip.
 
-        The vector is ``[cos(dip) * sin(strike), cos(dip) * cos(strike), sin(dip)]``
-        (x, y, z): it points toward azimuth ``strike`` and rises ``dip`` degrees
-        above the horizontal. That is the upward normal of a plane dipping
-        ``90 - dip`` degrees toward azimuth ``strike`` -- NOT the normal of a plane
-        with geological strike ``strike`` and dip ``dip``: for ``dip=0`` (a level
-        plane) it is horizontal (measured: ``[0, 1, 0]`` at ``strike=0``).
+        Convention (ledger 362): azimuths in degrees clockwise from north
+        (+y); the plane dips toward ``strike + 90`` (the right-hand rule) and is
+        level along the strike. The normal is
+        ``[sin(dip) * cos(strike), -sin(dip) * sin(strike), cos(dip)]`` (x, y, z):
+        perpendicular to the strike line and to the dip line, unit length, with
+        ``z >= 0`` -- a level plane (``dip=0``) gives ``[0, 0, 1]``.
 
         Parameters
         ----------
         strike : float
-            Azimuth in degrees, clockwise from +y (north).
+            Strike azimuth in degrees clockwise from north (+y). Any finite value
+            (taken modulo 360); a non-number raises ``TypeError``.
         dip : float
-            Inclination in degrees above the horizontal.
+            Dip in degrees below the horizontal, toward ``strike + 90``, in
+            ``[0, 90)``; anything else raises ``ValueError`` naming it (90 is a
+            vertical plane; a negative dip is the strike turned 180 degrees).
 
         Returns
         -------
         numpy.ndarray
-            Shape ``(3,)``, unit length.
+            Shape ``(3,)``, unit length, upward (``z > 0``).
         """
         return surface_get_normal_from_strike_and_dip(strike, dip)
 
