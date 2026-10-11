@@ -522,7 +522,6 @@
         "name:KEYWORD_ONLY='mvr'",
         "print_input:KEYWORD_ONLY=False",
         "print_flows:KEYWORD_ONLY=False",
-        "modelnames:KEYWORD_ONLY=False",
         "options:VAR_KEYWORD=<required>"
       ],
       "flopy": [

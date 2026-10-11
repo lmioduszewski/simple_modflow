@@ -879,18 +879,31 @@ def mvr_spec(
         ``TypeError`` naming a close valid one if any. They are applied last, so they
         override the ``pname``/``filename`` set from ``name`` and the two output
         file records. A string value may contain ``{model_name}``, which is
-        replaced by the model's name at build. ``modelnames=True`` reaches FloPy,
-        but the checks here read the single-model layouts above, so records in
-        MF6's model-name layout (``(mname, pname)`` packages) are refused.
+        replaced by the model's name at build. ``modelnames=True`` raises
+        ``ValueError``: this builds a MODEL's mover, and MF6 refuses ``MODELNAMES``
+        there in either record layout ("MODELNAMES cannot be specified unless the
+        mover package is for an exchange", ``docs/reproducers/mvr_modelnames.py``);
+        ``modelnames=False`` is MF6's default and is passed on.
 
     Raises
     ------
     ValueError
-        On a bare package name rather than a record, duplicate package names,
-        references to undeclared packages, or ``maxmvr``/``maxpackages`` smaller
-        than required.
+        On ``modelnames=True``, a bare package name rather than a record,
+        duplicate package names, references to undeclared packages, or
+        ``maxmvr``/``maxpackages`` smaller than required.
     """
 
+    if options.get("modelnames"):
+        # Read as the single-model layout below, a (mname, pname) record's MODEL name
+        # became the package `requires=` and INDEXED_PACKAGES named, and MF6 refuses
+        # the option on a model's mover whatever the records say (ledger 413).
+        raise ValueError(
+            f"modelnames={options['modelnames']!r}: MF6 takes MODELNAMES only on the mover of a "
+            "GWF-GWF exchange, and this builds a model's own mover, which MF6 refuses with it "
+            "('MODELNAMES cannot be specified unless the mover package is for an exchange'). "
+            "Leave modelnames out and name the packages alone: packages=[['sfr'], ['lak']], "
+            "records (pname1, id1, pname2, id2, mvrtype, value)."
+        )
     required = _package_names(packages)
     if len(set(required)) != len(required):
         raise ValueError("MVR packages must contain unique package names.")

@@ -8296,7 +8296,6 @@ class _MVRPackage:
         name: str = "mvr",
         print_input: bool = False,
         print_flows: bool = False,
-        modelnames: bool = False,
         **options: Any,
     ) -> PackageSpec:
         """Build an MVR package from semantic moves (delegates to ``MVRBuilder``).
@@ -8327,15 +8326,13 @@ class _MVRPackage:
         print_flows : bool, optional
             MF6 ``PRINT_FLOWS``: print the moved rates to the listing file.
             Default ``False``.
-        modelnames : bool, optional
-            MF6 ``MODELNAMES``: records name a model before each package, for a
-            mover between models. The records built from :class:`Move` carry
-            package names only, so leave it ``False`` here. Default ``False``.
         **options
             Extra ``flopy.mf6.ModflowGwfmvr`` options, passed at build time; a name
-            that class does not accept raises ``TypeError`` at the call. Applied
-            last, so they override the ``pname``, ``filename`` and budget file
-            records set from ``name``.
+            that class does not accept raises ``TypeError`` at the call, and
+            ``modelnames=True`` raises ``ValueError``: MF6 takes ``MODELNAMES`` only
+            on a GWF-GWF exchange's mover, never on a model's own (ledger 413).
+            Applied last, so they override the ``pname``, ``filename`` and budget
+            file records set from ``name``.
 
         Returns
         -------
@@ -8354,7 +8351,6 @@ class _MVRPackage:
             name=name,
             print_input=print_input,
             print_flows=print_flows,
-            modelnames=modelnames,
             options=options,
         ).build()
 
@@ -8389,7 +8385,10 @@ class _MVRPackage:
         maxpackages : int, optional
             Maximum number of packages involved (auto-sized when omitted).
         **options
-            Extra ``flopy.mf6.ModflowGwfmvr`` options.
+            Extra ``flopy.mf6.ModflowGwfmvr`` options, passed to
+            :func:`~myflopy.advanced.mvr_spec`. ``modelnames=True`` raises
+            ``ValueError``: this is a model's mover, and MF6 takes ``MODELNAMES``
+            only on a GWF-GWF exchange's (ledger 413).
 
         Returns
         -------

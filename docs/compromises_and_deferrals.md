@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 412 entries (417 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 413 entries (418 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 413 | A model's mover takes no `modelnames`: `mvr_spec` refuses `modelnames=True`, and `mf.mvr`/`MVRBuilder` no l... | 2026-10-11 |
 | 412 | An SFR `reach_layer` is a WHOLE number, a float such as `1.0` included, inside the domain's layers | 2026-10-11 |
 | 411 | `protect_sources` / `protected_labels` still change no mesh: every refinement ring vertex stays fixed, beca... | 2026-10-11 |
 | 410 | `max_optimization_points` is removed from the mesh optimizer and `GridSpec.voronoi`, and the optimizer's de... | 2026-10-11 |
@@ -18055,3 +18056,22 @@ same day, which is the useful part of the result.
       Revert check: the old branch fails the three `test_a_whole_float_layer_is_that_layer`
       cases, all seven `test_a_layer_that_names_no_model_layer_is_refused` cases and
       `test_a_fraction_in_a_mapping_or_a_column_is_refused_not_truncated`.
+
+413. **A model's mover takes no `modelnames`: `mvr_spec` refuses `modelnames=True`, and `mf.mvr`/`MVRBuilder` no longer have the parameter (2026-10-11).**
+      MF6 refuses `MODELNAMES` on a MODEL's MVR file in either record layout -- "MODELNAMES
+      cannot be specified unless the mover package is for an exchange"
+      (`docs/reproducers/mvr_modelnames.py`) -- and `mvr_spec` builds only a model's mover.
+      `mf.mvr(modelnames=True)` wrote the option beside package-only records, and
+      `mf.mvr.flopy(..., modelnames=True)` read the `(mname, pname)` layout as the
+      single-model one, so its MODEL name was what `requires=` and `INDEXED_PACKAGES`
+      would have held, and the refusal it reached was "unique package names" or
+      "undeclared packages: 0". **Judgment call:** REFUSED, not supported -- reading the
+      model-name layout would build a file MF6 still refuses, and a mover between models
+      belongs on a GWF-GWF exchange, which myflopy does not build a mover for. The
+      parameter is REMOVED from `mf.mvr`/`MVRBuilder` rather than kept refusing, because
+      no value of it but the default can act; given anyway it reaches `mvr_spec` through
+      `**options` and is refused there. `modelnames=False` still passes. The FloPy
+      artifact restore (`project/components.py`) still carries a loaded package's value.
+      Revert check: the three `test_mvr_modelnames_is_refused_naming_mf6s_rule` cases and
+      `test_mf_mvr_takes_no_modelnames_and_refuses_one_given`;
+      `test_mf6_refuses_modelnames_on_a_models_mover_in_either_layout` pins MF6's premise.

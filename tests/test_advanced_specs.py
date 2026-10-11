@@ -241,3 +241,83 @@ def test_mvr_index_marker_holds_whole_package_names():
         spec = mvr_spec(packages, {0: [["sfr", 0, "lak", 0, "FACTOR", 1.0]]})
         assert spec.metadata[INDEXED_PACKAGES] == ["lak", "sfr"]
         assert spec.requires == ("sfr", "lak")
+
+
+#: A model's mover in the three record layouts ``modelnames=True`` came with: what
+#: ``mf.mvr(modelnames=True)`` wrote (package-only records), and MF6's model-name
+#: layout ``(mname, pname)`` with two packages and with one.
+MODELNAMES_LAYOUTS = {
+    "package-only records": ([["sfr"], ["lak"]], {0: [["sfr", 0, "lak", 0, "FACTOR", 1.0]]}),
+    "model-name layout": ([["m", "sfr"], ["m", "lak"]], {0: [["m", "sfr", 0, "m", "lak", 0, "FACTOR", 1.0]]}),
+    "model-name layout, one package": ([["m", "sfr"]], {0: [["m", "sfr", 0, "m", "sfr", 1, "FACTOR", 1.0]]}),
+}
+
+
+@pytest.mark.parametrize("layout", list(MODELNAMES_LAYOUTS))
+def test_mvr_modelnames_is_refused_naming_mf6s_rule(layout):
+    """The model-name layout was read as the single-model one -- its MODEL name became
+    the package ``requires=`` and the index marker named, and the refusal was
+    'unique package names' or 'undeclared packages: 0' -- and package-only records
+    built a file MF6 refuses (ledger 413)."""
+
+    packages, perioddata = MODELNAMES_LAYOUTS[layout]
+    with pytest.raises(ValueError, match=r"modelnames=True: MF6 takes MODELNAMES only on the mover of a GWF-GWF exchange"):
+        mvr_spec(packages, perioddata, modelnames=True)
+
+
+def test_mf_mvr_takes_no_modelnames_and_refuses_one_given():
+    import myflopy as mf
+    from myflopy.grid_identity import INDEXED_PACKAGES
+
+    moves = (mf.Move(mf.MoverConnection("sfr", 3), mf.MoverConnection("lak", 0)),)
+    with pytest.raises(ValueError, match=r"modelnames=True: MF6 takes MODELNAMES only"):
+        mf.mvr(nper=1, moves=moves, modelnames=True)
+    with pytest.raises(TypeError, match="modelnames"):
+        mf.MVRBuilder(nper=1, moves=moves, modelnames=True)
+    spec = mf.mvr(nper=1, moves=moves, modelnames=False)  # MF6's default, passed on
+    assert spec.requires == ("sfr", "lak") and spec.metadata[INDEXED_PACKAGES] == ["lak", "sfr"]
+
+
+def test_mf6_refuses_modelnames_on_a_models_mover_in_either_layout(tmp_path):
+    """What the refusal describes: MF6 stops reading a model's MVR file that declares
+    MODELNAMES, whatever its records' layout (``docs/reproducers/mvr_modelnames.py``)."""
+
+    import subprocess
+    import warnings
+    from pathlib import Path
+
+    import numpy as np
+
+    import myflopy as mf
+    from tests.test_sfr_stream_inputs import _sfr_builder
+
+    builder = _sfr_builder(mover=True)
+    grid = builder.grid
+    props = grid.get_disv_gridprops()
+    xy = np.array([(c[1], c[2]) for c in props["cell2d"]])
+    edge = np.flatnonzero((xy[:, 0] < 100.0) | (xy[:, 0] > 500.0))
+    model = mf.gwf("m", grid=grid, packages=[
+        mf.disv(nlay=1, ncpl=grid.ncpl, nvert=len(props["vertices"]), vertices=props["vertices"],
+                cell2d=props["cell2d"], top=110.0, botm=[0.0]),
+        mf.npf(k=10.0, icelltype=0), mf.ic(strt=90.0),
+        mf.chd(stress_period_data={0: [[(0, int(c)), 90.0] for c in edge]}),
+        builder.build(),
+        mf.mvr(nper=1, moves=(mf.Move(mf.MoverConnection("sfr", 3), mf.MoverConnection("sfr", 4), value=0.5),)),
+        mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
+    ])
+    simulation = mf.simulation(model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        run = mf.Project(tmp_path / "p", name="p").run("r", simulation)
+    assert run.success
+    workspace = Path(run.model().workspace)
+    written = (workspace / "m.mvr").read_text()
+    declared = written.replace("BEGIN options\n", "BEGIN options\n  MODELNAMES\n")
+    model_names = declared.replace("\n  sfr\n", "\n  m  sfr\n").replace("  sfr  4  sfr  5", "  m  sfr  4  m  sfr  5")
+    assert model_names.count("  m  sfr") == 3, model_names
+    for text in (declared, model_names):
+        (workspace / "m.mvr").write_text(text)
+        result = subprocess.run(["mf6"], cwd=workspace, capture_output=True, text=True, check=False)
+        assert result.returncode != 0
+        listing = " ".join((workspace / "mfsim.lst").read_text().split())
+        assert "MODELNAMES cannot be specified unless the mover package is for an exchange" in listing

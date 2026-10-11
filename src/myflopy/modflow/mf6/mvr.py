@@ -159,16 +159,13 @@ class MVRBuilder:
     print_flows : bool, default False
         Write MF6's ``PRINT_FLOWS`` option (print the moved flow rates to the
         listing file on the time steps where Output Control prints the budget).
-    modelnames : bool, default False
-        Passed to FloPy as MF6's ``MODELNAMES`` option. The records this builder
-        writes carry package names only, never model names, so leave it
-        ``False``: with ``True`` the file declares ``MODELNAMES`` while its records
-        do not follow that layout.
     options : Mapping[str, Any], optional
         Further keywords for :func:`~myflopy.advanced.mvr_spec`, which passes any
         it does not take itself (``maxmvr``/``maxpackages`` it does) on to
         :class:`flopy.mf6.ModflowGwfmvr`. Checked against that class's signature at
-        :meth:`build`; an unknown name raises ``TypeError``. Defaults to none.
+        :meth:`build`; an unknown name raises ``TypeError``. ``modelnames=True``
+        raises ``ValueError`` there: a model's mover takes no MF6 ``MODELNAMES``
+        (ledger 413). Defaults to none.
     """
 
     nper: int
@@ -176,7 +173,6 @@ class MVRBuilder:
     name: str = "mvr"
     print_input: bool = False
     print_flows: bool = False
-    modelnames: bool = False
     options: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -237,7 +233,6 @@ class MVRBuilder:
             name=self.name,
             print_input=self.print_input,
             print_flows=self.print_flows,
-            modelnames=self.modelnames,
             **dict(self.options),
         )
         return spec.with_metadata(
