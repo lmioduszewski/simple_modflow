@@ -262,6 +262,36 @@ def test_compare_reads_a_period_key_and_refuses_a_time_key_naming_the_period(run
             by_time.compare(model)
 
 
+@pytest.mark.slow
+@pytest.mark.parametrize("route", ["observation", "file"])
+@pytest.mark.parametrize("family", ["lake", "sfr_stage", "sfr_flow", "drn"])
+def test_the_residuals_of_a_set_given_no_values_are_one_row_per_period(runs, family, route):
+    """A capture template -- a set given no values, a forecast set -- answered
+    ``residuals()`` with ``KeyError: 'per'`` for lakes, reach stages and reach flows on
+    BOTH routes: ``compare()`` renamed ``per`` to ``time`` (on the observation route into
+    a SECOND ``time`` column). DRN zones were fixed in ledger 342; all four now answer
+    through one helper, ``_shared._compare_without_values``. The ``file`` route uses a
+    name the OBS does not declare, so the stage or budget file is read."""
+
+    model = runs["steps"]
+    make, locations, _csv, _columns = _families()[family]
+    if route == "file":
+        locations = {f"{name}_file": where for name, where in locations.items()}
+    targets = make(locations=locations)
+    series = targets.simulated_series(model)
+    residuals = targets.residuals(model)
+    simulated = "sim_stage" if "sim_stage" in residuals.columns else "sim_flow"
+    target = "stage_target" if simulated == "sim_stage" else "flow_target"
+    assert list(residuals.columns).count("time") == 1
+    assert len(residuals) == NPER * len(locations)
+    for name in locations:
+        rows = residuals[residuals["name"] == name].sort_values("per")
+        assert rows["per"].tolist() == rows["time"].tolist() == list(range(NPER)), name
+        np.testing.assert_array_equal(rows[simulated], series[name])
+    assert residuals[target].isna().all() and residuals["residual"].isna().all()
+    assert targets.stats(model)["n"].item() == 0
+
+
 # -- what PEST is handed ------------------------------------------------------------
 
 

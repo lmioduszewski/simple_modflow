@@ -571,7 +571,10 @@ locations ROW (every cell of a zone drawn as two rows twice, under one name, whi
 accepts), and refuses two zones whose labels coincide once written (`"a b"`, `"a_b"`).
 `compare()` gives one set of zone columns per zone on both routes -- its `cells` the
 `(layer, cell)` pairs -- and a set given no values compares with `time` equal to `per`,
-so `residuals()` of a capture template works (it raised `KeyError: 'per'`).
+so `residuals()` of a capture template works (it raised `KeyError: 'per'`). Lake,
+reach-stage and reach-flow targets answer the same way on both routes, through the one
+helper `_shared._compare_without_values`: they raised that `KeyError` too, ledger 342's
+"found, not fixed".
 
 **A target keyed by stress period reads the value at the period's END** -- head,
 concentration, reach stage, reach flow and zone flow alike (ledger 336; the user's

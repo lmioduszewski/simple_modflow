@@ -11,6 +11,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.observations._shared import (
+    _compare_without_values,
     _copy_frame,
     _declared_route,
     _default_compare_stats,
@@ -623,7 +624,10 @@ class LakeStageTargets:
             One row per target row (per simulated row when the targets hold no
             values): ``name``, ``lake``, ``time``, ``per``, ``stage_target``,
             ``sim_stage``, ``residual`` (simulated minus target) and
-            ``abs_residual``.
+            ``abs_residual``. With no values ``stage_target`` and the residuals are
+            ``NaN``, and ``time`` is the period, equal to ``per``, on both
+            routes: the table had no ``per`` -- it was renamed ``time`` -- so
+            :meth:`residuals` raised ``KeyError`` (found in ledger 342).
 
         Raises
         ------
@@ -655,8 +659,7 @@ class LakeStageTargets:
             simulated = _lake_stage_at_period_end(model, _calibration_stage_table(model))
             simulated = definitions.merge(simulated, on="lake", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
-            compare = simulated.rename(columns={"per": "time"}).copy()
-            compare["stage_target"] = np.nan
+            compare = _compare_without_values(simulated, target_column="stage_target")
         else:
             targets = self.get().copy()
             targets["per"] = _measured_periods(
@@ -689,6 +692,10 @@ class LakeStageTargets:
             :meth:`compare`'s rows, reduced to ``name``, ``lake``, ``time``,
             ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
             ``abs_residual``.
+            A set given no ``values`` -- a capture template, a forecast set --
+            gets one row per simulated row, its targets and residuals ``NaN``:
+            it raised ``KeyError`` naming ``per`` on both routes until ledger
+            342's fix for ``DrnFlowTargets`` reached this family.
         """
 
         frame = self.compare(model)

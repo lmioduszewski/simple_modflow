@@ -16,6 +16,7 @@ from myflopy.modflow.mf6.grid.domain import model_domain
 from myflopy.modflow.mf6.grid.geometry import cell_shares, domain_active, miss_reason
 from myflopy.modflow.mf6.observations._shared import (
     _aggregate_named_series,
+    _compare_without_values,
     _copy_frame,
     _declared_route,
     _default_compare_stats,
@@ -986,8 +987,7 @@ class DrnFlowTargets:
         simulated["per"] = simulated["time"]
         simulated = details.merge(simulated, on="name", how="left")
         if self._values.empty:
-            compare = simulated.copy()
-            compare["flow_target"] = np.nan
+            compare = _compare_without_values(simulated, target_column="flow_target")
         else:
             targets = self._values.copy()
             targets["per"] = _measured_periods(
@@ -1139,9 +1139,7 @@ class DrnFlowTargets:
         simulated = self._zone_flow_table(model, zones)
         simulated = simulated.merge(self._zone_details(zones), on="name", how="left")
         if self._values.empty:
-            compare = simulated.copy()
-            compare["time"] = compare["per"]
-            compare["flow_target"] = np.nan
+            compare = _compare_without_values(simulated, target_column="flow_target")
         else:
             targets = self._values.copy()
             targets["per"] = _measured_periods(

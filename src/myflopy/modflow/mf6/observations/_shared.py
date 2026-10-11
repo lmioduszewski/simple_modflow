@@ -1965,6 +1965,40 @@ def _default_compare_stats(frame: pd.DataFrame, *, residual_column: str = "resid
     )
 
 
+def _compare_without_values(simulated: pd.DataFrame, *, target_column: str) -> pd.DataFrame:
+    """``compare()`` of a set given no values: one row per simulated row, keyed by period.
+
+    The ONE shape every named-series family answers for a capture template (a set
+    holding no observed values, a forecast set): ``per`` is kept and ``time`` equals
+    it, as a set given values reads (ledger 346 keys both routes by period), and the
+    target column is ``NaN``. Lake, reach-stage and reach-flow ``compare()`` RENAMED
+    ``per`` to ``time`` here -- on the observation route, whose table already held a
+    ``time``, into a second column of that name -- so ``residuals()``, which selects
+    ``per``, raised ``KeyError`` on both routes. DRN zones were fixed that way in
+    ledger 342, which recorded the other three as found and not fixed; this is
+    that fix, for all four.
+
+    Parameters
+    ----------
+    simulated : pandas.DataFrame
+        The family's simulated rows joined to its locations, carrying ``per``.
+    target_column : str
+        The observed-value column the family's ``compare()`` returns
+        (``"stage_target"``, ``"flow_target"``).
+
+    Returns
+    -------
+    pandas.DataFrame
+        A copy of ``simulated`` with ``time`` set to ``per`` and ``target_column``
+        all ``NaN``.
+    """
+
+    compare = simulated.copy()
+    compare["time"] = compare["per"]
+    compare[target_column] = np.nan
+    return compare
+
+
 def _normalize_compare_time(frame: pd.DataFrame) -> pd.DataFrame:
     """Return one canonical ``time`` column after target/result merges."""
 

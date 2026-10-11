@@ -15526,9 +15526,15 @@ same day, which is the useful part of the result.
       (in-layer ints before, and per ROW on the observation route).
       **`residuals()` of a set given no values works**: the budget route's `compare()`
       renamed `per` to `time`, and `residuals` selected `per`. It keeps `per`, with `time`
-      equal to it. **Found, NOT fixed** (same shape, other families): `SfrFlowTargets`,
+      equal to it. ~~**Found, NOT fixed** (same shape, other families): `SfrFlowTargets`,
       `SfrStageTargets` and `LakeStageTargets.residuals()` raise the same `KeyError: 'per'`
-      on a value-less set on their file routes (measured on ledger 340's toy).
+      on a value-less set on their file routes (measured on ledger 340's toy).~~
+      **FIXED 2026-10-11**, and on BOTH routes -- the observation route raised it too: its
+      table held `time` already, so the rename made a second column of that name. All four
+      families build a value-less `compare()` through one helper,
+      `_shared._compare_without_values` (`per` kept, `time` equal to it); test
+      `test_obs_route_period_end.py::test_the_residuals_of_a_set_given_no_values_are_one_row_per_period`
+      (each family on each route; six of its eight cases fail with the helper reverted).
       **A partial miss is a Python warning** for DRN zones and head/concentration targets
       (`_report_missed_features`): `warnings.warn` beside the logger, ledger 288's rule --
       `import myflopy` installs a `NullHandler`, so the log line reached nobody (measured:

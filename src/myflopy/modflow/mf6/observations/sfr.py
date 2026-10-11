@@ -12,6 +12,7 @@ import pandas as pd
 from myflopy.modflow.mf6.observations._shared import (
     _aggregate_named_series,
     _clean_observation_output_values,
+    _compare_without_values,
     _copy_frame,
     _declared_route,
     _default_compare_stats,
@@ -406,7 +407,10 @@ class SfrStageTargets:
             One row per target row (per simulated row when the targets hold no
             values): ``name``, ``reach``, ``time``, ``per``, ``stage_target``,
             ``sim_stage``, ``residual`` (simulated minus target) and
-            ``abs_residual``.
+            ``abs_residual``. With no values ``stage_target`` and the residuals are
+            ``NaN``, and ``time`` is the period, equal to ``per``, on both
+            routes: the table had no ``per`` -- it was renamed ``time`` -- so
+            :meth:`residuals` raised ``KeyError`` (found in ledger 342).
 
         Raises
         ------
@@ -433,8 +437,7 @@ class SfrStageTargets:
             simulated = _sfr_stage_at_period_end(model, _calibration_stage_table(model))
             simulated = self._locations.merge(simulated, on="reach", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
-            compare = simulated.rename(columns={"per": "time"}).copy()
-            compare["stage_target"] = np.nan
+            compare = _compare_without_values(simulated, target_column="stage_target")
         else:
             targets = self.get().copy()
             targets["per"] = _measured_periods(
@@ -465,6 +468,10 @@ class SfrStageTargets:
             :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
             ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
             ``abs_residual``.
+            A set given no ``values`` -- a capture template, a forecast set --
+            gets one row per simulated row, its targets and residuals ``NaN``:
+            it raised ``KeyError`` naming ``per`` on both routes until ledger
+            342's fix for ``DrnFlowTargets`` reached this family.
         """
 
         frame = self.compare(model)
@@ -1017,7 +1024,10 @@ class SfrFlowTargets:
             ``abs_residual``. ``flow_target`` and ``sim_flow`` are both in MF6's
             sign -- zero or negative, water leaving the reach (ledger 350) -- so a
             residual above zero means the model sends LESS water downstream than
-            was gauged.
+            was gauged. With no values ``flow_target`` and the residuals are
+            ``NaN``, and ``time`` is the period, equal to ``per``, on both
+            routes: the table had no ``per`` -- it was renamed ``time`` -- so
+            :meth:`residuals` raised ``KeyError`` (found in ledger 342).
 
         Raises
         ------
@@ -1044,8 +1054,7 @@ class SfrFlowTargets:
             simulated = self._package_flow_table(model)
             simulated = self._locations.merge(simulated, on="reach", how="left")
         if self._values.empty:
-            compare = simulated.rename(columns={"per": "time"}).copy()
-            compare["flow_target"] = np.nan
+            compare = _compare_without_values(simulated, target_column="flow_target")
         else:
             targets = self.get().copy()
             targets["per"] = _measured_periods(
@@ -1076,6 +1085,10 @@ class SfrFlowTargets:
             :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
             ``per``, ``flow_target``, ``sim_flow``, ``residual`` and
             ``abs_residual``.
+            A set given no ``values`` -- a capture template, a forecast set --
+            gets one row per simulated row, its targets and residuals ``NaN``:
+            it raised ``KeyError`` naming ``per`` on both routes until ledger
+            342's fix for ``DrnFlowTargets`` reached this family.
         """
 
         frame = self.compare(model)
