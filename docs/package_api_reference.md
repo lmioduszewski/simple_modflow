@@ -525,8 +525,11 @@ cell)` the model's views key by -- DIS `(layer, row, col)` is `(layer, row * nco
 col)`, DISV `(layer, cell)` itself, DISU `(node,)` is `(0, node)`, the numbering its
 heads table and cell polygons use -- and a cellid off the grid raises. The package input
 tables (`model.<pkg>.inputs`), the SFR/LAK tables, the diff's value tier, the UZF
-`ifno_to_cellid`, the cell-budget tables' `node_to_lni` and the region registry all read
-through it; `split_cellid_columns` used to read a DIS cellid's ROW as its cell.
+`ifno_to_cellid`, the cell-budget tables' `node_to_lni`, the HFB table (and so
+`model.hfb.results.q`), the legacy `model.inputs.uzf`/`.rch` helpers, the parallel
+splitter's mover groups and the region registry all read through it;
+`split_cellid_columns` used to read a DIS cellid's ROW as its cell, and the HFB table
+its COLUMN.
 
 **The project's libraries.** `project.packages` / `.grids` / `.simulations` are
 `dict` **subclasses** — every dict operation works unchanged, and each also

@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 from myflopy.modflow.mf6.package_registry import packages_of_type
 from myflopy.viz import mpl_axes
 
@@ -309,7 +310,13 @@ def _mover_column_groups(model) -> tuple[np.ndarray, ...]:
             rows = data[np.asarray(data["ifno"], dtype=int) == int(feature_id)]
         else:
             return set()
-        return {int(tuple(cellid)[-1]) for cellid in rows["cellid"]}
+        cellids = list(rows["cellid"])
+        if has_cell_numbering(model):
+            # The flat cell index the partition mask uses: a DIS cellid's last item
+            # is its COLUMN, which kept row 0's cells together (ledger 419).
+            return {int(cell) for cell in cell_numbering(model).layer_cells(cellids)[1]}
+        # A light-weight test double with no typed grid: DISV (layer, cell).
+        return {int(tuple(cellid)[-1]) for cellid in cellids}
 
     groups = []
     for records in perioddata.values():

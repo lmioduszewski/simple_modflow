@@ -18201,6 +18201,15 @@ same day, which is the useful part of the result.
       cell. Regions now read the grid for any cell or layer (ledger 376 read it only for a
       tuple, to spare a loaded run opening its files; `region_heads` opens them anyway).
       `model.outputs.uzf.ifno_to_cellid` raised on every grid but DISV; it reads the rule.
+      Routed in review too, each having read `cellid[-1]` or `cellid[1]`: the HFB inputs
+      table (so `model.hfb.results.q` -- on a DIS run it read row 0's open face, 5.56
+      ft3/d, through a barrier passing 8.5e-5), the legacy `model.inputs.uzf`/`.rch`/
+      `DrnInput` helpers, and the parallel splitter's mover groups (they kept COLUMNS
+      together on DIS).
       Not routed: the BUILD-side builders (`areal`, `uzf`, `sfr`, `lakes`,
       `surface_water_validation`, `grid_identity`), which write DISV cellids, and
-      `components._grid_ncpl_array`, a grid fingerprint that must not move.
+      `components._grid_ncpl_array`, a grid fingerprint that must not move; and the DRN
+      zone OBSERVATION route, which is DISV-only at both ends -- `to_flopy_obs` writes a
+      `(layer, cell)` cellid, and `_shared._declared_features` compares a declared cellid
+      to the zone's pair as raw tuples, so a DIS or DISU declaration is refused as
+      "declared for" another cell rather than read (from the code; not run on DIS).

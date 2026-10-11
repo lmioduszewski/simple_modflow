@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 import pandas as pd
 
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering
 from myflopy.modflow.mf6.package_plotting import (
     _apply_backend,
     refuse_noun_parameters,
@@ -44,6 +45,28 @@ def _legacy_list_package(model: SimulationBase, package_type: str):
         f"and this legacy helper reads ONE. model.{package_type}.inputs reads every one, each "
         "row tagged with its package's name (pname)."
     )
+
+
+def _cell_numbers(model: SimulationBase, cellids: pd.Series):
+    """Each FloPy cellid's in-layer cell number, by the one cellid rule (ledger 419).
+
+    Parameters
+    ----------
+    model : SimulationBase
+        The model whose grid numbers the cells.
+    cellids : pandas.Series
+        FloPy cellids: ``(layer, row, col)`` on DIS, ``(layer, cell)`` on DISV,
+        ``(node,)`` on DISU.
+
+    Returns
+    -------
+    numpy.ndarray
+        The cell number the model's grid, heads table and cell polygons use:
+        ``row * ncol + col`` on DIS, the cell on DISV, the node on DISU. These
+        helpers read ``cellid[1]`` before -- a DIS cellid's ROW.
+    """
+
+    return cell_numbering(model).layer_cells(cellids.tolist())[1]
 
 
 class Inputs:
@@ -88,8 +111,14 @@ class UzfInput:
         :rtype: pd.Series
         """
         uzf = one_package(self.model, "uzf")  # several: refused, naming model.uzf(package=...)
-        ncpl = self.model.modelgrid.ncpl
+        # The one cellid rule (ledger 419): a DIS cellid's cell is
+        # row * ncol + col, and its second item -- read here before -- is the ROW.
+        numbering = cell_numbering(self.model)
+        ncpl = numbering.ncpl
         packagedata = pd.DataFrame(uzf.packagedata.get_data()).set_index('ifno')
+        cell_of_ifno = pd.Series(
+            numbering.layer_cells(packagedata['cellid'].tolist())[1], index=packagedata.index
+        )
 
         if isinstance(per, str):
             if per.lower() == 'all':
@@ -108,12 +137,15 @@ class UzfInput:
             perioddata = pd.DataFrame(uzf.perioddata.data[per]).loc[:, ['ifno', 'finf']]
 
         # create 'cell' column - converts ifno to cellid
-        perioddata['cell'] = perioddata.ifno.apply(lambda x: packagedata.loc[x].cellid[1])
+        perioddata['cell'] = perioddata.ifno.map(cell_of_ifno)
         perioddata = perioddata.drop(columns='ifno')
 
         # create dataframe with just cellid and uzf infiltration data
         # then reindex so all model cells are included even if zero finf
         finf = perioddata.set_index('cell').reindex(list(range(ncpl)), fill_value=0)
+        # A run LOADED from its files holds the rates as text (FloPy keeps the
+        # column object-typed for time-series names), which no float multiplies.
+        finf = finf.apply(pd.to_numeric)
         logger.info('scaling UZF infiltration rates by %s', multiplier)
         finf = finf * multiplier
 
@@ -409,7 +441,7 @@ class RchInput:
 
         per = self.per if per is None else per
         df = pd.DataFrame(_legacy_list_package(self.model, "rch").stress_period_data.data[per])
-        df['cellid'] = df['cellid'].apply(lambda x: x[1])  # extract cell numbers
+        df['cellid'] = _cell_numbers(self.model, df['cellid'])
         df = df.set_index('cellid')
         return df
 
@@ -424,7 +456,7 @@ class RchInput:
         vor = model.vor
 
         df = pd.DataFrame(_legacy_list_package(model, "rch").stress_period_data.data[per])
-        df['cellid'] = df['cellid'].apply(lambda x: x[1])  # extract cell numbers
+        df['cellid'] = _cell_numbers(model, df['cellid'])
         df = df.set_index('cellid')
         c_hov = df.reindex(list(range(vor.ncpl)), fill_value=0)  # insert missing cell nums
         c_hov = c_hov * multiplier
@@ -451,5 +483,7 @@ class DrnInput:
         model = self.model
         vor = model.vor
 
-        drn_cells = pd.DataFrame(_legacy_list_package(model, "drn").stress_period_data.data[per])['cellid'].apply(lambda x: x[1]).to_list()
+        drn_cells = _cell_numbers(
+            model, pd.DataFrame(_legacy_list_package(model, "drn").stress_period_data.data[per])['cellid']
+        ).tolist()
         return vor.plot.map(select=drn_cells)

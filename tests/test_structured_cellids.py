@@ -31,6 +31,10 @@ from myflopy.modflow.mf6 import package_explorer_utils as cellids
 from myflopy.modflow.mf6.simulation.regions import RegionRegistry, normalize_region_inputs
 
 NLAY, NROW, NCOL = 2, 3, 4
+#: Two nearly sealed barriers across the column-1 | column-2 face: row 1 of layer 0
+#: (cells 5 | 6) and row 2 of layer 1 (cells 9 | 10). Read as (layer, col) they named
+#: cells 1 | 2 of each layer -- row 0's face, which no barrier crosses.
+BARRIERS = [((0, 1, 1), (0, 1, 2)), ((1, 2, 1), (1, 2, 2))]
 
 
 def _write_and_run(sim) -> None:
@@ -39,11 +43,20 @@ def _write_and_run(sim) -> None:
     assert success, "\n".join(report[-20:])
 
 
-def _dis_run(workspace: Path, *, changed: dict | None = None, uzf: bool = False) -> Path:
+def _dis_run(
+    workspace: Path,
+    *,
+    changed: dict | None = None,
+    uzf: bool = False,
+    hfb: bool = False,
+    rch: bool = False,
+) -> Path:
     """A 2 x 3 x 4 DIS model: CHD 5.0 on the west column, 1.0 on the east one.
 
     ``changed`` maps a ``(layer, row, col)`` to the head that one CHD record holds
-    instead. ``uzf=True`` adds a UZF object on every top-layer cell.
+    instead. ``uzf=True`` adds a UZF object on every top-layer cell between the CHD
+    columns. ``hfb=True`` adds the barriers of :data:`BARRIERS`. ``rch=True`` adds
+    a list RCH of 0.01 on every top-layer cell.
     """
 
     workspace.mkdir(parents=True, exist_ok=True)
@@ -64,6 +77,15 @@ def _dis_run(workspace: Path, *, changed: dict | None = None, uzf: bool = False)
             heads[(layer, row, NCOL - 1)] = 1.0
     heads.update(changed or {})
     flopy.mf6.ModflowGwfchd(gwf, stress_period_data=list(heads.items()))
+    if hfb:
+        flopy.mf6.ModflowGwfhfb(
+            gwf, stress_period_data={0: [(*pair, 1e-6) for pair in BARRIERS]}
+        )
+    if rch:
+        flopy.mf6.ModflowGwfrch(
+            gwf,
+            stress_period_data=[((0, row, col), 0.01) for row in range(NROW) for col in range(NCOL)],
+        )
     if uzf:
         cells = [(0, row, col) for row in range(NROW) for col in range(1, NCOL - 1)]
         packagedata = [
@@ -295,3 +317,77 @@ def test_a_one_model_group_diff_is_refused_naming_a_second_model(runs):
     model = mf.load_mf6_run(runs.base)
     with pytest.raises(ValueError, match=r"holds only 'base'.*second model"):
         mf.ModelGroup({"base": model}).diff()
+
+
+# --- review (ledger 419): every other reader of a cellid reads the rule --
+
+
+def _face_flow(workspace: Path, node_a: int, node_b: int) -> float:
+    """MF6's own FLOW-JA-FACE from ``node_a`` to ``node_b``, through its IA/JA."""
+
+    grid = flopy.mf6.utils.MfGrdFile(str(workspace / "m.dis.grb"))
+    flows = np.ravel(
+        flopy.utils.CellBudgetFile(str(workspace / "m.cbc")).get_data(text="FLOW-JA-FACE")[0]
+    )
+    for position in range(grid.ia[node_a], grid.ia[node_a + 1]):
+        if grid.ja[position] == node_b:
+            return float(flows[position])
+    raise AssertionError(f"nodes {node_a} and {node_b} are not connected")
+
+
+def test_a_dis_barrier_names_its_own_face_and_reads_its_own_flow(tmp_path):
+    workspace = _dis_run(tmp_path / "hfb", hfb=True)
+    model = mf.load_mf6_run(workspace)
+
+    table = model.hfb.inputs.get()
+    assert table[["layer", "cell1", "cell2"]].values.tolist() == [[0, 5, 6], [1, 9, 10]]
+    assert table["length"].tolist() == [10.0, 10.0]
+
+    # The flow is MF6's across the barrier's own face. Read on row 0's open face it
+    # was 5.56 and 14.16 ft3/d through barriers passing 8.5e-5 and 2.5e-4.
+    q = model.hfb.results.q.get()
+    ncpl = NROW * NCOL
+    for (layer, cell1, cell2), flow in zip(
+        table[["layer", "cell1", "cell2"]].values.tolist(), q["q_cell1_to_cell2"], strict=True
+    ):
+        truth = _face_flow(workspace, layer * ncpl + cell1, layer * ncpl + cell2)
+        assert flow == pytest.approx(truth, rel=1e-6)
+        assert abs(truth) < 1e-3
+
+
+def test_the_legacy_input_helpers_name_the_grids_own_cells(tmp_path):
+    model = mf.load_mf6_run(_dis_run(tmp_path / "legacy", uzf=True, rch=True))
+
+    finf = model.inputs.uzf.finf(per=0, multiplier=1.0)
+    expected = [row * NCOL + col for row in range(NROW) for col in range(1, NCOL - 1)]
+    assert len(finf) == NROW * NCOL
+    assert finf.index[finf.iloc[:, 0] != 0].tolist() == expected
+    assert finf.iloc[expected, 0].tolist() == pytest.approx([0.001] * len(expected))
+
+    # cellid[1] made every row's four records one duplicated cell (the row).
+    assert sorted(model.inputs.rch.df(per=0).index) == list(range(NROW * NCOL))
+
+
+def test_a_dis_mover_keeps_its_own_cells_together_when_split(tmp_path):
+    from myflopy.modflow.mf6.parallel import _mover_column_groups
+
+    sim = flopy.mf6.MFSimulation(sim_ws=str(tmp_path))
+    flopy.mf6.ModflowTdis(sim)
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="m")
+    flopy.mf6.ModflowGwfdis(gwf, nlay=NLAY, nrow=NROW, ncol=NCOL, top=10.0, botm=[0.0, -10.0])
+    reaches = [
+        (index, cellid, 10.0, 1.0, 0.001, 9.0, 1.0, 1.0, 0.03, 0, 1.0, 0)
+        for index, cellid in enumerate([(0, 2, 3), (0, 1, 2)])
+    ]
+    flopy.mf6.ModflowGwfsfr(
+        gwf, pname="sfr", nreaches=2, packagedata=reaches, connectiondata=[(0,), (1,)]
+    )
+    flopy.mf6.ModflowGwfmvr(
+        gwf, maxmvr=1, maxpackages=1, packages=["sfr"],
+        perioddata={0: [("sfr", 0, "sfr", 1, "FACTOR", 1.0)]},
+    )
+    # The flat index the partition mask uses; the cellids' last items (3, 2) are
+    # COLUMNS, which kept two cells of row 0 together instead.
+    assert [sorted(int(cell) for cell in group) for group in _mover_column_groups(gwf)] == [
+        [1 * NCOL + 2, 2 * NCOL + 3]
+    ]

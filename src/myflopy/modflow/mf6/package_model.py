@@ -12,6 +12,7 @@ import pandas as pd
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering
 from myflopy.modflow.mf6.package_inputs import (
     CellPackageInputsExplorer,
     StaticArrayFieldExplorer,
@@ -754,6 +755,12 @@ class HfbPackageExplorer:
     def get(self) -> pd.DataFrame:
         """Return one row per barrier: period, layer, the two cells, and ``hydchr``.
 
+        Each record's two cellids are read by the one cellid rule
+        (``CellNumbering``, ledger 419): ``cell1``/``cell2`` are the in-layer
+        cell numbers the model's own grid uses -- ``row * ncol + col`` of a DIS
+        ``(layer, row, col)``, the node of a DISU ``(node,)`` (layer 0) -- and a
+        cellid off the grid raises ``ValueError``.
+
         Returns
         -------
         pandas.DataFrame
@@ -766,14 +773,18 @@ class HfbPackageExplorer:
         data = package.stress_period_data.get_data()
         grid = getattr(self.model, "vor", None)
 
+        # The cell the model's own grid numbers: a DIS barrier's LAST item is its
+        # column, which read as the cell put it on another row's face (ledger
+        # 419).
+        numbering = cell_numbering(self.model)
         rows = []
         for period, records in sorted(data.items()):
             if records is None:
                 continue
             for record in records:
                 first, second, hydchr = record[0], record[1], record[2]
-                layer_a, cell_a = int(first[0]), int(first[-1])
-                layer_b, cell_b = int(second[0]), int(second[-1])
+                layer_a, cell_a = numbering.layer_cell(first)
+                layer_b, cell_b = numbering.layer_cell(second)
                 length = None
                 if grid is not None and layer_a == layer_b:
                     segment = grid.shared_face(cell_a, cell_b)
