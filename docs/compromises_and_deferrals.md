@@ -15399,8 +15399,8 @@ same day, which is the useful part of the result.
       region's and the domain's own `max_area`; `max_optimization_points` as "recorded in
       the report only; it limits nothing"~~ -- the cap now applies on top of them, and the
       parameter is removed (ledgers 408, 410). The refinement ring vertices
-      `optimize_seeds` documents as always fixed still are: freeing them changes every
-      default optimized mesh, left for the user.
+      `optimize_seeds` documents as always fixed still are: freeing them moves default
+      optimized meshes, left for the user (ledger 411).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -18005,7 +18005,7 @@ same day, which is the useful part of the result.
       `test_max_optimization_points_is_gone_everywhere`; restoring the branch fails
       `test_every_status_the_optimizer_can_report_is_one_it_documents`.
 
-411. **`protect_sources` / `protected_labels` still change no mesh: every refinement ring vertex stays fixed, because freeing them moves every default optimized mesh and makes it worse (2026-10-11).**
+411. **`protect_sources` / `protected_labels` still change no mesh: every refinement ring vertex stays fixed, because freeing them moves default optimized meshes and, measured, makes them worse (2026-10-11).**
       FloPy's `.poly` writer gives every segment a nonzero marker, Triangle passes it to
       the vertices along it, and `get_fixed_and_free_vertex_ids` fixes every marked
       vertex -- so the rings of every refinement region, the domain's background sizing
@@ -18018,9 +18018,15 @@ same day, which is the useful part of the result.
       (`tiny_triangle_increase`, `neighbor_area_ratio_regression`): a Steiner point moved
       off its segment lands beside it and Triangle splits the segment again. The optimizer
       falls back to the unoptimized mesh -- `"balanced"` 2,124 triangles at a mean
-      neighbour-area ratio of 1.316 against 1.267 optimized -- for every `build_mesh` and
-      `GridSpec.voronoi` default build with a refinement region or a background
-      `max_area`, and protection still changes nothing (both fall back). Making it mean
+      neighbour-area ratio of 1.316 against 1.267 optimized -- and protection still changes
+      nothing (both fall back). Keeping the background sizing ring fixed as well (only the
+      rings of regions a caller added relax) falls back the same way there, and is
+      byte-identical to today on a domain holding only the background size and a
+      breakline, which default protection already covers. So any rule that frees a ring
+      moves every default optimized build (`build_mesh` and `GridSpec.voronoi` default to
+      `"balanced"`) holding a refinement region not protected by default -- a polygon,
+      circle, file or `GridSpec` `refinement=` source; the fall-back is measured on that
+      one test domain, not shown general (review, 2026-10-11). Making it mean
       something needs ring vertices that slide ALONG their segment, a design not settled
       here. The `optimize_seeds` docstring already states that ring vertices are always
       fixed.

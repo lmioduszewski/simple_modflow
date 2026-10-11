@@ -100,6 +100,8 @@ visual, so the primary path is to build the grid yourself and register the
 finished object.
 
 ```python
+from pathlib import Path
+
 tg = mf.TriangleGrid(model_ws="grids/refined", angle=30)
 tg.set_domain_file(Path("inputs/domain.gpkg"), max_area=20_000)  # background cell size
 tg.add_region_file(Path("inputs/wellfield.gpkg"), max_area=400)   # refine an area

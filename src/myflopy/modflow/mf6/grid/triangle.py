@@ -846,8 +846,9 @@ class TriangleGrid(Triangle):
             refinement region with priority ``-10`` and source ``"domain"``, so
             every region of higher priority (the default ``0`` included) claims
             its area first. Default ``None`` adds no background region: triangles
-            outside every refinement region then have no area limit, only the
-            ``angle`` constraint.
+            outside every refinement region are then limited only by the
+            ``angle`` constraint and the global ``maximum_area`` cap, when the
+            grid was given one (see the class).
         buffer : float, optional
             Distance to buffer the geometry by (``shapely`` ``buffer``; negative
             shrinks it). Default ``0``, no buffer.
