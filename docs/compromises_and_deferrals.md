@@ -18473,6 +18473,8 @@ same day, which is the useful part of the result.
       routes now REFUSE what the helpers refuse (an abbreviation names its word), keyed
       on the builder accepting `length_units` and on the OVERRIDE only; and
       `build_dis`/`build_disv`/`build_disu` MAP an abbreviation a spec already holds --
+      and so does the lazy `mf.disv(stack)` builder, which applies the options it holds
+      through `with_options` and was refusing a saved lazy spec's `"ft"` at build --
       judgment call, normalizing rather than refusing, so a saved project or a frozen
       run declared `"ft"` still rebuilds: such a run now writes `LENGTH_UNITS feet`
       (FloPy writes its enum lower case), MF6 reads unit 1 where it read 0, and every
@@ -18480,11 +18482,12 @@ same day, which is the useful part of the result.
       neither MF6's nor a known spelling is refused at the builder too -- a saved run
       holding one (none measured) no longer rebuilds until it is edited. The tables
       moved to `myflopy/_length_units.py` (import layer 0) so `specs.py` can ask them;
-      `specs.mf6_length_conversion` now reads them too, which adds `metres`/`us-ft`/
+      `mf6_length_conversion`, moved there from `specs.py`, reads them too, which adds `metres`/`us-ft`/
       `usft` there and `centimeter` to the stack. Revert check:
       `tests/test_length_unit_routes.py::test_every_edit_route_refuses_a_word_mf6_reads_as_undefined`
       (12 cases), `test_a_spec_holding_an_abbreviation_is_written_as_mf6s_word` and the
-      MF6 run `test_mf6_reads_a_rebuilt_ft_run_as_feet_and_computes_the_same_numbers`.
+      MF6 run `test_mf6_reads_a_rebuilt_ft_run_as_feet_and_computes_the_same_numbers`;
+      the lazy form, `test_a_lazy_disv_holding_an_abbreviation_rebuilds_as_mf6s_word`.
 
 433. **`ModelContext(length_units=)` is checked at construction, and a surface declaring `units=` sampled with no model unit is refused (2026-10-11).**
       `ModelContext` took any string (`"inches"` reached `mf.lak`, which refused it only

@@ -135,6 +135,34 @@ def test_a_spec_holding_an_abbreviation_is_written_as_mf6s_word(make):
         _built_word(unknown)
 
 
+def test_a_lazy_disv_holding_an_abbreviation_rebuilds_as_mf6s_word(vor, tmp_path):
+    """A lazy ``mf.disv(stack)`` saved holding ``ft`` rebuilds declaring FEET too.
+
+    Its builder applies the options it holds through ``with_options``, whose EDIT
+    check refused the abbreviation -- so the lazy form of a saved run died at build
+    where the eager one was mapped (ledger 432).
+    """
+
+    import dataclasses
+
+    lazy = mf.disv(mf.LayerStack(top=100.0).add("a", thickness=10.0))
+    for word, written in (("ft", "feet"), ("cm", "centimeters"), ("Meters", "meters")):
+        held = dataclasses.replace(lazy, options={**lazy.options, "length_units": word})
+        for spec in (held, PackageSpec.from_dict(held.to_dict())):
+            model = mf.gwf("m", context=ModelContext(grid=vor),
+                           packages=[spec, mf.npf(k=1.0), mf.ic(strt=95.0)])
+            sim = mf.simulation(model, name="s",
+                                packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+            built = sim.build_flopy(tmp_path / word).simulation.get_model("m")
+            assert built.disv.length_units.get_data().lower() == written
+            assert spec.options["length_units"] == word  # the spec, and its digest, unmoved
+    unknown = dataclasses.replace(lazy, options={"length_units": "furlongs"})
+    model = mf.gwf("m", context=ModelContext(grid=vor), packages=[unknown])
+    sim = mf.simulation(model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    with pytest.raises(ValueError, match=r"length_units='furlongs' is not a length unit"):
+        sim.build_flopy(tmp_path / "unknown")
+
+
 @pytest.mark.skipif(shutil.which("mf6") is None, reason="needs the mf6 executable")
 def test_mf6_reads_a_rebuilt_ft_run_as_feet_and_computes_the_same_numbers(tmp_path):
     """Measured on MF6: the rebuilt ``ft`` run's listing says unit 1 (it said 0), and

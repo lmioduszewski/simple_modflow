@@ -20,7 +20,7 @@ import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point, Polygon
 
-from myflopy._length_units import _check_mf6_length_token
+from myflopy._length_units import _check_mf6_length_token, mf6_length_option
 from myflopy._logging import get_logger
 from myflopy.advanced import (
     _array_bc_spec,
@@ -2433,6 +2433,13 @@ def _build_lazy_disv(model, *, layer_stack, build_kwargs, disv_name="disv", **op
 
     result = layer_stack.build(grid, **build_kwargs)
     spec = result.to_disv(grid, name=disv_name)
+    if options.get("length_units") is not None:
+        # The options are what the declared spec already HOLDS, applied here through
+        # `with_options` -- whose edit check refuses an abbreviation. A lazy spec saved
+        # holding `"ft"` (before ledger 404, or edited before ledger 432) must
+        # rebuild as the eager one does, so it is mapped to MF6's word first, exactly
+        # as the DIS builders map what an existing spec holds (ledger 432).
+        options = {**options, "length_units": mf6_length_option(options["length_units"])}
     built = spec.with_options(**options).build(model) if options else spec.build(model)
 
     declared_domain = getattr(context, "domain", None)

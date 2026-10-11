@@ -3891,9 +3891,10 @@ class ModelContext:
         The model's length unit, in any spelling a ``LayerStack`` takes
         (``"feet"``/``"foot"``/``"ft"``/``"us-ft"``/``"usft"``,
         ``"meters"``/``"meter"``/``"metres"``/``"m"``,
-        ``"centimeters"``/``"centimeter"``/``"cm"``, any case), or ``None`` /
-        ``"unknown"`` for no declared unit. Anything else -- ``""`` included --
-        raises ``ValueError`` HERE, at construction (ledger 433). Read by
+        ``"centimeters"``/``"centimeter"``/``"cm"``, any case and surrounding
+        spaces ignored), or ``None`` / ``""`` / ``"unknown"`` for no declared
+        unit. Anything else -- a non-``str`` included -- raises ``ValueError``
+        HERE, at construction (ledger 433). Read by
         ``mf.sfr``/``mf.lak`` to derive MF6's ``LENGTH_CONVERSION`` when none is
         given (3.28081 for feet, 1.0 for metres, 100.0 for centimetres, 1.0 with
         no unit), by ``mf.lak`` to convert a lakebed ``Surface`` declaring
