@@ -122,6 +122,17 @@ gave the same prior. Measured after the fix on the canonical model (nearest pilo
 them (+0.85) and decays with distance. It matters most where data are thin — IES then
 moves neighbouring points together instead of letting each wander alone.
 
+**The prior `run_ies()`/`prior()` hand PESTPP-IES holds every parameter** (ledger
+385): a draw of the whole control file -- each correlated `grid` parameter through
+its variogram, every other one on its own from its bounds -- with each correlated
+pilot-point set's values replaced by its own correlated draw. Before, a correlated
+`grid` parameter beside correlated pilot points, or correlated pilot points beside any
+other parameter, stopped both calls before a model ran. `cal.draw_prior()` draws the
+same way by default (`use_specsim=False`, ledger 384); pyEMU's spectral simulation
+(`use_specsim=True`) is possible only on a regular structured grid and is refused on a
+DISV/Voronoi one. PESTPP-IES holds the initial realizations to each parameter's bounds,
+so a drawn value beyond a bound runs at the bound.
+
 **On Tikhonov regularization: myflopy does not offer it, deliberately.** It is a
 PESTPP-GLM concept, and the runner here is PESTPP-IES, which prints
 `prior information equations not supported in ensemble methods, ignoring`. Worse, a

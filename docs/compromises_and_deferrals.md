@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 383 entries (388 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 385 entries (390 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 385 | The prior `run_ies()`/`prior()` hand PESTPP-IES holds every adjustable parameter, each correlated pilot-poi... | 2026-10-11 |
+| 384 | `cal.draw_prior()` defaults to `use_specsim=False`, and `True` off a regular structured grid is refused nam... | 2026-10-11 |
 | 383 | A PEST template holds the simulation's input files and nothing else of the run: the staging copy is what... | 2026-10-11 |
 | 382 | A negative cell or layer is refused, by the areal builders at the call and by the build on any discretization | 2026-10-11 |
 | 381 | An MVR `packages=` list of bare names is refused, naming the record spelling | 2026-10-11 |
@@ -15321,6 +15323,11 @@ same day, which is the useful part of the result.
       indexes; a negative cell or layer passing `_ArealBuilder.validate` and the build's
       range check~~ -- fixed, entries rewritten (ledgers 378, 379, 380,
       381, 382).
+      ~~`cal.draw_prior()` documented as raising `AttributeError` on a DISV model with its
+      default `use_specsim=True`~~ -- the default is `False` and `True` off a regular
+      structured grid is refused, entry rewritten (ledger 384); and the crash of
+      `run_ies()`/`prior()` with a correlated `grid` parameter beside correlated pilot
+      points is fixed (ledger 385).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17501,3 +17508,43 @@ same day, which is the useful part of the result.
       Revert check: copying the whole directory again fails
       `test_the_template_holds_no_output_metadata_or_pest_workspace_of_the_run`.
 
+384. **`cal.draw_prior()` defaults to `use_specsim=False`, and `True` off a regular structured grid is refused naming it (2026-10-11).**
+      The default was `True`, and pyEMU's spectral simulation reads the grid's
+      `delr`/`delc`: on a DISV model -- the toolkit's primary grid, whose `VertexGrid` has
+      neither -- every default call died with `AttributeError: 'list' object has no
+      attribute 'mean'` inside pyEMU, and the docstring said so.
+      **Judgment call: `False`, not "spectral where pyEMU can"** -- `False` is pyEMU's own
+      default and the draw `run_ies()`/`prior()` always made, so `draw_prior()` now shows
+      the prior those runs hand PESTPP-IES; an automatic switch would put two algorithms
+      behind one default and make the draw differ from `run_ies`'s on exactly the grids it
+      could act on. `True` on any grid but a regular structured one is a `ValueError`
+      naming `use_specsim=False` -- an irregular structured grid, which pyEMU refuses
+      itself, included, so both refusals read alike.
+      **Reachable today only on DISV:** an array parameter on a DIS model does not build at
+      all (found, not fixed), so the regular-grid branch is tested on stubs over FloPy's own
+      `StructuredGrid`.
+      Revert check: the old default fails
+      `test_draw_prior_draws_by_default_on_a_disv_model_and_refuses_specsim_there` and
+      `test_specsim_is_passed_to_pyemu_only_on_a_regular_structured_grid`.
+
+385. **The prior `run_ies()`/`prior()` hand PESTPP-IES holds every adjustable parameter, each correlated pilot-point set's columns from its own correlated draw (2026-10-11).**
+      Two layouts died before a model ran. A correlated `grid` parameter beside correlated
+      pilot points: the grid draw (`pf.draw`) covers every parameter of `cal.pst`, pilot
+      points included, so joining the pilot draw onto it overlapped on all 100 pilot
+      columns and pandas refused (`columns overlap but no suffix specified`). And --
+      found fixing that -- correlated pilot points beside ANY other adjustable parameter
+      with no correlated `grid` one: the ensemble held the pilot points alone, and
+      PESTPP-IES 5.2.16 refused it (`the following adjustable pars not in csv`).
+      **The rule:** `draw_prior(use_specsim=False)` over the whole control file, then each
+      correlated pilot-point set's columns REPLACED by its correlated draw -- the one that
+      honours `correlation=`. Both draws number their realizations 0..n-1; a mismatch is
+      refused rather than paired.
+      **Changes a seeded draw:** with pilot points the only correlated parameters, the
+      whole-file draw now runs first, so `np.random.seed(...)` gives other pilot values
+      than before.
+      **Not changed:** the correlated pilot draw is not truncated to the bounds, and
+      PESTPP-IES holds the initial ensemble to them (`ies_enforce_bounds`): realization 0 of
+      the grid layout's test ran 41 of its 541 values at a bound.
+      Revert check: the old join fails both cases of
+      `test_the_prior_holds_every_parameter_with_the_correlated_pilot_draw` and of
+      `test_pestpp_ies_runs_the_prior_it_is_handed`, each a real PESTPP-IES prior run.

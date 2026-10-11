@@ -1417,7 +1417,7 @@ class PestProject:
         self.pst.write(target)
         return target
 
-    def draw_prior(self, num_reals: int = 1000, use_specsim: bool = True):
+    def draw_prior(self, num_reals: int = 1000, use_specsim: bool = False):
         """Draw a prior parameter ensemble using the underlying ``PstFrom``.
 
         Calls ``cal.pf.draw(num_reals=..., use_specsim=...)``, which draws every
@@ -1426,18 +1426,25 @@ class PestProject:
         pilot points are added to ``cal.pst`` after ``PstFrom`` builds and have
         no geostruct there, so this draw includes them but draws each one
         independently; their ``correlation=`` is honoured only by the separate
-        draw :meth:`run_ies`/:meth:`prior` make.
+        draw :meth:`run_ies`/:meth:`prior` make, which replaces these columns
+        (ledger 385).
 
         Parameters
         ----------
         num_reals : int, optional
             Number of realizations to draw. Default ``1000``.
         use_specsim : bool, optional
-            Use pyEMU's spectral simulation for grid-scale parameters. Default
-            ``True`` here, where pyEMU's own default is ``False``;
-            :meth:`run_ies`/:meth:`prior` call this with ``False``. Measured on
-            a DISV (``VertexGrid``) model with a ``grid`` parameter, ``True``
-            raises ``AttributeError`` from inside pyEMU; pass ``False`` there.
+            Draw the ``grid``-style parameters by pyEMU's spectral simulation
+            instead of from the geostruct's covariance matrix. Default ``False``,
+            pyEMU's own default and the draw :meth:`run_ies`/:meth:`prior` make,
+            which works on every grid. ``True`` is possible only on a REGULAR
+            structured grid -- the model's DIS grid (or ``spatial_reference=``)
+            with one ``delr`` and one ``delc`` throughout -- and is refused
+            (``ValueError``) on any other, a DISV/Voronoi grid included: pyEMU's
+            spectral simulation needs row and column spacings, which a vertex
+            grid does not have (ledger 384). The default was ``True`` until
+            then, and every ``draw_prior()`` on a DISV model raised
+            ``AttributeError`` from inside pyEMU.
 
         Returns
         -------
@@ -1448,12 +1455,47 @@ class PestProject:
         Raises
         ------
         ValueError
-            When :meth:`build` has not run yet.
+            When :meth:`build` has not run yet; or when ``use_specsim`` is
+            ``True`` and the spatial reference is not a regular structured grid.
         """
 
         if self.pf is None:
             raise ValueError("Call build() before draw_prior().")
-        return self.pf.draw(num_reals=num_reals, use_specsim=use_specsim)
+        if use_specsim:
+            self._refuse_specsim_off_a_regular_grid()
+        return self.pf.draw(num_reals=num_reals, use_specsim=bool(use_specsim))
+
+    def _refuse_specsim_off_a_regular_grid(self) -> None:
+        """Refuse spectral simulation unless ``PstFrom``'s spatial reference is a regular structured grid.
+
+        pyEMU's ``SpecSim2d`` reads the grid's ``delr``/``delc``. A vertex grid
+        has neither: pyEMU then passed empty lists on and died with
+        ``AttributeError: 'list' object has no attribute 'mean'``; an irregular
+        structured grid gets pyEMU's own refusal. Both are refused here, naming
+        the spelling that works (ledger 384).
+        """
+
+        import numpy as np
+
+        pyemu = self.pyemu or _import_pyemu()
+        reference = getattr(self.pf, "spatial_reference", None)
+        delr = getattr(reference, "delr", None)
+        delc = getattr(reference, "delc", None)
+        if delr is not None and delc is not None:
+            delr = np.atleast_1d(np.asarray(delr, dtype=float))
+            delc = np.atleast_1d(np.asarray(delc, dtype=float))
+            if delr.size and delc.size and pyemu.geostats.SpecSim2d.grid_is_regular(delr, delc):
+                return
+            what = "a structured grid whose rows or columns are not all one width"
+        else:
+            what = f"a {type(reference).__name__}, which has no rows or columns"
+        raise ValueError(
+            f"draw_prior(use_specsim=True): pyEMU's spectral simulation draws only on a "
+            f"REGULAR structured grid (one delr, one delc), and this calibration's "
+            f"spatial reference is {what}. Draw from the geostruct's covariance "
+            f"instead: cal.draw_prior(num_reals, use_specsim=False) -- the default, and "
+            f"the draw run_ies()/prior() make."
+        )
 
     # -- native build path ------------------------------------------------
 
@@ -2133,36 +2175,53 @@ class PestProject:
         prior realizations (handed to PESTPP-IES via ``ies_par_en``) -- this is
         what makes posterior property-pattern maps meaningful rather than
         laughable. No-op when there are no geostatistical parameters.
+
+        The ensemble holds EVERY adjustable parameter of ``cal.pst`` -- PESTPP-IES
+        refuses one that lacks any -- so it starts from :meth:`draw_prior` (each
+        ``grid`` parameter correlated through its geostruct, every other parameter
+        drawn on its own from its bounds), and each correlated pilot-point set's
+        columns are then REPLACED by its own correlated draw (ledger 385).
+        Before, a correlated ``grid`` parameter beside correlated pilot points
+        overlapped on every pilot column and pandas refused the join, and correlated
+        pilot points beside any other parameter (with no correlated ``grid`` one)
+        handed PESTPP-IES an ensemble of the pilot points alone, which it refused:
+        either way ``run_ies()``/``prior()`` died before a model ran.
         """
 
-        # Grid parameters live in pyEMU's PstFrom, so `pf.draw` covers them.
+        # Grid parameters live in pyEMU's PstFrom, so `pf.draw` correlates them.
         # Pilot points do NOT: they are PEST template parameters registered after
         # `build_pst`, so they need their own draw (see
         # `_draw_pilot_point_prior`).
-        grid_specs = [
+        correlated = [
             spec
             for spec in self._native_parameter_specs
-            if spec.style == "grid" and spec.correlation is not None
+            if spec.style in ("grid", "pilotpoints") and spec.correlation is not None
         ]
-        pilot_specs = [
-            spec
-            for spec in self._native_parameter_specs
-            if spec.style == "pilotpoints" and spec.correlation is not None
-        ]
-        if self.pf is None or not (grid_specs or pilot_specs):
+        if self.pf is None or not correlated:
             return
 
-        ensemble = None
-        if grid_specs:
-            with self._quiet_pyemu_context():
-                ensemble = self.draw_prior(int(reals), use_specsim=False)
-            ensemble = ensemble._df if hasattr(ensemble, "_df") else ensemble
-        for spec in pilot_specs:
+        with self._quiet_pyemu_context():
+            ensemble = self.draw_prior(int(reals), use_specsim=False)
+        if ensemble is None:
+            return
+        ensemble = ensemble._df if hasattr(ensemble, "_df") else ensemble
+        for spec in correlated:
+            if spec.style != "pilotpoints":
+                continue
             drawn = self._draw_pilot_point_prior(spec, int(reals))
             if drawn is None:
                 continue
-            ensemble = drawn if ensemble is None else ensemble.join(drawn, how="inner")
-        if ensemble is None or ensemble.empty:
+            # Both draws number their realizations 0..n-1; anything else would pair
+            # one realization's pilot points with another's other parameters.
+            if not ensemble.index.equals(drawn.index):
+                raise RuntimeError(
+                    f"The prior draw's realizations {list(ensemble.index[:5])} and the "
+                    f"pilot-point draw's {list(drawn.index[:5])} of {spec.name!r} are not "
+                    "the same realizations; refusing to pair them."
+                )
+            ensemble = ensemble.drop(columns=ensemble.columns.intersection(drawn.columns))
+            ensemble = ensemble.join(drawn)
+        if ensemble.empty:
             return
 
         ensemble_path = self.template_workspace / f"{self.name}.prior_par.csv"
