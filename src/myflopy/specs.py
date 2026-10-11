@@ -1256,6 +1256,17 @@ def _relazified(package: Any) -> Any:
     )
 
 
+def _remap_engine():
+    """The overlay remap module, imported on first use (it pulls in geopandas).
+
+    One deferred import serving both callers, so the import ratchet does not move.
+    """
+
+    from myflopy.modflow.mf6.grid import remap
+
+    return remap
+
+
 def _remap_choices(
     remap: bool, rule: str | None, uncovered: str | None
 ) -> tuple[str | None, str | None]:
@@ -1282,15 +1293,10 @@ def _remap_choices(
                 + ("it." if len(given) == 1 else "them.")
             )
         return None, None
-    from myflopy.modflow.mf6.grid.remap import (
-        DEFAULT_RULE,
-        DEFAULT_UNCOVERED,
-        check_remap_choices,
-    )
-
-    rule = DEFAULT_RULE if rule is None else rule
-    uncovered = DEFAULT_UNCOVERED if uncovered is None else uncovered
-    check_remap_choices(rule, uncovered)
+    engine = _remap_engine()
+    rule = engine.DEFAULT_RULE if rule is None else rule
+    uncovered = engine.DEFAULT_UNCOVERED if uncovered is None else uncovered
+    engine.check_remap_choices(rule, uncovered)
     return rule, uncovered
 
 
@@ -1309,8 +1315,6 @@ def _remapped_package(package, *, old_polys, new_polys, ncpl, domain, rule, unco
     nothing for an integer flag or a recharge array, which is ledger 295's failure over
     again: the caller asked for a remap and would be told the move was fine.
     """
-
-    from myflopy.modflow.mf6.grid.remap import remap_arrays
 
     metadata = getattr(package, "metadata", None) or {}
     # Two routes, because only SOME packages are stamped. `mf.rch.array` records
@@ -1332,7 +1336,7 @@ def _remapped_package(package, *, old_polys, new_polys, ncpl, domain, rule, unco
         # overlay would carry an unverified guess forward and stamp it certified; a
         # pinned one is `stale` and has a better route (re-declaration). Ledger 275.
         return package, False
-    moved_options, report = remap_arrays(
+    moved_options, report = _remap_engine().remap_arrays(
         dict(package.options),
         old_polys=old_polys,
         new_polys=new_polys,
