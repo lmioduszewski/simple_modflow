@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 390 entries (395 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 391 entries (396 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 391 | `LayerStack.draft_grid` given no `crs=` takes its raster's CRS, else `EPSG:2927`; it never hands the grid... | 2026-10-11 |
 | 390 | The point/box lattice takes a fractional `spacing` and is centred on its point; `set_k_vor`'s K is always f... | 2026-10-11 |
 | 389 | `VoronoiGridPlus(crs=None)` is refused before any cell is built, naming `crs=` | 2026-10-11 |
 | 388 | A grid takes no `idomain=`: `VoronoiGridPlus`, `vor_from_disu`, `from_gsf` and `GridSpec.voronoi` refuse it... | 2026-10-11 |
@@ -17636,3 +17637,16 @@ same day, which is the useful part of the result.
       upcast; an all-int call now returns floats (`100.0`, was `100`).
       Tests: `tests/test_grid_helper_refusals.py` -- the old lattice fails the four
       lattice tests, the old `set_k_vor` both of its tests.
+
+391. **`LayerStack.draft_grid` given no `crs=` takes its raster's CRS, else `EPSG:2927`; it never hands the grid `None` (2026-10-11).**
+      Review of 389. `draft_grid(extent=...)` without `crs=` passed `crs=None` to
+      `VoronoiGridPlus`, which refuses it (ledger 370) -- so the documented all-`Flat`
+      call died unless `crs=` was typed, against the rule that a defaulted CRS is never
+      refused; a raster written with no CRS reached the grid as the TEXT `"None"`.
+      **The CRS comes from the first `Raster` surface whether or not `extent` is given**
+      -- judgment call: an extent over a georeferenced DEM is in that DEM's frame, and
+      labelling it 2927 instead would be a silent mislabel; with `extent` given a
+      contour surface is NOT interpolated (GRASS) just to read a CRS. With no such CRS
+      the package default `DEFAULT_CRS`. Test:
+      `tests/test_layers.py::test_a_draft_grid_given_no_crs_takes_the_default_or_its_rasters`
+      fails on the old body.

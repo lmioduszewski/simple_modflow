@@ -893,6 +893,39 @@ def test_an_explicit_extent_overrides_the_surfaces():
     assert (round(xmax - xmin), round(ymax - ymin)) == (500, 400)
 
 
+def _raster(path, crs):
+    rasterio = pytest.importorskip("rasterio")
+    from rasterio.transform import from_origin
+
+    with rasterio.open(
+        path, "w", driver="GTiff", height=8, width=12, count=1, dtype="float32",
+        crs=crs, transform=from_origin(0, 2000, 250, 250),
+    ) as handle:
+        handle.write(np.full((8, 12), 200.0, dtype="float32"), 1)
+    return path
+
+
+def test_a_draft_grid_given_no_crs_takes_the_default_or_its_rasters(tmp_path):
+    """`extent=` without `crs=` passed `crs=None` to the grid, which refuses it.
+
+    A defaulted CRS is never refused (ledger 391): an all-`Flat` stack and a
+    raster written with no CRS take EPSG:2927; a georeferenced raster lends its own
+    CRS even when the extent is given.
+    """
+
+    flat = LayerStack(top=Flat(200)).add("sand", thickness=40.0)
+    assert flat.draft_grid(cells=50, extent=(0, 0, 500, 400)).crs == "EPSG:2927"
+
+    unreferenced = LayerStack(top=Raster(_raster(tmp_path / "bare.tif", None)))
+    unreferenced = unreferenced.add("sand", thickness=40.0)
+    assert unreferenced.draft_grid(cells=50).crs == "EPSG:2927"
+
+    elsewhere = LayerStack(top=Raster(_raster(tmp_path / "south.tif", "EPSG:2926")))
+    elsewhere = elsewhere.add("sand", thickness=40.0)
+    assert elsewhere.draft_grid(cells=50, extent=(0, 0, 500, 400)).crs == "EPSG:2926"
+    assert elsewhere.draft_grid(cells=50, extent=(0, 0, 500, 400), crs="EPSG:2927").crs == "EPSG:2927"
+
+
 def test_a_stack_with_no_extent_anywhere_says_so():
     """`Flat`/`Array` describe thickness with no notion of where -- nothing to infer."""
 

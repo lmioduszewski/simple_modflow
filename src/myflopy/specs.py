@@ -3044,7 +3044,8 @@ class GridSpec:
             arguments under Other Parameters (and ``crs``,
             ``model_ws``/``workspace``). The named arguments are merged over it.
             Unlike ``**engine_options``, its keys are NOT validated: a
-            misspelled key is stored and never read.
+            misspelled key is stored and never read. The one exception is
+            ``"idomain"``, which raises ``TypeError`` (see ``**engine_options``).
         triangle_options : dict, optional
             Keyword arguments for ``TriangleGrid(...)`` -- ``angle``,
             ``maximum_area``, ``nodes``, ``exe_name``, ``additional_args``, plus

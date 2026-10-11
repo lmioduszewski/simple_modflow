@@ -401,8 +401,11 @@ Control it, or supply an extent when nothing carries one:
 
 ```python
 stack.for_grid(stack.draft_grid(cells=2000)).plot.section(y=1000)   # finer
-stack.draft_grid(extent=(0, 0, 500, 400), crs="EPSG:2927")          # all-Flat stack
+stack.draft_grid(extent=(0, 0, 500, 400))                            # all-Flat stack
 ```
+
+With no `crs=` the draft takes its raster's CRS, else the package default
+`EPSG:2927` (ledger 391).
 
 A stack of only `Flat`/`Array` surfaces describes thicknesses with no notion of
 where they are, so `.plot` raises pointing at `extent=` rather than inventing

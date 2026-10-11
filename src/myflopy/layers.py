@@ -31,6 +31,7 @@ from typing import Any
 import numpy as np
 import shapely.geometry as shp
 
+from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
 from myflopy._optional import require
 from myflopy.areas import Area
@@ -3731,7 +3732,13 @@ class LayerStack:
             ``(xmin, ymin, xmax, ymax)`` to use instead of the surfaces' own --
             for previewing over your real domain, or a corner of it.
         crs : str, optional
-            Overrides the CRS read from the source raster.
+            The grid's CRS. Default None: the CRS of the first raster-backed
+            surface the stack carries (read whether or not ``extent`` is given, so
+            an extent over a georeferenced DEM is labelled in the DEM's frame; with
+            ``extent`` given, a contour surface is not interpolated to find one), and
+            :data:`~myflopy._defaults.DEFAULT_CRS` (``"EPSG:2927"``) when no such
+            surface carries one -- an all-``Flat`` stack, or a raster written
+            without a CRS. A defaulted CRS is never refused (ledger 391).
 
         Returns
         -------
@@ -3745,22 +3752,32 @@ class LayerStack:
             where they are, so there is nothing to infer.
         """
 
-        if extent is None:
-            rasterio = require("rasterio", feature="reading a surface extent for draft_grid()")
+        if extent is None or crs is None:
             for surface in self._georeferenced_surfaces():
+                if extent is not None and surface.kind != "raster":
+                    continue    # only a CRS is wanted: never interpolate contours for it
                 source = surface.resolve_source()
                 if isinstance(source, Path):
+                    rasterio = require("rasterio", feature="reading a surface extent for draft_grid()")
                     with rasterio.open(source) as handle:
-                        extent = tuple(handle.bounds)
-                        crs = crs or str(handle.crs)
+                        if extent is None:
+                            extent = tuple(handle.bounds)
+                        # A raster with no CRS reads `None`, which `str()` made the
+                        # text "None" -- refused by the grid as an unreadable CRS.
+                        if crs is None and handle.crs is not None:
+                            crs = str(handle.crs)
                     break
-            else:
-                raise ValueError(
-                    "draft_grid() needs an extent: no surface in this stack carries "
-                    "one. `Raster` and `Contours` know where they are; `Flat`, "
-                    "`Array` and the algebra built on them do not. Pass "
-                    "extent=(xmin, ymin, xmax, ymax), or use a real grid."
-                )
+        # Omitted and not read off a raster: the package default, as for every other
+        # grid built with no crs= -- VoronoiGridPlus refuses an explicit None, and
+        # this call passed one for every extent= given without crs= (ledger 391).
+        crs = crs or DEFAULT_CRS
+        if extent is None:
+            raise ValueError(
+                "draft_grid() needs an extent: no surface in this stack carries "
+                "one. `Raster` and `Contours` know where they are; `Flat`, "
+                "`Array` and the algebra built on them do not. Pass "
+                "extent=(xmin, ymin, xmax, ymax), or use a real grid."
+            )
 
         xmin, ymin, xmax, ymax = (float(v) for v in extent)
         width, height = xmax - xmin, ymax - ymin
