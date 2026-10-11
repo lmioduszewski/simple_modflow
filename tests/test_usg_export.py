@@ -379,3 +379,55 @@ def test_export_without_a_grid_is_refused(workspace, tmp_path):
     assert model.grid is None
     with pytest.raises(ValueError, match="needs the grid"):
         model.export_gis(tmp_path / "nope")
+
+
+# --- one pixel size, in the raster's own units (ledger 369) -----------
+
+#: NAD83(HARN) / Washington South in METRES -- the same projection as the grid's
+#: EPSG:2927, which is in US survey feet, so only the unit differs.
+METRE_CRS = "EPSG:2856"
+FT_US = 1200.0 / 3937.0  # metres per US survey foot
+
+
+def _pixel(path):
+    import rasterio
+
+    with rasterio.open(path) as handle:
+        return handle.res
+
+
+def test_the_lakebed_raster_is_written_at_the_resolution_asked(usg, tmp_path):
+    """``resolution=`` reached the array rasters and not the lakebed."""
+
+    usg.export_gis(tmp_path / "fine", resolution=0.5)
+    assert _pixel(tmp_path / "fine" / "arrays" / "top.tif") == pytest.approx((0.5, 0.5))
+    assert _pixel(tmp_path / "fine" / "arrays" / "lakebed_bottom.tif") == pytest.approx((0.5, 0.5))
+
+
+def test_the_default_pixel_is_measured_in_the_output_crs(usg, tmp_path):
+    """A 10 ft cell written in metres: a quarter of its width is 0.762 m, not 2.5."""
+
+    manifest = usg.export_gis(tmp_path / "metres", crs=METRE_CRS)
+    expected = 10.0 * FT_US / 4.0
+    for name in ("top.tif", "lakebed_bottom.tif"):
+        assert _pixel(tmp_path / "metres" / "arrays" / name) == pytest.approx(
+            (expected, expected), rel=1e-6
+        ), name
+    note = next(n for n in manifest.notes if "per pixel" in n)
+    assert "metre per pixel" in note and "square metre" in note
+
+
+def test_an_explicit_resolution_is_in_the_output_crs_units(usg, tmp_path):
+    usg.export_gis(tmp_path / "metres", crs=METRE_CRS, resolution=1.5)
+    for name in ("top.tif", "lakebed_bottom.tif"):
+        assert _pixel(tmp_path / "metres" / "arrays" / name) == pytest.approx((1.5, 1.5)), name
+
+
+@pytest.mark.parametrize("bad, error", [
+    (0.0, ValueError), (-1.0, ValueError), (float("nan"), ValueError),
+    (float("inf"), ValueError), ("2", TypeError), (True, TypeError),
+])
+def test_a_resolution_that_is_not_a_pixel_size_is_refused(usg, tmp_path, bad, error):
+    with pytest.raises(error, match="resolution="):
+        usg.export_gis(tmp_path / "bad", resolution=bad)
+    assert not (tmp_path / "bad").exists(), "refused before anything is written"

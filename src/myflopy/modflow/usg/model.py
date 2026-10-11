@@ -474,13 +474,15 @@ class UsgModel:
             declares none). A line empty after clipping is ignored with a
             warning. Ignored when ``stream_lines`` is not given.
         resolution : float, optional
-            Pixel size of the per-cell array rasters under ``arrays/``, in the
-            units of the written ``crs`` (the cells are reprojected before the
-            raster is laid out). Default ``None`` takes a quarter of the median
-            cell width, computed in the grid's own units, which resolves a
-            typical cell and absorbs the smallest ones. The lakebed raster
-            ``arrays/lakebed_bottom.tif`` is always written at that default,
-            whatever this says.
+            Pixel size of EVERY raster under ``arrays/`` -- the per-cell arrays
+            and the lakebed ``arrays/lakebed_bottom.tif`` alike -- in the units
+            of the written ``crs`` (the cells are reprojected before the raster
+            is laid out), so a feet grid written to a metre CRS takes metres.
+            Default ``None`` takes a quarter of the median cell width, measured
+            on the cells as reprojected into ``crs``, which resolves a typical
+            cell and absorbs the smallest ones. Refused before anything is
+            written: a value that is not a number (``TypeError``) or not finite
+            and above zero (``ValueError``) (ledger 369).
         bed_thickness : float, optional
             Lakebed thickness, in model length units, assumed when deriving each
             lake's ``bedleak = fskin / bed_thickness`` in ``lakes.gpkg`` (both
@@ -502,8 +504,11 @@ class UsgModel:
         Raises
         ------
         ValueError
-            When the model has no grid, or when ``crs`` is not given and
-            ``grid.gdf_vorPolys`` has no CRS.
+            When the model has no grid, when ``crs`` is not given and
+            ``grid.gdf_vorPolys`` has no CRS, or when ``resolution`` is not
+            finite and above zero.
+        TypeError
+            When ``resolution`` is not a number.
         FileExistsError
             When ``directory`` is not empty and ``overwrite`` is ``False``.
 

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 368 entries (373 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 369 entries (374 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 369 | A USG export's `resolution` is in the OUTPUT CRS's units, and every raster uses it | 2026-10-11 |
 | 368 | Setting a grid's CRS RELABELS the grid and every frame it caches; it never reprojects | 2026-10-11 |
 | 367 | A USG list-BC period that defined no groundwater record is an EMPTY MODFLOW 6 period, not a missing one | 2026-10-11 |
 | 366 | An SFR network MF6's upstream-fraction check stops on is refused at build, the default diversion placement... | 2026-10-11 |
@@ -17144,7 +17145,8 @@ same day, which is the useful part of the result.
      period. A package with no groundwater record in ANY period is still not written --
      an all-empty package is not a package. `report()` counts the switched-off periods.
      Not changed: `export_gis`'s boundary layers take their cells from the first defined
-     period, so a switch-off is still invisible there.
+     period, so a switch-off is still invisible there. Reproducer:
+     `docs/reproducers/usg_switch_off_crs_pixels.py` part 1.
 
 368. **Setting a grid's CRS RELABELS the grid and every frame it caches; it never reprojects (2026-10-11).**
      `VoronoiGridPlus.crs` was a plain attribute, so `usg.to_mf6(crs="EPSG:2926")` left
@@ -17158,4 +17160,19 @@ same day, which is the useful part of the result.
      the lat/lon caches and `grid_centroid`, which are reprojections. A grid pickled with
      `crs` in `__dict__` is moved to `_crs` on load. NOT closed: `grid.gdf_vorPolys = frame`
      and `get_gdf_vorPolys(crs=other)` can still install a frame whose label differs from
-     `grid.crs` -- the second documents it as a side effect.
+     `grid.crs` -- the second documents it as a side effect. Reproducer:
+     `docs/reproducers/usg_switch_off_crs_pixels.py` part 2.
+
+369. **A USG export's `resolution` is in the OUTPUT CRS's units, and every raster uses it (2026-10-11).**
+     Two numbers disagreed about their units: `export_gis` documented `resolution` in the
+     GRID's units while `_write_raster` laid pixels out in the OUTPUT crs's, and the
+     default -- a quarter of the median cell width -- was measured on the grid's cells.
+     A 10 ft (US survey) cell written to EPSG:2856 (metres) got 2.5 m pixels for a
+     3.05 m cell, 3.28x too coarse; the lakebed raster ignored `resolution=` altogether.
+     Chosen: the raster's OWN units, because an explicit value was already read that way
+     (so a caller's number keeps its meaning), and because converting grid units to
+     output units has no linear answer for a geographic CRS. The default is measured on
+     the cells AS REPROJECTED (0.762 m there), resolved once and handed to every raster
+     writer; the manifest note states sizes and areas in the output CRS's named unit. A value that is not a finite number above zero is refused
+     before anything is written (0 divided by zero before). Reproducer:
+     `docs/reproducers/usg_switch_off_crs_pixels.py` part 3.

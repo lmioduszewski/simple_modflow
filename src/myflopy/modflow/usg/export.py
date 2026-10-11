@@ -174,9 +174,13 @@ def export_gis(
     clip_to
         A polygon file; supplied ``stream_lines`` are clipped to it first.
     resolution
-        Raster cell size, in the grid's units. Defaults to a quarter of the
-        median cell width, which resolves a typical cell and absorbs the
-        smallest ones -- see the module docstring.
+        Pixel size of EVERY raster written (the per-cell arrays and the lakebed),
+        in the units of the output ``crs`` -- the raster's own units, since the
+        cells are reprojected before the raster is laid out. Defaults to a
+        quarter of the median cell width, measured on the cells AS REPROJECTED
+        into ``crs``, which resolves a typical cell and absorbs the smallest
+        ones -- see the module docstring. A value that is not a finite number
+        above zero is refused (ledger 369).
     bed_thickness
         Thickness assumed when deriving ``bedleak`` from ``FSKIN``.
     overwrite
@@ -185,24 +189,40 @@ def export_gis(
     Returns
     -------
     ExportManifest
+
+    Raises
+    ------
+    ValueError
+        No grid; no CRS given or on the grid; a ``resolution`` that is not finite
+        and above zero.
+    TypeError
+        A ``resolution`` that is not a number.
+    FileExistsError
+        ``directory`` is not empty and ``overwrite`` is false.
     """
 
     if model.grid is None:
         raise ValueError(
             "export_gis() needs the grid; read the model with gsf= so it has geometry."
         )
+    target_crs = crs or _grid_crs(model)
+    # ONE pixel size for every raster, in the OUTPUT CRS's units (ledger 369),
+    # resolved before anything is written so a refusal leaves no directory behind.
+    pixel = _pixel_size(model, target_crs, resolution)
+
     directory = Path(directory)
     if directory.exists() and any(directory.iterdir()) and not overwrite:
         raise FileExistsError(f"{directory} is not empty; pass overwrite=True to replace it.")
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "arrays").mkdir(exist_ok=True)
 
-    target_crs = crs or _grid_crs(model)
     manifest = ExportManifest(directory=directory, crs=str(target_crs), nper=model.nper)
 
     _export_boundaries(model, directory, target_crs, manifest)
-    _export_cln(model, directory, target_crs, manifest, stream_lines, clip_to, bed_thickness)
-    _export_arrays(model, directory, target_crs, manifest, resolution)
+    _export_cln(
+        model, directory, target_crs, manifest, stream_lines, clip_to, bed_thickness, pixel
+    )
+    _export_arrays(model, directory, target_crs, manifest, pixel)
     _export_tables(model, directory, manifest)
     (directory / "manifest.json").write_text(manifest.to_json())
     (directory / "README.md").write_text(_readme(model, manifest))
@@ -603,6 +623,7 @@ def _export_cln(
     stream_lines: dict[str, str | Path] | None,
     clip_to: str | Path | None,
     bed_thickness: float,
+    resolution: float,
 ) -> None:
     """Write the CLN network as one file for streams and one for lakes.
 
@@ -622,7 +643,7 @@ def _export_cln(
     if streams:
         _write_streams(model, streams, directory, crs, manifest, stream_lines, clip_to)
     if lakes:
-        _write_lakes(model, lakes, directory, crs, manifest, bed_thickness)
+        _write_lakes(model, lakes, directory, crs, manifest, bed_thickness, resolution)
 
 
 def _walk_stream(model: UsgModel, feature) -> np.ndarray:
@@ -857,6 +878,7 @@ def _write_lakes(
     crs: str,
     manifest: ExportManifest,
     bed_thickness: float,
+    resolution: float,
 ) -> None:
     """Write ``lakes.gpkg``: a polygon per lake, its bed nodes, and its forcing.
 
@@ -917,7 +939,7 @@ def _write_lakes(
                 }
             )
 
-    _write_lakebed_raster(model, features, directory, crs, manifest)
+    _write_lakebed_raster(model, features, directory, crs, manifest, resolution)
 
     lakes = gpd.GeoDataFrame(lake_rows, geometry="geometry", crs=polys.crs).to_crs(crs)
     nodes = gpd.GeoDataFrame(node_rows, geometry="geometry", crs=polys.crs).to_crs(crs)
@@ -1016,7 +1038,9 @@ def _note_inactive_cells(features, active: np.ndarray, manifest) -> None:
     )
 
 
-def _write_lakebed_raster(model, features, directory: Path, crs: str, manifest) -> None:
+def _write_lakebed_raster(
+    model, features, directory: Path, crs: str, manifest, resolution: float
+) -> None:
     """Write the per-cell lakebed elevation as one raster covering every lake.
 
     ``mf.lak``'s ``lake_bottom=`` samples a raster at cell centres, which is the
@@ -1059,7 +1083,7 @@ def _write_lakebed_raster(model, features, directory: Path, crs: str, manifest) 
         filled += int(missing.size)
 
     path = directory / "arrays" / "lakebed_bottom.tif"
-    _write_raster(model, bed, path, crs, _resolution_for(model))
+    _write_raster(model, bed, path, crs, resolution)
     manifest.rasters["arrays/lakebed_bottom.tif"] = {
         "files": 1,
         "what": "per-cell lakebed elevation, NaN away from the lakes"
@@ -1068,10 +1092,60 @@ def _write_lakebed_raster(model, features, directory: Path, crs: str, manifest) 
     }
 
 
-def _resolution_for(model) -> float:
-    """The default raster cell size for a grid: a quarter of the median cell width."""
+def _cells_in(model, crs):
+    """The grid's cell polygons, reprojected into the output ``crs``."""
 
-    return float(np.sqrt(np.median(model.grid.gdf_vorPolys.geometry.area)) / 4.0)
+    polys = model.grid.gdf_vorPolys
+    return polys.geometry.to_crs(crs)
+
+
+def _resolution_for(model, crs) -> float:
+    """The default raster cell size: a quarter of the median cell width, IN ``crs``.
+
+    Measured on the cells as reprojected, because that is the frame the raster is
+    laid out in: taken in the grid's units it was 3.28x too coarse for a feet grid
+    written to a metre CRS (ledger 369). In a geographic CRS the width is in
+    degrees, which is what that raster's pixels are measured in, so geopandas'
+    warning about areas in degrees is not news here.
+    """
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Geometry is in a geographic CRS")
+        areas = _cells_in(model, crs).area
+    return float(np.sqrt(np.median(areas)) / 4.0)
+
+
+def _pixel_size(model, crs, resolution: float | None) -> float:
+    """The one pixel size every raster of an export uses, in ``crs`` units."""
+
+    if resolution is None:
+        return _resolution_for(model, crs)
+    if isinstance(resolution, bool) or not isinstance(resolution, (int, float, np.number)):
+        raise TypeError(
+            f"resolution={resolution!r}: give the pixel size as a number, in the units "
+            f"of the output crs ({crs})."
+        )
+    if not np.isfinite(resolution) or resolution <= 0:
+        raise ValueError(
+            f"resolution={resolution!r}: the pixel size must be a finite number above "
+            f"zero, in the units of the output crs ({crs})."
+        )
+    return float(resolution)
+
+
+def _unit_name(crs) -> str:
+    """The output CRS's length unit, for a sentence; ``"units"`` when it has none."""
+
+    import pyproj
+
+    try:
+        axes = pyproj.CRS.from_user_input(crs).axis_info
+    except pyproj.exceptions.CRSError as error:
+        logger.debug("no unit name for %s: %s", crs, error)
+        return "units"
+    return axes[0].unit_name if axes else "units"
 
 
 def _lake_forcing(model: UsgModel, features):
@@ -1135,15 +1209,16 @@ def _array_store(model: UsgModel) -> dict[str, Any]:
 
 
 def _export_arrays(
-    model: UsgModel, directory: Path, crs: str, manifest: ExportManifest, resolution: float | None
+    model: UsgModel, directory: Path, crs: str, manifest: ExportManifest, resolution: float
 ) -> None:
-    """Write every per-cell array as a raster, and again as exact points."""
+    """Write every per-cell array as a raster, and again as exact points.
+
+    ``resolution`` is the pixel size :func:`_pixel_size` resolved, in ``crs`` units.
+    """
 
     import geopandas as gpd
 
     polys = model.grid.gdf_vorPolys
-    if resolution is None:
-        resolution = _resolution_for(model)
     store = _array_store(model)
     columns: dict[str, np.ndarray] = {}
 
@@ -1183,10 +1258,18 @@ def _export_arrays(
         "geometry": "Point",
     }
     worst = _raster_fidelity(directory / "arrays" / "top.tif", points, "top")
+    # Every number in this sentence is in the OUTPUT crs's units, the pixel size's
+    # own: the areas were the grid's before, beside a pixel size in the crs's.
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Geometry is in a geographic CRS")
+        areas = _cells_in(model, crs).area
+    unit = _unit_name(crs)
     manifest.notes.append(
-        f"rasters are {resolution:g} units per pixel; the old mesh spans "
-        f"{polys.geometry.area.min():.1f}-{polys.geometry.area.max():,.0f} square units, so cells "
-        f"smaller than about {resolution ** 2:,.0f} square units are absorbed by their neighbours. "
+        f"rasters are {resolution:g} {unit} per pixel; the old mesh spans "
+        f"{areas.min():.1f}-{areas.max():,.0f} square {unit}, so cells "
+        f"smaller than about {resolution ** 2:,.0f} square {unit} are absorbed by their neighbours. "
         + (
             f"Measured on top.tif that costs at most {worst['max']:.2f} and typically "
             f"{worst['rms']:.3f} units of elevation. "
