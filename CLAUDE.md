@@ -577,12 +577,16 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5583 passed / 4 skipped**, 2026-10-02, the PEST-build series, ledgers
-  356-361 -- the build reads the run only, observation groups, a build deletes its
-  workspace only when a build wrote it, and a parallel run its master and workers only
-  when they are copies of its template): serial (`-n0`) **7m41s** and `-n 10` **1m34s**,
-  both in a checkout outside `.claude` with a RELATIVE `PYTHONPATH=src`, the parallel one
-  starting at a load average of ~0.4 and the serial one at ~10 as the parallel run ended.
+- Full suite (**5972 passed / 4 skipped**, 2026-10-11, the backlog round -- ledgers
+  362-411, the six PEST leftovers and the docstring pass's 68 code defects): serial
+  (`-n0`) **9m09s** and `-n 10` **2m11s**, both in a checkout outside `.claude` with a
+  RELATIVE `PYTHONPATH=src`, the parallel one starting at a load average of ~1.7 and the
+  serial one at ~11.9 as the parallel run ended. Before it, 5583 passed / 4 skipped
+  (2026-10-02, the PEST-build series, ledgers 356-361 -- the build reads the run only,
+  observation groups, a build deletes its workspace only when a build wrote it, and a
+  parallel run its master and workers only when they are copies of its template): serial
+  (`-n0`) 7m41s and `-n 10` 1m34s, the parallel one starting at a load average of ~0.4
+  and the serial one at ~10 as the parallel run ended.
   Before it, 5569 passed / 4
   skipped (ledger 360): serial 7m41s and `-n 10` 1m40s, at ~8.9 and ~2.5. Before that,
   5516 passed / 4 skipped (ledgers 353-355 -- SFR stage views
