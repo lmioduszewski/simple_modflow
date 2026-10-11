@@ -307,3 +307,76 @@ def test_edges_only_is_rejected_for_packages_that_cannot_support_it():
         assert "edges_only" in inspect.signature(
             getattr(GeoPackageSource, package)
         ).parameters, package
+
+
+# ---------------------------------------------------------------------------
+# a surface reference is one rule (ledger 392)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected"),
+    [("model_top", 10.0), ("Model_Top", 10.0), ("CELL_BOTTOM", 5.0), ("cell_top", 10.0)],
+)
+def test_a_surface_reference_is_read_in_any_case(tmp_path, reference, expected):
+    """`CellSurfaceOffset` lowercases its reference; the resolvers it calls now agree.
+
+    `"Model_Top"` read the CELL BOTTOM through `surface_value` -- measured 0.0 against
+    10.0 on a one-cell table -- because the table decoder's last branch was a bare
+    `else`.
+    """
+
+    from myflopy.geopackage import SurfaceResolver
+
+    vor = _two_cell_grid()
+    path = tmp_path / "b.gpkg"
+    _write_inputs(path)
+    source = GeoPackageSource(path, ModelContext(grid=vor), nper=1)
+    assert source.surface_value(reference, layer=0, cell=0) == expected
+    resolver = SurfaceResolver(ModelContext(surfaces={"top": [10.0], "bottom": [5.0]}))
+    assert resolver.surface_value(reference, layer=0, cell=0) == expected
+    assert resolver.surface_column(reference, layer=0, ncpl=1) == expected
+
+
+@pytest.mark.parametrize("reference", ["modeltop", "ground", "", None, 0])
+def test_an_unknown_surface_reference_is_refused_naming_the_three(tmp_path, reference):
+    """Any other word read the cell bottom in silence; now every entry refuses it alike."""
+
+    from myflopy.geopackage import SurfaceResolver
+
+    vor = _two_cell_grid()
+    path = tmp_path / "b.gpkg"
+    _write_inputs(path)
+    source = GeoPackageSource(path, ModelContext(grid=vor), nper=1)
+    resolver = SurfaceResolver(ModelContext(surfaces={"top": [10.0], "bottom": [5.0]}))
+    expected = "'model_top', 'cell_top', 'cell_bottom'"
+    for call in (
+        lambda: source.surface_value(reference, layer=0, cell=0),
+        lambda: resolver.surface_value(reference, layer=0, cell=0),
+        lambda: resolver.surface_column(reference, layer=0, ncpl=1),
+        lambda: CellSurfaceOffset(reference),
+    ):
+        with pytest.raises(ValueError, match=expected):
+            call()
+
+
+def test_a_feature_naming_no_layer_is_refused_by_name(tmp_path):
+    """A boundary feature's layer is read by the polygon map's rule (ledger 393).
+
+    A fraction was TRUNCATED by `int()` into a layer nobody wrote -- `1.5` with
+    `layer_base=1` built layer 0 -- and a value below the base raised naming neither
+    the file nor the feature.
+    """
+
+    vor = _two_cell_grid()
+    path = tmp_path / "b.gpkg"
+    _write_inputs(path)
+    frame = gpd.read_file(path)
+    for layer, why in ((0, "does not have"), (1.5, "not a whole layer number")):
+        frame["layer"] = [1.0, float(layer)]
+        frame.to_file(path, driver="GPKG")
+        source = GeoPackageSource(path, ModelContext(grid=vor), nper=1)
+        with pytest.raises(ValueError, match=f"'b.gpkg': feature 'right' .*{why}"):
+            source.drn()
+        with pytest.raises(ValueError, match=f"feature 'right' .*{why}"):
+            source.k_array(nlay=2, defaults=1.0)

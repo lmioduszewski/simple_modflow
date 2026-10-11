@@ -18,7 +18,7 @@ import warnings
 import geopandas as gpd
 import numpy as np
 import pytest
-from shapely.geometry import box
+from shapely.geometry import Point, box
 
 import myflopy as mf
 from myflopy.geopackage import GeoPackageSource, Spread
@@ -197,3 +197,59 @@ def test_a_source_that_lands_entirely_says_nothing(tmp_path, caplog):
         with caplog.at_level(logging.WARNING, logger="myflopy.geopackage"):
             mf.drn.gpkg(_write(tmp_path, CELL_5), layer="bc", context=_context(), nper=1)
     assert caplog.text == ""
+
+
+# --- k_array: the same channel and the same gaps= (ledger 394) ----------- #
+
+
+def test_k_array_names_a_missed_zone_through_the_channel_a_caller_HEARS(tmp_path):
+    """The `caplog` test above certified a line nobody receives (ledger 288's trap).
+
+    `k_array`'s partial miss went to `logger.warning` alone: measured, a K map with one
+    zone off the grid returned that zone's cells at the default with 0 warnings under
+    `simplefilter("always")`.
+    """
+
+    path = _write(tmp_path, CELL_5, FAR, names=["clay", "elsewhere"])
+    with pytest.warns(UserWarning, match="1 of 2 features") as caught:
+        k = GeoPackageSource(path, _context(), 1, layer="bc").k_array(nlay=1, defaults=1.0)
+    assert np.flatnonzero(k[0] != 1.0).tolist() == [5]
+    assert "'elsewhere' (outside the grid)" in str(caught[0].message)
+
+
+def test_k_array_reads_gaps_like_the_boundary_builders(tmp_path):
+    """`gaps=` was not read by `k_array`; it means one thing on one source now."""
+
+    # A point 3 units past the grid's right edge, level with cell 7 (row 1, column 3).
+    near = Point(103.0, 30.0)
+    path = _write(tmp_path, CELL_5, near, names=["clay", "just_off"])
+
+    with pytest.raises(ValueError, match="'just_off' \\(outside the grid\\)"):
+        GeoPackageSource(path, _context(), 1, layer="bc", gaps="raise").k_array(nlay=1, defaults=1.0)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        quiet = GeoPackageSource(path, _context(), 1, layer="bc", gaps="ignore").k_array(
+            nlay=1, defaults=1.0
+        )
+    assert np.flatnonzero(quiet[0] != 1.0).tolist() == [5]
+
+    with pytest.warns(UserWarning, match="MOVED onto the grid"):
+        moved = GeoPackageSource(path, _context(), 1, layer="bc", gaps="nearest").k_array(
+            nlay=1, defaults=1.0
+        )
+    assert np.flatnonzero(moved[0] != 1.0).tolist() == [5, 7]
+
+
+def test_k_array_still_refuses_a_map_that_lands_nowhere_under_ignore(tmp_path):
+    source = GeoPackageSource(_write(tmp_path, FAR), _context(), 1, layer="bc", gaps="ignore")
+    with pytest.raises(ValueError, match="defaults everywhere"):
+        source.k_array(nlay=1, defaults=1.0)
+
+
+def test_k_array_names_a_missing_column_like_the_builders(tmp_path):
+    """No up-front check here before: a bare `KeyError('kh')` from the row lookup."""
+
+    source = GeoPackageSource(_write(tmp_path, CELL_5), _context(), 1, layer="bc")
+    with pytest.raises(ValueError, match="'bc.gpkg' is missing fields: kh"):
+        source.k_array(value="kh", nlay=1, defaults=1.0)

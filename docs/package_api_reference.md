@@ -117,6 +117,12 @@ Each list BC offers up to three forms; the record fields are its input nouns:
   nper=12, elevation=mf.CellSurfaceOffset("cell_top", offset=-2.0))`. A source whose
   features land on no active cell RAISES, naming both extents and both CRSs (the file
   may have none); a feature that misses while others land is WARNED by name (ledger 211).
+  A column named anywhere in the call -- inside `mf.Spread(...)` too -- is checked before
+  any record is built (`is missing fields: ...`); a `layer_field` value that is not a
+  whole number at or above `layer_base` is refused naming the feature; and
+  `min_above_bottom=` on a model carrying no layer elevations (no `context.surfaces`, no
+  `grid.gdf_topbtm`) RAISES rather than writing the records unlifted. A RIV stage below
+  its own `rbot` is refused whether or not the model has elevations (ledger 395).
 - `.flopy` — raw FloPy escape hatch (the same records, no myflopy processing).
 
 **Domain-aware builder forms** (top-active cells picked from the model domain):
@@ -450,7 +456,10 @@ release-group boundnames; without them it names the fix and offers
   and `lake_bottom` defaults from the record.
 - `mf.Toward(target, fraction)` — the contact a share of the way from the surface
   above down to `target`; the primitive `split=` is built on.
-- `mf.CellSurfaceOffset("model_top"|"cell_top"|"cell_bottom", offset=, minimum=)`.
+- `mf.CellSurfaceOffset("model_top"|"cell_top"|"cell_bottom", offset=, minimum=)`. The
+  reference is read in any case, and any other word is refused naming the three -- by
+  `CellSurfaceOffset`, `GeoPackageSource.surface_value` and `SurfaceResolver` alike,
+  one rule (ledger 392).
 - `GridSpec.voronoi(boundary=, refinement=, breaklines=, points=, ...)` — refinement
   arrives on **three asymmetric channels**: `refinement=` takes ONE polygon source
   (every feature = one region, sized by `fields={"area": "<column>"}` or
@@ -906,7 +915,7 @@ so one declaration builds on two meshes, `move_report` reads it `rebuilt`, and
 | `rule` | `"majority"` (default), `"mean"`, `"centroid"` — see below |
 | `default` | value for a cell no polygon reaches. Without it, REFUSED |
 | `layer` | layer/table name inside a multi-layer file |
-| `layer_field` | column naming the model layer. Omitted, the map is areal and applies to every layer |
+| `layer_field` | column naming the model layer, numbered from `layer_base`. Omitted, the map is areal and applies to every layer. A value below `layer_base`, past the last layer, fractional or NULL is REFUSED naming the feature |
 
 **The rule is named, not inherited, because the three disagree.** `majority` gives a
 cell whichever polygon covers most of it and so writes only values the map contains;
@@ -922,6 +931,9 @@ field and used to be accepted, then die inside FloPy naming neither.
 For a boundary condition's conductance or elevation this is the wrong tool — the seven
 `mf.<pkg>.gpkg` forms already do it. `GeoPackageSource.k_array` is the EAGER sibling:
 still supported, but it needs the grid at declaration and its result cannot be saved.
+It reads its source's `gaps=`/`snap_within=` exactly as the `.gpkg` forms do -- a missed
+zone is a `UserWarning` by default, `"raise"` refuses, `"nearest"` moves a point -- and
+leaves a missed zone's cells at `defaults` (ledger 394).
 
 ---
 
@@ -1036,6 +1048,8 @@ otherwise written to every cell it covers, which is right for an elevation and
 multiplies a conductance by the cell count (measured: 2.02x, on an unchanged grid).
 `conductance=mf.Spread("conductance")` gives each cell its share — by length for a
 line, area for a polygon, and the whole value for a point, which has nothing to divide.
+A feature has ONE set of shares, so every `Spread` in one call must use the same `mode`;
+two that differ are refused at the call, naming both (ledger 396).
 A polygon covers a cell by AREA: one drawn along cell faces reaches only the cells
 inside it, not the neighbours it shares an edge with (ledger 210). A line lying ON a
 face is split evenly between its two cells, and a point on a face or vertex goes whole

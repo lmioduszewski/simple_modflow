@@ -33,10 +33,15 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 391 entries (396 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 396 entries (401 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 396 | Two `Spread`s of one call with different `mode`s are refused at the call, naming both | 2026-10-11 |
+| 395 | An explicit `min_above_bottom=` on a model with no layer elevations RAISES, and a RIV stage below its... | 2026-10-11 |
+| 394 | `GeoPackageSource.k_array` reads `gaps=`/`snap_within=` and reports a partial miss through `warnings.warn`,... | 2026-10-11 |
+| 393 | A feature's layer is a whole number from `layer_base` up, read by one rule for the polygon map and every... | 2026-10-11 |
+| 392 | A surface reference is one rule: any case, and any other word refused naming the three | 2026-10-11 |
 | 391 | `LayerStack.draft_grid` given no `crs=` takes its raster's CRS, else `EPSG:2927`; it never hands the grid... | 2026-10-11 |
 | 390 | The point/box lattice takes a fractional `spacing` and is centred on its point; `set_k_vor`'s K is always f... | 2026-10-11 |
 | 389 | `VoronoiGridPlus(crs=None)` is refused before any cell is built, naming `crs=` | 2026-10-11 |
@@ -15348,6 +15353,14 @@ same day, which is the useful part of the result.
       `generate_grid_polygons` as taking an `int` `spacing` only; `idomain=` on
       `VoronoiGridPlus`, `vor_from_disu` and `from_gsf` as "accepted and IGNORED"~~ --
       fixed, entries rewritten (ledgers 388 to 390).
+      ~~A `Spread` column documented as left out of the `.gpkg` column check (a bare
+      `KeyError`); `GeoPackageSource.surface_value` as reading any unknown reference as
+      `"cell_bottom"`; a `Polygons` layer below `layer_base` as painting nothing;
+      `k_array`'s partial miss as only logged and `gaps` as unread; `min_above_bottom`
+      as skipped without a word on a model with no layer elevations (the RIV
+      stage-below-rbot refusal with it); and several `Spread`s as taking the FIRST one's
+      `mode`~~ -- fixed, entries rewritten (ledgers 392 to 396; the column
+      check, a plain fix, has none).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17650,3 +17663,79 @@ same day, which is the useful part of the result.
       the package default `DEFAULT_CRS`. Test:
       `tests/test_layers.py::test_a_draft_grid_given_no_crs_takes_the_default_or_its_rasters`
       fails on the old body.
+
+392. **A surface reference is one rule: any case, and any other word refused naming the three (2026-10-11).**
+      `GeoPackageSource.surface_value` and both `SurfaceResolver` verbs took any string,
+      and the table decoder's last branch was a bare `else`, so `"Model_Top"` or a typo
+      read the CELL BOTTOM: measured 0.0 against `"model_top"`'s 10.0 on a one-cell table.
+      `CellSurfaceOffset` already lowercased and validated its own; all of them now call
+      `geopackage.surface_reference`. **Judgment call:** a mixed-case spelling is ACCEPTED
+      (lowercased), not refused, because `CellSurfaceOffset` has always accepted it and
+      one rule cannot both take and refuse `"Model_Top"`; this changes what a direct
+      caller writing it gets (the ground, where it got the cell bottom).
+      Revert check: dropping the two calls fails `test_a_surface_reference_is_read_in_any_case
+      [Model_Top-10.0]` and the five `test_an_unknown_surface_reference_is_refused_naming_the_three`
+      cases.
+
+393. **A feature's layer is a whole number from `layer_base` up, read by one rule for the polygon map and every `GeoPackageSource` builder (2026-10-11).**
+      `array_from_polygons` refused only a layer PAST the last, so a `Polygons` feature
+      numbered below `layer_base` matched no layer and painted nothing in silence:
+      measured, zones at `lay` 0 and 1 with `layer_base=1, default=1.0` returned
+      `[[7, 7, ...], [1, 1, ...]]` -- the k=5 zone gone -- with no warning. Now refused
+      naming every such feature, through `geopackage._layer_index`, which
+      `GeoPackageSource._layer` reads too (its refusal named neither file nor feature).
+      **Judgment call:** a FRACTIONAL layer is refused on both routes. The builders
+      truncated it by `int()` (`1.5` with `layer_base=1` built layer 0) and the map
+      painted nothing with it; neither is a layer anyone wrote. A NULL is refused naming
+      the feature where numpy raised "cannot convert float NaN". `k_array` now also
+      names a missing `value`/`layer_field` column the way the builders do (it raised a
+      bare `KeyError`).
+      Revert check: restoring the upper-bound-only, truncating reading fails
+      `test_polygon_arrays.py::test_a_feature_naming_no_layer_is_refused_by_name` (below
+      the base, a fraction) and `test_geopackage_source.py::test_a_feature_naming_no_layer_is_refused_by_name`.
+
+394. **`GeoPackageSource.k_array` reads `gaps=`/`snap_within=` and reports a partial miss through `warnings.warn`, as the boundary builders do (2026-10-11).**
+      Its partial miss went to `logger.warning` alone, which reaches nobody by default
+      (ledger 288): measured, a K map with one zone off the grid returned that zone's
+      cells at the default with 0 warnings under `simplefilter("always")`. And `gaps=`
+      was not read. It now fills the boundary builders' `_Coverage` and reports through
+      their `_report`, so `gaps` means one thing on one source: `"warn"` names the zone
+      in a `UserWarning`, `"raise"` refuses, `"nearest"` moves a missed POINT, `"ignore"`
+      is silent, and a map landing nowhere is refused in every mode. `_refuse_or_report_misses`
+      -- one of the three copies of the ledger-211 wrapper ledger 242 recorded -- is
+      deleted. **Judgment calls:** the gaps were IMPLEMENTED rather than refused, because
+      the shared report made it a dozen lines; and a zone running past the grid is NOT
+      reported as clipped there -- a geology map routinely extends beyond the model, and
+      warning on every build would bury the miss it exists to name.
+      Revert check: bypassing the report on a partial miss fails
+      `test_k_array_names_a_missed_zone_through_the_channel_a_caller_HEARS` and
+      `test_k_array_reads_gaps_like_the_boundary_builders`.
+
+395. **An explicit `min_above_bottom=` on a model with no layer elevations RAISES, and a RIV stage below its `rbot` is refused with or without them (2026-10-11).**
+      Both sat behind `elevations_available`: with neither `context.surfaces` nor
+      `grid.gdf_topbtm`, a requested floor was skipped without a word (measured: a drain
+      at -5.0 with `min_above_bottom=1.0` wrote -5.0 and said nothing, where the same
+      call with surfaces lifted it and warned), and so was the stage-below-rbot refusal,
+      which compares two numbers of one record and needs no elevations -- MF6 then
+      stopped the run. **Judgment call:** only the EXPLICIT request raises; the default-on
+      DETECTION is still skipped quietly with no elevations, as ledger 290 chose ("a
+      package whose model declares no surfaces is not an error"). The message says where
+      elevations come from (`ModelContext(surfaces=)`, `grid.gdf_topbtm`, and on the lazy
+      form the built discretization, which ledger 284's fallback makes the usual case).
+      Revert check: removing the raise fails the four
+      `test_an_explicit_clearance_with_no_elevations_is_refused` cases; gating the RIV
+      check on elevations again fails `test_a_river_stage_below_its_bottom_is_refused_with_no_elevations`.
+
+396. **Two `Spread`s of one call with different `mode`s are refused at the call, naming both (2026-10-11).**
+      A feature has one set of cell shares, and `_resolved_shares` took the FIRST
+      wrapped field's mode for all: measured on a line half off a 4-cell strip,
+      `mf.evt.gpkg(rate=Spread(mode="clip"), depth=Spread(mode="retained"))` wrote a
+      depth total of 1.0 where `retained` keeps 2.0, with nothing said. Only EVT can wrap
+      two fields. **Judgment call:** refused rather than resolved per field -- one call
+      meaning two coverage rules is a declaration nobody meant, and a per-field share
+      would split one feature's records two ways. `min_share`/`warn_below` keep their
+      documented combination (largest, smallest), which loses nothing. Checked by
+      `refuse_mixed_spread_modes` on the eager and the lazy path, as
+      `refuse_spread_on_elevation` is.
+      Revert check: disabling the check fails both
+      `test_two_spreads_with_different_modes_are_refused_naming_both` cases.

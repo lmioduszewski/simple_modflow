@@ -57,6 +57,7 @@ from myflopy.geopackage import (
     SurfaceResolver,
     array_from_polygons,
     check_placement_options,
+    refuse_mixed_spread_modes,
     refuse_spread_on_elevation,
 )
 from myflopy.grid_identity import (
@@ -1440,6 +1441,7 @@ def _lazy_bc_spec(
     # cell width across `with_grid`, which is the stale-cellid defect in another costume
     # (ledger 288).
     refuse_spread_on_elevation(package, values)
+    refuse_mixed_spread_modes(package, values)
     check_gaps(gaps, verb=f"mf.{package}.gpkg")
     check_placement_options(
         min_above_bottom=min_above_bottom, snap_within=snap_within, verb=f"mf.{package}.gpkg"
@@ -3700,7 +3702,10 @@ class _CHDPackage:
             set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
             ``stage`` by the same delta, so the declared river depth survives. A
             negative value raises ``ValueError`` at the call, with or without
-            ``context=``.
+            ``context=``. With no layer elevations to measure from -- no
+            ``context.surfaces``, no ``grid.gdf_topbtm`` and, on the lazy form, no
+            built discretization -- a value here raises ``ValueError`` when the
+            records resolve, rather than being skipped.
         name : str, default "chd"
             Package name.
         edges_only : bool, default False
@@ -3966,7 +3971,10 @@ class _GHBPackage:
             set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
             ``stage`` by the same delta, so the declared river depth survives. A
             negative value raises ``ValueError`` at the call, with or without
-            ``context=``.
+            ``context=``. With no layer elevations to measure from -- no
+            ``context.surfaces``, no ``grid.gdf_topbtm`` and, on the lazy form, no
+            built discretization -- a value here raises ``ValueError`` when the
+            records resolve, rather than being skipped.
         name : str, default "ghb"
             Package name.
         edges_only : bool, default False
@@ -4219,7 +4227,10 @@ class _DRNPackage:
             set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
             ``stage`` by the same delta, so the declared river depth survives. A
             negative value raises ``ValueError`` at the call, with or without
-            ``context=``.
+            ``context=``. With no layer elevations to measure from -- no
+            ``context.surfaces``, no ``grid.gdf_topbtm`` and, on the lazy form, no
+            built discretization -- a value here raises ``ValueError`` when the
+            records resolve, rather than being skipped.
         name : str, default "drn"
             Package name.
         edges_only : bool, default False
@@ -4438,7 +4449,9 @@ class _RIVPackage:
             Elevation of the riverbed bottom, which must sit below ``stage`` and
             above the cell bottom. A value spec: an attribute column name, a numeric constant, a
             *list* of column names (indexed by stress period), or a
-            :class:`~myflopy.geopackage.CellSurfaceOffset`.
+            :class:`~myflopy.geopackage.CellSurfaceOffset`. A record whose stage lies
+            below its ``rbot`` raises ``ValueError`` naming the feature when the
+            records resolve, whether or not the model carries layer elevations.
         layer : str, optional
             Name of the layer/table inside the file. Defaults to the first, which is
             the only one in a single-layer GeoPackage or a shapefile.
@@ -4491,7 +4504,10 @@ class _RIVPackage:
             set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
             ``stage`` by the same delta, so the declared river depth survives. A
             negative value raises ``ValueError`` at the call, with or without
-            ``context=``.
+            ``context=``. With no layer elevations to measure from -- no
+            ``context.surfaces``, no ``grid.gdf_topbtm`` and, on the lazy form, no
+            built discretization -- a value here raises ``ValueError`` when the
+            records resolve, rather than being skipped.
         name : str, default "riv"
             Package name.
         edges_only : bool, default False

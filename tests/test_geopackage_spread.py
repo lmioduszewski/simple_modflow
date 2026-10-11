@@ -520,3 +520,57 @@ def test_spread_is_still_allowed_where_there_IS_a_total_to_divide(tmp_path):
     for helper_name, field in (("drn", "conductance"), ("rch", "recharge"), ("wel", "rate")):
         spec = getattr(mf, helper_name).gpkg(path, nper=1, **{field: Spread("x")})
         assert spec.inputs["stress_period_data"].values[field].field == "x"
+
+
+def test_a_misspelled_spread_column_is_named_before_any_record(tmp_path, grid_and_context):
+    """A column named only inside `Spread(...)` is in the up-front column check.
+
+    It was left out, so a typo there died mid-build as a bare `KeyError('typo')` naming
+    neither the file nor the feature, where the same typo unwrapped got the named error.
+    Both spellings now say the same thing.
+    """
+
+    grid, ctx = grid_and_context
+    path = _write(tmp_path, LineString([(0.5, 0.5), (3.5, 0.5)]), layer=1, elevation=10.0, cond=100.0)
+    for conductance in ("typo", Spread("typo")):
+        with pytest.raises(ValueError, match=r"GeoPackage 'bc.gpkg' is missing fields: typo"):
+            mf.drn.gpkg(path, layer="bc", context=ctx, nper=1, elevation="elevation",
+                        conductance=conductance, boundnames=False)
+
+
+def _evt_file(tmp_path):
+    path = tmp_path / "evt.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["et"], "layer": [1], "surface": [10.0], "rate": [1.0], "depth": [2.0]},
+        geometry=[LineString([(2.0, 0.5), (6.0, 0.5)])], crs="EPSG:2927",
+    ).to_file(path, layer="bc", driver="GPKG")
+    return path
+
+
+@pytest.mark.parametrize("lazy", [False, True])
+def test_two_spreads_with_different_modes_are_refused_naming_both(tmp_path, grid_and_context, lazy):
+    """A feature has ONE set of cell shares, so one mode; the FIRST was used for both.
+
+    Measured before the fix: `rate=Spread(mode="clip")` beside
+    `depth=Spread(mode="retained")` on a line half off the grid wrote the depth CLIPPED
+    -- half of what `retained` keeps -- with nothing said (ledger 396). Refused at
+    the call, eager and lazy.
+    """
+
+    _, ctx = grid_and_context
+    kwargs = {} if lazy else {"context": ctx}
+    with pytest.raises(ValueError, match=r"rate=Spread\('rate', mode='clip'\), "
+                                         r"depth=Spread\('depth', mode='retained'\)"):
+        mf.evt.gpkg(_evt_file(tmp_path), layer="bc", nper=1, **kwargs,
+                    rate=Spread("rate"), depth=Spread("depth", mode="retained"))
+
+
+def test_two_spreads_with_one_mode_still_build(tmp_path, grid_and_context):
+    """The control: agreeing modes are what one set of shares can honour."""
+
+    _, ctx = grid_and_context
+    spec = mf.evt.gpkg(_evt_file(tmp_path), layer="bc", context=ctx, nper=1,
+                       rate=Spread("rate", mode="retained"), depth=Spread("depth", mode="retained"))
+    records = _records(spec)
+    assert sum(r[2] for r in records) == pytest.approx(1.0)
+    assert sum(r[3] for r in records) == pytest.approx(2.0)

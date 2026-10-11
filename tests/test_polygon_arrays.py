@@ -385,6 +385,38 @@ def test_a_layer_beyond_the_model_is_refused(meshes, tmp_path):
         )
 
 
+@pytest.mark.parametrize(
+    ("layers", "why"),
+    [
+        ([0, 1], "0, a layer this model does not have -- with layer_base=1 they run 1 to 2"),
+        ([1, 1.5], "1.5 is not a whole layer number"),
+        ([1, None], "empty"),
+    ],
+)
+def test_a_feature_naming_no_layer_is_refused_by_name(meshes, tmp_path, layers, why):
+    """Below the base, a fraction or a NULL names no layer, and is refused naming the feature.
+
+    Only a layer PAST the last was refused. One below `layer_base` matched no layer
+    and painted nothing: measured, zones at `lay` 0 and 1 with `layer_base=1` and
+    `default=1.0` gave the first zone's cells the default with no warning (ledger
+    393). A fraction matched no layer the same way; a NULL died in numpy.
+    """
+
+    small, _ = meshes
+    path = _write(tmp_path / "low.gpkg", small)
+    frame = gpd.read_file(path, layer="geology")
+    frame["layer"] = layers
+    frame.to_file(path, layer="geology", driver="GPKG")
+    position = next(i for i, one in enumerate(layers) if one != 1)
+    with pytest.raises(ValueError, match="1 of 2 features name no model layer") as caught:
+        array_from_polygons(
+            Polygons(path=path, column="k", layer="geology", layer_field="layer", default=1.0),
+            small, nlay=2, parameter="npf.k",
+        )
+    assert f"'unit{position}' (" in str(caught.value)
+    assert why in str(caught.value)
+
+
 def test_a_missing_file_is_refused_at_the_declaration(tmp_path):
     with pytest.raises(FileNotFoundError):
         mf.npf(k=mf.Polygons(path=tmp_path / "absent.gpkg", column="k"))

@@ -288,6 +288,74 @@ def test_a_river_stage_below_its_own_bottom_is_refused(sloping, tmp_path):
         )
 
 
+# --- a model with no layer elevations (ledger 395) ----------------------
+
+
+def _bare(context):
+    """The same grid and domain with NO layer elevations anywhere."""
+
+    from myflopy.specs import _layer_elevations
+
+    bare = mf.ModelContext(grid=context.grid, domain=context.domain)
+    assert _layer_elevations(bare) is None, "the fixture must carry no elevations"
+    return bare
+
+
+def _bc_file(directory):
+    path = directory / "bc.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["f"], "layer": [1], "head": [-5.0], "elevation": [-5.0],
+         "stage": [-4.0], "rbot": [-5.0], "conductance": [100.0]},
+        geometry=[LineString([(20.0, 300.0), (580.0, 300.0)])], crs=2927,
+    ).to_file(path)
+    return path
+
+
+@pytest.mark.parametrize("helper_name", ["chd", "ghb", "drn", "riv"])
+def test_an_explicit_clearance_with_no_elevations_is_refused(sloping, tmp_path, helper_name):
+    """A floor the caller asked for, with no bottom to measure it from, RAISES.
+
+    It was skipped without a word: measured, a drain at -5.0 with `min_above_bottom=1.0`
+    on a context carrying no surfaces wrote -5.0 unchanged and said nothing, where the
+    same declaration with surfaces lifted it and warned.
+    """
+
+    context, _, _ = sloping
+    with pytest.raises(ValueError, match=r"min_above_bottom=1\.0 .*no layer elevations.*"
+                                         r"ModelContext\(surfaces="):
+        getattr(mf, helper_name).gpkg(
+            _bc_file(tmp_path), context=_bare(context), nper=1, min_above_bottom=1.0,
+        )
+
+
+def test_with_no_clearance_asked_for_no_elevations_is_not_an_error(sloping, tmp_path):
+    """The control: the DETECTION is still skipped quietly -- a model declaring no
+    surfaces is not an error -- so only the explicit request raises."""
+
+    context, _, _ = sloping
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        spec = mf.drn.gpkg(_bc_file(tmp_path), context=_bare(context), nper=1)
+    assert {float(r[1]) for r in spec.options["stress_period_data"][0]} == {-5.0}
+
+
+def test_a_river_stage_below_its_bottom_is_refused_with_no_elevations(sloping, tmp_path):
+    """The refusal compares two numbers of ONE record and needs no elevations; it sat
+    inside the floor and was skipped with it, leaving MF6 to stop the run."""
+
+    context, _, _ = sloping
+    path = tmp_path / "bad.gpkg"
+    gpd.GeoDataFrame(
+        {"name": ["riv"], "layer": [1], "stage": [30.0], "rbot": [40.0],
+         "conductance": [100.0]},
+        geometry=[LineString([(20.0, 300.0), (580.0, 300.0)])], crs=2927,
+    ).to_file(path)
+
+    with pytest.raises(ValueError, match="river stage .* BELOW its river bottom"):
+        mf.riv.gpkg(path, context=_bare(context), nper=1, stage="stage", rbot="rbot",
+                    conductance="conductance")
+
+
 # --- where it is and is not offered -----------------------------------------
 
 

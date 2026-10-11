@@ -51,6 +51,30 @@ logger = get_logger(__name__)
 
 SurfaceReference = str
 
+#: The three surfaces an elevation can be measured from, in the order they are taught.
+SURFACE_REFERENCES = ("model_top", "cell_top", "cell_bottom")
+
+
+def surface_reference(reference: Any) -> str:
+    """``reference`` lowercased, or a ``ValueError`` naming the three accepted spellings.
+
+    The ONE rule for a surface reference: :class:`CellSurfaceOffset` and both
+    :class:`SurfaceResolver` verbs (so :meth:`GeoPackageSource.surface_value` too) call
+    it. The resolvers used to take anything -- the table decoder's last branch was a
+    bare ``else`` -- so ``"Model_Top"`` or a typo read the CELL BOTTOM: measured 0.0
+    where ``"model_top"`` read 10.0 on the same one-cell table, with nothing said
+    (ledger 392).
+    """
+
+    spelled = reference.lower() if isinstance(reference, str) else None
+    if spelled not in SURFACE_REFERENCES:
+        raise ValueError(
+            f"A surface reference is one of {', '.join(map(repr, SURFACE_REFERENCES))} "
+            f"(any case), not {reference!r}: 'model_top' is the ground surface, "
+            "'cell_top'/'cell_bottom' the top/bottom of the record's own cell."
+        )
+    return spelled
+
 
 def _spec_payload(value: Any) -> dict[str, Any]:
     """Return the JSON-ready declaration of a flat ``RowValue`` dataclass.
@@ -130,7 +154,9 @@ class CellSurfaceOffset:
     Parameters
     ----------
     reference : {"model_top", "cell_top", "cell_bottom"}
-        Which surface to measure from. **There is no default -- name it.**
+        Which surface to measure from. **There is no default -- name it.** Any case
+        is accepted and stored lowercased; another word raises ``ValueError`` naming
+        the three.
 
         ``"model_top"``
             The ground surface. The same elevation for every layer, so a record's
@@ -216,11 +242,7 @@ class CellSurfaceOffset:
     def __post_init__(self) -> None:
         """Lowercase and validate ``reference`` (one of model_top/cell_top/cell_bottom)."""
 
-        reference = self.reference.lower()
-        valid = {"model_top", "cell_top", "cell_bottom"}
-        if reference not in valid:
-            raise ValueError(f"reference must be one of: {', '.join(sorted(valid))}.")
-        object.__setattr__(self, "reference", reference)
+        object.__setattr__(self, "reference", surface_reference(self.reference))
 
     @staticmethod
     def _row_or_value(
@@ -355,8 +377,35 @@ class SurfaceResolver:
         return float(array.reshape(-1)[cell])
 
     def surface_value(self, reference: SurfaceReference, *, layer: int, cell: int) -> float:
-        """Return a model/cell surface value for a mapped boundary cell."""
+        """Return a model/cell surface value for a mapped boundary cell.
 
+        Parameters
+        ----------
+        reference : {"model_top", "cell_top", "cell_bottom"}
+            Which surface to read: the ground surface, or the top or bottom of the
+            cell in ``layer``. Any case; another word raises ``ValueError`` naming
+            the three, as :class:`CellSurfaceOffset` does -- one rule,
+            :func:`surface_reference`.
+        layer : int
+            Zero-based model layer. ``"cell_top"`` of layer ``n > 0`` is the bottom of
+            layer ``n - 1``; ``"model_top"`` ignores it.
+        cell : int
+            Zero-based cell (CELL2D) number.
+
+        Returns
+        -------
+        float
+            The elevation, read from ``context.surfaces`` or, when that is ``None``,
+            ``grid.gdf_topbtm``.
+
+        Raises
+        ------
+        ValueError
+            ``reference`` is not one of the three; neither table is available; or the
+            table has no column for ``reference`` at ``layer``.
+        """
+
+        reference = surface_reference(reference)
         return self._decode(self._surfaces(), reference, layer=layer, cell=cell)
 
     def surface_column(self, reference: SurfaceReference, *, layer: int, ncpl: int):
@@ -371,8 +420,23 @@ class SurfaceResolver:
         Returns a plain ``float`` when every column agrees, so a flat land surface still
         writes MODFLOW's ``CONSTANT`` form -- and stays genuinely mesh-independent, which
         is what keeps it off the per-column pin (ledger 282).
+
+        Parameters
+        ----------
+        reference : {"model_top", "cell_top", "cell_bottom"}
+            As :meth:`surface_value`: any case, another word raises ``ValueError``.
+        layer : int
+            Zero-based model layer, as :meth:`surface_value`.
+        ncpl : int
+            Number of cells per layer: one value is resolved for each of ``0 .. ncpl - 1``.
+
+        Returns
+        -------
+        float or numpy.ndarray
+            A ``float`` when every column agrees, else a float array of length ``ncpl``.
         """
 
+        reference = surface_reference(reference)
         surfaces = self._surfaces()
         values = np.array(
             [self._decode(surfaces, reference, layer=layer, cell=cell) for cell in range(int(ncpl))],
@@ -463,17 +527,19 @@ class Spread:
         Attribute column holding each feature's TOTAL -- a conductance or a flux for
         the whole feature, in the package's own units. Each covered cell is written
         ``value * share``. A NULL or a non-number raises ``ValueError`` naming the
-        feature; a column the file lacks raises a bare ``KeyError`` (it is left out of
-        the up-front column check). Refused with ``TypeError`` on an elevation
-        argument (``chd``/``ghb`` ``head``, ``drn`` ``elevation``, ``riv``
-        ``stage``/``rbot``, ``evt`` ``surface``), where there is no total to divide.
+        feature; a column the file lacks raises ``ValueError`` naming the file and the
+        column, before any record is built, as an unwrapped column does. Refused with
+        ``TypeError`` on an elevation argument (``chd``/``ghb`` ``head``, ``drn``
+        ``elevation``, ``riv`` ``stage``/``rbot``, ``evt`` ``surface``), where there is
+        no total to divide.
     mode : {"clip", "retained"}, default "clip"
         What becomes of the part of a feature outside the active grid (above):
         ``"clip"`` keeps shares as fractions of the whole feature, so that part is
         not written; ``"retained"`` divides each kept share by the fraction covered,
         so the written cells still sum to the total. Anything else raises
-        ``ValueError``. When one call wraps several fields, the FIRST wrapped
-        field's ``mode`` applies to all of them.
+        ``ValueError``. When one call wraps several fields they must all use the
+        same mode -- a feature has one set of cell shares -- and two that differ
+        raise ``ValueError`` naming both, at the call.
     min_share : float, default 0.01
         Cells holding less than this fraction of the feature are dropped before
         ``mode`` is applied -- dropped from the feature's records altogether, every
@@ -545,10 +611,17 @@ RowValue = str | int | float | list[str] | tuple[str, ...] | CellSurfaceOffset |
 
 
 def _required_value_fields(value: RowValue) -> set[str]:
-    """Return GeoPackage fields needed by one value specification."""
+    """Return GeoPackage fields needed by one value specification.
+
+    A :class:`Spread` names a column too: left out, a typo in one was missed by the
+    up-front check and surfaced mid-build as a bare ``KeyError('typo')`` naming neither
+    the file nor the feature (ledger 392).
+    """
 
     if isinstance(value, CellSurfaceOffset):
         return value.required_fields()
+    if isinstance(value, Spread):
+        return _required_value_fields(value.field)
     if isinstance(value, str):
         return {value}
     return set(value) if isinstance(value, (list, tuple)) else set()
@@ -593,6 +666,40 @@ def _finite(value, *, field: RowValue, label: str, source: str):
             "report success. Fix the attribute, or drop the feature from the layer."
         )
     return value
+
+
+def _layer_index(value: Any, *, base: int, nlay: int | None) -> tuple[int | None, str]:
+    """``(zero-based model layer, "")`` for one ``layer_field`` value, or ``(None, why)``.
+
+    The ONE reading of a feature's layer column, for :func:`array_from_polygons` and
+    every :class:`GeoPackageSource` builder. A value is a WHOLE number at or above
+    ``base`` -- and, where the caller knows ``nlay``, below ``base + nlay``. The
+    polygon map checked only the upper bound, so a feature numbered below ``base``
+    matched no layer and painted NOTHING in silence: measured, two zones at ``lay`` 0
+    and 1 with ``layer_base=1`` gave the first zone's cells the default and no warning
+    (ledger 393). A fractional value was truncated by ``int()`` into a layer
+    nobody wrote, and a NULL raised numpy's bare "cannot convert float NaN".
+    """
+
+    if value is None:
+        return None, "it is empty (a GeoPackage NULL)"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None, f"{value!r} is not a layer number"
+    if not np.isfinite(number):
+        return None, "it is empty (a GeoPackage NULL)" if np.isnan(number) else f"it is {number}"
+    if not number.is_integer():
+        return None, f"{value!r} is not a whole layer number"
+    layer = int(number) - int(base)
+    top = None if nlay is None else int(nlay) + int(base) - 1
+    if layer < 0 or (nlay is not None and layer >= int(nlay)):
+        span = f"{int(base)} to {top}" if top is not None else f"{int(base)} up"
+        return None, (
+            f"{int(number)}, a layer this model does not have -- with "
+            f"layer_base={int(base)} they run {span}"
+        )
+    return layer, ""
 
 
 def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) -> np.ndarray:
@@ -665,16 +772,23 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
                 f"{source} has no column {recipe.layer_field!r} to read the model "
                 f"layer from. Its columns are: {', '.join(map(str, gdf.columns))}."
             )
-        assigned = gdf[recipe.layer_field].to_numpy() - recipe.layer_base
-        beyond = sorted({int(one) for one in assigned if int(one) >= int(nlay)})
-        if beyond:
+        resolved = [
+            _layer_index(one, base=recipe.layer_base, nlay=nlay)
+            for one in gdf[recipe.layer_field]
+        ]
+        unusable = [
+            f"{label} ({why})"
+            for label, (layer, why) in zip(labels, resolved, strict=True)
+            if layer is None
+        ]
+        if unusable:
             raise ValueError(
-                f"{source} assigns features to model layer(s) "
-                + ", ".join(str(one + recipe.layer_base) for one in beyond)
-                + f", which this model does not have (nlay={int(nlay)}, so "
-                f"{recipe.layer_field!r} runs {recipe.layer_base} to "
-                f"{int(nlay) + recipe.layer_base - 1})."
+                f"{source}: {len(unusable)} of {len(gdf)} features name no model layer "
+                f"in {recipe.layer_field!r}, so they would paint nothing into "
+                f"{parameter}: {_listed(unusable)}. Correct the column, or set "
+                "`layer_base=` to how its layers are numbered."
             )
+        assigned = np.array([layer for layer, _ in resolved], dtype=int)
         for index in range(int(nlay)):
             chosen = assigned == index
             if not chosen.any():
@@ -872,6 +986,33 @@ def refuse_spread_on_elevation(package: str, values) -> None:
             )
 
 
+def refuse_mixed_spread_modes(package: str, values) -> None:
+    """Refuse two :class:`Spread` fields of one call that disagree on ``mode``, at the CALL.
+
+    A feature has ONE set of cell shares, so a call has one mode; the share step read
+    the FIRST wrapped field's and dropped the rest in silence (``mf.evt.gpkg`` with
+    ``rate`` clipped and ``depth`` retained wrote the depth clipped). Refused rather
+    than resolved per field -- the two disagreeing is a declaration nobody meant
+    (ledger 396). Called from the eager and the lazy path, as
+    :func:`refuse_spread_on_elevation` is. ``min_share`` and ``warn_below`` are not
+    refused: their combination (largest, smallest) is documented and loses nothing.
+    """
+
+    spreads = {
+        name: spec for name, spec in (values or {}).items() if isinstance(spec, Spread)
+    }
+    modes = {spec.mode for spec in spreads.values()}
+    if len(modes) > 1:
+        named = ", ".join(f"{name}=Spread({spec.field!r}, mode={spec.mode!r})"
+                          for name, spec in spreads.items())
+        raise ValueError(
+            f"mf.{package}.gpkg: {named} -- one feature's cells take ONE set of shares, "
+            "so every Spread in a call must use the same mode. Pick 'clip' (the part "
+            "off the grid is not written) or 'retained' (the total is kept on the part "
+            "that remains) for all of them."
+        )
+
+
 def check_placement_options(
     *, min_above_bottom: float | None, snap_within: float | None, verb: str
 ) -> None:
@@ -997,8 +1138,10 @@ class GeoPackageSource:
         ``boundnames=True`` writes the row index as the boundname.
     layer_field : str or None, default "layer"
         Attribute column giving each feature's model layer, read as
-        ``int(value) - layer_base``; a result below 0 raises ``ValueError``. The
-        boundary builders require the column when this is set. ``None`` puts every
+        ``value - layer_base``. A value that is not a whole number at or above
+        ``layer_base`` -- a NULL, a fraction, one below the base -- raises
+        ``ValueError`` naming the feature (:meth:`k_array` also refuses one past its
+        ``nlay``). The column is required when this is set. ``None`` puts every
         feature in the top layer.
     period_field : str, optional
         Attribute column giving the ONE stress period a feature applies to, read as
@@ -1021,7 +1164,8 @@ class GeoPackageSource:
         ``"raise"`` raises ``ValueError`` wherever ``"warn"`` would
         report. ``"ignore"`` says nothing. In every mode a source with no feature on
         a usable cell raises ``ValueError`` naming both extents and both CRSs. An
-        unknown word raises ``ValueError`` here. :meth:`k_array` does not read it.
+        unknown word raises ``ValueError`` here. :meth:`k_array` reads it the same
+        way, a missed feature leaving its cells at ``defaults``.
     snap_within : float, optional
         ``gaps="nearest"`` only: the farthest a missed point may be moved, in the
         grid's coordinate units, measured to the cell POLYGON rather than its
@@ -1035,9 +1179,11 @@ class GeoPackageSource:
         less than ``max(|bottom| * 1e-6, 1e-6)``, so ``0.0`` means as close to the
         bottom as the written file can hold. ``None`` (the default) lifts nothing,
         but a record below its cell bottom is still reported (see ``gaps``). Both the
-        report and the lift need layer elevations; with neither ``context.surfaces``
-        nor ``grid.gdf_topbtm`` they are skipped without a word. Negative raises
-        ``ValueError``.
+        report and the lift need layer elevations -- ``context.surfaces``, else
+        ``grid.gdf_topbtm``. With neither, the report is skipped, and a value given
+        here makes every builder with an elevation field raise ``ValueError`` saying
+        where elevations come from, rather than write the records unlifted. Negative
+        raises ``ValueError``.
     """
 
     path: Path | str
@@ -1104,14 +1250,24 @@ class GeoPackageSource:
 
         return domain_active(self.context.domain, layer, cell)
 
-    def _layer(self, row) -> int:
-        """The zero-based grid layer for a feature (from ``layer_field`` minus ``layer_base``)."""
+    def _layer(self, index: Any, row, *, nlay: int | None = None) -> int:
+        """The zero-based grid layer for a feature (from ``layer_field`` minus ``layer_base``).
+
+        Read by :func:`_layer_index`, the rule the polygon map shares; a value naming
+        no layer raises naming the feature. ``nlay`` is checked where the caller knows
+        it (:meth:`k_array`); the boundary builders leave the upper bound to the
+        build's cellid range check.
+        """
 
         if self.layer_field is None:
             return 0
-        layer = int(row[self.layer_field]) - self.layer_base
-        if layer < 0:
-            raise ValueError(f"GeoPackage layer resolves to negative index: {layer}")
+        layer, why = _layer_index(row[self.layer_field], base=self.layer_base, nlay=nlay)
+        if layer is None:
+            raise ValueError(
+                f"GeoPackage '{self.path.name}': feature {self._feature_label(index, row)} "
+                f"names no model layer in {self.layer_field!r}: {why}. Correct the "
+                "column, or set `layer_base=` to how its layers are numbered."
+            )
         return layer
 
     def _periods(self, row) -> range | tuple[int]:
@@ -1262,9 +1418,8 @@ class GeoPackageSource:
         ----------
         reference : {"model_top", "cell_top", "cell_bottom"}
             Which surface to read: the ground surface, or the top or bottom of the
-            cell in ``layer``. Spelled exactly so, lowercase -- it is not validated
-            here (:class:`CellSurfaceOffset` validates its own), and any other string
-            is read as ``"cell_bottom"``.
+            cell in ``layer``. Any case; another word raises ``ValueError`` naming the
+            three -- the rule :class:`CellSurfaceOffset` applies (ledger 392).
         layer : int
             Zero-based model layer. ``"cell_top"`` of layer ``n > 0`` is the bottom of
             layer ``n - 1``; ``"model_top"`` ignores it.
@@ -1280,8 +1435,8 @@ class GeoPackageSource:
         Raises
         ------
         ValueError
-            Neither table is available, or the table has no column for ``reference``
-            at ``layer``. A ``cell`` outside the table (or, in a dict table, a
+            ``reference`` is not one of the three; neither table is available; or the
+            table has no column for ``reference`` at ``layer``. A ``cell`` outside the table (or, in a dict table, a
             ``layer`` past its bottoms) is not checked: the lookup's own
             ``KeyError``/``IndexError`` propagates.
         """
@@ -1346,8 +1501,8 @@ class GeoPackageSource:
                 f"No feature in GeoPackage {source} lands on an {target}; {empty}. "
                 f"{_listed(reasons)}. {self._where()}"
                 + ("" if self.gaps != "ignore" else
-                   " gaps='ignore' does not reach this: a boundary package with no "
-                   "records is not a state MF6 can use.")
+                   " gaps='ignore' does not reach this: it quiets a feature that "
+                   "misses, not a source none of whose features lands.")
             )
 
         if self.gaps == "ignore" or coverage.quiet():
@@ -1434,48 +1589,6 @@ class GeoPackageSource:
             parts.append(f"not written: {lost}")
         return "; ".join(parts) + "."
 
-    def _refuse_or_report_misses(
-        self, missed: list[tuple[Any, Any]], *, empty: str, edges_only: bool = False
-    ) -> None:
-        """Raise when no feature lands on the grid; warn, naming them, when only some miss.
-
-        Both used to pass in silence. A source that lands NOWHERE -- another
-        location, a file with no CRS, a model placed at the origin -- came back as
-        an empty package, which MF6 rejects at read time naming the file rather
-        than the cause, or with ``maxbound=`` runs without, under normal
-        termination; ``k_array`` came back as its defaults. So that raises, with
-        both extents and both CRSs, which is what the mismatch is found by. A
-        PARTIAL miss can be deliberate (one layer serving several grids), so it
-        warns rather than refusing, but by name. Why each feature missed is
-        worded by :func:`myflopy.modflow.mf6.grid.geometry.miss_reason`.
-        """
-
-        source = f"'{self.path.name}'" + (f" (layer {self.layer!r})" if self.layer else "")
-        total = len(self.gdf)
-        if total == 0:
-            raise ValueError(f"GeoPackage {source} has no features; {empty}.")
-        if not missed:
-            return
-        polys = self.grid.gdf_vorPolys
-        target = "active grid-edge cell" if edges_only else "active cell"
-        reasons = [
-            f"{self._feature_label(index, row)} "
-            f"({miss_reason(polys, row.geometry, target=target)})"
-            for index, row in missed
-        ]
-        listing = ", ".join(reasons[:10])
-        if len(reasons) > 10:
-            listing += f", and {len(reasons) - 10} more"
-        if len(missed) == total:
-            raise ValueError(
-                f"No feature in GeoPackage {source} lands on an {target}; {empty}. "
-                f"{listing}. {self._where()}"
-            )
-        logger.warning(
-            "%d of %d features in GeoPackage %s land on no %s and are left out: %s",
-            len(missed), total, source, target, listing,
-        )
-
     def _value(
         self,
         row,
@@ -1529,8 +1642,21 @@ class GeoPackageSource:
         coverage = _Coverage()
         # Detection needs the layer elevations. Where the model carries none there is
         # nothing to compare against, so it is skipped rather than raising -- a package
-        # whose model declares no surfaces is not an error.
+        # whose model declares no surfaces is not an error. A floor the caller ASKED for
+        # is another matter: skipping it wrote every record exactly as declared, below
+        # its cell bottom, with nothing said (ledger 395).
+        elevation_positions = self._elevation_positions(package)
         elevations_available = bool(package) and _layer_elevations(self.context) is not None
+        if elevation_positions and self.min_above_bottom is not None and not elevations_available:
+            raise ValueError(
+                f"GeoPackage '{self.path.name}' -> {package}: min_above_bottom="
+                f"{self.min_above_bottom!r} lifts each elevation above its own cell "
+                "bottom, and this model carries no layer elevations to read the bottom "
+                "from. They come from ModelContext(surfaces=...) -- a LayerBuildResult or "
+                "a {'top': ..., 'botm': ...} table -- or from the grid's gdf_topbtm; a "
+                "package declared WITHOUT context= also reads the built discretization's "
+                "top and botm. Supply one, or drop min_above_bottom."
+            )
         spreads = tuple(f for f in fields if isinstance(f, Spread))
         required = {
             field_name
@@ -1552,7 +1678,7 @@ class GeoPackageSource:
         data = {period: [] for period in range(self.nper)}
         missed: list[tuple[Any, Any]] = []
         for index, row in self.gdf.iterrows():
-            layer = self._layer(row)
+            layer = self._layer(index, row)
             label = self._feature_label(index, row)
             coverage.features += 1
             shares = self._cell_shares(row.geometry, layer=layer, edges_only=edges_only)
@@ -1589,6 +1715,12 @@ class GeoPackageSource:
                         )
                         for field in fields
                     ]
+                    if package == "riv":
+                        # Needs no elevations, so it runs whether or not the model has
+                        # any; it sat inside the floor and was skipped with it.
+                        self._refuse_stage_below_rbot(
+                            values, positions=elevation_positions, cell=cell, label=label
+                        )
                     if elevations_available:
                         # AFTER the `gaps="nearest"` snap, never before: a snapped point
                         # lands in a DIFFERENT cell with a different bottom, so a floor
@@ -1642,8 +1774,7 @@ class GeoPackageSource:
         had drifted apart.
         """
 
-        fields = _PACKAGE_EXPLORER_SPECS[package].gpkg_defaults
-        positions = {name: i for i, name in enumerate(fields) if (package, name) in _ELEVATION_FIELDS}
+        positions = self._elevation_positions(package)
         if not positions:
             return values
         bottom = self.surface_value("cell_bottom", layer=layer, cell=cell)
@@ -1657,24 +1788,8 @@ class GeoPackageSource:
         # clamped q=-380.00 with the river depth collapsed to 0.000 from a declared 1.0;
         # carrying the stage up q=-108.57. Three readings, 3.5x apart.
         # A stage that is ALREADY inside its cell is left alone -- see `river_pair_lift`,
-        # where lifting it unconditionally measured a reversed sign (ledger 291).
-        if package == "riv":
-            stage_now = float(values[positions["stage"]])
-            rbot_now = float(values[positions["rbot"]])
-            if stage_now < rbot_now:
-                # MF6 refuses this at BOTH icelltypes ("RIV BOUNDARY (n) RIVER STAGE ...
-                # IS LESS THAN RIVER BOTTOM"), and `mf.riv.gpkg`'s own docstring already
-                # promises the invariant while nothing enforced it. Refused here rather
-                # than silently collapsed by the pair-lift below (ledger 290).
-                raise ValueError(
-                    f"GeoPackage '{self.path.name}': feature {label} gives cell {cell} a "
-                    f"river stage ({stage_now:,.4g}) BELOW its river bottom "
-                    f"({rbot_now:,.4g}). MF6 refuses that whatever icelltype is, and "
-                    "min_above_bottom cannot fix it -- a river's stage is its water "
-                    "surface and its rbot the bed beneath. Swap the two columns, or "
-                    "correct the attribute."
-                )
-
+        # where lifting it unconditionally measured a reversed sign (ledger 291). A stage
+        # below its rbot never reaches here: `_refuse_stage_below_rbot` ran first.
         pair = ("rbot", "stage") if package == "riv" else ()
         checked = ["rbot"] if pair else list(positions)
 
@@ -1702,6 +1817,37 @@ class GeoPackageSource:
             else:
                 values[index] = floor
         return values
+
+    @staticmethod
+    def _elevation_positions(package: str) -> dict[str, int]:
+        """``{helper field: record position}`` for each ELEVATION field of ``package``."""
+
+        if not package:
+            return {}
+        fields = _PACKAGE_EXPLORER_SPECS[package].gpkg_defaults
+        return {name: i for i, name in enumerate(fields) if (package, name) in _ELEVATION_FIELDS}
+
+    def _refuse_stage_below_rbot(self, values, *, positions, cell, label) -> None:
+        """Refuse a RIV record whose stage lies below its own rbot.
+
+        MF6 refuses this at BOTH icelltypes ("RIV BOUNDARY (n) RIVER STAGE ... IS LESS
+        THAN RIVER BOTTOM"), and ``mf.riv.gpkg``'s own docstring promises the invariant
+        (ledger 290). It compares two numbers of one record and needs no layer
+        elevations, so it runs on every RIV record -- it used to sit inside the floor
+        and was skipped with it on a model carrying none (ledger 395).
+        """
+
+        stage_now = float(values[positions["stage"]])
+        rbot_now = float(values[positions["rbot"]])
+        if stage_now < rbot_now:
+            raise ValueError(
+                f"GeoPackage '{self.path.name}': feature {label} gives cell {cell} a "
+                f"river stage ({stage_now:,.4g}) BELOW its river bottom "
+                f"({rbot_now:,.4g}). MF6 refuses that whatever icelltype is, and "
+                "min_above_bottom cannot fix it -- a river's stage is its water "
+                "surface and its rbot the bed beneath. Swap the two columns, or "
+                "correct the attribute."
+            )
 
     def _account_for_missing(self, coverage, row, fields, *, package: str, covered: float) -> None:
         """Add a feature's unwritten quantity to the running total, where that MEANS something.
@@ -1891,6 +2037,7 @@ class GeoPackageSource:
         )
 
         refuse_spread_on_elevation(package, fields)
+        refuse_mixed_spread_modes(package, fields)
 
         data_options: dict[str, Any] = {"boundnames": boundnames}
         if descriptor.capabilities.edges_only:
@@ -1955,7 +2102,8 @@ class GeoPackageSource:
         Raises
         ------
         ValueError
-            A column this call reads is missing; a value is NULL or non-numeric; no
+            A column this call reads is missing; a value is NULL or non-numeric;
+            ``min_above_bottom`` is set and the model carries no layer elevations; no
             feature reaches a usable cell; or ``gaps="raise"`` found something to
             report.
         TypeError
@@ -2018,12 +2166,10 @@ class GeoPackageSource:
         Raises
         ------
         ValueError
-            A column this call reads is missing; a value is NULL or non-numeric; no
+            A column this call reads is missing; a value is NULL or non-numeric;
+            ``min_above_bottom`` is set and the model carries no layer elevations; no
             feature reaches a usable cell; or ``gaps="raise"`` found something to
             report.
-        KeyError
-            A column named only by a :class:`Spread` is missing (it is left out of
-            the up-front column check).
         TypeError
             ``head`` is a :class:`Spread` -- a head has no total to divide.
         """
@@ -2085,12 +2231,10 @@ class GeoPackageSource:
         Raises
         ------
         ValueError
-            A column this call reads is missing; a value is NULL or non-numeric; no
+            A column this call reads is missing; a value is NULL or non-numeric;
+            ``min_above_bottom`` is set and the model carries no layer elevations; no
             feature reaches a usable cell; or ``gaps="raise"`` found something to
             report.
-        KeyError
-            A column named only by a :class:`Spread` is missing (it is left out of
-            the up-front column check).
         TypeError
             ``elevation`` is a :class:`Spread` -- an elevation has no total to divide.
         """
@@ -2123,9 +2267,9 @@ class GeoPackageSource:
             The river stage, in model length units: a column name; a number used for
             every feature; a list of column names indexed by stress period (periods
             past its end read the last one); or a :class:`CellSurfaceOffset`,
-            resolved per cell. Copied to every cell a feature covers. When the model
-            carries layer elevations, a stage below its record's ``rbot`` raises
-            ``ValueError``.
+            resolved per cell. Copied to every cell a feature covers. A stage below
+            its record's ``rbot`` raises ``ValueError`` naming the feature, whether or
+            not the model carries layer elevations.
         conductance : str, float, list of str, or Spread, default "conductance"
             The riverbed conductance (MF6's ``cond``), in length^2/time, as the same
             value forms. A plain value is copied WHOLE to every cell a feature
@@ -2159,12 +2303,9 @@ class GeoPackageSource:
         ------
         ValueError
             A column this call reads is missing; a value is NULL or non-numeric; a
-            stage lies below its rbot (checked only with layer elevations); no
-            feature reaches a usable cell; or ``gaps="raise"`` found something to
-            report.
-        KeyError
-            A column named only by a :class:`Spread` is missing (it is left out of
-            the up-front column check).
+            stage lies below its rbot; ``min_above_bottom`` is set and the model
+            carries no layer elevations; no feature reaches a usable cell; or
+            ``gaps="raise"`` found something to report.
         TypeError
             ``stage`` or ``rbot`` is a :class:`Spread` -- an elevation has no total
             to divide.
@@ -2223,9 +2364,6 @@ class GeoPackageSource:
             A column this call reads is missing; a value is NULL or non-numeric; no
             feature reaches a usable cell; or ``gaps="raise"`` found something to
             report.
-        KeyError
-            A column named only by a :class:`Spread` is missing (it is left out of
-            the up-front column check).
         """
 
         return self._bc_from_features(
@@ -2273,12 +2411,10 @@ class GeoPackageSource:
         Raises
         ------
         ValueError
-            A column this call reads is missing; a value is NULL or non-numeric; no
+            A column this call reads is missing; a value is NULL or non-numeric;
+            ``min_above_bottom`` is set and the model carries no layer elevations; no
             feature reaches a usable cell; or ``gaps="raise"`` found something to
             report.
-        KeyError
-            A column named only by a :class:`Spread` is missing (it is left out of
-            the up-front column check).
         """
 
         return self._bc_from_features(
@@ -2345,9 +2481,6 @@ class GeoPackageSource:
             ``nseg`` is not 1; a column this call reads is missing; a value is NULL or
             non-numeric; no feature reaches a usable cell; or ``gaps="raise"`` found
             something to report.
-        KeyError
-            A column named only by a :class:`Spread` is missing (it is left out of
-            the up-front column check).
         TypeError
             ``surface`` is a :class:`Spread` -- an elevation has no total to divide.
         """
@@ -2383,13 +2516,14 @@ class GeoPackageSource:
         Parameters
         ----------
         value : str, default "k"
-            Attribute column holding each feature's K, in length/time. A NULL or a
+            Attribute column holding each feature's K, in length/time. A file without
+            it raises ``ValueError`` naming the file and the column. A NULL or a
             non-number raises ``ValueError`` naming the feature; it is read only for
             features that reach a cell.
         nlay : int
-            Number of model layers: the array's first dimension. A feature whose layer
-            (``layer_field`` value less ``layer_base``) is ``nlay`` or more raises
-            ``ValueError``.
+            Number of model layers: the array's first dimension. A feature whose
+            ``layer_field`` value is not a whole number from ``layer_base`` to
+            ``layer_base + nlay - 1`` raises ``ValueError`` naming the feature.
         defaults : float or list of float
             K for every cell no feature paints: one value for every layer, or one per
             layer (any other length raises ``ValueError``).
@@ -2402,38 +2536,66 @@ class GeoPackageSource:
         Raises
         ------
         ValueError
-            As above, or when no feature reaches an active cell (naming both extents
-            and CRSs). A PARTIAL miss is only logged at WARNING; ``gaps`` is not read.
-        KeyError
-            The file lacks the ``value`` column or the ``layer_field`` column -- there
-            is no up-front column check here.
+            As above; the file lacks the ``layer_field`` column; no feature reaches an
+            active cell (naming both extents and CRSs, whatever ``gaps`` says); or
+            ``gaps="raise"`` and some feature misses.
+
+        Notes
+        -----
+        A feature reaching no active cell is handled by this source's ``gaps``, as in
+        the boundary builders: ``"warn"`` (the default) leaves its cells at
+        ``defaults`` and names it in a ``UserWarning`` as well as the log;
+        ``"nearest"`` first moves a missed POINT onto the nearest active cell within
+        ``snap_within`` and reports the move; ``"raise"`` refuses; ``"ignore"`` says
+        nothing. A polygon running past the grid is not reported -- a geology map
+        routinely extends beyond the model.
         """
 
         fallback = [defaults] * nlay if np.isscalar(defaults) else list(defaults)
         if len(fallback) != nlay:
             raise ValueError("defaults must be a scalar or contain one value per layer.")
+        required = {value} | ({self.layer_field} if self.layer_field is not None else set())
+        missing = sorted(required - set(self.gdf.columns))
+        if missing:
+            raise ValueError(
+                f"GeoPackage '{self.path.name}' is missing fields: {', '.join(missing)}"
+            )
         result = np.array(
             [[float(fallback[layer])] * self.grid.ncpl for layer in range(nlay)],
             dtype=float,
         )
-        missed: list[tuple[Any, Any]] = []
+        # The same accounting and the same `_report` as the boundary builders, so `gaps=`
+        # means one thing on this source whichever method reads it. The partial miss
+        # went to `logger.warning` alone, which reaches nobody by default (ledger 288),
+        # and `gaps=` was not read (ledger 394). CLIPPING is deliberately not
+        # recorded: a geology map routinely runs past the model, and that is not news.
+        coverage = _Coverage()
         for index, row in self.gdf.iterrows():
-            layer = self._layer(row)
-            if layer >= nlay:
-                raise ValueError(f"GeoPackage layer {layer} is outside nlay={nlay}.")
+            layer = self._layer(index, row, nlay=nlay)
+            label = self._feature_label(index, row)
+            coverage.features += 1
             cells = self._cells(row.geometry, layer=layer)
+            if not cells and self.gaps == "nearest":
+                shares, distance = self._snapped_shares(row.geometry, layer=layer, edges_only=False)
+                if shares:
+                    coverage.snapped.append((label, distance))
+                    cells = [cell for cell, _ in shares]
             if not cells:
-                missed.append((index, row))
+                coverage.missed.append((index, row))
                 continue
+            coverage.landed += 1
             painted = _finite(
                 row[value],
                 field=value,
-                label=self._feature_label(index, row),
+                label=label,
                 source=f"'{self.path.name}'",
             )
             for cell in cells:
                 result[layer, cell] = float(painted)
-        self._refuse_or_report_misses(missed, empty="the K array would be its defaults everywhere")
+        self._report(
+            coverage, package="k_array", name=value, edges_only=False,
+            empty="the K array would be its defaults everywhere",
+        )
         return result
 
 

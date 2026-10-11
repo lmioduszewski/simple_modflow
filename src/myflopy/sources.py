@@ -501,7 +501,9 @@ class BoundarySource(DataSourceSpec):
     layer_field : str or None, default "layer"
         Attribute column giving each feature's model layer, numbered from
         ``layer_base``; the column is required when set. ``None`` puts every feature
-        in the first model layer. A value resolving below 0 raises ``ValueError``.
+        in the first model layer. A value that is not a whole number at or above
+        ``layer_base`` (a NULL, a fraction, one below the base) raises ``ValueError``
+        naming the feature.
     period_field : str or None, optional
         Attribute column giving the ONE stress period a feature applies to, numbered
         from ``period_base``; a period outside ``0..nper-1`` raises ``ValueError``.
@@ -535,8 +537,9 @@ class BoundarySource(DataSourceSpec):
         with ``stage`` raised by the same amount when it was below the floor too.
         ``0.0`` still lifts by a tiny nudge, because a value written exactly at the
         bottom can round below it. ``None`` (the default) changes nothing but still
-        reports records below their cell bottom. Both need layer elevations and are
-        skipped without them. Negative raises ``ValueError`` at build. The
+        reports records below their cell bottom. Both need layer elevations: without
+        any, the report is skipped and a value here raises ``ValueError`` at build
+        (ledger 395). Negative raises ``ValueError`` at build. The
         ``wel``/``rch``/``evt`` helpers never set it; ``wel`` and ``rch`` have no
         elevation field.
     edges_only : bool, default False
@@ -940,10 +943,11 @@ class Polygons(DataSourceSpec):
     layer_field : str, optional
         Column naming the MODEL layer a feature paints, ``layer_base``-based. ``None``
         (the default) makes the map areal, broadcast to EVERY layer -- which is what a
-        geology map digitized in plan view means. When set, a file without the column,
-        or a feature naming a layer past the model's last, raises ``ValueError`` at
-        build. A value below ``layer_base`` is not refused: that feature paints no
-        cell.
+        geology map digitized in plan view means. When set, a file without the column
+        raises ``ValueError`` at build, and so does a feature whose value is not a
+        whole number from ``layer_base`` to ``layer_base + nlay - 1`` -- below the
+        base, past the model's last layer, a fraction or a NULL -- naming every such
+        feature (ledger 393).
     layer_base : int, default 1
         What the first model layer is called in ``layer_field``.
     source_sha : str, optional
