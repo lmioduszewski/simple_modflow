@@ -139,7 +139,8 @@ def _stub(reference):
     calls = []
     pf = types.SimpleNamespace(
         spatial_reference=reference,
-        draw=lambda num_reals, use_specsim: calls.append((num_reals, use_specsim)) or "drawn",
+        draw=lambda num_reals, use_specsim, sigma_range, scale_offset: calls.append(
+            (num_reals, use_specsim, sigma_range, scale_offset)) or "drawn",
     )
     stub = types.SimpleNamespace(pf=pf, pyemu=None)
     stub._refuse_specsim_off_a_regular_grid = (
@@ -158,7 +159,8 @@ def test_specsim_is_passed_to_pyemu_only_on_a_regular_structured_grid():
     stub, calls = _stub(_structured([10.0] * 5))
     assert PestProject.draw_prior(stub, 7, use_specsim=True) == "drawn"
     assert PestProject.draw_prior(stub, 7) == "drawn"
-    assert calls == [(7, True), (7, False)]
+    # Both at the prior's one sigma range (ledger 424).
+    assert calls == [(7, True, 6, True), (7, False, 6, True)]
 
     stub, calls = _stub(_structured([10.0, 10.0, 20.0, 10.0, 10.0]))
     with pytest.raises(ValueError, match="not all one width.*use_specsim=False"):

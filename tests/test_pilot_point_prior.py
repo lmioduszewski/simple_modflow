@@ -129,3 +129,33 @@ def test_a_regularization_mode_control_file_is_refused_before_launch():
     # The ordinary mode passes straight through.
     project.pst.control_data.pestmode = "estimation"
     assert project._refuse_regularization_mode() is None
+
+
+def test_the_pilot_point_prior_spreads_as_far_as_its_bounds_say(tmp_path):
+    """The pilot draw took the variogram's sill of 1 as its log10 variance, whatever the
+    bounds: with bounds (0.5, 2) 77% of the values handed to PESTPP-IES lay outside
+    them and it ran each AT a bound. It is pyEMU's geostatistical draw now, the one a
+    correlated ``grid`` parameter of the same bounds gets: log10 standard deviation
+    ``log10(ub / lb) / 6`` (ledger 424)."""
+
+    pytest.importorskip("pyemu")
+    import myflopy as mf
+    from tests.test_pest_structured_grid import _build, _dis_run, _heads
+
+    model = mf.load_mf6_run(_dis_run(tmp_path / "run"))
+    cal = model.pest("bounds", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("k", style="pilotpoints", pp_space=1, correlation=30.0,
+                     bounds=(0.5, 2.0), name="kp")
+    cal.parameterize("k33", style="grid", correlation=30.0, bounds=(0.5, 2.0), name="kg")
+    cal.observe(_heads())
+    _build(cal, "bounds")
+    np.random.seed(11)
+    cal._inject_geostatistical_prior(200)
+    ensemble = pd.read_csv(cal.template_workspace / "bounds.prior_par.csv", index_col=0)
+    expected = np.log10(4.0) / 6
+    for prefix in ("kpl", "pname:kg"):
+        columns = [name for name in ensemble.columns if name.startswith(prefix)]
+        values = ensemble[columns].to_numpy()
+        assert len(columns) == 60
+        assert np.log10(values).std() == pytest.approx(expected, rel=0.15), prefix
+        assert ((values < 0.5) | (values > 2.0)).mean() < 0.01, prefix

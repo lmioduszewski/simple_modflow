@@ -117,6 +117,14 @@ _TARGET_SPEC_TYPES = (
 )
 
 
+#: How many standard deviations a parameter's bounds span in every prior draw: a
+#: log-transformed parameter of bounds ``(lb, ub)`` is drawn with a log10 standard
+#: deviation of ``log10(ub / lb) / PRIOR_SIGMA_RANGE``. ``6`` is ``PstFrom.draw``'s
+#: own default, which the correlated grid draw used all along; the pilot-point draw
+#: now uses it too (ledger 424).
+PRIOR_SIGMA_RANGE = 6
+
+
 def _pest_run_slug(name: str) -> str:
     """Filesystem-safe directory name for a PEST run's default workspace."""
 
@@ -1546,7 +1554,10 @@ class PestProject:
             raise ValueError("Call build() before draw_prior().")
         if use_specsim:
             self._refuse_specsim_off_a_regular_grid()
-        return self.pf.draw(num_reals=num_reals, use_specsim=bool(use_specsim))
+        return self.pf.draw(
+            num_reals=num_reals, use_specsim=bool(use_specsim),
+            sigma_range=PRIOR_SIGMA_RANGE, scale_offset=True,
+        )
 
     def _refuse_specsim_off_a_regular_grid(self) -> None:
         """Refuse spectral simulation unless ``PstFrom``'s spatial reference is a regular structured grid.
@@ -2338,6 +2349,14 @@ class PestProject:
         matters most where the data are thin: with a correlated prior, IES moves
         neighbouring points together and unobserved areas keep a plausible field,
         rather than each point wandering on its own.
+
+        The covariance is SCALED by the variance the bounds imply
+        (:data:`PRIOR_SIGMA_RANGE`), through pyEMU's own
+        ``helpers.geostatistical_draws`` -- the rule ``PstFrom.draw`` applies to a
+        correlated ``grid`` parameter. The unscaled variogram drew every pilot value
+        with a log10 standard deviation of 1.0, so with bounds ``(0.5, 2)`` 77% of the
+        draw lay outside them and PESTPP-IES, which holds the initial ensemble to the
+        bounds, ran each at a bound (ledger 424).
         """
 
         frames = self._pilot_point_frames.get(spec.name)
@@ -2347,27 +2366,35 @@ class PestProject:
 
         pyemu = self.pyemu or _import_pyemu()
         geostruct = self._geostruct_for(spec)
-        columns = []
-        for frame, _ in frames:
-            # One covariance per LAYER's point set: the layers are separate
-            # parameter groups here, and correlating across them would assert a
-            # vertical structure the variogram never described.
-            names = [str(name) for name in frame["parnme"]]
-            with self._quiet_pyemu_context():
-                cov = geostruct.covariance_matrix(
-                    frame["x"].to_numpy(dtype=float),
-                    frame["y"].to_numpy(dtype=float),
-                    names=names,
-                )
-                drawn = pyemu.ParameterEnsemble.from_gaussian_draw(
-                    pst=self.pst, cov=cov, num_reals=int(reals), by_groups=False,
-                    fill=False,
-                )
-            values = drawn._df if hasattr(drawn, "_df") else drawn
-            columns.append(values.loc[:, [name for name in names if name in values.columns]])
-        if not columns:
+        # One covariance per LAYER's point set: the layers are separate parameter
+        # groups here, and correlating across them would assert a vertical
+        # structure the variogram never described. pyEMU's own geostatistical draw,
+        # the one `pf.draw` makes for a correlated grid parameter: the variogram
+        # (sill 1) SCALED by the variance the bounds imply at PRIOR_SIGMA_RANGE.
+        # Drawn from the unscaled variogram, a pilot value's log10 standard
+        # deviation was 1.0 whatever its bounds -- 0.10 for a grid parameter of the
+        # same bounds (0.5, 2) -- so 77% of the draw lay outside them and
+        # PESTPP-IES ran it AT a bound (ledger 424).
+        layers = [
+            pd.DataFrame({
+                "parnme": [str(name) for name in frame["parnme"]],
+                "x": frame["x"].to_numpy(dtype=float),
+                "y": frame["y"].to_numpy(dtype=float),
+            })
+            for frame, _ in frames
+        ]
+        names = pd.Index([name for layer in layers for name in layer["parnme"]])
+        with self._quiet_pyemu_context(), contextlib.redirect_stdout(io.StringIO()):
+            drawn = pyemu.helpers.geostatistical_draws(
+                self.pst, struct_dict={geostruct: layers}, num_reals=int(reals),
+                sigma_range=PRIOR_SIGMA_RANGE, scale_offset=True, subset=names,
+                verbose=False,
+            )
+        values = drawn._df if hasattr(drawn, "_df") else drawn
+        kept = [name for name in names if name in values.columns]
+        if not kept:
             return None
-        return pd.concat(columns, axis=1)
+        return values.loc[:, kept]
 
     def _refuse_what_start_workers_would_delete(
         self, master: Path, workers: int, *, method: str, default: bool

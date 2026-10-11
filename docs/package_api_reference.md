@@ -828,7 +828,10 @@ likewise** (ledger 361): pyEMU deletes the master directory and `worker_0..N-1` 
 so each must be absent, empty, or a copy of this calibration's template; anything else is
 refused before pyEMU starts. **With `correlation=` on a `grid` or pilot-point parameter,
 `run_ies`/`prior` hand PESTPP-IES their own prior** (ledger 385): a draw of every
-parameter, each correlated pilot-point set's values from its own correlated draw.
+parameter, each correlated pilot-point set's values from its own correlated draw --
+pyEMU's geostatistical draw, its variance set by the bounds as a `grid` parameter's is
+(ledger 424; it took a log10 variance of 1 whatever the bounds, and PESTPP-IES ran
+77% of a `(0.5, 2)` draw at a bound).
 `cal.draw_prior(n)` draws the same way (`use_specsim=False` by default; `True`, pyEMU's
 spectral simulation, only on a regular structured grid -- refused on DISV, ledger
 384).

@@ -131,7 +131,12 @@ other parameter, stopped both calls before a model ran. `cal.draw_prior()` draws
 same way by default (`use_specsim=False`, ledger 384); pyEMU's spectral simulation
 (`use_specsim=True`) is possible only on a regular structured grid and is refused on a
 DISV/Voronoi one. PESTPP-IES holds the initial realizations to each parameter's bounds,
-so a drawn value beyond a bound runs at the bound.
+so a drawn value beyond a bound runs at the bound. **Every prior draw spreads as far as
+the bounds say** -- six standard deviations between them (`PRIOR_SIGMA_RANGE`), pyEMU's
+own rule -- pilot points included since ledger 424: their correlated draw took the
+variogram's sill as a log10 variance of 1 whatever the bounds, so with bounds `(0.5, 2)`
+77% of it lay outside them and PESTPP-IES ran those at a bound
+(`docs/reproducers/pilot_point_prior_bounds.py`). Widen the bounds to widen the prior.
 
 **On Tikhonov regularization: myflopy does not offer it, deliberately.** It is a
 PESTPP-GLM concept, and the runner here is PESTPP-IES, which prints

@@ -33,11 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 424 entries (429 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 425 entries (430 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
 | 425 | A reproducer that runs PEST++ makes `PYTHONPATH` absolute at start, through the one helper... | 2026-10-11 |
+| 424 | A correlated pilot-point prior is pyEMU's geostatistical draw, its variance set by the bounds as a `grid` p... | 2026-10-11 |
 | 423 | A target named `per` or `time`, in any case, is refused when the set is built | 2026-10-11 |
 | 422 | `to_wide()` has one row per stress period, `time` the period as `int`, and a column for every target, an al... | 2026-10-11 |
 | 421 | A PEST build refuses an input named by a RELATIVE path out of the run directory, naming it and the package... | 2026-10-11 |
@@ -17643,9 +17644,10 @@ same day, which is the useful part of the result.
       **Changes a seeded draw:** with pilot points the only correlated parameters, the
       whole-file draw now runs first, so `np.random.seed(...)` gives other pilot values
       than before.
-      **Not changed:** the correlated pilot draw is not truncated to the bounds, and
+      ~~**Not changed:** the correlated pilot draw is not truncated to the bounds, and
       PESTPP-IES holds the initial ensemble to them (`ies_enforce_bounds`): realization 0 of
-      the grid layout's test ran 41 of its 541 values at a bound.
+      the grid layout's test ran 41 of its 541 values at a bound.~~ The draw was too wide,
+      not untruncated: it is scaled by its bounds since ledger 424.
       Revert check: the old join fails both cases of
       `test_the_prior_holds_every_parameter_with_the_correlated_pilot_draw` and of
       `test_pestpp_ies_runs_the_prior_it_is_handed`, each a real PESTPP-IES prior run.
@@ -18289,6 +18291,28 @@ same day, which is the useful part of the result.
       `_shared.RESERVED_TARGET_NAMES`, asked by all six families.
       Test: `tests/test_pest_handed_targets.py::test_a_target_named_like_a_key_column_is_refused_naming_it`
       (18 cases; fails with the refusal removed).
+
+424. **A correlated pilot-point prior is pyEMU's geostatistical draw, its variance set by the bounds as a `grid` parameter's is (2026-10-11).**
+      Ledger 385's "not truncated". Measured, the defect was the draw's WIDTH, not a
+      missing truncation: `_draw_pilot_point_prior` drew from the variogram unscaled, so
+      every pilot value had a log10 standard deviation of 1.0 (sill 1) whatever its bounds,
+      where the correlated `grid` parameter beside it -- `PstFrom.draw` -- had ~0.10 for
+      the same bounds `(0.5, 2)` (0.104 on the reproducer's Voronoi toy, against 0.964
+      for its pilot points). 76.2% of the pilot draw lay outside the bounds and
+      PESTPP-IES 5.2.16 ran 76.1% of the values AT a bound: a prior piled on its two ends
+      (`docs/reproducers/pilot_point_prior_bounds.py`, before and after).
+      **Judgment call: scale, not truncate, and not leave.** Truncating (pyEMU's
+      `enforce(how="reset")`) does exactly what PESTPP-IES's `ies_enforce_bounds` already
+      does to the handed ensemble, so it changes nothing; pyEMU's OWN draws are not
+      truncated either -- they are scaled. The pilot draw now IS pyEMU's
+      (`helpers.geostatistical_draws`, one covariance per layer as before), at
+      `PRIOR_SIGMA_RANGE = 6`, the sigma range `draw_prior` now passes `PstFrom.draw`
+      explicitly (it was that call's default). After: 0.2% outside, log10 std 0.097.
+      **Changes every correlated pilot-point prior** -- a seeded draw gives other values,
+      ten times narrower in log10 for bounds `(0.5, 2)`; the correlation with distance
+      (ledger 119's test) is unchanged. A prior that must stay wide needs wider bounds.
+      Test: `tests/test_pilot_point_prior.py::test_the_pilot_point_prior_spreads_as_far_as_its_bounds_say`
+      (fails with the unscaled draw restored).
 
 425. **A reproducer that runs PEST++ makes `PYTHONPATH` absolute at start, through the one helper `tests/conftest.py` uses too (2026-10-11).**
       Ledger 354 fixed a relative `PYTHONPATH` for pytest only: a reproducer run as
