@@ -145,7 +145,27 @@ class TargetRegistry:
         self["drn_flow"] = value
 
     def __getitem__(self, key: str):
-        """Return the model-bound helper for the registered target ``key``."""
+        """Return the model-bound helper for the registered target ``key``.
+
+        Parameters
+        ----------
+        key : str
+            The name the set was registered under (``"heads"``, ``"lake_stage"``,
+            or any name given through ``registry[name] = ...``), matched exactly
+            and case-sensitively. A name not registered raises a plain
+            ``KeyError``. Pass a ``str``: registration, ``in`` and ``del`` store
+            and test ``str(key)``, but this lookup uses ``key`` as given, so a
+            set registered as ``registry[1]`` is found by ``registry["1"]`` and
+            ``registry[1]`` raises ``KeyError``.
+
+        Returns
+        -------
+        BoundHeadTargets, BoundLakeStageTargets, BoundSfrStageTargets, ...
+            The set bound to this registry's model -- a ``BoundSfrFlowTargets`` or
+            ``BoundDrnFlowTargets`` for a flow set. A ``ConcTargets`` set comes
+            back in a ``BoundHeadTargets`` (it subclasses ``HeadTargets``), which
+            reads the concentration file for it.
+        """
 
         return self._bind(self._targets[key])
 

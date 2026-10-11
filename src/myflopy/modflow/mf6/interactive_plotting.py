@@ -1583,6 +1583,32 @@ class SliderAnimation(Picture):
         and how many frames were rendered vs reused. ``resume=``, ``progress=``,
         ``embed_frames=`` and the rest ride through to
         :func:`export_matplotlib_slider_html`.
+
+        Each frame is drawn by its picture's Matplotlib renderer (``plot_mpl()``,
+        or the Axes of a Matplotlib picture) and saved as a PNG -- Plotly's
+        static export is not used, so ``kaleido`` is not needed.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The HTML file to write. Its parent directory is created, and a
+            ``<path>.lock`` file is held while it is written (an existing one
+            raises ``RuntimeError``).
+        **kwargs
+            Forwarded to :func:`export_matplotlib_slider_html`: ``dpi`` and
+            ``interval_ms`` (defaulting to this animation's own, 140 dpi and
+            700 ms unless it was built with others), ``embed_frames`` (default
+            ``True``, one self-contained file; ``False`` writes the PNGs to
+            ``frame_directory``, default ``<path stem>_frames`` beside it),
+            ``frame_indices``/``frame_stride``/``max_frames`` (a subset of the
+            frames), ``resume`` (reuse PNGs already written; needs
+            ``embed_frames=False``), ``progress`` and ``close_figures``.
+            ``labels`` and ``title`` are this animation's and raise ``TypeError``
+            as duplicates, as does any keyword that function does not take.
+
+        Returns
+        -------
+        StandaloneHtmlSlider
         """
 
         pictures = [picture for _, picture in self.frames]
@@ -1598,12 +1624,43 @@ class SliderAnimation(Picture):
         )
 
     def html(self, path, **kwargs):
-        """Write the standalone slider page and return its path."""
+        """Write the standalone slider page and return its path.
+
+        :meth:`export` returning only the path, as ``.html`` does on every picture.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The HTML file to write; its parent directory is created.
+        **kwargs
+            Forwarded to :meth:`export`, and through it to
+            :func:`export_matplotlib_slider_html` -- ``dpi``, ``embed_frames``,
+            ``max_frames``, ``progress``, ...; see :meth:`export`.
+
+        Returns
+        -------
+        pathlib.Path
+        """
 
         return self.export(path, **kwargs).path
 
     def save(self, path, **kwargs):
-        """Write the animation out; only ``.html`` can hold every frame."""
+        """Write the animation out; only ``.html`` can hold every frame.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The file to write. Its suffix must be ``.html`` or ``.htm`` (any
+            case), which is :meth:`html`; any other suffix raises ``ValueError``,
+            since a still image holds one frame.
+        **kwargs
+            Forwarded to :meth:`html`, and through it to :meth:`export` --
+            ``dpi``, ``embed_frames``, ``max_frames``, ...; see :meth:`export`.
+
+        Returns
+        -------
+        pathlib.Path
+        """
 
         from pathlib import Path as _Path
 
@@ -1616,7 +1673,22 @@ class SliderAnimation(Picture):
         )
 
     def show(self, *args, **kwargs):
-        """Display the animation inline (Jupyter) by embedding the slider page."""
+        """Display the animation inline (Jupyter) by embedding the slider page.
+
+        Writes the page to a temporary directory with :meth:`html`'s defaults
+        (frames embedded) and hands its text to IPython's ``display``, so it needs
+        IPython and returns what ``display`` returns (``None``).
+
+        Parameters
+        ----------
+        *args
+            Accepted for the :class:`~myflopy.viz.Picture` signature and IGNORED:
+            nothing is passed on.
+        **kwargs
+            Accepted and IGNORED the same way -- an export option such as
+            ``dpi=`` or ``max_frames=`` changes nothing here. Use
+            ``.html(path, ...)`` to write the page with them.
+        """
 
         import tempfile
 

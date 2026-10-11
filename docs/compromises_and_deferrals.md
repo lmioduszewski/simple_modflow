@@ -33,10 +33,16 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 435 entries (440 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 441 entries (446 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 441 | Defects the single-model read views' docstring pass found and documented rather than fixed | 2026-10-11 |
+| 440 | Defects the LAK/SFR/surface-water, budget-term and HFB views' docstring pass found and documented rather th... | 2026-10-11 |
+| 439 | Defects the group read views' docstring pass found and documented rather than fixed | 2026-10-11 |
+| 438 | Defects the lane-D docstring pass found and documented rather than fixed | 2026-10-11 |
+| 437 | A bound plot verb documents only the parameters it accepts | 2026-10-11 |
+| 436 | The docstring guard reaches the read-grammar views: a static walk from the exported surface finds 162 more... | 2026-10-11 |
 | 435 | `LayerTable` has no `layers` field, and a slider refuses one string as `labels` | 2026-10-11 |
 | 434 | The LAK/SFR exchange, stage and group diff hovers write each field in the model's own length and time units | 2026-10-11 |
 | 433 | `ModelContext(length_units=)` is checked at construction, and a surface declaring `units=` sampled with no... | 2026-10-11 |
@@ -15425,10 +15431,11 @@ same day, which is the useful part of the result.
       parameter is removed (ledgers 408, 410). The refinement ring vertices
       `optimize_seeds` documents as always fixed still are: freeing them moves default
       optimized meshes, left for the user (ledger 411).
-      **NOT covered** -- scope cut: the read-grammar views reached as
+      ~~**NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
-      `get`/`summary` are not. Parameters starting with `_` are private and skipped. A
+      `get`/`summary` are not.~~ -- covered since ledger 436, which walks to them from
+      the exported surface. Parameters starting with `_` are private and skipped. A
       class whose `__init__` belongs to another library (`GwfModel` and siblings,
       `Mf6Simulation`, the five `dict` libraries) is not measured as a constructor; its
       myflopy methods are.
@@ -18530,3 +18537,289 @@ same day, which is the useful part of the result.
       `a` and `b`); `_checked_labels` raises `TypeError` naming the list spelling.
       Revert check: `tests/test_hover_model_units.py::test_a_layer_table_has_no_layers_field_that_nothing_reads`,
       `tests/test_interactive_plotting.py::test_slider_refuses_one_string_as_labels`.
+
+436. **The docstring guard reaches the read-grammar views: a static walk from the exported surface finds 162 more classes and 400 callables, with no list (2026-10-11).**
+      `tests/test_public_parameters_documented.py`'s `reached_classes` adds a `reached`
+      tier: every myflopy class a user gets to from `__all__`/`__engine__`/the helpers by
+      reading an attribute (a property, `__getattr__`, or what `__init__` assigns to any
+      `self.<name>`), indexing, calling the object, or calling a public method (its return
+      annotation, its `Returns` type, or the class a `return X(...)` builds), following
+      the module functions and private methods those bodies call, plus every subclass of a
+      class reached. **Static, not a model walk** -- judgment call, measured: walking a run
+      canonical model and a `ModelGroup`/`ModelDiff` of it by `getattr` met 107 classes,
+      every one of which this finds or exports, and it misses the PRT views (the canonical
+      model has no PRT); built at collection it would cost an MF6 run per xdist worker.
+      Return annotations alone missed 56 of the 107 (`model.hds`, `model.budget`, every
+      `group.*`/`diff.*` namespace is unannotated) and `SpatialView`'s subclasses miss
+      every namespace that draws nothing. **A method's BODY is not followed** -- doing so
+      reached 27 more classes (188 against 162), all internal (`Boundaries`, hover blocks,
+      grid-building records). It imports every myflopy module to resolve names imported
+      under `TYPE_CHECKING` or inside functions; collection time did not move measurably
+      (4.6-4.9 s against 4.4-5.2 s for the script on a shared machine).
+      **Scope cuts:** a reached class's CONSTRUCTOR is not measured (myflopy builds every
+      one); its `__call__`/`__getitem__` are, but an EXPORTED class's are still not (that
+      tier is unchanged); `myflopy._vendor.figs` is left out, because its README forbids
+      editing the snapshot by hand (`GridMesh.fig` reaches it). A generated method is
+      measured by the text in its source, fence included, as in the other tiers.
+      **Counts.** 400 callables on 162 classes; at introduction 278 had gaps -- 780
+      entries missing or defective across 40 files -- and all 780 are now written. A
+      second pass read 745 of them against the code and corrected 126; the last seven
+      (`ModelPlots.mosaic`, spliced from `viz.mosaic`'s untyped heads) were written in
+      `viz.mosaic` and checked by running it. Per-file defect lists sit in ledgers
+      438 (plot views), 439 (group), 440 (LAK/SFR/HFB/budget terms) and
+      441 (single-model inputs, heads, budgets); the rest are below.
+      **Defects documenting found, LISTED AND NOT FIXED** (each docstring states what the
+      code does; R = reproduced in the pass, C = read from the code):
+      *Plot views* (`docs/reproducers/view_plot_docstring_claims.py` items 10-15, R): an
+      input field's `plot()` -- single-model, group and diff -- takes `agg="sum"`, so
+      `model.drn.inputs.elev.plot()` draws 1598.13 per period for drains averaging
+      133.18 (ledger 297 not applied to series); `mosaic(kind="section", <typo>=)`'s
+      `TypeError` offers `cells`, which the composer captures; `stack.plot.section(
+      legend="bottom")` draws at the upper right (`legend` is read for truth only);
+      `plot.grid(backend="mpl")` and `GridMesh.plot_mpl()` draw onto pyplot's CURRENT
+      figure; the interpolated profile reads `<name>.hds` whatever the model's kind
+      (`FileNotFoundError` on a GWT model) and labels a concentration profile `hds`.
+      *LAK/SFR/HFB* (R unless marked): `model.surface_water.results.q.get(include=[])`
+      returns an empty table rather than refusing; `vor.plot.map(bgs=True)` and
+      `show_mounding=True` on a bare grid raise `AttributeError` at `.fig`, as do both
+      HFB maps given either; C: `build_lak_connection_table` computes
+      `connection_area` for EMBEDDEDH/V connections, whose `connwidth` MF6 never reads.
+      *Single-model inputs*: `hover_fields` through a record or array noun's tail changes
+      the tooltip, while `NOUN_INERT_PARAMS`' comment says the noun's `hover_spec`
+      supersedes it (R).
+      *Calibration and pictures* (R unless marked): `CalibrationPlot` `type="heads"`
+      raises `KeyError` unless every location has a row in every layer any location has
+      (`add_heads` loops over all pairs; reached from `from_compare`, `from_targets` and
+      `HeadTargets.plots`); `from_compare(type="heads")` raises a bare `KeyError('time')`
+      on a table with neither `per` nor `time`; `from_compare` ignores a lone
+      `target_column` or `simulated_column`, draws `type="calibration"` for a typo'd
+      `type`, and ignores `title`/`yaxis_title` for `heads`/`residuals_by_period`; the
+      `calibration` plot labels its axes swapped (C); `from_timeseries` draws an empty
+      "Baseline" for a name `baseline_compare` lacks (C); `VtkScene.save("shot")` returns
+      a path PyVista did not write (`shot.png`), refuses `x.PNG`, and its `.html` route
+      ignores every keyword; `Picture.html` does not create a missing parent directory;
+      `FrameAnimation.html` picks the restyle page by "first trace has z", so a surface,
+      heatmap or 3-D frame breaks Play and the slider; `Choro.add_hillshade` reuses a
+      fixed `hillshade.png` whatever raster made it and raises for its default
+      `tif_path=None` (C); `Choro.add_overlay` after `.fig` never reaches that figure
+      (C); `InterpolatedSurface.save_raster` ignores `polygon_clip`/`buffer` when the
+      clipped image, transform and meta are passed (C).
+      *Diff tier* (`docs/reproducers/diff_results_tier.py`, R): the MVR diff reads
+      `FROM-MVR`/`TO-MVR` from the GWF budget, where MF6 writes `DRN-TO-MVR`/
+      `WEL-TO-MVR`, so it is always empty (and `docs/model_diff_cheatsheet.md`'s "empty
+      if no mover" is false); `diff.hds/conc/temp` difference MF6's 1e30; the LAK q diff
+      joins on exact `kstpkper` and on wetted `FLOW-AREA` (2 of 72 connections dropped
+      at period 3); `diff.bud` differences `time_step`/`stress_period`/`tslen`;
+      `diff.packages.uzf.results.sat` raises `ValueError` (two `sat` columns, ledger
+      439); `ModelDiff.package_names`/`connection_package_names` find a package
+      by NAME prefix, not TYPE (a DRN named `seeps` is never compared and `report()` says
+      "identical"); `ModelDiff.package(name)` answers the namespace's own attributes;
+      `ConfigDiff.settings(section=<typo>)` returns an empty frame; the focused
+      `cells`/`values("lak"|"sfr")` raise a bare `AttributeError`; `PackageDiff.values`
+      never validates `model_name`, and several `get`/`summary` check it only when there
+      are rows; an explicit `layer=` overrides the layers tuple cellids name; `tags="abc"`
+      splits into characters. *Regions* (R): `add_from_cells`/`model.add_region` pass a
+      non-tuple cellid through `int()` (5.7 is cell 5, `"5"` accepted);
+      `RegionRegistry.add` takes any object, and a `RegionGroup` breaks
+      `region_summary()`/`summary()`; `resolve_cells("unknown")` says "Group".
+      *Observation targets* (R): `HeadTargets.plots.obs_vs_sim(ax=)`/`timeseries(ax=)`
+      ignore `ax`; `timeseries(name)` draws a well screened in two layers as one line
+      zig-zagging between them (and its period sort is not stable); a bound `ConcTargets`'
+      pictures are titled for heads; `HeadTargets.to_flopy_obs`/`attach_flopy_obs`
+      accept any `kind` (`"bogus"` is written) and the bound default `kind="HEAD"` is
+      passed for a `ConcTargets`, which a GWT OBS file refuses.
+      *PEST review and PRT* (R): `IesResults.plot_sensitivity(top=0)` raises `cannot
+      convert float NaN to integer`; `forecast(name)` takes a str only;
+      `parameters_at_bounds(which=)` reads the prior for anything but `"posterior"`;
+      `realization=` and `best("base")` fall back silently; Plotly `bins=` refuses a rule
+      name and takes edges with a meaningless size; `plot_field(which=)` is
+      case-sensitive and a bare-string `which=` in `plot_field_mosaic` iterates its
+      characters; `plot_obs_residuals`' markers ignore `colorscale`/`zmin`/`zmax`;
+      `plot_field(title=)` raises on Plotly and is ignored on mpl; `conflict` accepts a
+      coverage in [-1, 0); `plot_phi_contributions(kind=)` accepts typos;
+      `ies._normalize_backend` is a second backend resolver (accepts `"go"`/`"sns"`,
+      refuses `"interactive"`/`"static"`); `sensitivity(forecast=)` needs the exact
+      name. The PRT `travel_time`/`endpoints`/`capture` `.map(**kwargs)` tails reach a
+      private signature: `fill_value=` paints unreached cells (documented as blank) and
+      `value_column=`/`hover_spec=` raise "multiple values"; `PRTCaptureView.map(group=)`
+      ignores `ncols`/`sync_views`/`title`; `PRTPathlineView.get(group=)` matches the
+      upper-cased boundname exactly with no refusal; an unknown travel-time `stat` raises
+      a pandas `AttributeError`; `layer=1.7` is truncated to 1; and the PRT tails escape
+      `test_noun_signatures`.
+      *Docs*: `stack.plot.map()`'s generated `Returns` says `Choro`; it returns a
+      `LayerThicknessMap`.
+
+437. **A bound plot verb documents only the parameters it accepts (2026-10-11).**
+      `_inherit_verb_docs` spliced every entry of the free verb's reference into the bound
+      namespaces, so `vor.plot.section` documented 21 entries (`per`, `cells`, `layers`,
+      `**kwargs`, ...) and `vor.plot.grid`/`stack.plot.grid` 9 each (the vtk pathline
+      options) for parameters those scopes do not take -- each raises `TypeError` there.
+      A bound method with no `**kwargs` tail now inherits only the entries it accepts
+      (`plot._accepted_entry_names`). **Judgment call: a method WITH a tail keeps every
+      entry**, because the splice cannot know where a tail goes. That leaves
+      `stack.plot.section` documenting 23 free-verb parameters its tail hands to
+      `LayerSection`, whose renderer takes none of them, so each raises `TypeError` at the
+      first draw rather than at the call; its own `**kwargs` entry says so, and narrowing
+      that tail is a code change left undone (ledger 438).
+
+438. **Defects the lane-D docstring pass found and documented rather than fixed (2026-10-11).**
+      Writing the missing entries in the seven view/plot files (instructed: document the
+      truth, do not change code) turned these up, each measured; each docstring now says
+      what the code does. **Silent drops:** `SpatialView.mosaic`/`.animate` ignore their
+      `**kwargs` on `kind="plot"`, ignore the named `cells`/`agg` on `kind="map"`
+      (`model.drn.results.q.mosaic(agg="count")` draws the sum, where `.map(agg="count")`
+      draws counts), and cannot pass `cells` to `kind="section"` (the named parameter
+      captures it; the section fails with `object of type 'NoneType' has no len()`);
+      `SpatialView.plot` -- and the composers through `_series_selection` -- ignore
+      `layer=`/`cells=` on a table without that column; `SliderAnimation.show` ignores
+      its `*args`/`**kwargs`; `LayerSection.draw(color_by=...)` is not checked as the
+      constructor checks it (any value but `'thickness'` draws the layer picture); under
+      `color_by='thickness'` the section's `cmap` and `legend` change nothing (the fill is
+      `viridis`); a continuous `cmap` draws every layer nearly the same colour, because
+      layer `k` takes `cmap(k % 10)`, an index into a 256-step table, and an eleventh
+      layer repeats the first; the `figs` cross-section helper ignores `layer`/
+      `simplify_tolerance`/`sheet_name`/`read_kwargs` for the table `XSection.plot_mpl`
+      and `GridSection.plot_mpl` hand it. **Verbs and defaults that cannot act or lie:**
+      `FieldMappable.section` raises `NotImplementedError` for every field of every
+      namespace that has it (50 of 50 on the canonical model, 14 of 14 on a group of it);
+      a diff's LAK/SFR `results` list `'stage'` as a field whose node has no verbs, so
+      `map(field="stage")` raises `AttributeError`; `StackPlots.map(layer=0)`
+      raised `ValueError: list.index(x): x not in list` while its docstring promised an
+      index (it now says name only); `XSection.plot_mpl` labels the y axis
+      `Elevation (ft)` whatever the length unit or the field; `stack.plot.map(
+      bounds_padding=...)` without `extent=` raises a message saying the map "honours only
+      extent=/bounds_padding=". **Two rules for one selector:** `FieldMappable` matches
+      `field=` exactly (`'Stage'` raises) and `LeafFieldSugar` lower-cases it.
+      Measured by `docs/reproducers/view_plot_docstring_claims.py`.
+
+439. **Defects the group read views' docstring pass found and documented rather than fixed (2026-10-11).**
+      Writing the missing entries in `project/group/{budget,inputs,results,sfr,uzf,lak,
+      spatial,surface_water}.py` (instructed: document the truth, do not change code)
+      turned these up, each measured in `docs/reproducers/group_view_docstring_claims.py`;
+      each docstring now says what the code does. **Steps paired, not periods:**
+      `group.packages.lak.results.q.compare()` and `group.bud(...).compare()` join on the
+      EXACT `kstpkper` (LAK also on MF6's wetted `FLOW-AREA`), never reducing to period
+      ends as the rest of the group tier does (ledger 337): at nstp 1 against 2 they diff
+      the reference's period end against the other member's FIRST step (up to 209 ft3/d
+      on a canonical connection), and LAK drops 2 of 432 rows whose wetted area differs.
+      **Elevations added, records cross-paired:** the group inputs `map()`/`compare_map()`
+      take `agg="sum"` whatever the field's kind -- two GHB records of `bhead` 5 and 7
+      draw 12.0 where `model.ghb.inputs.bhead.map()` draws 6.0 (ledger 297, at the group
+      tier) -- and `GroupPackageInputs.compare()` joins a cell's records pairwise, so a
+      change of 1.0 in each draws 4.0, through `group.diff()` too. **Sentinels:**
+      `group.hds/conc/temp.compare()` difference MF6's 1e30 (a cell dry in one member
+      only reads a diff of 1e30) and `compare_map`'s default colour range becomes
+      plus/minus 1e30 (ledger 315's rule is not applied at this tier). **One absent
+      package ends the call:** a member without LAK or UZF makes the group LAK views and
+      `uzf.inputs.<field>` raise `AttributeError`, where the inputs, cell-result, SFR and
+      surface-water views leave it out. **Accepted, then ignored or replacing:** `agg` on
+      the LAK and SFR `compare_map`; `values=` in every `compare_map` tail, which replaces
+      the drawn differences while the hover keeps them; `show_mounding` through
+      `lak.connections.map`'s tail, which its own docstring calls worse than inert;
+      `per` beside `kstpkper` on `group.hds.get`/`compare`. An unknown `model_name`,
+      `connection_type` or `lak_connection_type` returns no rows rather than refusing.
+      **Also:** the LAK/SFR `compare_map` hovers read `ft/d`/`ft²/d` and the heads one
+      `ft` whatever the model's units; `group.hds.get` raises an opaque `TypeError` on a
+      tuple `layer` or a bare-int `cells`, which its siblings accept; `compare_map`
+      refuses a member whose discretization file differs in `botm` alone ("require the
+      same grid"); and an input table holds the period BLOCKS written, so a CHD declared
+      in period 0 reads 0 rows at `per=1`, single-model and group alike, while MF6 runs it
+      in every period. **Two `sat` columns:** `group.packages.uzf.results.sat` (and
+      `model.uzf.results.sat`) read NPF's `DATA-SAT`, whose table holds the record's flow
+      (0.0) renamed `sat` beside the saturation, so `compare()`/`compare_map()` raise
+      `ValueError` and `map()` `AttributeError`. One docstring was simply wrong and is
+      corrected: `lak.connections.map`'s `multiplier` acts AFTER `agg`, not before.
+
+440. **Defects the LAK/SFR/surface-water, budget-term and HFB views' docstring pass found and documented rather than fixed (2026-10-11).**
+      Writing the missing entries in `modflow/mf6/{package_surface_water,package_results,
+      package_model}.py` (instructed: document the truth, do not change code) turned these
+      up, each measured in `docs/reproducers/surface_water_hfb_view_claims.py`; each
+      docstring now says what the code does. **Wrong numbers:** `model.sfr.results.q`
+      joins each `SFR` record to the reach table on the CELL, not on its own reach
+      (`node2`), so a cell of three reaches carries nine rows and
+      `model.sfr.results.profile` gives each reach the cell's total (canonical cell 195:
+      -493.56 for reaches 22, 37 and 38, whose own flows are -20.91, -471.96, -0.69); the
+      SFR q MAP is unaffected (a ratio of tripled sums), and so is
+      `model.surface_water.results.q`'s `exchange_intensity`, while its SFR `q` and `rlen`
+      columns are tripled there (-1480.68 for -493.56). A LAK results row's `flow_area`
+      is MF6's own wetted `FLOW-AREA` -- a vertical connection's whole cell area or 0.0 --
+      not the `connection_area` formula `build_lak_budget_result_table`'s docstring
+      (`package_budget.py`, not this pass's file) still states. `model.hfb.results.q.get()` lists
+      every period block's barriers at every step whichever block is in force (MF6
+      REPLACES a period's barriers with a later block's: after a period-3 block of 3 faces
+      the 55 period-0 rows carry 21,809 ft3/d of open-face flow), and `hfb.inputs.map()` /
+      `segments(per=)` read the block DECLARED in a period -- `per=1` draws nothing while
+      period 0's barriers are in force, and `per=None` draws every block. **Lies the prose
+      told, corrected:** the HFB maps paint their backdrop by CELL NUMBER (not "plain"),
+      and the results map does not colour a barrier by its flow (Plotly's trace cycle; all
+      black on mpl); a record map's `multiplier` acts AFTER `agg` and scales the
+      `fill_value` cells -- except when the selection holds no record, which draws the
+      fill unscaled (1.0 against 2.0); `exchange_intensity` is length²/time on an SFR cell
+      and length/time on a LAK cell, not one comparable unit; an inputs table carries every
+      record in every period, not "all under period 0". **Refusals missing or wrong:**
+      `model.sfr.budget.<term>.wide()`'s default `index=("per", "lake")` raises
+      `KeyError: 'lake'` on every SFR term; `lak|sfr.budget.get(term="ext_inflow")` matches
+      nothing in silence; both SFR profile views draw by reach number for ANY `x` but
+      `"distance"` (a typo included), and `distance_*` is a running total of `rlen` in
+      reach-number order, not a channel distance on a branched network;
+      `model.lak.connections.map(per=)` raises a `TypeError` naming `ModelPlots.map`
+      while the entry spliced from `plot.map` documents `per` (the `record` keep set in
+      `plot._inherit_noun_docs`, not fixed here); `hfb.results.q.map` with a `per` and a
+      `kstpkper` that disagree raises `KeyError: 'layer'`; an unknown map trace property
+      is ignored under `backend="mpl"`; `model.budget["model"]`/`["types"]` return
+      namespace attributes and an unknown term raises `AttributeError`, not `KeyError`.
+      The SFR/LAK q maps' `agg` stays "accepted and not used". **Judgment call:** a noun
+      map's `**trace_kwargs` is documented in the noun's OWN text, not spliced from
+      `plot.map`, because its tail is not the free verb's (it refuses `values`/`type`/the
+      legacy hover trio first and reaches the verb's unnamed parameters by name); each is a
+      pinned shadow in `tests/docstring_shadows.json`.
+
+441. **Defects the single-model read views' docstring pass found and documented rather than fixed (2026-10-11).**
+      Writing the missing entries in `modflow/mf6/{package_inputs,headsplus,budget}.py`,
+      `modflow/utils/inputs.py`, `project/model_config.py`, `library.py` and
+      `modflow/mf6/observations/registry.py` (instructed: document the truth, do not change
+      code) turned these up, each measured in `docs/reproducers/view_docstring_claims.py`;
+      each docstring now says what the code does. **Silent wrong answers:** an input table
+      holds the period BLOCKS written, so `ghb.inputs.get(per=3)` and
+      `ghb.inputs.cond.map(per=3)` read no records for a GHB written once, in period 0,
+      while MF6 runs it in every period (UZF's `inputs.<field>` likewise; ledger 439
+      has the group twin) -- and that READ ADDS an empty block `per` to the FloPy package
+      (FloPy's `get_data(key=)` creates the storage it is asked for), so a model written
+      afterwards carries an empty PERIOD block and MF6 applies no GHB from period 3 on
+      (measured through MF6: 84 records -> 0 in periods 3-5, Normal termination; a view
+      changed the model). `ModelConfig.model_options` reports `newtonoptions="NEWTON"` for
+      a model holding an EMPTY `newtonoptions` (`""`/`[]`), which FloPy writes as no option,
+      so a rebuild from it turns NEWTON on. `model.bud(pkg).plot_budget_obs` does not
+      reproject its area polygons to the grid's CRS (an EPSG:4326 file reads 0.0 for every
+      area), keeps only
+      the FIRST record on a cell, returns an empty table for a `q` the budget lacks, labels
+      rows from the HEAD file's clock (ledger 301) and draws `y_range=None` as `[0, 4]`.
+      `hds.get_obs_heads(<str path>)` ignores the string and reads the constructor's
+      `obs_path`, and `get_obs_cells` gives a polygon over several cells the FIRST of them
+      (its one-cell `assert` tests the outer list of ledger 192's `{name: [[cells]]}`
+      shape, so it never fires). `hds.long()`/`wide()` keep MF6's +/-1e30 (ledger 315's rule is not
+      applied there). `ModelConfig.from_model(model.gwf)` and `config.section(<typo>)` come
+      back empty. **Accepted, then forwarded or ignored:** every record and array noun's
+      `**trace_kwargs` tail carries `show_mounding` (and `kstpkper`/`per_timestep`/`bgs`/
+      `hover_layers`) to the free verb unrefused -- on five nouns `show_mounding=True` keeps
+      the colours and adds a head-derived row to every tooltip, which their own docstrings
+      call worse than inert; refusing it is `NOUN_REFUSED_PARAMS`' job, and the narrowing
+      rule (a dropped name still rides the tail) is why it was not. `transmissivity_max
+      .get(per=)`; `get_obs_cells(crs=)`, which reprojects the points on to the grid's CRS
+      regardless; `long`/`wide(values=)`, whose one legal value is `store_column` (`"elev"`,
+      not `"head"`); `LakBudget`/`SFRBudget.get(return_df=)`, which only the literal `False`
+      changes. **Loud failures:** `model.outputs.sfr.bud.plot_flows()` raises
+      `KeyError: 'rno'` on every model (FloPy 3.10 names the column `ifno`);
+      `model.inputs.rch.map()`'s default `per=None` raises `KeyError`, and a float
+      `multiplier` raises `TypeError` on a package carrying boundnames; `inputs.uzf.finf`
+      raises `UnboundLocalError` for a NumPy integer `per` and `ValueError` for two UZF
+      objects under one cell; `plot_budget_obs` raises on a multi-part area polygon in a
+      `.gpkg` (a `.shp`'s is read whole and works), on a file with no CRS and on a `str`
+      path; a second `get_obs_heads` on one reader raises "No observation path found";
+      `AoiLibrary.setdefault(1, ...)` stores `'1'` and then raises `TypeError`;
+      `TargetRegistry[1]` raises `KeyError` for a set stored by `registry[1] = ...`.
+      **Prose corrected:** the record nouns called `show_layer_elevs`/`hover_surfaces`
+      deliberately absent though both are named and act (ledger 258), `UzfInput.finf`
+      said it returned a Series (it is a DataFrame), and "measured byte-identical" did not
+      hold for `hover_layers` where a picture keeps a heads or transmissivity hover: it
+      reshapes the tooltip of `model.inputs.uzf.map` and `npf.transmissivity.map`.

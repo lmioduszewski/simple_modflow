@@ -251,12 +251,38 @@ class ModelConfig:
 
     @classmethod
     def from_model(cls, model) -> ModelConfig:
-        """Extract the configuration settings from a live or loaded model."""
+        """Extract the configuration settings from a live or loaded model.
+
+        Parameters
+        ----------
+        model : SimulationBase
+            A myflopy model -- ``model.config`` passes itself. Read duck-typed:
+            ``model.sim.tdis`` gives the ``tdis`` section, ``model.ims`` (else the
+            first IMS in ``model.sim.sim_package_list``, else ``model.sim.ims``)
+            the ``ims`` section, and ``model.gwf`` the ``model`` section (its name
+            file) plus one section per package, named by the package's NAME in
+            lower case. Each of the three is skipped when its attribute is
+            missing, so an object exposing none of them -- a bare FloPy
+            ``ModflowGwf``, which has no ``.sim``/``.gwf`` -- gives an EMPTY config
+            with no error.
+        """
 
         return cls(_extract_settings(model))
 
     def settings(self, *, section: str | None = None) -> pd.DataFrame:
-        """Return the ``(section, setting, value)`` table, optionally filtered."""
+        """Return the ``(section, setting, value)`` table, optionally filtered.
+
+        Parameters
+        ----------
+        section : str, optional
+            Keep only this section's rows, re-indexed from 0. Matched exactly after
+            ``str(section).lower()``, so ``"IMS"`` reads ``ims``. The sections are
+            ``tdis``, ``ims``, ``model`` and each package's NAME in lower case
+            (``npf``, ``oc``, a second RIV's ``crisp``) -- see :attr:`sections`. A
+            name no section carries returns an empty table, not an error. Default
+            ``None``: every row. Always a copy; editing it leaves the config as it
+            was.
+        """
 
         frame = self._settings.copy()
         if section is not None:
@@ -270,7 +296,17 @@ class ModelConfig:
         return list(dict.fromkeys(self._settings["section"].tolist()))
 
     def section(self, name: str) -> dict:
-        """Return one section's settings as a ``{setting: value}`` mapping."""
+        """Return one section's settings as a ``{setting: value}`` mapping.
+
+        Parameters
+        ----------
+        name : str
+            The section, matched as :meth:`settings` matches ``section=``: exactly,
+            after ``str(name).lower()`` -- ``tdis``, ``ims``, ``model`` or a
+            package's NAME in lower case (:attr:`sections` lists them). A name no
+            section carries returns ``{}``, not an error, so a misspelt section
+            reads as one with no settings.
+        """
 
         frame = self.settings(section=name)
         return dict(zip(frame["setting"], frame["value"], strict=False))
@@ -303,6 +339,22 @@ class ModelConfig:
         this module imports nothing from myflopy but ``_logging`` -- and is not: a bare
         ``import myflopy`` succeeds while the test suite's import order hits a circular
         import through ``myflopy.project.__init__``. Measured, not assumed.
+
+        Parameters
+        ----------
+        gwf : flopy.mf6.ModflowGwf
+            The FloPy flow model -- ``model.gwf``, or any object with a
+            ``name_file``. Its name file's options block is read for the eight
+            names in ``MODEL_OPTION_NAMES`` (``list``, ``print_input``,
+            ``print_flows``, ``save_flows``, ``newtonoptions`` and the three
+            NetCDF ``*_filerecord`` entries, which are kept here because a
+            rebuild needs them). An option the model does not set is left out,
+            while one set to ``False`` comes back as ``False``;
+            ``newtonoptions`` comes back as ``"NEWTON"`` or its modifiers
+            (``["under_relaxation"]``), the forms ``mf.gwf`` takes -- and as
+            ``"NEWTON"`` too for a model holding an EMPTY ``newtonoptions``
+            (``""``/``[]``), which FloPy writes as no option at all (measured;
+            ledger 441). An object with no ``name_file`` gives ``{}``.
         """
 
         return _model_option_kwargs(gwf)

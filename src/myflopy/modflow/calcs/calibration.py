@@ -282,7 +282,64 @@ class CalibrationPlot(f.Fig):
         title: str | None = None,
         yaxis_title: str | None = None,
     ):
-        """Build a calibration plot directly from a compare/residual DataFrame."""
+        """Build a calibration plot directly from a compare/residual DataFrame.
+
+        Always a Plotly figure: this entry point has no ``backend=``.
+
+        Parameters
+        ----------
+        compare : pandas.DataFrame
+            A compare or residual table, one row per target row, as a target
+            set's ``compare(model)`` returns it. It is copied, never edited. It
+            must hold a target/simulated value pair: the two columns named
+            below, else the first of ``("head_target", "sim_head")``,
+            ``("stage_target", "sim_stage")``, ``("flow_target", "sim_flow")``,
+            ``("target_value", "sim_value")`` and ``("value_target",
+            "sim_value")`` it carries. With neither, ``ValueError``. That
+            inference runs for every ``type``, including those that do not
+            plot the pair.
+        type : str, default "calibration"
+            Which plot:
+
+            - ``"calibration"``: target (x) against simulated (y), one point per
+              row with fit statistics, titled "Calibration" by default;
+            - ``"obs_vs_sim"``: the same cross plot without the statistics,
+              titled "Observed vs simulated" by default;
+            - ``"heads"``: target and simulated values against the period, one
+              pair of lines per location and layer. A table without ``name``
+              or ``layer`` raises ``ValueError``. The period is ``per``, else
+              ``time``: a table with neither raises ``KeyError``, and a
+              non-numeric or missing value raises ``ValueError``. Every
+              location must have rows in EVERY layer the table names, or
+              ``KeyError`` (a well in layer 0 beside one in layer 1 raises).
+              The pair is read as heads, and ``title`` and ``yaxis_title`` are
+              ignored;
+            - ``"residuals_by_period"``: mean ``abs_residual`` per ``time``
+              (:meth:`from_residuals_by_period`). ``title``, ``yaxis_title`` and
+              the value pair are ignored.
+
+            Any other string, a misspelling included, draws the
+            ``"calibration"`` plot without a word.
+        target_column : str, optional
+            The column of target values (the x axis of a cross plot). It is used
+            only when ``simulated_column`` is ALSO given. Given alone, it is
+            ignored in silence and the pair is inferred as above. A named column
+            the table lacks raises ``ValueError``.
+        simulated_column : str, optional
+            The column of simulated values (the y axis), under the same rule:
+            it counts only together with ``target_column``.
+        title : str, optional
+            Title of a cross plot. The default ``None`` (or ``""``) gives that
+            plot's own title, listed under ``type``.
+        yaxis_title : str, optional
+            Y-axis title of a cross plot. The default ``None`` (or ``""``) gives
+            ``"Simulated"``. The x-axis is always titled ``"Observed"``.
+
+        Returns
+        -------
+        CalibrationPlot
+            A Plotly figure (a ``viz.Fig``).
+        """
 
         resolved_target, resolved_simulated = _infer_compare_value_columns(
             compare,
@@ -321,7 +378,38 @@ class CalibrationPlot(f.Fig):
 
     @classmethod
     def from_targets(cls, targets, *, model=None, type: str = "calibration"):
-        """Build a calibration plot from ``HeadTargets`` or a bound target helper."""
+        """Build a calibration plot from ``HeadTargets`` or a bound target helper.
+
+        The value columns are inferred from the comparison table
+        (:meth:`from_compare`), and titles take their defaults. Use a target
+        set's own ``plot`` for the family's titles.
+
+        Parameters
+        ----------
+        targets : object
+            Anything with a ``compare(model)`` method returning a compare table:
+            a raw target set (``HeadTargets``, ``ConcTargets``,
+            ``LakeStageTargets``, ``SfrStageTargets``, ``SfrFlowTargets``,
+            ``DrnFlowTargets``) or a model-bound helper (``model.targets.heads``
+            and its siblings). An object with a ``targets`` attribute is read as
+            BOUND.
+        model : SimulationBase, optional
+            The run model to compare against. A raw target set needs it, and
+            ``ValueError`` follows without it. For a bound helper, the default
+            ``None`` uses the model it is bound to, and a model given here is
+            compared INSTEAD.
+        type : str, default "calibration"
+            Which plot, passed to :meth:`from_compare`, whose entry lists the
+            values. A misspelling draws the ``"calibration"`` plot. ``"heads"``
+            needs a ``layer`` column, which lake, SFR and drain comparisons do
+            not have (``ValueError``), and raises ``KeyError`` when a head
+            target location has no row in a layer another location has.
+
+        Returns
+        -------
+        CalibrationPlot
+            A Plotly figure (a ``viz.Fig``).
+        """
 
         if hasattr(targets, "targets") and model is None:
             compare = targets.compare()
@@ -355,6 +443,49 @@ class CalibrationPlot(f.Fig):
         reach on a stage target's stage-file route) is not drawn and is left out
         of the 1:1 line and the statistics (ledger 355); the compare table is not
         changed.
+
+        A row missing either value is not drawn. When no row has both, the
+        figure carries a note saying which side is missing and a
+        ``UserWarning`` is issued.
+
+        Parameters
+        ----------
+        compare : pandas.DataFrame
+            A compare table holding ``target_column`` and ``simulated_column``
+            (``ValueError`` naming a missing one). It is copied, never edited.
+        baseline_compare : pandas.DataFrame, optional
+            A second compare table with the same two columns, such as the run
+            before a calibration, drawn as a "Baseline" series. Its values
+            widen the 1:1 line and stay out of the statistics. The default
+            ``None`` draws none.
+        target_column : str, default "head_target"
+            The column of target values, on the x axis.
+        simulated_column : str, default "sim_head"
+            The column of simulated values, on the y axis. Its no-value markers
+            are blanked as described above.
+        title : str, default "Observed vs simulated heads"
+            Figure title.
+        xaxis_title : str, default "Observed"
+            X-axis title.
+        yaxis_title : str, default "Simulated"
+            Y-axis title.
+        add_stats : bool, default False
+            Annotate ME, MAE, RMSE, NRMSE, NSE and R^2 of the model's points
+            (simulated minus target; ME, MAE and RMSE in the values' own units,
+            the other three unitless), upper left: to 3
+            decimals on Plotly (:meth:`add_stats`), to 3 significant figures on
+            Matplotlib. Nothing is added when no row has both values.
+        backend : str, default "plotly"
+            ``"plotly"`` (or ``"go"``) returns this interactive Plotly figure.
+            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) returns a
+            static ``matplotlib.figure.Figure`` in seaborn's whitegrid style.
+            Case and surrounding spaces are ignored, and any other value raises
+            ``ValueError``.
+
+        Returns
+        -------
+        CalibrationPlot or matplotlib.figure.Figure
+            By ``backend``.
         """
 
         checked, blanked = _blank_no_value(
@@ -493,6 +624,56 @@ class CalibrationPlot(f.Fig):
         MODFLOW's no-value marker (``|value| >= 1e29``: a dry or inactive SFR
         reach on a stage target's stage-file route) is a gap in the line, the
         model's and the baseline's (ledger 355); the compare table is not changed.
+
+        Rows are drawn in ``time`` order, numerically when every ``time`` is a
+        number. The x-axis is titled "Time / period".
+
+        Parameters
+        ----------
+        compare : pandas.DataFrame
+            A compare table holding ``name``, ``time``, ``target_column`` and
+            ``simulated_column`` (``ValueError`` naming a missing one). It is
+            copied, never edited.
+        name : str, optional
+            The target location to draw. It is matched against ``name``
+            case-insensitively, after stripping spaces from the value given
+            here. The default ``None`` is the table's one location, and it
+            raises ``ValueError`` when the table holds more than one. A name
+            no row carries raises ``ValueError``.
+        baseline_compare : pandas.DataFrame, optional
+            A second compare table, drawn as a third line from its rows for the
+            same ``name``. It needs ``name``, ``time`` and ``simulated_column``
+            only; its targets are not drawn. A baseline with no row for that
+            name draws an empty line, with no error. The default ``None`` draws
+            none.
+        target_column : str, default "head_target"
+            The column of target values.
+        simulated_column : str, default "sim_head"
+            The column of simulated values, read from ``compare`` and from
+            ``baseline_compare``.
+        target_label : str, default "Target"
+            Legend name of the target line.
+        simulated_label : str, default "Model"
+            Legend name of the simulated line.
+        baseline_label : str, default "Baseline"
+            Legend name of the baseline line. Unused without
+            ``baseline_compare``.
+        yaxis_title : str, default "Head"
+            Y-axis title. Give the quantity for a stage or flow table.
+        title : str, optional
+            Figure title. The default ``None`` (or ``""``) is the location's
+            name as the earliest matching row (in ``time`` order) spells it.
+        backend : str, default "plotly"
+            ``"plotly"`` (or ``"go"``) returns this interactive Plotly figure.
+            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) returns a
+            static ``matplotlib.figure.Figure`` in seaborn's whitegrid style.
+            Case and surrounding spaces are ignored, and any other value raises
+            ``ValueError``.
+
+        Returns
+        -------
+        CalibrationPlot or matplotlib.figure.Figure
+            By ``backend``.
         """
 
         frame, _ = _blank_no_value(
@@ -591,6 +772,35 @@ class CalibrationPlot(f.Fig):
         SFR reach on a stage target's stage-file route) is left out of its
         period's mean, and a period with nothing else is a gap (ledger 355); the
         compare table is not changed.
+
+        Rows are grouped by their ``time`` value, not by ``per``. A row whose
+        ``abs_residual`` is NaN (an unmeasured target row) is skipped by the
+        mean. The x-axis is titled "Time / period".
+
+        Parameters
+        ----------
+        compare : pandas.DataFrame
+            A compare table holding ``time`` and ``abs_residual`` (in the target
+            values' own units). ``ValueError`` names a missing one. It is never
+            edited.
+        baseline_compare : pandas.DataFrame, optional
+            A second compare table with the same two columns, drawn as
+            "Baseline MAE". The default ``None`` draws none.
+        title : str, default "Residual MAE by period"
+            Figure title.
+        yaxis_title : str, default "Mean absolute error"
+            Y-axis title.
+        backend : str, default "plotly"
+            ``"plotly"`` (or ``"go"``) returns this interactive Plotly figure.
+            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) returns a
+            static ``matplotlib.figure.Figure`` in seaborn's whitegrid style.
+            Case and surrounding spaces are ignored, and any other value raises
+            ``ValueError``.
+
+        Returns
+        -------
+        CalibrationPlot or matplotlib.figure.Figure
+            By ``backend``.
         """
 
         def _period_mae(data, caller):
@@ -851,25 +1061,32 @@ class CalibrationPlot(f.Fig):
             observed: list = None,
             simulated: list = None,
     ):
-        """
-        Computes calibration statistics between observed and simulated data, formats
-        them into a string for annotation, and adds the annotation to a plotly figure.
+        """Annotate this figure with calibration statistics and return them as text.
 
-        The function optionally accepts 'observed' and 'simulated' data as input
-        parameters. If not provided, default attributes of the class, namely
-        'self.observed' and 'self.simulated', are used. The calibration statistics
-        are computed using the 'calculate_calibration_statistics' utility and are
-        annotated at the upper-left corner of the plot.
+        The statistics come from :func:`calculate_calibration_statistics`, on
+        ``simulated - observed``: ME, MAE, RMSE, NRMSE (RMSE over the observed
+        range), NSE and R^2, in the values' own units where they have one. They
+        are written to 3 decimals in a box at the upper left.
 
-        :param observed: A list of observed values. If not provided, defaults to the
-                         attribute 'self.observed'. Can also accept a pandas DataFrame,
-                         in which case, the 'elev' column is extracted as a list.
-        :param simulated: A list of simulated values. If not provided, defaults to the
-                          attribute 'self.simulated'. Can also accept a pandas DataFrame,
-                          in which case, the 'elev' column is extracted as a list.
-        :return: A string representation of the calibration statistics formatted
-                 with line breaks. Returns None when there is a mismatch in the length
-                 or data type of the 'observed' and 'simulated' inputs.
+        Parameters
+        ----------
+        observed : array-like or pandas.DataFrame, optional
+            The target values. The default ``None`` uses ``self.observed``, set
+            by the constructor or the ``observed`` property. On a figure built
+            by a ``from_*`` method it is None, and leaving either argument out
+            then raises ``TypeError``.
+        simulated : array-like or pandas.DataFrame, optional
+            The simulated values, defaulting to ``self.simulated`` the same way.
+            When BOTH are DataFrames, each must have exactly one column
+            (``ValueError`` otherwise). They are paired by INDEX, and a row
+            with a NaN on either side is dropped. Otherwise both are flattened
+            and paired by POSITION. Their lengths must match (``ValueError``),
+            and a NaN is kept, which makes every statistic NaN.
+
+        Returns
+        -------
+        str
+            The statistics, one ``"name: value"`` per line, joined by ``<br>``.
         """
 
         observed = self.observed if observed is None else observed

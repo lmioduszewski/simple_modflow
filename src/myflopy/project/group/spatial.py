@@ -195,14 +195,38 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
     ) -> pd.DataFrame:
         """Return this field, aligned across all models in the group.
 
+        Each member's full value table (``all_heads``/``all_conc``/``all_temp``)
+        with a ``model`` column: one row per saved step, layer and cell, the
+        values as the file holds them -- a DRY or INACTIVE cell keeps MF6's
+        ``-1e30``/``+1e30`` here; nothing masks it (ledger 315's rule is not
+        applied at this tier, ledger 439).
+
         Parameters
         ----------
-        per, kstpkper
-            Optional stress-period selector. ``per`` is zero-based.
-        layer
-            Optional zero-based layer or layers to keep.
-        cells
-            Optional zero-based cell ids to keep.
+        per : int or None, optional
+            Keep one stress period, zero-based, read at its LAST saved step on
+            each member's own clock (``period_end.last_saved_step``, ledger 337),
+            so members of different ``nstp`` each give their own period end. A
+            member that saved nothing in it raises ``ValueError`` naming the
+            periods it has. Ignored when ``kstpkper`` is given. Default ``None``:
+            every saved step.
+        kstpkper : tuple of (int, int) or None, optional
+            Keep one exact saved step, zero-based ``(kstp, kper)``, on every
+            member -- which, across members of different ``nstp``, need not be
+            the same time in the period; a member that did not save it adds no
+            rows. Wins over ``per`` when both are given. Default ``None``.
+        layer : int or list of int or None, optional
+            Keep these zero-based layers -- an int or a LIST (a tuple raises
+            ``TypeError``). Default ``None``: every layer.
+        cells : list of int or None, optional
+            Keep these zero-based cell numbers within a layer -- any iterable of
+            ints (a bare int raises ``TypeError``). Default ``None``: every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``kstpkper``, ``layer``, ``cell`` and the field's value
+            column (``elev`` for heads, in model length; ``conc``; ``temp``).
         """
 
         frames = []
@@ -240,7 +264,40 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
         layer: int | list[int] | None = None,
         cells: list[int] | None = None,
     ) -> pd.DataFrame:
-        """Compare this field for all models against the group's reference model."""
+        """Compare this field for all models against the group's reference model.
+
+        The rows :meth:`get` selects are reduced to each member's own LAST saved
+        step of every period (``_reduce_to_period_end``) and paired with the
+        reference's on ``per``, ``layer`` and ``cell``, so members of different
+        ``nstp`` align by stress period. The values are differenced as the file
+        holds them: a cell DRY or INACTIVE in one member and not the other
+        differences against MF6's ``1e30`` sentinel (a ``diff`` of order
+        ``1e30``), and one dry in both reads 0.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Compare one stress period, zero-based -- each member's own last saved
+            step of it (:meth:`get`). Default ``None``: every period.
+        kstpkper : tuple of (int, int) or None, optional
+            Compare one exact saved step, zero-based ``(kstp, kper)``, on every
+            member; it then stands for period ``kper`` whatever its ``kstp``.
+            Wins over ``per`` when both are given. Default ``None``.
+        layer : int or list of int or None, optional
+            Compare these zero-based layers -- an int or a LIST (a tuple raises
+            ``TypeError``). Default ``None``: every layer.
+        cells : list of int or None, optional
+            Compare these zero-based cell numbers within a layer (an iterable of
+            ints; a bare int raises ``TypeError``). Default ``None``: every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, ``kstpkper`` (the compared member's
+            step), ``per``, ``layer``, ``cell``, the value column,
+            ``reference_<value>`` and ``diff`` -- always member minus reference.
+            Empty, with those columns, when :meth:`get` is.
+        """
 
         data = self.get(per=per, kstpkper=kstpkper, layer=layer, cells=cells)
         reference_column = f"reference_{self.value_column}"
@@ -292,13 +349,59 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
     ):
         """Diverging choropleth of this field's differences (model - reference).
 
-        Colors every Voronoi cell by ``diff`` for one stress period and layer,
-        using the same diff-map payload + rendering as the package diff maps.
-        ``model_name`` selects the compared model (inferred when the group has a
-        single non-reference model). ``per`` / ``layer`` are zero-based.
+        Colors every Voronoi cell by ``diff`` (:meth:`compare`) for one stress
+        period and layer, using the same diff-map payload + rendering as the
+        package diff maps. A cell dry or inactive in one member only draws a
+        difference of order ``1e30`` (either sign), and the default colour range
+        then spans plus/minus ``1e30``,
+        which draws every real difference white -- pass ``zmin``/``zmax``.
 
         Internal plumbing: the public route is the one ``diff()`` verb --
         ``group.diff().hds.map(...)`` / ``.conc`` / ``.temp``.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            The non-reference member to compare. Default ``None`` takes the
+            group's one non-reference member and raises ``ValueError`` when there
+            are several; the reference itself raises ``ValueError`` and a name not
+            in the group ``KeyError``. The member must have the reference's
+            discretization FILE content, read from each workspace (a changed
+            ``botm`` or ``idomain`` refuses too), grid type and ``ncpl``, or
+            ``ValueError``.
+        per : int, default 0
+            The stress period drawn, zero-based -- each member's own last saved
+            step of it; a member that saved nothing in it raises ``ValueError``.
+        layer : int, default 0
+            The zero-based layer drawn.
+        multiplier : float, default 1.0
+            Scales every drawn difference -- a unit conversion or a sign flip --
+            and the filled cells with them, except when the selection is empty
+            (every cell is then ``fill_value`` as given).
+        fill_value : float, default 0.0
+            The value of a cell with no comparison row; every cell has one in a
+            member's value table, so it acts only when a selection is empty.
+            ``float("nan")`` leaves such cells blank.
+        colorscale : str or list or None, optional
+            Any Plotly colorscale name or explicit stops. Default ``None``: the
+            group diff scale -- red at the negative end (lower than the
+            reference), white at zero, blue at the positive end.
+        **kwargs
+            Forwarded to the reference model's ``model.plot.map(...)``: its named
+            drawing options (``contours``, ``select``, ``features``, ``extent``,
+            ``backend``, ...) and its Plotly trace tail. ``zmin``/``zmax`` default
+            to plus/minus the largest absolute value drawn (a filled cell's
+            included), ``zmid`` to 0 and ``hover_spec`` to the comparison hover
+            (``value_unit`` from the class, ``ft`` for heads whatever the model's
+            units are); passing them overrides those. The names this method fills
+            itself beyond its own parameters (``type``, ``custom_zs``,
+            ``custom_hover``, ``hover_heads``, ``hover_ks``) raise ``TypeError``;
+            ``values=`` REPLACES the drawn differences while the hover keeps them.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            The map picture, or a bare Matplotlib figure with ``backend="mpl"``.
         """
 
         target_name = _resolve_group_compare_target(self.group, model_name)

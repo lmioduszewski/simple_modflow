@@ -1055,7 +1055,10 @@ class HeadTargets:
               per row, with fit statistics;
             - ``"obs_vs_sim"``: the same cross plot without the statistics;
             - ``"heads"``: target and simulated values through time, one pair of
-              lines per location and layer;
+              lines per location and layer -- which RAISES ``KeyError`` unless
+              every location is observed in every layer any location is
+              (measured: two wells, one in layer 0 and one in layer 1; and the
+              canonical model's own set);
             - ``"residuals_by_period"``: mean absolute residual per ``time``.
 
             Any other string draws the ``"calibration"`` plot.
@@ -1072,7 +1075,13 @@ class HeadTargets:
 
 
 class BoundHeadTargets:
-    """Model-bound head-target helper returned from ``model.targets.heads``."""
+    """Model-bound head-target helper returned from ``model.targets.heads``.
+
+    Every method reads the BOUND model unless given another: ``model=None`` (the
+    default) means the model the registry was read from. A ``ConcTargets`` set
+    registered on ``model.targets`` is bound by this class too (it is a
+    ``HeadTargets`` subclass), so "head" below reads "concentration" for one.
+    """
 
     def __init__(self, model, targets: HeadTargets):
         """Bind ``targets`` to ``model`` so its methods default to that model."""
@@ -1102,32 +1111,133 @@ class BoundHeadTargets:
         return self.targets.summary()
 
     def plot_locations(self, *, ax=None, **kwargs):
-        """Plot the target locations on a map axis (delegates to the wrapped targets)."""
+        """Plot the target locations on a map axis (delegates to the wrapped targets).
+
+        The bound model takes no part: the points are drawn in the CRS their
+        locations carry, not reprojected to the grid's.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes or None, optional
+            Axes to draw on. Default ``None`` makes a new figure and axes.
+        **kwargs
+            Forwarded unchanged to ``geopandas.GeoDataFrame.plot`` (for example
+            ``color=``, ``markersize=``); one it does not take raises there.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes, titled "Head Target Locations".
+
+        Raises
+        ------
+        ValueError
+            When the locations carry no geometry -- targets given as cell ids,
+            as the canonical model's are.
+        """
 
         return self.targets.plot_locations(ax=ax, **kwargs)
 
     def match_to_model(self, model=None) -> pd.DataFrame:
-        """Match each target location to its grid cell (defaults to the bound model)."""
+        """Match each target location to its grid cell (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The model to match against. Default ``None`` uses the bound model;
+            any other model-like object exposing ``vor.gdf_vorPolys`` is used
+            instead. Matching is :meth:`HeadTargets.match_to_model`'s: one cell
+            per point, active in the target's own layer, a miss warned about by
+            name and none landing raising ``ValueError``. A target given as a
+            cell id (the canonical model's are) is checked instead: an id the
+            grid does not have, or one inactive in its layer, raises
+            ``ValueError``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per MATCHED target location, with its ``cell`` and ``layer``.
+        """
 
         return self.targets.match_to_model(self.model if model is None else model)
 
     def simulated_heads(self, model=None) -> pd.DataFrame:
-        """Simulated heads at the target locations (defaults to the bound model)."""
+        """Simulated heads at the target locations (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model whose head (or concentration) file is read. Default
+            ``None`` uses the bound model; another run reads that run's file for
+            the same targets. Each period's value is the one at its END (ledger
+            336), as :meth:`HeadTargets.simulated_heads` reads it, whose
+            ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``per`` plus one column per observation label, in the field's units
+            (model length units for a head).
+        """
 
         return self.targets.simulated_heads(self.model if model is None else model)
 
     def compare(self, model=None) -> pd.DataFrame:
-        """Compare observed vs simulated heads (defaults to the bound model)."""
+        """Compare observed vs simulated heads (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against. Default ``None`` uses the bound
+            model; another run compares the same targets against it -- what the
+            plots' ``baseline=`` does. Read as :meth:`HeadTargets.compare` reads
+            it (each target's ``time`` a zero-based stress period, the head at
+            its END), whose ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per target row: the target's columns plus ``per``, ``cell``,
+            ``sim_head``, ``residual`` (simulated minus target) and
+            ``abs_residual``.
+        """
 
         return self.targets.compare(self.model if model is None else model)
 
     def residuals(self, model=None) -> pd.DataFrame:
-        """The residual table for the head targets (defaults to the bound model)."""
+        """The residual table for the head targets (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against, as in :meth:`compare`. Default
+            ``None`` uses the bound model.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`compare`'s rows, reduced as :meth:`HeadTargets.residuals`
+            reduces them (``name`` ... ``residual``, ``abs_residual``,
+            ``weight``).
+        """
 
         return self.targets.residuals(self.model if model is None else model)
 
     def stats(self, model=None) -> pd.DataFrame:
-        """Aggregate residual statistics (defaults to the bound model)."""
+        """Aggregate residual statistics (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against, as in :meth:`compare`. Default
+            ``None`` uses the bound model.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n``, ``mean_error``, ``mae`` and ``rmse`` of simulated
+            minus target, in the field's units (:meth:`HeadTargets.stats`).
+        """
 
         return self.targets.stats(self.model if model is None else model)
 
@@ -1137,7 +1247,31 @@ class BoundHeadTargets:
         csv_name: str = "head_targets.csv",
         kind: str = "HEAD",
     ):
-        """A FloPy ``continuous`` observation dict for the head targets on the bound model."""
+        """A FloPy ``continuous`` observation dict for the head targets on the bound model.
+
+        The targets are matched against the BOUND model
+        (:meth:`HeadTargets.observation_labels`): one record per matched target,
+        a target on no active cell left out with a warning, none landing
+        ``ValueError``.
+
+        Parameters
+        ----------
+        csv_name : str, optional
+            The CSV file MF6 writes these observations to -- the dict's one key,
+            passed through ``str``. Default ``"head_targets.csv"``.
+        kind : str, optional
+            The MF6 observation type written on every record, upper-cased and
+            not checked here: MF6 reads it when the model runs. Default
+            ``"HEAD"``. A bound ``ConcTargets`` inherits this default, which a
+            GWT model's OBS file refuses ("Observation type not found: HEAD",
+            measured): pass ``kind="CONCENTRATION"`` there.
+
+        Returns
+        -------
+        dict of str to list of tuple
+            ``{csv_name: [(obsname, kind, (layer, cell)), ...]}``, the cell id
+            zero-based, as :meth:`HeadTargets.to_flopy_obs` returns it.
+        """
 
         return self.targets.to_flopy_obs(self.model, csv_name=csv_name, kind=kind)
 
@@ -1150,7 +1284,39 @@ class BoundHeadTargets:
         kind: str = "HEAD",
         package=None,
     ):
-        """Attach an MF6 head observation package to the bound model."""
+        """Attach an MF6 head observation package to the bound model.
+
+        The targets are matched against the bound model (:meth:`to_flopy_obs`)
+        and the package is added to its FloPy objects in memory; writing and
+        running the simulation afterwards is the caller's.
+
+        Parameters
+        ----------
+        pname : str, optional
+            FloPy package name of the OBS package. Default ``"gwf_obs"``.
+        filename : str or pathlib.Path, optional
+            The OBS input file name FloPy writes, relative to the owning model's
+            directory; its stem names the default ``csv_name``. Default
+            ``"head_targets.obs"``.
+        csv_name : str or None, optional
+            The CSV file MF6 writes the observations to. Default ``None`` takes
+            ``filename``'s stem plus ``.csv`` (``"head_targets.csv"`` for the
+            default ``filename``).
+        kind : str, optional
+            The MF6 observation type, as in :meth:`to_flopy_obs`: upper-cased,
+            not checked, default ``"HEAD"`` -- on a bound ``ConcTargets`` too,
+            where MF6 refuses it: pass ``kind="CONCENTRATION"``.
+        package : flopy object or None, optional
+            The FloPy model or package to attach the OBS package to. Default
+            ``None`` attaches it to the bound model's FloPy model, ``model.gwf``
+            (on a transport model, the GWT model). The records are matched
+            against the bound model either way.
+
+        Returns
+        -------
+        flopy.mf6.modflow.mfutlobs.ModflowUtlobs
+            The observation package.
+        """
 
         return self.targets.attach_flopy_obs(
             self.model,
@@ -1162,7 +1328,31 @@ class BoundHeadTargets:
         )
 
     def calibration_plot(self, *, type: str = "calibration"):
-        """A calibration plot for the head targets on the bound model."""
+        """A calibration plot for the head targets on the bound model.
+
+        Parameters
+        ----------
+        type : str, optional
+            Which plot, drawn from :meth:`compare` on the bound model (whose
+            ``Raises`` apply):
+
+            - ``"calibration"`` (default): target against simulated, one point
+              per row, with fit statistics;
+            - ``"obs_vs_sim"``: the same cross plot without the statistics;
+            - ``"heads"``: target and simulated values through time, one pair of
+              lines per location and layer -- which RAISES ``KeyError`` unless
+              every location is observed in every layer any location is
+              (measured: two wells, one in layer 0 and one in layer 1; and the
+              canonical model's own set);
+            - ``"residuals_by_period"``: mean absolute residual per ``time``.
+
+            Any other string draws the ``"calibration"`` plot.
+
+        Returns
+        -------
+        myflopy.modflow.calcs.calibration.CalibrationPlot
+            A Plotly figure (a ``viz.Fig``).
+        """
 
         return self.targets.calibration_plot(self.model, type=type)
 
@@ -1176,7 +1366,11 @@ class BoundHeadTargets:
 
 
 class BoundHeadTargetPlots:
-    """Plotting facade for model-bound head targets."""
+    """Plotting facade for model-bound head targets (``model.targets.heads.plot``).
+
+    Every picture is drawn from the bound targets' ``compare()`` on the bound
+    model; a ``baseline`` model adds the same comparison on a second run.
+    """
 
     def __init__(self, bound_targets: BoundHeadTargets):
         """Wrap a :class:`BoundHeadTargets` to expose its plotting helpers."""
@@ -1196,19 +1390,86 @@ class BoundHeadTargetPlots:
         return self.bound_targets.targets
 
     def locations(self, *, ax=None, **kwargs):
-        """Plot target locations on a map axis."""
+        """Plot target locations on a map axis (:meth:`BoundHeadTargets.plot_locations`).
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes or None, optional
+            Axes to draw on. Default ``None`` makes a new figure and axes.
+        **kwargs
+            Forwarded unchanged to ``geopandas.GeoDataFrame.plot`` (for example
+            ``color=``, ``markersize=``); one it does not take raises there.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The axes, titled "Head Target Locations".
+
+        Raises
+        ------
+        ValueError
+            When the locations carry no geometry -- targets given as cell ids.
+        """
 
         return self.targets.plot_locations(ax=ax, **kwargs)
 
     def calibration(self, *, type: str = "calibration"):
-        """Return a calibration/heads plot for the bound targets."""
+        """Return a calibration/heads plot for the bound targets.
+
+        Parameters
+        ----------
+        type : str, optional
+            Which plot, as :meth:`BoundHeadTargets.calibration_plot` reads it:
+            ``"calibration"`` (default, the cross plot with fit statistics),
+            ``"obs_vs_sim"`` (without them), ``"heads"`` (values through time,
+            one pair of lines per location and layer; ``KeyError`` unless every
+            location is observed in every layer any location is) or
+            ``"residuals_by_period"``; any other string draws ``"calibration"``.
+
+        Returns
+        -------
+        myflopy.modflow.calcs.calibration.CalibrationPlot
+            A Plotly figure (a ``viz.Fig``). There is no ``backend``: use
+            :meth:`obs_vs_sim` or :meth:`residuals_by_period` for a static one.
+        """
 
         return self.bound_targets.calibration_plot(type=type)
 
     def obs_vs_sim(self, *, baseline=None, ax=None, backend: str = "plotly"):
         """Return a target-vs-simulated cross plot for one or two models.
 
-        ``backend`` selects ``"plotly"`` (default) or ``"matplotlib"``.
+        One point per comparison row holding both a target and a simulated
+        value, in the field's units (model length units for a head), with a 1:1
+        line spanning every value drawn; titled "Observed vs simulated heads"
+        (on a bound ``ConcTargets`` too). A simulated value that is MODFLOW's
+        no-value marker (``|value| >= 1e29``) is not drawn (ledger 355). When no
+        row of the bound model's comparison holds both values, its series is
+        empty, the figure carries a note naming the missing side, and a
+        ``UserWarning`` says so.
+
+        Parameters
+        ----------
+        baseline : SimulationBase or None, optional
+            A second run model: the SAME targets compared against it are drawn
+            as a "Baseline" series beside the bound model's "Model" series.
+            Default ``None`` draws the bound model alone. Its comparison raises
+            as the bound model's does.
+        ax : object, optional
+            ACCEPTED AND IGNORED, default ``None``: nothing is drawn on it and a
+            new figure is returned on either backend (measured: a Matplotlib
+            axes passed with ``backend="mpl"`` stays empty).
+        backend : str, optional
+            ``"plotly"`` (default; also ``"go"``) returns a
+            :class:`~myflopy.modflow.calcs.calibration.CalibrationPlot`;
+            ``"matplotlib"`` (also ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
+            ``matplotlib.figure.Figure``. Case and surrounding space are
+            ignored; anything else raises ``ValueError``, after the comparisons
+            have run.
+
+        Returns
+        -------
+        CalibrationPlot or matplotlib.figure.Figure
+            The cross plot, per ``backend``.
         """
 
         from myflopy.modflow.calcs.calibration import CalibrationPlot
@@ -1220,7 +1481,39 @@ class BoundHeadTargetPlots:
     def timeseries(self, name: str | None = None, *, baseline=None, ax=None, backend: str = "plotly"):
         """Return a time-series plot for one target location.
 
-        ``backend`` selects ``"plotly"`` (default) or ``"matplotlib"``.
+        The target's values ("Target") and the bound model's ("Model") against
+        the target's ``time`` -- the zero-based stress period -- in the field's
+        units, titled with the target's name; the y axis is titled "Head" (on a
+        bound ``ConcTargets`` too). A simulated no-value marker
+        (``|value| >= 1e29``) is a gap in the line (ledger 355).
+
+        Parameters
+        ----------
+        name : str or None, optional
+            The target to draw, matched against the comparison's ``name``
+            column ignoring case (and the argument's surrounding space). Default
+            ``None`` draws the set's only name, and raises ``ValueError`` when
+            the set holds more than one; a name matching no row raises
+            ``ValueError`` too. EVERY row carrying the name is drawn as ONE line
+            sorted by ``time``, so a well screened in two layers zig-zags between
+            its layers' heads period by period (measured on the canonical
+            model).
+        baseline : SimulationBase or None, optional
+            A second run model whose simulated values for the same target are
+            drawn as a "Baseline" line. Default ``None`` draws the bound model
+            alone.
+        ax : object, optional
+            ACCEPTED AND IGNORED, default ``None``: nothing is drawn on it and a
+            new figure is returned on either backend (measured).
+        backend : str, optional
+            ``"plotly"`` (default; also ``"go"``) or ``"matplotlib"`` (also
+            ``"mpl"``, ``"seaborn"``, ``"sns"``), as in :meth:`obs_vs_sim`;
+            anything else raises ``ValueError``.
+
+        Returns
+        -------
+        CalibrationPlot or matplotlib.figure.Figure
+            The time series, per ``backend``.
         """
 
         from myflopy.modflow.calcs.calibration import CalibrationPlot
@@ -1237,7 +1530,25 @@ class BoundHeadTargetPlots:
     def residuals_by_period(self, *, baseline=None, backend: str = "plotly"):
         """Return a by-period residual summary plot.
 
-        ``backend`` selects ``"plotly"`` (default) or ``"matplotlib"``.
+        The mean absolute residual of the measured rows in each ``time`` (the
+        zero-based stress period), "Model MAE", titled "Residual MAE by period";
+        a period with no measured row is a gap, and a residual against MODFLOW's
+        no-value marker is left out of its mean (ledger 355).
+
+        Parameters
+        ----------
+        baseline : SimulationBase or None, optional
+            A second run model whose per-period MAE for the same targets is drawn
+            as "Baseline MAE". Default ``None`` draws the bound model alone.
+        backend : str, optional
+            ``"plotly"`` (default; also ``"go"``) or ``"matplotlib"`` (also
+            ``"mpl"``, ``"seaborn"``, ``"sns"``), as in :meth:`obs_vs_sim`;
+            anything else raises ``ValueError``.
+
+        Returns
+        -------
+        CalibrationPlot or matplotlib.figure.Figure
+            The period summary, per ``backend``.
         """
 
         from myflopy.modflow.calcs.calibration import CalibrationPlot
@@ -1249,5 +1560,3 @@ class BoundHeadTargetPlots:
             baseline_compare=baseline_frame,
             backend=backend,
         )
-
-

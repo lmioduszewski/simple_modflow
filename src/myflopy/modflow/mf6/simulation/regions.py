@@ -164,12 +164,58 @@ class RegionRegistry:
         return name in self._regions or name in self._groups
 
     def __getitem__(self, name: str) -> ModelRegion | RegionGroup:
-        """The registered region or group named ``name`` (see :meth:`get`)."""
+        """The registered region or group named ``name``: ``model.regions["site"]``.
+
+        The same lookup as :meth:`get`.
+
+        Parameters
+        ----------
+        name : str
+            A region's or a group's name -- the two share one namespace. An unknown
+            name raises ``KeyError``.
+
+        Returns
+        -------
+        ModelRegion or RegionGroup
+            The registered object itself, not a copy.
+        """
 
         return self.get(name)
 
     def add(self, region: ModelRegion, *, overwrite: bool = False) -> ModelRegion:
-        """Register a concrete region object."""
+        """Register a region object built by hand.
+
+        The object is stored as given, not copied, so a later edit to its ``cells``
+        shows through every lookup and every group naming it. Nothing here checks
+        it -- not its type, not its cells against the model's grid, not its
+        ``layer`` -- which is what :meth:`add_from_cells` and
+        :meth:`add_from_geometry` do on the way to calling this.
+
+        Parameters
+        ----------
+        region : ModelRegion
+            The region, registered under ``region.name``. Any object carrying a
+            ``name`` is accepted, but reading it back reads its region fields: a
+            :class:`RegionGroup` passed here registers as a region, and
+            :meth:`resolve_cells` on it then raises ``AttributeError`` (no
+            ``cells``), as do :meth:`region_summary` and :meth:`summary` from then
+            on (no ``package``). A group is :meth:`add_group`'s.
+        overwrite : bool, optional
+            Default ``False`` raises ``ValueError`` when a region of that name is
+            registered; ``True`` replaces it, and every group naming it resolves to
+            the new one. A name a GROUP holds raises ``ValueError`` either way.
+
+        Returns
+        -------
+        ModelRegion
+            ``region`` itself.
+
+        Raises
+        ------
+        ValueError
+            If ``region.name`` is a group's name, or an existing region's without
+            ``overwrite=True``.
+        """
         if region.name in self._groups:
             raise ValueError(f"Cannot add region {region.name!r}; a group with that name already exists")
         if not overwrite and region.name in self._regions:
@@ -186,7 +232,52 @@ class RegionRegistry:
         metadata: dict[str, Any] | None = None,
         overwrite: bool = False,
     ) -> RegionGroup:
-        """Create or replace a named group of regions/groups."""
+        """Create or replace a named group of regions/groups.
+
+        A group holds region and group NAMES, resolved to cells only when read
+        (:meth:`resolve_cells`), so a later change to a member shows through.
+
+        Parameters
+        ----------
+        name : str
+            Group name. A name a REGION holds raises ``ValueError`` whatever
+            ``overwrite`` says.
+        members : iterable of str or None, optional
+            Region or group names to add, in order, each through
+            :meth:`add_to_group`: an unknown name raises ``KeyError``, one that
+            would make a cycle (``name`` itself, or a group already containing
+            ``name``) ``ValueError``, and a repeated name is kept once. A refused
+            member leaves the registry exactly as it was before the call -- no
+            group ``name`` if there was none, the previous one under
+            ``overwrite=True`` (ledger 375). Default ``None`` creates an empty
+            group.
+        tags : iterable of str or None, optional
+            Labels, copied into a list on the group and shown by
+            :meth:`group_summary`; nothing reads them. Any iterable is copied item
+            by item, so a bare string is split into its characters
+            (``tags="wells"`` stores five one-letter tags) -- pass a list. Default
+            ``None`` stores none.
+        metadata : dict or None, optional
+            Free key/values, copied into a dict on the group; nothing reads them.
+            Default ``None`` stores an empty dict.
+        overwrite : bool, optional
+            Default ``False`` raises ``ValueError`` when a group called ``name``
+            exists; ``True`` replaces it with the new group once every member has
+            been accepted. Groups that named the old one now resolve to the new.
+
+        Returns
+        -------
+        RegionGroup
+            The registered group.
+
+        Raises
+        ------
+        ValueError
+            If ``name`` is a region's name, an existing group's without
+            ``overwrite=True``, or a member would make a cycle.
+        KeyError
+            If a ``members`` name is neither a region nor a group.
+        """
         if name in self._regions:
             raise ValueError(f"Cannot add group {name!r}; a region with that name already exists")
         if not overwrite and name in self._groups:
@@ -220,7 +311,24 @@ class RegionRegistry:
         return group
 
     def add_to_group(self, group_name: str, member_name: str) -> RegionGroup:
-        """Add an existing region or group to another group."""
+        """Add an existing region or group to another group.
+
+        Parameters
+        ----------
+        group_name : str
+            The group to add to. An unknown name, or a region's, raises
+            ``KeyError``.
+        member_name : str
+            A registered region or group name; an unknown one raises ``KeyError``.
+            ``group_name`` itself, or a group that already contains ``group_name``
+            directly or through its subgroups (a cycle), raises ``ValueError``.
+            Adding a member already present changes nothing.
+
+        Returns
+        -------
+        RegionGroup
+            The updated group.
+        """
         group = self.get_group(group_name)
         if member_name not in self:
             raise KeyError(f"Cannot add {member_name!r} to {group_name!r}; member does not exist")
@@ -232,13 +340,44 @@ class RegionRegistry:
         return group
 
     def remove_from_group(self, group_name: str, member_name: str) -> RegionGroup:
-        """Remove one member from a named group."""
+        """Remove one member from a named group.
+
+        Only the membership goes; the member itself stays registered (:meth:`remove`
+        deletes it).
+
+        Parameters
+        ----------
+        group_name : str
+            The group to remove from. An unknown name, or a region's, raises
+            ``KeyError``.
+        member_name : str
+            The member to drop. A name that is not a member -- registered or not --
+            is ignored without an error.
+
+        Returns
+        -------
+        RegionGroup
+            The updated group.
+        """
         group = self.get_group(group_name)
         group.members = [member for member in group.members if member != member_name]
         return group
 
     def remove(self, name: str) -> ModelRegion | RegionGroup:
-        """Remove a region or group and detach it from all groups."""
+        """Remove a region or group and detach it from all groups.
+
+        Parameters
+        ----------
+        name : str
+            A region or group name; an unknown one raises ``KeyError``. The name is
+            also dropped from the members of every group. Removing a group does not
+            remove its members.
+
+        Returns
+        -------
+        ModelRegion or RegionGroup
+            The removed object.
+        """
         if name in self._regions:
             removed = self._regions.pop(name)
         elif name in self._groups:
@@ -252,7 +391,19 @@ class RegionRegistry:
         return removed
 
     def get(self, name: str) -> ModelRegion | RegionGroup:
-        """Return either a region or a group by name."""
+        """Return either a region or a group by name.
+
+        Parameters
+        ----------
+        name : str
+            A region's or a group's name -- the two share one namespace. An unknown
+            name raises ``KeyError``.
+
+        Returns
+        -------
+        ModelRegion or RegionGroup
+            The registered object itself, not a copy.
+        """
         if name in self._regions:
             return self._regions[name]
         if name in self._groups:
@@ -260,13 +411,37 @@ class RegionRegistry:
         raise KeyError(f"{name!r} does not exist")
 
     def get_region(self, name: str) -> ModelRegion:
-        """Return one concrete region by name."""
+        """Return one concrete region by name.
+
+        Parameters
+        ----------
+        name : str
+            A region's name. A group's name, or an unknown one, raises ``KeyError``
+            (:meth:`get_group` is a group's, :meth:`get` either).
+
+        Returns
+        -------
+        ModelRegion
+            The registered region itself, not a copy.
+        """
         if name not in self._regions:
             raise KeyError(f"Region {name!r} does not exist")
         return self._regions[name]
 
     def get_group(self, name: str) -> RegionGroup:
-        """Return one region group by name."""
+        """Return one region group by name.
+
+        Parameters
+        ----------
+        name : str
+            A group's name. A region's name, or an unknown one, raises ``KeyError``
+            (:meth:`get_region` is a region's, :meth:`get` either).
+
+        Returns
+        -------
+        RegionGroup
+            The registered group itself, not a copy.
+        """
         if name not in self._groups:
             raise KeyError(f"Group {name!r} does not exist")
         return self._groups[name]
@@ -341,7 +516,78 @@ class RegionRegistry:
         metadata: dict[str, Any] | None = None,
         overwrite: bool = False,
     ) -> ModelRegion:
-        """Create and register a region from explicit cell IDs."""
+        """Create and register a region from explicit cell IDs.
+
+        The region is kept in this in-memory registry only (not saved with a
+        project). ``model.add_region`` is this call.
+
+        Parameters
+        ----------
+        name : str
+            Region name. A name a GROUP holds raises ``ValueError`` whatever
+            ``overwrite`` says.
+        cellids : iterable of int or tuple, or None
+            The cells. An ``int`` (a numpy integer too) is an in-layer cell number,
+            taken as given, and a one-item tuple ``(cell,)`` the same; an empty
+            tuple is dropped and ``None`` is no cells. A longer tuple is the model
+            grid's own cellid: ``(layer, cell)`` on a vertex grid (DISV, DISU),
+            ``(layer, row, col)`` on a structured (DIS) grid, whose cell number is
+            FloPy's row-major ``row * ncol + col``. A tuple of the other grid's
+            length, or a row/column off a structured grid, raises ``ValueError``
+            naming the expected form (ledger 376). Anything that is not a tuple
+            goes through ``int()``: a float is TRUNCATED in silence (``5.7`` is
+            cell 5) and a numeric string read (``"5"``), while a list ``[0, 5]``
+            or an array row raises ``TypeError`` -- a cellid must be a TUPLE. The
+            model's grid is read only when a cellid of two or more items needs
+            it. The region stores the sorted unique in-layer cell
+            numbers, which is what :meth:`resolve_cells` returns and
+            ``model.region_heads`` matches against the heads table's ``cell``
+            column, and ``cellids`` as given.
+        layer : int or list of int or None, optional
+            Zero-based layer (or layers) stored on the region; ``model.region_heads``
+            keeps only those layers when called without its own ``layer``. Nothing
+            else reads it -- ``map(select=name)`` draws the region's cells on
+            whatever layer the map shows. Default ``None`` takes the layers the
+            tuple ``cellids`` name (one as an ``int``, several as a sorted list),
+            else leaves the region layer-free. A value given here WINS over those
+            layers without a word: ``[(0, 5), (1, 6)]`` with ``layer=2`` stores
+            layer 2, the tuples' 0 and 1 surviving only in ``cellids``.
+        category : str, optional
+            Free label stored on the region and shown by :meth:`region_summary`;
+            nothing reads it. Default ``"selection"``.
+        package : str or None, optional
+            A package name stored on the region as a label and shown by
+            :meth:`region_summary`; nothing is looked up or checked. Default
+            ``None``.
+        tags : iterable of str or None, optional
+            Labels, copied into a list on the region; nothing reads them. Any
+            iterable is copied item by item, so a bare string is split into its
+            characters (``tags="wells"`` stores five one-letter tags) -- pass a
+            list. Default ``None`` stores none.
+        geometry : object, optional
+            Anything, kept on the region for reference; it selects no cells
+            (:meth:`add_from_geometry` does that). Default ``None``.
+        metadata : dict or None, optional
+            Free key/values, copied into a dict on the region; nothing reads them.
+            Default ``None`` stores an empty dict.
+        overwrite : bool, optional
+            Default ``False`` raises ``ValueError`` when a region called ``name``
+            exists; ``True`` replaces it, and every group naming it resolves to the
+            new cells.
+
+        Returns
+        -------
+        ModelRegion
+            The registered region.
+
+        Raises
+        ------
+        ValueError
+            If ``name`` is a group's, or an existing region's without
+            ``overwrite=True``, or a tuple cellid is not of the grid's form.
+        TypeError
+            If a cellid is a list or an array row (neither a tuple nor a number).
+        """
         # ``None`` is no cells, as ``normalize_region_inputs`` reads it.
         cellids = [] if cellids is None else list(cellids)
         # The model's grid reads the tuples and bounds every layer and cell
@@ -380,7 +626,61 @@ class RegionRegistry:
         metadata: dict[str, Any] | None = None,
         overwrite: bool = False,
     ) -> ModelRegion:
-        """Create and register a region from geometry intersection."""
+        """Create and register a region from geometry intersection.
+
+        The cells are selected on the model's grid (``model.vor.gdf_vorPolys``,
+        so in-layer cell numbers), flattened into one list and registered through
+        :meth:`add_from_cells`, so every rule there applies.
+        ``model.add_region_from_geometry`` is this call.
+
+        Parameters
+        ----------
+        name : str
+            Region name, as in :meth:`add_from_cells`.
+        geometry : shapely geometry, GeoDataFrame, GeoSeries, str or pathlib.Path
+            What selects the cells: any shapely geometry, a GeoDataFrame or
+            GeoSeries (every feature's cells, pooled), or a path to a vector file
+            (its first layer is read). One carrying a CRS is reprojected to the
+            grid's; one carrying none is read in the grid's frame. Any other type
+            raises ``ValueError``. Also stored on the region as given.
+        predicate : str or None, optional
+            Default ``None`` selects by MEASURE: a polygon reaches the cells it
+            covers by area, a line those it runs through, a point the one cell
+            holding it (ledgers 210-212 and 237); a feature reaching no cell is
+            left out, named in a logged warning. A geopandas predicate
+            (``"intersects"``, ``"contains"``, ...) takes the raw spatial join
+            instead, which counts any touch -- a polygon that is exactly one cell
+            selects its neighbours across shared faces and vertices too.
+        layer : int or list of int or None, optional
+            Zero-based layer (or layers) stored on the region, as in
+            :meth:`add_from_cells`; the geometry selects in plan view and names no
+            layer, so ``None`` (the default) leaves the region layer-free.
+        category : str, optional
+            Free label stored on the region. Default ``"selection"``.
+        package : str or None, optional
+            A package name stored on the region as a label; nothing is looked up.
+            Default ``None``.
+        tags : iterable of str or None, optional
+            Labels, copied into a list, as in :meth:`add_from_cells` (a bare string
+            is split into characters). Default ``None`` stores none.
+        metadata : dict or None, optional
+            Free key/values, copied into a dict on the region. Default ``None``
+            stores an empty dict.
+        overwrite : bool, optional
+            Default ``False`` raises ``ValueError`` when a region called ``name``
+            exists; ``True`` replaces it.
+
+        Returns
+        -------
+        ModelRegion
+            The registered region.
+
+        Raises
+        ------
+        ValueError
+            If ``geometry`` is of an unsupported type or reaches no cell, or for a
+            name collision as in :meth:`add_from_cells`.
+        """
         cell_series = get_vor_cells_as_series(
             self.model.vor.gdf_vorPolys,
             geometry,
@@ -404,12 +704,41 @@ class RegionRegistry:
         )
 
     def resolve_cells(self, name: str) -> list[int]:
-        """Resolve a region or group name into unique model cell IDs."""
+        """Resolve a region or group name into unique model cell IDs.
+
+        Parameters
+        ----------
+        name : str
+            A region or group name; a group is resolved through its members,
+            recursively. An unknown name raises ``KeyError`` (its message says
+            "Group", whichever was meant); a cycle raises ``ValueError``.
+
+        Returns
+        -------
+        list of int
+            The sorted union of the in-layer cell numbers the reached regions
+            store. Layers are not applied: two regions on different layers sharing
+            a cell number give it once.
+        """
         cells, _ = self.resolve_cells_with_trace(name)
         return cells
 
     def resolve_cells_with_trace(self, name: str) -> tuple[list[int], dict[int, list[str]]]:
-        """Resolve a region/group and record which names contributed each cell."""
+        """Resolve a region/group and record which names contributed each cell.
+
+        Parameters
+        ----------
+        name : str
+            A region or group name, resolved as in :meth:`resolve_cells`; an
+            unknown name raises ``KeyError``, a cycle ``ValueError``.
+
+        Returns
+        -------
+        tuple of (list of int, dict of int to list of str)
+            The sorted unique cells, and for each cell the sorted names of the
+            REGIONS that contributed it (never a group's name; a cell in several
+            regions lists each).
+        """
         resolved_cells: set[int] = set()
         trace: dict[int, set[str]] = {}
         self._resolve_into(name, resolved_cells, trace, stack=[])

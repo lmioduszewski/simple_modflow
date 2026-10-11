@@ -55,7 +55,41 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         layer: int | Sequence[int] | None = None,
         cells: Sequence[int] | None = None,
     ) -> pd.DataFrame:
-        """Return aligned SFR exchange rows, including ``q_per_length``."""
+        """Return aligned SFR exchange rows, including ``q_per_length``.
+
+        Each member's ``build_sfr_budget_result_table``: one row per reach per
+        saved step of the cell-budget file's ``SFR`` record, every saved step
+        kept, plus a ``model`` column. A member with no SFR package adds no rows;
+        one with SEVERAL raises ``SeveralPackagesError`` -- each numbers its own
+        reaches (ledger 352), and the group view takes no ``package=``.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one member's rows, by its name in the group. Default ``None``:
+            every member. A name that is not in the group matches nothing and
+            returns an empty frame.
+        per : int or None, optional
+            Keep one stress period, zero-based: a FILTER, so every step the
+            period saved is kept (:meth:`compare` and the maps read its last).
+            Default ``None``: every period.
+        layer : int or list of int or None, optional
+            Keep the reaches in these zero-based layers (an int, list or tuple; a
+            NumPy array raises ``TypeError``). Default ``None``: every layer.
+        cells : int or list of int or None, optional
+            Keep the reaches on these zero-based cell numbers within a layer.
+            Default ``None``: every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``pname``, ``kstpkper``, ``per``, ``reach``,
+            ``layer``, ``cell``, ``node``/``node2``, the reach geometry (``rlen``
+            and ``distance_start/mid/end``, model length), ``q_gwf`` -- MF6's raw
+            sign, flow FROM the reach TO the aquifer, so NEGATIVE where the reach
+            gains (model length^3/time) -- and ``q_per_length`` = ``q_gwf / rlen``
+            (length^2/time).
+        """
 
         frames = []
         for current_model_name, model in self.group.models.items():
@@ -86,7 +120,40 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         layer: int | Sequence[int] | None = None,
         cells: Sequence[int] | None = None,
     ) -> pd.DataFrame:
-        """Compare grouped SFR exchange rows against the reference model."""
+        """Compare grouped SFR exchange rows against the reference model.
+
+        Each member is first reduced to its own LAST saved step of every period
+        (``_reduce_to_period_end``, ledger 337), so members of different ``nstp``
+        align by stress period. Rows are paired with the reference's on the
+        integer and text identity columns -- ``package``, ``pname``, ``per``,
+        ``reach``, ``layer``, ``cell``, ``node``, ``node2`` -- by an inner join;
+        the float reach geometry is left out of the key and of the result, so a
+        reach whose length differs by rounding still pairs.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one compared member's rows, by its name, after the comparison.
+            Default ``None``: every non-reference member. The reference's own
+            name, or a name not in the group, returns an empty frame.
+        per : int or None, optional
+            Compare one stress period, zero-based, each member at its own last
+            saved step of it. Default ``None``: every period.
+        layer : int or list of int or None, optional
+            Compare only the reaches in these zero-based layers. Default
+            ``None``: every layer.
+        cells : int or list of int or None, optional
+            Compare only these zero-based cell numbers within a layer. Default
+            ``None``: every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, the join keys, ``q_gwf``,
+            ``reference_q_gwf``, ``q_gwf_diff``, and the same three for
+            ``q_per_length`` -- each difference member minus reference, in MF6's
+            sign. Empty when :meth:`get` is.
+        """
 
         data = self.get(per=per, layer=layer, cells=cells)
         if data.empty:
@@ -187,7 +254,63 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Build a grouped SFR diff map using normalized exchange per unit length."""
+        """Build a grouped SFR diff map using normalized exchange per unit length.
+
+        Each member's rows of period ``per`` (its own last saved step) are
+        reduced to one value per cell, ``sum(q_gwf) / sum(rlen)`` over the
+        reaches in the cell -- the flow per unit reach length, in MF6's sign --
+        and the map draws member minus reference on the reference's grid, for
+        the cells both members have a reach in.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            The non-reference member to compare. Default ``None`` takes the
+            group's one non-reference member and raises ``ValueError`` when there
+            are several; the reference itself raises ``ValueError`` and a name not
+            in the group ``KeyError``. The member must have the reference's
+            discretization FILE content, read from each workspace (a changed
+            ``botm`` or ``idomain`` refuses too), grid type and ``ncpl``, or
+            ``ValueError``.
+        per : int, default 0
+            The stress period drawn, zero-based -- each member's own last saved
+            step of it. A period with no rows draws every cell at ``fill_value``.
+        layer : int, default 0
+            The zero-based layer whose reaches are drawn.
+        multiplier : float, default 1.0
+            Scales every drawn difference -- a unit conversion or a sign flip --
+            and the filled cells with them, except when no cell has a reach in
+            both members (every cell is then ``fill_value`` as given).
+        fill_value : float, default 0.0
+            The value of a cell that lacks a reach in either member -- in one
+            alone or in neither. ``float("nan")`` leaves it blank. A cell whose
+            reaches have no length is ``NaN``.
+        agg : str, default "sum"
+            Accepted and IGNORED: the per-cell reduction is always the
+            length-weighted ``sum(q_gwf) / sum(rlen)`` above, whatever is passed
+            (ledger 439).
+        colorscale : str or list or None, optional
+            Any Plotly colorscale name or explicit stops. Default ``None``: the
+            group diff scale -- red at the negative end, white at zero, blue at
+            the positive end (in MF6's sign a reach gaining MORE than the
+            reference's is negative, so red).
+        **kwargs
+            Forwarded to the reference model's ``model.plot.map(...)``: its named
+            drawing options (``contours``, ``select``, ``features``, ``extent``,
+            ``backend``, ...) and its Plotly trace tail. ``zmin``/``zmax`` default
+            to plus/minus the largest absolute value drawn (a filled cell's
+            included), ``zmid`` to 0 and ``hover_spec`` to the comparison hover,
+            whose units read ``ft²/d`` whatever the model's units are; passing
+            them overrides those. The names this method fills itself beyond its
+            own parameters (``type``, ``custom_zs``, ``custom_hover``,
+            ``hover_heads``, ``hover_ks``) raise ``TypeError``; ``values=``
+            REPLACES the drawn differences while the hover keeps them.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            The map picture, or a bare Matplotlib figure with ``backend="mpl"``.
+        """
 
         del agg
         target_name = _resolve_group_compare_target(self.group, model_name)

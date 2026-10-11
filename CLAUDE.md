@@ -522,11 +522,14 @@ ambiguous, never copy the annotation), a body giving the default, units, which
 mode/branch it belongs to and how it interacts with the others, plus a `**options` entry
 saying where a tail goes. `tests/test_public_parameters_documented.py` discovers
 `__all__`, `__engine__`, the helper methods and every public method on an exported class
-(715 callables) and fails naming the callable -- no allowlist. `python
+(715 callables), plus -- through `reached_classes`, a static walk with no list -- the
+public methods of every class a user REACHES from those by attribute, call or returned
+value: the read-grammar views, `model.plot`, `model.targets` (400 more, ledger 436);
+and fails naming the callable -- no allowlist. `python
 tests/test_public_parameters_documented.py <file>` lists what a file still lacks. It
 checks that a type is WRITTEN, not that it is TRUE: the 2,004 entries written for it were
 read against the code by a second pass, which corrected 175. A dataclass users RECEIVE may
-use `Attributes`. Not covered: the read-grammar views (not exported).
+use `Attributes`. A gap inside a generated fence is fixed in the free verb, then regenerated.
 
 ## Printing? Only if a human asked for it (plan 7.2, 2026-08-01)
 Library code logs; it does not print. Use `myflopy._logging.get_logger(__name__)` —

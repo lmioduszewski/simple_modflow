@@ -620,8 +620,41 @@ class XSection(Picture):
             include_model_top: bool | None = None,
             include_model_btm: bool | None = None,
     ) -> pd.DataFrame:
-        """
-        Return the cross-section as a long-form DataFrame for external plotting.
+        """Return the cross-section as a long-form DataFrame for external plotting.
+
+        The rows ``.fig`` and :meth:`plot_mpl` draw, one per point: ``distance``
+        along the section line and ``elevation`` -- both in the model's length
+        units, except that a PROFILE row's ``elevation`` is the value the
+        section draws at its ``kstpkper`` -- plus ``series`` (the line's legend
+        name) and ``kind`` (``'profile'``, ``'model_top'``, ``'model_bottom'``).
+        Stepped profile rows read the model's own field (head on GWF,
+        concentration on GWT, temperature on GWE) and sit at the distance along
+        the line of each crossed cell's polygon centroid, projected onto it --
+        one ``series`` per layer, with a ``layer`` column; a dry or inactive
+        cell's value is ``NaN``. An interpolated profile is one ``series`` of
+        ``num_points - 2`` evenly spaced points (the line's two ends are
+        dropped), with no ``layer``, sampled from the head file
+        ``<model name>.hds`` whatever the model's kind -- so on a GWT or GWE
+        model it raises ``FileNotFoundError`` -- or under ``surf_type='lyr'``
+        from the layer's top.
+
+        Parameters
+        ----------
+        include_model_top : bool, optional
+            Add the model top as ``series`` ``'model top'`` (``kind``
+            ``'model_top'``), one row per cell the line crosses, at the stepped
+            profile's distances (each cell's polygon centroid projected onto the
+            line), interpolated profile or not. ``None`` (the default) follows the
+            section's own ``show_model_top``, which is what ``.fig`` draws.
+        include_model_btm : bool, optional
+            Add the bottom of each layer in the section's ``layer`` as ``series``
+            ``'Lyr <k> Btm'`` (``kind`` ``'model_bottom'``, with ``layer``), at the
+            same cell distances. ``None`` (the default) follows
+            ``show_model_btm``. Independent of ``include_model_top``.
+
+        Returns
+        -------
+        pandas.DataFrame
         """
         include_model_top = self.show_model_top if include_model_top is None else include_model_top
         include_model_btm = self.show_model_btm if include_model_btm is None else include_model_btm
@@ -687,8 +720,35 @@ class XSection(Picture):
         return pd.DataFrame(rows)
 
     def plot_mpl(self, **kwargs):
-        """
-        Plot the cross-section with the figs matplotlib cross-section helper.
+        """Plot the cross-section with the ``figs`` Matplotlib cross-section helper.
+
+        One line per ``series`` of :meth:`to_frame` (called with its defaults, so
+        the model top and bottoms follow ``show_model_top``/``show_model_btm``):
+        the same lines ``.fig`` draws. It always makes a NEW figure: the helper
+        takes no Axes.
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded to :func:`myflopy.viz.plot_cross_section`. ``title``
+            defaults to the section's ``section_name`` and ``ylabel`` to
+            ``'Elevation (ft)'`` -- feet whatever the model's length unit, and
+            "elevation" on a concentration or temperature profile too -- so pass
+            ``ylabel=`` for anything else. ``xlabel`` (default ``'Distance'``),
+            ``show_legend`` (default ``True``), ``style``,
+            ``x_units_per_inch``/``y_units_per_inch`` (an exact print scale,
+            applied only when both are set), ``line_kwargs`` (to ``Axes.plot``)
+            and ``scale_kwargs`` act; anything else goes on to the figure factory
+            (``figsize``, default ``(11, 8.5)`` inches; ``font_size``; ...), which
+            raises ``TypeError`` on a keyword it does not know.
+            ``data``/``x``/``y``/``series_col`` are this method's and raise
+            ``TypeError`` as duplicates; ``layer``, ``simplify_tolerance``,
+            ``sheet_name`` and ``read_kwargs`` read a FILE source and are ignored,
+            since this hands the helper a table.
+
+        Returns
+        -------
+        tuple of (matplotlib.figure.Figure, matplotlib.axes.Axes)
         """
         from myflopy.viz import plot_cross_section
 

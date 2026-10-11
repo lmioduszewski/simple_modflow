@@ -1307,7 +1307,11 @@ class SfrFlowTargets:
 
 
 class BoundSfrStageTargets:
-    """Model-bound SFR stage helper returned from ``model.targets.sfr_stage``."""
+    """Model-bound SFR stage helper returned from ``model.targets.sfr_stage``.
+
+    Every method reads the BOUND model unless given another: ``model=None`` (the
+    default) means the model the registry was read from.
+    """
 
     def __init__(self, model, targets: SfrStageTargets):
         """Bind ``targets`` to ``model`` so its methods default to that model."""
@@ -1337,27 +1341,113 @@ class BoundSfrStageTargets:
         return self.targets.summary()
 
     def simulated_series(self, model=None) -> pd.DataFrame:
-        """The wide simulated series (defaults to the bound model)."""
+        """The wide simulated series (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model with an SFR package to read. Default ``None`` uses the
+            bound model; another run reads that run's files for the same
+            targets. Read by :meth:`SfrStageTargets.simulated_series`'s two
+            routes -- the SFR's declared STAGE observations when every target is
+            declared there, else the SFR stage file read RAW (a dry reach -1e30,
+            an inactive one +1e30) -- one row per stress period at its END, whose
+            ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` (the zero-based stress period) plus one stage column per
+            target, in model length units.
+        """
 
         return self.targets.simulated_series(self.model if model is None else model)
 
     def compare(self, model=None) -> pd.DataFrame:
-        """Compare observed vs simulated values (defaults to the bound model)."""
+        """Compare observed vs simulated values (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model with an SFR package to compare against. Default
+            ``None`` uses the bound model; another run compares the same targets
+            against it -- what the plots' ``baseline=`` does. Read as
+            :meth:`SfrStageTargets.compare` reads it (each target's ``time`` a
+            zero-based stress period), whose ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per target row (per simulated row, ``stage_target`` and the
+            residuals ``NaN``, when the set holds no values): ``name``,
+            ``reach``, ``time``, ``per``, ``stage_target``, ``sim_stage``,
+            ``residual`` (simulated minus target) and ``abs_residual``.
+        """
 
         return self.targets.compare(self.model if model is None else model)
 
     def residuals(self, model=None) -> pd.DataFrame:
-        """The residual table (defaults to the bound model)."""
+        """The residual table (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against, as in :meth:`compare`. Default
+            ``None`` uses the bound model.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
+            ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
+            ``abs_residual``.
+        """
 
         return self.targets.residuals(self.model if model is None else model)
 
     def stats(self, model=None) -> pd.DataFrame:
-        """Aggregate residual statistics (defaults to the bound model)."""
+        """Aggregate residual statistics (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against, as in :meth:`compare`. Default
+            ``None`` uses the bound model.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n``, ``mean_error``, ``mae`` and ``rmse`` of simulated
+            minus target stage, in model length units
+            (:meth:`SfrStageTargets.stats`).
+        """
 
         return self.targets.stats(self.model if model is None else model)
 
     def to_flopy_obs(self, *, csv_name: str = "sfr_stage_targets.csv", kind: str = "STAGE"):
-        """A FloPy ``continuous`` observation dict for the SFR-stage targets."""
+        """A FloPy ``continuous`` observation dict for the SFR-stage targets.
+
+        The records need no model -- each names its reach by number -- so the
+        bound model takes no part.
+
+        Parameters
+        ----------
+        csv_name : str, optional
+            The CSV file MF6 writes these observations to -- the dict's one key.
+            Default ``"sfr_stage_targets.csv"``. Any name: the observation route
+            reads whichever file the SFR package's OBS declares (ledger 344).
+        kind : str, optional
+            The MF6 SFR observation type written on every record. Must be
+            ``"STAGE"`` (any case), the default; any other raises ``ValueError``
+            (ledger 344).
+
+        Returns
+        -------
+        dict of str to list of tuple
+            ``{csv_name: [(label, "STAGE", reach + 1), ...]}``, the reach
+            ONE-based, as :meth:`SfrStageTargets.to_flopy_obs` returns it (whose
+            ``Raises`` apply).
+        """
 
         return self.targets.to_flopy_obs(csv_name=csv_name, kind=kind)
 
@@ -1370,7 +1460,40 @@ class BoundSfrStageTargets:
         kind: str = "STAGE",
         package=None,
     ):
-        """Attach an MF6 SFR-stage observation package to the bound model."""
+        """Attach an MF6 SFR-stage observation package to the bound model.
+
+        Added to the bound model's FloPy objects in memory; writing and running
+        the simulation afterwards is the caller's.
+
+        Parameters
+        ----------
+        pname : str, optional
+            FloPy package name of the OBS package. Default ``"sfr_stage_obs"``.
+        filename : str or pathlib.Path, optional
+            The OBS input file name FloPy writes, in the owning model's
+            directory; its stem names the default ``csv_name``. Default
+            ``"sfr_stage_targets.obs"``.
+        csv_name : str or None, optional
+            The CSV file MF6 writes the observations to. Default ``None`` takes
+            ``filename``'s stem plus ``.csv`` (``"sfr_stage_targets.csv"`` for
+            the default ``filename``).
+        kind : str, optional
+            The MF6 SFR observation type, as in :meth:`to_flopy_obs`:
+            ``"STAGE"``, the default, and nothing else (``ValueError``).
+        package : flopy object or None, optional
+            The FloPy package (or model) to attach the OBS package to. Default
+            ``None`` takes the bound model's SFR package: the one the targets
+            name (their ``package`` field; ``ValueError`` when the model has no
+            SFR package of that name), else its only SFR package, found by type
+            (several raise ``ValueError`` naming them, none ``AttributeError``;
+            ledger 352). Reading the observations back needs the targets' own
+            ``package`` field to name it when the model carries several.
+
+        Returns
+        -------
+        flopy.mf6.modflow.mfutlobs.ModflowUtlobs
+            The observation package.
+        """
 
         return self.targets.attach_flopy_obs(
             self.model,
@@ -1397,7 +1520,12 @@ class BoundSfrStageTargets:
 
 
 class BoundSfrFlowTargets:
-    """Model-bound SFR flow helper returned from ``model.targets.sfr_flow``."""
+    """Model-bound SFR flow helper returned from ``model.targets.sfr_flow``.
+
+    Every method reads the BOUND model unless given another: ``model=None`` (the
+    default) means the model the registry was read from. Flows are in MF6's
+    sign -- zero or negative, water the reach sends on (ledger 350).
+    """
 
     def __init__(self, model, targets: SfrFlowTargets):
         """Bind ``targets`` to ``model`` so its methods default to that model."""
@@ -1427,27 +1555,117 @@ class BoundSfrFlowTargets:
         return self.targets.summary()
 
     def simulated_series(self, model=None) -> pd.DataFrame:
-        """The wide simulated series (defaults to the bound model)."""
+        """The wide simulated series (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model with an SFR package to read. Default ``None`` uses the
+            bound model; another run reads that run's files for the same
+            targets. Read by :meth:`SfrFlowTargets.simulated_series`'s two
+            routes -- the SFR's declared ``DOWNSTREAM-FLOW`` observations when
+            every target is declared there, else the SFR budget file -- one row
+            per stress period at its END, whose ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` (the zero-based stress period) plus one flow column per
+            target, in model length cubed per time and MF6's sign (zero or
+            negative).
+        """
 
         return self.targets.simulated_series(self.model if model is None else model)
 
     def compare(self, model=None) -> pd.DataFrame:
-        """Compare observed vs simulated values (defaults to the bound model)."""
+        """Compare observed vs simulated values (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model with an SFR package to compare against. Default
+            ``None`` uses the bound model; another run compares the same targets
+            against it -- what the plots' ``baseline=`` does. Read as
+            :meth:`SfrFlowTargets.compare` reads it (each target's ``time`` a
+            zero-based stress period), whose ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per target row (per simulated row, ``flow_target`` and the
+            residuals ``NaN``, when the set holds no values): ``name``,
+            ``reach``, ``time``, ``per``, ``flow_target``, ``sim_flow``,
+            ``residual`` (simulated minus target, above zero when the model
+            sends LESS water downstream than was gauged) and ``abs_residual``.
+        """
 
         return self.targets.compare(self.model if model is None else model)
 
     def residuals(self, model=None) -> pd.DataFrame:
-        """The residual table (defaults to the bound model)."""
+        """The residual table (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against, as in :meth:`compare`. Default
+            ``None`` uses the bound model.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`compare`'s rows, reduced to ``name``, ``reach``, ``time``,
+            ``per``, ``flow_target``, ``sim_flow``, ``residual`` and
+            ``abs_residual``.
+        """
 
         return self.targets.residuals(self.model if model is None else model)
 
     def stats(self, model=None) -> pd.DataFrame:
-        """Aggregate residual statistics (defaults to the bound model)."""
+        """Aggregate residual statistics (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against, as in :meth:`compare`. Default
+            ``None`` uses the bound model.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n``, ``mean_error``, ``mae`` and ``rmse`` of simulated
+            minus target flow, in model length cubed per time
+            (:meth:`SfrFlowTargets.stats`).
+        """
 
         return self.targets.stats(self.model if model is None else model)
 
     def to_flopy_obs(self, *, csv_name: str = "sfr_flow_targets.csv", kind: str = "DOWNSTREAM-FLOW"):
-        """A FloPy ``continuous`` observation dict for the SFR-flow targets."""
+        """A FloPy ``continuous`` observation dict for the SFR-flow targets.
+
+        The records need no model -- each names its reach by number -- so the
+        bound model takes no part.
+
+        Parameters
+        ----------
+        csv_name : str, optional
+            The CSV file MF6 writes these observations to -- the dict's one key.
+            Default ``"sfr_flow_targets.csv"``. Any name: the observation route
+            reads whichever file the SFR package's OBS declares (ledger 344).
+        kind : str, optional
+            The MF6 SFR observation type written on every record. Must be
+            ``"DOWNSTREAM-FLOW"`` (any case), the default, which MF6 reports
+            negative; any other raises ``ValueError`` (``"SFR"`` would declare
+            the stream-aquifer exchange under the targets' names, which the
+            observation route refuses as another quantity when read back;
+            ledger 344).
+
+        Returns
+        -------
+        dict of str to list of tuple
+            ``{csv_name: [(label, "DOWNSTREAM-FLOW", reach + 1), ...]}``, the
+            reach ONE-based, as :meth:`SfrFlowTargets.to_flopy_obs` returns it
+            (whose ``Raises`` apply).
+        """
 
         return self.targets.to_flopy_obs(csv_name=csv_name, kind=kind)
 
@@ -1460,7 +1678,41 @@ class BoundSfrFlowTargets:
         kind: str = "DOWNSTREAM-FLOW",
         package=None,
     ):
-        """Attach an MF6 SFR-flow observation package to the bound model."""
+        """Attach an MF6 SFR-flow observation package to the bound model.
+
+        Added to the bound model's FloPy objects in memory; writing and running
+        the simulation afterwards is the caller's.
+
+        Parameters
+        ----------
+        pname : str, optional
+            FloPy package name of the OBS package. Default ``"sfr_flow_obs"``.
+        filename : str or pathlib.Path, optional
+            The OBS input file name FloPy writes, in the owning model's
+            directory; its stem names the default ``csv_name``. Default
+            ``"sfr_flow_targets.obs"``.
+        csv_name : str or None, optional
+            The CSV file MF6 writes the observations to. Default ``None`` takes
+            ``filename``'s stem plus ``.csv`` (``"sfr_flow_targets.csv"`` for
+            the default ``filename``).
+        kind : str, optional
+            The MF6 SFR observation type, as in :meth:`to_flopy_obs`:
+            ``"DOWNSTREAM-FLOW"``, the default, and nothing else
+            (``ValueError``).
+        package : flopy object or None, optional
+            The FloPy package (or model) to attach the OBS package to. Default
+            ``None`` takes the bound model's SFR package: the one the targets
+            name (their ``package`` field; ``ValueError`` when the model has no
+            SFR package of that name), else its only SFR package, found by type
+            (several raise ``ValueError`` naming them, none ``AttributeError``;
+            ledger 352). Reading the observations back needs the targets' own
+            ``package`` field to name it when the model carries several.
+
+        Returns
+        -------
+        flopy.mf6.modflow.mfutlobs.ModflowUtlobs
+            The observation package.
+        """
 
         return self.targets.attach_flopy_obs(
             self.model,
@@ -1484,5 +1736,3 @@ class BoundSfrFlowTargets:
                 yaxis_title="Flow",
             )
         return self._plot
-
-

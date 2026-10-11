@@ -492,7 +492,13 @@ Bound form of :func:`myflopy.plot.section`.
 ```
 
 Inside a fence is the free verb's reference, replaced wholesale on the next run.
-Outside is yours, edited in place with no tool run.
+Outside is yours, edited in place with no tool run. A bound method with no
+`**kwargs` tail inherits only the entries for parameters it ACCEPTS, so a narrower
+scope never documents one that raises there -- `vor.plot.section` took six and
+used to list twenty-one more (ledger 437). A method with a tail keeps every
+entry, since what it forwards is open; `stack.plot.section`'s tail reaches a
+renderer that takes nothing more, so the twenty-three it inherits all raise `TypeError`
+when the picture is drawn.
 
 **Adding a noun?** Three steps, and the middle one is the one that gets missed:
 

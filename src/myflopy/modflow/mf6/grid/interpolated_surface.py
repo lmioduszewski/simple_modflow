@@ -676,20 +676,35 @@ class InterpolatedSurface(Picture):
         return surface
 
     def clip_raster_with_polygon(self, polygon: Polygon = None, buffer=None):
-        """
-        Clips the in-memory raster with a vector polygon and returns the clipped raster data.
+        """Clip the in-memory raster with a polygon and return the clipped raster data.
 
         ``polygon`` defaults to :attr:`region` -- ``clip=``, else the grid's
         footprint. Pixels outside it come back NaN. They came back 0, a value a
         head or an elevation can really take, and callers then blanked every real
-        0 along with them (ledger 314).
+        0 along with them (ledger 314). The raster is not cropped: the result
+        keeps the full ``resolution`` x ``resolution`` pixel grid. A pixel is
+        kept when its CENTRE is inside the polygon.
 
-        Parameters:
-        polygon (shapely.geometry.Polygon): Polygon to use for clipping.
-        buffer (float): Optional distance to grow (or, negative, shrink) it by.
+        Parameters
+        ----------
+        polygon : shapely.geometry.Polygon or shapely.geometry.MultiPolygon, optional
+            The polygon to clip to, in the surface's own x/y coordinates (the
+            grid's CRS and length units). The default ``None`` uses
+            :attr:`region`, and raises ``ValueError`` when there is none (a bare
+            point cloud given no ``clip=``). A file path is NOT read here, unlike
+            ``clip=``. It fails with ``AttributeError``.
+        buffer : float, optional
+            Distance, in the surface's length units, to grow the polygon by
+            (negative shrinks it) with shapely's ``buffer`` before clipping. It
+            applies to the default region as well. The default ``None``, like
+            ``0``, leaves the polygon as it is.
 
-        Returns:
-        tuple: Clipped raster data array, its transform, and the raster's metadata.
+        Returns
+        -------
+        tuple of (numpy.ndarray, affine.Affine, dict)
+            The clipped image, shape ``(1, resolution, resolution)`` with NaN
+            outside the polygon; its transform; and the in-memory raster's
+            metadata (``nodata`` NaN, the grid's CRS or ``crs=``).
         """
         polygon = self._required_region() if polygon is None else polygon
         polygon = polygon.buffer(buffer) if buffer else polygon
@@ -710,22 +725,49 @@ class InterpolatedSurface(Picture):
             polygon_clip: Polygon = None,
             buffer=0
     ):
-        """
-        Saves the clipped raster data to a GeoTIFF file.
-
-        Parameters:
-        clipped_image (numpy.ndarray): Clipped raster data array.
-        clipped_transform (Affine): Transform for the clipped raster.
-        meta (dict): Metadata of the original raster dataset.
-        output_tif (str): Path to the output GeoTIFF file.
+        """Save clipped raster data to a GeoTIFF file.
 
         Pass all three of ``clipped_image``, ``clipped_transform`` and ``meta``
         (what :meth:`clip_raster_with_polygon` returns), or none of them to clip
         here. The written file declares NaN as no-data, and a real 0 is written
         as 0 -- it was written as NaN, with the clipped-away pixels.
 
-        Returns:
+        Parameters
+        ----------
+        output_tif : str or os.PathLike, default "clipped_raster.tif"
+            The GeoTIFF to write. An existing file is overwritten, and its
+            directory must exist. The default is a RELATIVE name, so it lands
+            in the current working directory.
+        clipped_image : numpy.ndarray, optional
+            The pixels to write, shaped ``(bands, rows, cols)`` as
+            :meth:`clip_raster_with_polygon` returns them. Written as given.
+        clipped_transform : affine.Affine, optional
+            The affine transform of ``clipped_image``.
+        meta : dict, optional
+            Raster metadata (rasterio's ``dataset.meta``). It is copied, never
+            edited. ``driver``, ``height``, ``width`` and ``transform`` are set
+            from the image and transform, and every other key (``dtype``,
+            ``count``, ``crs``, ``nodata``) is written as given.
+        polygon_clip : shapely.geometry.Polygon or shapely.geometry.MultiPolygon, optional
+            What to clip to when the three pieces above are not given, in the
+            surface's own coordinates. The default ``None`` uses ``clip=``,
+            else the grid's footprint, and raises ``ValueError`` when the
+            surface has neither. It is silently IGNORED when the three pieces
+            are given, because nothing is clipped then.
+        buffer : float, default 0
+            Distance, in the surface's length units, to grow (negative: shrink)
+            the clip polygon by. ``0`` leaves it as it is. Silently ignored
+            with the three pieces, as ``polygon_clip`` is.
+
+        Returns
+        -------
         None
+
+        Raises
+        ------
+        ValueError
+            When some but not all of ``clipped_image``, ``clipped_transform``
+            and ``meta`` are given.
         """
 
         polygon_clip = self.clip if polygon_clip is None else polygon_clip
@@ -780,6 +822,29 @@ class InterpolatedSurface(Picture):
         overrides the z-array, which defaults to :attr:`clipped_surface` -- what
         :attr:`fig` draws; any extra keyword arguments pass straight through to
         ``go.Surface``.
+
+        Parameters
+        ----------
+        surface : numpy.ndarray, optional
+            The z values to draw, one per pixel of this surface's grid, shape
+            ``(resolution, resolution)``, row 0 at the NORTH edge, in the
+            surface's own units (a head or an elevation, model length units).
+            NaN pixels are gaps. It is not checked against the grid here. The
+            default ``None`` is :attr:`clipped_surface`, masked to
+            :attr:`region` (unmasked when there is none, a bare point cloud).
+        colorscale : str or list, optional
+            A Plotly colorscale name or ``[[position, color], ...]`` stops. The
+            default ``None`` uses this surface's ``colorscale`` attribute
+            (``"Earth_r"`` as constructed).
+        **kwargs
+            Passed on to ``plotly.graph_objects.Surface`` (``opacity``,
+            ``showscale``, ``name``, ``cmin``/``cmax``, ...). ``x``, ``y`` and
+            ``z`` are set here, so passing one raises ``TypeError``.
+
+        Returns
+        -------
+        plotly.graph_objects.Surface
+            The trace, not yet added to any figure.
         """
         surface = self.clipped_surface if surface is None else surface
         xg, yg = self.xy_meshgrid
@@ -826,6 +891,29 @@ class InterpolatedSurface(Picture):
         nothing to mask to. ``surface=`` draws another array on this surface's
         pixel grid, masked the same way -- it used to be discarded whenever
         ``clip=True``.
+
+        A new figure on every call. :attr:`fig` is the cached one.
+
+        Parameters
+        ----------
+        surface : numpy.ndarray, optional
+            The z values to draw on this surface's pixel grid, shape
+            ``(resolution, resolution)``, row 0 at the north edge. When masking,
+            any other shape raises ``ValueError``. With ``clip=False`` it is
+            drawn unchecked. The default ``None`` is :attr:`surface`, the
+            unmasked interpolation, which the mask then clips.
+        clip : bool or None, default None
+            ``None`` masks to :attr:`region` when there is one and draws
+            unmasked when there is not (a bare point cloud). ``True`` masks and
+            raises ``ValueError`` when there is no region. ``False`` never
+            masks. Masking that removes EVERY finite pixel raises
+            ``ValueError`` naming both extents. A surface with no finite pixel
+            to begin with is drawn empty, without an error.
+
+        Returns
+        -------
+        myflopy.viz.Fig
+            A figure holding the one surface trace.
         """
 
         surface = self.surface if surface is None else surface

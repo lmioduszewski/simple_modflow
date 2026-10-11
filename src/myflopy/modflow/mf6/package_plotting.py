@@ -1493,10 +1493,51 @@ class SpatialView:
     ):
         """One choropleth panel.
 
+        The ``map`` of a GROUP or DIFF surface -- ``group.hds``,
+        ``group.packages.drn.results.q``, ``diff.packages.drn.results.q``, ...
+        A single model's nouns define their own ``map``, with its own parameters.
         ``backend="plotly"`` (default) returns an interactive ``Choro``;
-        ``backend="mpl"`` returns a static matplotlib ``Figure``. On a
-        group/diff surface ``model`` (first positional) selects which model to
-        draw (defaults to the reference).
+        ``backend="mpl"`` returns a static matplotlib ``Figure``.
+
+        Parameters
+        ----------
+        model : str, optional
+            Which model to draw, by name; the one positional. On a group,
+            ``None`` (the default) draws the group's reference model, and a name
+            not in the group raises ``KeyError``. On a diff, the COMPARED model
+            whose difference from the reference is drawn: ``None`` picks it when
+            the group has exactly one non-reference model and raises
+            ``ValueError`` otherwise, as does the reference's own name.
+        per : int, default 0
+            Stress period, zero-based. Passed through ``int()`` (so ``None``
+            raises ``TypeError``) and handed to the panel builder with ``layer``.
+        layer : int, default 0
+            Layer, zero-based. Passed through ``int()`` the same way.
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            ``'plotly'`` (or ``'interactive'``) returns the ``Choro`` picture;
+            ``'mpl'`` (or ``'matplotlib'``, ``'static'``) draws that same picture
+            with ``Choro.plot_mpl()`` and returns the bare ``Figure``. Anything
+            else raises ``ValueError``.
+        **map_kwargs
+            Forwarded to this surface's panel builder. A group FIELD
+            (``group.hds``/``.conc``/``.temp``) hands them to the member's own
+            ``map(...)``, and a group STAGE view (``lak``/``sfr``
+            ``results.stage``) to the member's stage noun's ``map`` (its ``agg``
+            defaults to ``'first'``). Every other group view first takes its own
+            -- ``multiplier`` (default 1.0), ``fill_value`` (0.0) and
+            ``colorscale``; ``agg`` (``'sum'``), which the LAK and SFR exchange
+            accept and do not use and the surface-water exchange does not take;
+            ``value_column`` on an inputs view; ``connection_type`` on the LAK
+            exchange; ``include``/``lak_connection_type`` on the surface-water
+            exchange -- and hands the rest to the model's bound map verb -- the
+            drawing options of :func:`myflopy.plot.map` (``zmin``/``zmax``,
+            ``contours``, ``features``, ``extent``, ...). A diff hands them to the
+            group's ``compare_map``, which ends at the reference model's bound map
+            verb.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
         """
 
         choro = self._spatial_map(per=int(per), layer=int(layer), model=model, **map_kwargs)
@@ -1659,6 +1700,56 @@ class SpatialView:
         A period's point is its LAST saved step (each model's own, in a group):
         ``agg`` combines the cells of that one step, never the steps of a period
         (ledgers 337, 348).
+
+        A static property (NPF ``k``, DISV ``top``) has no stress periods, and
+        raises ``ValueError`` naming ``map()`` instead.
+
+        Parameters
+        ----------
+        model : str or sequence of str, optional
+            On a group or a diff, the model(s) to draw, one line each -- on a diff,
+            the COMPARED models: a name, a list of names, or ``'*'``/``None`` (the
+            default) for every one. A name the surface does not draw raises
+            ``KeyError`` (on a diff, the reference's own name included). On a
+            single model's noun only ``None``/``'*'`` is accepted; anything else
+            raises ``ValueError``.
+        per : int or sequence of int, optional
+            Keep only these stress periods (zero-based); ``None`` (the default)
+            keeps every period in the table.
+        layer : int or sequence of int, optional
+            Keep only these layers (zero-based); ``None`` (the default) keeps all,
+            and when more than one remains each layer is its own line. IGNORED,
+            with nothing said, on a table that has no ``layer`` column (a lake's
+            stage, for one): every row is kept.
+        cells : int or sequence of int, optional
+            Keep only these cells (zero-based, within a layer) and draw one line
+            per cell rather than combining them. IGNORED, with nothing said, on a
+            table that has no ``cell`` column.
+        agg : str, optional
+            How the cells in one line combine at a period: any pandas groupby
+            reduction NAME -- ``'sum'``, ``'mean'``, ``'min'``, ``'max'``,
+            ``'median'``, ``'first'``, ``'count'``, ... A callable is not accepted,
+            nor is an unknown name: both raise ``AttributeError``. ``None`` (the
+            default) is the surface's own: ``'mean'`` for heads, concentration and
+            temperature (one model or a group), their difference, and a single
+            model's LAK/SFR stage; ``'sum'`` everywhere else -- a flux and a
+            difference of fluxes, a group's stage view (one row per lake or reach
+            and period, so the sum is the stage), and every package INPUT field,
+            an elevation included: ``model.drn.inputs.elev.plot()`` draws the SUM
+            of the drain cells' elevations, where its ``map`` combines a cell's
+            records by the field's kind. A point whose rows hold no value at all
+            stays a gap rather than summing to 0.
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            ``'plotly'`` (or ``'interactive'``) returns a :class:`~myflopy.viz.Fig`;
+            ``'mpl'`` (or ``'matplotlib'``, ``'static'``) an 8 x 4 inch Matplotlib
+            ``Figure``. Anything else raises ``ValueError``.
+        title : str, optional
+            The figure title. Default ``'<field> by stress period'``, with
+            ``' (model - reference)'`` appended on a diff.
+
+        Returns
+        -------
+        myflopy.viz.Fig or matplotlib.figure.Figure
         """
 
         backend_kind = self._normalize_backend(backend)
@@ -1932,11 +2023,19 @@ class SpatialView:
         model : str or sequence of str, optional
             The model faceted over (``by='model'``), or held constant otherwise.
             Groups and diffs only.
-        cells : sequence of int, optional
-            Restrict series panels to these cells. ``kind='plot'`` only.
+        cells : int or sequence of int, optional
+            Restrict series panels to these cells (zero-based, within a layer),
+            one line per cell. Read by ``kind='plot'`` only, and IGNORED by the
+            other kinds with nothing said: it does not reach a map, nor a
+            section's path -- ``mosaic(kind='section', cells=...)`` draws no line
+            and fails inside the section (``TypeError``); give the section a
+            ``line``.
         agg : str, optional
             How several rows per period are reduced for a series panel
-            (``'sum'``/``'mean'``/...). ``kind='plot'`` only.
+            (``'sum'``/``'mean'``/...). Read by ``kind='plot'`` only. IGNORED by
+            ``kind='map'`` with nothing said, although a record noun's ``map`` has
+            an ``agg`` of its own: ``mosaic(agg='count')`` draws what ``map()``
+            draws by default (the sum, on a flux).
         ncols : int, default 3
             Grid width; rows grow as needed.
         title : str, optional
@@ -1954,6 +2053,23 @@ class SpatialView:
             (a log-scaled mosaic gets a log axis in real units). It earns its
             keep here: a composer has no intermediate picture to call
             ``.plot_mpl()`` on.
+        **kwargs
+            Options for each panel's builder, by ``kind``. ``'map'``: forwarded,
+            with the drawing options named here, to every panel's map -- a single
+            model's noun ``map`` (``multiplier``/``fill_value`` on a record noun,
+            ``per_timestep``/``bgs``/``hover_layers`` on heads, ..., and through
+            its own tail Plotly trace properties), or on a group or a diff what
+            :meth:`map` forwards as ``**map_kwargs``. ``per``, ``layer`` and
+            ``model`` are this composer's and are set per panel; ``agg`` and
+            ``cells`` are named above and never get here.
+            ``'section'``: the line profile's own options -- ``line``,
+            ``interpolate``, ``interpolator``, ``use_rbf``, ``num_points``,
+            ``clip``, ``x_or_y``, ``show_model_top``, ``show_model_btm`` (see
+            :meth:`section`) -- and any other keyword raises ``TypeError``: a
+            cross-section argument (``fill``, ``layers``, ...) naming
+            ``model.plot.section(fill=...)``, ``kstpkper`` naming ``per=``, and
+            anything else listing the names accepted. ``'plot'``: IGNORED, with
+            nothing said -- the series panels read none of them.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -2465,11 +2581,18 @@ class SpatialView:
         model : str or sequence of str, optional
             The models swept (``over='model'``), or the one held constant
             otherwise. Groups and diffs only.
-        cells : sequence of int, optional
-            Restrict series frames to these cells. ``kind='plot'`` only.
+        cells : int or sequence of int, optional
+            Restrict series frames to these cells (zero-based, within a layer),
+            one line per cell. Read by ``kind='plot'`` only, and IGNORED by the
+            other kinds with nothing said: it does not reach a map, nor a
+            section's path -- ``animate(kind='section', cells=...)`` draws no line
+            and fails inside the section (``TypeError``); give the section a
+            ``line``.
         agg : str, optional
-            How several rows per period are reduced for a series frame.
-            ``kind='plot'`` only.
+            How several rows per period are reduced for a series frame. Read by
+            ``kind='plot'`` only. IGNORED by ``kind='map'`` with nothing said,
+            although a record noun's ``map`` has an ``agg`` of its own: each frame
+            draws what ``map()`` draws by default.
         title : str, optional
             Figure title. Defaults to a label naming the field and the axis.
         backend : {'plotly', 'mpl'}, default 'plotly'
@@ -2477,6 +2600,23 @@ class SpatialView:
             interactive house ``viz.Fig`` with play/pause and a slider;
             ``'mpl'`` a :class:`matplotlib.animation.FuncAnimation`. Both are
             objects to display or save -- nothing is written to disk.
+        **kwargs
+            Options for each frame's builder, by ``kind``. ``'map'``: forwarded,
+            with the drawing options named here, to every frame's map -- a single
+            model's noun ``map`` (``multiplier``/``fill_value`` on a record noun,
+            ``per_timestep``/``bgs``/``hover_layers`` on heads, ..., and through
+            its own tail Plotly trace properties), or on a group or a diff what
+            :meth:`map` forwards as ``**map_kwargs``. ``per``, ``layer`` and
+            ``model`` are this composer's and are set per frame; ``agg`` and
+            ``cells`` are named above and never get here.
+            ``'section'``: the line profile's own options -- ``line``,
+            ``interpolate``, ``interpolator``, ``use_rbf``, ``num_points``,
+            ``clip``, ``x_or_y``, ``show_model_top``, ``show_model_btm`` (see
+            :meth:`section`) -- and any other keyword raises ``TypeError``: a
+            cross-section argument (``fill``, ``layers``, ...) naming
+            ``model.plot.section(fill=...)``, ``kstpkper`` naming ``per=``, and
+            anything else listing the names accepted. ``'plot'``: IGNORED, with
+            nothing said -- the series frames read none of them.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -2824,7 +2964,24 @@ class LeafFieldSugar:
         raise NotImplementedError
 
     def field(self, name: str):
-        """Return the field-pinned node for ``name`` (validated)."""
+        """Return the field-pinned node for ``name`` (validated).
+
+        The same node ``node.<name>`` reaches; ``map(field=name)`` and the other
+        verbs dispatch through it.
+
+        Parameters
+        ----------
+        name : str
+            The field, by name -- one of :meth:`field_names`. Passed through
+            ``str()`` and lower-cased first, so ``'COND'`` is ``'cond'``. A name
+            not listed raises ``ValueError`` naming the choices; when the package
+            lists no fields at all, the name is handed on unchecked.
+
+        Returns
+        -------
+        SpatialView
+            This leaf pinned to the one field.
+        """
 
         key = str(name).lower()
         available = self._field_names()
@@ -2857,28 +3014,96 @@ class LeafFieldSugar:
         )
 
     def map(self, *args, field=None, **kwargs):
-        """Map this leaf's default field, or the one named by ``field=``."""
+        """Map this leaf's default field, or the one named by ``field=``.
+
+        Parameters
+        ----------
+        *args
+            Passed positionally to the map -- the leaf's own ``map`` or, with
+            ``field=``, the pinned field's: on a group or a diff its one positional
+            is ``model``.
+        field : str, optional
+            The input field to draw instead of the leaf's default, by name -- one
+            of :meth:`field_names` (``'cond'``, ``'bhead'``, ...), matched
+            case-insensitively; ``field="cond"`` is ``node.cond.map(...)``. A
+            name not listed raises ``ValueError`` naming the choices. ``None`` (the
+            default) draws the leaf's own default field.
+        **kwargs
+            Passed to the same ``map``, whose parameters they must be (see
+            :meth:`SpatialView.map`).
+        """
 
         if field is not None:
             return self.field(field).map(*args, **kwargs)
         return super().map(*args, **kwargs)
 
     def plot(self, *args, field=None, **kwargs):
-        """Series-plot this leaf's default field, or the one named by ``field=``."""
+        """Series-plot this leaf's default field, or the one named by ``field=``.
+
+        Parameters
+        ----------
+        *args
+            Passed positionally to the series plot -- the leaf's own ``plot`` or, with
+            ``field=``, the pinned field's: on a group or a diff its one positional
+            is ``model``.
+        field : str, optional
+            The input field to draw instead of the leaf's default, by name -- one
+            of :meth:`field_names` (``'cond'``, ``'bhead'``, ...), matched
+            case-insensitively; ``field="cond"`` is ``node.cond.plot(...)``. A
+            name not listed raises ``ValueError`` naming the choices. ``None`` (the
+            default) draws the leaf's own default field.
+        **kwargs
+            Passed to the same ``plot``, whose parameters they must be (see
+            :meth:`SpatialView.plot`).
+        """
 
         if field is not None:
             return self.field(field).plot(*args, **kwargs)
         return super().plot(*args, **kwargs)
 
     def mosaic(self, *args, field=None, **kwargs):
-        """Mosaic this leaf's default field, or the one named by ``field=``."""
+        """Mosaic this leaf's default field, or the one named by ``field=``.
+
+        Parameters
+        ----------
+        *args
+            Passed positionally to the leaf's own ``mosaic`` or, with ``field=``,
+            the pinned field's. Neither takes a positional, so any raises
+            ``TypeError``.
+        field : str, optional
+            The input field to draw instead of the leaf's default, by name -- one
+            of :meth:`field_names` (``'cond'``, ``'bhead'``, ...), matched
+            case-insensitively; ``field="cond"`` is ``node.cond.mosaic(...)``. A
+            name not listed raises ``ValueError`` naming the choices. ``None`` (the
+            default) draws the leaf's own default field.
+        **kwargs
+            Passed to the same ``mosaic``, whose parameters they must be (see
+            :meth:`SpatialView.mosaic`).
+        """
 
         if field is not None:
             return self.field(field).mosaic(*args, **kwargs)
         return super().mosaic(*args, **kwargs)
 
     def animate(self, *args, field=None, **kwargs):
-        """Animate this leaf's default field, or the one named by ``field=``."""
+        """Animate this leaf's default field, or the one named by ``field=``.
+
+        Parameters
+        ----------
+        *args
+            Passed positionally to the leaf's own ``animate`` or, with ``field=``,
+            the pinned field's. Neither takes a positional, so any raises
+            ``TypeError``.
+        field : str, optional
+            The input field to draw instead of the leaf's default, by name -- one
+            of :meth:`field_names` (``'cond'``, ``'bhead'``, ...), matched
+            case-insensitively; ``field="cond"`` is ``node.cond.animate(...)``. A
+            name not listed raises ``ValueError`` naming the choices. ``None`` (the
+            default) draws the leaf's own default field.
+        **kwargs
+            Passed to the same ``animate``, whose parameters they must be (see
+            :meth:`SpatialView.animate`).
+        """
 
         if field is not None:
             return self.field(field).animate(*args, **kwargs)
@@ -2959,6 +3184,30 @@ class FieldMappable:
         Extra positional/keyword args pass through -- e.g. a group namespace
         forwards a positional model name: ``results.map("F9b")``.
 
+        Parameters
+        ----------
+        *args
+            Passed positionally to ``ns.<field>.map(...)`` -- on a group or a
+            diff namespace, the model name (``results.map("F9b")``). A single
+            model's field map takes no positional, so any raises ``TypeError``.
+        field : str, optional
+            The field, by name -- one of :meth:`field_names`, matched exactly
+            (``'Stage'`` raises where ``'stage'`` works). A name not listed raises
+            ``ValueError`` naming the choices. ``None`` (the default) is the
+            namespace's default field: ``'q'`` on a package's results,
+            ``'gwrch'`` on UZF's, ``'finf'`` on UZF's inputs, and on another
+            package's inputs its default value column (``'connection_area'`` on
+            LAK, ``'rhk'`` on SFR). On a diff's LAK and SFR results ``'stage'``
+            is listed but its node has no verbs, so it raises ``AttributeError``.
+        **kwargs
+            Passed to ``ns.<field>.map(...)``, whose parameters they must be --
+            which differ by field.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            What ``ns.<field>.map(...)`` returns.
+
         Examples
         --------
         >>> ns.field_names()                 # ['q', 'stage', 'stage_change']
@@ -2974,6 +3223,26 @@ class FieldMappable:
 
         Signature varies with ``field=`` -- see :meth:`map` for why, and call
         ``ns.<field>.plot(`` when you want an editor to complete the arguments.
+
+        Parameters
+        ----------
+        *args
+            Passed positionally to ``ns.<field>.plot(...)``: its one positional is
+            ``model`` -- a name (or names) on a group or a diff namespace, and only
+            ``None``/``'*'`` on a single model's, where anything else raises
+            ``ValueError``.
+        field : str, optional
+            The field, by name -- one of :meth:`field_names`, matched exactly
+            (``'Stage'`` raises where ``'stage'`` works). A name not listed raises
+            ``ValueError`` naming the choices. ``None`` (the default) is the
+            namespace's default field: ``'q'`` on a package's results,
+            ``'gwrch'`` on UZF's, ``'finf'`` on UZF's inputs, and on another
+            package's inputs its default value column (``'connection_area'`` on
+            LAK, ``'rhk'`` on SFR). On a diff's LAK and SFR results ``'stage'``
+            is listed but its node has no verbs, so it raises ``AttributeError``.
+        **kwargs
+            Passed to ``ns.<field>.plot(...)``, whose parameters they must be --
+            which differ by field.
         """
 
         return self._field_accessor(field).plot(*args, **kwargs)
@@ -2983,6 +3252,31 @@ class FieldMappable:
 
         Signature varies with ``field=`` -- see :meth:`map` for why, and call
         ``ns.<field>.section(`` when you want an editor to complete the arguments.
+
+        No package field has a line profile: every field of a single model's or
+        a group's namespace raises ``NotImplementedError`` (measured: 50 of 50
+        and 14 of 14 on the canonical model), as do a diff's, bar its LAK and SFR
+        ``stage``, which raise ``AttributeError``. The profile is on the
+        dependent-variable nouns -- ``model.hds.section`` -- and the
+        cross-section is the model's bound section verb,
+        :func:`myflopy.plot.section`.
+
+        Parameters
+        ----------
+        *args
+            Passed positionally to ``ns.<field>.section(...)``.
+        field : str, optional
+            The field, by name -- one of :meth:`field_names`, matched exactly
+            (``'Stage'`` raises where ``'stage'`` works). A name not listed raises
+            ``ValueError`` naming the choices. ``None`` (the default) is the
+            namespace's default field: ``'q'`` on a package's results,
+            ``'gwrch'`` on UZF's, ``'finf'`` on UZF's inputs, and on another
+            package's inputs its default value column (``'connection_area'`` on
+            LAK, ``'rhk'`` on SFR). On a diff's LAK and SFR results ``'stage'``
+            is listed but its node has no verbs, so it raises ``AttributeError``.
+        **kwargs
+            Passed to ``ns.<field>.section(...)``, whose parameters they must be --
+            which differ by field.
         """
 
         return self._field_accessor(field).section(*args, **kwargs)
@@ -2992,6 +3286,24 @@ class FieldMappable:
 
         Signature varies with ``field=`` -- see :meth:`map` for why, and call
         ``ns.<field>.mosaic(`` when you want an editor to complete the arguments.
+
+        Parameters
+        ----------
+        *args
+            Passed positionally to ``ns.<field>.mosaic(...)``; the field's ``mosaic``
+            takes none, so any raises ``TypeError``.
+        field : str, optional
+            The field, by name -- one of :meth:`field_names`, matched exactly
+            (``'Stage'`` raises where ``'stage'`` works). A name not listed raises
+            ``ValueError`` naming the choices. ``None`` (the default) is the
+            namespace's default field: ``'q'`` on a package's results,
+            ``'gwrch'`` on UZF's, ``'finf'`` on UZF's inputs, and on another
+            package's inputs its default value column (``'connection_area'`` on
+            LAK, ``'rhk'`` on SFR). On a diff's LAK and SFR results ``'stage'``
+            is listed but its node has no verbs, so it raises ``AttributeError``.
+        **kwargs
+            Passed to ``ns.<field>.mosaic(...)``, whose parameters they must be --
+            which differ by field.
         """
 
         return self._field_accessor(field).mosaic(*args, **kwargs)
@@ -3001,6 +3313,24 @@ class FieldMappable:
 
         Signature varies with ``field=`` -- see :meth:`map` for why, and call
         ``ns.<field>.animate(`` when you want an editor to complete the arguments.
+
+        Parameters
+        ----------
+        *args
+            Passed positionally to ``ns.<field>.animate(...)``; the field's ``animate``
+            takes none, so any raises ``TypeError``.
+        field : str, optional
+            The field, by name -- one of :meth:`field_names`, matched exactly
+            (``'Stage'`` raises where ``'stage'`` works). A name not listed raises
+            ``ValueError`` naming the choices. ``None`` (the default) is the
+            namespace's default field: ``'q'`` on a package's results,
+            ``'gwrch'`` on UZF's, ``'finf'`` on UZF's inputs, and on another
+            package's inputs its default value column (``'connection_area'`` on
+            LAK, ``'rhk'`` on SFR). On a diff's LAK and SFR results ``'stage'``
+            is listed but its node has no verbs, so it raises ``AttributeError``.
+        **kwargs
+            Passed to ``ns.<field>.animate(...)``, whose parameters they must be --
+            which differ by field.
         """
 
         return self._field_accessor(field).animate(*args, **kwargs)

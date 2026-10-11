@@ -97,7 +97,40 @@ class CellBudgetResultsExplorer(SpatialView):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return the normalized result table for this budget term."""
+        """Return the normalized result table for this budget term.
+
+        One row per record entry at EVERY saved time step, in the budget file's
+        order, each tagged with the package that wrote it (``pname``) -- every
+        package of the type, unless the view was bound to one by
+        ``model.<pkg>(package=...)``. Values keep MODFLOW 6's own sign and the
+        file's units: model length³/time for a GWF flow term, mass or energy per
+        time for a term of a GWT or GWE model's budget (``model.budget.<term>``).
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period to keep -- a FILTER, so every step the period
+            saved stays, one row per step (:meth:`map` and :meth:`wide` read the
+            period's LAST saved step instead). One period: a list raises
+            ``TypeError`` here, where :meth:`long` and :meth:`wide` take several.
+            ``None`` (default) keeps every period. A period the budget file saved
+            nothing in gives an empty table, not an error.
+        layer : int or iterable of int or None, optional
+            Zero-based layer(s) to keep. ``None`` (default) keeps every layer.
+        cells : int or iterable of int or None, optional
+            Zero-based cell number(s) WITHIN a layer -- the ``cell`` column, not
+            MODFLOW 6's model-wide node number -- combined with ``layer`` by AND.
+            ``None`` (default) keeps every cell. A number no record carries
+            matches nothing, without a warning.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``node`` (and ``node2`` where the record has one -- ``STO-SS`` has
+            none), the value column (:attr:`value_name`, e.g. ``q_gwf``), any
+            auxiliary columns the record carries, then ``layer``,
+            ``cell``, ``model``, ``package``, ``pname``, ``kstpkper`` and ``per``.
+        """
 
         frame = build_budget_result_table(
             self.model,
@@ -204,7 +237,43 @@ class CellBudgetResultsExplorer(SpatialView):
         values: str | None = None,
         agg: str = "sum",
     ) -> pd.Series:
-        """Return a long result series indexed by ``kstpkper/layer/cell``."""
+        """Return a long result series indexed by ``kstpkper/layer/cell``.
+
+        EVERY saved step stays, one index entry each -- unlike :meth:`wide` and
+        :meth:`map`, which read each period at its last saved step.
+
+        Parameters
+        ----------
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep, every saved step of each.
+            ``None`` (default) keeps every period.
+        layer : int or iterable of int or None, optional
+            Zero-based layer(s) to keep. ``None`` (default) keeps every layer.
+        cells : int or iterable of int or None, optional
+            Zero-based cell number(s) within a layer (the ``cell`` column), ANDed
+            with ``layer``. ``None`` (default) keeps every cell.
+        values : str or None, optional
+            The column of :meth:`get` to return. ``None`` (default) is this term's
+            value column (:attr:`value_name`, e.g. ``"q_gwf"``); a name not in the
+            table raises ``KeyError`` -- unless the selection is empty, which
+            returns an empty series named after it.
+        agg : str or callable, default "sum"
+            How several records of ONE step landing on one ``(kstpkper, layer,
+            cell)`` -- two drains in one cell, or two packages of the type -- are
+            combined: any pandas groupby aggregation name, or a callable. ``"sum"``
+            is a cell's net flow; never a reduction over steps.
+
+        Returns
+        -------
+        pandas.Series
+            Named after the column read, indexed by ``kstpkper``, ``layer``,
+            ``cell`` and sorted, in the file's units and MODFLOW 6's sign.
+
+        Raises
+        ------
+        KeyError
+            When ``values`` is not a column of a non-empty selection.
+        """
 
         value_column = self.value_name if values is None else str(values)
         frame = self.get(layer=layer, cells=cells)
@@ -235,7 +304,20 @@ class CellBudgetResultsExplorer(SpatialView):
         return series
 
     def stack(self, **kwargs) -> pd.Series:
-        """Alias for :meth:`long`."""
+        """Alias for :meth:`long`.
+
+        Parameters
+        ----------
+        **kwargs
+            Passed unchanged to :meth:`long`, so its five keywords (``per``,
+            ``layer``, ``cells``, ``values``, ``agg``) and nothing else: any other
+            name raises ``TypeError`` naming ``long``.
+
+        Returns
+        -------
+        pandas.Series
+            What :meth:`long` returns for the same keywords.
+        """
 
         return self.long(**kwargs)
 
@@ -311,11 +393,13 @@ class CellBudgetResultsExplorer(SpatialView):
         that arrives through a tail is one no editor can ever offer (plan 8.8).
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
-        was measured to leave a record noun's figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row into
-        the tooltip on every cell.
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. Each was measured to leave a record noun's figure
+        byte-identical, and ``show_mounding`` is worse than inert: it injects a
+        head-derived row into the tooltip on every cell. Passed anyway, they ride
+        ``**trace_kwargs`` to the free verb. ``show_layer_elevs`` and
+        ``hover_surfaces`` ARE named (ledger 306): the layer frame is the grid's,
+        so they act on any map.
 
         Parameters
         ----------
@@ -335,7 +419,10 @@ class CellBudgetResultsExplorer(SpatialView):
             or ``-1.0`` to draw outflow as positive -- which changes the PICTURE
             only: the table keeps MF6's convention, and the colorbar will then
             read backwards from ``.get()``, so say so in the caption if you use
-            it. Applied before ``agg``.
+            it. Applied AFTER ``agg`` (so under ``-1.0``, ``agg="max"`` draws
+            minus the largest record) and to every cell, ``fill_value`` included:
+            ``fill_value=1.0, multiplier=2.0`` draws 2.0 where there is no record
+            -- but 1.0 when the selection holds no record at all.
         fill_value : float, default 0.0
             Value given to cells this term has no record for. Zero is the honest
             default for a flow -- a cell with no boundary exchanges nothing --
@@ -347,6 +434,23 @@ class CellBudgetResultsExplorer(SpatialView):
             ``sum`` is right for a flow: two drains in one cell remove the sum of
             what each removes. Change it only when you want a per-feature
             statistic rather than the cell's net exchange.
+        **trace_kwargs
+            Every other keyword, forwarded to ``model.plot.map`` after two checks:
+            ``values``, ``type``, ``custom_hover``, ``hover_heads`` and ``hover_ks``
+            raise ``TypeError`` (this noun supplies its own field and hover), and
+            ``hover_spec`` is read as the old spelling of ``hover``, which wins when
+            both are given. A free-verb parameter this noun does not name -- ``zoom``,
+            ``bgs``, ``kstpkper``, ``per_timestep``, ``hover_layers``,
+            ``show_mounding``, ... -- reaches the verb by that name, and ``custom_zs``,
+            which this noun computes, raises ``TypeError`` as a second value. The rest
+            are properties of the Plotly ``Choroplethmap`` trace -- ``zmid``,
+            ``colorbar``, ``reversescale``, ``showscale`` -- checked only when the
+            figure is built, so a misspelled one raises ``ValueError`` at ``.fig`` or
+            ``.show()``, and is IGNORED under ``backend="mpl"``, which never builds
+            that trace. On a ``q`` result -- a package's ``results.q`` and EVERY
+            ``model.budget.<term>``, ``sto_ss`` included -- ``zmid`` defaults to
+            ``0.0``, the centre of the symmetric scale; pass one to move it. Other
+            terms (``uzf.results.gwrch``, ...) set none.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -625,6 +729,30 @@ class StageResultsExplorer(SpatialView):
         ``per=N`` is a FILTER: every step period ``N`` saved, one row per step per
         connected cell -- where :meth:`map`, :meth:`plot` and the composers draw its
         last saved step.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period to keep, every step of it the stage file
+            saved. One period (a list raises ``TypeError``); ``None`` (default)
+            keeps every period. A period the file saved nothing in gives an empty
+            table, not an error.
+        layer : int or iterable of int or None, optional
+            Zero-based layer(s) of the CONNECTED groundwater cell to keep -- a lake
+            connected in several layers repeats its stage in each. ``None``
+            (default) keeps every layer.
+        cells : int or iterable of int or None, optional
+            Zero-based cell number(s) within a layer of the connected groundwater
+            cell (the ``cell`` column), ANDed with ``layer``. ``None`` (default)
+            keeps every cell; a number no feature connects to matches nothing.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``kstpkper``, ``per``, the feature (``lake``,
+            or ``reach`` with its ``rlen``/``distance_*`` columns), ``layer``,
+            ``cell`` and ``stage`` in model length units -- ``NaN`` where the lake
+            or reach is dry or inactive (ledgers 329, 353), the row kept.
         """
 
         frame = self._builder(self.model, package=self.package)
@@ -702,11 +830,13 @@ class StageResultsExplorer(SpatialView):
         that arrives through a tail is one no editor can ever offer (plan 8.8).
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
-        was measured to leave a record noun's figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row into
-        the tooltip on every cell.
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. Each was measured to leave a record noun's figure
+        byte-identical, and ``show_mounding`` is worse than inert: it injects a
+        head-derived row into the tooltip on every cell. Passed anyway, they ride
+        ``**trace_kwargs`` to the free verb. ``show_layer_elevs`` and
+        ``hover_surfaces`` ARE named (ledger 306): the layer frame is the grid's,
+        so they act on any map.
 
         Parameters
         ----------
@@ -723,8 +853,12 @@ class StageResultsExplorer(SpatialView):
             mean, and ``.get()`` shows which layers exist in its ``layer``
             column.
         multiplier : float, default 1.0
-            Scale every value before drawing -- unit conversion, or a datum
-            shift. Applied before ``agg``.
+            Scale every value before drawing -- a unit conversion (a multiplier
+            cannot shift a datum). Applied AFTER ``agg`` (so under ``-1.0``,
+            ``agg="max"`` draws minus the largest record) and to every cell,
+            ``fill_value`` included: ``fill_value=1.0, multiplier=2.0`` draws 2.0
+            where there is no record -- but 1.0 when the selection holds no record
+            at all.
         fill_value : float, default 0.0
             Value given to cells this package does not connect to. Pass
             ``float("nan")`` to leave them uncoloured, which is almost always
@@ -737,6 +871,20 @@ class StageResultsExplorer(SpatialView):
             are reduced to one number. ``first`` suits a shared water level; use ``mean`` when two
             different features overlap a cell and you want the average of their
             stages rather than whichever was read first.
+        **trace_kwargs
+            Every other keyword, forwarded to ``model.plot.map`` after two checks:
+            ``values``, ``type``, ``custom_hover``, ``hover_heads`` and ``hover_ks``
+            raise ``TypeError`` (this noun supplies its own field and hover), and
+            ``hover_spec`` is read as the old spelling of ``hover``, which wins when
+            both are given. A free-verb parameter this noun does not name -- ``zoom``,
+            ``bgs``, ``kstpkper``, ``per_timestep``, ``hover_layers``,
+            ``show_mounding``, ... -- reaches the verb by that name, and ``custom_zs``,
+            which this noun computes, raises ``TypeError`` as a second value. The rest
+            are properties of the Plotly ``Choroplethmap`` trace -- ``zmid``,
+            ``colorbar``, ``reversescale``, ``showscale`` -- checked only when the
+            figure is built, so a misspelled one raises ``ValueError`` at ``.fig`` or
+            ``.show()``, and is IGNORED under ``backend="mpl"``, which never builds
+            that trace.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -1210,7 +1358,35 @@ class PackageBudgetTermExplorer:
         per: int | Iterable[int] | None = None,
         **filters,
     ) -> pd.DataFrame:
-        """Return the filtered package budget-term dataframe."""
+        """Return the filtered package budget-term dataframe.
+
+        The parent namespace's ``get`` (``model.lak.budget.get`` /
+        ``model.sfr.budget.get``) with ``term`` pinned to this helper's term or
+        family (:attr:`types`). A term the package's budget file does not hold
+        gives an empty table, not an error.
+
+        Parameters
+        ----------
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep, every saved step of each -- a
+            FILTER. ``None`` (default) keeps every period.
+        **filters
+            The parent's other selector, passed unchanged: ``lakes=`` (zero-based
+            lake number, or an iterable of them) on a LAK term, ``reaches=`` on an
+            SFR term. ``term=`` raises ``TypeError`` (this helper supplies it), and
+            so does any other name.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per record entry per saved step: ``model``, ``package``,
+            ``term``, ``kstpkper``, ``per``, the feature (``lake``/``reach``) and
+            ``q`` -- model length³/time, in the sign the package's own budget file
+            records: positive is an INFLOW to the lake's or reach's water budget
+            (on LAK's ``STORAGE``, water released as the lake's volume FALLS; on
+            ``FLOW-JA-FACE``, flow into the feature from the other one) -- plus
+            each term's own columns.
+        """
 
         return self._namespace.get(term=self.term, per=per, **filters)
 
@@ -1221,7 +1397,37 @@ class PackageBudgetTermExplorer:
         by: list[str] | tuple[str, ...] | None = None,
         **filters,
     ) -> pd.DataFrame:
-        """Summarize the filtered package budget terms."""
+        """Summarize the filtered package budget terms.
+
+        The parent namespace's ``summary`` with ``term`` pinned to this helper's
+        term or family: each period is its LAST saved step on the budget file's
+        own clock, and the records of that step sum.
+
+        Parameters
+        ----------
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep. ``None`` (default) keeps every
+            period.
+        by : list or tuple of str or None, optional
+            Columns to group by. ``None`` (default) is the parent's own:
+            ``["per", "lake", "term"]`` on LAK, ``["per", "reach", "term"]`` on
+            SFR. Naming ``"kstpkper"`` keeps every saved step, one group each,
+            rather than each period's last; a name the table lacks raises
+            ``KeyError`` once any row matches (an empty selection returns an empty
+            table with those columns).
+        **filters
+            The parent's other selector, passed unchanged: ``lakes=`` on a LAK
+            term, ``reaches=`` on an SFR term (a zero-based number or an iterable
+            of them). ``term=`` raises ``TypeError`` (this helper supplies it), and
+            so does any other name.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``by`` columns, ``record_count``, the summed ``q`` (model
+            length³/time, the package budget file's sign) and the summed extra
+            columns the term carries -- see ``model.lak.budget.summary``.
+        """
 
         return self._namespace.summary(term=self.term, per=per, by=by, **filters)
 
@@ -1233,7 +1439,39 @@ class PackageBudgetTermExplorer:
         values: str = "q",
         **filters,
     ) -> pd.DataFrame:
-        """Pivot the filtered package budget terms to a wide dataframe."""
+        """Pivot the filtered package budget terms to a wide dataframe.
+
+        The parent namespace's ``wide`` with ``term`` pinned to this helper's term
+        or family: one column per term, each ``per`` row the period's LAST saved
+        step on the budget file's own clock.
+
+        Parameters
+        ----------
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep as rows. ``None`` (default) keeps
+            every period.
+        index : list or tuple of str, default ("per", "lake")
+            Columns labelling the rows, passed to the parent whatever its own
+            default. The default is the LAK spelling: on an SFR term
+            (``model.sfr.budget.<term>.wide()``) it raises ``KeyError: 'lake'``
+            whenever any row matches, so pass ``index=("per", "reach")`` there.
+            Naming ``"kstpkper"`` keeps every saved step, one row each.
+        values : str, default "q"
+            The column to pivot; records of one step on one row add. A name the
+            table lacks raises ``KeyError`` once any row matches (an empty
+            selection returns an empty table).
+        **filters
+            The parent's other selector, passed unchanged: ``lakes=`` on a LAK
+            term, ``reaches=`` on an SFR term (a zero-based number or an iterable
+            of them). ``term=`` raises ``TypeError`` (this helper supplies it), and
+            so does any other name.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The ``index`` columns, then one column per term of the family the file
+            holds; empty when nothing matches.
+        """
 
         return self._namespace.wide(
             term=self.term, per=per, index=index, values=values, **filters
@@ -1362,6 +1600,32 @@ class ModelBudgetNamespace:
         ``model.budget["SOURCE-SINK MIX"]`` and ``model.budget["source_sink_mix"]``
         are the same object, so a term name copied straight out of ``types`` (or
         out of an MF6 listing file) always works.
+
+        Parameters
+        ----------
+        term : str
+            The term, either spelling, any case: anything ``str()`` accepts,
+            stripped and lower-cased, every run of characters other than
+            ``[0-9a-z]`` made one ``_`` and a leading or trailing ``_`` dropped
+            (:func:`budget_term_attribute`), then read as an attribute.
+            A term this model's budget file does not hold raises
+            ``AttributeError`` -- not ``KeyError`` -- listing the ones it does. A
+            key that normalizes to one of the namespace's own attributes returns
+            that attribute instead of a term: ``budget["types"]`` is the
+            :attr:`types` list and ``budget["model"]`` the model itself (no MF6
+            record carries either name).
+
+        Returns
+        -------
+        CellBudgetResultsExplorer
+            The term's explorer, as ``model.budget.<attribute>`` returns it -- or,
+            for a key naming one of the namespace's own attributes (``"types"``,
+            ``"model"``), that attribute.
+
+        Raises
+        ------
+        AttributeError
+            When the model's budget file holds no such term.
         """
 
         return getattr(self, budget_term_attribute(term))

@@ -2336,23 +2336,31 @@ class ModelPlots:
 
         Parameters
         ----------
-        panels
-            A list of panels, or of ``(label, panel)`` pairs. A panel is either a
-            ``Choro`` (anything exposing ``get_choropleth()``) or a Plotly figure
-            whose traces are copied into its grid cell. Map panels contribute their
+        panels : iterable of Choro, plotly Figure or (label, panel) pairs
+            Required. The panels in reading order (filled row by row), each either a
+            panel or a two-item ``(label, panel)`` tuple or list. A panel is either a
+            ``Choro`` (anything exposing ``get_choropleth()``) or a
+            ``plotly.graph_objects.Figure`` (``viz.Fig`` included) whose traces are
+            copied into its grid cell; anything else raises ``TypeError``, and an
+            empty iterable raises ``ValueError``. Map panels contribute their
             cell trace **and** their overlays (contours, location markers,
-            pathlines) via ``overlay_traces()``. Unlabeled panels take their figure
-            title, else ``Panel <n>``.
-        ncols
-            Grid width; rows grow as needed. A grid holding maps is
+            pathlines) via ``overlay_traces()``. A label is drawn through ``str()``;
+            an unlabeled panel (or a ``None`` label) takes its figure title, else
+            ``Panel <n>``.
+        ncols : int, default 3
+            Grid width in panels, capped at the number of panels (``0`` means one
+            column); rows grow as needed. A grid holding maps is
             :data:`MOSAIC_ROW_HEIGHT` pixels per row (plotly's default 450 px is the
             whole figure), and each map subplot is framed for its own canvas.
-        title
-            Overall figure title.
-        diff
+        title : str or None, default None
+            Overall figure title; ``None`` draws none. Each panel's own title is its
+            subplot label (see ``panels``), not this.
+        diff : bool, default False
             When ``True``, the shared map color scale is centered at zero
-            (diverging), as used by the diff surfaces.
-        sync_views
+            (diverging), as used by the diff surfaces: a side no panel's
+            ``zmin``/``zmax`` names mirrors the pooled magnitude. Has no effect when
+            no panel is a map.
+        sync_views : bool or None, default None
             Map panels framed to ONE window (the union of their grids, or one shared
             ``extent``) start there together and, by default (``None``), are wired to
             pan and zoom **together** live -- dragging or zooming one map moves the
@@ -2363,7 +2371,7 @@ class ModelPlots:
             panel to one window; ``True`` then raises rather than doing that. Set
             ``False`` to let each map pan/zoom independently. Panels without geometry
             (raw Plotly figures) are unaffected.
-        colorbar
+        colorbar : dict, callable or None, default None
             Colorbar settings for the shared map color axis -- a dict of Plotly
             ``colorbar`` properties, or a **callable** ``(cmin, cmax) -> dict``.
             Panels are pooled onto one ``coloraxis``, which discards each panel's
@@ -2376,12 +2384,21 @@ class ModelPlots:
             both. The callable form exists because other useful labels also depend
             on the pooled limits, and those are only known here -- e.g.
             ``colorbar=lambda lo, hi: {"tickvals": ..., "ticktext": ...}``.
-            Ignored when no panel is a map.
-        extent
+            Ignored when no panel is a map. ``None`` (the default) leaves the bar
+            as Plotly draws it, apart from the automatic log-decade labels above and
+            a ``","`` thousands format when every map panel writes its numbers as
+            whole thousands (transmissivity).
+        extent : tuple, geometry, GeoDataFrame, str, list or None, default None
             The window every map panel opens on (see :func:`myflopy.plot.map`), or a
             LIST of them, one per panel in order -- ``None`` in the list for "this
             panel's own". A panel built with its own ``map(extent=...)`` keeps it
-            when this is ``None``. Sets the VIEW only.
+            when this is ``None``. Sets the VIEW only. An extent is anything
+            :func:`myflopy.plot.map` takes as ``extent=`` (four numbers
+            ``(xmin, ymin, xmax, ymax)``, points, a geometry, a GeoDataFrame or an
+            area name). Ignored entirely when no panel is a map; otherwise a list
+            must hold exactly one entry per panel (``ValueError`` otherwise), a
+            non-map panel's entry must be ``None`` (``TypeError``), and a map panel
+            drawn with ``fit_bounds=False`` refuses a window (``ValueError``).
 
         Returns
         -------
@@ -2925,6 +2942,23 @@ def _split_named_sections(text: str) -> list[tuple[str, str]]:
     ]
 
 
+def _accepted_entry_names(method) -> set[str] | None:
+    """The entry heads ``method`` can accept, or ``None`` when its tail is open.
+
+    Named parameters by name, a ``*args`` tail as ``*args`` (the spelling
+    :func:`_parameter_name` reads off a var-arg head). ``None`` for a method with
+    a ``**kwargs`` tail, which may forward any keyword its reference documents.
+    """
+
+    parameters = inspect.signature(method).parameters.values()
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters):
+        return None
+    return {
+        f"*{p.name}" if p.kind is inspect.Parameter.VAR_POSITIONAL else p.name
+        for p in parameters
+    }
+
+
 def _inherit_verb_docs(namespace) -> None:
     """Give each bound verb its free counterpart's reference, as ONE docstring.
 
@@ -2982,6 +3016,15 @@ def _inherit_verb_docs(namespace) -> None:
         subject = next(iter(inspect.signature(free).parameters), None)
         if subject and subject not in inspect.signature(method).parameters:
             sections = _drop_parameter(sections, subject)
+        # A NARROWER scope inherits only the entries for parameters it accepts.
+        # `vor.plot.section` takes six and inherited the free verb's other
+        # twenty -- `per`, `cells`, `layers`, `**kwargs` -- every one of which
+        # raises `TypeError` there; `vor.plot.grid` and `stack.plot.grid` carried
+        # the vtk pathline options the same way (ledger 437). A method with a
+        # `**kwargs` tail keeps them all: what it forwards is open.
+        accepted = _accepted_entry_names(method)
+        if accepted is not None:
+            sections = _filter_parameters(sections, keep=accepted)
         if own_sections:
             # The bound method documents some of its own parameters (GridPlots.map
             # does). Appending the inherited block wholesale gave it TWO

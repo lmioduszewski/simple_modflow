@@ -47,7 +47,43 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
         layer: int | Sequence[int] | None = None,
         cells: Sequence[int] | None = None,
     ) -> pd.DataFrame:
-        """Return one aligned UZF perioddata field for all models."""
+        """Return one aligned UZF perioddata field for all models.
+
+        Each member's ``build_uzf_field_input_table`` for this field: one row per
+        UZF object (``ifno``) per written period block, placed on its layer and
+        cell, plus a ``model`` column. Every member must carry exactly one UZF
+        package: a member with none raises ``AttributeError`` and one with
+        several ``SeveralPackagesError`` (``ifno`` numbers the objects within
+        ONE package, ledger 352), either of which ends the whole call -- the
+        group view takes no ``package=`` (ledger 439).
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one member's rows, by its name in the group. Default ``None``:
+            every member. A name that is not in the group matches nothing and
+            returns an empty frame.
+        per : int or None, optional
+            Keep one stress period, zero-based. The table holds the PERIODDATA
+            blocks the UZF file writes: a period with no block of its own -- which
+            MF6 runs on the last block before it -- has no rows. Default ``None``:
+            every written block.
+        layer : int or list of int or None, optional
+            Keep the UZF objects in these zero-based layers (an int, list or
+            tuple; a NumPy array raises ``TypeError``). Default ``None``: every
+            layer.
+        cells : int or list of int or None, optional
+            Keep the UZF objects on these zero-based cell numbers within a layer.
+            Default ``None``: every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``per``, ``ifno`` (zero-based), ``layer``,
+            ``cell`` and the field, in the model's units (``finf``/``pet`` a
+            length per time, ``extdp``/``ha``/``hroot`` a length, ``extwc`` and
+            ``rootact`` as MF6 takes them).
+        """
 
         frames = []
         for current_model_name, model in self.group.models.items():
@@ -78,7 +114,36 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
         layer: int | Sequence[int] | None = None,
         cells: Sequence[int] | None = None,
     ) -> pd.DataFrame:
-        """Compare the grouped UZF field against the reference model."""
+        """Compare the grouped UZF field against the reference model.
+
+        Each non-reference member's rows are paired with the reference's on
+        ``per``, ``ifno``, ``layer`` and ``cell`` by an inner join, so a UZF object
+        only one member has -- or one numbered differently -- is dropped.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one compared member's rows, by its name, after the comparison.
+            Default ``None``: every non-reference member. The reference's own
+            name, or a name not in the group, returns an empty frame.
+        per : int or None, optional
+            Compare one stress period's written block, zero-based (see
+            :meth:`get`). Default ``None``: every written block.
+        layer : int or list of int or None, optional
+            Compare only the UZF objects in these zero-based layers. Default
+            ``None``: every layer.
+        cells : int or list of int or None, optional
+            Compare only these zero-based cell numbers within a layer. Default
+            ``None``: every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, ``per``, ``ifno``, ``layer``,
+            ``cell``, the field, ``reference_<field>`` and ``<field>_diff``
+            (member minus reference, the field's units). Empty when :meth:`get`
+            is.
+        """
 
         data = self.get(per=per, layer=layer, cells=cells)
         if data.empty:
@@ -172,7 +237,59 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Build a diff choropleth for one grouped UZF field."""
+        """Build a diff choropleth for one grouped UZF field.
+
+        Draws ``<field>_diff`` from :meth:`compare` (member minus reference) on
+        the reference model's grid, one value per cell.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            The non-reference member to compare. Default ``None`` takes the
+            group's one non-reference member and raises ``ValueError`` when there
+            are several; the reference itself raises ``ValueError`` and a name not
+            in the group ``KeyError``. The member must have the reference's
+            discretization FILE content, read from each workspace (a changed
+            ``botm`` or ``idomain`` refuses too), grid type and ``ncpl``, or
+            ``ValueError``.
+        per : int, default 0
+            The stress period whose written block is compared, zero-based (see
+            :meth:`get`). A period with no rows draws every cell at
+            ``fill_value``.
+        layer : int, default 0
+            The zero-based layer whose UZF objects are drawn.
+        multiplier : float, default 1.0
+            Scales every drawn difference AFTER ``agg`` -- a unit conversion or a
+            sign flip -- and the filled cells with them, except when the
+            selection is empty (every cell is then ``fill_value`` as given).
+        fill_value : float, default 0.0
+            The value of a cell with no comparison row. ``float("nan")`` leaves
+            it blank. A cell whose rows hold no difference at all is ``NaN``, not
+            this (ledger 329).
+        agg : str, default "sum"
+            How several rows on one cell combine, as any pandas aggregation name.
+            A UZF package holds one object per layer and cell, so with one layer
+            drawn there is normally one row and it does not act.
+        colorscale : str or list or None, optional
+            Any Plotly colorscale name or explicit stops. Default ``None``: the
+            group diff scale -- red at the negative end, white at zero, blue at
+            the positive end.
+        **kwargs
+            Forwarded to the reference model's ``model.plot.map(...)``: its named
+            drawing options (``contours``, ``select``, ``features``, ``extent``,
+            ``backend``, ...) and its Plotly trace tail. ``zmin``/``zmax`` default
+            to plus/minus the largest absolute value drawn (a filled cell's
+            included) and ``hover_spec`` to the comparison hover; passing them
+            overrides those. The names this method fills itself beyond its own
+            parameters (``type``, ``custom_zs``, ``custom_hover``,
+            ``hover_heads``, ``hover_ks``) raise ``TypeError``; ``values=``
+            REPLACES the drawn differences while the hover keeps them.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            The map picture, or a bare Matplotlib figure with ``backend="mpl"``.
+        """
 
         target_name = _resolve_group_compare_target(self.group, model_name)
         _ensure_group_map_compatible(self.group, target_name)

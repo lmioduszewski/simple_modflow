@@ -1,13 +1,16 @@
 {
  "CellBudgetResultsExplorer.map": [
+  "**trace_kwargs",
   "layer",
   "per"
  ],
  "CellPackageInputFieldExplorer.map": [
+  "**trace_kwargs",
   "layer",
   "per"
  ],
  "DependentVariableFile.map": [
+  "**trace_kwargs",
   "backend"
  ],
  "GridPlots.grid": [
@@ -28,23 +31,28 @@
   "reverse"
  ],
  "GroupLakConnections.map": [
+  "**trace_kwargs",
   "layer"
  ],
  "HfbPackageExplorer.map": [
+  "**trace_kwargs",
   "layer",
   "per",
   "values"
  ],
  "HfbResultsExplorer.map": [
+  "**trace_kwargs",
   "kstpkper",
   "layer",
   "per"
  ],
  "LakBudgetResultsExplorer.map": [
+  "**trace_kwargs",
   "layer",
   "per"
  ],
  "LakConnectionsExplorer.map": [
+  "**trace_kwargs",
   "layer"
  ],
  "PRTPathlineView.map": [
@@ -52,10 +60,12 @@
   "per"
  ],
  "SfrBudgetResultsExplorer.map": [
+  "**trace_kwargs",
   "layer",
   "per"
  ],
  "SpatialView.animate": [
+  "**kwargs",
   "backend",
   "title"
  ],
@@ -82,26 +92,32 @@
   "resolution"
  ],
  "StageResultsExplorer.map": [
+  "**trace_kwargs",
   "layer",
   "per"
  ],
  "StaticArrayFieldExplorer.map": [
+  "**trace_kwargs",
   "layer",
   "per"
  ],
  "SurfaceWaterExchangeResultsExplorer.map": [
+  "**trace_kwargs",
   "layer",
   "per"
  ],
  "SurfaceWaterInputFieldExplorer.map": [
+  "**trace_kwargs",
   "layer",
   "per"
  ],
  "UzfFieldInputsExplorer.map": [
+  "**trace_kwargs",
   "layer",
   "per"
  ],
  "UzfInput.map": [
+  "**trace_kwargs",
   "per"
  ]
 }

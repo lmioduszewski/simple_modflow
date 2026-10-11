@@ -351,14 +351,18 @@ def test_prose_inside_a_parameter_list_is_refused():
     )
 
 
-#: Nouns that accept `**trace_kwargs` without documenting it. PRE-EXISTING and
-#: left alone -- the noun tier deliberately says less about the Plotly tail than
-#: the verb tier does. Pinned so the number cannot grow unnoticed.
+#: Nouns that accept `**trace_kwargs` without documenting it. Pinned so the number
+#: cannot grow unnoticed.
 #:
 #: 15 -> 17 on 2026-09-14 (ledger 258): `SpatialView.mosaic`/`.animate` joined
 #: the spliced set, and each keeps a `**kwargs` tail of its own -- the section
 #: branch has drawing options this composer does not name.
-UNDOCUMENTED_TAILS = 17
+#: 17 -> 0 on 2026-10-11 (ledger 436): the parameter guard reaches the nouns
+#: and requires an entry saying where a tail goes, so each noun documents its own
+#: -- in its own text, not spliced, because a noun's tail is not the free verb's
+#: (it refuses `values`/`type`/the legacy hover trio first, and reaches the
+#: verb's unnamed parameters by name).
+UNDOCUMENTED_TAILS = 0
 
 
 def test_every_spliced_method_documents_what_it_accepts():

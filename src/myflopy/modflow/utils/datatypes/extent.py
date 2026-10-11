@@ -46,7 +46,25 @@ class Extent:
     label: str | None = None
 
     def padded(self, padding: float) -> tuple[float, float, float, float]:
-        """The native box grown by ``padding`` of its own size on every side."""
+        """The native box grown by ``padding`` of its own size on every side.
+
+        What the static backends set as their axis limits for ``extent=``, with
+        ``padding`` taken from the map's ``bounds_padding``.
+
+        Parameters
+        ----------
+        padding : float
+            The margin added on each side, as a FRACTION of the box's own width
+            (left and right) and height (top and bottom) -- dimensionless, so
+            ``0.05`` grows a 1,000 ft wide box by 50 ft each side. Anything
+            ``float()`` accepts; ``0`` returns the box itself and a negative value
+            shrinks it (below ``-0.5`` the box turns inside out, unchecked).
+
+        Returns
+        -------
+        tuple of float
+            ``(xmin, ymin, xmax, ymax)`` in the grid's CRS, shapely's order.
+        """
 
         xmin, ymin, xmax, ymax = self.native
         dx = (xmax - xmin) * float(padding)

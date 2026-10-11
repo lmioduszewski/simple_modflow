@@ -1244,6 +1244,26 @@ class Choro(Picture):
         export and puts the screen view back after. None -- write the figure as
         it stands -- when there is nothing to refit, or when the caller has MOVED
         the view on ``.fig`` since it was fitted: that view is theirs (ledger 311).
+
+        Parameters
+        ----------
+        size : tuple of (float, float)
+            ``(width, height)`` in pixels of the WHOLE exported image, margins
+            and colorbar included. It is not the map canvas that
+            :meth:`map_view`'s ``size`` means: :func:`~myflopy.viz.map_canvas`
+            subtracts the margins Plotly draws, the colorbar's included when
+            this map shows one, before the zoom is fitted.
+            :meth:`~myflopy.viz.Picture.save` passes the export
+            ``width``/``height`` it was given, else the figure's own, else
+            Plotly's 700x500. No default. With ``fit_bounds=False``, with no
+            grid, or with a moved view the size is not read and the result is
+            None.
+
+        Returns
+        -------
+        dict or None
+            ``{"center": ..., "zoom": ...}`` for ``layout.map``, or None to
+            write the figure as it stands.
         """
 
         if self.vor is None or not self.fit_bounds:
@@ -1282,6 +1302,30 @@ class Choro(Picture):
 
         What a composer calls to frame a panel it did not build; the map's own
         ``extent=`` goes through the same call.
+
+        Parameters
+        ----------
+        value : None, str, sequence, shapely geometry, GeoSeries, GeoDataFrame or area
+            One ``extent=`` spelling (:func:`~myflopy.modflow.utils.datatypes
+            .extent.resolve_extent` lists them). The forms are four numbers
+            ``(xmin, ymin, xmax, ymax)`` in shapely order, a run of ``(x, y)``
+            points, a geometry, a GeoSeries/GeoDataFrame, an object answering
+            ``to_geoseries()`` (``mf.Area``), or the NAME of an area of
+            interest. Numbers and bare geometries are read in the GRID's CRS
+            (the default CRS when this map has no grid), and a
+            GeoSeries/GeoDataFrame is reprojected from its own CRS (read in the
+            grid's when it declares none). A name is looked up in the ``aoi`` of
+            the model this map reads inputs from, and ``KeyError`` lists the
+            known names (there are none on a bare grid). ``None`` returns None.
+            A LIST of extents (one per panel), or anything that is none of
+            these, raises ``TypeError``. A box with no area, or one lying
+            entirely off the grid, raises ``ValueError``. This map's own
+            :attr:`extent` is not changed.
+
+        Returns
+        -------
+        Extent or None
+            The window in the grid's CRS and in WGS84, or None for ``None``.
         """
 
         vor = self.vor
@@ -1330,6 +1374,30 @@ class Choro(Picture):
         area centroid while the subplots used the midpoint, so an irregular
         domain was framed two ways, and only the midpoint keeps a fitted box
         inside the view.
+
+        Parameters
+        ----------
+        bounds : sequence of four floats, optional
+            ``(west, south, east, north)`` in WGS84 degrees to frame instead of
+            this map's own :attr:`latlon_bounds` (its ``extent=``, else its
+            grid). Given, it frames even a map with no grid. The default
+            ``None`` uses the map's own bounds. Then, with neither an extent
+            nor a grid, only ``{"style": ...}`` is returned.
+        size : tuple of (float, float), optional
+            ``(width, height)`` in pixels of the MAP CANVAS the zoom is fitted
+            for: the plot area inside the margins, as
+            :func:`~myflopy.viz.map_canvas` returns it, not the whole figure
+            (that is :meth:`export_map_view`'s ``size``). The default ``None``
+            is a standalone map at Plotly's 700x450, less this map's margins
+            and a colorbar's. Read only when ``fit_bounds`` is True. With
+            ``fit_bounds=False`` the zoom is the map's own ``zoom`` and this is
+            ignored.
+
+        Returns
+        -------
+        dict
+            ``{"style": "carto-voyager", "center": {"lat", "lon"}, "zoom"}``,
+            the last two only when there is something to frame.
         """
 
         view = {"style": "carto-voyager"}
@@ -1401,10 +1469,31 @@ class Choro(Picture):
     def add_overlay(self, *traces):
         """Register extra map traces (pathlines, features, ...) drawn over the cells.
 
-        Overlays ride with the map wherever it goes: :attr:`choropleth` draws them
+        Overlays ride with the map wherever it goes: :attr:`fig` draws them
         onto the figure, and :func:`myflopy.viz.mosaic` copies them into the panel
         alongside the cell trace -- which is what keeps a composed small-multiple
         from quietly showing only half the picture.
+
+        Register them BEFORE the figure is first assembled, which happens on any
+        ``.fig``, ``.show()``, ``.save()``/``.html()`` or inline display. One
+        added afterwards never reaches this map's own figure (``.fig`` is built
+        once). It still reaches :meth:`overlay_traces`, so a ``mosaic``,
+        ``animate`` or ``.ani`` built later draws it.
+
+        Parameters
+        ----------
+        *traces
+            Plotly trace objects drawn above the cells, contours, ``features=``
+            and the ``select=`` outline, in the order given and after any
+            registered before them. They should be map traces
+            (``go.Scattermap``, ``go.Choroplethmap``, ...) placed by
+            ``lon``/``lat`` in WGS84 degrees. :meth:`plot_mpl` does not draw
+            them.
+
+        Returns
+        -------
+        Choro
+            This map, so calls chain.
         """
 
         self._overlays.extend(traces)
@@ -1713,7 +1802,33 @@ class Choro(Picture):
         """Render a hillshade GeoTIFF as a PNG image layer beneath the map traces.
 
         Reuses an already-exported PNG next to the model output when present,
-        otherwise converts ``tif_path`` first.
+        otherwise converts ``tif_path`` first. :attr:`fig` calls this with the
+        map's ``hillshade_path=``.
+
+        The PNG is ``hillshade.png`` in the results model's output folder, or in
+        the CURRENT WORKING DIRECTORY when the map has no results model. The
+        name does not depend on the raster, and an existing file of that name is
+        reused WHATEVER raster it was made from. A second map given a different
+        ``tif_path`` therefore draws the first raster's image stretched over
+        the second raster's bounds. Delete the PNG to make it convert again.
+
+        The image replaces the basemap (map style ``"white-bg"``) and any other
+        ``layout.map.layers``, and the cells are drawn at opacity 0.6 over it.
+
+        Parameters
+        ----------
+        tif_path : str or os.PathLike
+            The GeoTIFF to draw: 1 band (grey), 2 (grey + alpha), 3 (RGB) or 4+
+            (RGBA from the first four), in any CRS rasterio reads. Its bounds
+            are reprojected to WGS84 to place the image. A 1- or 2-band raster
+            is always stretched linearly, from its own minimum to its maximum,
+            onto 0-255. A 3+ band raster keeps its ``uint8`` bands as they are
+            and stretches the others. The default ``None`` cannot act: rasterio
+            raises ``TypeError``.
+
+        Returns
+        -------
+        None
         """
 
         hillshade = ChoroplethHillshadeBackground(tif_path, self.model)
@@ -1851,26 +1966,58 @@ class Choro(Picture):
 
         Parameters
         ----------
-        ax
+        ax : matplotlib.axes.Axes, optional
             Existing matplotlib ``Axes`` to draw into (e.g. one panel of a
-            multi-layer mosaic). A new figure is created when omitted.
-        cmap
-            Matplotlib colormap. Defaults to the nearest equivalent of this
-            Choro's Plotly ``colorscale``.
-        vmin, vmax
-            Color limits; default to the Choro's ``zmin`` / ``zmax`` when set.
-        colorbar
-            Draw the colorbar legend (default ``True``).
-        outline_regions
-            Names of model regions to outline in black for context (requires a
-            parent ``model``), e.g. ``("all_streams", "all_lakes")``.
-        edgecolor
-            Cell edge color (default ``"none"`` for a clean fill).
-        norm
+            multi-layer mosaic); the figure returned is ``ax.figure``, and the
+            colorbar is added to it as a new Axes. The default ``None`` makes a
+            new 7 x 6 inch figure.
+        cmap : str or matplotlib.colors.Colormap, optional
+            A Matplotlib colormap name or object, handed to GeoPandas. The
+            default ``None`` builds one from Plotly's own stops for this
+            Choro's ``colorscale`` (:func:`~myflopy.viz.mpl_colormap_for`), so
+            both backends draw the same ramp.
+        vmin, vmax : float, optional
+            Color limits in the map's DATA units: the units of the values
+            drawn (e.g. ft for heads), and on a ``logscale`` map the real
+            values, never their log10. They default to the Choro's
+            ``zmin``/``zmax``. When those are None too, a linear map
+            autoscales to its finite values and a log map spans its positive
+            ones. On a log map a limit must be finite and positive
+            (``ValueError``). Ignored when ``norm`` is given.
+        colorbar : bool, default True
+            Draw the colorbar (GeoPandas' ``legend=``). With a ``"thousands"``
+            number style its labels read ``112,000``. On a log map, ticks the
+            Choro's own ``colorbar=`` names (``tickvals``/``ticktext``, in log10
+            positions) are placed at their data-unit values.
+        title : str, optional
+            Axes title. The default ``None`` (or ``""``) draws none. The Plotly
+            figure's title is not carried over.
+        outline_regions : sequence, default ()
+            Things to outline, one cell boundary each, in
+            ``PALETTE.mpl_highlight`` (crimson) at 0.5 pt, e.g.
+            ``("all_streams", "all_lakes")``. Each item is resolved exactly as a
+            ``select=`` value: a registered region name (needs the model this map
+            reads inputs from), an area-of-interest name, a vector-file path, a
+            geometry or ``mf.Area``, cell indices, or a boolean mask. A name that
+            is none of those, or a cell index off the grid, raises
+            ``ValueError``. An item that covers no cell draws nothing (it logs a
+            warning). A bare string is iterated character by character, so
+            wrap one name in a tuple. Drawn in addition to the ``select=``
+            outline.
+        edgecolor : str, default "none"
+            Cell edge colour, any Matplotlib colour (``"none"`` for a clean
+            fill).
+        norm : matplotlib.colors.Normalize, optional
             A ready ``matplotlib.colors.Normalize`` shared with other panels --
             what the static ``mosaic``/``animate`` pass so every panel draws
             through this one renderer on one scale. Replaces ``vmin``/``vmax``
-            (and the automatic ``LogNorm``) when given.
+            (and the automatic ``LogNorm``) when given. On a log map,
+            non-positive values are still left blank.
+        **plot_kwargs
+            Passed on to ``geopandas.GeoDataFrame.plot`` (``linewidth``,
+            ``alpha``, ``legend_kwds``, ``missing_kwds``, ...). ``column`` and
+            ``legend`` are set here, so passing either raises ``TypeError``
+            (use ``colorbar=``).
 
         Returns
         -------

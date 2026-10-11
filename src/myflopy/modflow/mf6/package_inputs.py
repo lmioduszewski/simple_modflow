@@ -85,14 +85,32 @@ class CellPackageInputsExplorer(FieldMappable):
     ) -> pd.DataFrame:
         """Return a normalized input table for this package.
 
+        One row per record of every package of this type (each tagged ``pname``,
+        its FloPy name in upper case): the record's own fields (``cond``,
+        ``bhead``, ``boundname``, auxiliaries, ...) plus ``layer``, ``cell``,
+        ``package``, ``per`` and ``model``. An array-form RCH/EVT gives one row
+        per column per period. The three selectors combine with AND.
+
         Parameters
         ----------
-        per
-            Optional zero-based stress period.
-        layer
-            Optional zero-based layer or layers to keep.
-        cells
-            Optional zero-based cell ids to keep.
+        per : int, optional
+            Zero-based stress period. Only the package's own PERIOD block
+            numbered ``per`` is read: MF6 applies the last block to every later
+            period that has none of its own, but such a period returns NO rows
+            here (measured: a GHB written once, in period 0, gives an empty table
+            at ``per=3``; ledger 441). A period past ``nper`` returns no rows
+            either. On a LIST package such a read also ADDS an empty block
+            numbered ``per`` to the FloPy package (FloPy's ``get_data(key=)``
+            creates it), so a model written afterwards carries an empty PERIOD
+            block there and MF6 applies NO records from that period on (measured:
+            that GHB, read at ``per=3`` and rewritten, ran with 0 records in
+            periods 3-5 against 84; ledger 441). Default ``None``: every
+            block, each row's ``per`` the block it came from.
+        layer : int or iterable of int, optional
+            Zero-based layer(s) to keep. Default ``None``: every layer.
+        cells : int or iterable of int, optional
+            Zero-based cell id(s) WITHIN a layer (``0`` to ``ncpl - 1``) to keep;
+            a bare int works as well as a list. Default ``None``: every cell.
         """
 
         frame = build_cell_package_input_table(
@@ -191,7 +209,29 @@ class CellPackageInputFieldExplorer(SpatialView):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return rows for this input field, preserving package metadata."""
+        """Return rows for this input field, preserving package metadata.
+
+        Columns ``model``, ``package``, ``pname`` (where the table carries it),
+        ``per``, ``layer``, ``cell`` and this field, one row per record; the
+        selectors are those of the package's ``inputs.get`` and combine with AND.
+
+        Parameters
+        ----------
+        per : int, optional
+            Zero-based stress period. Only the package's own PERIOD block
+            numbered ``per`` is read: MF6 applies the last block to every later
+            period that has none of its own, but such a period returns NO rows
+            here (measured: a GHB written once, in period 0, gives an empty table
+            at ``per=3``), and on a list package the read ADDS an empty block
+            ``per`` to the FloPy package, which MF6 then reads as "no records
+            from here on" once the model is written (see the package's
+            ``inputs.get``; ledger 441). Default ``None``: every block.
+        layer : int or iterable of int, optional
+            Zero-based layer(s) to keep. Default ``None``: every layer.
+        cells : int or iterable of int, optional
+            Zero-based cell id(s) within a layer to keep. Default ``None``: every
+            cell.
+        """
 
         frame = self.inputs.get(per=per, layer=layer, cells=cells)
         required_columns = ["model", "package", "per", "layer", "cell", self.field_name]
@@ -273,17 +313,25 @@ class CellPackageInputFieldExplorer(SpatialView):
         that arrives through a tail is one no editor can ever offer (plan 8.8).
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
-        was measured to leave a record noun's figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row into
-        an elevation tooltip on every cell.
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. Each was measured to leave a record noun's figure
+        byte-identical, and ``show_mounding`` is worse than inert: it injects a
+        head-derived row into an elevation tooltip on every cell. They are not
+        REFUSED, though: ``**trace_kwargs`` carries them to the free verb.
+        ``show_layer_elevs``/``hover_surfaces`` are named, and act: they read the
+        GRID's layer frame (ledger 258).
 
         Parameters
         ----------
         per : int, default 0
             Stress period to read, zero-based. A package whose records do not
-            change with time has them all under period 0.
+            change with time has them all under period 0. Only the package's own
+            PERIOD block numbered ``per`` is read, so a period MF6 fills from an
+            earlier block draws as having no records -- every cell
+            ``fill_value`` (measured: a GHB written once, at ``per=3``) -- and on a
+            list package the read ADDS an empty block ``per`` to the FloPy
+            package, which MF6 reads as "no records from here on" once the model
+            is written (see the package's ``inputs.get``; ledger 441).
         layer : int, default 0
             Zero-based layer. Records in other layers are not drawn; pass the
             layer the boundary actually sits in, which
@@ -301,6 +349,21 @@ class CellPackageInputFieldExplorer(SpatialView):
             extensive quantity such as a conductance or a flow, ``mean`` for an
             intensive one such as an elevation or a head. Worth setting
             explicitly when a vector source put many features in one cell.
+        **trace_kwargs
+            The open tail, forwarded to ``model.plot.map``. ``values=``,
+            ``type=`` and the legacy ``custom_hover``/``hover_heads``/``hover_ks``
+            raise ``TypeError``, and ``hover_spec=`` is read as a legacy spelling
+            of ``hover`` (``hover`` wins when both are given). A key naming a
+            :func:`myflopy.plot.map` parameter this noun does not name reaches it
+            as that parameter, unrefused -- ``zoom``, ``hover_fields``,
+            ``animation_kstpkpers``, ``rch_scale`` (which acts on a recharge
+            map only), and the per-layer ``kstpkper``,
+            ``per_timestep``, ``bgs``, ``hover_layers`` and ``show_mounding``
+            (measured: ``show_mounding=True`` keeps every colour and adds a
+            head-derived row to every tooltip; ledger 441). Anything else
+            rides to the ``go.Choroplethmap`` trace (``zmid``, ``colorbar``), where
+            Plotly refuses an unknown name with ``ValueError`` when the figure is
+            built.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -551,7 +614,30 @@ class UzfFieldInputsExplorer(SpatialView):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return the normalized UZF field table for the selected rows."""
+        """Return the normalized UZF field table for the selected rows.
+
+        Columns ``model``, ``package`` (``"uzf"``), ``per``, ``ifno``, ``layer``,
+        ``cell`` and this field: one row per UZF object listed in a period block,
+        placed at its own cell through ``packagedata``. The selectors combine
+        with AND.
+
+        Parameters
+        ----------
+        per : int, optional
+            Zero-based stress period. Only the UZF package's own PERIOD block
+            numbered ``per`` is read: a period MF6 fills from an earlier block,
+            or one past ``nper``, returns no rows -- and the read ADDS an empty
+            block ``per`` to the FloPy package (FloPy's ``get_data(key=)`` creates
+            it), which a later write puts in the file as an empty PERIOD block
+            (measured: ``per=99`` left a block 99 behind; ledger 441).
+            Default ``None``: every block.
+        layer : int or iterable of int, optional
+            Zero-based layer(s) of the UZF object's cell to keep. Default
+            ``None``: every layer.
+        cells : int or iterable of int, optional
+            Zero-based cell id(s) within a layer to keep. Default ``None``: every
+            cell.
+        """
 
         frame = build_uzf_field_input_table(
             self.model,
@@ -579,7 +665,23 @@ class UzfFieldInputsExplorer(SpatialView):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return a wide DataFrame with one row per UZF record and one column per period."""
+        """Return a wide DataFrame with one row per UZF record and one column per period.
+
+        Rows are every UZF object of the package (``ifno``, ``layer``, ``cell``)
+        that the selectors keep; columns ``per_<n>`` are one per PERIOD block the
+        package writes (a period MF6 fills from an earlier block has no column),
+        ``NaN`` where a block does not list the object. A selection keeping no
+        object returns an empty frame with the three key columns.
+
+        Parameters
+        ----------
+        layer : int or iterable of int, optional
+            Zero-based layer(s) of the object's cell to keep. Default ``None``:
+            every layer.
+        cells : int or iterable of int, optional
+            Zero-based cell id(s) within a layer to keep. Default ``None``: every
+            cell.
+        """
 
         return build_uzf_field_input_wide_table(
             self.model,
@@ -654,11 +756,13 @@ class UzfFieldInputsExplorer(SpatialView):
         that arrives through a tail is one no editor can ever offer (plan 8.8).
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
-        was measured to leave a record noun's figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row into
-        an infiltration tooltip on every cell.
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. Each was measured to leave a record noun's figure
+        byte-identical, and ``show_mounding`` is worse than inert: it injects a
+        head-derived row into an infiltration tooltip on every cell. They are not
+        REFUSED, though: ``**trace_kwargs`` carries them to the free verb.
+        ``show_layer_elevs``/``hover_surfaces`` are named, and act: they read the
+        GRID's layer frame (ledger 258).
 
         Parameters
         ----------
@@ -689,6 +793,21 @@ class UzfFieldInputsExplorer(SpatialView):
             over the cell); switch to ``mean`` for an intensive one such as
             ``extdp``, ``extwc`` or ``rootact``, where summing a stacked column
             produces a number with no physical meaning.
+        **trace_kwargs
+            The open tail, forwarded to ``model.plot.map``. ``values=``,
+            ``type=`` and the legacy ``custom_hover``/``hover_heads``/``hover_ks``
+            raise ``TypeError``, and ``hover_spec=`` is read as a legacy spelling
+            of ``hover`` (``hover`` wins when both are given). A key naming a
+            :func:`myflopy.plot.map` parameter this noun does not name reaches it
+            as that parameter, unrefused -- ``zoom``, ``hover_fields``,
+            ``animation_kstpkpers``, ``rch_scale`` (which acts on a recharge
+            map only), and the per-layer ``kstpkper``,
+            ``per_timestep``, ``bgs``, ``hover_layers`` and ``show_mounding``
+            (measured: ``show_mounding=True`` keeps every colour and adds a
+            head-derived row to every tooltip; ledger 441). Anything else
+            rides to the ``go.Choroplethmap`` trace (``zmid``, ``colorbar``), where
+            Plotly refuses an unknown name with ``ValueError`` when the figure is
+            built.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -1145,7 +1264,23 @@ class StaticArrayFieldExplorer(SpatialView):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return this static array field as a normalized layer/cell table."""
+        """Return this static array field as a normalized layer/cell table.
+
+        Columns ``model``, ``package``, ``field``, ``layer``, ``cell`` and this
+        field, one row per layer and cell of the ``(nlay, ncpl)`` array -- a
+        constant or a per-layer list declared for the model is broadcast to every
+        cell first. Values are in the package's own units. The selectors combine
+        with AND.
+
+        Parameters
+        ----------
+        layer : int or iterable of int, optional
+            Zero-based layer(s) to keep; one the model lacks selects nothing.
+            Default ``None``: every layer.
+        cells : int or iterable of int, optional
+            Zero-based cell id(s) within a layer to keep. Default ``None``: every
+            cell.
+        """
 
         arr = self._array()
         rows = []
@@ -1179,7 +1314,20 @@ class StaticArrayFieldExplorer(SpatialView):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.Series:
-        """Return this field as a series indexed by ``layer/cell``."""
+        """Return this field as a series indexed by ``layer/cell``.
+
+        Sorted by layer then cell, named after the field; a selection keeping
+        nothing returns an empty float series with the same two index levels.
+
+        Parameters
+        ----------
+        layer : int or iterable of int, optional
+            Zero-based layer(s) to keep, as in :meth:`get`. Default ``None``:
+            every layer.
+        cells : int or iterable of int, optional
+            Zero-based cell id(s) within a layer to keep. Default ``None``: every
+            cell.
+        """
 
         frame = self.get(layer=layer, cells=cells)
         if frame.empty:
@@ -1190,7 +1338,14 @@ class StaticArrayFieldExplorer(SpatialView):
         return series
 
     def stack(self, **kwargs) -> pd.Series:
-        """Alias for :meth:`long`."""
+        """Alias for :meth:`long`.
+
+        Parameters
+        ----------
+        **kwargs
+            Passed to :meth:`long` unchanged: ``layer=`` and ``cells=``, by
+            keyword. Anything else -- ``per=`` included -- raises ``TypeError``.
+        """
 
         return self.long(**kwargs)
 
@@ -1200,7 +1355,19 @@ class StaticArrayFieldExplorer(SpatialView):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Pivot this field to one row per cell and one column per layer."""
+        """Pivot this field to one row per cell and one column per layer.
+
+        A ``cell`` column, then ``layer_<k>`` for each layer kept. A selection
+        keeping nothing returns an empty frame with a ``cell`` column.
+
+        Parameters
+        ----------
+        layer : int or iterable of int, optional
+            Zero-based layer(s) to keep as columns. Default ``None``: every layer.
+        cells : int or iterable of int, optional
+            Zero-based cell id(s) within a layer to keep as rows. Default
+            ``None``: every cell.
+        """
 
         frame = self.get(layer=layer, cells=cells)
         if frame.empty:
@@ -1271,13 +1438,18 @@ class StaticArrayFieldExplorer(SpatialView):
         that arrives through a tail is one no editor can ever offer (plan 8.8).
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. They
-        describe a simulated per-layer FIELD read from an output file; this
-        picture is model input, drawn one layer at a time, and each was measured
-        to leave it byte-identical. ``show_mounding`` is worse than inert: it
-        injects a head-derived row into the tooltip of every cell, on a picture
-        that is not a head.
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. They describe a simulated per-layer FIELD read
+        from an output file; this picture is model input, drawn one layer at a
+        time, and on a stored array (``npf.k``) each was measured to leave it
+        byte-identical. On ``npf.transmissivity``, which draws through the free
+        map's own transmissivity hover, ``hover_layers`` does reshape the
+        tooltip (measured). ``show_mounding`` is worse than inert: it injects a
+        head-derived row into the tooltip of every cell, on a picture that is not
+        a head. They are not REFUSED, though: ``**trace_kwargs`` carries them to
+        the free verb.
+        ``show_layer_elevs``/``hover_surfaces`` are named, and act: they read the
+        GRID's layer frame (ledger 258).
 
         Parameters
         ----------
@@ -1297,6 +1469,21 @@ class StaticArrayFieldExplorer(SpatialView):
             look identical for a uniform ``k`` and quite different for one built
             from a per-unit list. Use ``.wide()`` to see every layer side by side
             before choosing.
+        **trace_kwargs
+            The open tail, forwarded to ``model.plot.map``. ``values=``,
+            ``type=`` and the legacy ``custom_hover``/``hover_heads``/``hover_ks``
+            raise ``TypeError``, and ``hover_spec=`` is read as a legacy spelling
+            of ``hover`` (``hover`` wins when both are given). A key naming a
+            :func:`myflopy.plot.map` parameter this noun does not name reaches it
+            as that parameter, unrefused -- ``zoom``, ``hover_fields``,
+            ``animation_kstpkpers``, ``rch_scale`` (which acts on a recharge
+            map only), and the per-layer ``kstpkper``,
+            ``per_timestep``, ``bgs``, ``hover_layers`` and ``show_mounding``
+            (measured: ``show_mounding=True`` keeps every colour and adds a
+            head-derived row to every tooltip; ledger 441). Anything else
+            rides to the ``go.Choroplethmap`` trace (``zmid``, ``colorbar``), where
+            Plotly refuses an unknown name with ``ValueError`` when the figure is
+            built.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -1588,6 +1775,27 @@ class TransmissivityMaxExplorer(StaticArrayFieldExplorer):
         saved time step, every saved period by default -- and is ignored by the
         maximum, which has no time. Built with numpy rather than one row at a
         time: a saturated table is ``periods x layers x cells`` long.
+
+        Columns ``model``, ``package``, ``field``, (saturated only) ``per`` and
+        ``kstp``, ``layer``, ``cell``, the transmissivity (length^2/time in the
+        model's units, e.g. ft2/d), ``k`` (length/time) and ``thickness``
+        (length).
+
+        Parameters
+        ----------
+        per : int or iterable of int, optional
+            On ``npf.transmissivity``: the zero-based stress period(s), each read
+            at the LAST saved head step of the period; a period with no saved
+            heads, or an empty iterable, raises ``ValueError``, and an unrun model
+            raises naming ``transmissivity_max``. Default ``None``: every period
+            with saved heads. On ``npf.transmissivity_max``: accepted and
+            IGNORED -- the maximum has no time, so every value returns the same
+            table, with no ``per``/``kstp`` columns.
+        layer : int or iterable of int, optional
+            Zero-based layer(s) to keep. Default ``None``: every layer.
+        cells : int or iterable of int, optional
+            Zero-based cell id(s) within a layer to keep. Default ``None``: every
+            cell.
         """
 
         frames = []
@@ -1646,7 +1854,20 @@ class TransmissivityExplorer(TransmissivityMaxExplorer):
         """Transmissivity indexed by ``per/layer/cell`` -- the PERIOD is part of the
         key, since the saturated thickness moves with the heads (the inherited
         static form indexed by ``layer/cell`` alone repeated every key once per
-        period, ledger 311)."""
+        period, ledger 311).
+
+        Parameters
+        ----------
+        per : int or iterable of int, optional
+            Zero-based stress period(s), each at its last saved head step, as in
+            :meth:`get`; a period with no saved heads raises ``ValueError``.
+            Default ``None``: every period with saved heads.
+        layer : int or iterable of int, optional
+            Zero-based layer(s) to keep. Default ``None``: every layer.
+        cells : int or iterable of int, optional
+            Zero-based cell id(s) within a layer to keep. Default ``None``: every
+            cell.
+        """
 
         frame = self.get(per=per, layer=layer, cells=cells)
         series = frame.set_index(["per", "layer", "cell"])[self.field_name].sort_index()
@@ -1654,7 +1875,14 @@ class TransmissivityExplorer(TransmissivityMaxExplorer):
         return series
 
     def stack(self, **kwargs) -> pd.Series:
-        """Alias for :meth:`long`."""
+        """Alias for :meth:`long`.
+
+        Parameters
+        ----------
+        **kwargs
+            Passed to :meth:`long` unchanged: ``per=``, ``layer=`` and ``cells=``,
+            by keyword. Anything else raises ``TypeError``.
+        """
 
         return self.long(**kwargs)
 
@@ -1666,7 +1894,21 @@ class TransmissivityExplorer(TransmissivityMaxExplorer):
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
         """One row per ``(per, cell)``, one column per layer -- never one period
-        silently standing for all of them."""
+        silently standing for all of them.
+
+        Columns ``per``, ``cell``, then ``layer_<k>`` for each layer kept.
+
+        Parameters
+        ----------
+        per : int or iterable of int, optional
+            Zero-based stress period(s), each at its last saved head step, as in
+            :meth:`get`. Default ``None``: every period with saved heads.
+        layer : int or iterable of int, optional
+            Zero-based layer(s) to keep as columns. Default ``None``: every layer.
+        cells : int or iterable of int, optional
+            Zero-based cell id(s) within a layer to keep as rows. Default
+            ``None``: every cell.
+        """
 
         frame = self.get(per=per, layer=layer, cells=cells)
         wide = frame.pivot_table(

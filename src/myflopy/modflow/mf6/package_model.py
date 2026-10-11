@@ -308,6 +308,11 @@ class HfbResultsExplorer:
     def get(self, *, kstpkper=None, per: int | None = None) -> pd.DataFrame:
         """Return the simulated flow across every barrier, per time step.
 
+        Every barrier of EVERY period's block is listed at every step, whichever
+        block is in force then: a model whose period-3 block replaces its period-0
+        barriers still lists the period-0 faces from period 3 on, carrying the
+        flow of faces that are no longer barriers.
+
         Parameters
         ----------
         kstpkper : tuple, optional
@@ -364,7 +369,24 @@ class HfbResultsExplorer:
         return pd.DataFrame(rows)
 
     def summary(self, **kwargs) -> pd.DataFrame:
-        """One row per time step: how much water crossed the barriers, and the extremes."""
+        """One row per time step: how much water crossed the barriers, and the extremes.
+
+        Parameters
+        ----------
+        **kwargs
+            Passed unchanged to :meth:`get`: ``kstpkper`` (one ``(kstp, kper)``)
+            and ``per`` (a zero-based stress period) choose the saved steps
+            summarized, every one by default. Any other name raises ``TypeError``
+            naming ``get``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``per``, ``kstp``, ``barriers`` (rows of :meth:`get` at that step --
+            every block's barriers, whichever is in force), ``q_net`` (the sum of
+            ``q_cell1_to_cell2``, model length³/time), ``q_abs_total`` and
+            ``q_max_abs``.
+        """
 
         table = self.get(**kwargs)
         if table.empty:
@@ -424,12 +446,15 @@ class HfbResultsExplorer:
         backend: str = "plotly",
         **trace_kwargs,
     ):
-        """Draw the barriers coloured by the flow crossing them.
+        """Draw the barriers on the grid, each carrying the flow across it in its hover.
 
-        Each barrier is drawn on the face it occupies, thickness fixed and colour
-        carrying |q| -- a barrier is a line, so it is drawn as one. The cells
-        beneath are the plain grid; the drawing parameters below style THAT
-        backdrop, which is what makes a barrier legible against it.
+        Each barrier is drawn on the face it occupies -- a barrier is a line, so
+        it is drawn as one -- at a fixed width, and its flow ``q`` is in its HOVER
+        only: the colour does NOT carry it. On Plotly each barrier is its own
+        trace in Plotly's default cycle of trace colours; on Matplotlib every one
+        is black. The cells beneath are the bare grid, which ``vor.plot.map``
+        colours by CELL NUMBER (0 .. ncpl-1) on the ``'earth'`` scale; the drawing
+        parameters below style THAT backdrop.
 
         Every parameter is named rather than swept into ``**kwargs``: PyCharm and
         Pylance read the ``def`` line and never run the module, so a parameter
@@ -448,11 +473,31 @@ class HfbResultsExplorer:
             ``(per, kstp)`` pair, not the largest ``kstp``, because a model whose
             periods each hold one time step has ``kstp == 0`` throughout.
         per : int, optional
-            Stress period to read, zero-based. Mutually exclusive with
-            ``kstpkper``.
+            Stress period to read, zero-based, at its last saved step. Given with
+            ``kstpkper`` it FILTERS that step: the same period draws it, a
+            different one leaves nothing and raises ``KeyError: 'layer'`` from the
+            empty table. Every barrier of every period's block is drawn,
+            whichever block is in force at that step.
         layer : int, default 0
             Zero-based layer. A barrier sits in one layer, so this selects which
             set of faces is drawn; barriers in other layers are not shown.
+        **trace_kwargs
+            Every other keyword, forwarded to ``vor.plot.map`` -- the BACKDROP --
+            after two checks: ``values``, ``type``, ``custom_hover``,
+            ``hover_heads`` and ``hover_ks`` raise ``TypeError`` (this noun draws
+            the barrier flow), and ``hover_spec`` is read as the old spelling of
+            ``hover``, which wins when both are given. A parameter of
+            ``vor.plot.map`` this noun does not name (``zoom``, ...) reaches it by
+            that name, as does one of the ``Choro`` picture it builds
+            (``per_timestep``, ``hover_layers``, ...), and ``custom_zs``
+            recolours the backdrop cells. The backdrop is a bare grid
+            that reads no model, so ``bgs=True`` and ``show_mounding=True``, which
+            read heads, raise ``AttributeError`` at ``.fig``. The rest are
+            properties of the backdrop's Plotly ``Choroplethmap`` trace -- ``zmid``,
+            ``colorbar``, ``reversescale``, ``showscale`` -- never of the barrier
+            lines; checked only when the figure is built, so a misspelled one
+            raises ``ValueError`` at ``.fig`` or ``.show()``, and IGNORED under
+            ``backend="mpl"``, which never builds that trace.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -831,7 +876,25 @@ class HfbPackageExplorer:
         """Return the barriers as a GeoDataFrame of the faces they sit on.
 
         The shape worth keeping: a barrier's geometry is the shared edge, and an
-        edge survives a change of grid in a way a cell-pair index does not.
+        edge survives a change of grid in a way a cell-pair index does not. A
+        barrier between two LAYERS (``vertical`` in :meth:`get`) has no face in
+        plan and is left out, as is a pair the grid finds no shared face for.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period whose OWN block to return -- compared with the
+            ``per`` column of :meth:`get`, the period each block was DECLARED in,
+            so a period with no block of its own returns nothing although MODFLOW 6
+            still applies the last block before it. ``None`` (default) returns
+            every block's barriers, a barrier declared in two blocks once per
+            block.
+
+        Returns
+        -------
+        geopandas.GeoDataFrame
+            ``per``, ``layer``, ``cell1``, ``cell2``, ``hydchr`` and the shared
+            face as a ``LineString``, in the grid's CRS.
         """
 
         import geopandas as gpd
@@ -903,7 +966,9 @@ class HfbPackageExplorer:
 
         A barrier is an edge, so it is drawn as an edge -- over the cell field
         rather than instead of it. ``values`` colours the cells as any other map
-        would; without one the grid is drawn plain beneath the barriers.
+        would; without one the bare grid is drawn beneath the barriers, which
+        ``vor.plot.map`` colours by CELL NUMBER (0 .. ncpl-1) on the ``'earth'``
+        scale.
 
         Every parameter is named rather than swept into ``**kwargs``: PyCharm and
         Pylance read the ``def`` line and never run the module, so a parameter
@@ -920,15 +985,35 @@ class HfbPackageExplorer:
         ----------
         values : array-like, optional
             Per-cell values to colour the cells by -- heads, K, a zone id, any
-            array of length ``vor.ncpl``. With none, the grid is drawn plain and
-            the barriers are the only thing carrying colour.
+            array of length ``vor.ncpl``. With none, the cells are coloured by
+            their cell number, not left plain.
         per : int, optional
-            Which period's barriers to draw, zero-based. The first defined period
-            by default. Barriers are usually time-invariant, so this matters only
-            for a model that redefines them.
+            The zero-based stress period whose OWN block of barriers to draw
+            (:meth:`segments`): a period with no block of its own draws none,
+            although MODFLOW 6 still applies the last block before it. ``None``
+            (default) draws every block's barriers together -- not the first
+            block's -- so a model that redefines its barriers draws both sets.
         layer : int, default 0
             Which layer's barriers to draw, zero-based. A barrier sits on the
             faces of one layer; those in other layers are not shown.
+        **trace_kwargs
+            Every other keyword, forwarded to ``vor.plot.map`` -- the BACKDROP --
+            after two checks: ``type``, ``custom_hover``, ``hover_heads`` and
+            ``hover_ks`` raise ``TypeError`` (``values`` is named above, so it
+            never lands here), and ``hover_spec`` is read as the old spelling of
+            ``hover``, which wins when both are given. A parameter of
+            ``vor.plot.map`` this noun does not name (``zoom``, ...) reaches it by
+            that name, as does one of the ``Choro`` picture it builds
+            (``kstpkper``, ``per_timestep``, ``hover_layers``, ...), and
+            ``custom_zs`` recolours the backdrop cells as ``values`` does. The
+            backdrop is a bare grid that reads no model, so ``bgs=True`` and
+            ``show_mounding=True``, which read heads, raise ``AttributeError`` at
+            ``.fig``. The rest are properties of the backdrop's Plotly
+            ``Choroplethmap`` trace -- ``zmid``, ``colorbar``, ``reversescale``,
+            ``showscale`` -- never of the barrier lines; checked only when the
+            figure is built, so a misspelled one raises ``ValueError`` at ``.fig``
+            or ``.show()``, and IGNORED under ``backend="mpl"``, which never builds
+            that trace.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional

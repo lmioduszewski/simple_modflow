@@ -33,11 +33,30 @@ class GroupBudget:
     ) -> pd.DataFrame:
         """Return aligned budget data for all models in the group.
 
+        One row per record entry of every member's cell-budget file, as each
+        member's ``model.bud(package).df`` holds it, with a ``model`` column naming
+        the member.
+
         Parameters
         ----------
-        package
-            Optional package filter such as ``"rch"`` or ``"drn"``. If omitted,
-            the package passed to :meth:`ModelGroup.bud` is used.
+        package : str or None, optional
+            The budget record to read, such as ``"rch"`` or ``"drn"``, lower-cased
+            and handed to every member's ``model.bud(package)`` -- matched there,
+            case-insensitively, as a SUBSTRING of the record names in that
+            member's budget file (see
+            :meth:`~myflopy.modflow.mf6.simulation.base.SimulationBase.bud`). Default
+            ``None`` uses the package given to :meth:`ModelGroup.bud`; with
+            neither, ``ValueError``. A member whose file holds no matching record
+            raises ``ValueError`` from its own ``bud()``, which ends the whole call.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``node`` (the model-wide node, zero-based: ``layer * ncpl + cell`` on
+            a DISV), ``kstpkper`` (zero-based ``(kstp, kper)`` on that member's
+            own budget-file clock), the record's own columns (``node2``, ``q`` in
+            model length^3/time with MF6's sign, and any auxiliary column) and
+            ``model``.
         """
 
         package_name = self.package if package is None else str(package).lower()
@@ -70,12 +89,35 @@ class GroupBudget:
     ) -> pd.DataFrame:
         """Compare budget values for all models against the reference model.
 
+        Rows of each non-reference member are paired with the reference's on
+        EVERY other column of :meth:`get` -- ``node``, ``kstpkper``, ``node2`` and
+        any auxiliary column -- by an inner join, so a row with no identical
+        partner is dropped. ``kstpkper`` is matched EXACTLY, never reduced to the
+        period's end: two members of different ``nstp`` pair the reference's
+        step ``(k, p)`` with the other member's step ``(k, p)``, which is not the
+        same time in the period (with one step against two, the reference's
+        period end against the other's FIRST step; ledger 439).
+
         Parameters
         ----------
-        package
-            Optional package override.
-        value_column
-            Budget value column to compare. Defaults to ``"q"``.
+        package : str or None, optional
+            The budget record to compare, as :meth:`get` takes it (a
+            case-insensitive substring of the member files' record names).
+            Default ``None`` uses the package given to :meth:`ModelGroup.bud`;
+            with neither, ``ValueError``.
+        value_column : str, default "q"
+            The column of :meth:`get` to difference -- ``"q"``, the flow in model
+            length^3/time with MF6's sign. A name :meth:`get` does not have raises
+            ``KeyError``. Every OTHER column becomes a join key, so naming one
+            other than the flow leaves ``q`` among the keys and keeps only rows
+            whose flows are identical.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, the join keys, ``value_column``,
+            ``reference_<value_column>`` and ``diff`` (member minus reference).
+            Empty, with those columns, when no row pairs.
         """
 
         data = self.get(package=package)

@@ -912,7 +912,11 @@ class LakeStageTargets:
 
 
 class BoundLakeStageTargets:
-    """Model-bound lake-stage helper returned from ``model.targets.lake_stage``."""
+    """Model-bound lake-stage helper returned from ``model.targets.lake_stage``.
+
+    Every method reads the BOUND model unless given another: ``model=None`` (the
+    default) means the model the registry was read from.
+    """
 
     def __init__(self, model, targets: LakeStageTargets):
         """Bind ``targets`` to ``model`` so its methods default to that model."""
@@ -942,22 +946,86 @@ class BoundLakeStageTargets:
         return self.targets.summary()
 
     def simulated_series(self, model=None) -> pd.DataFrame:
-        """The wide simulated series (defaults to the bound model)."""
+        """The wide simulated series (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model with a LAK package to read. Default ``None`` uses the
+            bound model; another run reads that run's files for the same
+            targets. Read by :meth:`LakeStageTargets.simulated_series`'s two
+            routes -- the LAK's declared STAGE observations when every target is
+            declared there, else the LAK stage file -- one row per stress period
+            at its END, whose ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` (the zero-based stress period) plus one stage column per
+            target, in model length units.
+        """
 
         return self.targets.simulated_series(self.model if model is None else model)
 
     def compare(self, model=None) -> pd.DataFrame:
-        """Compare observed vs simulated values (defaults to the bound model)."""
+        """Compare observed vs simulated values (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model with a LAK package to compare against. Default
+            ``None`` uses the bound model; another run compares the same targets
+            against it -- what the plots' ``baseline=`` does. Read as
+            :meth:`LakeStageTargets.compare` reads it (each target's ``time`` a
+            zero-based stress period, a DRY lake at its bottom, ledger 351),
+            whose ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per target row (per simulated row, ``stage_target`` and the
+            residuals ``NaN``, when the set holds no values): ``name``, ``lake``,
+            ``time``, ``per``, ``stage_target``, ``sim_stage``, ``residual``
+            (simulated minus target) and ``abs_residual``.
+        """
 
         return self.targets.compare(self.model if model is None else model)
 
     def residuals(self, model=None) -> pd.DataFrame:
-        """The residual table (defaults to the bound model)."""
+        """The residual table (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against, as in :meth:`compare`. Default
+            ``None`` uses the bound model.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`compare`'s rows, reduced to ``name``, ``lake``, ``time``,
+            ``per``, ``stage_target``, ``sim_stage``, ``residual`` and
+            ``abs_residual``.
+        """
 
         return self.targets.residuals(self.model if model is None else model)
 
     def stats(self, model=None) -> pd.DataFrame:
-        """Aggregate residual statistics (defaults to the bound model)."""
+        """Aggregate residual statistics (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against, as in :meth:`compare`. Default
+            ``None`` uses the bound model.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n``, ``mean_error``, ``mae`` and ``rmse`` of simulated
+            minus target stage, in model length units
+            (:meth:`LakeStageTargets.stats`).
+        """
 
         return self.targets.stats(self.model if model is None else model)
 
@@ -967,7 +1035,30 @@ class BoundLakeStageTargets:
         csv_name: str = "lake_stage_targets.csv",
         kind: str = "STAGE",
     ):
-        """A FloPy ``continuous`` observation dict for the lake-stage targets."""
+        """A FloPy ``continuous`` observation dict for the lake-stage targets.
+
+        The records need no model -- each names its lake by number -- so the
+        bound model takes no part.
+
+        Parameters
+        ----------
+        csv_name : str, optional
+            The CSV file MF6 writes these observations to -- the dict's one key.
+            Default ``"lake_stage_targets.csv"``. Any name: the observation route
+            reads whichever file the LAK package's OBS declares (ledger 344).
+        kind : str, optional
+            The MF6 LAK observation type written on every record. Must be
+            ``"STAGE"`` (any case), the default; any other raises ``ValueError``:
+            declared under the targets' names, the observation route would refuse
+            it as another quantity when read back (ledger 344).
+
+        Returns
+        -------
+        dict of str to list of tuple
+            ``{csv_name: [(label, "STAGE", lake + 1), ...]}``, the lake number
+            ONE-based, as :meth:`LakeStageTargets.to_flopy_obs` returns it (whose
+            ``Raises`` apply).
+        """
 
         return self.targets.to_flopy_obs(csv_name=csv_name, kind=kind)
 
@@ -980,7 +1071,40 @@ class BoundLakeStageTargets:
         kind: str = "STAGE",
         package=None,
     ):
-        """Attach an MF6 lake-stage observation package to the bound model."""
+        """Attach an MF6 lake-stage observation package to the bound model.
+
+        Added to the bound model's FloPy objects in memory; writing and running
+        the simulation afterwards is the caller's.
+
+        Parameters
+        ----------
+        pname : str, optional
+            FloPy package name of the OBS package. Default ``"lak_obs"``.
+        filename : str or pathlib.Path, optional
+            The OBS input file name FloPy writes, in the owning model's
+            directory; its stem names the default ``csv_name``. Default
+            ``"lake_stage_targets.obs"``.
+        csv_name : str or None, optional
+            The CSV file MF6 writes the observations to. Default ``None`` takes
+            ``filename``'s stem plus ``.csv`` (``"lake_stage_targets.csv"`` for
+            the default ``filename``).
+        kind : str, optional
+            The MF6 LAK observation type, as in :meth:`to_flopy_obs`:
+            ``"STAGE"``, the default, and nothing else (``ValueError``).
+        package : flopy object or None, optional
+            The FloPy package (or model) to attach the OBS package to. Default
+            ``None`` takes the bound model's LAK package: the one the targets
+            name (their ``package`` field; ``ValueError`` when the model has no
+            LAK package of that name), else its only LAK package, found by type
+            (several raise ``ValueError`` naming them, none ``AttributeError``;
+            ledger 352). Reading the observations back needs the targets' own
+            ``package`` field to name it when the model carries several.
+
+        Returns
+        -------
+        flopy.mf6.modflow.mfutlobs.ModflowUtlobs
+            The observation package.
+        """
 
         return self.targets.attach_flopy_obs(
             self.model,
@@ -992,7 +1116,28 @@ class BoundLakeStageTargets:
         )
 
     def calibration_plot(self, *, type: str = "calibration"):
-        """A calibration plot for the lake-stage targets on the bound model."""
+        """A calibration plot for the lake-stage targets on the bound model.
+
+        Parameters
+        ----------
+        type : str, optional
+            Which plot, drawn from :meth:`compare` on the bound model (whose
+            ``Raises`` apply):
+
+            - ``"calibration"`` (default) or ``"obs_vs_sim"``: target stage
+              against simulated stage, one point per row, titled "Observed vs
+              simulated lake stage", without fit statistics;
+            - ``"residuals_by_period"``: mean absolute residual per ``time``.
+
+            ``"heads"`` RAISES ``ValueError`` (the lake comparison has no
+            ``layer`` column, which that plot requires), and any other string
+            draws the cross plot WITH fit statistics.
+
+        Returns
+        -------
+        myflopy.modflow.calcs.calibration.CalibrationPlot
+            A Plotly figure (a ``viz.Fig``).
+        """
 
         return self.targets.calibration_plot(self.model, type=type)
 
@@ -1009,5 +1154,3 @@ class BoundLakeStageTargets:
                 yaxis_title="Stage",
             )
         return self._plot
-
-

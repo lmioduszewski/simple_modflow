@@ -91,7 +91,24 @@ class ParticleTrackingResult(Mapping[str, Any]):
         }
 
     def __getitem__(self, key: str) -> Any:
-        """Mapping-style access to a result field by name."""
+        """Mapping-style access to a result field by name.
+
+        Parameters
+        ----------
+        key : str
+            One of the six field names :meth:`to_dict` lists -- ``"json_file"``,
+            ``"path_file"``, ``"output_json"``, ``"start_cell_diagnostics"``,
+            ``"endpoint_summary"``, ``"diagnostics_file"`` -- so
+            ``result["path_file"]`` is ``result.path_file``. Anything else raises
+            ``KeyError``.
+
+        Returns
+        -------
+        object
+            That field's value. ``output_json`` and ``endpoint_summary`` are
+            ``None`` for a step that did not run, and ``diagnostics_file``
+            without ``write_diagnostics`` (see :meth:`ParticleTrackingInput.run`).
+        """
 
         return self.to_dict()[key]
 

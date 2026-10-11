@@ -364,7 +364,22 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         }
 
     def long(self, *, values: str | None = None) -> pd.Series:
-        """Return the field as a long series indexed by ``kstpkper/layer/cell``."""
+        """Return the field as a long series indexed by ``kstpkper/layer/cell``.
+
+        Every SAVED time step, not one value per period (:meth:`get` is the
+        period-end table), as the file holds it: MODFLOW's no-value sentinels
+        (+1e30 inactive, -1e30 dry) are NOT masked here, unlike :meth:`get`,
+        :meth:`array` and the maps.
+
+        Parameters
+        ----------
+        values : str, optional
+            The value-table column to return. The table holds ONE column,
+            ``store_column`` -- ``"elev"`` for heads, ``"conc"``, ``"temp"`` -- so
+            that is the only name accepted; any other raises ``KeyError``,
+            ``"head"`` (the name :meth:`get` uses) included. Default ``None``:
+            that column. The series is named after it.
+        """
 
         values = values or self.store_column
         if values not in self.all_values.columns:
@@ -380,7 +395,33 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         values: str | None = None,
         agg: str = "first",
     ) -> pd.DataFrame:
-        """Pivot the field to one row per layer/cell and one column per ``kstpkper``."""
+        """Pivot the field to one row per layer/cell and one column per ``kstpkper``.
+
+        Columns are named ``kstpkper_<kstp>_<kper>``, one per SAVED time step,
+        after the ``index`` columns. Values are the file's own: the no-value
+        sentinels (+1e30 inactive, -1e30 dry) are NOT masked, so an ``agg`` that
+        combines layers (``"mean"``) folds a dry cell's -1e30 into the number.
+
+        Parameters
+        ----------
+        index : sequence of str, default ('layer', 'cell')
+            The row keys, from the value table's own levels: ``"layer"`` and/or
+            ``"cell"`` (zero-based). Naming one alone collapses the other through
+            ``agg`` -- ``("cell",)`` is one row per cell. A name the table lacks
+            raises ``KeyError`` listing the missing ones, ``"per"`` included (this
+            table is keyed by ``kstpkper``); ``"kstpkper"`` and the value column
+            are in it but are not row keys -- alone, pandas raises ``ValueError``.
+        values : str, optional
+            The value column, as in :meth:`long`: only ``store_column``
+            (``"elev"`` for heads) exists, and any other name raises ``KeyError``.
+            Default ``None``: that column.
+        agg : str or callable, default 'first'
+            The pandas ``pivot_table`` ``aggfunc`` reducing the values that share
+            one row and one time step -- a name (``"mean"``, ``"max"``, ``"sum"``)
+            or a callable. Under the default ``index`` every ``(layer, cell,
+            kstpkper)`` holds one value, so it acts only when ``index`` drops a
+            level.
+        """
 
         values = values or self.store_column
         if values not in self.all_values.columns:
@@ -415,17 +456,26 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
 
         Parameters
         ----------
-        layer
-            Zero-based model layer (0 == layer 1).
-        per
-            Stress period; the *last* saved timestep in that period is returned.
-            ``-1`` (default) or ``None`` returns the last saved time overall.
-            Ignored when ``kstpkper`` is given.
-        kstpkper
-            Exact ``(kstp, kper)`` to read, taking precedence over ``per``.
-        masked
-            Replace MODFLOW's no-value sentinels (+1e30 inactive, -1e30 dry)
-            with ``NaN`` (default ``True``).
+        layer : int, default 0
+            Zero-based model layer (0 == layer 1). Indexed as numpy indexes, so a
+            negative layer counts from the bottom (``-1`` is the lowest) and one
+            at or past ``nlay`` raises ``IndexError``.
+        per : int or None, default -1
+            Zero-based stress period; its LAST SAVED time step is returned
+            (:func:`~myflopy.modflow.mf6.period_end.last_saved_step`, ledger 337),
+            not a check that the period's end was saved. ``-1`` (default) or
+            ``None`` returns the last saved time overall; any other negative
+            value, or a period the file does not hold, raises ``ValueError``
+            naming the periods available. A numpy integer is accepted. Ignored
+            when ``kstpkper`` is given.
+        kstpkper : tuple of (int, int), optional
+            Exact zero-based ``(kstp, kper)`` to read, taking precedence over
+            ``per``; a time the file did not save raises ``ValueError`` listing
+            the saved ones. Default ``None``: ``per`` decides.
+        masked : bool, default True
+            Replace MODFLOW's no-value sentinels (``|value| >= 1e29``: +1e30
+            inactive, -1e30 dry) with ``NaN``. ``False`` returns the file's raw
+            numbers.
 
         Returns
         -------
@@ -475,17 +525,22 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
 
         Parameters
         ----------
-        layers
-            Zero-based layers to include (default: all ``nlay`` layers).
-        times
-            ``(kstp, kper)`` keys to include (default: every saved time). Order is
-            preserved; an unavailable key raises ``ValueError``.
-        name
-            Variable name for the field (default: this reader's ``value_name``).
-        masked
-            Replace MODFLOW's no-value sentinels (+1e30 inactive, -1e30 dry) with
-            ``NaN`` (default).
-        surfaces
+        layers : sequence of int, optional
+            Zero-based layers to include, in the order given. Default ``None``:
+            all ``nlay`` layers. Each is a numpy index, so ``-1`` reads the lowest
+            layer (and the ``layer`` coordinate keeps ``-1``), and one at or past
+            ``nlay`` raises ``IndexError``.
+        times : sequence of tuple of (int, int), optional
+            Zero-based ``(kstp, kper)`` keys to include (default: every saved
+            time step -- not one per period). Order is preserved; an unavailable
+            key raises ``ValueError`` naming the saved ones.
+        name : str, optional
+            Variable name for the field. Default ``None``: this reader's
+            ``value_name`` (``"head"``, ``"conc"`` or ``"temp"``).
+        masked : bool, default True
+            Replace MODFLOW's no-value sentinels (``|value| >= 1e29``: +1e30
+            inactive, -1e30 dry) with ``NaN``; ``False`` keeps the raw numbers.
+        surfaces : bool, default False
             Also attach the grid's layer frame -- ``top`` and ``botm_1`` ...
             ``botm_n``, one FLAT variable per layer
             (:meth:`~myflopy.modflow.mf6.grid.voronoi.VoronoiGridPlus.layer_surface_fields`)
@@ -665,6 +720,17 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         ----------
         backend : {'plotly', 'mpl'}, default 'plotly'
             Renderer. ``'mpl'`` returns a Matplotlib figure instead of a Picture.
+        **trace_kwargs
+            The open tail, forwarded to ``model.plot.map``. ``values=``,
+            ``type=`` and the legacy ``custom_hover``/``hover_heads``/``hover_ks``
+            raise ``TypeError`` (see Raises), and ``hover_spec=`` is read as a
+            legacy spelling of ``hover`` (``hover`` wins when both are given). A
+            key naming a :func:`myflopy.plot.map` parameter this method does not
+            name -- ``zoom``, ``hover_fields``, ``animation_kstpkpers``, or
+            ``rch_scale``, which acts on a recharge map only -- reaches it as that
+            parameter. Anything else rides to the ``go.Choroplethmap`` trace
+            (``zmid``, ``colorbar``, ``reversescale``), where Plotly refuses an
+            unknown name with ``ValueError`` when the figure is built.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         per : int, optional
@@ -1025,11 +1091,52 @@ class HeadsPlus(DependentVariableFile):
     def sort_dict_by_keys(
             dict_to_sort: dict = None
     ):
-        """Sorts the given dict by its keys and returns the sorted dict"""
+        """Sorts the given dict by its keys and returns the sorted dict.
+
+        Parameters
+        ----------
+        dict_to_sort : dict, optional
+            The mapping to order. Its keys go through ``sorted()``, so they must
+            compare with one another (``str`` with ``int`` raises ``TypeError``).
+            Not modified: a NEW ``dict`` is returned, in ascending key order.
+            Default ``None`` returns ``{}``.
+        """
         return _sort_dict_by_keys(dict_to_sort)
 
     def get_obs_cells(self, locs: Path, crs: str = None, loc_name_field='ExploName'):
-        """Compatibility wrapper for the dedicated observation-cell helper."""
+        """Compatibility wrapper for the dedicated observation-cell helper.
+
+        Parameters
+        ----------
+        locs : pathlib.Path, str or None
+            Required -- no default is declared. A vector file GeoPandas reads
+            (its FIRST layer) holding the observation points. It must carry a
+            CRS: a file without one raises ``ValueError``. A point gets the ONE
+            cell holding it, by the grid's own selection rule. A feature reaching
+            several cells (a line or polygon) gets the FIRST of them, in silence:
+            the one-cell ``assert`` tests the outer list of the selector's
+            ``{name: [[cells]]}`` shape, so it never fires (measured: a polygon
+            over cells 0, 1 and 22 returned 0; ledger 441). A feature
+            reaching no cell is left out, named in a logged warning. ``None``
+            reads :attr:`obs_path`, and raises ``ValueError`` when that is unset
+            too.
+        crs : str, int or pyproj.CRS, optional
+            A CRS the points are reprojected to on their way to the grid's. It
+            changes no cell -- the selection reprojects them on again to the
+            GRID's CRS (measured: ``"EPSG:4326"`` returned the same cells) -- and
+            it cannot label a file that carries no CRS, which still raises.
+            Default ``None``: this reader's ``crs`` (the grid's).
+        loc_name_field : str, default 'ExploName'
+            The attribute column naming each point; the names are the result's
+            keys. A file without that column is keyed by row position
+            ``0..n-1`` instead, with no error.
+
+        Returns
+        -------
+        dict
+            ``{name: cell}``, zero-based cell ids within a layer, in ascending
+            name order.
+        """
 
         return _get_obs_cells(self, locs=locs, crs=crs, loc_name_field=loc_name_field)
 
@@ -1039,7 +1146,43 @@ class HeadsPlus(DependentVariableFile):
             loc_name_field='ExploName',
             long_format=False
     ):
-        """Compatibility wrapper for the dedicated observation-head helper."""
+        """Compatibility wrapper for the dedicated observation-head helper.
+
+        Every SAVED time step in every layer, as the file holds it: no period-end
+        selection and no masking of MODFLOW's +1e30/-1e30 sentinels
+        (:meth:`get` does both).
+
+        Parameters
+        ----------
+        locs : pathlib.Path or list of int, optional
+            The locations. A ``pathlib.Path`` is stored as :attr:`obs_path` and
+            resolved through :meth:`get_obs_cells`, so the columns are the point
+            names. A ``list`` of Python ``int`` is read as zero-based cell ids
+            and names the columns itself; a numpy integer, or an id that is not a
+            cell, raises ``AssertionError``. Default ``None``: :attr:`obs_path`.
+            A path is resolved only while this reader holds NO observation cells:
+            a second call on the same reader with a ``Path`` (any path) or
+            ``None`` raises ``ValueError`` ("No observation path found"), while a
+            ``list`` always works. A ``str`` is not recognised as a path -- it is
+            ignored, so the call reads :attr:`obs_path` (the file given to the
+            constructor, in silence) when that is set and raises ``ValueError``
+            when it is not.
+        crs : str, int or pyproj.CRS, optional
+            Forwarded to :meth:`get_obs_cells`, where it changes no cell. Unused
+            for a list. Default ``None``: this reader's ``crs``.
+        loc_name_field : str, default 'ExploName'
+            The point-name column, forwarded to :meth:`get_obs_cells`. Unused for
+            a list.
+        long_format : bool, default False
+            ``False``: index ``(layer, kstpkper)``, one column per location in
+            sorted order. ``True``: melted to index ``(locs, layer, kstpkper)``
+            with one ``elev`` column.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The heads, in the model's length units.
+        """
 
         return _get_obs_heads(
             self,

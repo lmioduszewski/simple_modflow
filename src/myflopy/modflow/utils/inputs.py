@@ -95,20 +95,36 @@ class UzfInput:
         self.model = model
 
     def finf(self, per: int | str = 0, multiplier: float = 12 * 30):
-        """
-        Calculate the modified infiltration rate for UZF (Unsaturated Zone Flow) package
-        based on the given period and multiplier. The output is adjusted to include all
-        model cells even if they have zero infiltration.
+        """UZF infiltration (``finf``) on every model cell, scaled.
 
-        :param per: The stress period index for which the infiltration rates need
-            to be calculated. Defaults to 0.
-        :type per: int
-        :param multiplier: A scaling factor applied to the infiltration rate.
-            Defaults to 12 * 30 - converts ft/day to in/month.
-        :type multiplier: float
-        :return: A pandas Series containing the adjusted infiltration rates for all
-            model cells, indexed by cell ID.
-        :rtype: pd.Series
+        Reads the model's only UZF package (several raise
+        ``SeveralPackagesError``), joins each UZF object's ``finf`` to its cell
+        through ``packagedata`` and reindexes to every cell ``0..ncpl - 1`` -- by
+        the cell number within its layer; the layer is dropped -- so a cell with
+        no UZF object reads 0.
+
+        Parameters
+        ----------
+        per : int or str, default 0
+            Zero-based stress period: the key of the UZF package's own PERIOD
+            block. A Python ``int`` only -- a numpy integer matches neither branch
+            and raises ``UnboundLocalError`` -- and a period with no block of its
+            own (MF6 reuses the previous one there) raises ``KeyError``. The
+            string ``"all"``, any case, returns every block instead, one column
+            per period; any other string raises ``ValueError``.
+        multiplier : float, default 360
+            Multiplies every value, the zero-filled cells included. ``12 * 30``
+            turns ft/day into inches per 30-day month in a feet-and-days model;
+            pass ``1`` to keep the model's own units.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Indexed by ``cell`` (``0..ncpl - 1``): one ``finf`` column for an int
+            ``per``, one column per period (named by its number) for ``"all"``.
+            Several UZF objects under one cell in a period block (a stacked
+            unsaturated column) list that cell twice, and the reindex raises
+            ``ValueError``.
         """
         uzf = one_package(self.model, "uzf")  # several: refused, naming model.uzf(package=...)
         # The one cellid rule (ledger 419): a DIS cellid's cell is
@@ -210,11 +226,15 @@ class UzfInput:
         below is keyword-only.
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
-        was measured to leave a record noun's figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row into
-        an elevation tooltip on every cell. ``values``/``type`` and the legacy
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. ``kstpkper``, ``per_timestep`` and ``bgs`` were
+        each measured to leave this figure byte-identical; ``hover_layers``
+        reshapes the head rows of its tooltip (this legacy map keeps the heads
+        hover the record nouns turn off), and ``show_mounding`` is worse than
+        inert: it injects a head-derived row into the tooltip on every cell. They
+        are not REFUSED, though: ``**trace_kwargs`` carries them to the free verb.
+        ``show_layer_elevs``/``hover_surfaces`` are named, and act: they read the
+        GRID's layer frame (ledger 258). ``values``/``type`` and the legacy
         hover trio raise instead of being forwarded: infiltration is what this
         noun draws, and overriding the numbers under a tooltip that still reports
         ``finf`` produces a figure whose cells and whose labels disagree.
@@ -233,6 +253,21 @@ class UzfInput:
             recharge is usually reviewed in; pass ``1.0`` to see the raw model
             units, or ``365.25`` for ft/year. Applied to every cell, including
             the zero-filled ones, so it never changes which cells are blank.
+        **trace_kwargs
+            The open tail, forwarded to ``model.plot.map``. ``values=``,
+            ``type=`` and the legacy ``custom_hover``/``hover_heads``/``hover_ks``
+            raise ``TypeError``, and ``hover_spec=`` is read as a legacy spelling
+            of ``hover`` (``hover`` wins when both are given). A key naming a
+            :func:`myflopy.plot.map` parameter this noun does not name reaches it
+            as that parameter, unrefused -- ``zoom``, ``hover_fields``,
+            ``animation_kstpkpers``, ``rch_scale`` (which acts on a recharge map
+            only), ``layer`` (which moves the head tooltip and no colour:
+            infiltration has no layer axis here), and the per-layer
+            ``kstpkper``, ``per_timestep``, ``bgs``, ``hover_layers`` and
+            ``show_mounding`` (measured: ``show_mounding=True`` keeps every colour
+            and adds a head-derived row to every tooltip). Anything else rides to
+            the ``go.Choroplethmap`` trace (``zmid``, ``colorbar``), where Plotly
+            refuses an unknown name with ``ValueError`` when the figure is built.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -437,7 +472,25 @@ class RchInput:
         self.per = 0  # default stress period
 
     def df(self, per: int|str = None):
-        """The RCH stress-period-data table for ``per`` indexed by cell number."""
+        """The RCH stress-period-data table for ``per`` indexed by cell number.
+
+        Reads the model's ONE list-form RCH package (several raise
+        ``SeveralPackagesError`` naming ``model.rch.inputs``, which reads them
+        all; an array-form RCH counts as one and raises ``AttributeError``, having
+        no records, as does a model with no RCH). The index is named ``cellid``
+        but holds the cell number WITHIN its layer -- the layer is dropped -- and
+        the columns are the record's other fields (``recharge``, auxiliaries,
+        ``boundname``), in model units.
+
+        Parameters
+        ----------
+        per : int, optional
+            Zero-based stress period: the key of the package's own PERIOD block
+            in FloPy's ``stress_period_data.data``. A period with no block of its
+            own (MF6 reuses the previous one there) raises ``KeyError``, and so
+            does a string, whatever the annotation says. Default ``None``:
+            ``self.per``, which starts at 0.
+        """
 
         per = self.per if per is None else per
         df = pd.DataFrame(_legacy_list_package(self.model, "rch").stress_period_data.data[per])
@@ -450,7 +503,29 @@ class RchInput:
             per: tuple = None,
             multiplier: float | int = 1
     ):
-        """Plot the recharge choropleth for one period (filling zero-recharge cells)."""
+        """Plot the recharge choropleth for one period (filling zero-recharge cells).
+
+        Reads the model's ONE list-form RCH package as :meth:`df` does, colours
+        each cell by the record table's FIRST column (``recharge``) and lists
+        every column in the hover; a cell with no record reads 0. Returns a
+        :class:`~myflopy.modflow.utils.datatypes.choros.Choro` built on
+        ``model.vor`` alone -- no model is bound, so it has no ``backend`` and no
+        heads hover.
+
+        Parameters
+        ----------
+        per : int
+            Zero-based stress period: the key of the package's own PERIOD block.
+            Required in practice: the default ``None`` is no block key and raises
+            ``KeyError`` (:meth:`df` falls back to ``self.per``; this does not),
+            as does a period with no block of its own.
+        multiplier : float or int, default 1
+            Multiplies every column of the record table before drawing -- the
+            coloured ``recharge`` and the hover's columns alike, zero-filled
+            cells included. A ``boundname`` column is multiplied too: on a
+            package carrying boundnames a non-integer multiplier raises
+            ``TypeError`` and an integer one repeats each name.
+        """
 
         model = self.model
         vor = model.vor

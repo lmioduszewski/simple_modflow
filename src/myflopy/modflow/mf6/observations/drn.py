@@ -1372,7 +1372,13 @@ class DrnFlowTargets:
         )
 
 class BoundDrnFlowTargets:
-    """Model-bound DRN seepage-zone helper returned from ``model.targets.drn_flow``."""
+    """Model-bound DRN seepage-zone helper returned from ``model.targets.drn_flow``.
+
+    Every method reads the BOUND model unless given another: ``model=None`` (the
+    default) means the model the registry was read from, and ``get``,
+    ``to_long`` and ``summary`` resolve geometry zones against it. Flows are in
+    MF6's sign -- zero or negative, water the drains take out (ledger 350).
+    """
 
     def __init__(self, model, targets: DrnFlowTargets):
         """Bind ``targets`` to ``model`` so its methods default to that model."""
@@ -1402,27 +1408,120 @@ class BoundDrnFlowTargets:
         return self.targets.summary(model=self.model)
 
     def simulated_series(self, model=None) -> pd.DataFrame:
-        """The wide simulated-discharge series per zone (defaults to the bound model)."""
+        """The wide simulated-discharge series per zone (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model with a DRN package to read; zones drawn as geometry
+            are resolved against ITS grid. Default ``None`` uses the bound model.
+            Read by :meth:`DrnFlowTargets.simulated_series`'s two routes -- the
+            DRN's declared ``DRN`` observations when every zone cell is declared
+            there, else the model's cell-budget file -- one row per stress
+            period at its END, each zone the sum of its cells, whose ``Raises``
+            apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` (the zero-based stress period) plus one flow column per
+            zone, in model length cubed per time and MF6's sign (zero or
+            negative).
+        """
 
         return self.targets.simulated_series(self.model if model is None else model)
 
     def compare(self, model=None) -> pd.DataFrame:
-        """Compare observed vs simulated DRN discharge (defaults to the bound model)."""
+        """Compare observed vs simulated DRN discharge (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model with a DRN package to compare against; zones drawn as
+            geometry are resolved against ITS grid. Default ``None`` uses the
+            bound model; another run compares the same targets against it --
+            what the plots' ``baseline=`` does. Read as
+            :meth:`DrnFlowTargets.compare` reads it (each target's ``time`` a
+            zero-based stress period), whose ``Raises`` apply.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per target row (per simulated row -- one per zone and
+            period, ``flow_target`` and the residuals ``NaN`` -- when the set
+            holds no values): ``name``, ``time``, ``per``, ``flow_target``,
+            ``sim_flow``, ``residual`` (simulated minus target, above zero when
+            the model drains LESS than was measured), ``abs_residual``, and the
+            zone's ``group``, ``weight`` and ``cells``.
+        """
 
         return self.targets.compare(self.model if model is None else model)
 
     def residuals(self, model=None) -> pd.DataFrame:
-        """The residual table for the seepage-zone targets (defaults to the bound model)."""
+        """The residual table for the seepage-zone targets (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against, as in :meth:`compare`. Default
+            ``None`` uses the bound model.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`compare`'s rows, reduced to ``name``, ``group``, ``time``,
+            ``per``, ``flow_target``, ``sim_flow``, ``residual``,
+            ``abs_residual``, ``weight`` and ``cells`` (absent only when
+            :meth:`compare` has none), as :meth:`DrnFlowTargets.residuals`
+            reduces them.
+        """
 
         return self.targets.residuals(self.model if model is None else model)
 
     def stats(self, model=None) -> pd.DataFrame:
-        """Aggregate residual statistics (defaults to the bound model)."""
+        """Aggregate residual statistics (defaults to the bound model).
+
+        Parameters
+        ----------
+        model : SimulationBase or None, optional
+            The run model to compare against, as in :meth:`compare`. Default
+            ``None`` uses the bound model.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``n``, ``mean_error``, ``mae`` and ``rmse`` of simulated
+            minus target flow, in model length cubed per time
+            (:meth:`DrnFlowTargets.stats`).
+        """
 
         return self.targets.stats(self.model if model is None else model)
 
     def to_flopy_obs(self, *, csv_name: str = "drn_flow_targets.csv", kind: str = "DRN"):
-        """A FloPy ``continuous`` observation dict for the DRN seepage-zone targets."""
+        """A FloPy ``continuous`` observation dict for the DRN seepage-zone targets.
+
+        Zones drawn as geometry are resolved against the BOUND model
+        (:meth:`DrnFlowTargets.zone_definitions`); one record per zone cell.
+
+        Parameters
+        ----------
+        csv_name : str, optional
+            The CSV file MF6 writes these observations to -- the dict's one key.
+            Default ``"drn_flow_targets.csv"``. Any name: the observation route
+            reads whichever file the DRN package's OBS declares (ledger 344).
+        kind : str, optional
+            The MF6 observation type written on every record. Must be ``"DRN"``
+            (any case), the default -- MF6's drain-flow observation, outflow
+            negative -- and any other raises ``ValueError`` (ledger 344).
+
+        Returns
+        -------
+        dict of str to list of tuple
+            ``{csv_name: [(label, "DRN", (layer, cell)), ...]}``, one record per
+            cell of each zone, the cellid ZERO-based, as
+            :meth:`DrnFlowTargets.to_flopy_obs` returns it (whose ``Raises``
+            apply).
+        """
 
         return self.targets.to_flopy_obs(self.model, csv_name=csv_name, kind=kind)
 
@@ -1435,7 +1534,41 @@ class BoundDrnFlowTargets:
         kind: str = "DRN",
         package=None,
     ):
-        """Attach an MF6 DRN observation package to the bound model for these zones."""
+        """Attach an MF6 DRN observation package to the bound model for these zones.
+
+        Zones are resolved against the bound model (:meth:`to_flopy_obs`) and
+        the package is added to its FloPy objects in memory; writing and running
+        the simulation afterwards is the caller's.
+
+        Parameters
+        ----------
+        pname : str, optional
+            FloPy package name of the OBS package. Default ``"drn_flow_obs"``.
+        filename : str or pathlib.Path, optional
+            The OBS input file name FloPy writes, in the owning model's
+            directory; its stem names the default ``csv_name``. Default
+            ``"drn_flow_targets.obs"``.
+        csv_name : str or None, optional
+            The CSV file MF6 writes the observations to. Default ``None`` takes
+            ``filename``'s stem plus ``.csv`` (``"drn_flow_targets.csv"`` for
+            the default ``filename``).
+        kind : str, optional
+            The MF6 observation type, as in :meth:`to_flopy_obs`: ``"DRN"``, the
+            default, and nothing else (``ValueError``).
+        package : flopy object or None, optional
+            The FloPy package (or model) to attach the OBS package to. Default
+            ``None`` takes the bound model's DRN package: the one the targets
+            name (their ``package`` field; ``ValueError`` when the model has no
+            DRN package of that name), else its only DRN package, found by type
+            (several raise ``ValueError`` naming them, none ``AttributeError``;
+            ledger 352). Reading the observations back needs the targets' own
+            ``package`` field to name it when the model carries several.
+
+        Returns
+        -------
+        flopy.mf6.modflow.mfutlobs.ModflowUtlobs
+            The observation package.
+        """
 
         return self.targets.attach_flopy_obs(
             self.model,
@@ -1459,5 +1592,3 @@ class BoundDrnFlowTargets:
                 yaxis_title="Flow",
             )
         return self._plot
-
-

@@ -90,7 +90,53 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         cells: Sequence[int] | None = None,
         connection_type: str | Sequence[str] | None = None,
     ) -> pd.DataFrame:
-        """Return aligned LAK exchange rows, including ``q_per_area``."""
+        """Return aligned LAK exchange rows, including ``q_per_area``.
+
+        Each member's ``build_lak_budget_result_table``: one row per lake
+        connection per saved step of the LAK package's own budget file (its
+        ``GWF`` records), every saved step kept, joined to the connection
+        geometry, plus a ``model`` column. Every member must carry exactly one
+        LAK package: a member with none raises ``AttributeError`` and one with
+        several ``SeveralPackagesError`` (each numbers its own lakes, ledger 352),
+        either of which ends the whole call -- the group view takes no
+        ``package=`` (ledger 439).
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one member's rows, by its name in the group. Default ``None``:
+            every member. A name that is not in the group matches nothing and
+            returns an empty frame.
+        per : int or None, optional
+            Keep one stress period, zero-based: a FILTER, so every step the
+            period saved is kept. Default ``None``: every period.
+        layer : int or list of int or None, optional
+            Keep the connections in these zero-based layers (an int, list or
+            tuple; a NumPy array raises ``TypeError``). Default ``None``: every
+            layer.
+        cells : int or list of int or None, optional
+            Keep the connections on these zero-based cell numbers within a layer.
+            Default ``None``: every cell.
+        connection_type : str or list of str or None, optional
+            Keep only connections of these MF6 types (``"VERTICAL"``,
+            ``"HORIZONTAL"``, ``"EMBEDDEDH"``, ``"EMBEDDEDV"``), compared upper-cased
+            with each connection's ``claktype``. A spelling that is no MF6 type
+            matches nothing and returns an empty frame, without an error.
+            Default ``None``: every connection.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``kstpkper``, ``per``, ``lake`` and ``iconn``
+            (zero-based), ``layer``, ``cell``, the connection's ``claktype``,
+            ``belev``, ``telev``, ``connlen``, ``connwidth`` and ``bedleak``,
+            ``node``/``node2``, ``q_lake`` -- the lake's side of the exchange, so
+            POSITIVE where the lake gains from the aquifer (model
+            length^3/time) -- ``FLOW-AREA``/``flow_area``, the WETTED area MF6
+            wrote for that step (length^2; it moves with the stage and is 0 for a
+            dry connection), and ``q_per_area`` = ``q_lake / flow_area``
+            (length/time, ``NaN`` where the area is 0).
+        """
 
         frames = []
         for current_model_name, model in self.group.models.items():
@@ -126,7 +172,50 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         cells: Sequence[int] | None = None,
         connection_type: str | Sequence[str] | None = None,
     ) -> pd.DataFrame:
-        """Compare grouped LAK exchange rows against the reference model."""
+        """Compare grouped LAK exchange rows against the reference model.
+
+        Each non-reference member's rows are paired with the reference's on
+        EVERY column of :meth:`get` but ``model``, ``q_lake`` and ``q_per_area``
+        by an inner join -- ``kstpkper`` and the float columns ``flow_area``/
+        ``FLOW-AREA`` and the geometry included -- and NOT reduced to period ends
+        first. So ``kstpkper`` pairs the reference's step ``(k, p)`` with the
+        other member's step ``(k, p)``: with different ``nstp`` that is not the
+        same time in the period (with one step against two, the reference's
+        period end against the other's FIRST step). And because MF6's wetted
+        ``FLOW-AREA`` moves with the stage, a connection whose wetted area
+        differs between the members has no partner and is dropped (ledger
+        439).
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one compared member's rows, by its name, after the comparison.
+            Default ``None``: every non-reference member. The reference's own
+            name, or a name not in the group, returns an empty frame.
+        per : int or None, optional
+            Compare one stress period, zero-based -- every step it saved, paired
+            step by step as above. Default ``None``: every period.
+        layer : int or list of int or None, optional
+            Compare only the connections in these zero-based layers. Default
+            ``None``: every layer.
+        cells : int or list of int or None, optional
+            Compare only these zero-based cell numbers within a layer. Default
+            ``None``: every cell.
+        connection_type : str or list of str or None, optional
+            Keep only connections of these MF6 types (``"VERTICAL"``,
+            ``"HORIZONTAL"``, ``"EMBEDDEDH"``, ``"EMBEDDEDV"``), compared upper-cased
+            with each connection's ``claktype``. A spelling that is no MF6 type
+            matches nothing and compares nothing, without an error.
+            Default ``None``: every connection.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, the join keys, ``q_lake``,
+            ``reference_q_lake``, ``q_lake_diff``, and the same three for
+            ``q_per_area`` -- each difference member minus reference, the lake's
+            sign. Empty when :meth:`get` is.
+        """
 
         data = self.get(per=per, layer=layer, cells=cells, connection_type=connection_type)
         if data.empty:
@@ -224,7 +313,72 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Build a grouped LAK diff map using normalized exchange per area."""
+        """Build a grouped LAK diff map using normalized exchange per area.
+
+        Each member's connections of period ``per`` (its own LAST saved step,
+        ledger 348) are reduced to one value per cell, ``sum(q_lake) /
+        sum(flow_area)`` over the connections in the cell -- the flow per unit
+        wetted area, positive where the lake gains -- and the map draws member
+        minus reference on the reference's grid, for the cells both members
+        connect a lake to. (Unlike :meth:`compare`, this does align each member
+        at its own period end.)
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            The non-reference member to compare. Default ``None`` takes the
+            group's one non-reference member and raises ``ValueError`` when there
+            are several; the reference itself raises ``ValueError`` and a name not
+            in the group ``KeyError``. The member must have the reference's
+            discretization FILE content, read from each workspace (a changed
+            ``botm`` or ``idomain`` refuses too), grid type and ``ncpl``, or
+            ``ValueError``.
+        per : int, default 0
+            The stress period drawn, zero-based -- each member's own last saved
+            step of it. A period with no rows draws every cell at ``fill_value``.
+        layer : int, default 0
+            The zero-based layer whose connections are drawn.
+        connection_type : str or list of str or None, optional
+            Keep only connections of these MF6 types (``"VERTICAL"``,
+            ``"HORIZONTAL"``, ``"EMBEDDEDH"``, ``"EMBEDDEDV"``), compared upper-cased
+            with each connection's ``claktype``. A spelling that is no MF6 type
+            matches nothing and draws every cell at ``fill_value``, without an error.
+            Default ``None``: every connection.
+        multiplier : float, default 1.0
+            Scales every drawn difference -- a unit conversion or a sign flip --
+            and the filled cells with them, except when no cell is a lake cell of
+            both members (every cell is then ``fill_value`` as given).
+        fill_value : float, default 0.0
+            The value of a cell that is not a lake cell of both members -- one
+            alone connects a lake to it, or neither does. ``float("nan")`` leaves
+            it blank. A cell whose connections are all dry (wetted area 0) in
+            either member is ``NaN``.
+        agg : str, default "sum"
+            Accepted and IGNORED: the per-cell reduction is always the
+            area-weighted ``sum(q_lake) / sum(flow_area)`` above, whatever is
+            passed (ledger 439).
+        colorscale : str or list or None, optional
+            Any Plotly colorscale name or explicit stops. Default ``None``: the
+            group diff scale -- red at the negative end, white at zero, blue at
+            the positive end (a lake gaining MORE than the reference's is
+            positive, so blue).
+        **kwargs
+            Forwarded to the reference model's ``model.plot.map(...)``: its named
+            drawing options (``contours``, ``select``, ``features``, ``extent``,
+            ``backend``, ...) and its Plotly trace tail. ``zmin``/``zmax`` default
+            to plus/minus the largest absolute value drawn (a filled cell's
+            included), ``zmid`` to 0 and ``hover_spec`` to the comparison hover,
+            whose units read ``ft/d`` whatever the model's units are; passing
+            them overrides those. The names this method fills itself beyond its
+            own parameters (``type``, ``custom_zs``, ``custom_hover``,
+            ``hover_heads``, ``hover_ks``) raise ``TypeError``; ``values=``
+            REPLACES the drawn differences while the hover keeps them.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            The map picture, or a bare Matplotlib figure with ``backend="mpl"``.
+        """
 
         del agg
         target_name = _resolve_group_compare_target(self.group, model_name)
@@ -499,7 +653,41 @@ class GroupLakConnections:
         layer: int | Sequence[int] | None = None,
         cells: Sequence[int] | None = None,
     ) -> pd.DataFrame:
-        """Return aligned LAK connection rows for all models."""
+        """Return aligned LAK connection rows for all models.
+
+        Each member's ``build_lak_connection_table``: one row per
+        ``connectiondata`` record of its LAK package, plus a ``model`` column.
+        Every member must carry exactly one LAK package: a member with none
+        raises ``AttributeError`` and one with several ``SeveralPackagesError``
+        (ledger 352), either of which ends the whole call.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one member's rows, by its name in the group. Default ``None``:
+            every member. A name that is not in the group matches nothing and
+            returns an empty frame.
+        lake : int or None, optional
+            Keep one lake's connections, by its zero-based lake number
+            (``ifno``). Default ``None``: every lake.
+        layer : int or list of int or None, optional
+            Keep the connections in these zero-based layers (an int, list or
+            tuple; a NumPy array raises ``TypeError``). Default ``None``: every
+            layer.
+        cells : int or list of int or None, optional
+            Keep the connections on these zero-based cell numbers within a layer.
+            Default ``None``: every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``lake``, ``iconn``, ``layer``, ``cell``,
+            ``claktype``, ``belev``/``telev``/``connlen``/``connwidth`` (model
+            length) as declared, ``bedleak`` and ``connection_area`` (length^2:
+            the cell's plan area for a vertical connection, ``connwidth * (telev -
+            belev)`` for a horizontal one -- the full face, not MF6's wetted
+            ``FLOW-AREA``).
+        """
 
         frames = []
         for current_model_name, model in self.group.models.items():
@@ -584,13 +772,15 @@ class GroupLakConnections:
         (plan 8.8). ``backend`` in particular used to reach the renderer only
         through that tail.
 
-        The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent.
-        Connection geometry has no time axis and no per-layer profile behind
-        it, so each was measured to leave the figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row
-        into a geometry tooltip on every cell.
+        The free verb's time and head arguments -- ``kstpkper``,
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        not named here: connection geometry has no time axis, so each was
+        measured to leave the figure byte-identical, and ``show_mounding`` is
+        worse than inert: it injects a head-derived row into a geometry tooltip
+        on every cell. They are NOT refused, though -- each still reaches the
+        free verb through ``**trace_kwargs`` by its name. ``show_layer_elevs``
+        and ``hover_surfaces`` ARE named: the layer frame is the grid's, so they
+        act on any map (ledger 306).
 
         Parameters
         ----------
@@ -626,15 +816,35 @@ class GroupLakConnections:
             ``connlen``, where adding two elevations produces a meaningless
             number.
         multiplier : float, default 1.0
-            Scale every value before drawing -- unit conversion (``0.3048`` for
-            feet to metres on an elevation column), or a sign flip. Applied
-            before ``agg``.
+            Scale every drawn value -- unit conversion (``0.3048`` for feet to
+            metres on an elevation column), or a sign flip. Applied AFTER
+            ``agg``, to each cell's reduced value, so ``agg="max"`` with
+            ``multiplier=-1`` draws minus the largest value, not the largest
+            negated one. The filled cells are scaled too (``fill_value=-1`` with
+            ``multiplier=2`` draws -2), except when no connection is selected,
+            where every cell is ``fill_value`` as given.
         fill_value : float, default 0.0
             Value given to cells with no LAK connection in this layer. The
             default colours them zero, which reads as "no lake here" on an
             area map; pass ``float("nan")`` to leave them uncoloured instead,
             which is what you want on an elevation column where zero is a real
             elevation and would distort the colour range.
+        **trace_kwargs
+            Every other keyword, forwarded to the member's ``model.plot.map``
+            after three checks: ``values``, ``type``, ``custom_hover``,
+            ``hover_heads`` and ``hover_ks`` raise ``TypeError`` (this noun
+            supplies its own field and hover); ``per`` raises ``TypeError`` naming
+            ``group.packages.lak.results`` (connection geometry has no time
+            axis); and ``hover_spec`` is read as the old spelling of ``hover``,
+            ``hover`` winning when both are given. ``custom_zs``, which this noun
+            computes, raises ``TypeError`` as a second value. A free-verb
+            parameter this noun does not name -- ``zoom``, ``bgs``, ``kstpkper``,
+            ``per_timestep``, ``hover_layers``, ``show_mounding``, ... -- reaches
+            the verb by that name. The rest are properties of the Plotly
+            ``Choroplethmap`` trace -- ``zmid``, ``colorbar``, ``reversescale``,
+            ``showscale`` -- checked only when the figure is built, so a
+            misspelled one raises ``ValueError`` at ``.fig`` or ``.show()``, and
+            IGNORED under ``backend="mpl"``, which never builds that trace.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional

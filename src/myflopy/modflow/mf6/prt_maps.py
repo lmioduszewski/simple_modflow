@@ -277,7 +277,20 @@ class _PRTDerivedView(SpatialView):
         )
 
     def animate(self, *args, **kwargs):
-        """PRT maps integrate the whole run, so there is no axis to animate over."""
+        """PRT maps integrate the whole run, so there is no axis to animate over.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Accepted only so that ANY call reaches the refusal below; none is
+            read. The inherited composer's ``by``/``per``/``layer`` and map options
+            have nothing to act on here.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, naming ``mosaic()``, ``capture.map()`` and the pathline map.
+        """
 
         raise NotImplementedError(
             "PRT maps summarize a whole tracking run, so there is no period (or "
@@ -375,9 +388,29 @@ class PRTTravelTimeView(_PRTDerivedView):
     def get(self, *, stat: str = "median", layer: int | None = None) -> pd.DataFrame:
         """Travel-time rows, one per ``(layer, cell)`` particles terminated in.
 
-        Columns: ``layer``, ``cell``, ``travel_time`` (the ``stat`` across that
-        cell's particles), ``particle_count``, ``min_time``, ``max_time``,
-        ``release_groups``. ``layer`` filters; ``None`` keeps every layer.
+        Parameters
+        ----------
+        stat : str, default 'median'
+            The statistic of the travel times (``t - trelease``, in the flow
+            model's TDIS time unit) of the particles that ended in each cell: the
+            name of a pandas groupby aggregation -- ``"median"``, ``"mean"``,
+            ``"min"``, ``"max"``, ``"sum"``, ``"std"`` (NaN for a cell holding one
+            particle), ``"count"``, ``"first"``, ``"last"``. An unknown name raises
+            pandas' ``AttributeError`` (it is not checked here, so a run with no
+            endpoints returns its empty frame whatever it is).
+        layer : int, optional
+            Keep only the particles that ended in this zero-based layer (passed
+            through ``int()``, so a float is truncated). A layer no particle ended
+            in -- the model's own or not -- returns an empty frame. Default
+            ``None`` keeps every layer, one row per ``(layer, cell)``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns ``layer``, ``cell`` (zero-based, per layer), ``travel_time``
+            (the ``stat`` across that cell's particles), ``particle_count``,
+            ``min_time``, ``max_time``, ``release_groups`` (the distinct groups
+            released into it, comma-joined).
         """
 
         return _aggregate_endpoints(self._endpoints(layer), ["layer", "cell"], str(stat))
@@ -402,12 +435,59 @@ class PRTTravelTimeView(_PRTDerivedView):
     ):
         """Travel time per cell in plan view.
 
-        ``layer=None`` (default) pools every layer into one plan-view panel --
-        the statistic is recomputed over the pooled particles, never averaged
-        from per-layer values. Cells no particle reached are left blank rather
-        than drawn as zero. ``logscale`` helps when travel times span decades
-        (it scales the colors only; the hover keeps real times). ``units`` labels
-        the hover values and defaults to the flow model's TDIS time unit.
+        Cells no particle reached are left blank rather than drawn as zero. The
+        map is time-integrated over the whole run, so it carries no period.
+
+        Parameters
+        ----------
+        stat : str, default 'median'
+            The statistic of the travel times of the particles ending in each
+            cell, as :meth:`get` takes it (a pandas groupby aggregation name; an
+            unknown one raises pandas' ``AttributeError``). It also names the
+            hover's title and value row.
+        layer : int, optional
+            The zero-based layer whose endpoints to map, and the layer the base
+            map is drawn for; outside the model's layers raises ``ValueError``.
+            Default ``None`` pools every layer into one plan-view panel -- the
+            statistic is recomputed over the pooled particles, never averaged
+            from per-layer values -- drawn on layer 0's cells.
+        logscale : bool, default False
+            Colour on a log10 scale, for travel times spanning decades. It scales
+            the colours only: the hover keeps real times, and a non-positive
+            value draws as a gap.
+        colorscale : str or list of (float, str), optional
+            Any Plotly colorscale name (``_r`` reverses it) or explicit stops, as
+            :meth:`myflopy.plot.map` takes it. Default ``None``: ``"earth"``
+            (:data:`PRT_COLORSCALE`), the house scale for these one-sided
+            magnitudes.
+        units : str, optional
+            The unit label the hover puts on ``travel_time``, ``min_time`` and
+            ``max_time``. Labels only -- nothing is converted. Default ``None``:
+            the flow model's TDIS ``TIME_UNITS`` as ``s``/``min``/``h``/``d``/
+            ``yr``, or no label when the model declares none.
+        backend : str, default 'plotly'
+            ``"plotly"`` (or ``"interactive"``) returns the interactive ``Choro``
+            picture; ``"mpl"`` (or ``"matplotlib"``, ``"static"``) a static
+            :class:`matplotlib.figure.Figure` drawn by ``Choro.plot_mpl``. Any
+            case; anything else raises ``ValueError``.
+        **kwargs
+            The other options of the model's map verb
+            (:meth:`model.plot.map <myflopy.plot.ModelPlots.map>`) -- ``zmin``/
+            ``zmax``, ``contours`` and the ``contour_*`` options, ``select``,
+            ``features``, ``extent``, ``hillshade_path``, ``fit_bounds``,
+            ``hover`` (a ``HoverSpec`` that replaces this map's own hover), ... --
+            and, past them, properties of the ``go.Choroplethmap`` trace, which
+            Plotly validates when the map is built (an unknown name raises
+            ``ValueError``). ``per=`` and ``agg=`` raise ``TypeError`` naming
+            ``layer=``/``stat=``, and the options this method sets itself
+            (``type``, ``custom_zs``, ``custom_hover``, ``hover_heads``,
+            ``hover_ks``, and the legacy ``hover_spec`` -- pass ``hover=``) raise
+            ``TypeError``.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            By ``backend``.
         """
 
         frame = _aggregate_endpoints(self._endpoints(layer), ["cell"], str(stat))
@@ -442,7 +522,24 @@ class PRTTravelTimeView(_PRTDerivedView):
         """Cumulative arrival curve: particles that have stopped by a given travel time.
 
         One step line per release group when the run has them, else one for the
-        whole population. ``backend="mpl"`` returns a matplotlib figure.
+        whole population, every layer pooled.
+
+        Parameters
+        ----------
+        backend : str, default 'plotly'
+            ``"plotly"`` (or ``"interactive"``) returns a :class:`viz.Fig`;
+            ``"mpl"`` (or ``"matplotlib"``, ``"static"``) a
+            :class:`matplotlib.figure.Figure`. Any case; anything else raises
+            ``ValueError``.
+        title : str, optional
+            The figure title. Default ``None``: ``"Particle arrivals by travel
+            time"``.
+
+        Returns
+        -------
+        viz.Fig or matplotlib.figure.Figure
+            Particles arrived against travel time, in each group's shared
+            category colour.
         """
 
         frame = self._endpoints()
@@ -513,8 +610,27 @@ class PRTPathlineView(_PRTDerivedView):
     def get(self, *, group: str | None = None, layer: int | None = None) -> pd.DataFrame:
         """Normalized track records, optionally limited to one release group or layer.
 
-        ``layer`` filters *records*, not particles: a particle that crosses layers
-        contributes only the vertices inside the requested layer.
+        Parameters
+        ----------
+        group : str, optional
+            Keep the records of one release group, matched EXACTLY against the
+            ``release_group`` column -- the PRP boundname as MF6 writes it back,
+            UPPER-cased (``group="west_wells"`` at release reads ``"WEST_WELLS"``
+            here; :meth:`groups` lists them). Unlike :meth:`map`, a group with no
+            records is not refused: the frame is simply empty. Default ``None``
+            keeps every group.
+        layer : int, optional
+            Keep only the records in this zero-based layer (passed through
+            ``int()``). It filters *records*, not particles: a particle that
+            crosses layers contributes only the vertices inside the requested
+            layer. Default ``None`` keeps every layer.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Every track-CSV column plus ``cell``/``layer`` (zero-based),
+            ``travel_time`` (``t - trelease``), ``release_group`` and
+            ``particle``, on a fresh index.
         """
 
         frame = pathline_cell_table(self.results.track_records, ncpl=self._ncpl)
@@ -1067,13 +1183,47 @@ class PRTPathlineView(_PRTDerivedView):
     ):
         """One map panel per release group, on a shared view.
 
-        ``extent=`` frames every panel, or -- as a list -- each panel on its own, as
-        on every composer (ledger 309); ``sync_views`` defaults to linking panels
-        that share a window.
-
         Only ``by="release_group"`` is offered: layer panels would repeat the same
         trajectories over different head layers, since a plan-view track is never
         layer-specific.
+
+        Parameters
+        ----------
+        by : str, default 'release_group'
+            The facet, and the only one: anything else raises ``ValueError``. A
+            run with no release groups raises ``ValueError`` naming
+            ``PRTReleasePoints.from_cells(..., group=...)``.
+        ncols : int, default 2
+            Panels per row (:func:`myflopy.viz.mosaic`), capped at the number of
+            groups.
+        sync_views : bool, optional
+            Whether the panels pan and zoom together: ``None`` (default) links
+            panels that open on one window, ``False`` leaves each independent, and
+            ``True`` with a LIST ``extent`` of different windows raises
+            ``ValueError``.
+        backend : str, default 'plotly'
+            ``"plotly"`` (or ``"interactive"``, any case) only -- the mosaic is a
+            Plotly composition; ``"mpl"`` raises ``ValueError`` naming
+            ``map(group=...)`` for a single static panel.
+        title : str, optional
+            The overall figure title. Default ``None``: none; each panel is titled
+            with its group.
+        **kwargs
+            ``extent`` goes to the mosaic: one window for every panel, or a list
+            with one per panel (``None`` for a panel's own), VIEW only (ledger
+            309). Everything else is passed to EACH panel's :meth:`map` --
+            ``base`` (``"heads"`` or ``None``), ``per``, ``layer``, ``color``,
+            ``width``, ``max_particles`` (per panel, each warning when it caps),
+            the base-map options and trace properties. ``group`` is set per panel
+            and raises ``TypeError`` (each panel's map title is its group;
+            ``title=`` is this method's own parameter, the overall title); an
+            already-built ``Choro`` as ``base`` raises ``ValueError``, since one
+            map cannot back every panel.
+
+        Returns
+        -------
+        viz.Fig
+            The composed figure, one panel per release group in sorted order.
         """
 
         if by != "release_group":
@@ -1115,7 +1265,26 @@ class PRTPathlineView(_PRTDerivedView):
         """Elevation against travel time -- the vertical half of each trajectory.
 
         The plan-view map says where particles went; this says how deep they got
-        and when, one line per particle colored by release group.
+        and when, one line per particle colored by release group (or per particle
+        when the run has no groups). Track records without a ``z`` column raise
+        ``KeyError``.
+
+        Parameters
+        ----------
+        backend : str, default 'plotly'
+            ``"plotly"`` (or ``"interactive"``) returns a :class:`viz.Fig`;
+            ``"mpl"`` (or ``"matplotlib"``, ``"static"``) a
+            :class:`matplotlib.figure.Figure`. Any case; anything else raises
+            ``ValueError``.
+        title : str, optional
+            The figure title. Default ``None``: ``"Particle elevation over travel
+            time"``.
+
+        Returns
+        -------
+        viz.Fig or matplotlib.figure.Figure
+            Elevation (``z``, model units) against travel time, one legend entry
+            per group (per particle when the run has no groups).
         """
 
         frame = self.get()
@@ -1177,7 +1346,19 @@ class PRTPathlineView(_PRTDerivedView):
         return fig
 
     def section(self, *args, **kwargs):
-        """Trajectories are not a per-cell field, so there is no section to slice."""
+        """Trajectories are not a per-cell field, so there is no section to slice.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Accepted only so that ANY call reaches the refusal below; none is read.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, naming :meth:`plot` (elevation against travel time), the
+            vertical view of the same tracks.
+        """
 
         raise NotImplementedError(
             "Pathlines are trajectories, not a per-cell field, so they cannot be "
@@ -1186,7 +1367,18 @@ class PRTPathlineView(_PRTDerivedView):
         )
 
     def animate(self, *args, **kwargs):
-        """One figure already holds the whole run, so there is no axis to animate."""
+        """One figure already holds the whole run, so there is no axis to animate.
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Accepted only so that ANY call reaches the refusal below; none is read.
+
+        Raises
+        ------
+        NotImplementedError
+            Always, naming :meth:`mosaic` and :meth:`plot`.
+        """
 
         raise NotImplementedError(
             "The pathline map already draws every particle's whole trajectory, so "
@@ -1204,7 +1396,26 @@ class PRTEndpointsView(_PRTDerivedView):
     _HOVER_FIELDS = ("release_groups", "min_time", "max_time")
 
     def get(self, *, layer: int | None = None) -> pd.DataFrame:
-        """Endpoint counts, one row per ``(layer, cell)`` particles terminated in."""
+        """Endpoint counts, one row per ``(layer, cell)`` particles terminated in.
+
+        A particle's endpoint is its terminating (``ireason == 3``) record, or its
+        last record when the run terminated none. When some particles terminated,
+        one still in transit has no endpoint and is not counted.
+
+        Parameters
+        ----------
+        layer : int, optional
+            Keep only the particles that ended in this zero-based layer (passed
+            through ``int()``); a layer no particle ended in returns an empty
+            frame. Default ``None`` keeps every layer.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Columns ``layer``, ``cell``, ``particle_count``, ``travel_time`` (the
+            MEDIAN of that cell's travel times), ``min_time``, ``max_time`` and
+            ``release_groups``.
+        """
 
         return _aggregate_endpoints(self._endpoints(layer), ["layer", "cell"], "median")
 
@@ -1224,7 +1435,45 @@ class PRTEndpointsView(_PRTDerivedView):
         backend: str = "plotly",
         **kwargs,
     ):
-        """Particle-termination counts per cell (blank where no particle stopped)."""
+        """Particle-termination counts per cell (blank where no particle stopped).
+
+        Parameters
+        ----------
+        layer : int, optional
+            The zero-based layer whose endpoints to count, and the layer the base
+            map is drawn for; outside the model's layers raises ``ValueError``.
+            Default ``None`` pools every layer -- a cell's count is then the
+            particles that ended anywhere in its column -- drawn on layer 0's
+            cells.
+        colorscale : str or list of (float, str), optional
+            Any Plotly colorscale name (``_r`` reverses it) or explicit stops.
+            Default ``None``: ``"earth"`` (:data:`PRT_COLORSCALE`).
+        logscale : bool, default False
+            Colour the counts on a log10 scale; the hover keeps the real counts.
+        backend : str, default 'plotly'
+            ``"plotly"`` (or ``"interactive"``) returns the interactive ``Choro``
+            picture; ``"mpl"`` (or ``"matplotlib"``, ``"static"``) a static
+            :class:`matplotlib.figure.Figure`. Any case; anything else raises
+            ``ValueError``.
+        **kwargs
+            The other options of the model's map verb
+            (:meth:`model.plot.map <myflopy.plot.ModelPlots.map>`) -- ``zmin``/
+            ``zmax``, ``contours`` and the ``contour_*`` options, ``select``,
+            ``features``, ``extent``, ``hillshade_path``, ``fit_bounds``,
+            ``hover`` (a ``HoverSpec`` that replaces this map's own hover), ... --
+            and, past them, properties of the ``go.Choroplethmap`` trace, which
+            Plotly validates when the map is built (an unknown name raises
+            ``ValueError``). ``per=`` and ``agg=`` raise ``TypeError`` (the map is
+            time-integrated and already one row per cell), and the options this
+            method sets itself (``type``, ``custom_zs``, ``custom_hover``,
+            ``hover_heads``, ``hover_ks``, and the legacy ``hover_spec`` -- pass
+            ``hover=``) raise ``TypeError``.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            By ``backend``.
+        """
 
         frame = _aggregate_endpoints(self._endpoints(layer), ["cell"], "median")
         unit = _time_unit(self.model)
@@ -1255,7 +1504,27 @@ class PRTEndpointsView(_PRTDerivedView):
         )
 
     def plot(self, *, top: int = 20, backend: str = "plotly", title: str | None = None):
-        """Bar figure of the cells that caught the most particles (``top`` of them)."""
+        """Bar figure of the cells that caught the most particles (``top`` of them).
+
+        Parameters
+        ----------
+        top : int, default 20
+            How many cells to draw, most particles first, each ``(layer, cell)``
+            separately and labelled ``L<layer> C<cell>``. Passed through
+            ``int()``, so a float is truncated; ``0`` draws no bars.
+        backend : str, default 'plotly'
+            ``"plotly"`` (or ``"interactive"``) returns a :class:`viz.Fig`;
+            ``"mpl"`` (or ``"matplotlib"``, ``"static"``) a
+            :class:`matplotlib.figure.Figure`. Any case; anything else raises
+            ``ValueError``.
+        title : str, optional
+            The figure title. Default ``None``: ``"Particle endpoints by cell"``.
+
+        Returns
+        -------
+        viz.Fig or matplotlib.figure.Figure
+            One bar per cell: the particles that ended there.
+        """
 
         frame = self.get().sort_values("particle_count", ascending=False).head(int(top))
         pairs = [
@@ -1319,7 +1588,29 @@ class PRTCaptureView(_PRTDerivedView):
         return frame.assign(group=labels)
 
     def get(self, *, by: str = "release_group", layer: int | None = None) -> pd.DataFrame:
-        """Capture rows: ``group``, ``layer``, ``cell``, ``particle_count`` (+ travel times)."""
+        """Capture rows: ``group``, ``layer``, ``cell``, ``particle_count`` (+ travel times).
+
+        Parameters
+        ----------
+        by : str, default 'release_group'
+            How particles are grouped: ``"release_group"`` by the PRP boundname
+            their release point carried (UPPER-cased by MF6), or
+            ``"release_point"`` by release-point id (``irpt``, as text) for a run
+            built without boundnames. Anything else raises ``ValueError``, and
+            ``"release_group"`` on a run with no boundnames raises ``ValueError``
+            naming both fixes.
+        layer : int, optional
+            Keep only the particles that ended in this zero-based layer (passed
+            through ``int()``); a layer no particle ended in returns an empty
+            frame. Default ``None`` keeps every layer.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per ``(group, layer, cell)`` with ``particle_count``,
+            ``travel_time`` (the median), ``min_time``, ``max_time`` and
+            ``release_groups``.
+        """
 
         frame = self._grouped_endpoints(by, layer)
         return _aggregate_endpoints(frame, ["group", "layer", "cell"], "median")
@@ -1332,7 +1623,24 @@ class PRTCaptureView(_PRTDerivedView):
         )
 
     def groups(self, *, by: str = "release_group") -> list[str]:
-        """The release groups present in this run, in sorted order."""
+        """The release groups present in this run, in sorted order.
+
+        Parameters
+        ----------
+        by : str, default 'release_group'
+            How particles are grouped: ``"release_group"`` by the PRP boundname
+            their release point carried (UPPER-cased by MF6), or
+            ``"release_point"`` by release-point id (``irpt``, as text) for a run
+            built without boundnames. Anything else raises ``ValueError``, and
+            ``"release_group"`` on a run with no boundnames raises ``ValueError``
+            naming both fixes.
+
+        Returns
+        -------
+        list of str
+            The labels, sorted as TEXT (release point ``"10"`` before ``"2"``);
+            empty when no particle has an endpoint.
+        """
 
         frame = self._grouped_endpoints(by)
         return sorted({str(value) for value in frame["group"]}) if not frame.empty else []
@@ -1356,8 +1664,63 @@ class PRTCaptureView(_PRTDerivedView):
         panel per release group on one shared color scale and (``sync_views``)
         linked pan/zoom, which is how capture zones are read side by side. Name a
         ``group`` to get that single group's ``Choro`` instead (the form the
-        facet composers use); ``ncols``/``sync_views``/``title`` describe the
-        mosaic and do not apply to that single panel.
+        facet composers use).
+
+        Parameters
+        ----------
+        by : str, default 'release_group'
+            How particles are grouped: ``"release_group"`` by the PRP boundname
+            their release point carried (UPPER-cased by MF6), or
+            ``"release_point"`` by release-point id (``irpt``, as text) for a run
+            built without boundnames. Anything else raises ``ValueError``, and
+            ``"release_group"`` on a run with no boundnames raises ``ValueError``
+            naming both fixes.
+        group : str, optional
+            Map this one group alone, compared as TEXT with the labels
+            :meth:`groups` lists (so ``group=1`` finds release point ``"1"``); one
+            with no particles raises ``KeyError``. Default ``None``: the mosaic of
+            every group, sorted; a run with no endpoints raises ``ValueError``.
+        layer : int, optional
+            The zero-based layer whose endpoints to count, and the layer every
+            panel's base map is drawn for. Default ``None`` pools every layer,
+            drawn on layer 0's cells.
+        colorscale : str or list of (float, str), optional
+            Any Plotly colorscale name or explicit stops, for every panel. Default
+            ``None``: ``"earth"`` (:data:`PRT_COLORSCALE`).
+        ncols : int, default 2
+            Mosaic only: panels per row, passed through ``int()`` and capped at
+            the number of groups. Ignored -- not refused -- with ``group=``.
+        sync_views : bool, optional
+            Mosaic only: whether the panels pan and zoom together (``None``, the
+            default, links panels that open on one window; ``False`` leaves each
+            independent; ``True`` with a list ``extent`` of different windows
+            raises). Ignored -- not refused -- with ``group=``.
+        backend : str, default 'plotly'
+            With ``group=``: ``"plotly"`` (or ``"interactive"``) returns the
+            ``Choro``, ``"mpl"`` (or ``"matplotlib"``, ``"static"``) a static
+            :class:`matplotlib.figure.Figure`. The mosaic is Plotly only: ``"mpl"``
+            there raises ``ValueError`` naming ``group=``. Any case; an unknown
+            value raises ``ValueError``.
+        title : str, optional
+            Mosaic only: the overall title, default ``"Capture zones by release
+            group"`` (or ``by release point``). Ignored -- not refused, and no
+            title is set -- with ``group=``.
+        **kwargs
+            Passed to every panel's map, as on :meth:`PRTEndpointsView.map`:
+            ``logscale``, the other options of :meth:`model.plot.map
+            <myflopy.plot.ModelPlots.map>` (``zmin``/``zmax``, ``contours``,
+            ``select``, ``features``, ``hover``, ...) and, past them,
+            ``go.Choroplethmap`` trace properties Plotly validates. ``extent``
+            frames the single map with ``group=``; on the mosaic it goes to the
+            composer, one window for every panel or a list with one per panel.
+            ``per=``/``agg=`` and the options this method sets itself (``type``,
+            ``custom_zs``, ``custom_hover``, ``hover_heads``, ``hover_ks``,
+            ``hover_spec``) raise ``TypeError``.
+
+        Returns
+        -------
+        viz.Fig or Choro or matplotlib.figure.Figure
+            The mosaic (``group=None``), else the one group's map by ``backend``.
         """
 
         frame = self._grouped_endpoints(by, layer)
@@ -1443,7 +1806,31 @@ class PRTCaptureView(_PRTDerivedView):
         return self.map(layer=int(layer), **kwargs)
 
     def plot(self, *, by: str = "release_group", backend: str = "plotly", title: str | None = None):
-        """Bar figure of how many particles each release group contributed."""
+        """Bar figure of how many particles each release group contributed.
+
+        Parameters
+        ----------
+        by : str, default 'release_group'
+            How particles are grouped: ``"release_group"`` by the PRP boundname
+            their release point carried (UPPER-cased by MF6), or
+            ``"release_point"`` by release-point id (``irpt``, as text) for a run
+            built without boundnames. Anything else raises ``ValueError``, and
+            ``"release_group"`` on a run with no boundnames raises ``ValueError``
+            naming both fixes.
+        backend : str, default 'plotly'
+            ``"plotly"`` (or ``"interactive"``) returns a :class:`viz.Fig`;
+            ``"mpl"`` (or ``"matplotlib"``, ``"static"``) a
+            :class:`matplotlib.figure.Figure`. Any case; anything else raises
+            ``ValueError``.
+        title : str, optional
+            The figure title. Default ``None``: ``"Particles by release group"``
+            (or ``by release point``).
+
+        Returns
+        -------
+        viz.Fig or matplotlib.figure.Figure
+            One bar per group, largest first, each in its shared category colour.
+        """
 
         frame = self._grouped_endpoints(by)
         counts = (

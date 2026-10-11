@@ -2425,7 +2425,32 @@ class LayerSection(MplPicture):
         self.title = kwargs.get("title") or "Layer cross-section"
 
     def draw(self, ax=None, **kwargs):
-        """Render the section into ``ax`` (or a new one) and return the Axes."""
+        """Render the section into ``ax`` (or a new one) and return the Axes.
+
+        Reached as ``.plot_mpl(ax=...)``; ``.axes``/``.show()``/``.save()`` call it
+        once with no arguments and cache what it returns.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            The Axes to draw into. ``None`` (the default) draws into a new 9 x 4
+            inch figure. Either way the Axes drawn on is returned. Drawing into
+            your own Axes does not replace the picture's cached ``.axes``.
+        **kwargs
+            The drawing options :meth:`StackPlots.section` stored, overridden for
+            this draw only: ``color_by``, ``cmap``, ``show_grid``, ``legend``,
+            ``title``. Merged over the stored ones (this call wins) and handed to
+            the stack's section renderer, which takes nothing else -- any other
+            keyword raises ``TypeError``. A ``color_by`` given HERE is not checked
+            as the constructor checks it: any value but ``'thickness'`` draws the
+            layer-coloured picture. Under ``color_by='thickness'`` the fill is
+            always ``viridis`` and there is no legend, so ``cmap`` and ``legend``
+            change nothing there.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+        """
 
         return self._result._draw_cross_section(
             self._line, x=self._x, y=self._y, ax=ax, **{**self._kwargs, **kwargs}
@@ -2460,7 +2485,32 @@ class LayerThicknessMap(MplPicture):
         self._padding = float(padding)
 
     def draw(self, ax=None, **kwargs):
-        """Render the thickness map into ``ax`` (or a new one)."""
+        """Render the thickness map into ``ax`` (or a new one) and return the Axes.
+
+        Reached as ``.plot_mpl(ax=...)``; ``.axes``/``.show()``/``.save()`` call it
+        once with no arguments and cache what it returns.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            The Axes to draw into. ``None`` (the default) draws into a new figure.
+            Either way the Axes is returned, titled with the layer (or "total
+            thickness") and the stack's length units, with an equal aspect and,
+            when the map was built with ``extent=``, limits set to that box grown
+            by its ``bounds_padding`` (a fraction of the box's own width and
+            height). Drawing into your own Axes does not replace the picture's
+            cached ``.axes``.
+        **kwargs
+            Accepts nothing: it is the signature :meth:`MplPicture.plot_mpl
+            <myflopy.viz.MplPicture.plot_mpl>` calls every ``draw`` with, and the
+            thickness renderer takes only the layer and the Axes. Any keyword
+            raises ``TypeError`` -- ``layer=`` included, which the map fixed when
+            it was built (``stack.plot.map("sand")``).
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+        """
 
         ax = self._result._draw_thickness_map(layer=self._layer, ax=ax, **kwargs)
         if self._extent is not None:
@@ -2547,15 +2597,21 @@ class StackPlots:
 
         Parameters
         ----------
-        layer : str or int, optional
-            One layer by name or index. With none, total thickness.
+        layer : str, optional
+            One layer, by NAME (``stack.names``). With none, total thickness. An
+            integer index is not accepted: it raises ``ValueError`` (``x not in
+            list``), on both renderers.
         basemap : bool, default False
             Route through the shared choropleth (``vor.plot.map``) so the cells
             sit on a web basemap. Requires a real CRS.
         **kwargs
-            Choropleth styling, forwarded to :meth:`~myflopy.modflow.mf6.grid
-            .plotting.GridPlots.map`. **Only meaningful with ``basemap=True``**
-            -- the default renderer is Matplotlib and takes none of them.
+            With ``basemap=True``, choropleth styling, forwarded to
+            :meth:`~myflopy.modflow.mf6.grid.plotting.GridPlots.map` (the entries
+            below; ``values`` is the thickness itself, so passing it raises
+            ``TypeError``). Without it the Matplotlib thickness map honours only
+            ``extent=`` and, beside it, ``bounds_padding=`` (default ``0.05``, a
+            fraction of the box's own size); any other keyword raises
+            ``TypeError`` -- ``bounds_padding=`` without ``extent=`` included.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         values : sequence of float, optional
@@ -2892,16 +2948,30 @@ class StackPlots:
         color_by : {'layer', 'thickness'}, default 'layer'
             Cell scalar the fill is keyed to: discrete layer colours, or a
             continuous viridis thickness field.
-        cmap : str, default 'tab10'
-            Colormap for that scalar.
+        cmap : str or matplotlib.colors.Colormap, default 'tab10'
+            Colormap for the layer colours, under ``color_by='layer'`` only: a
+            name or a ``Colormap``, as ``plt.get_cmap`` takes. Layer
+            ``k`` takes ``cmap(k % 10)``, an integer index into the colormap's own
+            table: a ten-colour qualitative map like ``'tab10'`` gives each layer
+            its own colour, but a continuous map's table has 256 steps, so
+            ``'viridis'`` draws every layer in nearly the same colour, and an
+            eleventh layer repeats the first. Under ``color_by='thickness'`` the
+            fill is always ``viridis`` and this changes nothing.
         show_grid : bool, default True
             Draw cell edges over the fill.
         legend : bool, default True
-            Include the layer legend.
+            Include the layer legend, at the upper right inside the plot. Read for
+            its truth only: a placement word the free verb takes
+            (``'outside right'``, ``'bottom'``, ...) draws it at the upper right
+            too. ``color_by='thickness'`` draws none either way.
         title : str, optional
             Plot title. Defaults to "Layer cross-section".
         **kwargs
-            Forwarded to :class:`LayerSection`.
+            Forwarded to :class:`LayerSection`, which stores them for its renderer,
+            and that takes only the five options above. So nothing else can act:
+            any other keyword -- every free-verb argument listed below included --
+            raises ``TypeError``, and only when the picture is first DRAWN
+            (``.axes``, ``.show()``, ``.save()``), not at this call.
 
             .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
         cells : int or list of int, optional
@@ -3224,32 +3294,6 @@ class StackPlots:
             thickness, ``terrain`` for elevations.
         width, height : int, default 900, 580
             *(vtk only)* Scene size in pixels.
-
-            .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
-        pathlines : DataFrame, optional
-            Particle track records, drawn as time-coloured tubes over the 3-D mesh.
-            Requires ``backend="vtk"``; in plan view the equivalent is
-            ``map(pathlines=...)``. Passing it with ``backend="plotly"`` raises.
-
-        vertical_exaggeration : float, default 1.0
-            *(vtk only)* Multiplier on z, to make a thin model legible.
-        model_style : {'wireframe', 'surface', 'points'}, default 'wireframe'
-            *(vtk only)* How the grid itself is drawn beneath the tracks.
-        model_opacity : float, default 0.25
-            *(vtk only)* Opacity of the grid, so tracks inside it stay visible.
-        pathline_cmap : str, default 'viridis'
-            *(vtk only)* Colormap for the time-coloured tubes.
-        pathline_width : float, default 4.0
-            *(vtk only)* Tube width.
-        show_edges : bool, default True
-            *(vtk only)* Draw cell edges on the mesh.
-        off_screen : bool, default True
-            *(vtk only)* Render without opening a window -- the right default in a
-            notebook or on a headless machine.
-        **kwargs
-            Forwarded to the backend's builder.
-
-            .. end generated
 
         Returns
         -------

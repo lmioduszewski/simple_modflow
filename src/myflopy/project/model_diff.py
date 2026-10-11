@@ -249,10 +249,41 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
         """Aligned value table: each numeric field as ``x`` / ``reference_x`` /
         ``x_diff`` on the cells shared with the reference model.
 
-        ``model_name`` (the first positional argument) restricts the table to one
-        compared model; ``per`` / ``layer`` / ``cells`` filter as on the group
-        input accessor. With no ``model_name`` every non-reference model is
-        returned.
+        The group's input compare (``group.packages.<pkg>.inputs.compare``): every
+        member's stress-period rows of this package -- every package of the type,
+        each row tagged ``pname`` -- inner-joined to the reference's on ``per``,
+        ``layer``, ``cell`` and every non-numeric column (``package``, ``pname``,
+        a boundname), so a cell in only one model is absent here (:meth:`cells`
+        shows it) and so is a row whose package NAME differs. A cell holding
+        several records of one package pairs each of the model's with each of the
+        reference's: two records on each side give four rows. ``x_diff`` is model
+        minus reference, in the field's own units.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one compared model, by its name in the group (the first
+            positional argument). Default ``None`` returns every non-reference
+            model. It is a FILTER, not checked: a name not in the group, or the
+            reference's, gives an empty frame where :meth:`cells` and
+            :meth:`summary` raise.
+        **kwargs
+            Forwarded to the group compare: ``per`` (int, a zero-based stress
+            period: the cells that period's own block declares, so a period with
+            no block of its own -- MF6 reuses the previous one -- has none),
+            ``layer`` (int or sequence of int, zero-based) and ``cells`` (int or
+            sequence of int, zero-based in-layer), combined with AND; default
+            ``None`` keeps everything. Anything else raises ``TypeError``. The
+            pinned field (``inputs.cond``) does not narrow the table: every numeric
+            field is diffed.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, the join columns, then ``x``,
+            ``reference_x`` and ``x_diff`` for each numeric field (``cond``,
+            ``bhead``, ...). Empty (no columns) when no member holds rows the
+            filters keep.
         """
 
         return self._inputs.compare(model_name=model_name, **kwargs)
@@ -274,6 +305,33 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
         but not the reference), or -- when ``include_shared=True`` --
         ``shared``. This is the difference a value-only compare cannot show,
         because its inner join drops cells present in only one model.
+
+        A cell is its ``(per, layer, cell)`` key, pooled over every package of the
+        type (two CHD packages on one cell are one key), so a cell moved from one
+        package of the type to another is not a difference here. A package a
+        member does not carry, or cannot be read, contributes no keys.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Compare one model, by its name in the group. Default ``None`` compares
+            every non-reference model. A name not in the group raises ``KeyError``;
+            the reference's raises ``ValueError``.
+        per : int or None, optional
+            Keep one zero-based stress period: the cells that period's own block
+            declares, so a period with no block of its own (MF6 reuses the previous
+            one) holds none in either model. Default ``None`` uses every period.
+        layer : int or sequence of int or None, optional
+            Keep these zero-based layers. Default ``None`` keeps every layer.
+        include_shared : bool, optional
+            Default ``False`` lists only the cells in one model and not the other;
+            ``True`` adds the cells in both, as ``membership="shared"``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``per``, ``layer``, ``cell`` (zero-based ints) and
+            ``membership``, sorted by key within each membership.
         """
 
         reference = self.group.reference
@@ -295,7 +353,31 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
         return pd.DataFrame(rows, columns=["model", "per", "layer", "cell", "membership"])
 
     def summary(self, *, model_name=None) -> pd.DataFrame:
-        """Per-model structural + value difference counts for this package."""
+        """Per-model structural + value difference counts for this package.
+
+        Over every period and layer: the cell keys of :meth:`cells`, and the
+        shared rows of :meth:`values` whose numeric fields differ at all (no
+        tolerance; a ``NaN`` on either side counts as no change).
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Summarize one model, by its name in the group. Default ``None``
+            summarizes every non-reference model. A name not in the group raises
+            ``KeyError``; the reference's raises ``ValueError``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per compared model: ``package``, ``model``,
+            ``present_in_reference``, ``present_in_model``,
+            ``cells_only_in_reference``, ``cells_only_in_model``, ``cells_shared``,
+            ``value_cells_changed`` (ROWS of :meth:`values`, not cells: a cell
+            counts once per package and period it differs in, and more where it
+            holds several records of one package -- one cell with two records a
+            side, its conductances changed, counts 4) and ``identical`` (presence,
+            cells and values all agree).
+        """
 
         reference = self.group.reference
         ref_present, ref_keys = _package_keys(self.group.models[reference], self.package_name)
@@ -419,6 +501,37 @@ class ConnectionDiff:
 
         Columns: ``model``, the geometry columns, and ``membership``
         (``only_in_reference`` / ``only_in_model`` / ``shared``).
+
+        A multiset difference of whole geometry rows -- LAK ``lake``, ``layer``,
+        ``cell``, ``claktype``, ``belev``, ``telev``, ``connlen``, ``connwidth``;
+        SFR ``reach``, ``layer``, ``cell``, ``rlen`` (zero-based ids, model length
+        units) -- so a connection whose geometry changed is one
+        ``only_in_reference`` row and one ``only_in_model`` row. A member without
+        the package, or whose table cannot be read, counts as holding no rows, so
+        every row of the other side is listed as one-sided.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Compare one model, by its name in the group. Default ``None`` compares
+            every non-reference model. A name not in the group raises ``KeyError``;
+            the reference's raises ``ValueError``.
+        round_to : int, optional
+            Decimal places every FLOAT geometry column is rounded to on both sides
+            before rows are compared (``pandas.Series.round``; a negative value
+            rounds to tens, hundreds, ...), so build noise below it is not a
+            difference. Integer and text columns are compared exactly. Default
+            ``6``. The rows returned carry the ROUNDED values.
+        include_shared : bool, optional
+            Default ``False`` lists only the rows in one network and not the
+            other; ``True`` adds the rows in both, as ``membership="shared"``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, the identity columns the tables carry, and
+            ``membership``; a row repeated in a network is repeated here as often
+            as its count differs.
         """
 
         _, ref_counter, ref_columns = self._counter(self.group.reference, round_to=round_to)
@@ -439,7 +552,26 @@ class ConnectionDiff:
         return pd.DataFrame(collected, columns=["model", *resolved, "membership"])
 
     def summary(self, *, model_name=None, round_to: int = 6) -> pd.DataFrame:
-        """Per-model connection/reach difference counts vs the reference."""
+        """Per-model connection/reach difference counts vs the reference.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Summarize one model, by its name in the group. Default ``None``
+            summarizes every non-reference model. A name not in the group raises
+            ``KeyError``; the reference's raises ``ValueError``.
+        round_to : int, optional
+            Decimal places the float geometry columns are rounded to before rows
+            are matched, as in :meth:`rows`. Default ``6``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per compared model: ``package``, ``model``,
+            ``present_in_reference``, ``present_in_model``, ``only_in_reference``,
+            ``only_in_model``, ``shared`` (row counts) and ``identical``
+            (presence agrees and no row is on one side only).
+        """
 
         ref_present, ref_counter, _ = self._counter(self.group.reference, round_to=round_to)
         rows = []
@@ -484,7 +616,20 @@ class LakConnectionDiff(ConnectionDiff):
         return build_lak_connection_table(model)
 
     def connections(self, **kwargs) -> pd.DataFrame:
-        """Per-connection geometry set difference vs the reference lake network."""
+        """Per-connection geometry set difference vs the reference lake network.
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded to :meth:`rows`: ``model_name``, ``round_to`` and
+            ``include_shared``, keyword-only. Anything else raises ``TypeError``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`rows`' table: ``model``, the LAK connection-geometry columns and
+            ``membership``.
+        """
 
         return self.rows(**kwargs)
 
@@ -503,7 +648,23 @@ class SfrReachDiff(ConnectionDiff):
         return build_sfr_reach_table(model)
 
     def reaches(self, **kwargs) -> pd.DataFrame:
-        """Per-reach geometry set difference vs the reference stream network."""
+        """Per-reach geometry set difference vs the reference stream network.
+
+        Also reachable as ``connections`` (a reach is a stream's connection to a
+        cell).
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded to :meth:`rows`: ``model_name``, ``round_to`` and
+            ``include_shared``, keyword-only. Anything else raises ``TypeError``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`rows`' table: ``model``, ``reach``, ``layer``, ``cell``,
+            ``rlen`` and ``membership``.
+        """
 
         return self.rows(**kwargs)
 
@@ -777,14 +938,57 @@ class _FocusedModelDiff:
         return self._diff._render_report(model_name=self.model_name)
 
     def cells(self, package: str, **kwargs) -> pd.DataFrame:
-        """Structural cell set-difference for one ``package`` on this model."""
+        """Structural cell set-difference for one ``package`` on this model.
+
+        :meth:`PackageDiff.cells` with ``model_name`` set to this model.
+
+        Parameters
+        ----------
+        package : str
+            A cell-based BC package type, any case: ``rch``, ``chd``, ``drn``,
+            ``ghb``, ``riv``, ``wel`` or ``evt``. ``lak`` and ``sfr`` raise
+            ``AttributeError`` naming no alternative (their diff has no ``cells``;
+            ``diff.packages.lak.inputs.rows(model_name=...)`` is the connection
+            difference), and any other name raises ``AttributeError`` listing the
+            supported ones.
+        **kwargs
+            Forwarded to :meth:`PackageDiff.cells`: ``per``, ``layer`` and
+            ``include_shared``. ``model_name`` is this model's and may not be
+            passed again (``TypeError``); anything else raises ``TypeError``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``per``, ``layer``, ``cell`` and ``membership``.
+        """
 
         return _resolve_package_diff(self._diff, package).cells(
             model_name=self.model_name, **kwargs
         )
 
     def values(self, package: str, **kwargs) -> pd.DataFrame:
-        """Aligned value difference for one ``package`` on this model."""
+        """Aligned value difference for one ``package`` on this model.
+
+        :meth:`PackageDiff.values` with ``model_name`` set to this model.
+
+        Parameters
+        ----------
+        package : str
+            A cell-based BC package type, any case, as in :meth:`cells`; ``lak``
+            and ``sfr`` raise ``AttributeError`` (their diff has no ``values``),
+            any other name ``AttributeError`` listing the supported ones.
+        **kwargs
+            Forwarded to :meth:`PackageDiff.values` and on to the group compare:
+            ``per``, ``layer`` and ``cells``. ``model_name`` is this model's and may
+            not be passed again (``TypeError``); anything else raises
+            ``TypeError``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, the join columns, and ``x`` /
+            ``reference_x`` / ``x_diff`` for each numeric field.
+        """
 
         return _resolve_package_diff(self._diff, package).values(
             model_name=self.model_name, **kwargs
@@ -852,6 +1056,30 @@ class ConfigDiff:
         Columns: ``model, section, setting, reference_value, model_value``. A
         setting present in only one model shows ``'<absent>'`` on the other side.
         Optionally restrict to one ``section`` (e.g. ``"ims"`` or ``"tdis"``).
+
+        Each member's ``model.config.settings()`` is compared key by key on
+        ``(section, setting)``; values that compare equal (``==``, or the same
+        ``repr`` where ``==`` cannot answer) are left out.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Compare one model, by its name in the group. Default ``None`` compares
+            every non-reference model. A name not in the group raises ``KeyError``;
+            the reference's raises ``ValueError``.
+        section : str or None, optional
+            Keep one section, any case: the lower-case names ``model.config``
+            writes -- ``"tdis"``, ``"ims"``, ``"oc"``, ``"model"`` (the name-file
+            options such as ``NEWTON``), and one per package type present
+            (``"npf"``, ``"disv"``, ``"chd"``, ...). Default ``None`` keeps every
+            section. A name no member has is NOT refused: it gives an empty frame,
+            the same answer as "no difference".
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per differing setting per compared model, in ``(section,
+            setting)`` order.
         """
 
         wanted_section = None if section is None else str(section).lower()
@@ -882,7 +1110,21 @@ class ConfigDiff:
         )
 
     def summary(self, *, model_name=None) -> pd.DataFrame:
-        """Per-model count of differing configuration settings."""
+        """Per-model count of differing configuration settings.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Summarize one model, by its name in the group. Default ``None``
+            summarizes every non-reference model. A name not in the group raises
+            ``KeyError``; the reference's raises ``ValueError``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``settings_differing`` (the rows :meth:`settings` gives it,
+            every section) and ``identical`` (none differ).
+        """
 
         differences = self.settings(model_name=model_name)
         rows = []
@@ -1002,12 +1244,42 @@ class ModelDiff:
 
         Every node has ``.inputs`` (declared-data difference) and, where the
         package produces cell output, ``.results`` (computed difference).
+
+        Parameters
+        ----------
+        name : str
+            A package type, any case: ``rch``, ``chd``, ``drn``, ``ghb``, ``riv``,
+            ``wel``, ``evt``, ``lak``, ``sfr``, ``uzf`` or ``mvr``. Any other name
+            raises ``AttributeError`` listing those -- bar the namespace's own
+            attribute names, which are not refused (``"_diff"`` returns this
+            ``ModelDiff``). Whether a member carries the package is not checked
+            here.
+
+        Returns
+        -------
+        object
+            The node ``diff.packages.<name>`` returns: ``.inputs`` and
+            ``.results`` for the BC packages, LAK and SFR, ``.results`` alone for
+            UZF and MVR.
         """
 
         return getattr(self.packages, str(name).lower())
 
     def model(self, name: str) -> _FocusedModelDiff:
-        """Focus the diff on a single non-reference model."""
+        """Focus the diff on a single non-reference model.
+
+        Parameters
+        ----------
+        name : str
+            The model's name in the group (converted with ``str``). A name not in
+            the group raises ``KeyError``; the reference's raises ``ValueError``.
+
+        Returns
+        -------
+        _FocusedModelDiff
+            ``summary()``, ``report()``, ``cells(package)`` and
+            ``values(package)``, each narrowed to this model.
+        """
 
         return _FocusedModelDiff(self, name)
 
@@ -1017,6 +1289,31 @@ class ModelDiff:
         One row per (package, non-reference model). ``identical`` is ``True``
         when a package matches the reference in presence, cell membership, and
         all field values.
+
+        The cell-based BC packages only (:attr:`package_names`), each through its
+        :meth:`PackageDiff.summary`; LAK/SFR geometry, configuration and results
+        are :meth:`report`'s. A type is listed when some member carries a package
+        whose NAME is the type or starts with it (``chd_0``, ``drn``), not by the
+        package's type: a DRN named ``seeps`` is left out -- measured, a
+        conductance changed 10 to 30 there and :meth:`report` read "identical to
+        reference" (``docs/reproducers/diff_results_tier.py``). The LAK/SFR list
+        :meth:`report` reads is found the same way, so a GHB named ``lake_edge``
+        counts there as a LAK.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Summarize one model, by its name in the group. Default ``None``
+            summarizes every non-reference model. A name not in the group raises
+            ``KeyError`` and the reference's ``ValueError`` -- but only when
+            :attr:`package_names` lists a type; with none, the empty table comes
+            back whatever it says.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`PackageDiff.summary`'s columns, one row per listed package and
+            compared model; empty when :attr:`package_names` is.
         """
 
         frames = [
@@ -1034,6 +1331,30 @@ class ModelDiff:
         By default this covers how the models are *set up* (packages, config,
         connection geometry). Pass ``results=True`` to also compare computed
         outputs (heads, budget) -- this reads output files and requires runs.
+
+        Parameters
+        ----------
+        results : bool, optional
+            Default ``False`` reports packages (:meth:`summary`), configuration
+            (``config.settings()``) and LAK/SFR connection geometry -- the package
+            and geometry tiers finding a package by its NAME (:meth:`summary`), so
+            one named otherwise is not compared. ``True`` adds,
+            per model, ``hds.summary()`` and ``bud.summary()`` at their default
+            tolerances (``atol`` = ``rtol`` = 1e-3) as a "Results differences"
+            table, and a breach makes the model "differs" -- their caveats
+            included (a cell dry in one model only reads a head difference of
+            1e30, ``HeadsResultDiff.get``; FloPy's ``tslen`` and
+            ``time_step`` columns counted as budget terms, so a change of ``nstp``
+            alone breaches the budget). When either read fails
+            with a missing or unreadable output (``OSError``, ``ValueError``,
+            ``KeyError``, ...), the report says "outputs unavailable" for that
+            model and the results do not count against "identical".
+
+        Returns
+        -------
+        str
+            Markdown: a heading per compared model, "identical to reference" or
+            "differs from reference" with the differing tables.
         """
 
         return self._render_report(results=results)

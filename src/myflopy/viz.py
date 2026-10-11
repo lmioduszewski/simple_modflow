@@ -125,7 +125,30 @@ class Picture:
         )
 
     def show(self, *args, **kwargs):
-        """Display the picture."""
+        """Display the picture through its figure's own ``show``.
+
+        For a Plotly picture that is the house ``figs.Fig.show``, whose renderer
+        defaults to ``"browser"``: the call opens the figure in a web browser
+        tab, not inline. To see it inline in Jupyter, leave the picture as the
+        last expression of a cell, or pass ``renderer="notebook"``.
+
+        Parameters
+        ----------
+        *args
+            Positional arguments to ``figs.Fig.show``, whose first two are
+            ``renderer`` and ``config``. A third raises ``TypeError``. Use
+            keywords instead.
+        **kwargs
+            Keywords to ``figs.Fig.show`` and then ``plotly.io.show``:
+            ``renderer`` (a Plotly renderer name, default ``"browser"``),
+            ``config`` (a Plotly config dict, default the house config with
+            scroll-zoom on), ``validate``, and the options Plotly passes to the
+            renderer (``auto_play``, ``post_script``, ``animation_opts``, ...).
+
+        Returns
+        -------
+        None
+        """
 
         return self.fig.show(*args, **kwargs)
 
@@ -134,6 +157,34 @@ class Picture:
 
         ``include_plotlyjs="cdn"`` keeps the file small; pass ``True`` to inline
         plotly.js for a file that works with no network.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The file to write. An existing file is overwritten. Its directory
+            must already exist (``FileNotFoundError`` otherwise). This method
+            does not create it, unlike the ``html`` of :class:`MplPicture`,
+            :class:`VtkScene` and :class:`FrameAnimation`.
+        include_plotlyjs : bool or str, default "cdn"
+            How the page gets plotly.js, as Plotly's ``write_html`` reads it.
+            ``"cdn"`` links the CDN copy, so the file is small but needs a
+            network to open. ``True`` inlines it (about 4.8 MB with Plotly
+            6.9), so the file opens offline. ``False`` leaves it out, ``"directory"`` links a
+            ``plotly.min.js`` next to the file, and ``"require"`` loads it
+            through require.js. A string ending in ``.js`` is used as the
+            script's URL.
+        **kwargs
+            Keywords to ``figs.Fig.write_html`` and then Plotly's
+            ``write_html``: ``config`` (default the figure's own house config),
+            ``auto_play``, ``include_mathjax``, ``post_script`` (default the
+            figure's own, when it has one), ``full_html``, ``animation_opts``,
+            ``validate``, ``default_width``, ``default_height``, ``auto_open``
+            and ``div_id``. Any other keyword raises ``TypeError``.
+
+        Returns
+        -------
+        pathlib.Path
+            ``path``.
         """
 
         from pathlib import Path as _Path
@@ -149,6 +200,35 @@ class Picture:
         Plotly's static export, which needs ``kaleido`` -- an optional dependency
         this package does not pin, so the error names it rather than surfacing
         Plotly's own.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The file to write. Its suffix chooses the route, case-insensitively.
+            ``.html`` or ``.htm`` goes to this picture's own :meth:`html`. Any
+            other suffix goes to Plotly's ``write_image``. It reads the format
+            from the suffix (``.png``, ``.jpg``/``.jpeg``, ``.webp``, ``.svg``,
+            ``.pdf``) unless ``format=`` is given, refuses a format it does not
+            know, and raises ``ValueError`` for a path with no suffix and no
+            ``format=``. Without kaleido installed, the image route raises
+            ``ImportError`` naming it before anything is written. The image
+            route never creates a missing directory. The HTML route creates
+            one only when the picture's own ``html`` does.
+        **kwargs
+            For ``.html``: the keywords of this picture's :meth:`html`
+            (``include_plotlyjs`` and Plotly's ``write_html`` keywords). For an
+            image: Plotly's ``write_image`` keywords, which are ``format``,
+            ``scale``, ``width`` and ``height`` (pixels), ``validate`` and
+            ``engine``. On a map (a picture with ``export_map_view``, such as
+            a ``Choro``), ``width``/``height`` also set the size the view is
+            refitted for: given, else the figure's own, else Plotly's 700x500.
+            The screen view is put back after the write. A view the caller
+            moved on ``.fig`` is written as it stands.
+
+        Returns
+        -------
+        pathlib.Path
+            ``path``.
         """
 
         from pathlib import Path as _Path
@@ -241,7 +321,29 @@ class MplPicture(Picture):
     _axes = None
 
     def draw(self, ax=None, **kwargs):
-        """Render into ``ax`` (or a new one) and return the Axes."""
+        """Render into ``ax`` (or a new one) and return the Axes.
+
+        Abstract: this base raises ``NotImplementedError``, and each subclass
+        supplies the drawing. :attr:`axes` calls it once with no arguments and
+        caches the result. :meth:`plot_mpl` calls it again on every call.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            The Axes to draw into, such as one panel of a mosaic. The default
+            ``None`` makes a new figure and Axes.
+        **kwargs
+            The subclass's drawing options. ``LayerSection`` merges them over
+            the options it was built with and passes them to
+            ``LayerBuildResult._draw_cross_section`` (``color_by``, ``cmap``,
+            ``show_grid``, ``legend``, ``title``). ``LayerThicknessMap``
+            accepts none, and any keyword raises ``TypeError``.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The Axes drawn into.
+        """
 
         raise NotImplementedError(
             f"{type(self).__name__} is an MplPicture but does not define `draw`."
@@ -271,12 +373,47 @@ class MplPicture(Picture):
         Named to match :meth:`Choro.plot_mpl` and ``GridSection.plot_mpl``, which
         are the Matplotlib BACKEND of a Plotly picture. Here it is the only
         renderer, but the spelling is the same so callers need not care which.
+
+        It draws AGAIN on every call and leaves the cached :attr:`axes` alone.
+        It returns the Axes, where ``Choro.plot_mpl`` returns a Figure;
+        ``as_mpl_figure`` turns either into a Figure.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            The Axes to draw into. The default ``None`` makes a new figure.
+        **kwargs
+            Passed to :meth:`draw`, whose entry says what each subclass accepts.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The Axes drawn into.
         """
 
         return self.draw(ax=ax, **kwargs)
 
     def show(self, *args, **kwargs):
-        """Display the picture."""
+        """Display the picture, drawing it first if it has not been drawn.
+
+        This is ``matplotlib.pyplot.show``, which shows EVERY open pyplot
+        figure, this one included. On a non-interactive backend such as Agg
+        it shows nothing, and Matplotlib issues a ``UserWarning`` that the
+        figure cannot be shown.
+
+        Parameters
+        ----------
+        *args
+            Passed to ``matplotlib.pyplot.show``, whose backends take no
+            positional argument, so any raises ``TypeError``.
+        **kwargs
+            Passed to ``matplotlib.pyplot.show``: ``block`` (bool or None,
+            whether to wait until the windows are closed).
+
+        Returns
+        -------
+        None
+        """
 
         import matplotlib.pyplot as plt
 
@@ -284,7 +421,32 @@ class MplPicture(Picture):
         return plt.show(*args, **kwargs)
 
     def save(self, path, *, dpi: int = 150, **kwargs):
-        """Write the picture out; ``.html`` embeds the PNG in a minimal page."""
+        """Write the picture out; ``.html`` embeds the PNG in a minimal page.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The file to write. Its suffix chooses the route, case-insensitively.
+            ``.html`` or ``.htm`` goes to :meth:`html`, which creates a missing
+            directory. Any other suffix goes to Matplotlib's ``savefig``, which
+            reads the format from the suffix (``.png``, ``.pdf``, ``.svg``,
+            ``.jpg``, ...) and does not create the directory. An existing file
+            is overwritten.
+        dpi : int, default 150
+            Resolution in dots per inch, for a raster format and for the PNG
+            embedded in an ``.html`` page. A vector format uses it only for any
+            raster it embeds.
+        **kwargs
+            Keywords to ``matplotlib.figure.Figure.savefig`` (``transparent``,
+            ``facecolor``, ``pad_inches``, ``metadata``, ``format``, ...). This
+            method fixes ``bbox_inches="tight"``, so passing ``bbox_inches``
+            raises ``TypeError``, and so does ``format`` on the ``.html`` route.
+
+        Returns
+        -------
+        pathlib.Path
+            ``path``.
+        """
 
         from pathlib import Path as _Path
 
@@ -300,6 +462,25 @@ class MplPicture(Picture):
         Self-contained and needs no network -- there is no plotly.js to fetch,
         because there is no Plotly figure. The trade against an interactive
         export is deliberate: this is the artifact you email someone.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The page to write, whatever its suffix. Missing directories are
+            created and an existing file is overwritten. The page title is the
+            picture's ``title`` attribute, else its class name.
+        dpi : int, default 150
+            Resolution of the embedded PNG, in dots per inch.
+        **kwargs
+            Keywords to ``matplotlib.figure.Figure.savefig`` for the embedded
+            PNG (``transparent``, ``facecolor``, ``pad_inches``, ...). This
+            method fixes ``format="png"`` and ``bbox_inches="tight"``, so
+            passing either raises ``TypeError``.
+
+        Returns
+        -------
+        pathlib.Path
+            ``path``.
         """
 
         import base64
@@ -677,12 +858,48 @@ class FrameAnimation(Picture):
         The saving is therefore per-frame geometry, so it grows with
         frames x cells: measured at 6 frames on a 441-cell grid it is ~17%
         (5.7 MB vs 6.9 MB, mostly inlined plotly.js either way), and at 20
-        frames on a 2,000-cell grid roughly an order of magnitude. Anything
-        that is not a choropleth falls through to plotly's own writer.
+        frames on a 2,000-cell grid roughly an order of magnitude.
+
+        The test is not "is this a choropleth". It is whether the first frame's
+        first trace carries a ``z``. A frame trace with no ``z`` (2-D lines
+        and markers) falls through to plotly's own writer. Any trace WITH a
+        ``z`` takes the restyle page, a 3-D ``surface``, a ``scatter3d`` or a
+        heatmap included. When that trace carries no ``customdata`` (an
+        ``InterpolatedSurface``'s does not), the page embeds ``null`` where
+        its script calls ``customdata.map``, so Play and the slider fail in
+        the browser while frame 0 still draws.
 
         ``include_plotlyjs`` defaults to ``True`` (inlined) rather than
         ``Picture``'s ``"cdn"``: this is the artifact you send someone, so it
         should open with no network.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The page to write. Missing directories are created and an existing
+            file is overwritten.
+        include_plotlyjs : bool or str, default True
+            How the page gets plotly.js, as Plotly's ``write_html`` reads it.
+            ``True`` inlines it so the page opens offline, and ``"cdn"`` links
+            it so the page is smaller but needs a network. ``False``,
+            ``"directory"``, ``"require"`` and a ``.js`` URL are as in
+            :meth:`Picture.html`.
+        **kwargs
+            On the restyle page (a first frame trace carrying ``z``), two
+            keywords only, and any other raises ``TypeError``:
+
+            - ``interval_ms`` (int, default 250): milliseconds between frames
+              during playback.
+            - ``config`` (dict): Plotly config keys merged over the figure's
+              house config (scroll-zoom on, no logo).
+
+            Otherwise, Plotly's ``write_html`` keywords via ``figs.Fig.write_html``,
+            as in :meth:`Picture.html`.
+
+        Returns
+        -------
+        pathlib.Path
+            ``path``.
         """
 
         from pathlib import Path as _Path
@@ -796,6 +1013,22 @@ class VtkScene(Picture):
 
         The page opens from disk as well as over HTTP -- see
         :meth:`_make_file_url_safe` for why that needs help.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The page to write, whatever its suffix. Missing directories are
+            created and an existing file is overwritten. Needs PyVista's trame
+            extras (``ImportError`` naming them otherwise).
+        **kwargs
+            Accepted and IGNORED: nothing is forwarded, because PyVista's
+            ``Plotter.export_html`` takes only the file name. A keyword given
+            here changes nothing and raises nothing.
+
+        Returns
+        -------
+        pathlib.Path
+            ``path``.
         """
 
         from pathlib import Path as _Path
@@ -810,7 +1043,31 @@ class VtkScene(Picture):
         return path
 
     def save(self, path, **kwargs):
-        """Write the scene out; ``.html`` is interactive, image formats are stills."""
+        """Write the scene out; ``.html`` is interactive, image formats are stills.
+
+        Parameters
+        ----------
+        path : str or os.PathLike
+            The file to write. Missing directories are created on both routes.
+            ``.html`` or ``.htm`` (any case) goes to :meth:`html`. Any other
+            suffix is a screenshot by PyVista's ``Plotter.screenshot``, which
+            writes ``.png``, ``.jpeg``/``.jpg``, ``.bmp`` or ``.tif``/``.tiff``
+            in LOWER case only (``.PNG`` is refused) and refuses any other
+            suffix with ``ValueError``. A path with NO suffix is written with
+            ``.png`` appended, so the path returned names no file.
+        **kwargs
+            For a screenshot, ``Plotter.screenshot``'s keywords:
+            ``transparent_background`` (bool), ``window_size`` (``(width,
+            height)`` in pixels) and ``scale`` (int, multiplies the window
+            size). Passing ``return_img`` changes only what PyVista computes;
+            the path is returned either way. For ``.html`` they reach
+            :meth:`html`, which ignores them.
+
+        Returns
+        -------
+        pathlib.Path
+            ``path``.
+        """
 
         from pathlib import Path as _Path
 
@@ -822,7 +1079,29 @@ class VtkScene(Picture):
         return path
 
     def show(self, *args, **kwargs):
-        """Display the scene in its own window (or inline, per PyVista config)."""
+        """Display the scene in its own window (or inline, per PyVista config).
+
+        Parameters
+        ----------
+        *args
+            Positional arguments to PyVista's ``Plotter.show``, in its order:
+            ``title``, ``window_size``, ``interactive``, ``auto_close``, ...
+            Keywords are clearer.
+        **kwargs
+            Keywords to ``Plotter.show``. ``jupyter_backend`` picks the
+            notebook viewer (``"trame"``, ``"html"``, ``"static"``, ...; default
+            PyVista's global theme). The others include ``window_size``
+            (``(width, height)`` in pixels), ``cpos`` (a camera position),
+            ``screenshot`` (a path to save a still on close) and
+            ``return_viewer``.
+
+        Returns
+        -------
+        object
+            Whatever ``Plotter.show`` returns: None, a camera position, an
+            image array or a notebook viewer widget, depending on the
+            arguments and the environment.
+        """
 
         return self.scene.show(*args, **kwargs)
 
@@ -1251,23 +1530,31 @@ def mosaic(
 
     Parameters
     ----------
-    panels
-        A list of panels, or of ``(label, panel)`` pairs. A panel is either a
-        ``Choro`` (anything exposing ``get_choropleth()``) or a Plotly figure
-        whose traces are copied into its grid cell. Map panels contribute their
+    panels : iterable of Choro, plotly Figure or (label, panel) pairs
+        Required. The panels in reading order (filled row by row), each either a
+        panel or a two-item ``(label, panel)`` tuple or list. A panel is either a
+        ``Choro`` (anything exposing ``get_choropleth()``) or a
+        ``plotly.graph_objects.Figure`` (``viz.Fig`` included) whose traces are
+        copied into its grid cell; anything else raises ``TypeError``, and an
+        empty iterable raises ``ValueError``. Map panels contribute their
         cell trace **and** their overlays (contours, location markers,
-        pathlines) via ``overlay_traces()``. Unlabeled panels take their figure
-        title, else ``Panel <n>``.
-    ncols
-        Grid width; rows grow as needed. A grid holding maps is
+        pathlines) via ``overlay_traces()``. A label is drawn through ``str()``;
+        an unlabeled panel (or a ``None`` label) takes its figure title, else
+        ``Panel <n>``.
+    ncols : int, default 3
+        Grid width in panels, capped at the number of panels (``0`` means one
+        column); rows grow as needed. A grid holding maps is
         :data:`MOSAIC_ROW_HEIGHT` pixels per row (plotly's default 450 px is the
         whole figure), and each map subplot is framed for its own canvas.
-    title
-        Overall figure title.
-    diff
+    title : str or None, default None
+        Overall figure title; ``None`` draws none. Each panel's own title is its
+        subplot label (see ``panels``), not this.
+    diff : bool, default False
         When ``True``, the shared map color scale is centered at zero
-        (diverging), as used by the diff surfaces.
-    sync_views
+        (diverging), as used by the diff surfaces: a side no panel's
+        ``zmin``/``zmax`` names mirrors the pooled magnitude. Has no effect when
+        no panel is a map.
+    sync_views : bool or None, default None
         Map panels framed to ONE window (the union of their grids, or one shared
         ``extent``) start there together and, by default (``None``), are wired to
         pan and zoom **together** live -- dragging or zooming one map moves the
@@ -1278,7 +1565,7 @@ def mosaic(
         panel to one window; ``True`` then raises rather than doing that. Set
         ``False`` to let each map pan/zoom independently. Panels without geometry
         (raw Plotly figures) are unaffected.
-    colorbar
+    colorbar : dict, callable or None, default None
         Colorbar settings for the shared map color axis -- a dict of Plotly
         ``colorbar`` properties, or a **callable** ``(cmin, cmax) -> dict``.
         Panels are pooled onto one ``coloraxis``, which discards each panel's
@@ -1291,12 +1578,21 @@ def mosaic(
         both. The callable form exists because other useful labels also depend
         on the pooled limits, and those are only known here -- e.g.
         ``colorbar=lambda lo, hi: {"tickvals": ..., "ticktext": ...}``.
-        Ignored when no panel is a map.
-    extent
+        Ignored when no panel is a map. ``None`` (the default) leaves the bar
+        as Plotly draws it, apart from the automatic log-decade labels above and
+        a ``","`` thousands format when every map panel writes its numbers as
+        whole thousands (transmissivity).
+    extent : tuple, geometry, GeoDataFrame, str, list or None, default None
         The window every map panel opens on (see :func:`myflopy.plot.map`), or a
         LIST of them, one per panel in order -- ``None`` in the list for "this
         panel's own". A panel built with its own ``map(extent=...)`` keeps it
-        when this is ``None``. Sets the VIEW only.
+        when this is ``None``. Sets the VIEW only. An extent is anything
+        :func:`myflopy.plot.map` takes as ``extent=`` (four numbers
+        ``(xmin, ymin, xmax, ymax)``, points, a geometry, a GeoDataFrame or an
+        area name). Ignored entirely when no panel is a map; otherwise a list
+        must hold exactly one entry per panel (``ValueError`` otherwise), a
+        non-map panel's entry must be ``None`` (``TypeError``), and a map panel
+        drawn with ``fit_bounds=False`` refuses a window (``ValueError``).
 
     Examples
     --------

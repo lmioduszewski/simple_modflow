@@ -102,7 +102,60 @@ class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
         return f"reference_{self.value_column}"
 
     def get(self, *, model_name=None, per=None, layer=None, cells=None) -> pd.DataFrame:
-        """Return aligned differences: value / reference value / ``diff``."""
+        """Return aligned differences: value / reference value / ``diff``.
+
+        The group's compare (``group.hds``/``conc``/``temp``): each member's saved
+        values reduced to its OWN last saved step of each stress period, then
+        inner-joined to the reference's on ``(per, layer, cell)`` -- so members
+        with different ``nstp`` line up by period, and a cell or period one side
+        lacks is absent. ``diff`` is model minus reference, in the field's unit
+        (head: the model's length unit; ``conc``: the GWT model's concentration
+        unit; ``temp``: the GWE model's temperature unit).
+
+        MF6's no-value numbers are NOT masked on this route: it reads each
+        member's raw ``all_heads`` table, so a cell MF6 wrote as dry (-1e30) or
+        inactive (+1e30) enters ``diff`` as a number -- one dry cell against a
+        wet reference reads a ``diff`` of -1e30 (measured,
+        ``docs/reproducers/diff_results_tier.py``). ``model.hds.get()`` masks
+        them as ``NaN``.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one compared model, by its name in the group. Default ``None``
+            keeps every non-reference model. A name not in the group raises
+            ``KeyError``; the reference's raises ``ValueError``. Every member is
+            read either way.
+        per : int or None, optional
+            Keep one zero-based stress period, each member read at its own last
+            saved step of it (:func:`~myflopy.modflow.mf6.period_end.last_saved_step`,
+            ledger 337). A period a member's file saved nothing in raises
+            ``ValueError`` naming the periods it has. Default ``None`` keeps every
+            period.
+        layer : int or list of int or None, optional
+            Keep these zero-based layers. A ``list`` is several layers; any other
+            value goes through ``int()``, so a TUPLE raises ``TypeError``. Default
+            ``None`` keeps every layer.
+        cells : list of int or None, optional
+            Keep these zero-based in-layer cells (any iterable of ints). A bare
+            ``int`` raises ``TypeError`` -- pass ``[5]``. Default ``None`` keeps
+            every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, ``kstpkper`` (the compared member's own
+            step), ``per``, ``layer``, ``cell``, the value column (``elev``,
+            ``conc`` or ``temp``), ``reference_<value>`` and ``diff``.
+
+        Raises
+        ------
+        KeyError
+            If ``model_name`` names no model in the group.
+        ValueError
+            If ``model_name`` is the reference, or ``per`` names a period a
+            member saved nothing in.
+        """
 
         frame = self._field.compare(per=per, layer=layer, cells=cells)
         if model_name is not None:
@@ -184,7 +237,45 @@ class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
         layer=None,
     ) -> pd.DataFrame:
         """One row per model: max/mean |Δhead|, RMSE, where/when the max is, and
-        whether every cell is within tolerance."""
+        whether every cell is within tolerance.
+
+        Over the rows :meth:`get` returns. A cell dry or inactive in ONE model only
+        is not set aside (:meth:`get`): its +-1e30 sets ``max_abs_diff``,
+        ``mean_abs_diff`` and ``rmse`` and fails the tolerance, where a stage diff
+        counts such rows in ``n_one_sided`` instead. One with the same sentinel on
+        both sides reads a ``diff`` of 0 and passes.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Summarize one compared model, by its name in the group. Default
+            ``None`` summarizes every non-reference model. A name not in the group
+            raises ``KeyError``; the reference's raises ``ValueError``.
+        atol : float, optional
+            Absolute tolerance, in the field's unit (head: the model's length unit;
+            ``diff.conc``/``diff.temp``: concentration/temperature). A row is
+            within tolerance when ``|diff| <= atol + rtol * |reference value|``,
+            and the model when every row is. Default ``1e-3``.
+        rtol : float, optional
+            Relative tolerance, dimensionless, multiplying ``|reference value|`` in
+            the same test. Default ``1e-3``.
+        per : int or None, optional
+            One zero-based stress period, each member at its own last saved step
+            of it, as in :meth:`get` (a period a member did not save raises
+            ``ValueError``). Default ``None`` uses every period.
+        layer : int or list of int or None, optional
+            These zero-based layers, as in :meth:`get` (a tuple raises
+            ``TypeError``). Default ``None`` uses every layer.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per compared model: ``model``, ``n`` (rows compared),
+            ``max_abs_diff``, ``mean_abs_diff``, ``rmse``, ``argmax_cell``,
+            ``argmax_layer``, ``argmax_kstpkper`` (where the largest ``|diff|`` is;
+            the first such row on a tie) and ``within_tolerance``. Empty when
+            there is nothing to compare.
+        """
 
         data = self.get(model_name=model_name, per=per, layer=layer)
         columns = [
@@ -266,7 +357,33 @@ class BudgetResultDiff(_ResultDiffBase):
         )
 
     def get(self, *, model_name=None) -> pd.DataFrame:
-        """Return aligned per-term budget differences per timestep."""
+        """Return aligned per-term budget differences per timestep.
+
+        Each member's incremental listing budget (``model.budget_incremental``,
+        FloPy's ``get_incremental()``: the rate for each time step, in the model's
+        volume per time unit) is melted to one row per ``(totim, term)`` and
+        inner-joined to the reference's on an equal ``totim``, so a time step only
+        one model's listing file holds is absent. A "term" is EVERY numeric
+        column of that table but ``totim`` --
+        the budget's ``<TERM>_IN``/``<TERM>_OUT``, ``TOTAL_IN``/``TOTAL_OUT``,
+        ``IN-OUT``, ``PERCENT_DISCREPANCY``, and also FloPy's bookkeeping columns
+        ``time_step``, ``stress_period`` and ``tslen``, which are not budget terms
+        but are differenced like them (measured,
+        ``docs/reproducers/diff_results_tier.py``).
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Compare one model, by its name in the group. Default ``None`` compares
+            every non-reference model. A name not in the group raises ``KeyError``;
+            the reference's raises ``ValueError``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``totim``, ``term``, ``reference_value``, ``model_value``
+            and ``diff`` (model minus reference).
+        """
 
         reference = self._model_budget(self.group.reference)
         columns = ["model", "totim", "term", "reference_value", "model_value", "diff"]
@@ -300,7 +417,36 @@ class BudgetResultDiff(_ResultDiffBase):
         rtol: float = _DEFAULT_RTOL,
     ) -> pd.DataFrame:
         """One row per (model, budget term): totals, percent change, worst
-        per-timestep difference, and whether every timestep is within tolerance."""
+        per-timestep difference, and whether every timestep is within tolerance.
+
+        Over :meth:`get`'s rows, so FloPy's ``time_step``/``stress_period``/
+        ``tslen`` columns get rows too: two members differing only in ``nstp``
+        read ``tslen`` at -50% and ``time_step`` out of tolerance (measured).
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Summarize one model, by its name in the group. Default ``None``
+            summarizes every non-reference model. A name not in the group raises
+            ``KeyError``; the reference's raises ``ValueError``.
+        atol : float, optional
+            Absolute tolerance, in each term's own unit (a flow term's volume per
+            time; ``PERCENT_DISCREPANCY``'s percent). A time step is within
+            tolerance when ``|diff| <= atol + rtol * |reference value|``, and the
+            term when every aligned step is. Default ``1e-3``.
+        rtol : float, optional
+            Relative tolerance, dimensionless, multiplying ``|reference value|`` in
+            the same test. Default ``1e-3``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``term``, ``reference_total`` and ``model_total`` (the SUM of
+            the aligned steps' rates, not a volume), ``diff_total``,
+            ``pct_change`` (``NaN`` when the reference total is 0),
+            ``max_abs_diff`` (worst step) and ``within_tolerance``; sorted by model
+            and term. Empty when there is nothing to compare.
+        """
 
         data = self.get(model_name=model_name)
         columns = [
@@ -359,7 +505,63 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
         self.value_name = accessor.value_name
 
     def get(self, *, model_name=None, per=None, layer=None, cells=None) -> pd.DataFrame:
-        """Return aligned per-cell budget differences (value / reference / diff)."""
+        """Return aligned per-cell budget differences (value / reference / diff).
+
+        The wrapped group accessor's ``compare``. The value column, and how rows
+        are aligned, depend on which accessor this is:
+
+        - a BC package's ``results.q`` (``rch``/``chd``/``drn``/``ghb``/``riv``/
+          ``wel``/``evt``), SFR's ``results.q`` and UZF's ``gwrch``/``sat``: each
+          member reduced to its OWN last saved step of each stress period, then
+          joined to the reference on every non-float column but ``kstpkper``
+          (``per``, ``layer``, ``cell``, ``node``, ``pname``, a reach ...), so
+          members with different ``nstp`` line up by period. ``q_gwf`` is MF6's
+          sign, positive INTO the aquifer, in model volume per time (SFR adds
+          ``q_per_length``); ``gwrch`` is UZF's recharge to the water table, same
+          sign and unit. ``sat`` reads MF6's ``DATA-SAT`` (NPF's, under
+          ``SAVE_SATURATION``, for every cell), but the table it reads holds TWO
+          ``sat`` columns -- the record's always-zero ``q`` renamed beside its
+          ``SAT`` -- so :meth:`get` and :meth:`summary` RAISE ``ValueError``
+          ("Cannot set a DataFrame with multiple columns") on it (measured).
+        - LAK's ``results.q``: NOT reduced, and joined on ``kstpkper`` and every
+          other non-value column, float geometry and MF6's wetted ``FLOW-AREA``/
+          ``flow_area`` included. Members with the same time steps compare step
+          for step; with different ``nstp`` the rows that share a ``(kstp, kper)``
+          are compared -- measured, a member at ``nstp=2`` read at the FIRST step
+          of each period against a reference at ``nstp=1``. A connection whose
+          wetted area differs between the two (dry on one side, say) has no
+          partner and is dropped -- measured, 2 of 72 at period 3 in that pair
+          (``docs/reproducers/diff_results_tier.py``). ``q_lake`` is the lake's
+          frame, positive INTO the lake (adds ``q_per_area``).
+        - MVR (:class:`MvrResultDiff`): the reduced form, column ``q``.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one compared model, by its name in the group. Default ``None``
+            keeps every non-reference model. A name not in the group raises
+            ``KeyError`` and the reference's ``ValueError`` -- only when there are
+            rows to filter; an empty comparison comes back unchecked.
+        per : int or None, optional
+            Keep one zero-based stress period (each member's last saved step of it
+            on the reduced branches; every saved step on LAK's). A period no member
+            saved gives an empty frame, not an error. Default ``None`` keeps every
+            period.
+        layer : int or sequence of int or None, optional
+            Keep these zero-based layers. Default ``None`` keeps every layer.
+        cells : int or sequence of int or None, optional
+            Keep these zero-based in-layer cells. Default ``None`` keeps every
+            cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, the join columns, ``<value>``,
+            ``reference_<value>`` and ``<value>_diff`` (model minus reference).
+            Empty, with no columns, when no row is selected -- no member has a
+            record of the term, or the filters keep none; empty WITH the columns
+            when rows were read but none pairs with a reference row.
+        """
 
         frame = self._accessor.compare(per=per, layer=layer, cells=cells)
         if frame.empty:
@@ -385,7 +587,45 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
         cells=None,
     ) -> pd.DataFrame:
         """One row per model: max/mean/RMSE of the per-cell flow Δ, where the max
-        is, and whether every cell is within tolerance."""
+        is, and whether every cell is within tolerance.
+
+        Over the rows :meth:`get` returns (its alignment rules apply, LAK's
+        step-for-step join included).
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Summarize one compared model, by its name in the group. Default
+            ``None`` summarizes every non-reference model. Checked as in
+            :meth:`get`: ``KeyError``/``ValueError`` only when there are rows.
+        atol : float, optional
+            Absolute tolerance, in the value's unit (a flow's model volume per
+            time; ``sat`` raises before it is used, :meth:`get`). A row is within
+            tolerance when
+            ``|<value>_diff| <= atol + rtol * |reference value|``, and the model
+            when every row is. Default ``1e-3``.
+        rtol : float, optional
+            Relative tolerance, dimensionless, multiplying ``|reference value|`` in
+            the same test. Default ``1e-3``.
+        per : int or None, optional
+            One zero-based stress period, as in :meth:`get`. Default ``None`` uses
+            every period.
+        layer : int or sequence of int or None, optional
+            These zero-based layers, as in :meth:`get`. Default ``None`` uses every
+            layer.
+        cells : int or sequence of int or None, optional
+            These zero-based in-layer cells, as in :meth:`get`. Default ``None``
+            uses every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per compared model: ``model``, ``package``, ``value`` (the
+            value column's name), ``n``, ``max_abs_diff``, ``mean_abs_diff``,
+            ``rmse``, ``argmax_cell`` (the first row with the largest ``|diff|``;
+            ``-1`` without a ``cell`` column) and ``within_tolerance``. Empty when
+            there is nothing to compare.
+        """
 
         data = self.get(model_name=model_name, per=per, layer=layer, cells=cells)
         diff_column = f"{self.value_name}_diff"
@@ -538,7 +778,14 @@ class UzfResultsDiffNamespace(FieldMappable):
 
     @property
     def sat(self) -> CellBudgetResultDiff:
-        """Unsaturated-zone saturation difference vs the reference model."""
+        """Cell saturation difference vs the reference model.
+
+        MF6's ``DATA-SAT`` record, which NPF writes under ``SAVE_SATURATION`` for
+        EVERY groundwater cell (the saturated fraction of the cell, 0-1) -- not
+        the unsaturated zone's saturation, though it sits under ``uzf``. Its
+        ``get()`` and ``summary()`` raise ``ValueError``: the table read holds two
+        ``sat`` columns (:meth:`CellBudgetResultDiff.get`).
+        """
 
         return CellBudgetResultDiff(self._diff, self._uzf_results().sat)
 
@@ -559,7 +806,38 @@ class StageResultDiff(_ResultDiffBase):
         self._entity = entity  # "lake" | "reach"
 
     def get(self, *, model_name=None, per=None, entity=None) -> pd.DataFrame:
-        """Return aligned stage differences (per / feature / stage_diff)."""
+        """Return aligned stage differences (per / feature / stage_diff).
+
+        The group's stage compare: each member's stage file, masked (a dry or
+        inactive lake or reach is ``NaN``, ledgers 329 and 353), reduced to its
+        own last saved step of each stress period and inner-joined to the
+        reference's on ``(per, <entity>)``. Also reachable as ``timeseries``. A
+        member carrying several LAK (SFR) packages raises
+        ``mf.SeveralPackagesError``: this diff cannot name one.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one compared model, by its name in the group. Default ``None``
+            keeps every non-reference model. A name not in the group raises
+            ``KeyError`` and the reference's ``ValueError`` -- only when there are
+            stage rows; an empty comparison comes back unchecked.
+        per : int or None, optional
+            Keep one zero-based stress period, each member at its own last saved
+            step of it. A period no member saved gives an empty frame. Default
+            ``None`` keeps every period.
+        entity : int or None, optional
+            Keep one feature, zero-based: the lake number on
+            ``diff.packages.lak.results.stage``, the reach number on
+            ``diff.packages.sfr.results.stage``. Default ``None`` keeps every one.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, ``per``, ``lake`` or ``reach``,
+            ``stage``, ``reference_stage`` (model length units, ``NaN`` where a
+            side has none) and ``stage_diff`` (model minus reference).
+        """
 
         kwargs = {"per": per}
         if entity is not None:
@@ -676,9 +954,12 @@ class StageResultDiff(_ResultDiffBase):
 class MvrResultDiff(_ResultDiffBase):
     """Mover (MVR) difference vs the reference model.
 
-    MF6 realizes the mover as ``FROM-MVR`` / ``TO-MVR`` budget terms in the
-    packages it moves water between (no standalone MVR output), so this compares
-    those terms per package and direction across models.
+    Meant to compare the ``FROM-MVR`` / ``TO-MVR`` budget terms of the packages
+    the mover moves water between, per package and direction across models. It
+    looks for them in the groundwater budget file under exactly those names,
+    where MF6 was not found to write them (:meth:`get` says what it writes and
+    where), so on the runs measured it returns an empty table although water
+    moved.
     """
 
     # Packages MF6 accepts as mover providers/receivers, i.e. exactly those
@@ -706,7 +987,42 @@ class MvrResultDiff(_ResultDiffBase):
         return CellBudgetResultDiff(self._diff, accessor)
 
     def get(self, *, package: str, direction: str = "from_mvr", model_name=None, **kwargs):
-        """Return per-cell mover flow differences for one package + direction."""
+        """Return per-cell mover flow differences for one package + direction.
+
+        Reads the records named exactly ``FROM-MVR`` / ``TO-MVR`` in each
+        member's GROUNDWATER budget file (the ``.cbc``), where MF6 was not found
+        to write them: a DRN or WEL moving water writes ``DRN-TO-MVR`` /
+        ``WEL-TO-MVR`` there, and SFR and LAK write ``FROM-MVR``/``TO-MVR`` into
+        their OWN package budget files, which this does not read. So against
+        those runs the table is empty although water moved (measured on two
+        drains and a well moving water into a stream, and on the canonical
+        model's SFR-to-lake mover, ``docs/reproducers/diff_results_tier.py``).
+
+        Parameters
+        ----------
+        package : str
+            The package type the rows are labelled with, any case (lower-cased).
+            It labels the ``package`` column and selects nothing: the term's
+            records are read from every package that wrote one. Any string is
+            accepted.
+        direction : str, optional
+            ``"from_mvr"`` (default) reads the ``FROM-MVR`` term, ``"to_mvr"`` the
+            ``TO-MVR`` term. Anything else -- ``"TO-MVR"`` included -- raises
+            ``KeyError``.
+        model_name : str or None, optional
+            Keep one compared model, by its name in the group. Default ``None``
+            keeps every non-reference model. Checked only when there are rows
+            (:meth:`CellBudgetResultDiff.get`).
+        **kwargs
+            Forwarded to :meth:`CellBudgetResultDiff.get`: ``per``, ``layer`` and
+            ``cells``. Anything else raises ``TypeError``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :meth:`CellBudgetResultDiff.get`'s table with value column ``q``;
+            empty, with no columns, when nothing is found.
+        """
 
         term = dict(self._DIRECTIONS)[direction]
         return self._cell_diff(package.lower(), term).get(model_name=model_name, **kwargs)
@@ -717,6 +1033,35 @@ class MvrResultDiff(_ResultDiffBase):
         """Per (model, package, direction) mover-flow Δ stats + within tolerance.
 
         Packages without a mover term (or without results) are skipped.
+
+        Probes each mover-capable package type (``drn``, ``ghb``, ``riv``, ``wel``,
+        ``uzf``, ``sfr``, ``lak``) in both directions through :meth:`get`, so it
+        reads what :meth:`get` reads -- no mover term at all on the runs
+        measured there, so the table came back empty although water moved. A
+        probe raising ``ValueError``, ``AttributeError``, ``OSError`` or
+        ``KeyError`` is skipped.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Summarize one compared model, by its name in the group. Default
+            ``None`` summarizes every non-reference model. Never refused: a name
+            not in the group, or the reference's, gives the empty table (where a
+            probe has rows, its ``KeyError``/``ValueError`` is skipped like any
+            other).
+        atol : float, optional
+            Absolute tolerance, in model volume per time, for
+            ``|q_diff| <= atol + rtol * |reference q|``, row by row. Default
+            ``1e-3``.
+        rtol : float, optional
+            Relative tolerance, dimensionless, in the same test. Default ``1e-3``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``direction``, ``value``, ``n``,
+            ``max_abs_diff``, ``mean_abs_diff``, ``rmse``, ``argmax_cell`` and
+            ``within_tolerance``, one row per model, package and direction found.
         """
 
         frames = []

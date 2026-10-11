@@ -578,13 +578,58 @@ class AoiLibrary(SpecLibrary[Area]):
         super().__setitem__(str(key), Area.coerce(value, name=str(key)))
 
     def update(self, *args, **kwargs) -> None:
-        """``dict.update``, through the coercing assignment (dict's own skips it)."""
+        """``dict.update``, through the coercing assignment (dict's own skips it).
+
+        Every value is stored as an :class:`~myflopy.areas.Area` named by its key,
+        exactly as ``library[key] = value`` would, so an existing name is REPLACED
+        (the unguarded spelling; ``add_aoi`` is the guarded one).
+
+        Parameters
+        ----------
+        *args, **kwargs
+            Whatever ``dict(*args, **kwargs)`` accepts -- at most ONE positional
+            mapping or iterable of ``(key, value)`` pairs (two raise ``TypeError``,
+            as ``dict`` does), plus keyword entries, which win over a positional
+            entry of the same name. The pairs are built into a plain ``dict`` first
+            and each is then stored through :meth:`__setitem__`: the key as
+            ``str(key)``, the value through :meth:`Area.coerce
+            <myflopy.areas.Area.coerce>` (four numbers ``(xmin, ymin, xmax,
+            ymax)``, ``(x, y)`` points, a shapely geometry, a GeoDataFrame or
+            GeoSeries, a vector-file path, or an ``Area``). A value none of those
+            raises ``TypeError``, and four numbers that are not a box
+            (``xmin >= xmax`` or ``ymin >= ymax``) or an empty frame raise
+            ``ValueError``; either way the entries stored before it stay stored.
+        """
 
         for key, value in dict(*args, **kwargs).items():
             self[key] = value
 
     def setdefault(self, key: str, default: Any = None) -> Area:
-        """``dict.setdefault``, through the coercing assignment."""
+        """``dict.setdefault``, through the coercing assignment.
+
+        Parameters
+        ----------
+        key : str
+            The area's name. Pass a ``str``: the membership test and the lookup
+            that returns the area use ``key`` exactly as given, while the store
+            writes ``str(key)``, so a non-string key (``1``) is stored as ``'1'``
+            -- replacing an existing ``'1'`` -- and the lookup then raises
+            ``TypeError`` from the did-you-mean message.
+        default : Area, shapely geometry, GeoDataFrame, GeoSeries, sequence, str or Path, optional
+            What to store when ``key`` is not already present -- four numbers
+            ``(xmin, ymin, xmax, ymax)``, a run of ``(x, y)`` points, or any other
+            form -- coerced exactly as
+            :meth:`__setitem__` coerces (see :meth:`Area.coerce
+            <myflopy.areas.Area.coerce>`); ignored when ``key`` is present. Default
+            ``None``, which is only usable for a key already present: an area
+            cannot be ``None``, so ``setdefault("new")`` raises ``TypeError``
+            rather than storing it as ``dict.setdefault`` would.
+
+        Returns
+        -------
+        Area
+            The area now stored under ``key``.
+        """
 
         if key not in self:
             self[key] = default

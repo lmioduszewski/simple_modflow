@@ -49,7 +49,19 @@ class GroupPackageInputField(_GroupSpatialView):
         self.field_name = str(field_name).lower()
 
     def get(self, **kwargs) -> pd.DataFrame:
-        """Return the aligned input rows narrowed to this field."""
+        """Return the aligned input rows narrowed to this field.
+
+        The parent's :meth:`GroupPackageInputs.get` rows, keeping only ``model``,
+        ``package``, ``pname``, ``per``, ``layer``, ``cell`` and this field's
+        column (those of them the table has).
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded unchanged to :meth:`GroupPackageInputs.get`, which takes
+            ``model_name``, ``per``, ``layer`` and ``cells`` (see there); any other
+            name raises ``TypeError``.
+        """
 
         frame = self._parent.get(**kwargs)
         keep = [
@@ -60,7 +72,18 @@ class GroupPackageInputField(_GroupSpatialView):
         return frame[keep] if keep else frame
 
     def summary(self, **kwargs) -> pd.DataFrame:
-        """Return the parent's per-model coverage summary."""
+        """Return the parent's per-model coverage summary.
+
+        The package's summary, not this field's: :meth:`GroupPackageInputs.summary`
+        counts the cells and periods holding a record, whichever fields it sets.
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded unchanged to :meth:`GroupPackageInputs.summary`, which takes
+            ``model_name``, ``per`` and ``layer`` (see there); any other name
+            raises ``TypeError``.
+        """
 
         return self._parent.summary(**kwargs)
 
@@ -114,7 +137,40 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
         layer: int | Sequence[int] | None = None,
         cells: Sequence[int] | None = None,
     ) -> pd.DataFrame:
-        """Return aligned stress-period input data for all models."""
+        """Return aligned stress-period input data for all models.
+
+        Each member's ``build_cell_package_input_table`` for this package type --
+        every package of the type, array form included, each row tagged with its
+        package's ``pname`` (ledger 229) -- plus a ``model`` column. A member that
+        does not carry the package is left out (logged at DEBUG), not an error.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one member's rows, by its name in the group. Default ``None``:
+            every member. A name that is not in the group matches nothing and
+            returns an empty frame.
+        per : int or None, optional
+            Keep one stress period, zero-based. The table holds the period BLOCKS
+            the package file writes: a period with no block of its own -- which
+            MF6 runs on the last block before it -- has no rows, here as on the
+            single-model ``model.<pkg>.inputs.get(per=)``. Default ``None``: every
+            written block.
+        layer : int or list of int or None, optional
+            Keep the rows in these zero-based layers (an int, list or tuple; a
+            NumPy array raises ``TypeError``). Default ``None``: every layer.
+        cells : int or list of int or None, optional
+            Keep the rows on these zero-based cell numbers within a layer (the
+            ``cell`` column, not the model-wide node). Default ``None``: every
+            cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The package's own record fields (``cond``, ``bhead``, ... in model
+            units) with ``package``, ``pname``, ``per``, ``layer``, ``cell`` and
+            ``model``. Empty when no member carries the package.
+        """
 
         frames = []
         for current_model_name, model in self.group.models.items():
@@ -155,8 +211,29 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
     ) -> pd.DataFrame:
         """Return a per-model summary of this package's input coverage.
 
-        Mirrors the single-model ``model.<pkg>.inputs.summary()`` verb:
-        one row per model with the number of applied cells and stress periods.
+        One row per member holding a record: how many distinct cells and stress
+        periods its rows cover.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Summarize one member, by its name in the group. Default ``None``:
+            every member. A name that is not in the group returns an empty frame.
+        per : int or None, optional
+            Count only one stress period's written block, zero-based (see
+            :meth:`get`; a period with no block of its own counts nothing).
+            Default ``None``: every written block.
+        layer : int or list of int or None, optional
+            Count only the rows in these zero-based layers. Default ``None``:
+            every layer.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``cells`` (distinct values of the ``cell``
+            column -- a cell number used in two layers counts once) and
+            ``periods`` (distinct written periods). Empty, with those columns,
+            when :meth:`get` is.
         """
 
         data = self.get(model_name=model_name, per=per, layer=layer)
@@ -183,7 +260,41 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
         layer: int | Sequence[int] | None = None,
         cells: Sequence[int] | None = None,
     ) -> pd.DataFrame:
-        """Compare input values for all models against the reference model."""
+        """Compare input values for all models against the reference model.
+
+        Every NUMERIC column of :meth:`get` but ``per``/``layer``/``cell`` is
+        differenced; each non-reference member's rows are paired with the
+        reference's on every remaining column -- ``package``, ``pname``, ``per``,
+        ``layer``, ``cell`` and any text column such as ``boundname`` -- by an
+        inner join, so a row with no identical partner is dropped (a member whose
+        package carries another name pairs nothing). A cell holding SEVERAL
+        records of the package pairs every one of the member's with every one of
+        the reference's: two each give four rows, so a per-cell difference there
+        is not one record's change (ledger 439).
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            Keep one compared member's rows, by its name, after the comparison.
+            Default ``None``: every non-reference member. The reference's own
+            name, or a name not in the group, returns an empty frame.
+        per : int or None, optional
+            Compare one stress period's written block, zero-based (see
+            :meth:`get`). Default ``None``: every written block.
+        layer : int or list of int or None, optional
+            Compare only the rows in these zero-based layers. Default ``None``:
+            every layer.
+        cells : int or list of int or None, optional
+            Compare only these zero-based cell numbers within a layer. Default
+            ``None``: every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``reference_model``, the join keys, then for each value
+            column ``<col>``, ``reference_<col>`` and ``<col>_diff`` (member minus
+            reference, model units). Empty when :meth:`get` is.
+        """
 
         data = self.get(per=per, layer=layer, cells=cells)
         if data.empty:
@@ -287,21 +398,64 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
     ):
         """Build a diff choropleth against the group's reference model.
 
+        Draws ``<value_column>_diff`` from :meth:`compare` (member minus
+        reference) on the reference model's grid, one value per cell.
+
         Parameters
         ----------
-        model_name
-            Non-reference model to compare against the reference. When the
-            group contains exactly one non-reference model, it is inferred.
-        per, layer
-            Zero-based stress period and layer to map.
-        value_column
-            Numeric input field whose difference should be mapped.
-        multiplier, fill_value, agg
-            Passed through to the shared diff-map payload builder.
-        colorscale
-            Optional diverging colorscale override.
-        kwargs
-            Forwarded to ``reference_model.plot.map(...)``.
+        model_name : str or None, optional
+            The non-reference member to compare. Default ``None`` takes the
+            group's one non-reference member and raises ``ValueError`` when there
+            are several; the reference itself raises ``ValueError`` and a name not
+            in the group ``KeyError``. The member must have the reference's
+            discretization FILE content, read from each workspace (a changed
+            ``botm`` or ``idomain`` refuses too), grid type and ``ncpl``, or
+            ``ValueError``.
+        per : int, default 0
+            The stress period whose written block is compared, zero-based (see
+            :meth:`get`). A period with no rows draws every cell at
+            ``fill_value``.
+        layer : int, default 0
+            The zero-based layer whose rows are drawn.
+        value_column : str or None, optional
+            The record field whose difference is drawn (``"cond"``, ``"bhead"``,
+            ...). Default ``None``: the package's registry default field when the
+            comparison has it, else its first numeric column; ``ValueError`` when
+            there is none, and ``KeyError`` when the field has no ``_diff``
+            column.
+        multiplier : float, default 1.0
+            Scales every drawn difference AFTER ``agg`` -- a unit conversion or a
+            sign flip -- and the filled cells with them, except when the
+            selection is empty (every cell is then ``fill_value`` as given).
+        fill_value : float, default 0.0
+            The value of a cell with no comparison row. ``float("nan")`` leaves
+            it blank. A cell whose rows hold no difference at all is ``NaN``, not
+            this (ledger 329).
+        agg : str, default "sum"
+            How several rows on one cell combine -- any pandas aggregation name.
+            It is NOT derived from the field's kind (ledger 297): the default ADDS
+            an elevation's records as it adds a conductance's, and on a cell with
+            several records it combines the cross-paired rows :meth:`compare`
+            makes (ledger 439).
+        colorscale : str or list or None, optional
+            Any Plotly colorscale name or explicit stops. Default ``None``: the
+            group diff scale -- red at the negative end, white at zero, blue at
+            the positive end.
+        **kwargs
+            Forwarded to the reference model's ``model.plot.map(...)``: its named
+            drawing options (``contours``, ``select``, ``features``, ``extent``,
+            ``backend``, ...) and its Plotly trace tail. ``zmin``/``zmax``
+            default to plus/minus the largest absolute value drawn (a filled
+            cell's included) and ``hover_spec`` to the comparison hover; passing
+            them overrides those. The names this method fills itself beyond its
+            own parameters (``type``, ``custom_zs``, ``custom_hover``,
+            ``hover_heads``, ``hover_ks``) raise ``TypeError``; ``values=``
+            REPLACES the drawn differences while the hover keeps them.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            The map picture, or a bare Matplotlib figure with ``backend="mpl"``.
         """
 
         target_name = _resolve_group_compare_target(self.group, model_name)

@@ -256,8 +256,32 @@ class GridSection(Picture):
         return pd.DataFrame(rows)
 
     def plot_mpl(self, **kwargs):
-        """
-        Plot the grid cross-section with the figs matplotlib cross-section helper.
+        """Plot the cell outlines this section cuts, with Matplotlib.
+
+        One line per cell polygon -- distance along the section against
+        elevation, both in the grid's length units -- drawn by the ``figs``
+        cross-section helper (:func:`myflopy.viz.plot_cross_section`) from
+        :meth:`to_frame`. It always makes a NEW figure: the helper takes no Axes.
+
+        Parameters
+        ----------
+        **kwargs
+            Forwarded to :func:`myflopy.viz.plot_cross_section`. ``show_legend``
+            defaults to ``False`` here (a legend would name every polygon);
+            ``title``, ``xlabel`` (default ``'Distance'``) and ``ylabel`` (default
+            ``'Elevation'``), ``style``, ``x_units_per_inch``/``y_units_per_inch``
+            (an exact print scale, applied only when both are set),
+            ``line_kwargs`` (to ``Axes.plot``) and ``scale_kwargs`` act; anything
+            else goes on to the figure factory (``figsize``, default ``(11, 8.5)``
+            inches; ``font_size``; ...), which raises ``TypeError`` on a keyword it
+            does not know. ``data``/``x``/``y``/``series_col`` are this method's and raise
+            ``TypeError`` as duplicates; ``layer``, ``simplify_tolerance``,
+            ``sheet_name`` and ``read_kwargs`` read a FILE source and are ignored,
+            since this hands the helper a table.
+
+        Returns
+        -------
+        tuple of (matplotlib.figure.Figure, matplotlib.axes.Axes)
         """
         from myflopy.viz import plot_cross_section
 
@@ -354,7 +378,33 @@ class GridMesh(Picture):
 
         This IS ``VoronoiGrid.plot`` -- called unbound, because ``vor.plot`` is
         now the namespace this object came from. Nothing about the drawing
-        changed; only the spelling did.
+        changed; only the spelling did. ``vor.plot.grid(backend="mpl")`` is the
+        same drawing returned as its ``Figure``.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            The Axes to draw the cell edges into, in the grid's own coordinates.
+            ``None`` (the default) calls ``plt.subplot(1, 1, 1, aspect="equal")``
+            on pyplot's CURRENT figure: that draws into an equal-aspect 1 x 1
+            Axes the figure already holds (a second call draws over the first),
+            and otherwise adds one on top of whatever Axes are there. Pyplot opens
+            a new figure only when none is current.
+        plot_title : bool, default True
+            Title the Axes ``"ncells: <ncpl>; nverts: <nverts>"``. ``False`` leaves
+            the title alone.
+        **kwargs
+            Forwarded through FloPy's ``VoronoiGrid.get_patch_collection`` to
+            ``PlotMapView.plot_grid``: ``colors`` (default ``'grey'``; ``color``,
+            ``ec`` and ``edgecolor`` are read as it), and everything else to
+            Matplotlib's ``LineCollection`` -- ``linewidths``, ``alpha``, ... An
+            unknown keyword raises ``AttributeError`` there. ``ax`` cannot be
+            passed here; it is the parameter above.
+
+        Returns
+        -------
+        matplotlib.axes.Axes
+            The Axes drawn on.
         """
 
         from flopy.utils.voronoi import VoronoiGrid
@@ -816,90 +866,6 @@ class GridPlots:
             ``backend="mpl"`` can: the Plotly outline picture is not an axes, and
             raises rather than ignoring the argument.
 
-            .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
-        cells : int or list of int, optional
-            The section path as cell numbers, in order; the line runs through their
-            centroids.
-        per : int, optional
-            Stress period, zero-based: the LAST step saved in it is drawn, so
-            ``per=0`` is the end of the first period as the output saved it, on
-            both pictures (and on ``map`` and ``surface``). With neither ``per`` nor
-            ``kstpkper``, both pictures draw the model's FIRST saved time. Giving
-            both raises. A model only.
-        kstpkper : tuple of (int, int), optional
-            The exact ``(time step, period)`` to draw; one the output did not save
-            raises. A model only.
-        layers : int or sequence of int, optional
-            *(cross-section)* Which layers' CELLS to draw, zero-based; every layer
-            by default. The rest are masked out and the vertical extent is cropped
-            to what remains. A layer outside the model raises.
-        head_layers : int, sequence of int, or None, default 0
-            *(cross-section, ``fill='layer'``)* Whose water levels go on top:
-            layer 0 by default, a list draws one labelled line each, ``None`` none.
-            Ignored by ``'results'`` and an array, which paint the field onto the
-            cells instead. A model only.
-        layer_labels : sequence of str, optional
-            *(cross-section)* Names for the layers, one per layer in model order,
-            for the legend and the water levels. Defaults to the names the model was
-            built with (``ModelContext(surfaces=stack.build(vor))`` keeps them),
-            else ``Layer 1..N``.
-        show_grid : bool, default True
-            *(cross-section)* Draw the cell edges.
-        legend : bool or str, default True
-            *(cross-section)* Where the legend goes. ``False`` drops it; ``True``
-            puts it at the upper right; ``"auto"`` leaves it to the renderer; a side
-            or corner (``"bottom"``, ``"topright"``, or matplotlib's own
-            ``"upper right"``) places it inside the plot; ``"outside right"`` or
-            ``"outside bottom"`` (also ``left`` and ``top``) places it beside the
-            plot -- usually what you want, since inside it sits on the geology it
-            describes. An unknown word raises.
-        layer : int or list of int, default 0
-            *(line profile)* Whose head lines to draw; a list overlays several. An
-            interpolated profile draws one layer, so a list of more raises there.
-        interpolate : bool, default False
-            *(line profile)* Sample an interpolated surface along the line, rather
-            than stepping from cell centre to cell centre.
-        interpolator : str, optional
-            *(line profile)* The interpolation method by name -- ``'griddata'``,
-            ``'rbf'``, ``'linearND'`` or ``'cloughTocher2D'``. Giving one turns
-            ``interpolate`` on.
-        use_rbf : bool, default True
-            *(line profile, interpolating)* With no ``interpolator``: radial basis
-            functions (``True``) or ``griddata`` (``False``). ``False`` without
-            interpolation raises.
-        num_points : int, default 100
-            *(line profile, interpolating)* How many points to sample along the line.
-            Changed without interpolation, it raises: nothing is sampled then.
-        clip : Path or geometry, optional
-            *(line profile, interpolating)* Clip the interpolated surface to this
-            region; raises without interpolation.
-        x_or_y : {'x', 'y'}, default 'x'
-            *(line profile)* With a single cell in ``cells``, run the line east-west
-            (``'x'``) or north-south (``'y'``) through it.
-        show_model_top : bool, default True
-            *(line profile)* Draw the model top.
-        show_model_btm : bool, default False
-            *(line profile)* Draw the bottoms of the layers in ``layer``.
-        surf_type : {'hds', 'lyr'}, default 'hds'
-            *(line profile, interpolating)* Interpolate the head field, or with
-            ``'lyr'`` the TOP of ``layer`` -- the model top for ``layer=0``, the bottom
-            of layer ``k - 1`` for ``layer=k`` -- from the model's own
-            discretization. ``'lyr'`` without interpolation raises.
-        animation_kstpkpers : sequence of tuple, optional
-            *(line profile, ``backend='plotly'``)* The times ``.ani`` steps through;
-            every saved time by default. A Matplotlib figure has no ``.ani``, so
-            this raises with ``backend='mpl'``.
-        section_name : str, optional
-            The cross-section's title, or the line profile's legend name.
-        **kwargs
-            *(line profile, interpolating)* Passed on to the interpolated surface:
-            ``resolution`` (its grid size per axis, default 1000) and ``crs``, or its
-            ``xs``/``ys``/``zs``/``vor``/``hds`` inputs. Any of them without
-            interpolation raises ``ValueError``; any other keyword raises
-            ``TypeError``, on either picture.
-
-            .. end generated
-
         Returns
         -------
         matplotlib.figure.Figure, FilledSection or GridSection
@@ -997,32 +963,6 @@ class GridPlots:
             every other verb spells it. The 3-D volume is
             ``myflopy.plot.grid(stack, backend="vtk")``, which needs a layer
             stack this scope does not have.
-
-            .. generated from myflopy.plot.grid -- edit there, then run scripts/derive_docstrings.py
-        pathlines : DataFrame, optional
-            Particle track records, drawn as time-coloured tubes over the 3-D mesh.
-            Requires ``backend="vtk"``; in plan view the equivalent is
-            ``map(pathlines=...)``. Passing it with ``backend="plotly"`` raises.
-
-        vertical_exaggeration : float, default 1.0
-            *(vtk only)* Multiplier on z, to make a thin model legible.
-        model_style : {'wireframe', 'surface', 'points'}, default 'wireframe'
-            *(vtk only)* How the grid itself is drawn beneath the tracks.
-        model_opacity : float, default 0.25
-            *(vtk only)* Opacity of the grid, so tracks inside it stay visible.
-        pathline_cmap : str, default 'viridis'
-            *(vtk only)* Colormap for the time-coloured tubes.
-        pathline_width : float, default 4.0
-            *(vtk only)* Tube width.
-        show_edges : bool, default True
-            *(vtk only)* Draw cell edges on the mesh.
-        off_screen : bool, default True
-            *(vtk only)* Render without opening a window -- the right default in a
-            notebook or on a headless machine.
-        **kwargs
-            Forwarded to the backend's builder.
-
-            .. end generated
 
         Returns
         -------

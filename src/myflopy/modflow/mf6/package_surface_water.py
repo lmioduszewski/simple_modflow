@@ -234,7 +234,20 @@ class SfrReachProfileView:
         return f"{type(self).__name__}(field={self.y_label!r}, per={self.per})"
 
     def __call__(self, *, per: int) -> SfrReachProfileView:
-        """Return an equivalent view bound to stress period ``per``."""
+        """Return an equivalent view bound to stress period ``per``.
+
+        Parameters
+        ----------
+        per : int
+            Zero-based stress period the new view reads when its verbs are called
+            without one; required, keyword-only, passed through ``int()`` (so
+            ``None`` raises ``TypeError``). This view is left unchanged.
+
+        Returns
+        -------
+        SfrReachProfileView
+            A view of the same field bound to ``per``.
+        """
 
         return type(self)(
             self.explorer, y_column=self.y_column, y_label=self.y_label, label=self.label, per=per
@@ -277,7 +290,21 @@ class SfrReachProfileView:
         return frame.sort_values(["reach", "cell"]).reset_index(drop=True)
 
     def summary(self, *, per: int | None = None) -> pd.DataFrame:
-        """Return a compact digest of the profiled field."""
+        """Return a compact digest of the profiled field.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period, read at its last saved step as :meth:`get`
+            reads it. ``None`` (default) is the period bound to the view
+            (``profile(per=N)``, 0 unless rebound).
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: the view's label and the record, period, layer and cell
+            counts of :meth:`get`'s table, naming the profiled column.
+        """
 
         frame = self.get(per=per)
         return summarize_input_table(
@@ -298,15 +325,33 @@ class SfrReachProfileView:
 
         Parameters
         ----------
-        per
-            Zero-based stress period; defaults to the period bound to the view.
-        x
-            Either ``"distance"`` for cumulative stream distance or ``"reach"``
-            for raw reach number.
-        plot_fig
-            If ``True``, call ``show()`` on the created figure.
-        return_fig
-            If ``True``, return the created figure.
+        per : int or None, optional
+            Zero-based stress period, read at its last saved step as :meth:`get`
+            reads it. ``None`` (default) is the period bound to the view
+            (``profile(per=N)``, 0 unless rebound). A period with no rows draws an
+            empty figure rather than raising.
+        x : str, default "distance"
+            The horizontal axis. ``"distance"`` (any case) is ``distance_mid``, the
+            reach mid-point's running total of ``rlen`` in reach-number order
+            (model length units); ANY other value is the zero-based reach number --
+            ``"reach"`` is the spelling, but a misspelling draws by reach too,
+            without a word.
+        plot_fig : bool, default False
+            Call ``show()`` on the figure before returning.
+        return_fig : bool, default True
+            Return the figure. With ``False`` the method returns ``None``, so
+            ``plot_fig=False, return_fig=False`` builds a figure nobody sees.
+
+        Returns
+        -------
+        myflopy.viz.Fig or None
+            One ``lines+markers`` trace of the field (``q_gwf`` or ``stage``) along
+            the chosen axis, or ``None`` when ``return_fig=False``.
+
+        Raises
+        ------
+        KeyError
+            When the table lacks the chosen axis column.
         """
 
         period = self._period(per)
@@ -373,7 +418,39 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return the normalized SFR budget-result table for selected rows."""
+        """Return the normalized SFR budget-result table for selected rows.
+
+        The GWF model budget's ``SFR`` records -- the stream-aquifer exchange, in
+        MODFLOW 6's own aquifer-referenced sign (``q_gwf`` NEGATIVE where the reach
+        GAINS), model length³/time -- one row per record at every saved step,
+        joined to the reach table for ``reach``, ``rlen`` and the ``distance_*``
+        columns. **The join is on the CELL, not on the record's own reach**
+        (``node2``): a cell holding several reaches gets every one of its records
+        once per reach, each tagged with every reach -- measured on the testing
+        canonical model, cell 195 holds reaches 22, 37 and 38 and carries 9 rows
+        for its 3 records. Read a multi-reach cell's flows through ``node2``.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period to keep, every saved step of it -- a FILTER.
+            One period (a list raises ``TypeError``); ``None`` (default) keeps
+            every period, and a period the file saved nothing in gives an empty
+            table.
+        layer : int or iterable of int or None, optional
+            Zero-based layer(s) of the groundwater cell to keep. ``None``
+            (default) keeps every layer.
+        cells : int or iterable of int or None, optional
+            Zero-based cell number(s) within a layer (the ``cell`` column), ANDed
+            with ``layer``. ``None`` (default) keeps every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            :class:`CellBudgetResultsExplorer`'s columns (``q_gwf`` the value)
+            plus ``reach``, ``rlen``, ``distance_start``/``distance_mid``/
+            ``distance_end`` and ``q_per_length`` (``q_gwf / rlen``).
+        """
 
         frame = build_sfr_budget_result_table(
             self.model,
@@ -464,11 +541,13 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         that arrives through a tail is one no editor can ever offer (plan 8.8).
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
-        was measured to leave a record noun's figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row into
-        the tooltip on every cell.
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. Each was measured to leave a record noun's figure
+        byte-identical, and ``show_mounding`` is worse than inert: it injects a
+        head-derived row into the tooltip on every cell. Passed anyway, they ride
+        ``**trace_kwargs`` to the free verb. ``show_layer_elevs`` and
+        ``hover_surfaces`` ARE named (ledger 306): the layer frame is the grid's,
+        so they act on any map.
 
         Parameters
         ----------
@@ -484,7 +563,9 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             Scale every value before drawing -- unit conversion, or ``-1.0`` to
             read gaining as positive. That changes the PICTURE only: ``.get()``
             keeps MF6's convention, so the colorbar will then disagree with the
-            table, and the caption should say so.
+            table, and the caption should say so. Applied to every cell after the
+            per-cell normalization, ``fill_value`` included -- except when the
+            selection holds no record at all, which draws the fill unscaled.
         fill_value : float, default 0.0
             Value given to cells with no stream reach in them. Zero is honest for
             an exchange -- no reach, no exchange -- but ``float("nan")`` leaves
@@ -495,6 +576,21 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             free choice of reducer left to make. Kept in the signature because
             removing it would break callers that pass it; it is a no-op, not a
             silent alternative.
+        **trace_kwargs
+            Every other keyword, forwarded to ``model.plot.map`` after two checks:
+            ``values``, ``type``, ``custom_hover``, ``hover_heads`` and ``hover_ks``
+            raise ``TypeError`` (this noun supplies its own field and hover), and
+            ``hover_spec`` is read as the old spelling of ``hover``, which wins when
+            both are given. A free-verb parameter this noun does not name -- ``zoom``,
+            ``bgs``, ``kstpkper``, ``per_timestep``, ``hover_layers``,
+            ``show_mounding``, ... -- reaches the verb by that name, and ``custom_zs``,
+            which this noun computes, raises ``TypeError`` as a second value. The rest
+            are properties of the Plotly ``Choroplethmap`` trace -- ``zmid``,
+            ``colorbar``, ``reversescale``, ``showscale`` -- checked only when the
+            figure is built, so a misspelled one raises ``ValueError`` at ``.fig`` or
+            ``.show()``, and is IGNORED under ``backend="mpl"``, which never builds
+            that trace. ``zmid`` defaults to ``0.0`` here, the centre of the
+            symmetric scale; pass one to move it.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -765,7 +861,20 @@ class LakBudgetView:
         return f"{type(self).__name__}(per={self.per})"
 
     def __call__(self, *, per: int) -> LakBudgetView:
-        """Return an equivalent view bound to stress period ``per``."""
+        """Return an equivalent view bound to stress period ``per``.
+
+        Parameters
+        ----------
+        per : int
+            Zero-based stress period the new view reads when its verbs are called
+            without one; required, keyword-only, passed through ``int()`` (so
+            ``None`` raises ``TypeError``). This view is left unchanged.
+
+        Returns
+        -------
+        LakBudgetView
+            A view of the same LAK exchange bound to ``per``.
+        """
 
         return type(self)(self.explorer, per=per)
 
@@ -780,7 +889,32 @@ class LakBudgetView:
         per: int | None = None,
         connection_type: str | Iterable[str] | None = None,
     ) -> pd.DataFrame:
-        """Return the exchange summary grouped by period, lake, and connection type."""
+        """Return the exchange summary grouped by period, lake, and connection type.
+
+        ONE period, at its LAST saved step on the LAK budget file's own clock: the
+        connections of that step add within each (lake, connection type).
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period. ``None`` (default) is the period bound to the
+            view (``budget(per=N)``, 0 unless rebound) -- never every period. A
+            period the file saved nothing in gives an empty table.
+        connection_type : str or iterable of str or None, optional
+            LAK connection type(s) to keep -- ``"vertical"``, ``"horizontal"``,
+            ``"embeddedh"``, ``"embeddedv"``, any case. ``None`` (default) keeps
+            every type. A type no connection has gives an empty table, not an
+            error.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``per``, ``lake``, ``claktype``, ``record_count`` (connections), the
+            summed exchange ``q_lake`` (model length³/time, the LAKE's sign:
+            positive is the lake gaining), the summed ``flow_area`` (length²) and
+            ``q_per_area`` (``q_lake / flow_area``, length/time; ``NaN`` where the
+            area is zero).
+        """
 
         return self.explorer._build_budget_summary(
             per=self._period(per), connection_type=connection_type
@@ -792,7 +926,25 @@ class LakBudgetView:
         per: int | None = None,
         connection_type: str | Iterable[str] | None = None,
     ) -> pd.DataFrame:
-        """Return a compact digest of the budget summary."""
+        """Return a compact digest of the budget summary.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period, as :meth:`get` reads it. ``None`` (default) is
+            the period bound to the view.
+        connection_type : str or iterable of str or None, optional
+            LAK connection type(s) to keep -- ``"vertical"``, ``"horizontal"``,
+            ``"embeddedh"``, ``"embeddedv"``, any case. ``None`` (default) keeps
+            every type. A type no connection has gives an empty table, not an
+            error.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``label``, ``records`` (rows of :meth:`get`), ``lakes`` and
+            ``connection_types`` (distinct counts), zeros when nothing matches.
+        """
 
         frame = self.get(per=per, connection_type=connection_type)
         if frame.empty:
@@ -826,14 +978,37 @@ class LakBudgetView:
 
         Parameters
         ----------
-        per
-            Zero-based stress period; defaults to the period bound to the view.
-        value
-            Summary field to visualize: ``"q"``, ``"flow_area"``, or ``"q_per_area"``.
-        ax
-            Optional Matplotlib axes to draw onto.
-        return_fig
-            If ``True``, return the created figure.
+        per : int or None, optional
+            Zero-based stress period, as :meth:`get` reads it. ``None`` (default) is
+            the period bound to the view. A period with no rows draws labelled,
+            empty axes rather than raising.
+        connection_type : str or iterable of str or None, optional
+            LAK connection type(s) to keep -- ``"vertical"``, ``"horizontal"``,
+            ``"embeddedh"``, ``"embeddedv"``, any case. ``None`` (default) keeps
+            every type. A type no connection has gives an empty table, not an
+            error.
+        value : {"q_per_area", "q", "q_lake", "flow_area"}, default "q_per_area"
+            The :meth:`get` column drawn, one bar per (lake, connection type):
+            ``"q_per_area"`` (length/time), ``"q"`` -- read as ``"q_lake"`` -- the
+            summed exchange (length³/time), or ``"flow_area"`` (length², drawn in
+            one colour). Anything else raises ``ValueError``.
+        ax : matplotlib.axes.Axes or None, optional
+            Axes to draw onto; the figure returned is then ``ax.figure``, and
+            ``tight_layout()`` is called on it whenever bars are drawn (not on an
+            empty period). ``None`` (default) makes a new 8 x 4 inch figure.
+        return_fig : bool, default True
+            Return the figure. With ``False`` the method returns ``None``, which
+            suits drawing onto your own ``ax``.
+
+        Returns
+        -------
+        matplotlib.figure.Figure or None
+            The figure the bars are on, or ``None`` when ``return_fig=False``.
+
+        Raises
+        ------
+        ValueError
+            When ``value`` is not one of the four names.
         """
 
         period = self._period(per)
@@ -909,7 +1084,47 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         cells: Iterable[int] | None = None,
         connection_type: str | Iterable[str] | None = None,
     ) -> pd.DataFrame:
-        """Return the normalized LAK budget-result table for selected rows."""
+        """Return the normalized LAK budget-result table for selected rows.
+
+        The LAK package budget file's ``GWF`` records -- one row per lake-aquifer
+        connection at every saved step -- matched back to the connection data for
+        ``claktype``, ``belev``/``telev``, ``connlen``/``connwidth`` and
+        ``bedleak``. ``q_lake`` is in the LAKE's sign (positive: the lake gains
+        from the aquifer), model length³/time.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period to keep, every saved step of it -- a FILTER.
+            One period (a list raises ``TypeError``); ``None`` (default) keeps
+            every period, and a period the file saved nothing in gives an empty
+            table.
+        layer : int or iterable of int or None, optional
+            Zero-based layer(s) of the connected groundwater cell to keep. ``None``
+            (default) keeps every layer.
+        cells : int or iterable of int or None, optional
+            Zero-based cell number(s) within a layer of the connected cell (the
+            ``cell`` column), ANDed with ``layer``. ``None`` (default) keeps every
+            cell.
+        connection_type : str or iterable of str or None, optional
+            LAK connection type(s) to keep -- ``"vertical"``, ``"horizontal"``,
+            ``"embeddedh"``, ``"embeddedv"``, any case -- ANDed with the other
+            selectors. ``None`` (default) keeps every type; a type no connection
+            has gives an empty table, not an error.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``kstpkper``, ``per``, ``lake``, ``layer``,
+            ``cell``, ``claktype``, the connection geometry, ``q_lake``,
+            ``flow_area`` and ``q_per_area`` (``q_lake / flow_area``,
+            length/time; ``NaN`` where the area is zero). ``flow_area`` (length²)
+            is MODFLOW 6's own ``FLOW-AREA`` for the connection at that step --
+            the WETTED area, not the connection table's ``connection_area``: on
+            the testing canonical model a vertical connection reads its cell's
+            whole plan area or 0.0, 11 to 14 of 33 of them 0.0 depending on the
+            period.
+        """
 
         frame = build_lak_budget_result_table(
             self.model,
@@ -996,11 +1211,13 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         that arrives through a tail is one no editor can ever offer (plan 8.8).
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
-        was measured to leave a record noun's figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row into
-        the tooltip on every cell.
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. Each was measured to leave a record noun's figure
+        byte-identical, and ``show_mounding`` is worse than inert: it injects a
+        head-derived row into the tooltip on every cell. Passed anyway, they ride
+        ``**trace_kwargs`` to the free verb. ``show_layer_elevs`` and
+        ``hover_surfaces`` ARE named (ledger 306): the layer frame is the grid's,
+        so they act on any map.
 
         Parameters
         ----------
@@ -1024,6 +1241,9 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             Scale every value before drawing -- unit conversion, or ``-1.0`` to
             flip the sign convention. That changes the PICTURE only: ``.get()``
             keeps MF6's convention, so say so in the caption if you use it.
+            Applied to every cell after the per-cell normalization,
+            ``fill_value`` included -- except when the selection holds no record
+            at all, which draws the fill unscaled.
         fill_value : float, default 0.0
             Value given to cells with no lake connection. Zero is honest for an
             exchange, but ``float("nan")`` leaves them uncoloured, which reads
@@ -1033,6 +1253,21 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             from total exchange over total flow area per cell, so no free choice
             of reducer remains. Kept in the signature because removing it would
             break callers that pass it; it is a no-op, not a silent alternative.
+        **trace_kwargs
+            Every other keyword, forwarded to ``model.plot.map`` after two checks:
+            ``values``, ``type``, ``custom_hover``, ``hover_heads`` and ``hover_ks``
+            raise ``TypeError`` (this noun supplies its own field and hover), and
+            ``hover_spec`` is read as the old spelling of ``hover``, which wins when
+            both are given. A free-verb parameter this noun does not name -- ``zoom``,
+            ``bgs``, ``kstpkper``, ``per_timestep``, ``hover_layers``,
+            ``show_mounding``, ... -- reaches the verb by that name, and ``custom_zs``,
+            which this noun computes, raises ``TypeError`` as a second value. The rest
+            are properties of the Plotly ``Choroplethmap`` trace -- ``zmid``,
+            ``colorbar``, ``reversescale``, ``showscale`` -- checked only when the
+            figure is built, so a misspelled one raises ``ValueError`` at ``.fig`` or
+            ``.show()``, and is IGNORED under ``backend="mpl"``, which never builds
+            that trace. ``zmid`` defaults to ``0.0`` here, the centre of the
+            symmetric scale; pass one to move it.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -1402,7 +1637,32 @@ class LakStageChangeExplorer:
         per0: int | None = None,
         per1: int | None = None,
     ) -> pd.DataFrame:
-        """Return stage-change rows for one lake and/or one period transition."""
+        """Return stage-change rows for one lake and/or one period transition.
+
+        One row per lake per pair of CONSECUTIVE periods the stage file saved,
+        each period read at its last saved step (``stage_change = stage1 -
+        stage0``, model length units; ``NaN`` into or out of a dry or inactive
+        period, the row kept). The three selectors combine by AND; each matches
+        exactly, so a value no row has gives an empty table, not an error.
+
+        Parameters
+        ----------
+        lake : int or None, optional
+            Zero-based lake number (within this LAK package). One lake: a list
+            raises ``TypeError``. ``None`` (default) keeps every lake.
+        per0 : int or None, optional
+            Zero-based stress period the transition starts FROM. ``None``
+            (default) keeps every start.
+        per1 : int or None, optional
+            Zero-based stress period the transition ends IN -- the next period the
+            stage file saved after ``per0``. ``None`` (default) keeps every end.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``lake``, ``per0``, ``per1``, ``stage0``,
+            ``stage1`` and ``stage_change``.
+        """
 
         frame = build_lak_stage_change_table(self.model, package=self.package)
         if lake is not None:
@@ -1454,6 +1714,31 @@ class LakStageChangeExplorer:
         *transition*, not the period, so it does not use the generic series
         engine). ``backend="plotly"`` returns a ``viz.Fig``; ``backend="mpl"``
         a matplotlib figure.
+
+        Parameters
+        ----------
+        lake : int or None, optional
+            Zero-based lake number to draw, as :meth:`get` selects it. ``None``
+            (default) draws one line per lake. A lake with no rows draws empty
+            axes rather than raising.
+        backend : {"plotly", "mpl"}, default "plotly"
+            Any case. ``"plotly"`` (or ``"interactive"``) returns a ``viz.Fig``;
+            ``"mpl"`` (or ``"matplotlib"``, ``"static"``) a Matplotlib figure, 8 x
+            4 inches, with a zero line. Anything else raises ``ValueError``.
+        title : str or None, optional
+            The figure title. ``None`` (default) -- or an empty string -- is
+            ``"LAK stage change by transition"``.
+
+        Returns
+        -------
+        myflopy.viz.Fig or matplotlib.figure.Figure
+            One line per lake, x the ``"per0->per1"`` transition label and y
+            ``stage_change`` (model length units).
+
+        Raises
+        ------
+        ValueError
+            When ``backend`` is not one of the five spellings.
         """
 
         from myflopy.viz import Fig
@@ -1524,7 +1809,36 @@ class LakConnectionsExplorer:
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return the normalized LAK connection table."""
+        """Return the normalized LAK connection table.
+
+        One row per connection record of ``connectiondata`` -- input geometry, no
+        time axis. The selectors combine by AND; a value no row has gives an empty
+        table, not an error.
+
+        Parameters
+        ----------
+        lake : int or None, optional
+            Zero-based lake number (within this LAK package). One lake: a list
+            raises ``TypeError``. ``None`` (default) keeps every lake.
+        layer : int or iterable of int or None, optional
+            Zero-based layer(s) of the connected groundwater cell. ``None``
+            (default) keeps every layer.
+        cells : int or iterable of int or None, optional
+            Zero-based cell number(s) within a layer of the connected cell (the
+            ``cell`` column). ``None`` (default) keeps every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``lake``, ``iconn``, ``layer``, ``cell``,
+            ``claktype``, ``belev``, ``telev``, ``connlen``, ``connwidth``,
+            ``connection_area`` (length²: the cell's plan area for a vertical
+            connection, ``connwidth * (telev - belev)`` -- the INPUT elevations,
+            a negative thickness read as zero -- for every other type, embedded
+            ones included, although MODFLOW 6 reads ``connwidth`` on a HORIZONTAL
+            connection only and accepts any value on an embedded one) and
+            ``bedleak``.
+        """
 
         frame = build_lak_connection_table(self.model, package=self.package)
         frame = _filter_normalized_table(frame, per=None, layer=layer, cells=cells)
@@ -1622,11 +1936,13 @@ class LakConnectionsExplorer:
         that arrives through a tail is one no editor can ever offer (plan 8.8).
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
-        was measured to leave a record noun's figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row into
-        the tooltip on every cell.
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. Each was measured to leave a record noun's figure
+        byte-identical, and ``show_mounding`` is worse than inert: it injects a
+        head-derived row into the tooltip on every cell. Passed anyway, they ride
+        ``**trace_kwargs`` to the free verb. ``show_layer_elevs`` and
+        ``hover_surfaces`` ARE named (ledger 306): the layer frame is the grid's,
+        so they act on any map.
 
         Parameters
         ----------
@@ -1649,12 +1965,32 @@ class LakConnectionsExplorer:
             them would invent a wider connection than any that exists.
         multiplier : float, default 1.0
             Scale every value before drawing -- unit conversion, most often.
-            Applied before ``agg``.
+            Applied AFTER ``agg`` (so under ``-1.0``, ``agg="max"`` draws
+            minus the largest record) and to every cell, ``fill_value`` included:
+            ``fill_value=1.0, multiplier=2.0`` draws 2.0 where there is no record
+            -- but 1.0 when the selection holds no record at all.
         fill_value : float, default 0.0
             Value given to cells with no lake connection. Pass ``float("nan")``
             to leave them uncoloured, which is usually clearer here: a lake
             covers a small part of the grid, and a 0.0 backdrop takes over the
             colour scale.
+        **trace_kwargs
+            Every other keyword, forwarded to ``model.plot.map`` after two checks:
+            ``values``, ``type``, ``custom_hover``, ``hover_heads`` and ``hover_ks``
+            raise ``TypeError`` (this noun supplies its own field and hover), and
+            ``hover_spec`` is read as the old spelling of ``hover``, which wins when
+            both are given. A free-verb parameter this noun does not name -- ``zoom``,
+            ``bgs``, ``kstpkper``, ``per_timestep``, ``hover_layers``,
+            ``show_mounding``, ... -- reaches the verb by that name, and ``custom_zs``,
+            which this noun computes, raises ``TypeError`` as a second value -- and so
+            does ``per``: connection geometry has no time axis, this signature names
+            no ``per``, and the noun passes ``per=0`` itself (the ``per`` entry below
+            is spliced from the free verb and does not apply here). The rest are
+            properties of the Plotly ``Choroplethmap`` trace -- ``zmid``,
+            ``colorbar``, ``reversescale``, ``showscale`` -- checked only when the
+            figure is built, so a misspelled one raises ``ValueError`` at ``.fig`` or
+            ``.show()``, and is IGNORED under ``backend="mpl"``, which never builds
+            that trace.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         per : int, optional
@@ -1993,15 +2329,42 @@ class LakBudgetNamespace:
     ) -> pd.DataFrame:
         """Return a canonical long dataframe of LAK package-output budget terms.
 
+        Every record of the LAK package's OWN budget file (not the GWF model
+        budget), one row per entry per saved step -- a FILTER on ``per``, so every
+        step a period saved stays; :meth:`summary` and :meth:`wide` read each
+        period's last. The selectors combine by AND, and none raises on a value
+        nothing matches: the table comes back empty.
+
         Parameters
         ----------
-        term
-            Optional LAK budget term filter such as ``"GWF"`` or
-            ``["GWF", "STORAGE"]``.
-        per
-            Optional zero-based stress period filter.
-        lakes
-            Optional iterable of zero-based lake ids to keep.
+        term : str or iterable of str or None, optional
+            Term(s) to keep, MODFLOW 6's spelling in any case -- ``"GWF"``,
+            ``["GWF", "STORAGE"]``, ``"EXT-INFLOW"`` (:attr:`types` lists what the
+            file holds). Compared after ``strip().upper()`` and nothing else, so
+            the attribute spelling ``"ext_inflow"`` matches NOTHING and returns an
+            empty table without a word (use ``model.lak.budget.ext_inflow``).
+            ``None`` (default) keeps every term.
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep, every saved step of each.
+            ``None`` (default) keeps every period.
+        lakes : int or iterable of int or None, optional
+            Zero-based lake number(s) to keep (within this LAK package; the
+            ``lake`` column, the record's ``node``). On ``FLOW-JA-FACE`` MODFLOW 6
+            writes each lake-to-lake outlet TWICE, once from each end, with
+            ``lake_to`` the other lake and ``q`` positive INTO ``lake`` -- so a
+            lake selects both its outflows (negative) and its inflows
+            (positive). ``None`` (default) keeps every lake.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``term``, ``kstpkper``, ``per``, ``lake``,
+            ``q`` (model length³/time, in the sign the LAK budget file records:
+            positive is an INFLOW to the lake's water budget -- on ``STORAGE``,
+            water released as the lake's volume FALLS) and each term's own
+            columns -- ``layer``/``cell``/``claktype``/``flow_area``/
+            ``q_per_area`` on ``GWF``, ``lake_to`` on ``FLOW-JA-FACE``,
+            ``VOLUME`` on ``STORAGE``.
         """
 
         frame = build_lak_budget_term_table(self.model, term=term, package=self.package)
@@ -2305,7 +2668,50 @@ class SfrBudgetNamespace:
         per: int | Iterable[int] | None = None,
         reaches: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return a canonical long dataframe of SFR package-output budget terms."""
+        """Return a canonical long dataframe of SFR package-output budget terms.
+
+        Every record of the SFR package's OWN budget file (not the GWF model
+        budget), one row per entry per saved step, each joined to the reach table
+        -- a FILTER on ``per``, so every step a period saved stays; :meth:`summary`
+        and :meth:`wide` read each period's last. The selectors combine by AND,
+        and none raises on a value nothing matches: the table comes back empty.
+
+        Parameters
+        ----------
+        term : str or iterable of str or None, optional
+            Term(s) to keep, MODFLOW 6's spelling in any case -- ``"GWF"``,
+            ``["GWF", "STORAGE"]``, ``"EXT-INFLOW"`` (:attr:`types` lists what the
+            file holds). Compared after ``strip().upper()`` and nothing else, so
+            the attribute spelling ``"ext_inflow"`` matches NOTHING and returns an
+            empty table without a word (use ``model.sfr.budget.ext_inflow``).
+            ``None`` (default) keeps every term.
+        per : int or iterable of int or None, optional
+            Zero-based stress period(s) to keep, every saved step of each.
+            ``None`` (default) keeps every period.
+        reaches : int or iterable of int or None, optional
+            Zero-based reach number(s) to keep (the ``reach`` column, the record's
+            ``node``). On ``FLOW-JA-FACE`` MODFLOW 6 writes each reach-to-reach
+            connection TWICE, once from each end, with ``reach_to`` the other
+            reach and ``q`` positive INTO ``reach`` -- measured at period 1 of the
+            testing canonical model: reach 0 to its downstream reach 1 reads
+            -21464.10 as ``(0, 1)`` and +21464.10 as ``(1, 0)`` -- so a reach
+            selects both its outflows and its inflows.
+            ``None`` (default) keeps every reach.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``term``, ``kstpkper``, ``per``, ``reach``,
+            the reach's ``layer``/``cell`` (on ``GWF`` the connected
+            groundwater cell's) and geometry (``rlen``, ``distance_*``), ``q``
+            (model length³/time, in the sign the SFR budget file records:
+            positive is an INFLOW to the reach's water budget -- the OPPOSITE of
+            ``model.sfr.results.q``'s ``q_gwf`` on ``GWF``) and each term's own
+            columns --
+            ``q_per_length`` (``q / rlen``) on every term but ``FLOW-JA-FACE``,
+            which carries ``reach_to``; ``FLOW-AREA`` and ``VOLUME`` where MODFLOW
+            6 writes them.
+        """
 
         frame = build_sfr_budget_term_table(self.model, term=term, package=self.package)
         if per is not None:
@@ -2620,7 +3026,20 @@ class SfrProfileView:
         return f"{type(self).__name__}(per={self.per})"
 
     def __call__(self, *, per: int) -> SfrProfileView:
-        """Return an equivalent view bound to stress period ``per``."""
+        """Return an equivalent view bound to stress period ``per``.
+
+        Parameters
+        ----------
+        per : int
+            Zero-based stress period the new view reads when its verbs are called
+            without one; required, keyword-only, passed through ``int()`` (so
+            ``None`` raises ``TypeError``). This view is left unchanged.
+
+        Returns
+        -------
+        SfrProfileView
+            A view of the same SFR package bound to ``per``.
+        """
 
         return type(self)(self.model, per=per, package=self.package)
 
@@ -2630,12 +3049,55 @@ class SfrProfileView:
         return self.per if per is None else int(per)
 
     def get(self, *, per: int | None = None) -> pd.DataFrame:
-        """Return the merged reach-ordered profile table."""
+        """Return the merged reach-ordered profile table.
+
+        One row per reach: geometry, ``packagedata`` fields, the stage and the
+        stream-aquifer exchange, each read at the period's LAST saved step on its
+        own file's clock (stage file, SFR budget file).
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period. ``None`` (default) is the period bound to the
+            view (``profile(per=N)``, 0 unless rebound). A period the stage file,
+            or an SFR budget file holding records, saved nothing in raises
+            ``ValueError`` naming the periods it has.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``per``, ``reach``, ``layer``, ``cell``,
+            ``rlen``, ``distance_start``/``distance_mid``/``distance_end``
+            (running totals of ``rlen`` in REACH NUMBER order, model length units
+            -- a downstream distance only where the reaches are numbered along one
+            channel), the ``packagedata`` fields, ``streambed_top``/
+            ``streambed_bottom``, ``stage`` and ``q_gwf`` (MF6's
+            aquifer-referenced sign: negative where the reach gains) with
+            ``q_per_length``. ``q_gwf`` is summed from
+            ``model.sfr.results.q.get()``, which joins records to reaches on the
+            CELL, so every reach of a cell holding several reads the CELL's total
+            (testing canonical cell 195 at period 3: -493.56 on reaches 22, 37 and
+            38, whose own flows are -20.91, -471.96 and -0.69; ledger 440).
+        """
 
         return build_sfr_long_profile_table(self.model, per=self._period(per), package=self.package)
 
     def summary(self, *, per: int | None = None) -> pd.DataFrame:
-        """Return a compact digest of the profile's stage and exchange fields."""
+        """Return a compact digest of the profile's stage and exchange fields.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period, read as :meth:`get` reads it. ``None``
+            (default) is the period bound to the view.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row: ``label``, the record, period, layer and cell counts, and the
+            value columns present among ``stage``, ``streambed_top``, ``q_gwf``,
+            ``q_per_length``.
+        """
 
         frame = self.get(per=per)
         return summarize_input_table(
@@ -2664,26 +3126,46 @@ class SfrProfileView:
 
         Parameters
         ----------
-        per
-            Zero-based stress period; defaults to the period bound to the view.
-        x
-            Either ``"distance"`` for cumulative stream distance or ``"reach"``
-            for raw reach number.
-        include_stage
-            Whether to show simulated stream stage.
-        include_streambed
-            Whether to show streambed top and bottom elevations.
-        include_exchange
-            Whether to show stream-groundwater exchange on a secondary axis.
-        signed_exchange
-            When ``True`` (the default) draw exchange as per-reach bars colored
-            by sign -- blue where the reach gains (NEGATIVE q_gwf: SFR's cell
-            record is aquifer-referenced, MF6's raw sign), red where it loses,
-            matching the SFR map colorscale. When ``False`` draw one unsigned line.
-        plot_fig
-            If ``True``, call ``show()`` on the created figure.
-        return_fig
-            If ``True``, return the created figure.
+        per : int or None, optional
+            Zero-based stress period, read as :meth:`get` reads it (a period with
+            no saved record raises ``ValueError``). ``None`` (default) is the
+            period bound to the view.
+        x : str, default "distance"
+            The horizontal axis. ``"distance"`` (any case) is ``distance_mid``, the
+            reach mid-point's running total of ``rlen`` in reach-number order
+            (model length units); ANY other value is the zero-based reach number --
+            ``"reach"`` is the spelling, but a misspelling draws by reach too,
+            without a word.
+        include_stage : bool, default True
+            Draw the simulated stage (left axis, model length units). Drawn only
+            when the table has a ``stage`` column.
+        include_streambed : bool, default True
+            Draw ``streambed_top`` and, dashed, ``streambed_bottom`` (left axis).
+        include_exchange : bool, default True
+            Draw ``q_gwf`` on a second, right-hand axis (model length³/time).
+        signed_exchange : bool, default True
+            How ``include_exchange`` draws it; no effect without it. ``True``: one
+            bar per reach coloured by sign -- blue where the reach gains (NEGATIVE
+            ``q_gwf``: SFR's cell record is aquifer-referenced, MF6's raw sign), red
+            where it loses, matching the SFR map colorscale. ``False``: one line,
+            uncoloured by sign.
+        plot_fig : bool, default False
+            Call ``show()`` on the figure before returning.
+        return_fig : bool, default True
+            Return the figure. With ``False`` the method returns ``None``, so
+            ``plot_fig=False, return_fig=False`` builds a figure nobody sees.
+
+        Returns
+        -------
+        myflopy.viz.Fig or None
+            The long profile, or ``None`` when ``return_fig=False``.
+
+        Raises
+        ------
+        ValueError
+            When the stage or budget file saved nothing in the period.
+        KeyError
+            When the table lacks the chosen axis column.
         """
 
         period = self._period(per)
@@ -2931,7 +3413,48 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
         include: str | Iterable[str] | None = None,
         lak_connection_type: str | Iterable[str] | None = None,
     ) -> pd.DataFrame:
-        """Return combined SFR/LAK exchange rows in a unified L/T convention."""
+        """Return combined SFR/LAK exchange rows in one unified sign convention.
+
+        One row per period per groundwater cell per package type, each period read
+        at its LAST saved step on its budget file's own clock; every SFR and LAK
+        package of the model contributes (several of a type add in a cell).
+        ``exchange_intensity`` is myflopy's unified sign -- positive is the
+        surface-water feature GAINING from groundwater -- but not one unit:
+        ``-q / rlen`` on an SFR row (length²/time, per unit of reach length) and
+        ``q / flow_area`` on a LAK row (length/time, per unit of bed area).
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period to keep, one row per cell at its last saved
+            step. One period (a list raises ``TypeError``); ``None`` (default)
+            keeps every period.
+        layer : int or iterable of int or None, optional
+            Zero-based layer(s) of the groundwater cell to keep. ``None`` (default)
+            keeps every layer.
+        include : str or iterable of str or None, optional
+            Package type(s) contributing rows, ``"sfr"`` and/or ``"lak"``, any
+            case; anything else raises ``ValueError``. ``None`` (default) is both.
+            A type the model has no package of adds no rows.
+        lak_connection_type : str or iterable of str or None, optional
+            LAK connection type(s) to keep -- ``"vertical"``, ``"horizontal"``,
+            ``"embeddedh"``, ``"embeddedv"``, any case -- applied to the LAK rows
+            only; SFR rows are untouched. ``None`` (default) keeps every type, and
+            a type no connection has drops every LAK row without a word.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``model``, ``package``, ``per``, ``layer``, ``cell``, the summed ``q``
+            (each package's raw sign) and ``exchange_intensity`` and ``source``
+            (``"sfr"``/``"lak"``), plus ``rlen``/``q_per_length`` on SFR rows and
+            ``flow_area``/``q_per_area`` on LAK rows (``NaN`` on the other's).
+            The SFR rows sum ``model.sfr.results.q.get()``, which joins records to
+            reaches on the CELL, so on a cell holding ``k`` reaches the SFR ``q``
+            and ``rlen`` are each ``k`` times their true sums while
+            ``exchange_intensity``, their ratio, is right (testing canonical cell
+            195 at period 3: ``q`` -1480.68 for -493.56; ledger 440).
+        """
 
         return build_surface_water_exchange_cell_table(
             self.model,
@@ -3006,8 +3529,10 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
         - **negative** = the surface-water feature LOSING to groundwater
 
         and both packages are expressed per unit of contact (reach length for
-        SFR, flow area for LAK) so a stream and a lakebed are comparable numbers
-        rather than two different quantities sharing a colourbar.
+        SFR, flow area for LAK), so a cell's colour reports intensity rather than
+        how much stream or lakebed it holds. The two are NOT one unit: an SFR
+        cell is length²/time (per length of reach), a LAK cell length/time (per
+        area of bed), so they share a colourbar, not a dimension.
 
         Because the quantity is SIGNED, the scale is centred on zero:
         ``zmin``/``zmax`` default to ``-max|q|``/``+max|q|`` and the trace gets
@@ -3021,11 +3546,13 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
         that arrives through a tail is one no editor can ever offer (plan 8.8).
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
-        was measured to leave a record noun's figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row into
-        the tooltip on every cell.
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. Each was measured to leave a record noun's figure
+        byte-identical, and ``show_mounding`` is worse than inert: it injects a
+        head-derived row into the tooltip on every cell. Passed anyway, they ride
+        ``**trace_kwargs`` to the free verb. ``show_layer_elevs`` and
+        ``hover_surfaces`` ARE named (ledger 306): the layer frame is the grid's,
+        so they act on any map.
 
         Parameters
         ----------
@@ -3049,11 +3576,28 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
         multiplier : float, default 1.0
             Scale every value before drawing -- unit conversion, most often.
             Note the sign convention here is already myflopy's unified one, so
-            there is rarely a reason to pass ``-1.0``.
+            there is rarely a reason to pass ``-1.0``. Applied to every cell after
+            the per-cell normalization, ``fill_value`` included -- except when the
+            selection holds no record at all, which draws the fill unscaled.
         fill_value : float, default 0.0
             Value given to cells with neither a reach nor a lake connection.
             ``float("nan")`` leaves them uncoloured, which usually reads better:
             surface water touches a small fraction of most grids.
+        **trace_kwargs
+            Every other keyword, forwarded to ``model.plot.map`` after two checks:
+            ``values``, ``type``, ``custom_hover``, ``hover_heads`` and ``hover_ks``
+            raise ``TypeError`` (this noun supplies its own field and hover), and
+            ``hover_spec`` is read as the old spelling of ``hover``, which wins when
+            both are given. A free-verb parameter this noun does not name -- ``zoom``,
+            ``bgs``, ``kstpkper``, ``per_timestep``, ``hover_layers``,
+            ``show_mounding``, ... -- reaches the verb by that name, and ``custom_zs``,
+            which this noun computes, raises ``TypeError`` as a second value. The rest
+            are properties of the Plotly ``Choroplethmap`` trace -- ``zmid``,
+            ``colorbar``, ``reversescale``, ``showscale`` -- checked only when the
+            figure is built, so a misspelled one raises ``ValueError`` at ``.fig`` or
+            ``.show()``, and is IGNORED under ``backend="mpl"``, which never builds
+            that trace. ``zmid`` defaults to ``0.0`` here, the centre of the
+            symmetric scale; pass one to move it.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -3328,7 +3872,31 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return rows containing this mapped input field."""
+        """Return rows containing this mapped input field.
+
+        The inputs namespace's table (:meth:`SurfaceWaterInputsNamespace.get`)
+        reduced to its identifying columns and this field.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period to keep. Every period carries every reach or
+            connection, its period-block settings held until a later block changes
+            them. One period (a list raises ``TypeError``); ``None`` (default)
+            keeps all ``nper`` copies.
+        layer : int or iterable of int or None, optional
+            Zero-based layer(s) of the groundwater cell. ``None`` (default) keeps
+            every layer.
+        cells : int or iterable of int or None, optional
+            Zero-based cell number(s) within a layer (the ``cell`` column), ANDed
+            with ``layer``. ``None`` (default) keeps every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Whichever of ``model``, ``package``, ``per``, ``lake``, ``reach``,
+            ``layer``, ``cell`` the table has, then the field's column.
+        """
 
         frame = self.inputs.get(per=per, layer=layer, cells=cells)
         metadata = [
@@ -3403,23 +3971,30 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
         that arrives through a tail is one no editor can ever offer (plan 8.8).
 
         The per-layer arguments the free verb has -- ``kstpkper``,
-        ``per_timestep``, ``bgs``, ``hover_layers``, ``hover_surfaces``,
-        ``show_layer_elevs``, ``show_mounding`` -- are deliberately absent. Each
-        was measured to leave a record noun's figure byte-identical, and
-        ``show_mounding`` is worse than inert: it injects a head-derived row into
-        the tooltip on every cell.
+        ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
+        deliberately not named. Each was measured to leave a record noun's figure
+        byte-identical, and ``show_mounding`` is worse than inert: it injects a
+        head-derived row into the tooltip on every cell. Passed anyway, they ride
+        ``**trace_kwargs`` to the free verb. ``show_layer_elevs`` and
+        ``hover_surfaces`` ARE named (ledger 306): the layer frame is the grid's,
+        so they act on any map.
 
         Parameters
         ----------
         per : int, default 0
-            Stress period to read, zero-based. A field that does not vary with
-            time has all its records under period 0.
+            Stress period to read, zero-based. Every period carries every reach or
+            connection, a period-block setting held until a later block changes
+            it, so a field that does not vary with time reads the same in every
+            period.
         layer : int, default 0
             Zero-based layer. Records in other layers are not drawn -- for a
             lake spanning several layers this is how you choose.
         multiplier : float, default 1.0
             Scale every value before drawing -- unit conversion, most often.
-            Applied before ``agg``.
+            Applied AFTER ``agg`` (so under ``-1.0``, ``agg="max"`` draws
+            minus the largest record) and to every cell, ``fill_value`` included:
+            ``fill_value=1.0, multiplier=2.0`` draws 2.0 where there is no record
+            -- but 1.0 when the selection holds no record at all.
         fill_value : float, default 0.0
             Value given to cells this package has no record for. Pass
             ``float("nan")`` to leave them uncoloured, which is usually clearer
@@ -3433,6 +4008,20 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
             elevation or a leakance from being added to itself. Set it
             explicitly when a cell holds several reaches and you want a
             per-reach statistic rather than the cell total.
+        **trace_kwargs
+            Every other keyword, forwarded to ``model.plot.map`` after two checks:
+            ``values``, ``type``, ``custom_hover``, ``hover_heads`` and ``hover_ks``
+            raise ``TypeError`` (this noun supplies its own field and hover), and
+            ``hover_spec`` is read as the old spelling of ``hover``, which wins when
+            both are given. A free-verb parameter this noun does not name -- ``zoom``,
+            ``bgs``, ``kstpkper``, ``per_timestep``, ``hover_layers``,
+            ``show_mounding``, ... -- reaches the verb by that name, and ``custom_zs``,
+            which this noun computes, raises ``TypeError`` as a second value. The rest
+            are properties of the Plotly ``Choroplethmap`` trace -- ``zmid``,
+            ``colorbar``, ``reversescale``, ``showscale`` -- checked only when the
+            figure is built, so a misspelled one raises ``ValueError`` at ``.fig`` or
+            ``.show()``, and is IGNORED under ``backend="mpl"``, which never builds
+            that trace.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -3693,7 +4282,34 @@ class SurfaceWaterInputsNamespace(FieldMappable):
         layer: int | Iterable[int] | None = None,
         cells: Iterable[int] | None = None,
     ) -> pd.DataFrame:
-        """Return normalized package inputs mapped to groundwater cells."""
+        """Return normalized package inputs mapped to groundwater cells.
+
+        One row per reach (SFR) or per lake connection (LAK) per stress period,
+        ``0 .. nper-1``: the static ``packagedata`` (and, for LAK, the
+        ``connectiondata``) joined with the numeric period-block settings, each
+        held from the period that sets it until a later one changes it, as MODFLOW
+        6 holds them. A selector nothing matches gives an empty table, not an
+        error.
+
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period to keep. One period (a list raises
+            ``TypeError``); ``None`` (default) keeps all ``nper`` copies.
+        layer : int or iterable of int or None, optional
+            Zero-based layer(s) of the groundwater cell. ``None`` (default) keeps
+            every layer.
+        cells : int or iterable of int or None, optional
+            Zero-based cell number(s) within a layer (the ``cell`` column), ANDed
+            with ``layer``. ``None`` (default) keeps every cell.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``reach`` (SFR) or ``lake`` with the connection columns (LAK),
+            ``layer``, ``cell``, every input field (:attr:`fields` lists the
+            numeric ones), ``per``, ``package`` and ``model``.
+        """
 
         builder = (
             build_lak_input_table
