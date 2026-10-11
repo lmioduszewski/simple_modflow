@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 408 entries (413 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 409 entries (414 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 409 | Declaring the domain again on one `TriangleGrid` replaces the previous domain's background sizing region;... | 2026-10-11 |
 | 408 | A global `maximum_area` on `TriangleGrid` is a cap ON TOP of every refinement region's and the domain's own... | 2026-10-11 |
 | 407 | `LayerSurfaces.to_disv(attach=True)` writes the grid only once the spec is built | 2026-10-11 |
 | 406 | `LayerSurfaces` refuses a repeated label, naming it and its positions | 2026-10-11 |
@@ -17958,3 +17959,19 @@ same day, which is the useful part of the result.
       `test_a_global_maximum_area_keeps_every_refinement_region`,
       `test_a_global_maximum_area_keeps_the_domain_background_size` and
       `test_the_smaller_of_the_cap_and_the_region_limit_wins[5000.0]`.
+
+409. **Declaring the domain again on one `TriangleGrid` replaces the previous domain's background sizing region; `source="domain"` is reserved for it (2026-10-11).**
+      `set_domain_*(max_area=)` appended a `domain_size` region and never removed the
+      last one, so a domain declared twice (a notebook cell run again) kept the old size
+      beside the new: `set_domain_rectangle(1000, 1000, max_area=5000)` then `(500, 500,
+      max_area=100)` clipped the stale region's ring to 0.07 ft inside the new edge and
+      meshed 85,839 triangles (smallest 0.0014 ft2) against 4,880 declared once. The
+      region a domain added is now dropped by every later declaration, with or without
+      a `max_area`; refinement regions are kept. **Judgment call:** the region is found by
+      its `source` tag, so `add_region_polygon(source="domain")` is REFUSED rather than
+      left to be deleted silently by the next domain declaration. A domain declared once
+      builds byte-identically. Library paths always used a fresh `TriangleGrid`, so no
+      resolved `GridSpec` moves.
+      Revert check: keeping the old region fails
+      `test_re_declaring_the_domain_replaces_its_background_sizing_region` and
+      `test_re_declaring_the_domain_without_max_area_drops_the_old_background`.

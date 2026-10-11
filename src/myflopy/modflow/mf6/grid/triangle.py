@@ -702,9 +702,16 @@ class TriangleGrid(Triangle):
         max_area: float | int | None,
         label: str,
     ):
-        """Record the domain geometry and, when ``max_area`` is set, add a background sizing region."""
+        """Record the domain geometry and, when ``max_area`` is set, add a background sizing region.
+
+        The previous domain's sizing region is dropped first: it belonged to that domain,
+        and kept beside the new one (a notebook cell run twice) its ring, clipped to the
+        new boundary, ran 0.07 ft inside it and Triangle filled the strip with slivers --
+        85,839 triangles against 4,880 for the same domain declared once (ledger 409).
+        """
 
         self._refuse_a_self_touching_domain(geometry)
+        self.region_specs = [region for region in self.region_specs if region.source != "domain"]
         self.domain_spec = DomainSpec(geometry=geometry, label=label, max_area=max_area)
         if max_area is not None:
             domain_region_geometry = self._domain_background_geometry(geometry, max_area=max_area)
@@ -713,8 +720,10 @@ class TriangleGrid(Triangle):
                 max_area=max_area,
                 label=f"{label}_size" if label else "domain_size",
                 priority=-10,
-                source="domain",
             )
+            # The tag add_region_polygon refuses from a caller: it marks the region this
+            # method replaces on the next declaration.
+            self.region_specs[-1].source = "domain"
             if domain_region_geometry is geometry:
                 # No point of the domain is 0.5*sqrt(max_area) from its boundary, so the
                 # inset is empty and the sizing region is the domain itself. Its ring, clipped
@@ -808,7 +817,10 @@ class TriangleGrid(Triangle):
         """Define the model domain from polygonal geometry.
 
         The geometry is buffered, simplified and densified, in that order, and
-        stored as :attr:`domain_spec`, replacing any earlier domain. A
+        stored as :attr:`domain_spec`, replacing any earlier domain and the
+        background sizing region its ``max_area`` added. Refinement regions
+        already added are kept: each was clipped to the domain stored when it
+        was added, and :meth:`prepare` clips it to this one. A
         multi-part geometry gives a multi-part domain; interior rings become
         holes in the mesh.
 
@@ -1050,6 +1062,9 @@ class TriangleGrid(Triangle):
             :meth:`build_mesh`'s ``protect_sources`` select regions by it, and
             :meth:`preview_regions` shows it. The helpers set ``"line"``,
             ``"rectangle"``, ``"circle"``, ``"file"``, ``"polygon"`` and others.
+            ``"domain"`` is reserved for the background sizing region a
+            ``set_domain_*(max_area=)`` call adds -- the one region a later
+            domain declaration replaces -- and raises ``ValueError`` here.
             Default ``"geometry"``.
         domain : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence, optional
             Geometry to clip the region to instead of the stored domain, in the
@@ -1076,8 +1091,15 @@ class TriangleGrid(Triangle):
         Raises
         ------
         ValueError
-            If no polygonal area remains after clipping and preprocessing.
+            If no polygonal area remains after clipping and preprocessing, or if
+            ``source="domain"``.
         """
+        if source == "domain":
+            raise ValueError(
+                "source='domain' is reserved for the background sizing region that "
+                "set_domain_*(max_area=...) adds, which the next domain declaration replaces. "
+                "Give the domain its background size there, or tag this region another way."
+            )
         clip_domain = self.domain_geometry if domain is None else domain
         geometry = self._polygonize_geometry(
             polygon,

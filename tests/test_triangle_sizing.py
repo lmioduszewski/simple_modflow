@@ -70,3 +70,38 @@ def test_the_smaller_of_the_cap_and_the_region_limit_wins(tmp_path, cap):
     inside = np.array([region.contains(Point(c)) for c in centroids])
     assert areas[inside].max() <= min(cap, 1000.0) * (1 + 1e-9)
     assert areas[~inside].max() <= min(cap, 20_000.0) * (1 + 1e-9)
+
+
+def test_re_declaring_the_domain_replaces_its_background_sizing_region(tmp_path):
+    tri = TriangleGrid(model_ws=str(tmp_path / "twice"), angle=32)
+    tri.set_domain_rectangle(1000, 1000, max_area=5000)
+    tri.add_region_polygon(box(100, 100, 200, 200), max_area=50, label="kept")
+    tri.set_domain_rectangle(500, 500, max_area=100)
+    assert [(r.label, r.source, r.max_area) for r in tri.region_specs] == [
+        ("kept", "geometry", 50),
+        ("domain_size", "domain", 100),
+    ]
+    tri.build()
+
+    fresh = TriangleGrid(model_ws=str(tmp_path / "once"), angle=32)
+    fresh.set_domain_rectangle(500, 500, max_area=100)
+    fresh.add_region_polygon(box(100, 100, 200, 200), max_area=50, label="kept")
+    fresh.build()
+    # The stale 5000 ft2 region's ring sat 0.07 ft inside the new edge: 85,839
+    # triangles (of 0.0014 ft2) against 4,880 for the domain declared once.
+    assert len(tri.ele) == len(fresh.ele)
+    assert np.array_equal(np.asarray(tri.verts), np.asarray(fresh.verts))
+
+
+def test_re_declaring_the_domain_without_max_area_drops_the_old_background(tmp_path):
+    tri = TriangleGrid(model_ws=str(tmp_path / "ws"), angle=32)
+    tri.set_domain_rectangle(1000, 1000, max_area=5000)
+    tri.set_domain_circle(300.0, (500.0, 500.0))
+    assert tri.region_specs == []
+
+
+def test_the_domain_tag_is_refused_from_a_caller(tmp_path):
+    tri = TriangleGrid(model_ws=str(tmp_path / "ws"), angle=32)
+    tri.set_domain_rectangle(1000, 1000)
+    with pytest.raises(ValueError, match=r"set_domain_\*\(max_area"):
+        tri.add_region_polygon(box(100, 100, 200, 200), max_area=50, source="domain")
