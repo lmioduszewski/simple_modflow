@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 410 entries (415 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 411 entries (416 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 411 | `protect_sources` / `protected_labels` still change no mesh: every refinement ring vertex stays fixed, beca... | 2026-10-11 |
 | 410 | `max_optimization_points` is removed from the mesh optimizer and `GridSpec.voronoi`, and the optimizer's de... | 2026-10-11 |
 | 409 | Declaring the domain again on one `TriangleGrid` replaces the previous domain's background sizing region;... | 2026-10-11 |
 | 408 | A global `maximum_area` on `TriangleGrid` is a cap ON TOP of every refinement region's and the domain's own... | 2026-10-11 |
@@ -15394,6 +15395,12 @@ same day, which is the useful part of the result.
       an operand of algebra; `to_disv(attach=True)` as writing the grid before its
       refusals; `LayerSurfaces` labels as not checked for repeats~~ -- fixed, entries
       rewritten (ledgers 404 to 407).
+      ~~`TriangleGrid(maximum_area=)` documented as switching off every refinement
+      region's and the domain's own `max_area`; `max_optimization_points` as "recorded in
+      the report only; it limits nothing"~~ -- the cap now applies on top of them, and the
+      parameter is removed (ledgers 408, 410). The refinement ring vertices
+      `optimize_seeds` documents as always fixed still are: freeing them changes every
+      default optimized mesh, left for the user.
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17997,3 +18004,23 @@ same day, which is the useful part of the result.
       Revert check: restoring the parameter fails
       `test_max_optimization_points_is_gone_everywhere`; restoring the branch fails
       `test_every_status_the_optimizer_can_report_is_one_it_documents`.
+
+411. **`protect_sources` / `protected_labels` still change no mesh: every refinement ring vertex stays fixed, because freeing them moves every default optimized mesh and makes it worse (2026-10-11).**
+      FloPy's `.poly` writer gives every segment a nonzero marker, Triangle passes it to
+      the vertices along it, and `get_fixed_and_free_vertex_ids` fixes every marked
+      vertex -- so the rings of every refinement region, the domain's background sizing
+      region included, are fixed already and protection adds nothing (842 free vertices
+      and the same 2,346 triangles with `protect_sources=("line",)` and `None`).
+      **Scope cut, left for the user:** fixing only the DOMAIN boundary's vertices was
+      measured (`docs/reproducers/mesh_region_rings_fixed.py`) and frees 184 ring vertices
+      on the test domain (47 with the river protected), but the first round is then
+      REJECTED under `"balanced"`, `"fast"` and `"smooth"` alike
+      (`tiny_triangle_increase`, `neighbor_area_ratio_regression`): a Steiner point moved
+      off its segment lands beside it and Triangle splits the segment again. The optimizer
+      falls back to the unoptimized mesh -- `"balanced"` 2,124 triangles at a mean
+      neighbour-area ratio of 1.316 against 1.267 optimized -- for every `build_mesh` and
+      `GridSpec.voronoi` default build with a refinement region or a background
+      `max_area`, and protection still changes nothing (both fall back). Making it mean
+      something needs ring vertices that slide ALONG their segment, a design not settled
+      here. The `optimize_seeds` docstring already states that ring vertices are always
+      fixed.
