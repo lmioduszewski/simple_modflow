@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 423 entries (428 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 424 entries (429 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 425 | A reproducer that runs PEST++ makes `PYTHONPATH` absolute at start, through the one helper... | 2026-10-11 |
 | 423 | A target named `per` or `time`, in any case, is refused when the set is built | 2026-10-11 |
 | 422 | `to_wide()` has one row per stress period, `time` the period as `int`, and a column for every target, an al... | 2026-10-11 |
 | 421 | A PEST build refuses an input named by a RELATIVE path out of the run directory, naming it and the package... | 2026-10-11 |
@@ -18282,3 +18283,21 @@ same day, which is the useful part of the result.
       `_shared.RESERVED_TARGET_NAMES`, asked by all six families.
       Test: `tests/test_pest_handed_targets.py::test_a_target_named_like_a_key_column_is_refused_naming_it`
       (18 cases; fails with the refusal removed).
+
+425. **A reproducer that runs PEST++ makes `PYTHONPATH` absolute at start, through the one helper `tests/conftest.py` uses too (2026-10-11).**
+      Ledger 354 fixed a relative `PYTHONPATH` for pytest only: a reproducer run as
+      `PYTHONPATH=src` handed it on, PEST++ started the forward run in the template, and
+      that child imported the venv's editable install -- the main checkout -- so the
+      reproducer measured the wrong tree (a first run of `lake_default_prefix.py` exited
+      1). `docs/reproducers/_absolute_pythonpath.py` holds the ONE rewrite
+      (`absolute_pythonpath`, `make_pythonpath_absolute`); `tests/conftest.py` loads it by
+      path (it has no dependencies; the reproducers run as plain scripts), and
+      `relative_pythonpath_subprocess.py` uses it in place of its own copy. Every
+      reproducer that runs PEST++ and imports myflopy calls it at module level --
+      `dry_lake_bottom`, `lake_default_prefix`, `obs_route_period_end`,
+      `pest_handed_targets`, `pest_observation_groups`, `pilot_point_prior_bounds`.
+      **Not done:** myflopy's own `run_ies`/`prior` still hand PEST++ the environment as
+      given, so a NOTEBOOK or script started under a relative `PYTHONPATH` meets the same
+      trap (CLAUDE.md states it); making the library rewrite it was out of this scope.
+      Test: `tests/test_reproducers_make_pythonpath_absolute.py` (discovers the scripts
+      by what they run; fails naming one whose call is removed).

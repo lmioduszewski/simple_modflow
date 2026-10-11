@@ -90,6 +90,14 @@ import myflopy as mf
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 from myflopy.modflow.mf6.package_tables import lake_bottoms
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _absolute_pythonpath import make_pythonpath_absolute  # noqa: E402
+
+# PEST++ starts each forward run in the template, where a relative PYTHONPATH would
+# import another myflopy: made absolute here, before anything changes directory
+# (ledger 425).
+make_pythonpath_absolute()
+
 NPER = 6
 GAUGED = [100.45, 100.30, 100.20, 100.10, 100.35, 100.40]
 

@@ -12,9 +12,10 @@ DEFAULT prefixes, tags each measured group by its own name, and runs PESTPP-IES.
 
 It uses only the public API, so it measures whichever tree is on ``PYTHONPATH`` -- the
 "before" column below is this script run against the parent commit's ``src``
-(``git archive <parent> src | tar -x -C <dir>``, then ``PYTHONPATH=<dir>/src``) -- an
-ABSOLUTE path: PESTPP-IES runs the forward run in the template, where a relative one
-resolves to nothing and the venv's editable install is imported instead. Needs
+(``git archive <parent> src | tar -x -C <dir>``, then ``PYTHONPATH=<dir>/src``). A
+relative path is made absolute at start (``_absolute_pythonpath``, ledger 425):
+PESTPP-IES runs the forward run in the template, where a relative one resolved to
+nothing and the venv's editable install was imported instead. Needs
 ``mf6`` and ``pestpp-ies``. It reuses ``pest_observation_groups.py``'s model (imported
 from it): a 6 x 6 irregular Voronoi grid, one confined layer, a four-reach stream and a
 two-cell lake, three 10-day periods; one parameter, ``k``. Heads W2/W1/W10 unlabelled,
@@ -46,7 +47,13 @@ import pandas as pd
 import myflopy as mf
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _absolute_pythonpath import make_pythonpath_absolute  # noqa: E402
 from pest_observation_groups import IES, _built, _calibration, _heads, _toy  # noqa: E402
+
+# PEST++ starts each forward run in the template, where a relative PYTHONPATH would
+# import another myflopy: made absolute here, before anything changes directory
+# (ledger 425).
+make_pythonpath_absolute()
 
 
 def main():

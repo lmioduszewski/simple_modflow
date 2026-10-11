@@ -65,17 +65,23 @@ _SESSION_TEMP_ROOT = "MYFLOPY_PYTEST_TEMP_ROOT"
 # workers inherit it.
 
 
-def _absolute_pythonpath(value: str, start: str) -> str:
-    """``value``, a ``PYTHONPATH``, with every relative entry made absolute against ``start``.
+def _load_absolute_pythonpath():
+    """The ONE rewrite, ``docs/reproducers/_absolute_pythonpath.py``'s (ledger 425).
 
-    An empty entry means ``start`` itself, as Python reads one; an absolute entry is
-    kept as written. The order is kept, so the import search order does not move.
+    Loaded by path: the reproducers run as plain scripts and use it too, and it has
+    no dependencies.
     """
 
-    return os.pathsep.join(
-        entry if os.path.isabs(entry) else os.path.abspath(os.path.join(start, entry))
-        for entry in value.split(os.pathsep)
-    )
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "docs" / "reproducers" / "_absolute_pythonpath.py"
+    spec = importlib.util.spec_from_file_location("_absolute_pythonpath", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.absolute_pythonpath
+
+
+_absolute_pythonpath = _load_absolute_pythonpath()
 
 
 def pytest_configure(config):

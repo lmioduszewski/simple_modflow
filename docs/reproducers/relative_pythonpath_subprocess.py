@@ -22,18 +22,14 @@ child imports the same file. Under an absolute ``PYTHONPATH``, or none, all thre
 from __future__ import annotations
 
 import os
+import pathlib
 import subprocess
 import sys
 import tempfile
 
-
-def _absolute(value: str, start: str) -> str:
-    """The rewrite ``tests/conftest.py`` applies (``_absolute_pythonpath``)."""
-
-    return os.pathsep.join(
-        entry if os.path.isabs(entry) else os.path.abspath(os.path.join(start, entry))
-        for entry in value.split(os.pathsep)
-    )
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+# The rewrite tests/conftest.py applies, from the one module both use (ledger 425).
+from _absolute_pythonpath import absolute_pythonpath  # noqa: E402
 
 
 def _child_imports(cwd: str, pythonpath: str | None) -> str:
@@ -58,7 +54,7 @@ def main() -> None:
     print(f"this process imports         : {myflopy.__file__}")
     with tempfile.TemporaryDirectory() as elsewhere:
         print(f"child in {elsewhere}, inherited: {_child_imports(elsewhere, given)}")
-        rewritten = _absolute(given, start) if given else None
+        rewritten = absolute_pythonpath(given, start) if given else None
         print(f"child there, made absolute   : {_child_imports(elsewhere, rewritten)}"
               f"  (PYTHONPATH {rewritten!r})")
 

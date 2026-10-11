@@ -72,6 +72,14 @@ import pyemu
 import myflopy as mf
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _absolute_pythonpath import make_pythonpath_absolute  # noqa: E402
+
+# PEST++ starts each forward run in the template, where a relative PYTHONPATH would
+# import another myflopy: made absolute here, before anything changes directory
+# (ledger 425).
+make_pythonpath_absolute()
+
 NPER, NSTP, PERLEN = 3, 3, 10.0
 REACHES = [13, 14, 15, 16]
 DRN_CELLS = [20, 21, 27]

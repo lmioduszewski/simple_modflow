@@ -75,6 +75,7 @@ from __future__ import annotations
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import warnings
 
@@ -86,6 +87,14 @@ from flopy.utils import CellBudgetFile
 import myflopy as mf
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 from myflopy.modflow.mf6.period_end import END_RTOL, period_lengths
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _absolute_pythonpath import make_pythonpath_absolute  # noqa: E402
+
+# PEST++ starts each forward run in the template, where a relative PYTHONPATH would
+# import another myflopy: made absolute here, before anything changes directory
+# (ledger 425).
+make_pythonpath_absolute()
 
 NPER, NSTP, PERLEN = 3, 3, 10.0
 REACHES = [13, 14, 15, 16]

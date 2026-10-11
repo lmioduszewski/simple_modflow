@@ -673,9 +673,12 @@ validation — that bug was found twice, in `read_gpkg` and `contour_line_segmen
   main checkout's signature). `tests/conftest.py`'s `pytest_configure` now rewrites every
   relative entry against the directory pytest was started in, before any xdist worker or
   test starts a process, and `tests/test_subprocess_imports_the_code_under_test.py` fails
-  naming both files if a child imports another myflopy. A script you run BY HAND outside
-  pytest (a reproducer, a notebook kernel started elsewhere) still resolves its own
-  relative `PYTHONPATH` against its own start directory.
+  naming both files if a child imports another myflopy. A reproducer that runs PEST++
+  makes it absolute itself, through the same function (`docs/reproducers/
+  _absolute_pythonpath.py`, which conftest loads; ledger 425) -- a new one calls
+  `make_pythonpath_absolute()` at module level or `tests/test_reproducers_make_pythonpath_absolute.py`
+  fails naming it. Any other script you run BY HAND, or a notebook kernel started
+  elsewhere, still resolves its own relative `PYTHONPATH` against its own start directory.
 - **A session writes its temp files in its OWN root, and a leak fails by name** (ledger
   335): `tests/conftest.py` points TMPDIR at `/tmp/myflopy-pytest-*` (one subdirectory
   per xdist worker) and removes it at the end, even after a failure. A test that leaves
