@@ -35,9 +35,11 @@ viz.mosaic([...panels...], ncols=2)                 # free-form composer (any mi
   (`"none"` drops the per-layer value line altogether; any other spelling raises
   at the call, naming the four), `hover_surfaces=True`, `hover_fields=["stage"]`,
   or a full `hover=HoverSpec(...)`. LAK/SFR exchange maps automatically include
-  the feature's stage. A footer's cell area is written in the model's own length
-  unit squared (`ft²`, `m²`, `cm²`, read from its DIS), and with no unit when the
-  model declares none.
+  the feature's stage. A head, and a footer's cell area, are written in the model's
+  own length unit (`ft`/`ft²`, `m`/`m²`, `cm`/`cm²`, read from its DIS), and with no
+  unit when the model declares none. On the `model.hds`/`.conc`/`.temp` nouns, as on
+  `model.plot.map`, `hover_layers` and `hover_surfaces=True` apply on top of a
+  `hover=` spec.
 - **Colorscales follow one policy:** diverging red/white/blue only for signed
   gaining/losing "q"-like fields (gaining = blue) and for diff maps
   (negative = red, positive = blue); everything else uses the house

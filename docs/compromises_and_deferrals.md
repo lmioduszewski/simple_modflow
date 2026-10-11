@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 401 entries (406 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 403 entries (408 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 403 | A map's head hover writes each head in the model's own length unit, and with no unit when the model declare... | 2026-10-11 |
+| 402 | A head/conc/temp noun applies `hover_layers` and `hover_surfaces=True` on top of a caller's `hover=`, as... | 2026-10-11 |
 | 401 | A hover footer writes a cell's area in the model's own length unit squared, and with no unit when the model... | 2026-10-11 |
 | 400 | `hover_layers="none"` is no layer readout, and a spelling outside the four is refused at the call, at every... | 2026-10-11 |
 | 399 | A model one row or one column wide splits: grid neighbours are computed only for a lake or mover group to k... | 2026-10-11 |
@@ -17823,7 +17825,8 @@ same day, which is the useful part of the result.
      One check, `hover.check_hover_layers` (`HOVER_LAYERS`), run by `HoverSpec.__post_init__`,
      by `Choro.__init__` (so a map whose hover never reads it -- `type="ks"`, the legacy
      `custom_hover` -- still refuses a typo) and by the head/conc/temp nouns, also beside
-     `hover=`, which then ignores it. The noun's default moved from `"active+strip"` to
+     `hover=`, on which the noun now applies it as the free verb does (ledger 402).
+     The noun's default moved from `"active+strip"` to
      `None` (resolving to `"active+strip"`), so the spliced `plot.map` entry is true there.
      Revert check: `test_hover_layers_none_shows_no_layer_readout_at_every_scope[*]` and
      `test_a_hover_layers_typo_is_refused_at_the_call_at_every_scope[*]` (real maps of the
@@ -17838,8 +17841,34 @@ same day, which is the useful part of the result.
      this changes the default footer of every such model. Not consulted: the grid's CRS
      axis unit, which can disagree with LENGTH_UNITS; the area is in grid units either way.
      Found and NOT fixed: `lak_hover`/`sfr_hover` still hardcode `ft`, `ft²`, `ft³/d`,
-     `ft²/d` on their FIELDS (stage, flow area, q), so a LAK map of a model in metres
-     writes `m²` in its footer beside `ft²` on its flow area.
+     `ft²/d` on their FIELDS (stage, flow area, q), and `project/group/sfr.py` `ft²/d`, so
+     a LAK map of a model in metres writes `m²` in its footer beside `ft²` on its flow
+     area. (The HEAD's `ft` was the same defect; ledger 403 reads it.)
      Revert check: `test_the_footer_writes_the_cell_area_in_square_metres_on_a_model_in_metres`
      (a real MF6 run declared in METERS) and
      `test_a_model_declaring_no_length_unit_writes_the_area_with_none`.
+
+402. **A head/conc/temp noun applies `hover_layers` and `hover_surfaces=True` on top of a caller's `hover=`, as `model.plot.map` does (2026-10-11).**
+     Beside `hover=` the noun checked `hover_layers` and then dropped it, and dropped
+     `hover_surfaces`, while the free verb and the bound namespace apply both to the
+     given spec -- so `model.hds.map(hover=spec, hover_layers="none")` drew the layer
+     readout that `model.plot.map(hover=spec, hover_layers="none")` does not. The noun now
+     forwards them. Judgment call: the noun's `hover_surfaces` is a `bool` defaulting to
+     `False`, so only `True` can be told from "not given"; `False` beside a spec with
+     `surfaces=True` keeps the spec's, where the free verb (default `None`) would turn it
+     off. Making it `None` was not done: it moves a pinned noun default for a corner no
+     one has reported. Revert check:
+     `test_a_noun_applies_hover_layers_and_surfaces_on_top_of_its_hover_as_the_free_verb_does`.
+
+403. **A map's head hover writes each head in the model's own length unit, and with no unit when the model declares none (2026-10-11).**
+     `head_hover` wrote `ft` after every head -- the default hover of every head map, on a
+     model in metres too, now beside a footer reading `m²` (ledger 401). It takes
+     `unit=`, and the free/bound map (`grid.plotting._default_hover_spec`) and the noun
+     (`HeadsPlus._default_hover`) pass `hydraulics.unit_labels(model)[0]`, the reader the
+     footer and the transmissivity hover use. Same judgment call as 401: a model whose
+     DIS declares no `LENGTH_UNITS` writes the head with NO unit, which changes the default
+     hover of every such model (the sentinel run among them). `head_hover()` called by hand
+     keeps `"ft"` as its default, as `conc_hover` keeps `"mg/L"`. Not done: the
+     concentration/temperature units, which no MF6 input declares. Revert check:
+     `test_the_head_is_written_in_the_models_length_unit` (a real run in METERS, the
+     canonical run in feet, the sentinel run in none).

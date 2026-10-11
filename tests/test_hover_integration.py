@@ -500,3 +500,48 @@ def test_a_model_declaring_no_length_unit_writes_the_area_with_none(sentinel_run
     trace = sentinel_run.hds.map(hover=HoverSpec(primary="head", footer=("area",))).get_choropleth()
     footer = trace.hovertemplate.rsplit("<br>", 1)[-1]
     assert footer.count("cell %{customdata[") == 1 and "²" not in footer
+
+
+@pytest.mark.slow
+def test_a_noun_applies_hover_layers_and_surfaces_on_top_of_its_hover_as_the_free_verb_does(
+    canonical_run,
+):
+    """Beside ``hover=``, the noun dropped ``hover_layers``/``hover_surfaces``
+    while ``model.plot.map`` applied them, so ``hover_layers="none"`` still drew
+    the layer readout at one scope (ledger 402)."""
+
+    from myflopy.modflow.utils.datatypes.hover import head_hover
+
+    spec = head_hover(layers="active", unit="ft")
+    for options in ({"hover_layers": "none"}, {"hover_layers": "all"}, {"hover_surfaces": True}):
+        noun = canonical_run.hds.map(layer=1, hover=spec, **options).get_choropleth()
+        free = canonical_run.plot.map(layer=1, hover=spec, **options).get_choropleth()
+        assert noun.hovertemplate == free.hovertemplate, options
+        assert [list(row) for row in noun.customdata] == [list(row) for row in free.customdata]
+    none = canonical_run.hds.map(layer=1, hover=spec, hover_layers="none").get_choropleth()
+    assert "Layer " not in none.hovertemplate
+    surfaces = canonical_run.hds.map(layer=1, hover=spec, hover_surfaces=True).get_choropleth()
+    assert "bot" in surfaces.hovertemplate
+
+
+def _head_cell(trace):
+    """Cell 0's head as the hover writes it (the value after ``Layer N``)."""
+
+    column = int(trace.hovertemplate.split("Layer ")[1].split("customdata[")[1].split("]")[0])
+    return str(trace.customdata[0][column])
+
+
+@pytest.mark.slow
+def test_the_head_is_written_in_the_models_length_unit(metres_run, sentinel_run, canonical_run):
+    """``head_hover`` wrote ``ft`` after every head, on a model in metres too
+    (ledger 403); a model declaring no unit writes the number alone."""
+
+    from myflopy import plot
+
+    for run, unit in ((metres_run, "m"), (canonical_run, "ft"), (sentinel_run, None)):
+        for picture in (run.hds.map(), run.plot.map(), plot.map(run)):
+            value = _head_cell(picture.get_choropleth())
+            if unit is None:
+                assert "\N{NO-BREAK SPACE}" not in value and float(value), value
+            else:
+                assert value.endswith(f"\N{NO-BREAK SPACE}{unit}"), value

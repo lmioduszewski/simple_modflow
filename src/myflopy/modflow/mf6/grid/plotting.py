@@ -42,8 +42,9 @@ _HOVER_FOR_TYPE = {"hds": head_hover, "conc": conc_hover, "temp": temp_hover}
 def _default_hover_spec(map_type: str, model=None):
     """The default :class:`HoverSpec` for a map of ``map_type``, or None.
 
-    The three dependent variables and the two transmissivities get one -- the
-    latter labelled in the model's own units, read from ``model``.
+    The three dependent variables and the two transmissivities get one -- heads
+    and the transmissivities labelled in the model's own units, read from
+    ``model``.
     ``type="custom"`` is the package/group path, which supplies its own
     ``custom_hover``; ``"rch"``/``"ks"`` read fields whose hover is assembled
     inline. Returning None for those leaves their existing behaviour exactly as
@@ -51,9 +52,13 @@ def _default_hover_spec(map_type: str, model=None):
     """
 
     key = str(map_type).lower()
+    length, time = unit_labels(model) if model is not None else (None, None)
     if key in ("trans", "trans_max"):
-        length, time = unit_labels(model) if model is not None else (None, None)
         return trans_hover(saturated=key == "trans", length=length, time=time)
+    if key == "hds":
+        # A head is a length: written in the model's own unit, never assumed
+        # (ledger 403).
+        return head_hover(unit=length)
     builder = _HOVER_FOR_TYPE.get(key)
     return builder() if builder is not None else None
 

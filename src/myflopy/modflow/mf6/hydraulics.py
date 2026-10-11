@@ -207,9 +207,10 @@ _TIME_ABBREVIATIONS = {
 def unit_labels(model) -> tuple[str | None, str | None]:
     """``(length, time)`` abbreviations from the model's DIS and TDIS, or None each.
 
-    Read, never assumed: the house hover hardcoded ``"ft"`` for heads, and a
-    transmissivity label is a product of TWO units, so a wrong guess would be
-    wrong twice.
+    Read, never assumed: the house head hover hardcoded ``"ft"`` (until ledger
+    403), and a transmissivity label is a product of TWO units, so a wrong
+    guess would be wrong twice. The map hovers read it for the head, the
+    transmissivity and the footer's cell area (ledger 401).
     """
 
     gwf = getattr(model, "gwf", None)

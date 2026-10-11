@@ -883,8 +883,25 @@ class _HoverAssembler:
 
 # --- default specs per plot kind -------------------------------------------------
 
-def head_hover(*, layers: str = "active+strip", surfaces: bool = False) -> HoverSpec:
-    """Default heads hover: active layer primary, optional strip/table/surfaces."""
+def head_hover(
+    *, layers: str = "active+strip", surfaces: bool = False, unit: str | None = "ft"
+) -> HoverSpec:
+    """Default heads hover: active layer primary, optional strip/table/surfaces.
+
+    Parameters
+    ----------
+    layers : {'active', 'active+strip', 'all', 'none'}, optional
+        How the head reads across the layers (:attr:`HoverSpec.layers`). Default
+        ``"active+strip"``. Any other value raises ``ValueError``.
+    surfaces : bool, optional
+        Add the model top and layer bottoms (:attr:`HoverSpec.surfaces`). Default
+        ``False``.
+    unit : str or None, optional
+        The unit written after each head -- the model's length unit. Default
+        ``"ft"``; ``None`` writes the number alone. Every map passes the unit its
+        model's DIS declares (``None`` when it declares none) rather than this
+        default, which wrote ``ft`` on a model in metres (ledger 403).
+    """
 
     return HoverSpec(
         primary="head",
@@ -892,7 +909,7 @@ def head_hover(*, layers: str = "active+strip", surfaces: bool = False) -> Hover
         layers=layers,
         surfaces=surfaces,
         footer=("period", "date"),
-        units={"head": "ft"},
+        units={"head": unit} if unit else {},
         labels={"head": "Head"},
     )
 

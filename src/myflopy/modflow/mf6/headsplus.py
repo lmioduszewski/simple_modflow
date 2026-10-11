@@ -34,6 +34,7 @@ from myflopy.modflow.mf6.heads_observations import (
 from myflopy.modflow.mf6.heads_observations import (
     sort_dict_by_keys as _sort_dict_by_keys,
 )
+from myflopy.modflow.mf6.hydraulics import unit_labels
 from myflopy.modflow.mf6.package_plotting import (
     SpatialView,
     _apply_backend,
@@ -636,9 +637,10 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         ``hover`` accepts a :class:`~myflopy.modflow.utils.datatypes.hover.HoverSpec`
         for full control of the sectioned, styled hover; otherwise this field's
         default spec is used. ``hover_layers`` (``"active"`` | ``"active+strip"`` |
-        ``"all"`` | ``"none"``; anything else raises, even beside ``hover=``) sets
-        how the vertical profile shows, and ``hover_surfaces=True``
-        adds the model-top/layer-bottom column (merged on ``"all"``).
+        ``"all"`` | ``"none"``; anything else raises) sets how the vertical
+        profile shows, and ``hover_surfaces=True`` adds the model-top/layer-bottom
+        column (merged on ``"all"``) -- on a ``hover=`` spec too, as at
+        ``model.plot.map``.
 
         Parameters
         ----------
@@ -825,8 +827,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         if self.model is None:
             raise ValueError(f"{type(self).__name__}.map() requires a parent model.")
         refuse_noun_parameters(f"model.{self._choro_type}", self._choro_type, trace_kwargs)
-        # Checked even beside `hover=`, which then ignores it: a typo must not
-        # pass in silence on one spelling and raise on the other (ledger 400).
+        # Checked at the call, beside `hover=` too (ledger 400).
         layers = (
             "active+strip" if hover_layers is None
             else check_hover_layers(hover_layers, name="hover_layers")
@@ -865,6 +866,12 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             show_layer_elevs=show_layer_elevs,
             show_mounding=show_mounding,
             hover_spec=hover,
+            # Applied on top of a caller's `hover=` as the free verb applies them:
+            # the noun dropped both beside one, so `hover_layers="none"` drew the
+            # layer readout here and not at `model.plot.map` (ledger 402).
+            # `hover_surfaces` is a bool here, so only True can be told from unset.
+            hover_layers=hover_layers,
+            hover_surfaces=True if hover_surfaces else None,
             **trace_kwargs,
         )
         return _apply_backend(choro, backend)
@@ -952,9 +959,11 @@ class HeadsPlus(DependentVariableFile):
         self.obs_path = obs_path
 
     def _default_hover(self, *, layers: str, surfaces: bool):
-        """The default heads hover spec."""
+        """The default heads hover spec, in the model's own length unit."""
 
-        return head_hover(layers=layers, surfaces=surfaces)
+        return head_hover(
+            layers=layers, surfaces=surfaces, unit=unit_labels(self.model)[0]
+        )
 
     @property
     def all_heads(self):
