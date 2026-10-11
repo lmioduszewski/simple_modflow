@@ -1774,7 +1774,11 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `<model workspace>.pest/<name>` — a SIBLING of the model dir, ledger 107), not by
   importing `PestProject` directly.
 - **A build only READS the run and never touches the model object** (ledger 356, the
-  user's call). `build()` copies the run directory to `<template>.staging`, loads the
+  user's call). `build()` copies the run's INPUT files to `<template>.staging` -- what
+  `mfsim.nam` leads MF6 to read (`project._simulation_input_files`: name-file entries,
+  `FILEIN` scanned in turn, `OPEN/CLOSE`), never its outputs, run metadata or an old
+  PEST folder, which every template and IES worker carried (92 of the canonical full
+  template's 107 MB; ledger 383) -- loads the
   simulation from THAT (`MFSimulation.load` + `keep_implicit` -- FloPy's loader drops LAK
   `IMPLICIT`, ledger 326), relayers (ledger 110) and externalizes it there, hands it to
   `PstFrom`, and removes it, failure included. It used to do all of that to the CALLER's

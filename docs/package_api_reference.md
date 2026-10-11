@@ -758,8 +758,9 @@ start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(.
 `model.pest_runs` or `run.pest_runs`. **`model.pest(...)` is the front door** — it
 fills `start_datetime` from TDIS and puts the run where `pest_runs` will find it.
 `mf.PestProject(...)` can be constructed directly, but that is the advanced path.
-**`cal.build()` only READS the run** (ledger 356): it stages a copy of the run directory
-beside the template (`<template>.staging`, removed when the build ends), loads the
+**`cal.build()` only READS the run** (ledger 356): it stages a copy of the run's INPUT
+files -- what `mfsim.nam` leads MF6 to read, none of its outputs, run metadata or old
+PEST folders (ledger 383) -- beside the template (`<template>.staging`, removed when the build ends), loads the
 simulation from it -- keeping LAK `IMPLICIT` -- and re-stores arrays per layer and in
 external files there, never in the run or on the model object. The template is the
 run's FILES (the inputs its output, which the observations read, came from), so a model

@@ -307,7 +307,9 @@ pst = cal.build("calib.pst", noptmax=0)   # noptmax=0 = "run once, compute resid
 `noptmax=0` is the universal first check: run the model once through PEST and make
 sure the plumbing works before launching anything long.
 
-**The build only reads your run** (ledger 356). It copies the run directory to a
+**The build only reads your run** (ledger 356). It copies the simulation's INPUT
+files -- what `mfsim.nam` leads MODFLOW 6 to read, and nothing else of the run
+directory: no outputs, no run metadata, no old PEST folder (ledger 383) -- to a
 staging directory beside the template, loads the simulation from that copy, stores
 every array and list there in external files (the form pyEMU's multipliers act on)
 and hands that to PEST; the run's files and the model object you called

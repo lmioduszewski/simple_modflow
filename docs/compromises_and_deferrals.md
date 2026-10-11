@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 382 entries (387 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 383 entries (388 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 383 | A PEST template holds the simulation's input files and nothing else of the run: the staging copy is what... | 2026-10-11 |
 | 382 | A negative cell or layer is refused, by the areal builders at the call and by the build on any discretization | 2026-10-11 |
 | 381 | An MVR `packages=` list of bare names is refused, naming the record spelling | 2026-10-11 |
 | 380 | A lazy UZF or array-form RCH/EVT builds on a context holding a grid and no domain, every cell active as in MF6 | 2026-10-11 |
@@ -16633,9 +16634,10 @@ same day, which is the useful part of the result.
       arrays moved out into 22 new files, `m.disv` 502 lines to 30 -- and 18 storage
       entries of the model object changed. PEST's iterations never needed it: they run
       in the template and its worker copies.
-      **What ships.** `PestProject._stage_model` copies the run directory to
-      `<template>.staging` (skipping the template and itself, for a `workspace=` inside
-      the run), loads it with `MFSimulation.load` + `keep_implicit` (FloPy's loader drops
+      **What ships.** `PestProject._stage_model` copies ~~the run directory~~ the run's
+      INPUT files (ledger 383; the whole directory until then) to
+      `<template>.staging` ~~(skipping the template and itself, for a `workspace=` inside
+      the run)~~, loads it with `MFSimulation.load` + `keep_implicit` (FloPy's loader drops
       `IMPLICIT`, ledger 326 -- the route `Run.open` and `mf.load_mf6_run` take), relayers
       and externalizes it there and writes it back; `PstFrom` copies THAT, and the staging
       directory is removed in a `finally`, a failed build included. Everything the build
@@ -17467,3 +17469,35 @@ same day, which is the useful part of the result.
       Revert check: the old code fails the nine `test_rch_builder_refuses_a_negative_cell_or_layer`
       cases, the three `test_a_negative_cellid_is_refused*` cases and
       `test_a_negative_node_is_refused_on_a_disu_model`.
+
+383. **A PEST template holds the simulation's input files and nothing else of the run: the staging copy is what `mfsim.nam` leads MF6 to read (2026-10-11).**
+      The staging copy (ledgers 356-357) copied the WHOLE run directory, and `PstFrom` --
+      and pyEMU's `start_workers`, into every IES worker -- copied that on: MF6's heads,
+      budgets, listings and OBS CSVs, myflopy's `run.json` and pickled model, and any PEST
+      workspace in the run (`<run>/pest/`, the pre-ledger-107 layout). Measured on the
+      canonical full run (100x100x4): a template of 106.82 MB, 92.04 MB of it outputs,
+      now 13.77 MB; the testing profile 4.18 -> 0.73 MB
+      (`docs/reproducers/pest_template_holds_inputs_only.py`). Every input and build file
+      is byte-identical to before but for FloPy's date stamp. On the user's Ten Trails
+      runs the rule reads 35.3 MB of inputs (16 files) out of a 3,211.8 MB `baseline` run
+      directory, and 13.5 MB (18, its ATS file and LAK table among them) out of
+      `hm_mounding_new_lak`'s 366.4 MB; FloPy loads that copy with no warning.
+      **The OUTPUT files the template needs are NONE**: the build reads every base
+      observation from the RUN directory (`sim_ws=model.workspace`,
+      `targets.simulated_series(model)`), and each realization's MF6 writes its own. A real
+      PESTPP-IES prior run (NOPTMAX=-1) of a template with no output in it reads, in its
+      base realization, exactly the base observations the build read from the run, heads,
+      SFR flow, DRN flow and lake stage alike
+      (`tests/test_pest_template_holds_inputs_only.py`).
+      **Judgment call: an ALLOW-list, followed from `mfsim.nam`** (`_simulation_input_files`:
+      each name-file block's entry, `FILEIN` scanned in turn, `OPEN/CLOSE` copied unread;
+      never `options`' `LIST` or a `FILEOUT`), not a deny-list of outputs and metadata --
+      a deny-list cannot name a file it does not know (a note, a backup, a renamed listing).
+      A file the scan missed fails LOUDLY: FloPy's load of the staging copy names it. No
+      directory is copied, so no PEST workspace can be.
+      **Not copied, as before:** a name that is absolute (read in place by every worker) or
+      outside the run directory (`../flow/flow.hds`) -- the latter then resolves against
+      the template's parent, which the build does not refuse (found, not fixed).
+      Revert check: copying the whole directory again fails
+      `test_the_template_holds_no_output_metadata_or_pest_workspace_of_the_run`.
+

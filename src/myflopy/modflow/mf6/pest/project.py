@@ -122,6 +122,112 @@ def _pest_run_slug(name: str) -> str:
     return slug or "pest_run"
 
 
+#: Name-file blocks whose entries name an INPUT file in their second field: the
+#: simulation name file's ``timing``/``models``/``exchanges``/``solutiongroup`` and a
+#: model name file's ``packages``. Never ``options``, whose ``LIST`` names an OUTPUT.
+_NAME_FILE_BLOCKS = frozenset({"timing", "models", "exchanges", "solutiongroup", "packages"})
+
+#: The file type opening a name-file entry -- ``TDIS6``, ``gwf6``, ``GWF6-GWT6``,
+#: ``ims6``, ``DISV6``, ``OBS6`` ... -- which a solution group's ``MXITER 2`` is not.
+_MF6_FILE_TYPE = re.compile(r"(?i)^[a-z]+6(-[a-z]+6)?$")
+
+#: One field of an MF6 input line: a quoted name (spaces allowed) or a bare word.
+_MF6_FIELD = re.compile(r"'[^']*'|\"[^\"]*\"|\S+")
+
+#: A file an MF6 input names to READ: ``FILEIN <name>`` (TS6, OBS6, TAS6, TAB6, ATS6,
+#: SPC6, HPC6, FMI's flows ...) or an external array or list, ``OPEN/CLOSE <name>``.
+#: Never ``FILEOUT``, which names an output.
+_MF6_INPUT_REFERENCE = re.compile(
+    r"(?i)(?<![\w/])(FILEIN|OPEN/CLOSE)\s+('[^']*'|\"[^\"]*\"|\S+)"
+)
+
+
+def _mf6_field(token: str) -> str:
+    """One MF6 field with its quotes removed."""
+
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
+        return token[1:-1]
+    return token
+
+
+def _mf6_text(path: Path) -> str | None:
+    """``path`` as text with MF6's comments removed, or ``None`` for a binary file."""
+
+    data = path.read_bytes()
+    if b"\0" in data[:8192]:
+        return None
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    return "\n".join(re.split(r"[#!]", line, maxsplit=1)[0] for line in lines)
+
+
+def _simulation_input_files(sim_ws: str | Path) -> list[Path]:
+    """Every file MODFLOW 6 READS when it runs the simulation in ``sim_ws``, relative to it.
+
+    Followed from ``mfsim.nam`` the way MF6 opens them: each name-file entry (TDIS,
+    each model's name file and its packages, exchanges, solutions), each ``FILEIN``
+    a scanned file names (TS6, OBS6, TAS6, TAB6, ATS6, SPC6, HPC6, FMI's flow files
+    ...) and each ``OPEN/CLOSE`` external array or list -- names MF6 resolves against
+    the directory it runs in. A ``FILEIN`` file is scanned in turn; an ``OPEN/CLOSE``
+    file holds data and is not. Outputs -- the listing files, every ``FILEOUT``, and
+    any file nothing names -- are not inputs, and neither is a name that is absolute
+    (read in place from anywhere), outside ``sim_ws``, or not a file there.
+
+    This is what a PEST build's staging copy holds (ledger 383): the template
+    needs the simulation's inputs and nothing else of the run.
+
+    Parameters
+    ----------
+    sim_ws : str or pathlib.Path
+        The simulation directory, holding ``mfsim.nam``.
+
+    Returns
+    -------
+    list of pathlib.Path
+        The input files, relative to ``sim_ws``, ``mfsim.nam`` first, each once.
+    """
+
+    root = Path(sim_ws)
+    found: dict[Path, None] = {}
+    # (relative name, how the file is read): "simulation" / "model" name files
+    # are read for their blocks, "input" files scanned for FILEIN/OPEN/CLOSE,
+    # "data" files (OPEN/CLOSE) copied unread.
+    pending: list[tuple[str, str]] = [("mfsim.nam", "simulation")]
+    while pending:
+        name, kind = pending.pop(0)
+        relative = Path(os.path.normpath(name))
+        if relative.is_absolute() or relative.parts[:1] == ("..",) or relative in found:
+            continue
+        path = root / relative
+        if not path.is_file():
+            continue
+        found[relative] = None
+        if kind == "data":
+            continue
+        text = _mf6_text(path)
+        if text is None:
+            continue
+        if kind in ("simulation", "model"):
+            block = None
+            for line in text.splitlines():
+                fields = [_mf6_field(token) for token in _MF6_FIELD.findall(line)]
+                if not fields:
+                    continue
+                word = fields[0].lower()
+                if word == "begin":
+                    block = fields[1].lower() if len(fields) > 1 else None
+                elif word == "end":
+                    block = None
+                elif (
+                    block in _NAME_FILE_BLOCKS
+                    and len(fields) > 1
+                    and _MF6_FILE_TYPE.match(fields[0])
+                ):
+                    pending.append((fields[1], "model" if block == "models" else "input"))
+        for keyword, token in _MF6_INPUT_REFERENCE.findall(text):
+            pending.append((_mf6_field(token), "input" if keyword.upper() == "FILEIN" else "data"))
+    return list(found)
+
+
 def build_forward_run_command(template_workspace: Path, interpreter: str) -> str:
     """Return the PEST++ model command that runs ``forward_run.py``.
 
@@ -278,8 +384,10 @@ class PestProject:
         ``.workspace`` and, for ``pp_space=`` pilot points, any ``zones=`` and
         head or concentration targets given by cell id, ``.vor``. Its workspace
         -- the RUN directory, which must hold the simulation's files
-        (``mfsim.nam``) -- is READ, never written: :meth:`build` copies it to a
-        staging directory beside the template, loads the simulation from that
+        (``mfsim.nam``) -- is READ, never written: :meth:`build` copies the
+        simulation's input files from it -- what ``mfsim.nam`` leads MF6 to read,
+        none of its outputs, run metadata or old PEST folders (ledger 383) --
+        to a staging directory beside the template, loads the simulation from that
         copy and stores every array and list there in external files
         (``set_all_data_external``), so the run's files and this object are
         left exactly as they were (ledger 356). The template is made from the
@@ -1081,7 +1189,7 @@ class PestProject:
         return template.with_name(f"{template.name}{STAGING_SUFFIX}")
 
     def _stage_model(self) -> Path:
-        """Copy the run directory to a staging directory and make PEST's model of it there.
+        """Copy the run's INPUT files to a staging directory and make PEST's model of them there.
 
         Everything the build changes is changed in the COPY (ledger 356): the
         simulation is loaded from it, each declared array target is re-stored one
@@ -1091,10 +1199,17 @@ class PestProject:
         and ``self.model`` is never touched -- before, all of this was done to the
         caller's model object and written into the run directory.
 
-        The copy is the run's FILES, which is what its output files -- the base
-        observations PEST reads -- were computed from. FloPy's loader drops LAK
-        ``IMPLICIT`` without a word (ledger 326), so the loaded simulation goes
-        through ``keep_implicit``, as myflopy's own loaders do.
+        The copy is the simulation's own input files and nothing else of the run
+        (``_simulation_input_files``, ledger 383): no output -- the build reads
+        every base observation from the RUN directory's output files, and each
+        realization's model writes its own -- no myflopy run metadata (``run.json``,
+        ``.myflopy/``, a pickled model), and no PEST workspace a run directory holds.
+        It copied the whole directory until then, so all of those went into every
+        template and every IES worker. The inputs are the run's FILES, which is what
+        its output files -- the base observations PEST reads -- were computed from.
+        FloPy's loader drops LAK ``IMPLICIT`` without a word (ledger 326), so the
+        loaded simulation goes through ``keep_implicit``, as myflopy's own loaders
+        do.
 
         Returns
         -------
@@ -1124,27 +1239,13 @@ class PestProject:
         # build that dies copying leaves a directory the next build may clear.
         staging.mkdir(parents=True)
         _write_build_marker(staging, "staging")
-        own = {staging.resolve(), self.template_workspace.resolve()}
-        own_names = {path.name for path in own}
-
-        def _skip_own(directory, names):
-            """Never copy the template, the staging directory or a build's marker.
-
-            Both directories sit outside the run directory -- the build refuses one
-            that does not (ledger 360) -- but a symbolic link inside the run can still
-            lead the copy to them. A marker the run holds (a run made in a copy of a
-            template) would overwrite the staging directory's own.
-            """
-
-            return [
-                name for name in names
-                if name == BUILD_MARKER
-                or (name in own_names and (Path(directory) / name).resolve() in own)
-            ]
-
-        # Not `symlinks=True` (PstFrom's own copy): FloPy writes the staged inputs
-        # back, and through a link that would write into whatever it points at.
-        shutil.copytree(source, staging, ignore=_skip_own, dirs_exist_ok=True)
+        inputs = _simulation_input_files(source)
+        for relative in inputs:
+            destination = staging / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            # The file's content, never a link: FloPy writes the staged inputs back,
+            # and through a link that would write into whatever it points at.
+            shutil.copyfile(source / relative, destination)
         copied = time.perf_counter()
         simulation = flopy.mf6.MFSimulation.load(sim_ws=str(staging), verbosity_level=0)
         keep_implicit(simulation)
@@ -1157,8 +1258,9 @@ class PestProject:
         simulation.set_all_data_external()
         simulation.write_simulation(silent=True)
         logger.info(
-            "Staged %s for PEST in %s: copied in %.2f s, loaded and externalized in %.2f s",
-            source, staging, copied - started, time.perf_counter() - copied,
+            "Staged %s for PEST in %s: %d input files copied in %.2f s, loaded and "
+            "externalized in %.2f s",
+            source, staging, len(inputs), copied - started, time.perf_counter() - copied,
         )
         return staging
 
@@ -1552,8 +1654,9 @@ class PestProject:
         In order it: deletes the template and staging directories a previous
         build wrote (and refuses, deleting nothing, when either is a folder no
         build wrote -- see ``workspace=`` on :class:`PestProject`, ledger 360);
-        copies the run directory to a staging directory beside the
-        template, loads the simulation from that copy and writes it back with
+        copies the simulation's input files -- what ``mfsim.nam`` leads MF6 to
+        read, and nothing else of the run directory (ledger 383) -- to a
+        staging directory beside the template, loads the simulation from that copy and writes it back with
         every array and list in an external file (``set_all_data_external``);
         creates a ``pyemu.utils.PstFrom`` over the staged copy; registers every
         :meth:`parameterize` call natively (``pf.add_parameters``) and every

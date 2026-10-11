@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import warnings
 from pathlib import Path
@@ -340,19 +341,26 @@ def test_the_file_system_root_is_refused_naming_the_spelling(tmp_path):
 
 def test_a_template_pstfrom_refused_after_copying_it_is_rebuilt_next_time(tmp_path):
     """``PstFrom`` copies the staging directory into the template and only then
-    refuses a run holding ``org/`` (one made in a copy of a template). The template it
-    left carried the STAGING copy's marker, so the next build refused it as a folder no
+    refuses one holding ``org/`` -- a run whose inputs live in a folder of that name
+    (the staging copy holds only the inputs, ledger 383). The template it left
+    carried the STAGING copy's marker, so the next build refused it as a folder no
     build wrote. It is marked as the template when ``PstFrom`` fails (ledger 361)."""
 
     model = _model(tmp_path)
     run = Path(model.workspace)
     workspace = tmp_path / "calib"
+    npf = run / "m.npf"
+    written = npf.read_text(encoding="utf-8")
+    k_from_org, replaced = re.subn(r"(\n  k\n\s*)CONSTANT\s+\S+", r"\1OPEN/CLOSE org/k.txt", written)
+    assert replaced == 1, written
     (run / "org").mkdir()
-    (run / "org" / "left.txt").write_text("from a template\n", encoding="utf-8")
+    (run / "org" / "k.txt").write_text("10.0\n" * 16, encoding="utf-8")
+    npf.write_text(k_from_org, encoding="utf-8")
     with pytest.raises(Exception, match="'org' subdir already exists"):
         _build(_calibration(model, workspace))
     assert workspace.is_dir() and not (tmp_path / "calib.staging").exists()
 
+    npf.write_text(written, encoding="utf-8")
     shutil.rmtree(run / "org")
     cal = _calibration(model, workspace)
     _build(cal)

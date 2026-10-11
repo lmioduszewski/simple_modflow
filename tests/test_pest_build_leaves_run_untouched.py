@@ -11,9 +11,10 @@ already written 21 files into the run directory; on a run with inline arrays ope
 with ``mf.load_mf6_run`` (loaded lazily) its array targets were refused; and pyEMU's
 ``PstFrom.log`` landed in the working directory.
 
-It now copies the run directory to a staging directory beside the template, loads the
-simulation from that copy -- keeping LAK ``IMPLICIT``, which FloPy's loader drops
-(ledger 326) -- relayers and externalizes THAT, and hands it to ``PstFrom``.
+It now copies the run's input files (the whole directory until ledger 383) to a
+staging directory beside the template, loads the simulation from that copy -- keeping
+LAK ``IMPLICIT``, which FloPy's loader drops (ledger 326) -- relayers and externalizes
+THAT, and hands it to ``PstFrom``.
 
 The model: a 12 x 12 irregular Voronoi grid of 20 ft cells, two layers (100 - 82 -
 40 ft) with a pond excavated to 82 ft holding an ``IMPLICIT`` lake, under NEWTON;
