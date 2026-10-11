@@ -23,6 +23,7 @@ from enum import Enum
 from html import escape
 from importlib import import_module
 from pathlib import Path, PurePath
+from types import ModuleType
 from typing import Any, TypeAlias, TypeVar, cast
 
 import flopy
@@ -391,9 +392,12 @@ def _callable_ref(builder: Builder) -> Any:
     ModflowGwfchd)``), so CHD/GHB/DRN/RIV/WEL/RCH/EVT specs round-trip. Each bound
     argument is itself a reference (callables/classes, e.g. the FloPy package
     class) or a plain JSON value. Raises ``ValueError`` if any piece is not
-    importable -- a lambda (module-level too), a local function, or a name that
-    resolves to a different object -- since such a reference could not be resolved
-    later, and a saved project holding one would fail to load as a whole.
+    importable -- a lambda (module-level too), a local function, a name that no
+    longer imports anything callable, or a method bound to an instance (or reached
+    through a subclass) whose binding the reference would drop -- since such a
+    reference could not be resolved later, and a saved project holding one would
+    fail to load as a whole. A plain function or class is written by NAME: one
+    rebound since (a notebook cell re-run) is written as what the name holds now.
     """
 
     if isinstance(builder, functools.partial):
@@ -416,16 +420,36 @@ def _callable_ref(builder: Builder) -> Any:
             "Define it with `def` at module level."
         )
     resolved = _resolve_reference(module, qualname)
-    if resolved is not builder:
-        # The name reaches SOMETHING ELSE (rebound, deleted, a bound method whose
-        # instance the reference would drop): the reference would load the wrong
-        # callable, or none, so it is refused rather than written. `==` admits a
-        # classmethod, which is a fresh bound object on every attribute read.
-        if resolved is None or resolved != builder:
-            raise ValueError(
-                f"Builder {builder!r} cannot be serialized: '{module}:{qualname}' "
-                "does not import back to it. Use a module-level function or class."
-            )
+    if resolved is None or not callable(resolved):
+        raise ValueError(
+            f"Builder {builder!r} cannot be serialized: '{module}:{qualname}' "
+            "imports nothing callable now (deleted, or rebound to a value), so a "
+            "saved project could not load it back."
+        )
+    bound_to = getattr(builder, "__self__", None)
+    if (
+        bound_to is not None
+        and not isinstance(bound_to, ModuleType)
+        and resolved is not builder
+        and resolved != builder
+    ):
+        # A METHOD names its function, not what it is bound to: an instance method
+        # resolves to the plain function and a classmethod reached through a
+        # subclass to the base class's binding, so the reference would DROP the
+        # instance or the subclass. `==` admits a classmethod read off its own class,
+        # a fresh bound object on every attribute read.
+        raise ValueError(
+            f"Builder {builder!r} cannot be serialized: '{module}:{qualname}' names "
+            f"the function, not what it is bound to ({bound_to!r}), so the reference "
+            "would load a different callable. Use a module-level function, a class, "
+            "or a classmethod read off its own class."
+        )
+    # A plain function or class is a NAME, not an object (ledger 387): what
+    # the name holds now is what a reload gets, exactly as for a module edited
+    # between save and load -- `package_digest` likewise never sees a builder's
+    # body. So a notebook cell re-run, which rebinds `hook` to a fresh but
+    # identical function, still saves; refusing it dropped the simulation from the
+    # save with nothing but a log line.
     return f"{module}:{qualname}"
 
 

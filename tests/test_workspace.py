@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 
 import flopy
 import numpy as np
@@ -726,13 +727,6 @@ def test_a_module_level_lambda_is_refused_at_save_and_the_project_loads(tmp_path
 
     with pytest.raises(ValueError, match="no importable name"):
         PostBuildHook("h", _module_level_lambda_hook).to_dict()
-    # A name that imports back to a DIFFERENT object is refused too.
-    impostor = type(_a_module_level_hook)(
-        _a_module_level_hook.__code__, globals(), "_a_module_level_hook"
-    )
-    impostor.__module__ = __name__
-    with pytest.raises(ValueError, match="does not import back to it"):
-        _callable_ref(impostor)
     assert _callable_ref(_a_module_level_hook) == f"{__name__}:_a_module_level_hook"
 
     project = mf.Project(tmp_path / "proj", name="p")
@@ -757,6 +751,70 @@ def test_a_module_level_lambda_is_refused_at_save_and_the_project_loads(tmp_path
     assert "no importable name" in dict(report.skipped)["lambda_hook"]
     loaded = mf.Project.load(project.root)
     assert sorted(loaded.simulations) == [_tiny_flow_spec().name]
+
+
+class _HookHolder:
+    def method(self, model, packages, context):
+        return None
+
+    @classmethod
+    def build(cls, model, packages, context):
+        return None
+
+
+class _HookHolderChild(_HookHolder):
+    pass
+
+
+def test_a_rebound_name_is_written_by_name_and_a_dropped_binding_is_refused(tmp_path):
+    """A plain function is a NAME; a method's binding is what the reference would drop.
+
+    Ledger 387. The lambda fix first refused any name that no longer imported
+    back to the SAME object, which refused the commonest notebook move -- re-running
+    the cell that defines a hook -- and dropped the simulation from the save with only
+    a log line. What a reference cannot carry is an instance or a subclass binding.
+    """
+
+    import types
+
+    from myflopy.specs import PostBuildHook, _callable_ref
+
+    cell = "def hook(model, packages, context):\n    return None\n"
+    module = types.ModuleType("notebook_like")
+    sys.modules[module.__name__] = module
+    try:
+        exec(cell, module.__dict__)
+        captured = module.hook
+        exec(cell, module.__dict__)  # the cell is run again: a new, equal function
+        assert captured is not module.hook
+        assert _callable_ref(captured) == "notebook_like:hook"
+
+        project = mf.Project(tmp_path / "proj", name="p")
+        project.add_simulation(
+            mf.SimulationSpec(
+                "rerun",
+                models=[mf.gwf("flow", packages=[mf.npf(k=1.0)],
+                               hooks=[PostBuildHook("h", captured)])],
+                packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+            )
+        )
+        assert project.save().skipped == ()
+        assert sorted(mf.Project.load(project.root).simulations) == ["rerun"]
+
+        module.hook = 3.0  # the name now holds a VALUE: nothing to load back
+        with pytest.raises(ValueError, match="imports nothing callable"):
+            _callable_ref(captured)
+        del module.hook
+        with pytest.raises(ValueError, match="imports nothing callable"):
+            _callable_ref(captured)
+    finally:
+        sys.modules.pop(module.__name__, None)
+
+    with pytest.raises(ValueError, match="not what it is bound to"):
+        _callable_ref(_HookHolder().method)
+    with pytest.raises(ValueError, match="not what it is bound to"):
+        _callable_ref(_HookHolderChild.build)
+    assert _callable_ref(_HookHolder.build) == f"{__name__}:_HookHolder.build"
 
 
 def test_strict_save_still_refuses_everything(tmp_path):

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 386 entries (391 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 387 entries (392 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 387 | A builder or hook reference is a NAME: a rebound function is written as what the name holds now | 2026-10-11 |
 | 386 | `with_grid`'s `rule=`/`uncovered=` are checked at the call and refused without `remap=True` | 2026-10-11 |
 | 385 | The prior `run_ies()`/`prior()` hand PESTPP-IES holds every adjustable parameter, each correlated pilot-poi... | 2026-10-11 |
 | 384 | `cal.draw_prior()` defaults to `use_specsim=False`, and `True` off a regular structured grid is refused nam... | 2026-10-11 |
@@ -17566,3 +17567,14 @@ same day, which is the useful part of the result.
      the call can tell a given value from the default. Judgment call: ANY value given
      without `remap=True` is refused naming `remap=True`, the default spelled out
      (`rule="geometric"`) included -- it is still an argument the move would ignore.
+
+387. **A builder or hook reference is a NAME: a rebound function is written as what the name holds now (2026-10-11).**
+     Fixing the module-level lambda, `_callable_ref` first also refused any name that did
+     not import back to the SAME object -- which refused the commonest notebook move, re-
+     running the cell that defines a hook: `Project.save()` skipped the simulation with only
+     a log line (measured; no Python warning). Judgment call: a plain function or class is
+     written by name, as a module edited between save and load always was (`package_digest`
+     never sees a body either), so a rebinding to a DIFFERENT function is written too.
+     Refused: a `<lambda>`/`<locals>` qualname, a name that now imports nothing callable,
+     and a METHOD whose binding the name drops -- an instance method, or a classmethod read
+     through a subclass (both were written as the base function before, silently).
