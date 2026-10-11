@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 366 entries (371 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 367 entries (372 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 367 | A USG list-BC period that defined no groundwater record is an EMPTY MODFLOW 6 period, not a missing one | 2026-10-11 |
 | 366 | An SFR network MF6's upstream-fraction check stops on is refused at build, the default diversion placement... | 2026-10-11 |
 | 365 | A per-reach SFR value must be a finite number, or a time-series name where MF6 takes one | 2026-10-11 |
 | 364 | A `StreamDiversion` is a reach connection too, so it runs with no `StreamConnection` between its streams | 2026-10-11 |
@@ -17131,3 +17132,15 @@ same day, which is the useful part of the result.
       is INACTIVE in every period, a case that seemed not worth a per-period model.
       Revert check: the check removed -> the three
       `test_a_network_mf6_cannot_run_is_refused_naming_the_reaches` cases fail.
+
+367. **A USG list-BC period that defined no groundwater record is an EMPTY MODFLOW 6 period, not a missing one (2026-10-11).**
+     `ITMP = 0`, a period whose every record is on a CLN node, and a period whose every
+     CHD record `fix_for_mf6` omitted were all left OUT of the converted period dict,
+     which MODFLOW 6 reads as "reuse the previous period": the synthetic model's drains,
+     switched off in period 2, discharged -64.41 ft3/d there under normal termination.
+     They are written as an empty period block now (MODFLOW 6's own budget: 0.0), while
+     `ITMP < 0` stays absent. CHANGES WRITTEN OUTPUT for any converted model with such a
+     period. A package with no groundwater record in ANY period is still not written --
+     an all-empty package is not a package. `report()` counts the switched-off periods.
+     Not changed: `export_gis`'s boundary layers take their cells from the first defined
+     period, so a switch-off is still invisible there.

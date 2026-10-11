@@ -527,8 +527,16 @@ def _list_period_data(model: UsgModel, records, *, fix_for_mf6: bool = False) ->
     A USG period whose ``ITMP`` was negative reused the previous period. MODFLOW
     6 expresses exactly that by omitting the period from the dict, so a reused
     period is simply absent here -- no data is duplicated and no period is
-    accidentally emptied. (An *empty list* would mean something else entirely in
-    MODFLOW 6: delete every record.)
+    accidentally emptied.
+
+    Every period that DEFINED its own records is a key, even when none of them
+    reaches MODFLOW 6: ``ITMP = 0`` (the package switched off), a period whose
+    records are all on CLN nodes, and a period whose every CHD record
+    ``fix_for_mf6`` omitted each become an EMPTY list, which MODFLOW 6 writes as
+    an empty period block and reads as "delete every record". Skipping such a
+    period left the previous period's boundaries running through it (ledger
+    367). A package with no record in ANY period returns an empty dict, so
+    the caller writes no package at all.
     """
 
     ftype = records.ftype
@@ -538,6 +546,9 @@ def _list_period_data(model: UsgModel, records, *, fix_for_mf6: bool = False) ->
     dropped_convertible = False
     for period, block in sorted(records.periods.items()):
         if len(block) == 0:
+            # ITMP = 0, or every record of the period was on a CLN node: the period
+            # is DEFINED and holds nothing, which is not the same as reusing the last.
+            data[period] = []
             continue
         nodes = block[:, 0].astype(np.int64)
         cellid = model.to_cellid(nodes)
@@ -611,8 +622,9 @@ def _list_period_data(model: UsgModel, records, *, fix_for_mf6: bool = False) ->
         rows = []
         for (layer, cell), values in zip(cellid[valid], values_block, strict=True):
             rows.append(_bc_record(ftype, (int(layer), int(cell)), values))
-        if rows:
-            data[period] = rows
+        # An empty `rows` is kept: the period was defined, and omitting it would
+        # tell MODFLOW 6 to reuse the previous period's records (ledger 367).
+        data[period] = rows
     if dropped[0]:
         # The convertible wording is byte-identical to what this always said, and is
         # true there. The confined one is new, because there the record was neither
@@ -634,6 +646,9 @@ def _list_period_data(model: UsgModel, records, *, fix_for_mf6: bool = False) ->
         # One message per family, each naming the field it actually moved. A single
         # generic line would have to call a drain invert and a river bed a "head".
         logger.warning(_CLAMP_REPORT[ftype], ftype, clamped[0])
+    if not any(data.values()):
+        # Not one record in any period: there is no package to write.
+        return {}
     return data
 
 
@@ -869,6 +884,9 @@ def conversion_notes(model: UsgModel) -> str:
             add(f"  {ftype:<5} -> (none)     every record is on a CLN node; see below")
             continue
         note = f"{records.n_defined} period(s) defined, {len(records.reused)} reused"
+        switched_off = sum(1 for block in records.periods.values() if len(block) == 0)
+        if switched_off:
+            note += f", {switched_off} with no groundwater record (switched off)"
         add(f"  {ftype:<5} -> {ftype:<9} {records.n_records} records, {note}")
     if model.rch is not None:
         add(f"  RCH   -> RCHA      {len(model.rch.rech)} arrays, NRCHOP={model.rch.nrchop}")

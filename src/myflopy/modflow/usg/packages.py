@@ -190,7 +190,10 @@ class PeriodRecords:
     ``periods`` maps a zero-based stress period to its records. A period that
     reused the previous one (``ITMP < 0``) is *not* a key -- the reuse is
     recorded in :attr:`reused` instead, because MODFLOW 6 expresses reuse the
-    same way, by omitting the period from its period dict.
+    same way, by omitting the period from its period dict. A period that defined
+    NO groundwater record -- ``ITMP = 0``, or every record on a CLN node -- IS a
+    key, holding an empty ``(0, n)`` block: the package is switched off there, and
+    the conversion writes it as an empty MODFLOW 6 period (ledger 367).
     """
 
     ftype: str

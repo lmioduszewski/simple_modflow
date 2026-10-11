@@ -865,3 +865,123 @@ def test_a_confined_model_is_warned_about_at_conversion_time(below_bottom, caplo
     assert said, "a confined model with below-bottom boundaries must not convert in silence"
     assert any("DRN" in message for message in said)
     assert not [r for r in caplog.records if "will reject this model" in r.getMessage()]
+
+
+# --- a boundary switched off stays off (ledger 367) -------------------
+#
+# MODFLOW 6 reads an ABSENT period as "reuse the previous one" and an EMPTY period
+# as "delete every record". A USG period with ITMP = 0 switched the package off, so
+# it has to become the second, never the first.
+
+_SWITCHED_OFF = {
+    "DRN": (13, "tiny.drn", (
+        "# drn\n"
+        "  2  0\n"
+        "  2  0  Stress Period 1\n"
+        "  1  7.5  100.0\n"
+        "  2  7.5  120.0\n"
+        "  0  0  Stress Period 2 (switched off)\n"
+    )),
+}
+
+
+def _period_keys(sim, name):
+    package = next(p for p in sim.models[0].packages if p.name == name)
+    return package.options["stress_period_data"]
+
+
+def test_an_itmp_zero_period_is_written_empty_not_left_out(tmp_path):
+    nam = _write_usg_model(tmp_path, packages=_SWITCHED_OFF)
+    model = read_usg(nam, gsf=tmp_path / "tiny.gsf", crs="EPSG:2927")
+    data = _period_keys(model.to_mf6("tiny", start_date_time="2020-01-01"), "drn")
+
+    assert sorted(data) == [0, 1]
+    assert len(data[0]) == 2
+    assert data[1] == [], "ITMP=0 switches the drains off; an absent period would reuse them"
+    assert "1 with no groundwater record (switched off)" in model.report()
+
+
+def test_a_reused_period_is_still_left_out(usg):
+    """The other half: ITMP < 0 is reuse, and reuse is an ABSENT period."""
+
+    data = _period_keys(usg.to_mf6("tiny", start_date_time="2020-01-01"), "drn")
+    assert sorted(data) == [0]
+
+
+def test_a_period_whose_records_are_all_cln_is_written_empty(tmp_path):
+    """Every record on a CLN node: the GROUNDWATER drains are off that period."""
+
+    packages = {"DRN": (13, "tiny.drn", (
+        "# drn\n"
+        "  2  0\n"
+        "  2  0  Stress Period 1\n"
+        "  1  7.5  100.0\n"
+        "  2  7.5  120.0\n"
+        "  1  0  Stress Period 2 (CLN only)\n"
+        f"  {NODES + 1}  7.5  100.0\n"
+    ))}
+    nam = _write_usg_model(tmp_path, packages=packages)
+    model = read_usg(nam, gsf=tmp_path / "tiny.gsf", crs="EPSG:2927")
+    assert model.boundaries["DRN"].n_cln_records == 1
+    data = _period_keys(model.to_mf6("tiny", start_date_time="2020-01-01"), "drn")
+    assert sorted(data) == [0, 1] and data[1] == []
+
+
+def test_a_period_fix_for_mf6_emptied_is_written_empty(tmp_path):
+    """Every CHD record of period 2 sits below its cell bottom and is omitted.
+
+    Leaving the period out instead re-applied period 1's constant heads through it.
+    """
+
+    packages = {"CHD": (18, "tiny.chd", (
+        "# chd\n"
+        "  2\n"
+        "  2  Stress Period 1\n"
+        "  3  9.0  9.0\n"
+        "  4  9.0  8.5\n"
+        "  2  Stress Period 2\n"
+        "  3  4.0  4.0\n"
+        "  4  4.0  4.0\n"
+    ))}
+    nam = _write_usg_model(tmp_path, packages=packages)
+    model = read_usg(nam, gsf=tmp_path / "tiny.gsf", crs="EPSG:2927")
+    data = _period_keys(
+        model.to_mf6("tiny", start_date_time="2020-01-01", fix_for_mf6=True), "chd"
+    )
+    assert sorted(data) == [0, 1] and len(data[0]) == 2 and data[1] == []
+
+
+def test_a_package_with_no_groundwater_record_anywhere_is_not_written(tmp_path):
+    """Empty periods are kept only beside a period that HAS records."""
+
+    packages = {"DRN": (13, "tiny.drn", (
+        "# drn\n"
+        "  1  0\n"
+        "  0  0  Stress Period 1\n"
+        "  0  0  Stress Period 2\n"
+    ))}
+    nam = _write_usg_model(tmp_path, packages=packages)
+    model = read_usg(nam, gsf=tmp_path / "tiny.gsf", crs="EPSG:2927")
+    sim = model.to_mf6("tiny", start_date_time="2020-01-01")
+    assert "drn" not in [p.name for p in sim.models[0].packages]
+
+
+@pytest.mark.slow
+def test_mf6_moves_no_drain_water_in_a_switched_off_period(tmp_path):
+    """MODFLOW 6's own budget: the drains discharge in period 1 and not in period 2."""
+
+    (tmp_path / "usg").mkdir()
+    nam = _write_usg_model(tmp_path / "usg", packages=_SWITCHED_OFF)
+    model = read_usg(nam, gsf=tmp_path / "usg" / "tiny.gsf", crs="EPSG:2927")
+    sim = model.to_mf6("tiny", start_date_time="2020-01-01", include=("chd", "drn"))
+    workspace = tmp_path / "mf6"
+    success, report = sim.build(workspace).execute()
+    assert success, "\n".join(report)[-2000:]
+
+    budget = flopy.utils.CellBudgetFile(str(workspace / "tiny.cbc"))
+    flows = {
+        int(kper): float(budget.get_data(text="DRN", kstpkper=(kstp, kper))[0]["q"].sum())
+        for kstp, kper in budget.get_kstpkper()
+    }
+    assert flows[0] < -1.0, "the drains discharge while they are on"
+    assert flows[1] == 0.0, "ITMP=0 switched them off; reusing period 1 drained ~-64 ft3/d"

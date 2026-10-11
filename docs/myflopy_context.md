@@ -177,7 +177,8 @@ Legend: ✅ built · 🟡 partial / has primitives · ❌ missing
 `mf.read_usg(nam, gsf=)` -> `UsgModel` -> `.to_mf6()` -> `SimulationSpec` (DISV).
 Module `src/myflopy/modflow/usg/`. Reads DISU (via FloPy), BAS6/LPF (hand-rolled --
 FloPy cannot load a BAS whose STRT is a binary unit), SMS, OC, the list BCs
-(CHD/DRN/GHB/WEL/RIV, honouring `ITMP < 0` reuse), RCH, ETS, HFB6, and CLN.
+(CHD/DRN/GHB/WEL/RIV, honouring `ITMP < 0` reuse and writing an `ITMP = 0` period
+EMPTY, which switches the package off as in USG -- ledger 367), RCH, ETS, HFB6, and CLN.
 
 Grid-independent views, which are what a re-grid starts from: `surfaces()` (layer
 contacts as `Surface` objects), `boundary_frame(ftype)` (a BC as a GeoDataFrame with

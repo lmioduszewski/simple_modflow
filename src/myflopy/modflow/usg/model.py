@@ -627,7 +627,10 @@ class UsgModel:
             separately, while a stage already inside its cell is left where it
             was drawn (ledger 291). A CHD record whose head (``ehead``) is not
             above that floor is omitted for that period, in confined and
-            convertible layers alike. Each kind of edit is counted in one logged
+            convertible layers alike; a period left with no CHD record is
+            written EMPTY, so no constant head acts in it, rather than left out,
+            which MODFLOW 6 would read as reusing the previous period's heads
+            (ledger 367). Each kind of edit is counted in one logged
             warning per package.
 
             MODFLOW-USG tolerates such a boundary. Whether MODFLOW 6 refuses one
@@ -656,7 +659,13 @@ class UsgModel:
         -------
         SimulationSpec
             One GWF model on DISV with its TDIS (the DISU's period lengths,
-            step counts and multipliers) and IMS.
+            step counts and multipliers) and IMS. A list boundary's period that
+            reused the previous one (``ITMP < 0``) is absent from its period
+            dict, which MODFLOW 6 reads as reuse; a period that defined no
+            groundwater record (``ITMP = 0``, or every record on a CLN node) is
+            an EMPTY list, which switches the package off for that period as
+            MODFLOW-USG did (ledger 367). A package with no groundwater
+            record in any period is not written.
 
         Raises
         ------
