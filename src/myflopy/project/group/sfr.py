@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from myflopy.modflow.mf6.hydraulics import unit_labels
 from myflopy.modflow.mf6.package_explorer import (
     SfrStageResultsExplorer,
     _exchange_colorscale,
@@ -19,7 +20,7 @@ from myflopy.modflow.mf6.package_explorer import (
     get_default_group_compare_colorscale,
 )
 from myflopy.modflow.mf6.package_surface_water import join_sfr_stage
-from myflopy.modflow.utils.datatypes.hover import compare_hover, sfr_hover
+from myflopy.modflow.utils.datatypes.hover import compare_hover, dimension_units, sfr_hover
 from myflopy.project.group._shared import (
     _ensure_group_map_compatible,
     _filter_group_input_table,
@@ -158,7 +159,8 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
-        kwargs.setdefault("hover_spec", sfr_hover())
+        length, time = unit_labels(target_model)
+        kwargs.setdefault("hover_spec", sfr_hover(length=length, time=time))
         return target_model.plot.map(
             per=per,
             layer=layer,
@@ -242,11 +244,12 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
                 "q_per_length",
                 "q_per_length_diff",
                 title="Δ stream exchange vs reference",
-                units={
-                    "q_per_length": "ft²/d",
-                    "reference_q_per_length": "ft²/d",
-                    "q_per_length_diff": "ft²/d",
-                },
+                # q / length is L²/T, in the drawn model's own units (ledger 434).
+                units=dimension_units(*unit_labels(reference_model), {
+                    "q_per_length": (2, -1),
+                    "reference_q_per_length": (2, -1),
+                    "q_per_length_diff": (2, -1),
+                }),
                 labels={"q_per_length_diff": "Δ q / length"},
             ),
         )

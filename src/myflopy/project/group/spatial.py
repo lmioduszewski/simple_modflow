@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from myflopy.modflow.mf6.hydraulics import unit_labels
 from myflopy.modflow.mf6.package_explorer import (
     SpatialView,
     build_group_input_compare_map_payload,
@@ -98,8 +99,15 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
     value_column: str = "elev"
     #: short label for the mapped quantity, used in hovers and axis titles
     value_label: str = "head"
-    #: unit shown in hovers; the per-kind conventions the hover factories use
-    value_unit: str = "ft"
+    #: unit shown in hovers; the per-kind conventions the hover factories use.
+    #: ``None`` (a head) reads the drawn model's own length unit instead -- it was
+    #: ``"ft"`` on a model in metres too (ledger 434).
+    value_unit: str | None = None
+
+    def _value_unit(self, model) -> str | None:
+        """The hover unit of this field on ``model``: :attr:`value_unit`, else its length unit."""
+
+        return self.value_unit if self.value_unit is not None else unit_labels(model)[0]
 
     def _noun_path(self) -> str:
         """``group.hds`` / ``group.conc`` / ``group.temp``, for messages."""
@@ -316,16 +324,17 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)
         kwargs.setdefault("zmid", 0.0)
         reference_column = f"reference_{self.value_column}"
+        unit = self._value_unit(reference_model)
         kwargs.setdefault(
             "hover_spec",
             compare_hover(
                 self.value_column,
                 "diff",
                 title=f"Δ {self.value_label} vs reference",
-                units={
-                    self.value_column: self.value_unit,
-                    reference_column: self.value_unit,
-                    "diff": self.value_unit,
+                units={} if unit is None else {
+                    self.value_column: unit,
+                    reference_column: unit,
+                    "diff": unit,
                 },
                 labels={"diff": f"Δ {self.value_label}"},
             ),
@@ -361,4 +370,4 @@ class GroupHeads(_GroupFieldView):
     table_attribute = "all_heads"
     value_column = "elev"
     value_label = "head"
-    value_unit = "ft"
+    value_unit = None  # the model's own length unit

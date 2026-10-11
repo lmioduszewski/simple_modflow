@@ -866,6 +866,16 @@ def test_slider_validation_rejects_empty_frames_and_label_mismatch(tmp_path):
         )
 
 
+def test_slider_refuses_one_string_as_labels(tmp_path):
+    """``labels="ab"`` passed the count check on two frames, one character each."""
+
+    with pytest.raises(TypeError, match=r"labels='ab' is one string.*labels=\['ab', \.\.\.\]"):
+        export_matplotlib_slider_html(
+            lambda *_: plt.figure(), [1, 2], tmp_path / "string.html", labels="ab"
+        )
+    assert not (tmp_path / "string.html").exists()
+
+
 @pytest.mark.parametrize("labels", [["a", "b", "c"], ["a"]], ids=["one_too_many", "one_too_few"])
 @pytest.mark.parametrize("exporter", ["head_map", "layer_mosaic", "cross_section"])
 def test_every_head_slider_refuses_a_label_count_that_is_not_the_frame_count(

@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 433 entries (438 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 435 entries (440 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 435 | `LayerTable` has no `layers` field, and a slider refuses one string as `labels` | 2026-10-11 |
+| 434 | The LAK/SFR exchange, stage and group diff hovers write each field in the model's own length and time units | 2026-10-11 |
 | 433 | `ModelContext(length_units=)` is checked at construction, and a surface declaring `units=` sampled with no... | 2026-10-11 |
 | 432 | A discretization's `length_units` is checked on every edit route, and the DIS builders write MF6's word for... | 2026-10-11 |
 | 431 | A frame a grid caches is in the grid's CRS or refused, and a heads reader and a legacy `Boundaries` read th... | 2026-10-11 |
@@ -2148,12 +2150,12 @@ same day, which is the useful part of the result.
       declares neither now reads `L³/T` (GWF), `M/T` (GWT), `E/T` (GWE) rather than
       guessing feet and days as before. **This changes the hover on any undeclared GWF
       model** from a confident wrong label to an honest dimensional one.
-    - Not converted in this pass: the SFR and LAK *package-output* hovers
+    - ~~Not converted in this pass: the SFR and LAK *package-output* hovers
       (`hover.py:675,688`), which hardcode `ft`/`ft²`/`ft³/d` across several fields.
       Most of those are geometry (`rlen`, `stage`, `flow_area`), not budget values, so
       they need a length-unit helper rather than this one, and both packages are
       GWF-only — no transport model reaches them. Separable; left for the pass that
-      needs it.
+      needs it.~~ Converted by ledger 434, through `hover.dimension_units`.
 
 96. **The connection-indexed guard keys on a hardcoded record NAME, because size
     cannot decide it (2026-07-27).**
@@ -17902,10 +17904,11 @@ same day, which is the useful part of the result.
      the area with NO unit rather than `ft²` -- read, never assumed (ledger 308's rule);
      this changes the default footer of every such model. Not consulted: the grid's CRS
      axis unit, which can disagree with LENGTH_UNITS; the area is in grid units either way.
-     Found and NOT fixed: `lak_hover`/`sfr_hover` still hardcode `ft`, `ft²`, `ft³/d`,
+     ~~Found and NOT fixed: `lak_hover`/`sfr_hover` still hardcode `ft`, `ft²`, `ft³/d`,
      `ft²/d` on their FIELDS (stage, flow area, q), and `project/group/sfr.py` `ft²/d`, so
      a LAK map of a model in metres writes `m²` in its footer beside `ft²` on its flow
-     area. (The HEAD's `ft` was the same defect; ledger 403 reads it.)
+     area.~~ Fixed by ledger 434: every field reads the model's units. (The HEAD's
+     `ft` was the same defect; ledger 403 reads it.)
      Revert check: `test_the_footer_writes_the_cell_area_in_square_metres_on_a_model_in_metres`
      (a real MF6 run declared in METERS) and
      `test_a_model_declaring_no_length_unit_writes_the_area_with_none`.
@@ -18498,3 +18501,29 @@ same day, which is the useful part of the result.
       `tests/test_length_unit_routes.py::test_model_context_refuses_a_unit_nothing_reads`,
       `test_every_sampler_refuses_a_declared_unit_with_no_model_unit`,
       `test_mf_lak_refuses_a_metre_bed_on_a_context_with_no_unit`.
+
+434. **The LAK/SFR exchange, stage and group diff hovers write each field in the model's own length and time units (2026-10-11).**
+      `lak_hover`/`sfr_hover` hardcoded `ft`/`ft²`/`ft³/d`/`ft²/d`, the group LAK/SFR
+      diff maps `ft/d`/`ft²/d`, the group head diff and every stage map `ft`. ONE rule,
+      `hover.dimension_units(length, time, {field: (length power, time power)})`, fed by
+      `hydraulics.unit_labels` (ledgers 401/403's reader); `trans_hover` reads through it
+      too, unchanged. Same judgment call as 401/403: a unit the model does not declare is
+      not written -- the field is a bare number -- and `lak_hover()`/`sfr_hover()` called
+      by hand now carry no unit (they took `length=`/`time=`, default `None`, as
+      `trans_hover` does), where they wrote feet. Verified on rendered maps of the
+      canonical run redeclared `METERS` (byte-identical outputs, 432): no `ft`
+      anywhere in the hovertemplate or customdata. Not done: the cross-section axis
+      labels (`xsections.py` "Elevation (ft)", `cross_section_plotting.py`
+      "Distance/Elevation (ft)") -- static axis text, not hovers. Revert check:
+      `tests/test_hover_model_units.py::test_the_lak_and_sfr_exchange_maps_are_labelled_in_metres`,
+      `test_the_group_maps_are_labelled_in_metres`.
+
+435. **`LayerTable` has no `layers` field, and a slider refuses one string as `labels` (2026-10-11).**
+      `LayerTable.layers` was declared and never read, so any value drew the same
+      all-layer table; which layers a hover reads is `HoverSpec.layers`, which adds the
+      block or not. Removed rather than wired: the table has one meaning (every layer),
+      and the one internal caller passed `"all"`. A `str` `labels=` passed the slider
+      exporters' count check character by character (`labels="ab"` titled two frames
+      `a` and `b`); `_checked_labels` raises `TypeError` naming the list spelling.
+      Revert check: `tests/test_hover_model_units.py::test_a_layer_table_has_no_layers_field_that_nothing_reads`,
+      `tests/test_interactive_plotting.py::test_slider_refuses_one_string_as_labels`.

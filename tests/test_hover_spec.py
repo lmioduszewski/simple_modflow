@@ -127,7 +127,7 @@ def test_lak_hover_primary_and_feature_block():
         cells=[901, 902],
         period=3,
     )
-    spec = lak_hover()
+    spec = lak_hover(length="ft", time="d")
     customdata, template, _ = _render(spec, ctx)
     assert "Lake exchange" in template
     assert "q / area" in template  # relabeled primary

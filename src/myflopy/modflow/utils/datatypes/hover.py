@@ -313,12 +313,14 @@ class Fields(HoverBlock):
 class LayerTable(HoverBlock):
     """Per-layer values as a compact table; optionally merges the surfaces column.
 
-    Rows are layers (plus a ``Top`` row when ``surfaces``). The active layer row
-    is accent-bold. With ``mark_dry`` a head below its cell bottom gets a dagger.
+    Rows are EVERY layer (plus a ``Top`` row when ``surfaces``); which layers a
+    hover reads is decided by :attr:`HoverSpec.layers`, which adds this block or
+    not. The active layer row is accent-bold. With ``mark_dry`` a head below its
+    cell bottom gets a dagger. It had a ``layers`` field that nothing read, so any
+    value was accepted and drew the same table; it is gone (ledger 435).
     """
 
     fields: tuple[str, ...] = ("head",)
-    layers: str = "all"
     surfaces: bool = False
     mark_dry: bool = True
 
@@ -646,7 +648,6 @@ class HoverSpec:
                 # meaningless for concentration/temperature.
                 LayerTable(
                     fields=(primary,),
-                    layers="all",
                     surfaces=want_surfaces,
                     mark_dry=(primary == "head"),
                 )
@@ -883,6 +884,64 @@ class _HoverAssembler:
 
 # --- default specs per plot kind -------------------------------------------------
 
+_POWERS = {1: "", 2: "²", 3: "³"}
+
+
+def dimension_units(
+    length: str | None,
+    time: str | None,
+    dimensions: Mapping[str, tuple[int, int]],
+) -> dict[str, str]:
+    """Each field's unit, written from the model's own length and time units.
+
+    The ONE rule every hover with a dimensioned field writes its units by
+    (ledger 434): the LAK/SFR exchange hovers, the transmissivity hover and
+    the group diff maps had each hardcoded ``ft``, ``ft²``, ``ft³/d``, ``ft²/d``,
+    so a model in metres was labelled in feet beside a footer in ``m²``. A unit
+    is read, never assumed (ledger 308): a field whose dimension needs a unit the
+    model does not declare gets NO entry, and is written as a bare number.
+
+    Parameters
+    ----------
+    length : str or None
+        The model's length abbreviation (``"ft"``, ``"m"``, ``"cm"``), as
+        :func:`myflopy.modflow.mf6.hydraulics.unit_labels` reads it from the DIS;
+        ``None`` when it declares none.
+    time : str or None
+        The model's time abbreviation (``"d"``, ``"s"``, ...) from TDIS, or
+        ``None``.
+    dimensions : mapping of str to (int, int)
+        Field name -> ``(length power, time power)``: a stage is ``(1, 0)``, an
+        area ``(2, 0)``, a flow ``(3, -1)``, a flux per unit length ``(2, -1)``.
+        Length powers 1 to 3 and time powers 0 or -1 are written; another raises
+        ``ValueError``.
+
+    Returns
+    -------
+    dict of str to str
+        ``{field: unit}`` for every field both of whose units are known, e.g.
+        ``{"q": "m³/d"}`` for ``("m", "d", {"q": (3, -1)})``.
+
+    Raises
+    ------
+    ValueError
+        A power this function cannot write.
+    """
+
+    units: dict[str, str] = {}
+    for name, (length_power, time_power) in dimensions.items():
+        if length_power not in _POWERS or time_power not in (0, -1):
+            raise ValueError(
+                f"{name}: cannot write length^{length_power} time^{time_power}; "
+                "length powers 1-3 and time powers 0 or -1 only."
+            )
+        if length is None or (time_power and time is None):
+            continue
+        unit = f"{length}{_POWERS[length_power]}"
+        units[name] = f"{unit}/{time}" if time_power else unit
+    return units
+
+
 def head_hover(
     *, layers: str = "active+strip", surfaces: bool = False, unit: str | None = "ft"
 ) -> HoverSpec:
@@ -968,11 +1027,9 @@ def trans_hover(
     hover carries no period footer.
     """
 
-    units: dict[str, str] = {}
-    if length and time:
-        units = {"T": f"{length}²/{time}", "K": f"{length}/{time}", "thickness": length}
-    elif length:
-        units = {"thickness": length}
+    units = dimension_units(
+        length or None, time or None, {"T": (2, -1), "K": (1, -1), "thickness": (1, 0)}
+    )
     return HoverSpec(
         primary="T",
         # A whole number with separators -- 112,000 ft²/d, not 1.12e+05 (user,
@@ -1075,28 +1132,62 @@ def parameter_field_hover(
     )
 
 
-def lak_hover() -> HoverSpec:
-    """Default lake-exchange hover: q/area primary with a lake feature block."""
+def lak_hover(*, length: str | None = None, time: str | None = None) -> HoverSpec:
+    """Default lake-exchange hover: q/area primary with a lake feature block.
+
+    Parameters
+    ----------
+    length : str, optional
+        The model's length abbreviation (``"ft"``, ``"m"``, ``"cm"``), which writes
+        the stage (L), the flow area (L²), the exchange q (L³/T) and q / area
+        (L/T). Default ``None``: no unit on any of them. The LAK map passes the
+        unit its model's DIS declares (``hydraulics.unit_labels``); every field
+        here was ``ft``-based on a model in metres too, beside a footer in ``m²``
+        (ledger 434).
+    time : str, optional
+        The model's time abbreviation (``"d"``, ...) from TDIS, which the two
+        rates need; with ``None`` they carry no unit while the stage and area
+        still do. Default ``None``.
+    """
 
     return HoverSpec(
         primary="q_per_area",
         title="Lake exchange",
         blocks=(Fields(title=None, fields=("stage", "q", "flow_area", "claktype")),),
         footer=("period", "date", "area"),
-        units={"q_per_area": "ft/d", "q": "ft³/d", "flow_area": "ft²", "stage": "ft"},
+        units=dimension_units(length, time, {
+            "q_per_area": (1, -1), "q": (3, -1), "flow_area": (2, 0), "stage": (1, 0),
+        }),
         labels={"q_per_area": "q / area", "flow_area": "area", "claktype": "type"},
     )
 
 
-def sfr_hover() -> HoverSpec:
-    """Default stream-exchange hover: q/length primary with a reach block."""
+def sfr_hover(*, length: str | None = None, time: str | None = None) -> HoverSpec:
+    """Default stream-exchange hover: q/length primary with a reach block.
+
+    Parameters
+    ----------
+    length : str, optional
+        The model's length abbreviation (``"ft"``, ``"m"``, ``"cm"``), which writes
+        the stage, depth and reach length (L), the exchange q (L³/T) and q / length
+        (L²/T). Default ``None``: no unit on any of them. The SFR map passes the
+        unit its model's DIS declares (``hydraulics.unit_labels``); every field
+        here was written in feet whatever the model declared (ledger 434).
+    time : str, optional
+        The model's time abbreviation (``"d"``, ...) from TDIS, which the two
+        rates need; with ``None`` they carry no unit while the lengths still do.
+        Default ``None``.
+    """
 
     return HoverSpec(
         primary="q_per_length",
         title="Stream exchange",
         blocks=(Fields(title=None, fields=("stage", "depth", "q", "rlen")),),
         footer=("period", "date"),
-        units={"q_per_length": "ft²/d", "q": "ft³/d", "rlen": "ft", "stage": "ft", "depth": "ft"},
+        units=dimension_units(length, time, {
+            "q_per_length": (2, -1), "q": (3, -1), "rlen": (1, 0), "stage": (1, 0),
+            "depth": (1, 0),
+        }),
         labels={"q_per_length": "q / length"},
     )
 

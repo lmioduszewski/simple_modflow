@@ -12,6 +12,7 @@ from myflopy._logging import get_logger
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+from myflopy.modflow.mf6.hydraulics import unit_labels
 from myflopy.modflow.mf6.package_budget import (
     budget_value_units,
     build_budget_result_table,
@@ -39,7 +40,7 @@ from myflopy.modflow.mf6.package_tables import (
     summarize_input_table,
 )
 from myflopy.modflow.mf6.period_end import at_last_saved_steps
-from myflopy.modflow.utils.datatypes.hover import result_hover
+from myflopy.modflow.utils.datatypes.hover import dimension_units, result_hover
 
 logger = get_logger(__name__)
 
@@ -926,7 +927,8 @@ class StageResultsExplorer(SpatialView):
             hover_spec=result_hover(
                 "stage",
                 title=f"{self.package_name.upper()} stage",
-                units={"stage": "ft"},
+                # A stage is a length, in the model's own unit (ledger 434).
+                units=dimension_units(unit_labels(self.model)[0], None, {"stage": (1, 0)}),
             ),
             zmin=zmin,
             zmax=zmax,

@@ -16,6 +16,7 @@ from myflopy.viz import mpl_axes
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
+from myflopy.modflow.mf6.hydraulics import unit_labels
 from myflopy.modflow.mf6.package_budget import (
     build_lak_budget_result_table,
     build_lak_budget_term_table,
@@ -76,6 +77,13 @@ from myflopy.modflow.utils.datatypes.hover import (
 )
 
 logger = get_logger(__name__)
+
+
+def _model_units(model) -> dict[str, str | None]:
+    """``{"length": ..., "time": ...}`` -- the model's own abbreviations, for a hover."""
+
+    length, time = unit_labels(model)
+    return {"length": length, "time": time}
 
 #: Everything that can come back from "ask the model for a stage result".
 #:
@@ -684,7 +692,8 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             hover=hover,
             show_layer_elevs=show_layer_elevs,
             hover_surfaces=hover_surfaces,
-            hover_spec=sfr_hover(),
+            # In the model's own units, never assumed feet (ledger 434).
+            hover_spec=sfr_hover(**_model_units(self.model)),
             zmin=zmin,
             zmax=zmax,
             # SFR's cell record is flow FROM reach TO cell (the "gwf" frame), so
@@ -1224,7 +1233,8 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             hover=hover,
             show_layer_elevs=show_layer_elevs,
             hover_surfaces=hover_surfaces,
-            hover_spec=lak_hover(),
+            # In the model's own units, never assumed feet (ledger 434).
+            hover_spec=lak_hover(**_model_units(self.model)),
             zmin=zmin,
             zmax=zmax,
             # NOT the SFR frame: LAK's GWF record comes from the LAK package
