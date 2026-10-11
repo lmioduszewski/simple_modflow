@@ -41,7 +41,10 @@ literals. Its `RETIRE WITH 4.7.3` tests must be deleted as each list goes, or th
 become circular and stop testing anything.
 
 **Changing the package API?** `tests/api_snapshot.json` pins every helper signature,
-`*_spec` output, and per-surface package list. If a change is intentional, rerun
+`*_spec` output, and per-surface package list -- and the signature of EVERY public
+callable (ledger 443): the set `scripts/public_surface.py` discovers, the same
+one `test_public_parameters_documented` measures, so a default changing on
+`Run.reopen` or `with_grid` shows in the diff. If a change is intentional, rerun
 `python scripts/derive_api_snapshot.py` and **review the diff** — it is the public-API
 change log. An un-regenerated snapshot fails CI.
 
@@ -434,7 +437,8 @@ a did-you-mean `KeyError`, and `_repr_html_`. `project.package(key)` / `.grid(ke
 mirror the long-standing `simulation(name)`; `package_spec(key)` had existed on the
 retired `ProjectSpec` and was dropped in the 2026-06-17 fold, unnoticed because
 **`api_snapshot.json` covered no part of the `Project` surface** — it does now
-(`Project.members`, `Run.members`, one row per library), so a verb vanishing fails CI.
+(`Project.members`, `Run.members`, one row per library), so a verb vanishing fails CI,
+and every method's signature (ledger 443), so a keyword changing does too.
 **Variants: `packages.fork(source, key, **overrides)` / `packages.edit(key, ...)` /
 `simulations.fork(source, name, swap={...})`.** Forks are **built, not patched** —
 `copy.deepcopy` reconstructs a frozen+slots dataclass through `__reduce_ex__`, so

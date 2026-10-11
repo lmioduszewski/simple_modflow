@@ -2,16 +2,23 @@
 
 The snapshot is the safety net for the 4.7 consolidation: it records the public
 shape of the package API *before* the refactor so that "behaviour-preserving"
-can be proven rather than asserted. Three dimensions:
+can be proven rather than asserted. Four dimensions:
 
 1. **signatures** -- every ``mf.<pkg>`` helper's public methods and their full
    parameter lists (names, kinds, defaults). A collapsed helper class must keep
    these byte-identical.
-2. **specs** -- every ``*_spec`` factory's output from FIXED inputs: package
+2. **public_signatures** -- the same, for every OTHER public callable: each one
+   ``scripts/public_surface.py`` discovers (the surface whose parameters
+   ``test_public_parameters_documented`` requires documented), keyed by its
+   qualified name -- ``load_run``, ``Run.reopen``, ``ModelSpec.with_grid``. Until
+   ledger 443 only the package helpers were pinned, so the defaults of
+   ``load_run``, ``Run.load``, ``Run.reopen`` and both ``with_grid`` verbs changed
+   on 2026-10-11 with ``--check`` reporting the snapshot up to date.
+3. **specs** -- every ``*_spec`` factory's output from FIXED inputs: package
    name, builder identity, and a compact option summary (reusing
    ``PackageSpec.option_summary``, so data payloads are summarized rather than
    dumped).
-3. **surfaces** -- the package set visible at each place that encodes package
+4. **surfaces** -- the package set visible at each place that encodes package
    knowledge. This doubles as the machine-readable version of 4.7's site
    inventory, and makes the CURRENT inconsistencies explicit.
 
@@ -28,13 +35,48 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_PATH = REPO_ROOT / "tests" / "api_snapshot.json"
 
 sys.path.insert(0, str(REPO_ROOT / "src"))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+# Three kinds of default repr change from one run or machine to the next, and the
+# snapshot must not: an object with no repr of its own prints its ADDRESS
+# (``LayerStack.replace``'s ``_UNSET = object()`` sentinel), which is dropped; a set
+# prints in hash order, which string hashing randomizes per process
+# (``build_canonical_model``'s ``required_packages`` frozenset), so its members are
+# sorted; and a path prints its platform's class and the user's home directory.
+_ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+")
+
+
+def _stable_repr(value) -> str:
+    """``repr(value)`` without the parts that differ between two runs."""
+
+    if isinstance(value, PurePath):
+        # `PosixPath` on Linux, `WindowsPath` on Windows (CI runs both), and a path
+        # under the home directory names the machine's user
+        # (`SimulationBase(mf_folder_path=Path.home() / "mf6")`).
+        text = value.as_posix()
+        home = Path.home().as_posix()
+        if text == home or text.startswith(home + "/"):
+            text = "~" + text[len(home):]
+        return f"Path({text!r})"
+    if isinstance(value, (set, frozenset)):
+        members = ", ".join(sorted(_stable_repr(item) for item in value))
+        if isinstance(value, frozenset):
+            return f"frozenset({{{members}}})" if members else "frozenset()"
+        return f"{{{members}}}" if members else "set()"
+    if type(value) in (tuple, list):
+        items = [_stable_repr(item) for item in value]
+        if type(value) is list:
+            return f"[{', '.join(items)}]"
+        return f"({items[0]},)" if len(items) == 1 else f"({', '.join(items)})"
+    return _ADDRESS.sub("", repr(value))
 
 
 def _default_repr(value) -> str:
@@ -42,7 +84,7 @@ def _default_repr(value) -> str:
 
     if value is inspect.Parameter.empty:
         return "<required>"
-    return repr(value)
+    return _stable_repr(value)
 
 
 def _signature(func) -> list[str]:
@@ -52,6 +94,12 @@ def _signature(func) -> list[str]:
         signature = inspect.signature(func)
     except (TypeError, ValueError):  # pragma: no cover - builtins
         return ["<unavailable>"]
+    return _parameters(signature)
+
+
+def _parameters(signature: inspect.Signature) -> list[str]:
+    """``name:kind=default`` for each parameter of ``signature`` but ``self``."""
+
     return [
         f"{name}:{parameter.kind.name}={_default_repr(parameter.default)}"
         for name, parameter in signature.parameters.items()
@@ -79,6 +127,48 @@ def collect_signatures() -> dict[str, dict[str, list[str]]]:
             if callable(member):
                 methods[attribute] = _signature(member)
         snapshot[name] = methods
+    return snapshot
+
+
+def _pinned_as_helper(qualname: str) -> bool:
+    """Whether ``collect_signatures`` already pins this discovered callable.
+
+    A package-first helper (``gwf``, ``mf.chd``) and its methods
+    (``mf.chd.gpkg``) are pinned there, under the helper's name; pinning them
+    again would show every change twice.
+    """
+
+    from myflopy import package_api
+
+    if not (qualname.startswith("mf.") or "." not in qualname):
+        return False  # a class method: `Run.reopen`
+    return qualname.removeprefix("mf.").split(".")[0] in package_api.__all__
+
+
+def collect_public_signatures() -> dict[str, list[str]]:
+    """The signature of every public callable the package helpers do not cover.
+
+    The set is ``public_surface.discover()`` -- exactly the callables whose
+    parameters ``test_public_parameters_documented`` requires documented -- so
+    the rule for what is pinned is the rule for what is public, not a list of
+    names: a new exported function or method is pinned the day it lands.
+    Classes measured as constructors are keyed by class name, methods by
+    ``Class.method`` under the class that DEFINES them.
+    """
+
+    from public_surface import discover
+
+    subjects, _skipped = discover()
+    snapshot: dict[str, list[str]] = {}
+    for subject in subjects:
+        if _pinned_as_helper(subject.qualname):
+            continue
+        if subject.qualname in snapshot:
+            raise ValueError(
+                f"two public callables are both named {subject.qualname!r}; the "
+                "snapshot keys by qualified name and would keep only one"
+            )
+        snapshot[subject.qualname] = _parameters(subject.signature)
     return snapshot
 
 
@@ -165,10 +255,10 @@ def collect_surfaces() -> dict[str, list[str]]:
 
         The project/run surface was covered by nothing until 2026-09-06, which is
         how ``ProjectSpec.package_spec(key)`` disappeared in the 2026-06-17 fold
-        into ``Project`` without a single test failing (ledger 182). Signatures
-        are deliberately not captured here: these are hand-written verbs whose
-        parameters change often, and the value is in noticing a verb APPEARING or
-        VANISHING.
+        into ``Project`` without a single test failing (ledger 182). This row
+        notices a verb APPEARING or VANISHING -- a property too, which has no
+        signature; each method's parameters are pinned in ``public_signatures``
+        (ledger 443; ledgers 190 and 197 had left them out on purpose).
         """
 
         return sorted(
@@ -295,6 +385,7 @@ def build_snapshot() -> dict:
             "change here means a refactor altered the public surface."
         ),
         "signatures": collect_signatures(),
+        "public_signatures": collect_public_signatures(),
         "specs": collect_specs(),
         "surfaces": collect_surfaces(),
     }

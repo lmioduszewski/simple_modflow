@@ -10,8 +10,10 @@ MODFLOW 6 models in myflopy. Two halves:
   `model.plot` / `vor.plot` / `stack.plot` (section C).
 
 > **Authoritative sources (this doc is the human-readable overview of them):**
-> - Build-side signatures are pinned in `tests/api_snapshot.json` (regenerate with
->   `python scripts/derive_api_snapshot.py`; the diff is the public-API change log).
+> - Every public signature is pinned in `tests/api_snapshot.json` -- the helpers', and
+>   since ledger 443 every exported function's and every public method's on an
+>   exported class (regenerate with `python scripts/derive_api_snapshot.py`; the diff
+>   is the public-API change log).
 > - Per-package fields/results/capabilities live in
 >   `src/myflopy/modflow/mf6/package_registry.py` (the single per-package descriptor).
 > - The read-side grammar is normative in `docs/view_layer_conventions.md`.

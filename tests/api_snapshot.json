@@ -1,5 +1,5565 @@
 {
   "_comment": "Golden snapshot of the package API (plan 4.7.0). Regenerate with scripts/derive_api_snapshot.py and REVIEW THE DIFF -- an unexpected change here means a refactor altered the public surface.",
+  "public_signatures": {
+    "AoiLibrary.setdefault": [
+      "key:POSITIONAL_OR_KEYWORD=<required>",
+      "default:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "AoiLibrary.update": [
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "Area": [
+      "geometry:POSITIONAL_OR_KEYWORD=<required>",
+      "crs:POSITIONAL_OR_KEYWORD=None",
+      "note:POSITIONAL_OR_KEYWORD=None",
+      "name:POSITIONAL_OR_KEYWORD=None",
+      "source:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "Area.bounds": [
+      "crs:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "Area.coerce": [
+      "value:POSITIONAL_OR_KEYWORD=<required>",
+      "crs:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "note:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY=None"
+    ],
+    "Area.from_dict": [
+      "doc:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None"
+    ],
+    "Area.to_dict": [],
+    "Area.to_geoseries": [
+      "crs:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "Array": [
+      "values:POSITIONAL_OR_KEYWORD=<required>",
+      "units:KEYWORD_ONLY=None"
+    ],
+    "BoundDrnFlowTargets.attach_flopy_obs": [
+      "pname:KEYWORD_ONLY='drn_flow_obs'",
+      "filename:KEYWORD_ONLY='drn_flow_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='DRN'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "BoundDrnFlowTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundDrnFlowTargets.get": [],
+    "BoundDrnFlowTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundDrnFlowTargets.simulated_series": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundDrnFlowTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundDrnFlowTargets.summary": [],
+    "BoundDrnFlowTargets.to_flopy_obs": [
+      "csv_name:KEYWORD_ONLY='drn_flow_targets.csv'",
+      "kind:KEYWORD_ONLY='DRN'"
+    ],
+    "BoundDrnFlowTargets.to_long": [],
+    "BoundDrnFlowTargets.to_wide": [],
+    "BoundHeadTargetPlots.calibration": [
+      "type:KEYWORD_ONLY='calibration'"
+    ],
+    "BoundHeadTargetPlots.locations": [
+      "ax:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "BoundHeadTargetPlots.obs_vs_sim": [
+      "baseline:KEYWORD_ONLY=None",
+      "ax:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "BoundHeadTargetPlots.residuals_by_period": [
+      "baseline:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "BoundHeadTargetPlots.timeseries": [
+      "name:POSITIONAL_OR_KEYWORD=None",
+      "baseline:KEYWORD_ONLY=None",
+      "ax:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "BoundHeadTargets.attach_flopy_obs": [
+      "pname:KEYWORD_ONLY='gwf_obs'",
+      "filename:KEYWORD_ONLY='head_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='HEAD'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "BoundHeadTargets.calibration_plot": [
+      "type:KEYWORD_ONLY='calibration'"
+    ],
+    "BoundHeadTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundHeadTargets.get": [],
+    "BoundHeadTargets.match_to_model": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundHeadTargets.plot_locations": [
+      "ax:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "BoundHeadTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundHeadTargets.simulated_heads": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundHeadTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundHeadTargets.summary": [],
+    "BoundHeadTargets.to_flopy_obs": [
+      "csv_name:KEYWORD_ONLY='head_targets.csv'",
+      "kind:KEYWORD_ONLY='HEAD'"
+    ],
+    "BoundHeadTargets.to_long": [],
+    "BoundHeadTargets.to_wide": [],
+    "BoundLakeStageTargets.attach_flopy_obs": [
+      "pname:KEYWORD_ONLY='lak_obs'",
+      "filename:KEYWORD_ONLY='lake_stage_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='STAGE'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "BoundLakeStageTargets.calibration_plot": [
+      "type:KEYWORD_ONLY='calibration'"
+    ],
+    "BoundLakeStageTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundLakeStageTargets.get": [],
+    "BoundLakeStageTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundLakeStageTargets.simulated_series": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundLakeStageTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundLakeStageTargets.summary": [],
+    "BoundLakeStageTargets.to_flopy_obs": [
+      "csv_name:KEYWORD_ONLY='lake_stage_targets.csv'",
+      "kind:KEYWORD_ONLY='STAGE'"
+    ],
+    "BoundLakeStageTargets.to_long": [],
+    "BoundLakeStageTargets.to_wide": [],
+    "BoundNamedSeriesTargetPlots.obs_vs_sim": [
+      "baseline:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "BoundNamedSeriesTargetPlots.residuals_by_period": [
+      "baseline:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "BoundNamedSeriesTargetPlots.timeseries": [
+      "name:POSITIONAL_OR_KEYWORD=None",
+      "baseline:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "BoundSfrFlowTargets.attach_flopy_obs": [
+      "pname:KEYWORD_ONLY='sfr_flow_obs'",
+      "filename:KEYWORD_ONLY='sfr_flow_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='DOWNSTREAM-FLOW'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "BoundSfrFlowTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundSfrFlowTargets.get": [],
+    "BoundSfrFlowTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundSfrFlowTargets.simulated_series": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundSfrFlowTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundSfrFlowTargets.summary": [],
+    "BoundSfrFlowTargets.to_flopy_obs": [
+      "csv_name:KEYWORD_ONLY='sfr_flow_targets.csv'",
+      "kind:KEYWORD_ONLY='DOWNSTREAM-FLOW'"
+    ],
+    "BoundSfrFlowTargets.to_long": [],
+    "BoundSfrFlowTargets.to_wide": [],
+    "BoundSfrStageTargets.attach_flopy_obs": [
+      "pname:KEYWORD_ONLY='sfr_stage_obs'",
+      "filename:KEYWORD_ONLY='sfr_stage_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='STAGE'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "BoundSfrStageTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundSfrStageTargets.get": [],
+    "BoundSfrStageTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundSfrStageTargets.simulated_series": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundSfrStageTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BoundSfrStageTargets.summary": [],
+    "BoundSfrStageTargets.to_flopy_obs": [
+      "csv_name:KEYWORD_ONLY='sfr_stage_targets.csv'",
+      "kind:KEYWORD_ONLY='STAGE'"
+    ],
+    "BoundSfrStageTargets.to_long": [],
+    "BoundSfrStageTargets.to_wide": [],
+    "BoundarySource": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "external:POSITIONAL_OR_KEYWORD=False",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "package:KEYWORD_ONLY=<required>",
+      "nper:KEYWORD_ONLY=<required>",
+      "values:KEYWORD_ONLY=<factory>",
+      "layer:KEYWORD_ONLY=None",
+      "name_field:KEYWORD_ONLY='name'",
+      "layer_field:KEYWORD_ONLY='layer'",
+      "period_field:KEYWORD_ONLY=None",
+      "layer_base:KEYWORD_ONLY=1",
+      "period_base:KEYWORD_ONLY=0",
+      "gaps:KEYWORD_ONLY='warn'",
+      "snap_within:KEYWORD_ONLY=None",
+      "min_above_bottom:KEYWORD_ONLY=None",
+      "edges_only:KEYWORD_ONLY=False",
+      "boundnames:KEYWORD_ONLY=True",
+      "source_sha:KEYWORD_ONLY=None"
+    ],
+    "BoundarySource.digest_payload": [],
+    "BoundarySource.to_dict": [],
+    "Budget.multimodel_plot_budget_obs": [
+      "models:POSITIONAL_OR_KEYWORD=<required>",
+      "model_package:POSITIONAL_OR_KEYWORD='drn'",
+      "shp_gpkg:POSITIONAL_OR_KEYWORD=None",
+      "q:POSITIONAL_OR_KEYWORD='q'",
+      "name_field:POSITIONAL_OR_KEYWORD='name'",
+      "times:POSITIONAL_OR_KEYWORD=None",
+      "plot_fig:POSITIONAL_OR_KEYWORD=True"
+    ],
+    "Budget.plot_budget_obs": [
+      "model:POSITIONAL_OR_KEYWORD=None",
+      "shp_gpkg:POSITIONAL_OR_KEYWORD=None",
+      "q:POSITIONAL_OR_KEYWORD='q'",
+      "plot_fig:POSITIONAL_OR_KEYWORD=True",
+      "return_fig:POSITIONAL_OR_KEYWORD=False",
+      "name_field:POSITIONAL_OR_KEYWORD='name'",
+      "times:POSITIONAL_OR_KEYWORD=None",
+      "multiplier:POSITIONAL_OR_KEYWORD=86400",
+      "y_range:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "BudgetResultDiff.get": [
+      "model_name:KEYWORD_ONLY=None"
+    ],
+    "BudgetResultDiff.summary": [
+      "model_name:KEYWORD_ONLY=None",
+      "atol:KEYWORD_ONLY=0.001",
+      "rtol:KEYWORD_ONLY=0.001"
+    ],
+    "BuiltModel": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "packages:POSITIONAL_OR_KEYWORD=<required>",
+      "context:POSITIONAL_OR_KEYWORD=<factory>",
+      "hook_results:POSITIONAL_OR_KEYWORD=<factory>",
+      "simulation:POSITIONAL_OR_KEYWORD=None",
+      "resolved:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "BuiltModel.as_gwe": [],
+    "BuiltModel.as_gwf": [],
+    "BuiltModel.as_gwt": [],
+    "BuiltModel.as_prt": [],
+    "BuiltModel.package": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "BuiltSimulation": [
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "models:POSITIONAL_OR_KEYWORD=<required>",
+      "packages:POSITIONAL_OR_KEYWORD=<required>",
+      "exchanges:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "BuiltSimulation.built_model": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "BuiltSimulation.gwe": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "BuiltSimulation.gwf": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "BuiltSimulation.gwt": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "BuiltSimulation.model": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "BuiltSimulation.package": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "BuiltSimulation.prt": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "CalibrationPlot.add_calib_scatter": [],
+    "CalibrationPlot.add_heads": [],
+    "CalibrationPlot.add_stats": [
+      "observed:POSITIONAL_OR_KEYWORD=None",
+      "simulated:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "CalibrationPlot.from_compare": [
+      "compare:POSITIONAL_OR_KEYWORD=<required>",
+      "type:KEYWORD_ONLY='calibration'",
+      "target_column:KEYWORD_ONLY=None",
+      "simulated_column:KEYWORD_ONLY=None",
+      "title:KEYWORD_ONLY=None",
+      "yaxis_title:KEYWORD_ONLY=None"
+    ],
+    "CalibrationPlot.from_obs_vs_sim": [
+      "compare:POSITIONAL_OR_KEYWORD=<required>",
+      "baseline_compare:KEYWORD_ONLY=None",
+      "target_column:KEYWORD_ONLY='head_target'",
+      "simulated_column:KEYWORD_ONLY='sim_head'",
+      "title:KEYWORD_ONLY='Observed vs simulated heads'",
+      "xaxis_title:KEYWORD_ONLY='Observed'",
+      "yaxis_title:KEYWORD_ONLY='Simulated'",
+      "add_stats:KEYWORD_ONLY=False",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "CalibrationPlot.from_residuals_by_period": [
+      "compare:POSITIONAL_OR_KEYWORD=<required>",
+      "baseline_compare:KEYWORD_ONLY=None",
+      "title:KEYWORD_ONLY='Residual MAE by period'",
+      "yaxis_title:KEYWORD_ONLY='Mean absolute error'",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "CalibrationPlot.from_targets": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "model:KEYWORD_ONLY=None",
+      "type:KEYWORD_ONLY='calibration'"
+    ],
+    "CalibrationPlot.from_timeseries": [
+      "compare:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "baseline_compare:KEYWORD_ONLY=None",
+      "target_column:KEYWORD_ONLY='head_target'",
+      "simulated_column:KEYWORD_ONLY='sim_head'",
+      "target_label:KEYWORD_ONLY='Target'",
+      "simulated_label:KEYWORD_ONLY='Model'",
+      "baseline_label:KEYWORD_ONLY='Baseline'",
+      "yaxis_title:KEYWORD_ONLY='Head'",
+      "title:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "CalibrationPlot.set_layout": [],
+    "CanonicalModelConfig": [
+      "nrow:POSITIONAL_OR_KEYWORD=100",
+      "ncol:POSITIONAL_OR_KEYWORD=100",
+      "nlay:POSITIONAL_OR_KEYWORD=4",
+      "nper:POSITIONAL_OR_KEYWORD=6",
+      "cell_size:POSITIONAL_OR_KEYWORD=100.0",
+      "period_length:POSITIONAL_OR_KEYWORD=30.0",
+      "steps_per_period:POSITIONAL_OR_KEYWORD=2"
+    ],
+    "CanonicalModelConfig.testing": [],
+    "CanonicalModelConfig.validation": [],
+    "CanonicalModelContract": [
+      "nlay:POSITIONAL_OR_KEYWORD=4",
+      "minimum_full_ncpl:POSITIONAL_OR_KEYWORD=10000",
+      "minimum_nper:POSITIONAL_OR_KEYWORD=6",
+      "minimum_sfr_reaches:POSITIONAL_OR_KEYWORD=40",
+      "minimum_full_sfr_reaches:POSITIONAL_OR_KEYWORD=150",
+      "icelltype:POSITIONAL_OR_KEYWORD=(1, 1, 0, 0)",
+      "layer_roles:POSITIONAL_OR_KEYWORD=('upper unconfined aquifer', 'lower unconfined aquifer', 'aquitard', 'confined aquifer')",
+      "required_packages:POSITIONAL_OR_KEYWORD=frozenset({'chd', 'disv', 'drn', 'evt', 'ghb', 'lak', 'mvr', 'npf', 'oc', 'rch', 'riv', 'sfr', 'sto', 'uzf', 'wel'})",
+      "required_targets:POSITIONAL_OR_KEYWORD=frozenset({'drn_flow', 'heads', 'lake_stage', 'sfr_flow', 'sfr_stage'})"
+    ],
+    "CanonicalModelContract.validate": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "full_profile:KEYWORD_ONLY=False"
+    ],
+    "CellBudgetResultDiff.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "CellBudgetResultDiff.summary": [
+      "model_name:KEYWORD_ONLY=None",
+      "atol:KEYWORD_ONLY=0.001",
+      "rtol:KEYWORD_ONLY=0.001",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "CellBudgetResultsExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "CellBudgetResultsExplorer.long": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None",
+      "values:KEYWORD_ONLY=None",
+      "agg:KEYWORD_ONLY='sum'"
+    ],
+    "CellBudgetResultsExplorer.map": [
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='sum'",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "CellBudgetResultsExplorer.stack": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "CellBudgetResultsExplorer.summary": [],
+    "CellBudgetResultsExplorer.wide": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None",
+      "index:KEYWORD_ONLY=('layer', 'cell')",
+      "values:KEYWORD_ONLY=None",
+      "agg:KEYWORD_ONLY='sum'"
+    ],
+    "CellNumbering.check": [
+      "layers:KEYWORD_ONLY=()",
+      "cells:KEYWORD_ONLY=()"
+    ],
+    "CellNumbering.layer_cell": [
+      "cellid:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "CellNumbering.layer_cells": [
+      "cellids:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "CellPackageInputFieldExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "CellPackageInputFieldExplorer.map": [
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=None",
+      "agg:KEYWORD_ONLY=None",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "CellPackageInputFieldExplorer.summary": [],
+    "CellPackageInputsExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "CellPackageInputsExplorer.summary": [],
+    "CellPackageResultsNamespace.summary": [],
+    "CellSurfaceOffset": [
+      "reference:POSITIONAL_OR_KEYWORD=<required>",
+      "offset:POSITIONAL_OR_KEYWORD=0.0",
+      "minimum:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "CellSurfaceOffset.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "CellSurfaceOffset.required_fields": [],
+    "CellSurfaceOffset.resolve": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "row:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY=<required>",
+      "cell:KEYWORD_ONLY=<required>"
+    ],
+    "CellSurfaceOffset.to_dict": [],
+    "Choro.add_choropleth": [],
+    "Choro.add_contours": [],
+    "Choro.add_hillshade": [
+      "tif_path:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "Choro.add_overlay": [
+      "traces:VAR_POSITIONAL=<required>"
+    ],
+    "Choro.dash_selector": [],
+    "Choro.export_map_view": [
+      "size:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Choro.get_choropleth": [],
+    "Choro.map_view": [
+      "bounds:KEYWORD_ONLY=None",
+      "size:KEYWORD_ONLY=None"
+    ],
+    "Choro.overlay_traces": [],
+    "Choro.plot_mpl": [
+      "ax:KEYWORD_ONLY=None",
+      "cmap:KEYWORD_ONLY=None",
+      "vmin:KEYWORD_ONLY=None",
+      "vmax:KEYWORD_ONLY=None",
+      "colorbar:KEYWORD_ONLY=True",
+      "title:KEYWORD_ONLY=None",
+      "outline_regions:KEYWORD_ONLY=()",
+      "edgecolor:KEYWORD_ONLY='none'",
+      "norm:KEYWORD_ONLY=None",
+      "plot_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "Choro.resolve_extent": [
+      "value:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Choro.update_layout": [],
+    "Clamp": [
+      "surface:POSITIONAL_OR_KEYWORD=<required>",
+      "lower:KEYWORD_ONLY=None",
+      "upper:KEYWORD_ONLY=None"
+    ],
+    "ConcObservationSpec": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "simulated_values:POSITIONAL_OR_KEYWORD=None",
+      "prefix:POSITIONAL_OR_KEYWORD='conc'",
+      "transport_model_name:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "ConcTargets": [
+      "locations:POSITIONAL_OR_KEYWORD=<required>",
+      "values:POSITIONAL_OR_KEYWORD=<required>",
+      "name_column:POSITIONAL_OR_KEYWORD='name'",
+      "layer_column:POSITIONAL_OR_KEYWORD='layer'",
+      "group_column:POSITIONAL_OR_KEYWORD='group'",
+      "weight_column:POSITIONAL_OR_KEYWORD='weight'",
+      "time_column:POSITIONAL_OR_KEYWORD='time'",
+      "value_column:POSITIONAL_OR_KEYWORD='conc'",
+      "times:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "ConcTargets.simulated_conc": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ConfigDiff.settings": [
+      "model_name:KEYWORD_ONLY=None",
+      "section:KEYWORD_ONLY=None"
+    ],
+    "ConfigDiff.summary": [
+      "model_name:KEYWORD_ONLY=None"
+    ],
+    "ConnectionDiff.rows": [
+      "model_name:KEYWORD_ONLY=None",
+      "round_to:KEYWORD_ONLY=6",
+      "include_shared:KEYWORD_ONLY=False"
+    ],
+    "ConnectionDiff.summary": [
+      "model_name:KEYWORD_ONLY=None",
+      "round_to:KEYWORD_ONLY=6"
+    ],
+    "Contours": [
+      "contours:POSITIONAL_OR_KEYWORD=<required>",
+      "z:KEYWORD_ONLY='Elev'",
+      "region_raster:KEYWORD_ONLY=None",
+      "region_vector:KEYWORD_ONLY=None",
+      "resolution:KEYWORD_ONLY=4",
+      "out:KEYWORD_ONLY=None",
+      "epsg:KEYWORD_ONLY='2927'",
+      "units:KEYWORD_ONLY=None",
+      "clip:KEYWORD_ONLY=True",
+      "progress:KEYWORD_ONLY=False",
+      "grass_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "CoverageReport.summary": [],
+    "DataSourceSpec": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "external:POSITIONAL_OR_KEYWORD=False",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "DataSourceSpec.digest_payload": [],
+    "DataSourceSpec.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "DataSourceSpec.to_dict": [],
+    "DependentVariableFile.array": [
+      "layer:KEYWORD_ONLY=0",
+      "per:KEYWORD_ONLY=-1",
+      "kstpkper:KEYWORD_ONLY=None",
+      "masked:KEYWORD_ONLY=True"
+    ],
+    "DependentVariableFile.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "DependentVariableFile.long": [
+      "values:KEYWORD_ONLY=None"
+    ],
+    "DependentVariableFile.map": [
+      "per:KEYWORD_ONLY=None",
+      "kstpkper:KEYWORD_ONLY=None",
+      "per_timestep:KEYWORD_ONLY='last'",
+      "layer:KEYWORD_ONLY=0",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "bgs:KEYWORD_ONLY=False",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "hover_layers:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=False",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "show_mounding:KEYWORD_ONLY=False",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "DependentVariableFile.summary": [],
+    "DependentVariableFile.to_xugrid": [
+      "layers:KEYWORD_ONLY=None",
+      "times:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY=None",
+      "masked:KEYWORD_ONLY=True",
+      "surfaces:KEYWORD_ONLY=False"
+    ],
+    "DependentVariableFile.wide": [
+      "index:KEYWORD_ONLY=('layer', 'cell')",
+      "values:KEYWORD_ONLY=None",
+      "agg:KEYWORD_ONLY='first'"
+    ],
+    "DisvFaces.disu_arrays": [
+      "tol:KEYWORD_ONLY=0.0"
+    ],
+    "DisvFaces.length_and_width": [
+      "a:POSITIONAL_OR_KEYWORD=<required>",
+      "b:POSITIONAL_OR_KEYWORD=<required>",
+      "toward:KEYWORD_ONLY=<required>"
+    ],
+    "DisvFaces.shared_edge": [
+      "a:POSITIONAL_OR_KEYWORD=<required>",
+      "b:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "DrnFlowObservationSpec": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "prefix:POSITIONAL_OR_KEYWORD='drn_flow'"
+    ],
+    "DrnFlowTargets": [
+      "locations:POSITIONAL_OR_KEYWORD=<required>",
+      "values:POSITIONAL_OR_KEYWORD=None",
+      "name_column:POSITIONAL_OR_KEYWORD='name'",
+      "group_column:POSITIONAL_OR_KEYWORD='group'",
+      "weight_column:POSITIONAL_OR_KEYWORD='weight'",
+      "time_column:POSITIONAL_OR_KEYWORD='time'",
+      "value_column:POSITIONAL_OR_KEYWORD='flow'",
+      "times:POSITIONAL_OR_KEYWORD=None",
+      "package:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "DrnFlowTargets.attach_flopy_obs": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "pname:KEYWORD_ONLY='drn_flow_obs'",
+      "filename:KEYWORD_ONLY='drn_flow_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='DRN'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "DrnFlowTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "DrnFlowTargets.get": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "DrnFlowTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "DrnFlowTargets.simulated_series": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "DrnFlowTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "DrnFlowTargets.summary": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "DrnFlowTargets.to_flopy_obs": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "csv_name:KEYWORD_ONLY='drn_flow_targets.csv'",
+      "kind:KEYWORD_ONLY='DRN'"
+    ],
+    "DrnFlowTargets.to_long": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "DrnFlowTargets.to_wide": [],
+    "DrnFlowTargets.zone_definitions": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "EVTBuilder": [
+      "context:KEYWORD_ONLY=<required>",
+      "nper:KEYWORD_ONLY=<required>",
+      "cells:KEYWORD_ONLY='top_active'",
+      "layer:KEYWORD_ONLY=0",
+      "name_by_cell:KEYWORD_ONLY=None",
+      "boundnames:KEYWORD_ONLY=False",
+      "name:KEYWORD_ONLY='evt'",
+      "options:KEYWORD_ONLY=<factory>",
+      "rate:KEYWORD_ONLY=<required>",
+      "depth:KEYWORD_ONLY=<required>",
+      "surface:KEYWORD_ONLY=CellSurfaceOffset(reference='model_top', offset=0.0, minimum=None)"
+    ],
+    "ExcavationRecord": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "cells:POSITIONAL_OR_KEYWORD=<required>",
+      "bed:POSITIONAL_OR_KEYWORD=<required>",
+      "min_remnant:POSITIONAL_OR_KEYWORD=0.1"
+    ],
+    "ExcavationRecord.bed_at": [
+      "cell:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ExchangeSpec": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "builder:POSITIONAL_OR_KEYWORD=<required>",
+      "models:POSITIONAL_OR_KEYWORD=<required>",
+      "options:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "ExchangeSpec.build": [
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "built_models:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ExchangeSpec.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ExchangeSpec.to_dict": [],
+    "ExchangeSpec.with_options": [
+      "overrides:VAR_KEYWORD=<required>"
+    ],
+    "ExpGeoStruct": [
+      "range:POSITIONAL_OR_KEYWORD=<required>",
+      "contribution:POSITIONAL_OR_KEYWORD=1.0",
+      "anisotropy:POSITIONAL_OR_KEYWORD=1.0",
+      "bearing:POSITIONAL_OR_KEYWORD=0.0",
+      "nugget:POSITIONAL_OR_KEYWORD=0.0",
+      "transform:POSITIONAL_OR_KEYWORD='none'"
+    ],
+    "ExportManifest.describe": [],
+    "ExportManifest.to_json": [],
+    "Extent.padded": [
+      "padding:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "FieldMappable.animate": [
+      "args:VAR_POSITIONAL=<required>",
+      "field:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "FieldMappable.field_names": [],
+    "FieldMappable.map": [
+      "args:VAR_POSITIONAL=<required>",
+      "field:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "FieldMappable.mosaic": [
+      "args:VAR_POSITIONAL=<required>",
+      "field:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "FieldMappable.plot": [
+      "args:VAR_POSITIONAL=<required>",
+      "field:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "FieldMappable.section": [
+      "args:VAR_POSITIONAL=<required>",
+      "field:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "FilledSection.plot_mpl": [
+      "ax:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "Flat": [
+      "value:POSITIONAL_OR_KEYWORD=<required>",
+      "units:KEYWORD_ONLY=None"
+    ],
+    "FrameAnimation.html": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "include_plotlyjs:KEYWORD_ONLY=True",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "FrameExportProgress": [
+      "index:POSITIONAL_OR_KEYWORD=<required>",
+      "total:POSITIONAL_OR_KEYWORD=<required>",
+      "label:POSITIONAL_OR_KEYWORD=<required>",
+      "status:POSITIONAL_OR_KEYWORD=<required>",
+      "path:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "GeoPackageSource": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "context:POSITIONAL_OR_KEYWORD=<required>",
+      "nper:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:POSITIONAL_OR_KEYWORD=None",
+      "name_field:POSITIONAL_OR_KEYWORD='name'",
+      "layer_field:POSITIONAL_OR_KEYWORD='layer'",
+      "period_field:POSITIONAL_OR_KEYWORD=None",
+      "layer_base:POSITIONAL_OR_KEYWORD=1",
+      "period_base:POSITIONAL_OR_KEYWORD=0",
+      "gaps:POSITIONAL_OR_KEYWORD='warn'",
+      "snap_within:POSITIONAL_OR_KEYWORD=None",
+      "min_above_bottom:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "GeoPackageSource.chd": [
+      "head:KEYWORD_ONLY='head'",
+      "name:KEYWORD_ONLY='chd'",
+      "edges_only:KEYWORD_ONLY=False",
+      "boundnames:KEYWORD_ONLY=True",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "GeoPackageSource.drn": [
+      "elevation:KEYWORD_ONLY='elevation'",
+      "conductance:KEYWORD_ONLY='conductance'",
+      "name:KEYWORD_ONLY='drn'",
+      "edges_only:KEYWORD_ONLY=False",
+      "boundnames:KEYWORD_ONLY=True",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "GeoPackageSource.evt": [
+      "surface:KEYWORD_ONLY='surface'",
+      "rate:KEYWORD_ONLY='rate'",
+      "depth:KEYWORD_ONLY='depth'",
+      "name:KEYWORD_ONLY='evt'",
+      "boundnames:KEYWORD_ONLY=True",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "GeoPackageSource.ghb": [
+      "head:KEYWORD_ONLY='head'",
+      "conductance:KEYWORD_ONLY='conductance'",
+      "name:KEYWORD_ONLY='ghb'",
+      "edges_only:KEYWORD_ONLY=False",
+      "boundnames:KEYWORD_ONLY=True",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "GeoPackageSource.k_array": [
+      "value:KEYWORD_ONLY='k'",
+      "nlay:KEYWORD_ONLY=<required>",
+      "defaults:KEYWORD_ONLY=<required>"
+    ],
+    "GeoPackageSource.rch": [
+      "recharge:KEYWORD_ONLY='recharge'",
+      "name:KEYWORD_ONLY='rch'",
+      "boundnames:KEYWORD_ONLY=True",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "GeoPackageSource.riv": [
+      "stage:KEYWORD_ONLY='stage'",
+      "conductance:KEYWORD_ONLY='conductance'",
+      "rbot:KEYWORD_ONLY='rbot'",
+      "name:KEYWORD_ONLY='riv'",
+      "edges_only:KEYWORD_ONLY=False",
+      "boundnames:KEYWORD_ONLY=True",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "GeoPackageSource.surface_value": [
+      "reference:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY=<required>",
+      "cell:KEYWORD_ONLY=<required>"
+    ],
+    "GeoPackageSource.wel": [
+      "rate:KEYWORD_ONLY='rate'",
+      "name:KEYWORD_ONLY='wel'",
+      "boundnames:KEYWORD_ONLY=True",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "GeoPackageSourceSpec": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "external:POSITIONAL_OR_KEYWORD=False",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "layer:POSITIONAL_OR_KEYWORD=None",
+      "query:POSITIONAL_OR_KEYWORD=None",
+      "crs:POSITIONAL_OR_KEYWORD=None",
+      "fields:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "GeoPackageSourceSpec.to_dict": [],
+    "GridMesh.plot_mpl": [
+      "ax:POSITIONAL_OR_KEYWORD=None",
+      "plot_title:POSITIONAL_OR_KEYWORD=True",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GridPlots.__call__": [],
+    "GridPlots.grid": [
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "GridPlots.map": [
+      "values:POSITIONAL_OR_KEYWORD=None",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "bgs:KEYWORD_ONLY=False",
+      "zoom:KEYWORD_ONLY=13",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "custom_hover:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GridPlots.section": [
+      "line:POSITIONAL_OR_KEYWORD=<required>",
+      "fill:KEYWORD_ONLY='layer'",
+      "fill_cmap:KEYWORD_ONLY='viridis'",
+      "fill_label:KEYWORD_ONLY=None",
+      "reverse:KEYWORD_ONLY=False",
+      "backend:KEYWORD_ONLY='mpl'"
+    ],
+    "GridRef": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "GridRef.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "GridRef.resolve": [
+      "project_root:KEYWORD_ONLY=None",
+      "workspace:KEYWORD_ONLY=None",
+      "build:KEYWORD_ONLY=True",
+      "return_triangle:KEYWORD_ONLY=False"
+    ],
+    "GridRef.to_dict": [],
+    "GridSection.plot_mpl": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GridSection.to_frame": [],
+    "GridSpec": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "grid_type:POSITIONAL_OR_KEYWORD=<required>",
+      "method:POSITIONAL_OR_KEYWORD=<required>",
+      "script:POSITIONAL_OR_KEYWORD=None",
+      "function:POSITIONAL_OR_KEYWORD=None",
+      "source:POSITIONAL_OR_KEYWORD=None",
+      "boundary:POSITIONAL_OR_KEYWORD=None",
+      "refinement:POSITIONAL_OR_KEYWORD=None",
+      "breaklines:POSITIONAL_OR_KEYWORD=()",
+      "points:POSITIONAL_OR_KEYWORD=()",
+      "inputs:POSITIONAL_OR_KEYWORD=()",
+      "crs:POSITIONAL_OR_KEYWORD=None",
+      "engine:POSITIONAL_OR_KEYWORD=None",
+      "options:POSITIONAL_OR_KEYWORD=<factory>",
+      "triangle_options:POSITIONAL_OR_KEYWORD=<factory>",
+      "mesh_options:POSITIONAL_OR_KEYWORD=<factory>",
+      "voronoi_options:POSITIONAL_OR_KEYWORD=<factory>",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "obj:POSITIONAL_OR_KEYWORD=None",
+      "persist:POSITIONAL_OR_KEYWORD='pickle'",
+      "pickle_path:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "GridSpec.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "GridSpec.from_geopackage": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='grid'",
+      "layer:KEYWORD_ONLY=None",
+      "id_column:KEYWORD_ONLY=None",
+      "grid_type:KEYWORD_ONLY='disv'",
+      "crs:KEYWORD_ONLY=None",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "GridSpec.from_object": [
+      "obj:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='grid'",
+      "grid_type:KEYWORD_ONLY='disv'",
+      "persist:KEYWORD_ONLY='pickle'"
+    ],
+    "GridSpec.from_pickle": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='grid'",
+      "grid_type:KEYWORD_ONLY='disv'"
+    ],
+    "GridSpec.python": [
+      "script:POSITIONAL_OR_KEYWORD=<required>",
+      "function:KEYWORD_ONLY=<required>",
+      "name:KEYWORD_ONLY='grid'",
+      "grid_type:KEYWORD_ONLY='disv'",
+      "inputs:KEYWORD_ONLY=()",
+      "crs:KEYWORD_ONLY=None",
+      "options:KEYWORD_ONLY=None",
+      "metadata:KEYWORD_ONLY=None"
+    ],
+    "GridSpec.resolve": [
+      "project_root:KEYWORD_ONLY=None",
+      "workspace:KEYWORD_ONLY=None",
+      "build:KEYWORD_ONLY=True",
+      "return_triangle:KEYWORD_ONLY=False"
+    ],
+    "GridSpec.structured": [
+      "name:KEYWORD_ONLY='grid'",
+      "nlay:KEYWORD_ONLY=<required>",
+      "nrow:KEYWORD_ONLY=<required>",
+      "ncol:KEYWORD_ONLY=<required>",
+      "delr:KEYWORD_ONLY=<required>",
+      "delc:KEYWORD_ONLY=<required>",
+      "top:KEYWORD_ONLY=<required>",
+      "botm:KEYWORD_ONLY=<required>",
+      "crs:KEYWORD_ONLY=None",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "GridSpec.to_dict": [],
+    "GridSpec.voronoi": [
+      "name:KEYWORD_ONLY='grid'",
+      "boundary:KEYWORD_ONLY=<required>",
+      "refinement:KEYWORD_ONLY=None",
+      "breaklines:KEYWORD_ONLY=()",
+      "points:KEYWORD_ONLY=()",
+      "crs:KEYWORD_ONLY=None",
+      "boundary_max_area:KEYWORD_ONLY=None",
+      "boundary_label:KEYWORD_ONLY=None",
+      "boundary_buffer:KEYWORD_ONLY=None",
+      "boundary_simplify_tolerance:KEYWORD_ONLY=None",
+      "boundary_densify_dist:KEYWORD_ONLY=None",
+      "refinement_max_area:KEYWORD_ONLY=None",
+      "refinement_priority:KEYWORD_ONLY=None",
+      "refinement_buffer:KEYWORD_ONLY=None",
+      "refinement_simplify_tolerance:KEYWORD_ONLY=None",
+      "refinement_densify_dist:KEYWORD_ONLY=None",
+      "breakline_max_area:KEYWORD_ONLY=None",
+      "breakline_priority:KEYWORD_ONLY=None",
+      "breakline_buffer:KEYWORD_ONLY=None",
+      "breakline_negative_buffer_after_clipping:KEYWORD_ONLY=None",
+      "breakline_simplify_tolerance:KEYWORD_ONLY=None",
+      "breakline_densify_dist:KEYWORD_ONLY=None",
+      "region_point_tolerance:KEYWORD_ONLY=None",
+      "engine:KEYWORD_ONLY='triangle_voronoi_plus'",
+      "options:KEYWORD_ONLY=None",
+      "triangle_options:KEYWORD_ONLY=None",
+      "mesh_options:KEYWORD_ONLY=None",
+      "voronoi_options:KEYWORD_ONLY=None",
+      "engine_options:VAR_KEYWORD=<required>"
+    ],
+    "GroupBudget.compare": [
+      "package:KEYWORD_ONLY=None",
+      "value_column:KEYWORD_ONLY='q'"
+    ],
+    "GroupBudget.get": [
+      "package:KEYWORD_ONLY=None"
+    ],
+    "GroupCellPackageResults.compare": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "GroupCellPackageResults.compare_map": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='sum'",
+      "colorscale:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GroupCellPackageResults.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "GroupLakBudgetResults.compare": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None",
+      "connection_type:KEYWORD_ONLY=None"
+    ],
+    "GroupLakBudgetResults.compare_map": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "connection_type:KEYWORD_ONLY=None",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='sum'",
+      "colorscale:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GroupLakBudgetResults.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None",
+      "connection_type:KEYWORD_ONLY=None"
+    ],
+    "GroupLakConnections.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "lake:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "GroupLakConnections.map": [
+      "model_name:KEYWORD_ONLY=None",
+      "lake:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=0",
+      "value_column:KEYWORD_ONLY='connection_area'",
+      "agg:KEYWORD_ONLY='sum'",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GroupLakOutputs.stage": [],
+    "GroupLakStageResults.compare": [
+      "model_name:KEYWORD_ONLY=None",
+      "lake:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None"
+    ],
+    "GroupLakStageResults.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "lake:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None"
+    ],
+    "GroupPackageInputField.get": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GroupPackageInputField.summary": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GroupPackageInputs.compare": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "GroupPackageInputs.compare_map": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "value_column:KEYWORD_ONLY=None",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='sum'",
+      "colorscale:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GroupPackageInputs.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "GroupPackageInputs.summary": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None"
+    ],
+    "GroupSfrBudgetResults.compare": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "GroupSfrBudgetResults.compare_map": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='sum'",
+      "colorscale:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GroupSfrBudgetResults.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "GroupSfrStageResults.compare": [
+      "model_name:KEYWORD_ONLY=None",
+      "reach:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None"
+    ],
+    "GroupSfrStageResults.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "reach:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None"
+    ],
+    "GroupSurfaceWaterExchangeResults.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "include:KEYWORD_ONLY=None",
+      "lak_connection_type:KEYWORD_ONLY=None"
+    ],
+    "GroupUzfFieldAccessor.compare": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "GroupUzfFieldAccessor.compare_map": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='sum'",
+      "colorscale:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "GroupUzfFieldAccessor.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "HeadTargetObservationSpec": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "simulated_values:POSITIONAL_OR_KEYWORD=None",
+      "prefix:POSITIONAL_OR_KEYWORD='hds'"
+    ],
+    "HeadTargets": [
+      "locations:POSITIONAL_OR_KEYWORD=<required>",
+      "values:POSITIONAL_OR_KEYWORD=<required>",
+      "name_column:POSITIONAL_OR_KEYWORD='name'",
+      "layer_column:POSITIONAL_OR_KEYWORD='layer'",
+      "group_column:POSITIONAL_OR_KEYWORD='group'",
+      "weight_column:POSITIONAL_OR_KEYWORD='weight'",
+      "time_column:POSITIONAL_OR_KEYWORD='time'",
+      "value_column:POSITIONAL_OR_KEYWORD='head'",
+      "times:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "HeadTargets.attach_flopy_obs": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "pname:KEYWORD_ONLY='gwf_obs'",
+      "filename:KEYWORD_ONLY='head_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='HEAD'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "HeadTargets.calibration_plot": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "type:KEYWORD_ONLY='calibration'"
+    ],
+    "HeadTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HeadTargets.from_cells": [
+      "cells:KEYWORD_ONLY=<required>",
+      "values:KEYWORD_ONLY=<required>",
+      "times:KEYWORD_ONLY=None",
+      "names:KEYWORD_ONLY=None",
+      "layers:KEYWORD_ONLY=0",
+      "groups:KEYWORD_ONLY=None",
+      "weights:KEYWORD_ONLY=None",
+      "time_column:KEYWORD_ONLY='time'",
+      "value_column:KEYWORD_ONLY='head'"
+    ],
+    "HeadTargets.from_records": [
+      "records:POSITIONAL_OR_KEYWORD=<required>",
+      "time_column:KEYWORD_ONLY='time'",
+      "value_column:KEYWORD_ONLY='head'"
+    ],
+    "HeadTargets.get": [],
+    "HeadTargets.match_to_model": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HeadTargets.observation_labels": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HeadTargets.plot_locations": [
+      "ax:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "HeadTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HeadTargets.simulated_heads": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HeadTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HeadTargets.summary": [],
+    "HeadTargets.to_flopy_obs": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "csv_name:KEYWORD_ONLY='head_targets.csv'",
+      "kind:KEYWORD_ONLY='HEAD'"
+    ],
+    "HeadTargets.to_long": [],
+    "HeadTargets.to_wide": [],
+    "HeadsPlus.get_all_heads": [],
+    "HeadsPlus.get_obs_cells": [
+      "locs:POSITIONAL_OR_KEYWORD=<required>",
+      "crs:POSITIONAL_OR_KEYWORD=None",
+      "loc_name_field:POSITIONAL_OR_KEYWORD='ExploName'"
+    ],
+    "HeadsPlus.get_obs_heads": [
+      "locs:POSITIONAL_OR_KEYWORD=None",
+      "crs:POSITIONAL_OR_KEYWORD=None",
+      "loc_name_field:POSITIONAL_OR_KEYWORD='ExploName'",
+      "long_format:POSITIONAL_OR_KEYWORD=False"
+    ],
+    "HeadsPlus.sort_dict_by_keys": [
+      "dict_to_sort:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "HeadsResultDiff.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "HeadsResultDiff.summary": [
+      "model_name:KEYWORD_ONLY=None",
+      "atol:KEYWORD_ONLY=0.001",
+      "rtol:KEYWORD_ONLY=0.001",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None"
+    ],
+    "HfbPackageExplorer.get": [],
+    "HfbPackageExplorer.map": [
+      "values:POSITIONAL_OR_KEYWORD=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=0",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "HfbPackageExplorer.segments": [
+      "per:KEYWORD_ONLY=None"
+    ],
+    "HfbPackageExplorer.summary": [],
+    "HfbResultsExplorer.get": [
+      "kstpkper:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None"
+    ],
+    "HfbResultsExplorer.map": [
+      "kstpkper:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=0",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "HfbResultsExplorer.summary": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "HoverSpec": [
+      "primary:POSITIONAL_OR_KEYWORD=None",
+      "title:POSITIONAL_OR_KEYWORD=None",
+      "id_field:POSITIONAL_OR_KEYWORD='cell'",
+      "layers:POSITIONAL_OR_KEYWORD='active'",
+      "surfaces:POSITIONAL_OR_KEYWORD=False",
+      "blocks:POSITIONAL_OR_KEYWORD=()",
+      "footer:POSITIONAL_OR_KEYWORD=('period', 'date')",
+      "precision:POSITIONAL_OR_KEYWORD=4",
+      "units:POSITIONAL_OR_KEYWORD=<factory>",
+      "labels:POSITIONAL_OR_KEYWORD=<factory>",
+      "style:POSITIONAL_OR_KEYWORD=<factory>",
+      "formats:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "HoverSpec.label": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HoverSpec.number_style": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HoverSpec.render": [
+      "ctx:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HoverSpec.unit": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "HoverSpec.with_fields": [
+      "names:VAR_POSITIONAL=<required>",
+      "title:KEYWORD_ONLY=None"
+    ],
+    "HoverSpec.with_style": [
+      "overrides:VAR_KEYWORD=<required>"
+    ],
+    "HoverStyle": [
+      "font_family:POSITIONAL_OR_KEYWORD='Calibri, sans-serif'",
+      "font_size:POSITIONAL_OR_KEYWORD=11.5",
+      "font_color:POSITIONAL_OR_KEYWORD='#222222'",
+      "bgcolor:POSITIONAL_OR_KEYWORD='rgba(255,255,255,0.96)'",
+      "bordercolor:POSITIONAL_OR_KEYWORD='#b5b5b5'",
+      "accent:POSITIONAL_OR_KEYWORD='#0f6e56'",
+      "muted:POSITIONAL_OR_KEYWORD='#888780'",
+      "align:POSITIONAL_OR_KEYWORD='left'"
+    ],
+    "HoverStyle.input": [],
+    "HoverStyle.to_hoverlabel": [],
+    "IesForecast.plot": [
+      "bins:KEYWORD_ONLY=20",
+      "title:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "IesForecast.summary": [],
+    "IesResults.best": [
+      "criterion:KEYWORD_ONLY='base'"
+    ],
+    "IesResults.conflict": [
+      "coverage:KEYWORD_ONLY=1.0"
+    ],
+    "IesResults.field": [
+      "target:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY=0"
+    ],
+    "IesResults.forecast": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "IesResults.forecasts": [],
+    "IesResults.obs_ensemble": [
+      "iteration:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "IesResults.obs_residuals": [
+      "realization:KEYWORD_ONLY='base'",
+      "prefix:KEYWORD_ONLY=None"
+    ],
+    "IesResults.par_ensemble": [
+      "iteration:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "IesResults.parameters_at_bounds": [
+      "which:KEYWORD_ONLY='posterior'",
+      "tol:KEYWORD_ONLY=0.01"
+    ],
+    "IesResults.phi_contributions": [
+      "realization:KEYWORD_ONLY='base'"
+    ],
+    "IesResults.plot_conflict": [
+      "coverage:KEYWORD_ONLY=1.0",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "IesResults.plot_field": [
+      "target:POSITIONAL_OR_KEYWORD=<required>",
+      "stat:KEYWORD_ONLY='mean'",
+      "which:KEYWORD_ONLY='posterior'",
+      "layer:KEYWORD_ONLY=0",
+      "backend:KEYWORD_ONLY='plotly'",
+      "choropleth_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "IesResults.plot_field_mosaic": [
+      "target:POSITIONAL_OR_KEYWORD=<required>",
+      "which:KEYWORD_ONLY=('prior', 'posterior')",
+      "stat:KEYWORD_ONLY='mean'",
+      "layer:KEYWORD_ONLY=0",
+      "ncols:KEYWORD_ONLY=2",
+      "title:KEYWORD_ONLY=None",
+      "sync_views:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "choropleth_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "IesResults.plot_obs_residuals": [
+      "realization:KEYWORD_ONLY='base'",
+      "layer:KEYWORD_ONLY=0",
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None",
+      "prefix:KEYWORD_ONLY=None",
+      "choropleth_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "IesResults.plot_parameters_at_bounds": [
+      "which:KEYWORD_ONLY='posterior'",
+      "tol:KEYWORD_ONLY=0.01",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "IesResults.plot_phi": [
+      "log:KEYWORD_ONLY=True",
+      "measured:KEYWORD_ONLY=False",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "IesResults.plot_phi_contributions": [
+      "realization:KEYWORD_ONLY='base'",
+      "kind:KEYWORD_ONLY='bar'",
+      "max_groups:KEYWORD_ONLY=20",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "IesResults.plot_phi_distribution": [
+      "measured:KEYWORD_ONLY=False",
+      "bins:KEYWORD_ONLY=25",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "IesResults.plot_prior_vs_obs": [
+      "groups:KEYWORD_ONLY=None",
+      "max_locations:KEYWORD_ONLY=12",
+      "show_conflict:KEYWORD_ONLY=True",
+      "coverage:KEYWORD_ONLY=1.0",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "IesResults.plot_sensitivity": [
+      "forecast:KEYWORD_ONLY=None",
+      "top:KEYWORD_ONLY=15",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "IesResults.plot_vs_obs": [
+      "groups:KEYWORD_ONLY=None",
+      "max_locations:KEYWORD_ONLY=12",
+      "iteration:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "IesResults.report": [
+      "html_path:POSITIONAL_OR_KEYWORD=<required>",
+      "max_locations:KEYWORD_ONLY=6"
+    ],
+    "IesResults.sensitivity": [
+      "forecast:KEYWORD_ONLY=None",
+      "by_group:KEYWORD_ONLY=True"
+    ],
+    "InterpolatedSurface.clip_raster_with_polygon": [
+      "polygon:POSITIONAL_OR_KEYWORD=None",
+      "buffer:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "InterpolatedSurface.clipped_fig": [
+      "surface:KEYWORD_ONLY=None",
+      "clip:KEYWORD_ONLY=None"
+    ],
+    "InterpolatedSurface.plot_heatmap": [],
+    "InterpolatedSurface.save_raster": [
+      "output_tif:POSITIONAL_OR_KEYWORD='clipped_raster.tif'",
+      "clipped_image:POSITIONAL_OR_KEYWORD=None",
+      "clipped_transform:POSITIONAL_OR_KEYWORD=None",
+      "meta:POSITIONAL_OR_KEYWORD=None",
+      "polygon_clip:POSITIONAL_OR_KEYWORD=None",
+      "buffer:POSITIONAL_OR_KEYWORD=0"
+    ],
+    "InterpolatedSurface.surface_trace": [
+      "surface:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "Isopach": [
+      "source:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LAKBuilder": [
+      "context:POSITIONAL_OR_KEYWORD=<required>",
+      "nper:POSITIONAL_OR_KEYWORD=<required>",
+      "lakes:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:POSITIONAL_OR_KEYWORD=None",
+      "lake_id_field:POSITIONAL_OR_KEYWORD=None",
+      "starting_stage:POSITIONAL_OR_KEYWORD=None",
+      "lake_bottom:POSITIONAL_OR_KEYWORD=None",
+      "lake_top:POSITIONAL_OR_KEYWORD=None",
+      "only_vertical:POSITIONAL_OR_KEYWORD=False",
+      "only_layer:POSITIONAL_OR_KEYWORD=None",
+      "rectangular_interior:POSITIONAL_OR_KEYWORD=False",
+      "bed_leakance:POSITIONAL_OR_KEYWORD=1.0",
+      "connection_modes:POSITIONAL_OR_KEYWORD='bathy'",
+      "unexcavated:POSITIONAL_OR_KEYWORD='warn'",
+      "tables:POSITIONAL_OR_KEYWORD=<factory>",
+      "outlets:POSITIONAL_OR_KEYWORD=()",
+      "stage:POSITIONAL_OR_KEYWORD=None",
+      "rainfall:POSITIONAL_OR_KEYWORD=None",
+      "evaporation:POSITIONAL_OR_KEYWORD=None",
+      "runoff:POSITIONAL_OR_KEYWORD=None",
+      "withdrawals:POSITIONAL_OR_KEYWORD=None",
+      "inflow:POSITIONAL_OR_KEYWORD=None",
+      "status:POSITIONAL_OR_KEYWORD=None",
+      "name:POSITIONAL_OR_KEYWORD='lak'",
+      "mover:POSITIONAL_OR_KEYWORD=False",
+      "boundnames:POSITIONAL_OR_KEYWORD=True",
+      "length_conversion:POSITIONAL_OR_KEYWORD=None",
+      "time_conversion:POSITIONAL_OR_KEYWORD=None",
+      "maximum_iterations:POSITIONAL_OR_KEYWORD=100",
+      "maximum_stage_change:POSITIONAL_OR_KEYWORD=1e-05",
+      "implicit:POSITIONAL_OR_KEYWORD=False",
+      "options:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "LAKBuilder.build": [],
+    "LAKBuilder.connection": [
+      "lake_id:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LAKBuilder.lake_number": [
+      "lake_id:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LAKBuilder.validate": [],
+    "LAKBuilder.with_updates": [
+      "updates:VAR_KEYWORD=<required>"
+    ],
+    "LakBudget.get": [
+      "bud_type:POSITIONAL_OR_KEYWORD=None",
+      "return_df:POSITIONAL_OR_KEYWORD=True"
+    ],
+    "LakBudgetNamespace.get": [
+      "term:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "lakes:KEYWORD_ONLY=None"
+    ],
+    "LakBudgetNamespace.summary": [
+      "term:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "lakes:KEYWORD_ONLY=None",
+      "by:KEYWORD_ONLY=None"
+    ],
+    "LakBudgetNamespace.wide": [
+      "term:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "lakes:KEYWORD_ONLY=None",
+      "index:KEYWORD_ONLY=('per', 'lake')",
+      "values:KEYWORD_ONLY='q'"
+    ],
+    "LakBudgetResultsExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None",
+      "connection_type:KEYWORD_ONLY=None"
+    ],
+    "LakBudgetResultsExplorer.map": [
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "connection_type:KEYWORD_ONLY=None",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='sum'",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LakBudgetView.__call__": [
+      "per:KEYWORD_ONLY=<required>"
+    ],
+    "LakBudgetView.get": [
+      "per:KEYWORD_ONLY=None",
+      "connection_type:KEYWORD_ONLY=None"
+    ],
+    "LakBudgetView.plot": [
+      "per:KEYWORD_ONLY=None",
+      "connection_type:KEYWORD_ONLY=None",
+      "value:KEYWORD_ONLY='q_per_area'",
+      "ax:KEYWORD_ONLY=None",
+      "return_fig:KEYWORD_ONLY=True"
+    ],
+    "LakBudgetView.summary": [
+      "per:KEYWORD_ONLY=None",
+      "connection_type:KEYWORD_ONLY=None"
+    ],
+    "LakConnectionDiff.connections": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LakConnectionsExplorer.get": [
+      "lake:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "LakConnectionsExplorer.map": [
+      "lake:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=0",
+      "value_column:KEYWORD_ONLY='connection_area'",
+      "agg:KEYWORD_ONLY='sum'",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LakConnectionsExplorer.summary": [],
+    "LakOutputData.__call__": [
+      "package:KEYWORD_ONLY=<required>"
+    ],
+    "LakPackageExplorer.__call__": [
+      "package:KEYWORD_ONLY=<required>"
+    ],
+    "LakStageChangeExplorer.get": [
+      "lake:KEYWORD_ONLY=None",
+      "per0:KEYWORD_ONLY=None",
+      "per1:KEYWORD_ONLY=None"
+    ],
+    "LakStageChangeExplorer.plot": [
+      "lake:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None"
+    ],
+    "LakStageChangeExplorer.summary": [],
+    "LakStageOutput.get": [
+      "masked:KEYWORD_ONLY=True"
+    ],
+    "LakStageOutput.kstpkper": [],
+    "LakeConnection": [
+      "cellid:POSITIONAL_OR_KEYWORD=<required>",
+      "connection_type:POSITIONAL_OR_KEYWORD='VERTICAL'",
+      "bed_leakance:POSITIONAL_OR_KEYWORD=None",
+      "bottom_elevation:POSITIONAL_OR_KEYWORD=0.0",
+      "top_elevation:POSITIONAL_OR_KEYWORD=0.0",
+      "connection_length:POSITIONAL_OR_KEYWORD=0.0",
+      "connection_width:POSITIONAL_OR_KEYWORD=0.0"
+    ],
+    "LakeOutlet": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "receiver:POSITIONAL_OR_KEYWORD=None",
+      "outlet_type:POSITIONAL_OR_KEYWORD='SPECIFIED'",
+      "invert:POSITIONAL_OR_KEYWORD=0.0",
+      "width:POSITIONAL_OR_KEYWORD=0.0",
+      "roughness:POSITIONAL_OR_KEYWORD=0.0",
+      "slope:POSITIONAL_OR_KEYWORD=0.0",
+      "rate:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "LakeStageObservationSpec": [
+      "lake_names:POSITIONAL_OR_KEYWORD=None",
+      "values:POSITIONAL_OR_KEYWORD=None",
+      "time_column:POSITIONAL_OR_KEYWORD='time'",
+      "value_column:POSITIONAL_OR_KEYWORD='stage'",
+      "weight:POSITIONAL_OR_KEYWORD=None",
+      "prefix:POSITIONAL_OR_KEYWORD='lak_stage'",
+      "targets:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "LakeStageTargets": [
+      "locations:POSITIONAL_OR_KEYWORD=None",
+      "values:POSITIONAL_OR_KEYWORD=None",
+      "time_column:POSITIONAL_OR_KEYWORD='time'",
+      "value_column:POSITIONAL_OR_KEYWORD='stage'",
+      "times:POSITIONAL_OR_KEYWORD=None",
+      "package:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "LakeStageTargets.attach_flopy_obs": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "pname:KEYWORD_ONLY='lak_obs'",
+      "filename:KEYWORD_ONLY='lake_stage_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='STAGE'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "LakeStageTargets.calibration_plot": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "type:KEYWORD_ONLY='calibration'"
+    ],
+    "LakeStageTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LakeStageTargets.from_records": [
+      "records:POSITIONAL_OR_KEYWORD=<required>",
+      "time_column:KEYWORD_ONLY='time'",
+      "value_column:KEYWORD_ONLY='stage'"
+    ],
+    "LakeStageTargets.from_series": [
+      "lake:KEYWORD_ONLY=<required>",
+      "lake_id:KEYWORD_ONLY=<required>",
+      "values:KEYWORD_ONLY=<required>",
+      "times:KEYWORD_ONLY=None",
+      "time_column:KEYWORD_ONLY='time'",
+      "value_column:KEYWORD_ONLY='stage'"
+    ],
+    "LakeStageTargets.get": [],
+    "LakeStageTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LakeStageTargets.simulated_series": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LakeStageTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LakeStageTargets.summary": [],
+    "LakeStageTargets.to_flopy_obs": [
+      "csv_name:KEYWORD_ONLY='lake_stage_targets.csv'",
+      "kind:KEYWORD_ONLY='STAGE'"
+    ],
+    "LakeStageTargets.to_long": [],
+    "LakeStageTargets.to_wide": [],
+    "LakeTable": [
+      "rows:POSITIONAL_OR_KEYWORD=<required>",
+      "filename:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "LakeTableBuilder": [
+      "rows:POSITIONAL_OR_KEYWORD=None",
+      "area:POSITIONAL_OR_KEYWORD=None",
+      "top:POSITIONAL_OR_KEYWORD=None",
+      "bottom:POSITIONAL_OR_KEYWORD=None",
+      "stage_step:POSITIONAL_OR_KEYWORD=1.0",
+      "storage_coefficient:POSITIONAL_OR_KEYWORD=1.0",
+      "dem:POSITIONAL_OR_KEYWORD=None",
+      "footprint:POSITIONAL_OR_KEYWORD=None",
+      "footprint_layer:POSITIONAL_OR_KEYWORD=None",
+      "stages:POSITIONAL_OR_KEYWORD=None",
+      "footprint_buffer:POSITIONAL_OR_KEYWORD=0.0",
+      "filename:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "LakeTableBuilder.build": [],
+    "LayerBuildResult": [
+      "top:POSITIONAL_OR_KEYWORD=<required>",
+      "botm:POSITIONAL_OR_KEYWORD=<required>",
+      "idomain:POSITIONAL_OR_KEYWORD=<required>",
+      "thickness:POSITIONAL_OR_KEYWORD=<required>",
+      "names:POSITIONAL_OR_KEYWORD=<required>",
+      "min_thickness:POSITIONAL_OR_KEYWORD=<required>",
+      "pinch:POSITIONAL_OR_KEYWORD=<required>",
+      "length_units:POSITIONAL_OR_KEYWORD=<required>",
+      "time_units:POSITIONAL_OR_KEYWORD=<required>",
+      "vor:POSITIONAL_OR_KEYWORD=None",
+      "units:POSITIONAL_OR_KEYWORD=<factory>",
+      "excavations:POSITIONAL_OR_KEYWORD=<factory>",
+      "ground:POSITIONAL_OR_KEYWORD=None",
+      "excavated:POSITIONAL_OR_KEYWORD=None",
+      "absorbed:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "LayerBuildResult.attach_to_grid": [
+      "vor:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "LayerBuildResult.excavate": [
+      "bottom:POSITIONAL_OR_KEYWORD=<required>",
+      "within:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "min_remnant:KEYWORD_ONLY=0.1"
+    ],
+    "LayerBuildResult.excavation_report": [
+      "thinner_than:KEYWORD_ONLY=None"
+    ],
+    "LayerBuildResult.per_layer": [
+      "mapping:POSITIONAL_OR_KEYWORD=<required>",
+      "default:KEYWORD_ONLY=<object object>"
+    ],
+    "LayerBuildResult.prune_isolated": [],
+    "LayerBuildResult.qc": [],
+    "LayerBuildResult.report": [],
+    "LayerBuildResult.to_disv": [
+      "vor:POSITIONAL_OR_KEYWORD=None",
+      "name:KEYWORD_ONLY='disv'"
+    ],
+    "LayerBuildResult.validate": [],
+    "LayerBuildResult.vertex_grid": [],
+    "LayerQCReport": [
+      "nlay:POSITIONAL_OR_KEYWORD=<required>",
+      "ncpl:POSITIONAL_OR_KEYWORD=<required>",
+      "names:POSITIONAL_OR_KEYWORD=<required>",
+      "nan_top:POSITIONAL_OR_KEYWORD=<required>",
+      "nan_botm:POSITIONAL_OR_KEYWORD=<required>",
+      "nan_active_cells:POSITIONAL_OR_KEYWORD=<required>",
+      "nonpositive_active:POSITIONAL_OR_KEYWORD=<required>",
+      "thin:POSITIONAL_OR_KEYWORD=<required>",
+      "pinched:POSITIONAL_OR_KEYWORD=<required>",
+      "isolated_active:POSITIONAL_OR_KEYWORD=<required>",
+      "n_active_components:POSITIONAL_OR_KEYWORD=<required>",
+      "component_sizes:POSITIONAL_OR_KEYWORD=<required>",
+      "reconcile_adjusted:POSITIONAL_OR_KEYWORD=None",
+      "reconcile_max_shift:POSITIONAL_OR_KEYWORD=None",
+      "excavated:POSITIONAL_OR_KEYWORD=None",
+      "absorbed:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "LayerSection.draw": [
+      "ax:POSITIONAL_OR_KEYWORD=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LayerStack": [
+      "vor:POSITIONAL_OR_KEYWORD=None",
+      "top:POSITIONAL_OR_KEYWORD=None",
+      "length_units:KEYWORD_ONLY='feet'",
+      "time_units:KEYWORD_ONLY='days'"
+    ],
+    "LayerStack.add": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "bottom:KEYWORD_ONLY=None",
+      "thickness:KEYWORD_ONLY=None",
+      "min_thickness:KEYWORD_ONLY=None",
+      "pinch:KEYWORD_ONLY=None",
+      "fill:KEYWORD_ONLY=None",
+      "split:KEYWORD_ONLY=None",
+      "names:KEYWORD_ONLY=None"
+    ],
+    "LayerStack.build": [
+      "vor:POSITIONAL_OR_KEYWORD=None",
+      "default_min_thickness:KEYWORD_ONLY=1.0",
+      "default_pinch:KEYWORD_ONLY='floor'",
+      "reconcile:KEYWORD_ONLY='bottom'",
+      "min_sep:KEYWORD_ONLY=0.1",
+      "trigger_sep:KEYWORD_ONLY=None",
+      "method:KEYWORD_ONLY='area'",
+      "refresh:KEYWORD_ONLY=False",
+      "attach:KEYWORD_ONLY=False"
+    ],
+    "LayerStack.cache_status": [],
+    "LayerStack.digest_payload": [],
+    "LayerStack.draft_grid": [
+      "cells:KEYWORD_ONLY=400",
+      "extent:KEYWORD_ONLY=None",
+      "crs:KEYWORD_ONLY=None"
+    ],
+    "LayerStack.excavate": [
+      "bottom:POSITIONAL_OR_KEYWORD=<required>",
+      "within:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "min_remnant:KEYWORD_ONLY=0.1"
+    ],
+    "LayerStack.for_grid": [
+      "vor:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LayerStack.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>",
+      "vor:KEYWORD_ONLY=None"
+    ],
+    "LayerStack.from_modflow": [
+      "vor:POSITIONAL_OR_KEYWORD=<required>",
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "names:KEYWORD_ONLY=None",
+      "resample:KEYWORD_ONLY=True",
+      "length_units:KEYWORD_ONLY='feet'",
+      "time_units:KEYWORD_ONLY='days'"
+    ],
+    "LayerStack.insert_below": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "new_name:POSITIONAL_OR_KEYWORD=<required>",
+      "bottom:KEYWORD_ONLY=None",
+      "thickness:KEYWORD_ONLY=None",
+      "min_thickness:KEYWORD_ONLY=None",
+      "pinch:KEYWORD_ONLY=None",
+      "fill:KEYWORD_ONLY=None",
+      "split:KEYWORD_ONLY=None",
+      "names:KEYWORD_ONLY=None"
+    ],
+    "LayerStack.qc": [
+      "vor:POSITIONAL_OR_KEYWORD=None",
+      "default_min_thickness:KEYWORD_ONLY=1.0",
+      "default_pinch:KEYWORD_ONLY='floor'",
+      "reconcile:KEYWORD_ONLY='bottom'",
+      "min_sep:KEYWORD_ONLY=0.1",
+      "trigger_sep:KEYWORD_ONLY=None",
+      "method:KEYWORD_ONLY='area'",
+      "refresh:KEYWORD_ONLY=False"
+    ],
+    "LayerStack.refresh": [],
+    "LayerStack.remove": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LayerStack.replace": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "bottom:KEYWORD_ONLY=None",
+      "thickness:KEYWORD_ONLY=None",
+      "min_thickness:KEYWORD_ONLY=<object object>",
+      "pinch:KEYWORD_ONLY=<object object>",
+      "fill:KEYWORD_ONLY=None",
+      "split:KEYWORD_ONLY=<object object>",
+      "names:KEYWORD_ONLY=<object object>"
+    ],
+    "LayerStack.to_dict": [],
+    "LayerStack.to_disv": [
+      "vor:POSITIONAL_OR_KEYWORD=None",
+      "name:KEYWORD_ONLY='disv'",
+      "attach:KEYWORD_ONLY=True",
+      "default_min_thickness:KEYWORD_ONLY=1.0",
+      "default_pinch:KEYWORD_ONLY='floor'",
+      "reconcile:KEYWORD_ONLY='bottom'",
+      "min_sep:KEYWORD_ONLY=0.1",
+      "trigger_sep:KEYWORD_ONLY=None",
+      "method:KEYWORD_ONLY='area'",
+      "refresh:KEYWORD_ONLY=False"
+    ],
+    "LayerSurfaces": [
+      "surfaces:POSITIONAL_OR_KEYWORD=<required>",
+      "labels:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "LayerSurfaces.attach": [
+      "vor:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LayerSurfaces.sample": [
+      "vor:POSITIONAL_OR_KEYWORD=<required>",
+      "reconcile:KEYWORD_ONLY=True",
+      "min_sep:KEYWORD_ONLY=0.1",
+      "trigger_sep:KEYWORD_ONLY=1",
+      "which:KEYWORD_ONLY='bottom'",
+      "method:KEYWORD_ONLY='area'",
+      "length_units:KEYWORD_ONLY=None",
+      "refresh:KEYWORD_ONLY=False"
+    ],
+    "LayerSurfaces.thickness_report": [
+      "vor:POSITIONAL_OR_KEYWORD=<required>",
+      "minimum_thickness:KEYWORD_ONLY=1.0",
+      "sample_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LayerSurfaces.to_disv": [
+      "vor:POSITIONAL_OR_KEYWORD=<required>",
+      "nlay:KEYWORD_ONLY=None",
+      "idomain:KEYWORD_ONLY=None",
+      "pinch_out:KEYWORD_ONLY=False",
+      "minimum_thickness:KEYWORD_ONLY=1.0",
+      "pinch:KEYWORD_ONLY='passthrough'",
+      "length_units:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY='disv'",
+      "attach:KEYWORD_ONLY=True",
+      "sample_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LayerSurfaces.top_botm": [
+      "vor:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LayerSurfaces.top_botm_idomain": [
+      "vor:POSITIONAL_OR_KEYWORD=<required>",
+      "minimum_thickness:KEYWORD_ONLY=1.0",
+      "pinch:KEYWORD_ONLY='passthrough'",
+      "sample_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LayerThicknessMap.draw": [
+      "ax:POSITIONAL_OR_KEYWORD=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LeafFieldSugar.animate": [
+      "args:VAR_POSITIONAL=<required>",
+      "field:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LeafFieldSugar.field": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LeafFieldSugar.field_names": [],
+    "LeafFieldSugar.map": [
+      "args:VAR_POSITIONAL=<required>",
+      "field:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LeafFieldSugar.mosaic": [
+      "args:VAR_POSITIONAL=<required>",
+      "field:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "LeafFieldSugar.plot": [
+      "args:VAR_POSITIONAL=<required>",
+      "field:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ListingOutcome": [
+      "outcome:POSITIONAL_OR_KEYWORD=<required>",
+      "finished_at:POSITIONAL_OR_KEYWORD=None",
+      "elapsed:POSITIONAL_OR_KEYWORD=None",
+      "stale:POSITIONAL_OR_KEYWORD=False"
+    ],
+    "LiteralSource": [
+      "value:POSITIONAL_OR_KEYWORD=<required>",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "LiteralSource.digest_payload": [],
+    "LiteralSource.to_dict": [],
+    "LoadedMf6Run": [
+      "workspace:KEYWORD_ONLY=<required>",
+      "model_name:KEYWORD_ONLY=None",
+      "crs:KEYWORD_ONLY='EPSG:2927'",
+      "verbosity_level:KEYWORD_ONLY=0"
+    ],
+    "LoadedMf6Run.grid_signature": [],
+    "LoadedMf6Run.load_all": [],
+    "LoadedMf6Run.package": [
+      "package_names:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LoadedMf6Run.run_simulation": [],
+    "MVRBuilder": [
+      "nper:POSITIONAL_OR_KEYWORD=<required>",
+      "moves:POSITIONAL_OR_KEYWORD=<required>",
+      "name:POSITIONAL_OR_KEYWORD='mvr'",
+      "print_input:POSITIONAL_OR_KEYWORD=False",
+      "print_flows:POSITIONAL_OR_KEYWORD=False",
+      "options:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "MVRBuilder.build": [],
+    "MVRBuilder.validate": [],
+    "Max": [
+      "surfaces:VAR_POSITIONAL=<required>"
+    ],
+    "MeshBuildProfile": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "cleanup:POSITIONAL_OR_KEYWORD=True",
+      "snap_tolerance:POSITIONAL_OR_KEYWORD=0.0",
+      "simplify_tolerance:POSITIONAL_OR_KEYWORD=2.0",
+      "min_feature_area:POSITIONAL_OR_KEYWORD=0.0",
+      "target_segment_length:POSITIONAL_OR_KEYWORD=120.0",
+      "resample_domain_boundary:POSITIONAL_OR_KEYWORD=False",
+      "resample_region_sources:POSITIONAL_OR_KEYWORD=('line',)",
+      "optimization_iterations:POSITIONAL_OR_KEYWORD=3",
+      "damping:POSITIONAL_OR_KEYWORD=0.25",
+      "min_move:POSITIONAL_OR_KEYWORD=0.001"
+    ],
+    "MeshBuildProfile.cleanup_kwargs": [],
+    "MeshBuildProfile.from_name": [
+      "profile:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Min": [
+      "surfaces:VAR_POSITIONAL=<required>"
+    ],
+    "ModelBudgetNamespace.__getitem__": [
+      "term:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ModelConfig.from_model": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ModelConfig.model_options": [
+      "gwf:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ModelConfig.section": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ModelConfig.settings": [
+      "section:KEYWORD_ONLY=None"
+    ],
+    "ModelContext": [
+      "grid:POSITIONAL_OR_KEYWORD=None",
+      "surfaces:POSITIONAL_OR_KEYWORD=None",
+      "dates:POSITIONAL_OR_KEYWORD=None",
+      "domain:POSITIONAL_OR_KEYWORD=None",
+      "length_units:POSITIONAL_OR_KEYWORD='feet'",
+      "time_units:POSITIONAL_OR_KEYWORD='days'",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "ModelDiff.model": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ModelDiff.package": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ModelDiff.report": [
+      "results:KEYWORD_ONLY=False"
+    ],
+    "ModelDiff.summary": [
+      "model_name:KEYWORD_ONLY=None"
+    ],
+    "ModelGroup": [
+      "models:POSITIONAL_OR_KEYWORD=<required>",
+      "reference:KEYWORD_ONLY=None",
+      "crs:KEYWORD_ONLY=None",
+      "verbosity_level:KEYWORD_ONLY=0",
+      "shared_grid:KEYWORD_ONLY=False"
+    ],
+    "ModelGroup.bud": [
+      "package:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "ModelGroup.diff": [],
+    "ModelGroup.summary": [],
+    "ModelMapStyle": [
+      "figsize:POSITIONAL_OR_KEYWORD=(10, 8)",
+      "cmap:POSITIONAL_OR_KEYWORD='viridis'",
+      "grid_color:POSITIONAL_OR_KEYWORD='#3c4652'",
+      "grid_linewidth:POSITIONAL_OR_KEYWORD=0.2",
+      "contour_color:POSITIONAL_OR_KEYWORD='white'",
+      "contour_linewidth:POSITIONAL_OR_KEYWORD=0.7",
+      "contour_levels:POSITIONAL_OR_KEYWORD=10",
+      "show_grid:POSITIONAL_OR_KEYWORD=True",
+      "show_contours:POSITIONAL_OR_KEYWORD=True",
+      "show_colorbar:POSITIONAL_OR_KEYWORD=True",
+      "dpi:POSITIONAL_OR_KEYWORD=140"
+    ],
+    "ModelPackages.mosaic": [
+      "packages:KEYWORD_ONLY=None",
+      "ncols:KEYWORD_ONLY=3",
+      "title:KEYWORD_ONLY=None",
+      "sync_views:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ModelPackages.summary": [
+      "detail:KEYWORD_ONLY='fields'"
+    ],
+    "ModelPlots.animate": [
+      "frames:POSITIONAL_OR_KEYWORD=<required>",
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None",
+      "dpi:KEYWORD_ONLY=140",
+      "interval_ms:KEYWORD_ONLY=700",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ModelPlots.grid": [
+      "backend:KEYWORD_ONLY='plotly'",
+      "pathlines:KEYWORD_ONLY=None",
+      "vertical_exaggeration:KEYWORD_ONLY=1.0",
+      "model_style:KEYWORD_ONLY='wireframe'",
+      "model_opacity:KEYWORD_ONLY=0.25",
+      "pathline_cmap:KEYWORD_ONLY='viridis'",
+      "pathline_width:KEYWORD_ONLY=4.0",
+      "show_edges:KEYWORD_ONLY=True",
+      "off_screen:KEYWORD_ONLY=True",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ModelPlots.map": [
+      "values:POSITIONAL_OR_KEYWORD=None",
+      "per:KEYWORD_ONLY=None",
+      "kstpkper:KEYWORD_ONLY=None",
+      "per_timestep:KEYWORD_ONLY='last'",
+      "layer:KEYWORD_ONLY=0",
+      "type:KEYWORD_ONLY='hds'",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "bgs:KEYWORD_ONLY=False",
+      "zoom:KEYWORD_ONLY=13",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "hover_layers:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "hover_fields:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "show_mounding:KEYWORD_ONLY=False",
+      "hover_heads:KEYWORD_ONLY=True",
+      "hover_ks:KEYWORD_ONLY=False",
+      "custom_hover:KEYWORD_ONLY=None",
+      "rch_scale:KEYWORD_ONLY=None",
+      "animation_kstpkpers:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ModelPlots.mosaic": [
+      "panels:POSITIONAL_OR_KEYWORD=<required>",
+      "ncols:KEYWORD_ONLY=3",
+      "title:KEYWORD_ONLY=None",
+      "diff:KEYWORD_ONLY=False",
+      "sync_views:KEYWORD_ONLY=None",
+      "colorbar:KEYWORD_ONLY=None",
+      "extent:KEYWORD_ONLY=None"
+    ],
+    "ModelPlots.section": [
+      "line:POSITIONAL_OR_KEYWORD=None",
+      "cells:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "kstpkper:KEYWORD_ONLY=None",
+      "fill:KEYWORD_ONLY='layer'",
+      "layers:KEYWORD_ONLY=None",
+      "head_layers:KEYWORD_ONLY=0",
+      "layer_labels:KEYWORD_ONLY=None",
+      "show_grid:KEYWORD_ONLY=True",
+      "legend:KEYWORD_ONLY=True",
+      "fill_cmap:KEYWORD_ONLY='viridis'",
+      "fill_label:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=0",
+      "interpolate:KEYWORD_ONLY=False",
+      "interpolator:KEYWORD_ONLY=None",
+      "use_rbf:KEYWORD_ONLY=True",
+      "num_points:KEYWORD_ONLY=100",
+      "clip:KEYWORD_ONLY=None",
+      "x_or_y:KEYWORD_ONLY='x'",
+      "show_model_top:KEYWORD_ONLY=True",
+      "show_model_btm:KEYWORD_ONLY=False",
+      "surf_type:KEYWORD_ONLY='hds'",
+      "animation_kstpkpers:KEYWORD_ONLY=None",
+      "reverse:KEYWORD_ONLY=False",
+      "section_name:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='mpl'",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ModelPlots.surface": [
+      "layer:KEYWORD_ONLY=0",
+      "per:KEYWORD_ONLY=None",
+      "kstpkper:KEYWORD_ONLY=None",
+      "surf_type:KEYWORD_ONLY='hds'",
+      "resolution:KEYWORD_ONLY=1000",
+      "use_rbf:KEYWORD_ONLY=False",
+      "interpolator:KEYWORD_ONLY=None",
+      "clip:KEYWORD_ONLY=None",
+      "crs:KEYWORD_ONLY=None",
+      "xs:KEYWORD_ONLY=None",
+      "ys:KEYWORD_ONLY=None",
+      "zs:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ModelSpec": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "model_type:POSITIONAL_OR_KEYWORD=<required>",
+      "packages:POSITIONAL_OR_KEYWORD=()",
+      "options:POSITIONAL_OR_KEYWORD=<factory>",
+      "builder:POSITIONAL_OR_KEYWORD=None",
+      "context:POSITIONAL_OR_KEYWORD=<factory>",
+      "hooks:POSITIONAL_OR_KEYWORD=()",
+      "grid:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "ModelSpec.build": [
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "build_context:KEYWORD_ONLY=None"
+    ],
+    "ModelSpec.coverage_on": [
+      "grid:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ModelSpec.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ModelSpec.move_report": [
+      "grid_free:KEYWORD_ONLY=()"
+    ],
+    "ModelSpec.package": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ModelSpec.resolved_packages": [
+      "build_context:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "ModelSpec.to_dict": [],
+    "ModelSpec.with_context": [
+      "context:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ModelSpec.with_grid": [
+      "grid:POSITIONAL_OR_KEYWORD=<required>",
+      "grid_free:KEYWORD_ONLY=()",
+      "remap:KEYWORD_ONLY=False",
+      "rule:KEYWORD_ONLY=None",
+      "uncovered:KEYWORD_ONLY=None"
+    ],
+    "ModelSpec.with_options": [
+      "overrides:VAR_KEYWORD=<required>"
+    ],
+    "ModelSpec.with_packages": [
+      "packages:VAR_POSITIONAL=<required>",
+      "slot:KEYWORD_ONLY=None"
+    ],
+    "ModelSpec.without_packages": [
+      "names:VAR_POSITIONAL=<required>"
+    ],
+    "ModelView": [
+      "run:KEYWORD_ONLY=<required>",
+      "model_name:KEYWORD_ONLY=<required>"
+    ],
+    "ModflowGwflakImplicit.write": [
+      "ext_file_action:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "Move": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "receiver:POSITIONAL_OR_KEYWORD=<required>",
+      "method:POSITIONAL_OR_KEYWORD='FACTOR'",
+      "value:POSITIONAL_OR_KEYWORD=1.0"
+    ],
+    "Move.to_record": [],
+    "MoverConnection": [
+      "package:POSITIONAL_OR_KEYWORD=<required>",
+      "index:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "MplPicture.draw": [
+      "ax:POSITIONAL_OR_KEYWORD=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "MplPicture.html": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "dpi:KEYWORD_ONLY=150",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "MplPicture.plot_mpl": [
+      "ax:POSITIONAL_OR_KEYWORD=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "MplPicture.save": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "dpi:KEYWORD_ONLY=150",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "MplPicture.show": [
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "MvrResultDiff.get": [
+      "package:KEYWORD_ONLY=<required>",
+      "direction:KEYWORD_ONLY='from_mvr'",
+      "model_name:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "MvrResultDiff.summary": [
+      "model_name:KEYWORD_ONLY=None",
+      "atol:KEYWORD_ONLY=0.001",
+      "rtol:KEYWORD_ONLY=0.001"
+    ],
+    "PRTCaptureView.get": [
+      "by:KEYWORD_ONLY='release_group'",
+      "layer:KEYWORD_ONLY=None"
+    ],
+    "PRTCaptureView.groups": [
+      "by:KEYWORD_ONLY='release_group'"
+    ],
+    "PRTCaptureView.map": [
+      "by:KEYWORD_ONLY='release_group'",
+      "group:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "ncols:KEYWORD_ONLY=2",
+      "sync_views:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PRTCaptureView.plot": [
+      "by:KEYWORD_ONLY='release_group'",
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None"
+    ],
+    "PRTCaptureView.summary": [],
+    "PRTEndpointsView.get": [
+      "layer:KEYWORD_ONLY=None"
+    ],
+    "PRTEndpointsView.map": [
+      "layer:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "backend:KEYWORD_ONLY='plotly'",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PRTEndpointsView.plot": [
+      "top:KEYWORD_ONLY=20",
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None"
+    ],
+    "PRTEndpointsView.summary": [],
+    "PRTPathlineView.animate": [
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PRTPathlineView.get": [
+      "group:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None"
+    ],
+    "PRTPathlineView.groups": [],
+    "PRTPathlineView.map": [
+      "base:KEYWORD_ONLY='heads'",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "group:KEYWORD_ONLY=None",
+      "color:KEYWORD_ONLY='release_group'",
+      "width:KEYWORD_ONLY=2.0",
+      "max_particles:KEYWORD_ONLY=250",
+      "title:KEYWORD_ONLY=None",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "base_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PRTPathlineView.mosaic": [
+      "by:KEYWORD_ONLY='release_group'",
+      "ncols:KEYWORD_ONLY=2",
+      "sync_views:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PRTPathlineView.plot": [
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None"
+    ],
+    "PRTPathlineView.section": [
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PRTPathlineView.summary": [],
+    "PRTProject": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "workspace:KEYWORD_ONLY=<required>",
+      "name:KEYWORD_ONLY=None",
+      "release_points:KEYWORD_ONLY=<required>",
+      "porosity:KEYWORD_ONLY=0.2",
+      "perioddata:KEYWORD_ONLY=None",
+      "time_units:KEYWORD_ONLY=None",
+      "release_perioddata:KEYWORD_ONLY=None",
+      "extend_tracking:KEYWORD_ONLY=False",
+      "stoptime:KEYWORD_ONLY=None",
+      "stoptraveltime:KEYWORD_ONLY=None",
+      "drape:KEYWORD_ONLY=True",
+      "local_z:KEYWORD_ONLY=True",
+      "stop_at_weak_sink:KEYWORD_ONLY=False",
+      "track_times:KEYWORD_ONLY=None",
+      "exe_name:KEYWORD_ONLY='mf6'"
+    ],
+    "PRTProject.results": [
+      "success:KEYWORD_ONLY=None",
+      "report:KEYWORD_ONLY=()"
+    ],
+    "PRTProject.run": [
+      "write:KEYWORD_ONLY=True",
+      "silent:KEYWORD_ONLY=True",
+      "report:KEYWORD_ONLY=True"
+    ],
+    "PRTProject.write": [
+      "silent:KEYWORD_ONLY=True"
+    ],
+    "PRTReleasePoints": [
+      "packagedata:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "PRTReleasePoints.from_cells": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "cells:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY=0",
+      "local_z:KEYWORD_ONLY=0.5",
+      "group:KEYWORD_ONLY=None"
+    ],
+    "PRTReleasePoints.from_points": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "points:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY=0",
+      "local_z:KEYWORD_ONLY=0.5",
+      "group:KEYWORD_ONLY=None"
+    ],
+    "PRTReleasePoints.merge": [
+      "sets:VAR_POSITIONAL=<required>"
+    ],
+    "PRTRunResults": [
+      "flow_model:POSITIONAL_OR_KEYWORD=<required>",
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "track_csv_path:POSITIONAL_OR_KEYWORD=<required>",
+      "budget_path:POSITIONAL_OR_KEYWORD=None",
+      "success:POSITIONAL_OR_KEYWORD=None",
+      "report:POSITIONAL_OR_KEYWORD=()"
+    ],
+    "PRTRunResults.export_3d_html": [
+      "output_path:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PRTRunResults.plot_map": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PRTRunResults.refresh": [],
+    "PRTRunResults.scene": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PRTTravelTimeView.get": [
+      "stat:KEYWORD_ONLY='median'",
+      "layer:KEYWORD_ONLY=None"
+    ],
+    "PRTTravelTimeView.map": [
+      "stat:KEYWORD_ONLY='median'",
+      "layer:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "colorscale:KEYWORD_ONLY=None",
+      "units:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PRTTravelTimeView.plot": [
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None"
+    ],
+    "PRTTravelTimeView.summary": [],
+    "PackageArtifact": [
+      "artifact_id:POSITIONAL_OR_KEYWORD=<required>",
+      "package_type:POSITIONAL_OR_KEYWORD=<required>",
+      "source_workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "source_model_name:POSITIONAL_OR_KEYWORD=<required>",
+      "source_package_name:POSITIONAL_OR_KEYWORD=<required>",
+      "compatibility:POSITIONAL_OR_KEYWORD=<required>",
+      "package_data:POSITIONAL_OR_KEYWORD=<required>",
+      "source_run_id:POSITIONAL_OR_KEYWORD=None",
+      "source_file:POSITIONAL_OR_KEYWORD=None",
+      "description:POSITIONAL_OR_KEYWORD=None",
+      "tags:POSITIONAL_OR_KEYWORD=<factory>",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "storage_mode:POSITIONAL_OR_KEYWORD='snapshot'",
+      "derived_from_artifact_id:POSITIONAL_OR_KEYWORD=None",
+      "derived_from_run_id:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "PackageBudgetTermExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "filters:VAR_KEYWORD=<required>"
+    ],
+    "PackageBudgetTermExplorer.summary": [
+      "per:KEYWORD_ONLY=None",
+      "by:KEYWORD_ONLY=None",
+      "filters:VAR_KEYWORD=<required>"
+    ],
+    "PackageBudgetTermExplorer.wide": [
+      "per:KEYWORD_ONLY=None",
+      "index:KEYWORD_ONLY=('per', 'lake')",
+      "values:KEYWORD_ONLY='q'",
+      "filters:VAR_KEYWORD=<required>"
+    ],
+    "PackageBuilder": [
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PackageBuilder.build": [],
+    "PackageDiff.cells": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "include_shared:KEYWORD_ONLY=False"
+    ],
+    "PackageDiff.summary": [
+      "model_name:KEYWORD_ONLY=None"
+    ],
+    "PackageDiff.values": [
+      "model_name:POSITIONAL_OR_KEYWORD=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PackageLibrary.clear": [],
+    "PackageLibrary.digests": [],
+    "PackageLibrary.edit": [
+      "key:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "deep:KEYWORD_ONLY=True",
+      "note:KEYWORD_ONLY=None",
+      "overrides:VAR_KEYWORD=<required>"
+    ],
+    "PackageLibrary.fork": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "key:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "deep:KEYWORD_ONLY=True",
+      "note:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False",
+      "overrides:VAR_KEYWORD=<required>"
+    ],
+    "PackageLibrary.persistence": [],
+    "PackageLibrary.pop": [
+      "args:VAR_POSITIONAL=<required>"
+    ],
+    "PackageLibrary.popitem": [],
+    "PackageLibrary.setdefault": [
+      "key:POSITIONAL_OR_KEYWORD=<required>",
+      "default:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "PackageLibrary.update": [
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "PackageRef": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "PackageRef.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "PackageRef.to_dict": [],
+    "PackageSpec": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "builder:POSITIONAL_OR_KEYWORD=<required>",
+      "options:POSITIONAL_OR_KEYWORD=<factory>",
+      "enabled:POSITIONAL_OR_KEYWORD=True",
+      "requires:POSITIONAL_OR_KEYWORD=()",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "inputs:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "PackageSpec.build": [
+      "target:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "PackageSpec.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "PackageSpec.to_dict": [],
+    "PackageSpec.with_metadata": [
+      "updates:VAR_KEYWORD=<required>"
+    ],
+    "PackageSpec.with_options": [
+      "overrides:VAR_KEYWORD=<required>"
+    ],
+    "ParallelEnvironment": [
+      "mf6:POSITIONAL_OR_KEYWORD=<required>",
+      "mpiexec:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ParallelModelWorkflow": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ParallelModelWorkflow.prepare": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ParallelModelWorkflow.run": [
+      "processors:KEYWORD_ONLY=None",
+      "validate_serial:KEYWORD_ONLY=True",
+      "split_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ParallelModelWorkflow.split": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ParallelModelWorkflow.split_model": [
+      "workspace:KEYWORD_ONLY=<required>",
+      "nparts:KEYWORD_ONLY=None",
+      "mask:KEYWORD_ONLY=None",
+      "active_only:KEYWORD_ONLY=True",
+      "seed:KEYWORD_ONLY=42",
+      "contiguous:KEYWORD_ONLY=True",
+      "verbose:KEYWORD_ONLY=False",
+      "write:KEYWORD_ONLY=True",
+      "save_mapping:KEYWORD_ONLY=True",
+      "preserve_source_observations:KEYWORD_ONLY=True",
+      "preserve_lakes:KEYWORD_ONLY=True"
+    ],
+    "ParallelModelWorkflow.topology": [],
+    "ParallelSplitResults": [
+      "run:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ParallelSplitResults.array": [
+      "model_name:KEYWORD_ONLY=None",
+      "output:KEYWORD_ONLY='head'",
+      "kstpkper:KEYWORD_ONLY=None",
+      "totim:KEYWORD_ONLY=None"
+    ],
+    "ParallelSplitResults.heads": [
+      "model_name:KEYWORD_ONLY=None",
+      "kstpkper:KEYWORD_ONLY=None",
+      "totim:KEYWORD_ONLY=None"
+    ],
+    "ParallelSplitRun": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "splitter:POSITIONAL_OR_KEYWORD=<required>",
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "mask:POSITIONAL_OR_KEYWORD=<required>",
+      "workspace:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ParallelSplitRun.compare_heads": [
+      "kstpkper:KEYWORD_ONLY=None",
+      "totim:KEYWORD_ONLY=None"
+    ],
+    "ParallelSplitRun.partition_model_name": [
+      "base_name:POSITIONAL_OR_KEYWORD=<required>",
+      "partition_id:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ParallelSplitRun.plot_partitions": [
+      "ax:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=0",
+      "cmap:KEYWORD_ONLY='tab20'"
+    ],
+    "ParallelSplitRun.run": [
+      "processors:KEYWORD_ONLY=None",
+      "write:KEYWORD_ONLY=True",
+      "run_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ParallelSplitRun.run_serial": [
+      "write:KEYWORD_ONLY=True",
+      "run_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ParallelSplitRun.summary": [],
+    "ParallelSplitRun.validate": [
+      "raise_on_error:KEYWORD_ONLY=True"
+    ],
+    "ParallelSplitRun.write": [
+      "save_mapping:KEYWORD_ONLY=True"
+    ],
+    "ParticleTracking": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ParticleTracking.mp3du": [
+      "particles:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ParticleTracking.open_prt": [
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None"
+    ],
+    "ParticleTracking.prt": [
+      "workspace:KEYWORD_ONLY=<required>",
+      "release_points:KEYWORD_ONLY=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "ParticleTrackingInput": [
+      "model:POSITIONAL_OR_KEYWORD=None",
+      "writep3dgsf_path:POSITIONAL_OR_KEYWORD=None",
+      "mp3du_path:POSITIONAL_OR_KEYWORD=None",
+      "writep3doutput_path:POSITIONAL_OR_KEYWORD=None",
+      "model_output_files:POSITIONAL_OR_KEYWORD=None",
+      "output_path:POSITIONAL_OR_KEYWORD=None",
+      "porosities_by_layer:POSITIONAL_OR_KEYWORD=None",
+      "particle_shp:POSITIONAL_OR_KEYWORD=None",
+      "particle_cells:POSITIONAL_OR_KEYWORD=None",
+      "particle_field_map:POSITIONAL_OR_KEYWORD=None",
+      "cellid_index_base:POSITIONAL_OR_KEYWORD=0",
+      "iface_overrides:POSITIONAL_OR_KEYWORD=None",
+      "direction:POSITIONAL_OR_KEYWORD='FORWARD'",
+      "simulation_end_time:POSITIONAL_OR_KEYWORD=None",
+      "flow_thread_count:POSITIONAL_OR_KEYWORD=10",
+      "pathline_thread_count:POSITIONAL_OR_KEYWORD=4",
+      "initial_stepsize:POSITIONAL_OR_KEYWORD=0.1",
+      "euler_dt:POSITIONAL_OR_KEYWORD=0.0001",
+      "adaptive_step_error:POSITIONAL_OR_KEYWORD=1e-06",
+      "capture_radius:POSITIONAL_OR_KEYWORD=10.0",
+      "tracking_options:POSITIONAL_OR_KEYWORD=None",
+      "generated_particle_zloc:POSITIONAL_OR_KEYWORD=0.95",
+      "generated_particle_release_time:POSITIONAL_OR_KEYWORD=0.0",
+      "generated_particle_label_prefix:POSITIONAL_OR_KEYWORD='cell_'"
+    ],
+    "ParticleTrackingInput.collect_boundary_cell_sets": [],
+    "ParticleTrackingInput.collect_inactive_cells": [],
+    "ParticleTrackingInput.create_gsf_file": [],
+    "ParticleTrackingInput.create_json_file": [],
+    "ParticleTrackingInput.create_modflow_input_files": [],
+    "ParticleTrackingInput.create_output_json_file": [],
+    "ParticleTrackingInput.create_path_file": [],
+    "ParticleTrackingInput.get_active_iface_overrides": [],
+    "ParticleTrackingInput.get_output_json": [],
+    "ParticleTrackingInput.get_start_cell_diagnostics": [],
+    "ParticleTrackingInput.run": [
+      "execute:KEYWORD_ONLY=True",
+      "convert_output:KEYWORD_ONLY=True",
+      "write_diagnostics:KEYWORD_ONLY=True"
+    ],
+    "ParticleTrackingInput.run_mp3du": [
+      "json_file_path:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ParticleTrackingInput.run_output_conversion": [
+      "output_json_path:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ParticleTrackingInput.summarize_endpoint_output": [
+      "endpoint_path:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "ParticleTrackingInput.validate_inputs": [
+      "execute:KEYWORD_ONLY=<required>",
+      "convert_output:KEYWORD_ONLY=<required>"
+    ],
+    "ParticleTrackingInput.write_diagnostics_file": [
+      "start_cells:KEYWORD_ONLY=None",
+      "endpoint_summary:KEYWORD_ONLY=None"
+    ],
+    "ParticleTrackingResult.__getitem__": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ParticleTrackingResult.to_dict": [],
+    "PestProject": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "workspace:KEYWORD_ONLY=None",
+      "start_datetime:KEYWORD_ONLY=<required>",
+      "spatial_reference:KEYWORD_ONLY=None",
+      "zero_based:KEYWORD_ONLY=False",
+      "longnames:KEYWORD_ONLY=True"
+    ],
+    "PestProject.build": [
+      "filename:POSITIONAL_OR_KEYWORD=None",
+      "noptmax:KEYWORD_ONLY=0"
+    ],
+    "PestProject.draw_prior": [
+      "num_reals:POSITIONAL_OR_KEYWORD=1000",
+      "use_specsim:POSITIONAL_OR_KEYWORD=False"
+    ],
+    "PestProject.forecast": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "prefix:KEYWORD_ONLY=None"
+    ],
+    "PestProject.observe": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "prefix:KEYWORD_ONLY=None"
+    ],
+    "PestProject.parameterize": [
+      "target:POSITIONAL_OR_KEYWORD=<required>",
+      "style:KEYWORD_ONLY=None",
+      "bounds:KEYWORD_ONLY=(0.5, 2.0)",
+      "physical:KEYWORD_ONLY=None",
+      "transform:KEYWORD_ONLY='log'",
+      "additive:KEYWORD_ONLY=None",
+      "zones:KEYWORD_ONLY=None",
+      "layers:KEYWORD_ONLY=None",
+      "pp_space:KEYWORD_ONLY=None",
+      "pp_points:KEYWORD_ONLY=None",
+      "correlation:KEYWORD_ONLY=None",
+      "anisotropy:KEYWORD_ONLY=1.0",
+      "bearing:KEYWORD_ONLY=0.0",
+      "nugget:KEYWORD_ONLY=0.0",
+      "temporal:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY=None",
+      "capture:KEYWORD_ONLY=False",
+      "extra:VAR_KEYWORD=<required>"
+    ],
+    "PestProject.prior": [
+      "reals:KEYWORD_ONLY=50",
+      "workers:KEYWORD_ONLY=None",
+      "noise:KEYWORD_ONLY=True",
+      "master_dir:KEYWORD_ONLY=None",
+      "exe:KEYWORD_ONLY='pestpp-ies'",
+      "pestpp_options:VAR_KEYWORD=<required>"
+    ],
+    "PestProject.run_ies": [
+      "reals:KEYWORD_ONLY=50",
+      "iterations:KEYWORD_ONLY=3",
+      "workers:KEYWORD_ONLY=None",
+      "noise:KEYWORD_ONLY=True",
+      "bad_phi_sigma:KEYWORD_ONLY=None",
+      "master_dir:KEYWORD_ONLY=None",
+      "exe:KEYWORD_ONLY='pestpp-ies'",
+      "pestpp_options:VAR_KEYWORD=<required>"
+    ],
+    "PestProject.settings": [],
+    "PestProject.write": [
+      "filename:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "PestRunHandle": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "model_name:POSITIONAL_OR_KEYWORD=<required>",
+      "template_dir:POSITIONAL_OR_KEYWORD=<required>",
+      "masters:POSITIONAL_OR_KEYWORD=<factory>",
+      "case:POSITIONAL_OR_KEYWORD=''",
+      "_model:POSITIONAL_OR_KEYWORD=None",
+      "_model_factory:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "PestRunHandle.review": [
+      "kind:POSITIONAL_OR_KEYWORD='ies'",
+      "model:KEYWORD_ONLY=None"
+    ],
+    "PestSettings.observation_frame": [],
+    "PestSettings.parameter_frame": [],
+    "Picture.html": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "include_plotlyjs:KEYWORD_ONLY='cdn'",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "Picture.save": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "Picture.show": [
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "Points": [
+      "xs:POSITIONAL_OR_KEYWORD=<required>",
+      "ys:POSITIONAL_OR_KEYWORD=<required>",
+      "zs:POSITIONAL_OR_KEYWORD=<required>",
+      "method:KEYWORD_ONLY='linear'",
+      "units:KEYWORD_ONLY=None"
+    ],
+    "Polygons": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "external:POSITIONAL_OR_KEYWORD=False",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "column:KEYWORD_ONLY=<required>",
+      "layer:KEYWORD_ONLY=None",
+      "rule:KEYWORD_ONLY='majority'",
+      "default:KEYWORD_ONLY=None",
+      "layer_field:KEYWORD_ONLY=None",
+      "layer_base:KEYWORD_ONLY=1",
+      "source_sha:KEYWORD_ONLY=None"
+    ],
+    "Polygons.digest_payload": [],
+    "Polygons.to_dict": [],
+    "PostBuildHook": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "callback:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "PostBuildHook.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "PostBuildHook.run": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "packages:POSITIONAL_OR_KEYWORD=<required>",
+      "context:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "PostBuildHook.to_dict": [],
+    "Project": [
+      "root:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "layout:KEYWORD_ONLY=None"
+    ],
+    "Project.add_aoi": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "geometry:POSITIONAL_OR_KEYWORD=<required>",
+      "crs:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "note:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "Project.add_grid": [
+      "key:POSITIONAL_OR_KEYWORD=<required>",
+      "grid:POSITIONAL_OR_KEYWORD=<required>",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "Project.add_package": [
+      "key:POSITIONAL_OR_KEYWORD=<required>",
+      "package:POSITIONAL_OR_KEYWORD=<required>",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "Project.add_simulation": [
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "Project.add_simulation_from_yaml": [
+      "source:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Project.discover_native_runs": [
+      "search_root:POSITIONAL_OR_KEYWORD=None",
+      "executable:KEYWORD_ONLY=None",
+      "load:KEYWORD_ONLY=False"
+    ],
+    "Project.discover_runs": [
+      "executable:KEYWORD_ONLY=None",
+      "load:KEYWORD_ONLY=False"
+    ],
+    "Project.grid": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Project.load": [
+      "root:POSITIONAL_OR_KEYWORD=<required>",
+      "layout:KEYWORD_ONLY=None"
+    ],
+    "Project.package": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Project.prepare_run": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "executable:KEYWORD_ONLY='mf6'",
+      "metadata:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False",
+      "build:KEYWORD_ONLY=True"
+    ],
+    "Project.refresh_runs": [
+      "executable:KEYWORD_ONLY=None"
+    ],
+    "Project.reopen_run": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "executable:KEYWORD_ONLY=None",
+      "load:KEYWORD_ONLY=True"
+    ],
+    "Project.run": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "executable:KEYWORD_ONLY='mf6'",
+      "metadata:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False",
+      "silent:KEYWORD_ONLY=True"
+    ],
+    "Project.save": [
+      "strict:KEYWORD_ONLY=False",
+      "bundle_sources:KEYWORD_ONLY=False"
+    ],
+    "Project.simulation": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Project.summary": [],
+    "Project.validate": [],
+    "ProjectLayout": [
+      "root:POSITIONAL_OR_KEYWORD=<required>",
+      "specs_dir_name:POSITIONAL_OR_KEYWORD='specs'",
+      "simulations_dir_name:POSITIONAL_OR_KEYWORD='simulations'",
+      "inputs_dir_name:POSITIONAL_OR_KEYWORD='inputs'",
+      "packages_dir_name:POSITIONAL_OR_KEYWORD='packages'",
+      "grids_dir_name:POSITIONAL_OR_KEYWORD='grids'"
+    ],
+    "ProjectLayout.ensure": [],
+    "ProjectLayout.for_project": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "root:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "ProjectLayout.from_dict": [
+      "root:POSITIONAL_OR_KEYWORD=<required>",
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ProjectLayout.grid_pickle_path": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ProjectLayout.grid_sidecar_path": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ProjectLayout.grid_spec_path": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ProjectLayout.package_pickle_path": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ProjectLayout.package_sidecar_path": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ProjectLayout.package_spec_path": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ProjectLayout.simulation_spec_path": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ProjectLayout.to_dict": [],
+    "RCHBuilder": [
+      "context:KEYWORD_ONLY=<required>",
+      "nper:KEYWORD_ONLY=<required>",
+      "cells:KEYWORD_ONLY='top_active'",
+      "layer:KEYWORD_ONLY=0",
+      "name_by_cell:KEYWORD_ONLY=None",
+      "boundnames:KEYWORD_ONLY=False",
+      "name:KEYWORD_ONLY='rch'",
+      "options:KEYWORD_ONLY=<factory>",
+      "recharge:KEYWORD_ONLY=<required>"
+    ],
+    "Raster": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "fill:KEYWORD_ONLY=None",
+      "units:KEYWORD_ONLY=None",
+      "nodata:KEYWORD_ONLY=None"
+    ],
+    "RasterSource": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "external:POSITIONAL_OR_KEYWORD=False",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "band:POSITIONAL_OR_KEYWORD=None",
+      "map_to:POSITIONAL_OR_KEYWORD=None",
+      "method:POSITIONAL_OR_KEYWORD=None",
+      "crs:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "RasterSource.to_dict": [],
+    "RchInput.df": [
+      "per:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "RchInput.map": [
+      "per:POSITIONAL_OR_KEYWORD=None",
+      "multiplier:POSITIONAL_OR_KEYWORD=1"
+    ],
+    "RegionRegistry.__getitem__": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "RegionRegistry.add": [
+      "region:POSITIONAL_OR_KEYWORD=<required>",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "RegionRegistry.add_from_cells": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "cellids:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY=None",
+      "category:KEYWORD_ONLY='selection'",
+      "package:KEYWORD_ONLY=None",
+      "tags:KEYWORD_ONLY=None",
+      "geometry:KEYWORD_ONLY=None",
+      "metadata:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "RegionRegistry.add_from_geometry": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "geometry:POSITIONAL_OR_KEYWORD=<required>",
+      "predicate:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "category:KEYWORD_ONLY='selection'",
+      "package:KEYWORD_ONLY=None",
+      "tags:KEYWORD_ONLY=None",
+      "metadata:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "RegionRegistry.add_group": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "members:KEYWORD_ONLY=None",
+      "tags:KEYWORD_ONLY=None",
+      "metadata:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "RegionRegistry.add_to_group": [
+      "group_name:POSITIONAL_OR_KEYWORD=<required>",
+      "member_name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "RegionRegistry.get": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "RegionRegistry.get_group": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "RegionRegistry.get_region": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "RegionRegistry.group_summary": [],
+    "RegionRegistry.list": [],
+    "RegionRegistry.list_groups": [],
+    "RegionRegistry.list_regions": [],
+    "RegionRegistry.region_summary": [],
+    "RegionRegistry.remove": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "RegionRegistry.remove_from_group": [
+      "group_name:POSITIONAL_OR_KEYWORD=<required>",
+      "member_name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "RegionRegistry.resolve_cells": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "RegionRegistry.resolve_cells_with_trace": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "RegionRegistry.summary": [],
+    "Run": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "spec:POSITIONAL_OR_KEYWORD=None",
+      "executable:POSITIONAL_OR_KEYWORD='mf6'",
+      "status:POSITIONAL_OR_KEYWORD='created'",
+      "created_at:POSITIONAL_OR_KEYWORD=<factory>",
+      "updated_at:POSITIONAL_OR_KEYWORD=<factory>",
+      "completed_at:POSITIONAL_OR_KEYWORD=None",
+      "success:POSITIONAL_OR_KEYWORD=None",
+      "report:POSITIONAL_OR_KEYWORD=<factory>",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "spec_block:POSITIONAL_OR_KEYWORD=None",
+      "spec_recipe:POSITIONAL_OR_KEYWORD=None",
+      "project_root:POSITIONAL_OR_KEYWORD=None",
+      "package_digests:POSITIONAL_OR_KEYWORD=None",
+      "package_snapshot:POSITIONAL_OR_KEYWORD=None",
+      "model_crs:POSITIONAL_OR_KEYWORD=None",
+      "built:POSITIONAL_OR_KEYWORD=None",
+      "simulation:POSITIONAL_OR_KEYWORD=None",
+      "build_context:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "Run.build": [],
+    "Run.execute": [
+      "silent:KEYWORD_ONLY=True"
+    ],
+    "Run.flopy_model": [
+      "name:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "Run.load": [
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "executable:KEYWORD_ONLY=None",
+      "load:KEYWORD_ONLY=True"
+    ],
+    "Run.model": [
+      "name:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "Run.open": [
+      "verbosity_level:KEYWORD_ONLY=0"
+    ],
+    "Run.reconcile": [
+      "write:KEYWORD_ONLY=True"
+    ],
+    "Run.reopen": [
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "executable:KEYWORD_ONLY=None",
+      "load:KEYWORD_ONLY=True"
+    ],
+    "Run.save_manifest": [],
+    "Run.to_dict": [],
+    "Run.write": [
+      "silent:POSITIONAL_OR_KEYWORD=False"
+    ],
+    "RunLibrary.discover": [
+      "project:POSITIONAL_OR_KEYWORD=<required>",
+      "executable:KEYWORD_ONLY=None",
+      "load:KEYWORD_ONLY=False"
+    ],
+    "RunLibrary.drift": [
+      "key:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "RunLibrary.summary": [],
+    "SFRBudget.get": [
+      "bud_type:POSITIONAL_OR_KEYWORD=None",
+      "return_df:POSITIONAL_OR_KEYWORD=True"
+    ],
+    "SFRBudget.plot_flows": [
+      "kstpkper:POSITIONAL_OR_KEYWORD=None",
+      "cfd_to_cfs:POSITIONAL_OR_KEYWORD=False",
+      "cfd_to_gpm:POSITIONAL_OR_KEYWORD=False",
+      "html:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "SFRBuilder": [
+      "context:POSITIONAL_OR_KEYWORD=<required>",
+      "nper:POSITIONAL_OR_KEYWORD=<required>",
+      "streams:POSITIONAL_OR_KEYWORD=<required>",
+      "stream_id:POSITIONAL_OR_KEYWORD=None",
+      "from_node:POSITIONAL_OR_KEYWORD=None",
+      "to_node:POSITIONAL_OR_KEYWORD=None",
+      "connection_mode:POSITIONAL_OR_KEYWORD='automatic'",
+      "connections:POSITIONAL_OR_KEYWORD=()",
+      "diversions:POSITIONAL_OR_KEYWORD=()",
+      "connection_tolerance:POSITIONAL_OR_KEYWORD=None",
+      "reverse_streams:POSITIONAL_OR_KEYWORD=()",
+      "reach_layer:POSITIONAL_OR_KEYWORD='top_active'",
+      "width:POSITIONAL_OR_KEYWORD=10.0",
+      "gradient:POSITIONAL_OR_KEYWORD=0.001",
+      "reach_top:POSITIONAL_OR_KEYWORD=None",
+      "roughness:POSITIONAL_OR_KEYWORD=0.03",
+      "streambed_k:POSITIONAL_OR_KEYWORD=1.0",
+      "streambed_thickness:POSITIONAL_OR_KEYWORD=1.0",
+      "inflow:POSITIONAL_OR_KEYWORD=None",
+      "rainfall:POSITIONAL_OR_KEYWORD=None",
+      "evaporation:POSITIONAL_OR_KEYWORD=None",
+      "runoff:POSITIONAL_OR_KEYWORD=None",
+      "status:POSITIONAL_OR_KEYWORD=None",
+      "name:POSITIONAL_OR_KEYWORD='sfr'",
+      "mover:POSITIONAL_OR_KEYWORD=False",
+      "length_conversion:POSITIONAL_OR_KEYWORD=None",
+      "time_conversion:POSITIONAL_OR_KEYWORD=None",
+      "min_reach_length:POSITIONAL_OR_KEYWORD=0.0",
+      "maximum_picard_iterations:POSITIONAL_OR_KEYWORD=1",
+      "maximum_iterations:POSITIONAL_OR_KEYWORD=1000",
+      "maximum_depth_change:POSITIONAL_OR_KEYWORD=0.01",
+      "options:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "SFRBuilder.build": [],
+    "SFRBuilder.connection": [
+      "stream_id:POSITIONAL_OR_KEYWORD=<required>",
+      "location:POSITIONAL_OR_KEYWORD='downstream'"
+    ],
+    "SFRBuilder.outlet_reach": [
+      "stream_id:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SFRBuilder.resolved_length_conversion": [],
+    "SFRBuilder.resolved_time_conversion": [],
+    "SFRBuilder.validate": [],
+    "SFRBuilder.with_updates": [
+      "updates:VAR_KEYWORD=<required>"
+    ],
+    "SFROutputData.__call__": [
+      "package:KEYWORD_ONLY=<required>"
+    ],
+    "SFRStageOutput.get": [
+      "masked:KEYWORD_ONLY=True"
+    ],
+    "SaveReport": [
+      "project_spec:POSITIONAL_OR_KEYWORD=<required>",
+      "simulations:POSITIONAL_OR_KEYWORD=0",
+      "packages:POSITIONAL_OR_KEYWORD=0",
+      "grids:POSITIONAL_OR_KEYWORD=0",
+      "aoi:POSITIONAL_OR_KEYWORD=0",
+      "pickled:POSITIONAL_OR_KEYWORD=0",
+      "skipped:POSITIONAL_OR_KEYWORD=()",
+      "bundled:POSITIONAL_OR_KEYWORD=()",
+      "not_bundled:POSITIONAL_OR_KEYWORD=()",
+      "context_dropped:POSITIONAL_OR_KEYWORD=()"
+    ],
+    "SfrBudgetNamespace.get": [
+      "term:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "reaches:KEYWORD_ONLY=None"
+    ],
+    "SfrBudgetNamespace.summary": [
+      "term:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "reaches:KEYWORD_ONLY=None",
+      "by:KEYWORD_ONLY=None"
+    ],
+    "SfrBudgetNamespace.wide": [
+      "term:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "reaches:KEYWORD_ONLY=None",
+      "index:KEYWORD_ONLY=('per', 'reach')",
+      "values:KEYWORD_ONLY='q'"
+    ],
+    "SfrBudgetResultsExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "SfrBudgetResultsExplorer.map": [
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='sum'",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SfrFlowObservationSpec": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "prefix:POSITIONAL_OR_KEYWORD='sfr_flow'"
+    ],
+    "SfrFlowTargets": [
+      "locations:POSITIONAL_OR_KEYWORD=None",
+      "values:POSITIONAL_OR_KEYWORD=None",
+      "time_column:POSITIONAL_OR_KEYWORD='time'",
+      "value_column:POSITIONAL_OR_KEYWORD='flow'",
+      "times:POSITIONAL_OR_KEYWORD=None",
+      "package:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "SfrFlowTargets.attach_flopy_obs": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "pname:KEYWORD_ONLY='sfr_flow_obs'",
+      "filename:KEYWORD_ONLY='sfr_flow_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='DOWNSTREAM-FLOW'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "SfrFlowTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SfrFlowTargets.get": [],
+    "SfrFlowTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SfrFlowTargets.simulated_series": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SfrFlowTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SfrFlowTargets.summary": [],
+    "SfrFlowTargets.to_flopy_obs": [
+      "csv_name:KEYWORD_ONLY='sfr_flow_targets.csv'",
+      "kind:KEYWORD_ONLY='DOWNSTREAM-FLOW'"
+    ],
+    "SfrFlowTargets.to_long": [],
+    "SfrFlowTargets.to_wide": [],
+    "SfrPackageExplorer.__call__": [
+      "package:KEYWORD_ONLY=<required>"
+    ],
+    "SfrProfileView.__call__": [
+      "per:KEYWORD_ONLY=<required>"
+    ],
+    "SfrProfileView.get": [
+      "per:KEYWORD_ONLY=None"
+    ],
+    "SfrProfileView.plot": [
+      "per:KEYWORD_ONLY=None",
+      "x:KEYWORD_ONLY='distance'",
+      "include_stage:KEYWORD_ONLY=True",
+      "include_streambed:KEYWORD_ONLY=True",
+      "include_exchange:KEYWORD_ONLY=True",
+      "signed_exchange:KEYWORD_ONLY=True",
+      "plot_fig:KEYWORD_ONLY=False",
+      "return_fig:KEYWORD_ONLY=True"
+    ],
+    "SfrProfileView.summary": [
+      "per:KEYWORD_ONLY=None"
+    ],
+    "SfrReachDiff.reaches": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SfrReachProfileView.__call__": [
+      "per:KEYWORD_ONLY=<required>"
+    ],
+    "SfrReachProfileView.get": [
+      "per:KEYWORD_ONLY=None"
+    ],
+    "SfrReachProfileView.plot": [
+      "per:KEYWORD_ONLY=None",
+      "x:KEYWORD_ONLY='distance'",
+      "plot_fig:KEYWORD_ONLY=False",
+      "return_fig:KEYWORD_ONLY=True"
+    ],
+    "SfrReachProfileView.summary": [
+      "per:KEYWORD_ONLY=None"
+    ],
+    "SfrStageObservationSpec": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "prefix:POSITIONAL_OR_KEYWORD='sfr_stage'"
+    ],
+    "SfrStageTargets": [
+      "locations:POSITIONAL_OR_KEYWORD=None",
+      "values:POSITIONAL_OR_KEYWORD=None",
+      "time_column:POSITIONAL_OR_KEYWORD='time'",
+      "value_column:POSITIONAL_OR_KEYWORD='stage'",
+      "times:POSITIONAL_OR_KEYWORD=None",
+      "package:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "SfrStageTargets.attach_flopy_obs": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "pname:KEYWORD_ONLY='sfr_stage_obs'",
+      "filename:KEYWORD_ONLY='sfr_stage_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='STAGE'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "SfrStageTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SfrStageTargets.get": [],
+    "SfrStageTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SfrStageTargets.simulated_series": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SfrStageTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SfrStageTargets.summary": [],
+    "SfrStageTargets.to_flopy_obs": [
+      "csv_name:KEYWORD_ONLY='sfr_stage_targets.csv'",
+      "kind:KEYWORD_ONLY='STAGE'"
+    ],
+    "SfrStageTargets.to_long": [],
+    "SfrStageTargets.to_wide": [],
+    "ShapeSource": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "external:POSITIONAL_OR_KEYWORD=False",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "crs:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "ShapeSource.to_dict": [],
+    "SimpleModelConfig": [
+      "vor:POSITIONAL_OR_KEYWORD=<required>",
+      "name:POSITIONAL_OR_KEYWORD='simplemodel'",
+      "nper:POSITIONAL_OR_KEYWORD=1",
+      "nlay:POSITIONAL_OR_KEYWORD=1",
+      "grid_type:POSITIONAL_OR_KEYWORD='disv'",
+      "top:POSITIONAL_OR_KEYWORD=None",
+      "bottom:POSITIONAL_OR_KEYWORD=None",
+      "idomain:POSITIONAL_OR_KEYWORD=None",
+      "initial_heads:POSITIONAL_OR_KEYWORD=None",
+      "initial_sat_thickness:POSITIONAL_OR_KEYWORD=1.0",
+      "per_len:POSITIONAL_OR_KEYWORD=30",
+      "num_steps:POSITIONAL_OR_KEYWORD=1",
+      "multiplier:POSITIONAL_OR_KEYWORD=1.0",
+      "time_units:POSITIONAL_OR_KEYWORD='DAYS'",
+      "k:POSITIONAL_OR_KEYWORD=100",
+      "k33_vert:POSITIONAL_OR_KEYWORD=None",
+      "perched:POSITIONAL_OR_KEYWORD=False",
+      "save_specific_discharge:POSITIONAL_OR_KEYWORD=True",
+      "specific_storage:POSITIONAL_OR_KEYWORD=0.0001",
+      "specific_yield:POSITIONAL_OR_KEYWORD=0.2",
+      "sto_steady:POSITIONAL_OR_KEYWORD=None",
+      "sto_transient:POSITIONAL_OR_KEYWORD=None",
+      "boundary_mode:POSITIONAL_OR_KEYWORD=None",
+      "boundary_cells:POSITIONAL_OR_KEYWORD=None",
+      "boundary_conductance:POSITIONAL_OR_KEYWORD=1000",
+      "boundary_head:POSITIONAL_OR_KEYWORD=None",
+      "drain_bottom_addition:POSITIONAL_OR_KEYWORD=0.1",
+      "rch_dict:POSITIONAL_OR_KEYWORD=None",
+      "newton:POSITIONAL_OR_KEYWORD=True",
+      "complexity:POSITIONAL_OR_KEYWORD='MODERATE'",
+      "output_save_record:POSITIONAL_OR_KEYWORD=(('HEAD', 'LAST'), ('BUDGET', 'LAST'))",
+      "output_print_record:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "SimulationBase": [
+      "name:POSITIONAL_OR_KEYWORD='mf6_model'",
+      "mf_folder_path:POSITIONAL_OR_KEYWORD=Path('~/mf6')",
+      "nper:POSITIONAL_OR_KEYWORD=1",
+      "vor:POSITIONAL_OR_KEYWORD=None",
+      "per_dates:POSITIONAL_OR_KEYWORD=None",
+      "idomain_path:POSITIONAL_OR_KEYWORD=None",
+      "newton:POSITIONAL_OR_KEYWORD=True",
+      "complexity:POSITIONAL_OR_KEYWORD='MODERATE'"
+    ],
+    "SimulationBase.add_aoi": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "geometry:POSITIONAL_OR_KEYWORD=<required>",
+      "crs:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "note:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "SimulationBase.add_group": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "members:KEYWORD_ONLY=None",
+      "tags:KEYWORD_ONLY=None",
+      "metadata:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "SimulationBase.add_region": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "cellids:KEYWORD_ONLY=<required>",
+      "layer:KEYWORD_ONLY=None",
+      "category:KEYWORD_ONLY='selection'",
+      "package:KEYWORD_ONLY=None",
+      "tags:KEYWORD_ONLY=None",
+      "geometry:KEYWORD_ONLY=None",
+      "metadata:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "SimulationBase.add_region_from_cells": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "cellids:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SimulationBase.add_region_from_geometry": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "geometry:POSITIONAL_OR_KEYWORD=<required>",
+      "predicate:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "category:KEYWORD_ONLY='selection'",
+      "package:KEYWORD_ONLY=None",
+      "tags:KEYWORD_ONLY=None",
+      "metadata:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "SimulationBase.add_to_group": [
+      "group_name:POSITIONAL_OR_KEYWORD=<required>",
+      "member_name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.bud": [
+      "package:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "SimulationBase.diff": [
+      "other:POSITIONAL_OR_KEYWORD=<required>",
+      "others:VAR_POSITIONAL=<required>",
+      "crs:KEYWORD_ONLY=None",
+      "shared_grid:KEYWORD_ONLY=False",
+      "verbosity_level:KEYWORD_ONLY=0"
+    ],
+    "SimulationBase.file_summary": [],
+    "SimulationBase.from_built_run": [
+      "run:POSITIONAL_OR_KEYWORD=<required>",
+      "model_name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.get_group": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.get_region": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.get_region_cells": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.grid_summary": [],
+    "SimulationBase.list_groups": [],
+    "SimulationBase.list_input_files": [],
+    "SimulationBase.list_output_files": [],
+    "SimulationBase.list_regions": [],
+    "SimulationBase.load_all": [],
+    "SimulationBase.node_from_lni": [
+      "layer:POSITIONAL_OR_KEYWORD=<required>",
+      "idx_in_layer:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.package": [
+      "package_names:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.pest": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "start_datetime:KEYWORD_ONLY=None",
+      "workspace:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SimulationBase.region_heads": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "per:KEYWORD_ONLY=None",
+      "kstpkper:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None"
+    ],
+    "SimulationBase.remove_from_group": [
+      "group_name:POSITIONAL_OR_KEYWORD=<required>",
+      "member_name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.remove_region": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.resolve_region_cells": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.resolve_region_cells_with_trace": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationBase.run_simulation": [],
+    "SimulationBase.summary": [],
+    "SimulationBase.to_xugrid": [
+      "layers:KEYWORD_ONLY=None",
+      "times:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY='head'",
+      "masked:KEYWORD_ONLY=True",
+      "surfaces:KEYWORD_ONLY=False"
+    ],
+    "SimulationBase.validate_surface_water": [
+      "nlakes:KEYWORD_ONLY=None",
+      "lak_packagedata:KEYWORD_ONLY=None",
+      "lak_connectiondata:KEYWORD_ONLY=None",
+      "lak_perioddata:KEYWORD_ONLY=None",
+      "sfr:KEYWORD_ONLY=None",
+      "maxmvr:KEYWORD_ONLY=None",
+      "maxpackages:KEYWORD_ONLY=None",
+      "mvr_packages:KEYWORD_ONLY=None",
+      "mvr_perioddata:KEYWORD_ONLY=None",
+      "raise_on_error:KEYWORD_ONLY=False"
+    ],
+    "SimulationLibrary.fork": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "swap:KEYWORD_ONLY=None",
+      "register:KEYWORD_ONLY=True",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "SimulationSpec": [
+      "name:POSITIONAL_OR_KEYWORD=<required>",
+      "models:POSITIONAL_OR_KEYWORD=<required>",
+      "packages:POSITIONAL_OR_KEYWORD=()",
+      "exchanges:POSITIONAL_OR_KEYWORD=()",
+      "options:POSITIONAL_OR_KEYWORD=<factory>",
+      "builder:POSITIONAL_OR_KEYWORD=<class 'flopy.mf6.modflow.mfsimulation.MFSimulation'>",
+      "workspace:POSITIONAL_OR_KEYWORD=None",
+      "executable:POSITIONAL_OR_KEYWORD='mf6'",
+      "run_name:POSITIONAL_OR_KEYWORD=None",
+      "derived_from:POSITIONAL_OR_KEYWORD=None",
+      "lineage:POSITIONAL_OR_KEYWORD=()"
+    ],
+    "SimulationSpec.build": [
+      "workspace:POSITIONAL_OR_KEYWORD=None",
+      "run_name:KEYWORD_ONLY=None",
+      "build_context:KEYWORD_ONLY=None"
+    ],
+    "SimulationSpec.build_flopy": [
+      "workspace:POSITIONAL_OR_KEYWORD=None",
+      "build_context:KEYWORD_ONLY=None"
+    ],
+    "SimulationSpec.coverage_on": [
+      "grid:POSITIONAL_OR_KEYWORD=<required>",
+      "on:KEYWORD_ONLY=None"
+    ],
+    "SimulationSpec.derive": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationSpec.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationSpec.from_yaml": [
+      "source:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationSpec.model": [
+      "name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationSpec.move_report": [
+      "on:KEYWORD_ONLY=None",
+      "grid_free:KEYWORD_ONLY=()"
+    ],
+    "SimulationSpec.resolved_packages": [
+      "build_context:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "SimulationSpec.to_dict": [],
+    "SimulationSpec.to_yaml": [
+      "path:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "SimulationSpec.with_exchange": [
+      "exchange:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationSpec.with_grid": [
+      "grid:POSITIONAL_OR_KEYWORD=<required>",
+      "on:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY=None",
+      "grid_free:KEYWORD_ONLY=()",
+      "remap:KEYWORD_ONLY=False",
+      "rule:KEYWORD_ONLY=None",
+      "uncovered:KEYWORD_ONLY=None"
+    ],
+    "SimulationSpec.with_model": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationSpec.with_models": [
+      "models:VAR_POSITIONAL=<required>"
+    ],
+    "SimulationSpec.with_packages": [
+      "packages:VAR_POSITIONAL=<required>",
+      "on:KEYWORD_ONLY=None",
+      "slot:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY=None"
+    ],
+    "SimulationSpec.with_workspace": [
+      "workspace:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SimulationSpec.without_packages": [
+      "names:VAR_POSITIONAL=<required>",
+      "on:KEYWORD_ONLY=None"
+    ],
+    "SliderAnimation.export": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SliderAnimation.html": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SliderAnimation.save": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SliderAnimation.show": [
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SpatialView.animate": [
+      "kind:KEYWORD_ONLY='map'",
+      "over:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=0",
+      "model:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None",
+      "agg:KEYWORD_ONLY=None",
+      "title:KEYWORD_ONLY=None",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SpatialView.map": [
+      "model:POSITIONAL_OR_KEYWORD=None",
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "backend:KEYWORD_ONLY='plotly'",
+      "map_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SpatialView.mosaic": [
+      "kind:KEYWORD_ONLY='map'",
+      "by:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "model:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None",
+      "agg:KEYWORD_ONLY=None",
+      "ncols:KEYWORD_ONLY=3",
+      "title:KEYWORD_ONLY=None",
+      "sync_views:KEYWORD_ONLY=None",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SpatialView.plot": [
+      "model:POSITIONAL_OR_KEYWORD=None",
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None",
+      "agg:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None"
+    ],
+    "SpatialView.section": [
+      "model:POSITIONAL_OR_KEYWORD=None",
+      "line:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "kstpkper:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=0",
+      "interpolate:KEYWORD_ONLY=False",
+      "interpolator:KEYWORD_ONLY=None",
+      "use_rbf:KEYWORD_ONLY=True",
+      "num_points:KEYWORD_ONLY=100",
+      "clip:KEYWORD_ONLY=None",
+      "x_or_y:KEYWORD_ONLY='x'",
+      "show_model_top:KEYWORD_ONLY=True",
+      "show_model_btm:KEYWORD_ONLY=False",
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None",
+      "refused:VAR_KEYWORD=<required>"
+    ],
+    "SpecBuildContext": [
+      "project_root:POSITIONAL_OR_KEYWORD=None",
+      "simulation_workspace:POSITIONAL_OR_KEYWORD=None",
+      "grid_workspace:POSITIONAL_OR_KEYWORD=None",
+      "package_specs:POSITIONAL_OR_KEYWORD=<factory>",
+      "grid_specs:POSITIONAL_OR_KEYWORD=<factory>",
+      "build_grids:POSITIONAL_OR_KEYWORD=True"
+    ],
+    "SpecBuildContext.grid_spec": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SpecBuildContext.model_grid_workspace": [
+      "model_name:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SpecBuildContext.package_spec": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SpecBuildContext.with_simulation_workspace": [
+      "workspace:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SpecLibrary.copy": [],
+    "SpecLibrary.names": [],
+    "SpecLibrary.summary": [],
+    "Spread": [
+      "field:POSITIONAL_OR_KEYWORD=<required>",
+      "mode:POSITIONAL_OR_KEYWORD='clip'",
+      "min_share:POSITIONAL_OR_KEYWORD=0.01",
+      "warn_below:POSITIONAL_OR_KEYWORD=0.99"
+    ],
+    "Spread.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Spread.to_dict": [],
+    "StackPlots.grid": [
+      "layers:POSITIONAL_OR_KEYWORD=None",
+      "backend:KEYWORD_ONLY='vtk'",
+      "color_by:KEYWORD_ONLY='layer'",
+      "scale:KEYWORD_ONLY=8",
+      "cmap:KEYWORD_ONLY=None",
+      "width:KEYWORD_ONLY=900",
+      "height:KEYWORD_ONLY=580"
+    ],
+    "StackPlots.map": [
+      "layer:POSITIONAL_OR_KEYWORD=None",
+      "basemap:KEYWORD_ONLY=False",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "StackPlots.section": [
+      "line:POSITIONAL_OR_KEYWORD=None",
+      "x:KEYWORD_ONLY=None",
+      "y:KEYWORD_ONLY=None",
+      "color_by:KEYWORD_ONLY='layer'",
+      "cmap:KEYWORD_ONLY='tab10'",
+      "show_grid:KEYWORD_ONLY=True",
+      "legend:KEYWORD_ONLY=True",
+      "title:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "StackPlots.surface": [
+      "layer:POSITIONAL_OR_KEYWORD='top'",
+      "backend:KEYWORD_ONLY='plotly'",
+      "resolution:KEYWORD_ONLY=120",
+      "colorscale:KEYWORD_ONLY='Earth_r'",
+      "color_by:KEYWORD_ONLY=None",
+      "opacity:KEYWORD_ONLY=None",
+      "height:KEYWORD_ONLY=None",
+      "scale:KEYWORD_ONLY=8",
+      "cmap:KEYWORD_ONLY='tab10'",
+      "width:KEYWORD_ONLY=900",
+      "show_edges:KEYWORD_ONLY=False",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "StageResultDiff.get": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "entity:KEYWORD_ONLY=None"
+    ],
+    "StageResultDiff.summary": [
+      "model_name:KEYWORD_ONLY=None",
+      "atol:KEYWORD_ONLY=0.001",
+      "rtol:KEYWORD_ONLY=0.001",
+      "per:KEYWORD_ONLY=None"
+    ],
+    "StageResultsExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "StageResultsExplorer.map": [
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='first'",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "StageResultsExplorer.summary": [],
+    "StandaloneHtmlSlider": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "labels:POSITIONAL_OR_KEYWORD=<required>",
+      "frame_count:POSITIONAL_OR_KEYWORD=<required>",
+      "title:POSITIONAL_OR_KEYWORD=<required>",
+      "embedded_frames:POSITIONAL_OR_KEYWORD=True",
+      "frame_directory:POSITIONAL_OR_KEYWORD=None",
+      "rendered_frames:POSITIONAL_OR_KEYWORD=0",
+      "reused_frames:POSITIONAL_OR_KEYWORD=0"
+    ],
+    "StaticArrayFieldExplorer.get": [
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "StaticArrayFieldExplorer.long": [
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "StaticArrayFieldExplorer.map": [
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "StaticArrayFieldExplorer.stack": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "StaticArrayFieldExplorer.summary": [],
+    "StaticArrayFieldExplorer.wide": [
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "StaticArrayPackageExplorer.summary": [],
+    "StreamConnection": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "receiver:POSITIONAL_OR_KEYWORD=<required>",
+      "source_location:POSITIONAL_OR_KEYWORD='downstream'",
+      "receiver_location:POSITIONAL_OR_KEYWORD='nearest'"
+    ],
+    "StreamDiversion": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "receiver:POSITIONAL_OR_KEYWORD=<required>",
+      "amount:POSITIONAL_OR_KEYWORD=<required>",
+      "source_location:POSITIONAL_OR_KEYWORD='downstream'",
+      "receiver_location:POSITIONAL_OR_KEYWORD='nearest'",
+      "priority:POSITIONAL_OR_KEYWORD='FRACTION'"
+    ],
+    "StreamNetwork": [
+      "stream_ids:POSITIONAL_OR_KEYWORD=<required>",
+      "connections:POSITIONAL_OR_KEYWORD=<required>",
+      "diversions:POSITIONAL_OR_KEYWORD=<required>",
+      "unresolved:POSITIONAL_OR_KEYWORD=()"
+    ],
+    "Surface": [
+      "kind:POSITIONAL_OR_KEYWORD=<required>",
+      "value:POSITIONAL_OR_KEYWORD=None",
+      "path:POSITIONAL_OR_KEYWORD=None",
+      "fill:POSITIONAL_OR_KEYWORD=None",
+      "nodata:POSITIONAL_OR_KEYWORD=None",
+      "units:POSITIONAL_OR_KEYWORD=None",
+      "contours:POSITIONAL_OR_KEYWORD=None",
+      "z:POSITIONAL_OR_KEYWORD='Elev'",
+      "region_raster:POSITIONAL_OR_KEYWORD=None",
+      "region_vector:POSITIONAL_OR_KEYWORD=None",
+      "clip:POSITIONAL_OR_KEYWORD=True",
+      "resolution:POSITIONAL_OR_KEYWORD=4",
+      "out:POSITIONAL_OR_KEYWORD=None",
+      "epsg:POSITIONAL_OR_KEYWORD='2927'",
+      "grass_kwargs:POSITIONAL_OR_KEYWORD=<factory>",
+      "progress:POSITIONAL_OR_KEYWORD=False",
+      "points:POSITIONAL_OR_KEYWORD=None",
+      "method:POSITIONAL_OR_KEYWORD='linear'",
+      "array:POSITIONAL_OR_KEYWORD=None",
+      "operands:POSITIONAL_OR_KEYWORD=()",
+      "zone:POSITIONAL_OR_KEYWORD=None",
+      "source_shas:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "Surface.above": [
+      "distance:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Surface.below": [
+      "distance:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Surface.between": [
+      "lower:KEYWORD_ONLY=None",
+      "upper:KEYWORD_ONLY=None"
+    ],
+    "Surface.cache_status": [],
+    "Surface.capped_at": [
+      "other:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Surface.constant_thickness": [
+      "thickness:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Surface.digest_payload": [],
+    "Surface.floored_at": [
+      "other:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Surface.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Surface.offset_below": [
+      "distance:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Surface.resolve_source": [
+      "refresh:KEYWORD_ONLY=False",
+      "warn:KEYWORD_ONLY=True"
+    ],
+    "Surface.shift": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "distance:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "Surface.thickness": [],
+    "Surface.to_dict": [],
+    "Surface.values": [
+      "vor:POSITIONAL_OR_KEYWORD=<required>",
+      "previous:POSITIONAL_OR_KEYWORD=None",
+      "method:KEYWORD_ONLY='area'",
+      "refresh:KEYWORD_ONLY=False",
+      "length_units:KEYWORD_ONLY=None"
+    ],
+    "Surface.within": [
+      "zone:POSITIONAL_OR_KEYWORD=<required>",
+      "outside:KEYWORD_ONLY=<required>"
+    ],
+    "SurfaceResolver.surface_column": [
+      "reference:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY=<required>",
+      "ncpl:KEYWORD_ONLY=<required>"
+    ],
+    "SurfaceResolver.surface_value": [
+      "reference:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY=<required>",
+      "cell:KEYWORD_ONLY=<required>"
+    ],
+    "SurfaceWaterExchangeResultsExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "include:KEYWORD_ONLY=None",
+      "lak_connection_type:KEYWORD_ONLY=None"
+    ],
+    "SurfaceWaterExchangeResultsExplorer.map": [
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "include:KEYWORD_ONLY=None",
+      "lak_connection_type:KEYWORD_ONLY=None",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SurfaceWaterExchangeResultsExplorer.summary": [],
+    "SurfaceWaterInputFieldExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "SurfaceWaterInputFieldExplorer.map": [
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY=None",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "SurfaceWaterInputFieldExplorer.summary": [],
+    "SurfaceWaterInputsNamespace.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "SurfaceWaterInputsNamespace.summary": [],
+    "SurfaceWaterValidationIssue": [
+      "level:POSITIONAL_OR_KEYWORD=<required>",
+      "code:POSITIONAL_OR_KEYWORD=<required>",
+      "message:POSITIONAL_OR_KEYWORD=<required>",
+      "context:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "SurfaceWaterValidationReport": [
+      "issues:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "SurfaceWaterValidationReport.add_error": [
+      "code:POSITIONAL_OR_KEYWORD=<required>",
+      "message:POSITIONAL_OR_KEYWORD=<required>",
+      "context:VAR_KEYWORD=<required>"
+    ],
+    "SurfaceWaterValidationReport.add_warning": [
+      "code:POSITIONAL_OR_KEYWORD=<required>",
+      "message:POSITIONAL_OR_KEYWORD=<required>",
+      "context:VAR_KEYWORD=<required>"
+    ],
+    "SurfaceWaterValidationReport.extend": [
+      "other:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "SurfaceWaterValidationReport.raise_for_errors": [
+      "prefix:POSITIONAL_OR_KEYWORD='Surface-water validation failed.'"
+    ],
+    "SurfaceWaterValidationReport.summary": [],
+    "SurfaceWaterValidationReport.summary_frame": [],
+    "SurfaceWaterValidationReport.to_frame": [],
+    "TableSource": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "external:POSITIONAL_OR_KEYWORD=False",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "table:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "TableSource.to_dict": [],
+    "TargetRegistry.__getitem__": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "TargetRegistry.keys": [],
+    "TargetRegistry.summary": [],
+    "Toward": [
+      "target:POSITIONAL_OR_KEYWORD=<required>",
+      "fraction:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "TransmissivityExplorer.long": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "TransmissivityExplorer.stack": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "TransmissivityExplorer.wide": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "TransmissivityMaxExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "TriangleGrid": [
+      "angle:POSITIONAL_OR_KEYWORD=32",
+      "region_point_tolerance:POSITIONAL_OR_KEYWORD=None",
+      "domain_clip_tolerance:POSITIONAL_OR_KEYWORD=None",
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "TriangleGrid.add_circle": [
+      "radius:POSITIONAL_OR_KEYWORD=100.0",
+      "center_coords:POSITIONAL_OR_KEYWORD=(0, 0)",
+      "polygon_to_add:POSITIONAL_OR_KEYWORD=None",
+      "point_to_add:POSITIONAL_OR_KEYWORD=None",
+      "point_region_size_max:POSITIONAL_OR_KEYWORD=1",
+      "return_only:POSITIONAL_OR_KEYWORD=False",
+      "radians_step:POSITIONAL_OR_KEYWORD=0.1"
+    ],
+    "TriangleGrid.add_dissipating_buffer_zones": [
+      "max_area:POSITIONAL_OR_KEYWORD=100",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "TriangleGrid.add_line_buffer": [
+      "line:POSITIONAL_OR_KEYWORD=<required>",
+      "buffer:POSITIONAL_OR_KEYWORD=10",
+      "simplify_tolerance:POSITIONAL_OR_KEYWORD=10",
+      "densify_dist:POSITIONAL_OR_KEYWORD=None",
+      "domain:POSITIONAL_OR_KEYWORD=None",
+      "max_area:POSITIONAL_OR_KEYWORD=None",
+      "negative_buffer_after_clipping:POSITIONAL_OR_KEYWORD=0"
+    ],
+    "TriangleGrid.add_line_feature": [
+      "line:POSITIONAL_OR_KEYWORD=<required>",
+      "buffer:KEYWORD_ONLY=10",
+      "max_area:KEYWORD_ONLY=<required>",
+      "label:KEYWORD_ONLY=None",
+      "priority:KEYWORD_ONLY=0",
+      "point_hint:KEYWORD_ONLY=None",
+      "simplify_tolerance:KEYWORD_ONLY=10",
+      "densify_dist:KEYWORD_ONLY=None",
+      "negative_buffer_after_clipping:KEYWORD_ONLY=0"
+    ],
+    "TriangleGrid.add_points": [
+      "points:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "TriangleGrid.add_poly_regions": [
+      "shp_gpkg:POSITIONAL_OR_KEYWORD=<required>",
+      "points:POSITIONAL_OR_KEYWORD=None",
+      "use_representative_point:POSITIONAL_OR_KEYWORD=True",
+      "maximum_areas:POSITIONAL_OR_KEYWORD=None",
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "TriangleGrid.add_polygon": [
+      "polygon:POSITIONAL_OR_KEYWORD=<required>",
+      "domain:POSITIONAL_OR_KEYWORD=None",
+      "buffer:POSITIONAL_OR_KEYWORD=0",
+      "simplify_tolerance:POSITIONAL_OR_KEYWORD=None",
+      "ignore_holes:POSITIONAL_OR_KEYWORD=True",
+      "max_area:POSITIONAL_OR_KEYWORD=None",
+      "densify_dist:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "TriangleGrid.add_polygons_with_multiregions": [
+      "shp_gpkg:POSITIONAL_OR_KEYWORD=<required>",
+      "buff_num:POSITIONAL_OR_KEYWORD=5",
+      "buff_sep:POSITIONAL_OR_KEYWORD=200",
+      "min_area:POSITIONAL_OR_KEYWORD=50",
+      "max_area:POSITIONAL_OR_KEYWORD=5000"
+    ],
+    "TriangleGrid.add_rectangle": [
+      "x_dist:POSITIONAL_OR_KEYWORD=100",
+      "y_dist:POSITIONAL_OR_KEYWORD=100",
+      "origin:POSITIONAL_OR_KEYWORD=(0, 0)",
+      "return_only:POSITIONAL_OR_KEYWORD=False",
+      "max_area:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "TriangleGrid.add_region": [
+      "point:POSITIONAL_OR_KEYWORD=<required>",
+      "attribute:POSITIONAL_OR_KEYWORD=0",
+      "maximum_area:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "TriangleGrid.add_region_circle": [
+      "radius:KEYWORD_ONLY=100.0",
+      "center_coords:KEYWORD_ONLY=(0, 0)",
+      "max_area:KEYWORD_ONLY=<required>",
+      "label:KEYWORD_ONLY=None",
+      "priority:KEYWORD_ONLY=0",
+      "point_hint:KEYWORD_ONLY=None",
+      "radians_step:KEYWORD_ONLY=0.1"
+    ],
+    "TriangleGrid.add_region_file": [
+      "shp_gpkg:POSITIONAL_OR_KEYWORD=<required>",
+      "max_area:KEYWORD_ONLY=<required>",
+      "label:KEYWORD_ONLY=None",
+      "priority:KEYWORD_ONLY=0",
+      "point_hint:KEYWORD_ONLY=None",
+      "explode:KEYWORD_ONLY=False",
+      "buffer:KEYWORD_ONLY=0",
+      "simplify_tolerance:KEYWORD_ONLY=None",
+      "densify_dist:KEYWORD_ONLY=None"
+    ],
+    "TriangleGrid.add_region_polygon": [
+      "polygon:POSITIONAL_OR_KEYWORD=<required>",
+      "max_area:KEYWORD_ONLY=<required>",
+      "label:KEYWORD_ONLY=None",
+      "priority:KEYWORD_ONLY=0",
+      "point_hint:KEYWORD_ONLY=None",
+      "source:KEYWORD_ONLY='geometry'",
+      "domain:KEYWORD_ONLY=None",
+      "buffer:KEYWORD_ONLY=0",
+      "simplify_tolerance:KEYWORD_ONLY=None",
+      "densify_dist:KEYWORD_ONLY=None"
+    ],
+    "TriangleGrid.add_region_rectangle": [
+      "x_dist:KEYWORD_ONLY=100",
+      "y_dist:KEYWORD_ONLY=100",
+      "origin:KEYWORD_ONLY=(0, 0)",
+      "max_area:KEYWORD_ONLY=<required>",
+      "label:KEYWORD_ONLY=None",
+      "priority:KEYWORD_ONLY=0",
+      "point_hint:KEYWORD_ONLY=None"
+    ],
+    "TriangleGrid.add_regions": [
+      "points:POSITIONAL_OR_KEYWORD=<required>",
+      "attributes:POSITIONAL_OR_KEYWORD=None",
+      "maximum_areas:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "TriangleGrid.build": [
+      "verbose:POSITIONAL_OR_KEYWORD=False"
+    ],
+    "TriangleGrid.build_mesh": [
+      "profile:KEYWORD_ONLY='balanced'",
+      "optimize:KEYWORD_ONLY=None",
+      "protected_labels:KEYWORD_ONLY=None",
+      "protect_sources:KEYWORD_ONLY=('line',)",
+      "verbose:KEYWORD_ONLY=False",
+      "overrides:VAR_KEYWORD=<required>"
+    ],
+    "TriangleGrid.build_optimized": [
+      "cleanup:KEYWORD_ONLY=True",
+      "snap_tolerance:KEYWORD_ONLY=0.0",
+      "simplify_tolerance:KEYWORD_ONLY=None",
+      "min_feature_area:KEYWORD_ONLY=0.0",
+      "target_segment_length:KEYWORD_ONLY=None",
+      "resample_domain_boundary:KEYWORD_ONLY=False",
+      "resample_region_sources:KEYWORD_ONLY=('line',)",
+      "optimization_iterations:KEYWORD_ONLY=3",
+      "damping:KEYWORD_ONLY=0.35",
+      "min_move:KEYWORD_ONLY=0.001",
+      "protected_labels:KEYWORD_ONLY=None",
+      "verbose:KEYWORD_ONLY=False"
+    ],
+    "TriangleGrid.clean_geometry": [
+      "snap_tolerance:KEYWORD_ONLY=0.0",
+      "simplify_tolerance:KEYWORD_ONLY=None",
+      "min_feature_area:KEYWORD_ONLY=0.0",
+      "target_segment_length:KEYWORD_ONLY=None",
+      "resample_domain_boundary:KEYWORD_ONLY=False",
+      "resample_region_sources:KEYWORD_ONLY=('line',)"
+    ],
+    "TriangleGrid.generate_dissipating_point_cloud": [
+      "polygon:POSITIONAL_OR_KEYWORD=None",
+      "buffer_dist:POSITIONAL_OR_KEYWORD=1000",
+      "num_buffers:POSITIONAL_OR_KEYWORD=5",
+      "min_area:POSITIONAL_OR_KEYWORD=None",
+      "max_area:POSITIONAL_OR_KEYWORD=None",
+      "min_spacing:POSITIONAL_OR_KEYWORD=200",
+      "max_spacing:POSITIONAL_OR_KEYWORD=1000",
+      "method:POSITIONAL_OR_KEYWORD='power'",
+      "exponent:POSITIONAL_OR_KEYWORD=2"
+    ],
+    "TriangleGrid.get_region_points": [],
+    "TriangleGrid.optimize_seeds": [
+      "iterations:KEYWORD_ONLY=3",
+      "damping:KEYWORD_ONLY=0.35",
+      "min_move:KEYWORD_ONLY=0.001",
+      "protected_labels:KEYWORD_ONLY=None",
+      "verbose:KEYWORD_ONLY=False"
+    ],
+    "TriangleGrid.prepare": [],
+    "TriangleGrid.preview_regions": [],
+    "TriangleGrid.quality_report": [
+      "include_voronoi:KEYWORD_ONLY=False"
+    ],
+    "TriangleGrid.set_domain_circle": [
+      "radius:POSITIONAL_OR_KEYWORD=100.0",
+      "center_coords:POSITIONAL_OR_KEYWORD=(0, 0)",
+      "radians_step:KEYWORD_ONLY=0.1",
+      "label:KEYWORD_ONLY='domain'",
+      "max_area:KEYWORD_ONLY=None"
+    ],
+    "TriangleGrid.set_domain_file": [
+      "shp_gpkg:POSITIONAL_OR_KEYWORD=<required>",
+      "label:KEYWORD_ONLY='domain'",
+      "max_area:KEYWORD_ONLY=None",
+      "buffer:KEYWORD_ONLY=0",
+      "simplify_tolerance:KEYWORD_ONLY=None",
+      "densify_dist:KEYWORD_ONLY=None"
+    ],
+    "TriangleGrid.set_domain_polygon": [
+      "polygon:POSITIONAL_OR_KEYWORD=<required>",
+      "label:KEYWORD_ONLY='domain'",
+      "max_area:KEYWORD_ONLY=None",
+      "buffer:KEYWORD_ONLY=0",
+      "simplify_tolerance:KEYWORD_ONLY=None",
+      "densify_dist:KEYWORD_ONLY=None"
+    ],
+    "TriangleGrid.set_domain_rectangle": [
+      "x_dist:POSITIONAL_OR_KEYWORD=100",
+      "y_dist:POSITIONAL_OR_KEYWORD=100",
+      "origin:POSITIONAL_OR_KEYWORD=(0, 0)",
+      "label:KEYWORD_ONLY='domain'",
+      "max_area:KEYWORD_ONLY=None"
+    ],
+    "TriangleGrid.validate_setup": [],
+    "UZFBuilder": [
+      "context:POSITIONAL_OR_KEYWORD=<required>",
+      "nper:POSITIONAL_OR_KEYWORD=<required>",
+      "vks:POSITIONAL_OR_KEYWORD=<required>",
+      "thtr:POSITIONAL_OR_KEYWORD=<required>",
+      "thts:POSITIONAL_OR_KEYWORD=<required>",
+      "thti:POSITIONAL_OR_KEYWORD=<required>",
+      "cells:POSITIONAL_OR_KEYWORD='all_active'",
+      "eps:POSITIONAL_OR_KEYWORD=4.0",
+      "surfdep:POSITIONAL_OR_KEYWORD=0.001",
+      "finf:POSITIONAL_OR_KEYWORD=0.0",
+      "pet:POSITIONAL_OR_KEYWORD=None",
+      "extdp:POSITIONAL_OR_KEYWORD=None",
+      "extwc:POSITIONAL_OR_KEYWORD=None",
+      "ha:POSITIONAL_OR_KEYWORD=None",
+      "hroot:POSITIONAL_OR_KEYWORD=None",
+      "rootact:POSITIONAL_OR_KEYWORD=None",
+      "name:POSITIONAL_OR_KEYWORD='uzf'",
+      "boundnames:POSITIONAL_OR_KEYWORD=False",
+      "mover:POSITIONAL_OR_KEYWORD=False",
+      "simulate_et:POSITIONAL_OR_KEYWORD=None",
+      "linear_gwet:POSITIONAL_OR_KEYWORD=False",
+      "square_gwet:POSITIONAL_OR_KEYWORD=False",
+      "simulate_gwseep:POSITIONAL_OR_KEYWORD=False",
+      "unsat_etwc:POSITIONAL_OR_KEYWORD=False",
+      "unsat_etae:POSITIONAL_OR_KEYWORD=False",
+      "ntrailwaves:POSITIONAL_OR_KEYWORD=7",
+      "nwavesets:POSITIONAL_OR_KEYWORD=40",
+      "options:POSITIONAL_OR_KEYWORD=<factory>"
+    ],
+    "UZFBuilder.build": [],
+    "UZFBuilder.validate": [],
+    "UZFBuilder.with_updates": [
+      "updates:VAR_KEYWORD=<required>"
+    ],
+    "UsgModel": [
+      "name_file:POSITIONAL_OR_KEYWORD=<required>",
+      "disu:POSITIONAL_OR_KEYWORD=<required>",
+      "bas:POSITIONAL_OR_KEYWORD=<required>",
+      "lpf:POSITIONAL_OR_KEYWORD=<required>",
+      "sms:POSITIONAL_OR_KEYWORD=None",
+      "grid:POSITIONAL_OR_KEYWORD=None",
+      "boundaries:POSITIONAL_OR_KEYWORD=<factory>",
+      "rch:POSITIONAL_OR_KEYWORD=None",
+      "ets:POSITIONAL_OR_KEYWORD=None",
+      "hfb:POSITIONAL_OR_KEYWORD=<factory>",
+      "cln:POSITIONAL_OR_KEYWORD=None",
+      "oc_words:POSITIONAL_OR_KEYWORD=()",
+      "length_units:POSITIONAL_OR_KEYWORD='unknown'",
+      "time_units:POSITIONAL_OR_KEYWORD='unknown'",
+      "start_date_time:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "UsgModel.attach_layers_to_grid": [],
+    "UsgModel.boundary_frame": [
+      "ftype:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "UsgModel.cln_polygons": [],
+    "UsgModel.export_gis": [
+      "directory:POSITIONAL_OR_KEYWORD=<required>",
+      "crs:KEYWORD_ONLY=None",
+      "stream_lines:KEYWORD_ONLY=None",
+      "clip_to:KEYWORD_ONLY=None",
+      "resolution:KEYWORD_ONLY=None",
+      "bed_thickness:KEYWORD_ONLY=1.0",
+      "overwrite:KEYWORD_ONLY=False"
+    ],
+    "UsgModel.report": [],
+    "UsgModel.surfaces": [
+      "interpolate:KEYWORD_ONLY=True",
+      "method:KEYWORD_ONLY='linear'"
+    ],
+    "UsgModel.to_cellid": [
+      "node:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "UsgModel.to_mf6": [
+      "name:POSITIONAL_OR_KEYWORD='usg'",
+      "crs:KEYWORD_ONLY=None",
+      "newton:KEYWORD_ONLY=None",
+      "under_relaxation:KEYWORD_ONLY=True",
+      "start_date_time:KEYWORD_ONLY=None",
+      "save_budget:KEYWORD_ONLY=True",
+      "complexity:KEYWORD_ONLY='COMPLEX'",
+      "include:KEYWORD_ONLY=None",
+      "fix_for_mf6:KEYWORD_ONLY=False",
+      "local_origin:KEYWORD_ONLY=True"
+    ],
+    "UsgModel.validate": [],
+    "UzfFieldInputsExplorer.get": [
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "UzfFieldInputsExplorer.map": [
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='sum'",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "UzfFieldInputsExplorer.summary": [],
+    "UzfFieldInputsExplorer.wide": [
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "UzfInput.finf": [
+      "per:POSITIONAL_OR_KEYWORD=0",
+      "multiplier:POSITIONAL_OR_KEYWORD=360"
+    ],
+    "UzfInput.map": [
+      "per:POSITIONAL_OR_KEYWORD=0",
+      "multiplier:POSITIONAL_OR_KEYWORD=360",
+      "zmin:KEYWORD_ONLY=None",
+      "zmax:KEYWORD_ONLY=None",
+      "colorscale:KEYWORD_ONLY=None",
+      "logscale:KEYWORD_ONLY=False",
+      "contours:KEYWORD_ONLY=False",
+      "contour_values:KEYWORD_ONLY=None",
+      "contour_levels:KEYWORD_ONLY=10",
+      "contour_color:KEYWORD_ONLY='black'",
+      "contour_width:KEYWORD_ONLY=1.5",
+      "contour_name:KEYWORD_ONLY=None",
+      "contour_clip:KEYWORD_ONLY=True",
+      "contour_resolution:KEYWORD_ONLY=150",
+      "contour_method:KEYWORD_ONLY='linear'",
+      "select:KEYWORD_ONLY=None",
+      "select_style:KEYWORD_ONLY='outline'",
+      "select_color:KEYWORD_ONLY=None",
+      "features:KEYWORD_ONLY=None",
+      "hillshade_path:KEYWORD_ONLY=None",
+      "fit_bounds:KEYWORD_ONLY=True",
+      "bounds_padding:KEYWORD_ONLY=0.05",
+      "extent:KEYWORD_ONLY=None",
+      "hover:KEYWORD_ONLY=None",
+      "show_layer_elevs:KEYWORD_ONLY=None",
+      "hover_surfaces:KEYWORD_ONLY=None",
+      "backend:KEYWORD_ONLY='plotly'",
+      "trace_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "UzfInputsNamespace.summary": [],
+    "UzfOutputData.__call__": [
+      "package:KEYWORD_ONLY=<required>"
+    ],
+    "UzfPackageExplorer.__call__": [
+      "package:KEYWORD_ONLY=<required>"
+    ],
+    "UzfResultsNamespace.summary": [],
+    "VectorParameterSource": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "value_column:POSITIONAL_OR_KEYWORD=<required>",
+      "feature_id_column:POSITIONAL_OR_KEYWORD='name'",
+      "zone_column:POSITIONAL_OR_KEYWORD=None",
+      "group_column:POSITIONAL_OR_KEYWORD=None",
+      "layer_column:POSITIONAL_OR_KEYWORD=None",
+      "crs:POSITIONAL_OR_KEYWORD=2927",
+      "lower_bound_column:POSITIONAL_OR_KEYWORD=None",
+      "upper_bound_column:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus": [
+      "tri:POSITIONAL_OR_KEYWORD=None",
+      "crs:POSITIONAL_OR_KEYWORD='EPSG:2927'",
+      "rasters:POSITIONAL_OR_KEYWORD=None",
+      "name:POSITIONAL_OR_KEYWORD='voronoi_grid'",
+      "qhull_options:POSITIONAL_OR_KEYWORD=None",
+      "idomain_path:POSITIONAL_OR_KEYWORD=None",
+      "verts:POSITIONAL_OR_KEYWORD=None",
+      "iverts:POSITIONAL_OR_KEYWORD=None",
+      "xcyc:POSITIONAL_OR_KEYWORD=None",
+      "tessellation:POSITIONAL_OR_KEYWORD='dual'",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.adjust_cells_by_id": [
+      "cell_ids:POSITIONAL_OR_KEYWORD=<required>",
+      "adjustment:POSITIONAL_OR_KEYWORD=<required>",
+      "df:POSITIONAL_OR_KEYWORD=None",
+      "layer:POSITIONAL_OR_KEYWORD=0",
+      "reconcile:POSITIONAL_OR_KEYWORD=True"
+    ],
+    "VoronoiGridPlus.adjust_top_btm_overlaps": [
+      "elev_df:POSITIONAL_OR_KEYWORD=None",
+      "shp:POSITIONAL_OR_KEYWORD=None",
+      "buffer:POSITIONAL_OR_KEYWORD=1",
+      "layer_bottom_name:POSITIONAL_OR_KEYWORD=1",
+      "min_sep:POSITIONAL_OR_KEYWORD=None",
+      "trigger_sep:POSITIONAL_OR_KEYWORD=1"
+    ],
+    "VoronoiGridPlus.barrier_faces": [
+      "barrier:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.calculate_distance": [
+      "gdf:POSITIONAL_OR_KEYWORD=<required>",
+      "poly_idx1:POSITIONAL_OR_KEYWORD=<required>",
+      "poly_idx2:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.enclosed_faces": [
+      "polygon:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.find_adjacent_cells": [
+      "cell_id:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.find_adjacent_polygons": [
+      "gdf:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.from_gsf": [
+      "gsf_path:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:POSITIONAL_OR_KEYWORD=0",
+      "crs:POSITIONAL_OR_KEYWORD='EPSG:2927'",
+      "rasters:POSITIONAL_OR_KEYWORD=None",
+      "name:POSITIONAL_OR_KEYWORD='voronoi_grid'",
+      "idomain_path:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.generate_grid_around_point": [
+      "center_point:POSITIONAL_OR_KEYWORD=<required>",
+      "spacing:POSITIONAL_OR_KEYWORD=<required>",
+      "size:POSITIONAL_OR_KEYWORD=<required>",
+      "crs:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.generate_grid_coordinates": [
+      "grid_spacing:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.generate_grid_polygons": [
+      "center_point:POSITIONAL_OR_KEYWORD=<required>",
+      "spacing:POSITIONAL_OR_KEYWORD=<required>",
+      "size:POSITIONAL_OR_KEYWORD=<required>",
+      "gap:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.get_cell_areas": [],
+    "VoronoiGridPlus.get_centroids": [],
+    "VoronoiGridPlus.get_disu_connectivity": [
+      "tol:KEYWORD_ONLY=0.0",
+      "validate:KEYWORD_ONLY=True"
+    ],
+    "VoronoiGridPlus.get_disu_props": [],
+    "VoronoiGridPlus.get_domain": [],
+    "VoronoiGridPlus.get_gdf_topbtm": [
+      "rasters:POSITIONAL_OR_KEYWORD=<required>",
+      "labels:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.get_gdf_topbtm_multilyr": [
+      "rasters:POSITIONAL_OR_KEYWORD=<required>",
+      "labels:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.get_gdf_vorPolys": [
+      "crs:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.get_grid_centroid": [],
+    "VoronoiGridPlus.get_grid_edge": [
+      "idomain:POSITIONAL_OR_KEYWORD=None",
+      "idomain_path:POSITIONAL_OR_KEYWORD=None",
+      "include_interiors:POSITIONAL_OR_KEYWORD=True"
+    ],
+    "VoronoiGridPlus.get_model_boundary_polygons": [],
+    "VoronoiGridPlus.get_normal_from_strike_and_dip": [
+      "strike:POSITIONAL_OR_KEYWORD=<required>",
+      "dip:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.get_origin_xy": [],
+    "VoronoiGridPlus.get_overlapping_area": [
+      "shp_gpkg:POSITIONAL_OR_KEYWORD=None",
+      "cell_list:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.get_raster_from_strike_dip": [
+      "strike:POSITIONAL_OR_KEYWORD=<required>",
+      "dip:POSITIONAL_OR_KEYWORD=<required>",
+      "known_point:POSITIONAL_OR_KEYWORD=<required>",
+      "pixel_size:POSITIONAL_OR_KEYWORD=1",
+      "output_filename:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.get_raster_vals_at_centroids": [
+      "raster_files:POSITIONAL_OR_KEYWORD=None",
+      "labels:POSITIONAL_OR_KEYWORD=None",
+      "method:KEYWORD_ONLY='area'",
+      "nodata:KEYWORD_ONLY=None",
+      "gaps:KEYWORD_ONLY='warn'"
+    ],
+    "VoronoiGridPlus.get_vor_cells_as_dict": [
+      "locs:POSITIONAL_OR_KEYWORD=<required>",
+      "crs:POSITIONAL_OR_KEYWORD=None",
+      "predicate:POSITIONAL_OR_KEYWORD=None",
+      "loc_name_field:POSITIONAL_OR_KEYWORD=None",
+      "return_gdf:POSITIONAL_OR_KEYWORD=False",
+      "layer:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.get_vor_cells_as_series": [
+      "overlapping_geometry:POSITIONAL_OR_KEYWORD=None",
+      "predicate:POSITIONAL_OR_KEYWORD=None",
+      "return_dict:POSITIONAL_OR_KEYWORD=False",
+      "name_field:POSITIONAL_OR_KEYWORD='ExploName'",
+      "layer:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.get_vor_idx_from_geometry": [
+      "shp_to_query:POSITIONAL_OR_KEYWORD=None",
+      "gdf_to_query:POSITIONAL_OR_KEYWORD=None",
+      "crs:POSITIONAL_OR_KEYWORD=None",
+      "crs_latlon:POSITIONAL_OR_KEYWORD='EPSG:4326'",
+      "name_col:POSITIONAL_OR_KEYWORD=None",
+      "predicate:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.get_vor_idx_from_geometry_idx": [
+      "gdf_to_query:POSITIONAL_OR_KEYWORD=None",
+      "idx:POSITIONAL_OR_KEYWORD=0",
+      "predicate:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.get_voronoi_polygons": [],
+    "VoronoiGridPlus.layer_surface_fields": [],
+    "VoronoiGridPlus.points_to_latlon": [
+      "x:POSITIONAL_OR_KEYWORD=<required>",
+      "y:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.reconcile_surfaces": [
+      "df:POSITIONAL_OR_KEYWORD=None",
+      "min_sep:POSITIONAL_OR_KEYWORD=0.1",
+      "trigger_sep:POSITIONAL_OR_KEYWORD=1",
+      "which:POSITIONAL_OR_KEYWORD='bottom'"
+    ],
+    "VoronoiGridPlus.set_k_vor": [
+      "k_dict:POSITIONAL_OR_KEYWORD=None",
+      "k_default:POSITIONAL_OR_KEYWORD=100.0"
+    ],
+    "VoronoiGridPlus.shared_face": [
+      "cell_a:POSITIONAL_OR_KEYWORD=<required>",
+      "cell_b:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.shared_face_length": [
+      "poly1:POSITIONAL_OR_KEYWORD=<required>",
+      "poly2:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VoronoiGridPlus.to_gpkg": [
+      "path:POSITIONAL_OR_KEYWORD='grid.gpkg'",
+      "data:KEYWORD_ONLY=None",
+      "surfaces:KEYWORD_ONLY=False",
+      "layer:KEYWORD_ONLY='cells'"
+    ],
+    "VoronoiGridPlus.to_shapefile": [
+      "filepath:POSITIONAL_OR_KEYWORD='vor_shp.shp'"
+    ],
+    "VoronoiGridPlus.to_xugrid": [
+      "data:POSITIONAL_OR_KEYWORD=None",
+      "name:KEYWORD_ONLY='data'",
+      "layer_dim:KEYWORD_ONLY='layer'",
+      "surfaces:KEYWORD_ONLY=False"
+    ],
+    "VoronoiGridPlus.ugrid2d": [],
+    "VoronoiGridPlus.vor_from_disu": [
+      "disu_path:POSITIONAL_OR_KEYWORD=<required>",
+      "crs:POSITIONAL_OR_KEYWORD='EPSG:2927'",
+      "rasters:POSITIONAL_OR_KEYWORD=None",
+      "name:POSITIONAL_OR_KEYWORD='voronoi_grid'",
+      "idomain_path:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "VoronoiGridPlus.voronoi_refine_by_point": [
+      "point:POSITIONAL_OR_KEYWORD=<required>",
+      "spacing:POSITIONAL_OR_KEYWORD=<required>",
+      "tri:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "VtkScene.html": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "VtkScene.save": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "VtkScene.show": [
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "Wells": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "stress_period_data:POSITIONAL_OR_KEYWORD=<required>",
+      "auxiliary:POSITIONAL_OR_KEYWORD=None",
+      "boundnames:POSITIONAL_OR_KEYWORD=True",
+      "artifact_id:POSITIONAL_OR_KEYWORD=None",
+      "artifact_catalog:POSITIONAL_OR_KEYWORD=None",
+      "artifact_description:POSITIONAL_OR_KEYWORD=None",
+      "artifact_tags:POSITIONAL_OR_KEYWORD=None",
+      "artifact_metadata:POSITIONAL_OR_KEYWORD=None",
+      "artifact_overwrite:POSITIONAL_OR_KEYWORD=False"
+    ],
+    "Where": [
+      "zone:POSITIONAL_OR_KEYWORD=<required>",
+      "inside:POSITIONAL_OR_KEYWORD=<required>",
+      "outside:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "XSection.plot_mpl": [
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "XSection.to_frame": [
+      "include_model_top:POSITIONAL_OR_KEYWORD=None",
+      "include_model_btm:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "ZoneSpec": [
+      "values:POSITIONAL_OR_KEYWORD=<required>",
+      "source:POSITIONAL_OR_KEYWORD='array'"
+    ],
+    "ZoneSpec.from_array": [
+      "values:POSITIONAL_OR_KEYWORD=<required>",
+      "source:KEYWORD_ONLY='array'"
+    ],
+    "ZoneSpec.from_polygons": [
+      "polygons:POSITIONAL_OR_KEYWORD=<required>",
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "column:KEYWORD_ONLY=None",
+      "nodata_zone:KEYWORD_ONLY=0"
+    ],
+    "ZoneSpec.from_raster": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "nodata_zone:KEYWORD_ONLY=0"
+    ],
+    "_ArealBuilder.build": [],
+    "_ArealBuilder.validate": [],
+    "_ArealBuilder.with_updates": [
+      "updates:VAR_KEYWORD=<required>"
+    ],
+    "_FocusedModelDiff.cells": [
+      "package:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "_FocusedModelDiff.report": [],
+    "_FocusedModelDiff.summary": [],
+    "_FocusedModelDiff.values": [
+      "package:POSITIONAL_OR_KEYWORD=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "_GroupFieldView.compare": [
+      "per:KEYWORD_ONLY=None",
+      "kstpkper:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "_GroupFieldView.compare_map": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "colorscale:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "_GroupFieldView.get": [
+      "per:KEYWORD_ONLY=None",
+      "kstpkper:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
+    ],
+    "_PRTDerivedView.animate": [
+      "args:VAR_POSITIONAL=<required>",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "build_canonical_model": [
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "config:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY='viz_prt_master'"
+    ],
+    "build_gwf_gwe_exchange": [
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "models:POSITIONAL_OR_KEYWORD=<required>",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "build_gwf_gwf_exchange": [
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "models:POSITIONAL_OR_KEYWORD=<required>",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "build_gwf_gwt_exchange": [
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "models:POSITIONAL_OR_KEYWORD=<required>",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "build_gwf_prt_exchange": [
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "models:POSITIONAL_OR_KEYWORD=<required>",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "build_ims": [
+      "simulation:POSITIONAL_OR_KEYWORD=<required>",
+      "models:KEYWORD_ONLY=None",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "build_particle_tracking_scene": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "pathlines:POSITIONAL_OR_KEYWORD=<required>",
+      "vertical_exaggeration:KEYWORD_ONLY=1.0",
+      "model_style:KEYWORD_ONLY='wireframe'",
+      "model_opacity:KEYWORD_ONLY=0.25",
+      "pathline_cmap:KEYWORD_ONLY='viridis'",
+      "pathline_width:KEYWORD_ONLY=4.0",
+      "show_edges:KEYWORD_ONLY=True",
+      "off_screen:KEYWORD_ONLY=True"
+    ],
+    "canonical_feature_signals": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "canonical_head_signals": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "canonical_partition_mask": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "nparts:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "canonical_sfr_signals": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "per:KEYWORD_ONLY=0"
+    ],
+    "chd_spec": [
+      "stress_period_data:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='chd'",
+      "boundnames:KEYWORD_ONLY=False",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "drn_spec": [
+      "stress_period_data:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='drn'",
+      "boundnames:KEYWORD_ONLY=False",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "evt_spec": [
+      "stress_period_data:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='evt'",
+      "nseg:KEYWORD_ONLY=1",
+      "auxiliary:KEYWORD_ONLY=None",
+      "boundnames:KEYWORD_ONLY=False",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "export_cross_section_slider_html": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "line:POSITIONAL_OR_KEYWORD=<required>",
+      "output_path:POSITIONAL_OR_KEYWORD=<required>",
+      "kstpkpers:KEYWORD_ONLY=None",
+      "head_frames:KEYWORD_ONLY=None",
+      "labels:KEYWORD_ONLY=None",
+      "style:KEYWORD_ONLY=None",
+      "title:KEYWORD_ONLY='Head cross section through time'",
+      "dpi:KEYWORD_ONLY=140",
+      "interval_ms:KEYWORD_ONLY=700",
+      "embed_frames:KEYWORD_ONLY=True",
+      "frame_directory:KEYWORD_ONLY=None",
+      "frame_indices:KEYWORD_ONLY=None",
+      "frame_stride:KEYWORD_ONLY=1",
+      "max_frames:KEYWORD_ONLY=None",
+      "resume:KEYWORD_ONLY=False",
+      "progress:KEYWORD_ONLY=False",
+      "cross_section_kwargs:VAR_KEYWORD=<required>"
+    ],
+    "export_head_layer_mosaic_slider_html": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "output_path:POSITIONAL_OR_KEYWORD=<required>",
+      "layers:KEYWORD_ONLY=None",
+      "kstpkpers:KEYWORD_ONLY=None",
+      "head_frames:KEYWORD_ONLY=None",
+      "labels:KEYWORD_ONLY=None",
+      "style:KEYWORD_ONLY=None",
+      "title:KEYWORD_ONLY='Head layer mosaic through time'",
+      "ncols:KEYWORD_ONLY=3",
+      "dpi:KEYWORD_ONLY=None",
+      "panel_figsize:KEYWORD_ONLY=None",
+      "vmin:KEYWORD_ONLY=None",
+      "vmax:KEYWORD_ONLY=None",
+      "shared_color_scale:KEYWORD_ONLY=True",
+      "embed_frames:KEYWORD_ONLY=True",
+      "frame_directory:KEYWORD_ONLY=None",
+      "frame_indices:KEYWORD_ONLY=None",
+      "frame_stride:KEYWORD_ONLY=1",
+      "max_frames:KEYWORD_ONLY=None",
+      "resume:KEYWORD_ONLY=False",
+      "progress:KEYWORD_ONLY=False"
+    ],
+    "export_head_map_slider_html": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "output_path:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY=0",
+      "kstpkpers:KEYWORD_ONLY=None",
+      "head_frames:KEYWORD_ONLY=None",
+      "labels:KEYWORD_ONLY=None",
+      "style:KEYWORD_ONLY=None",
+      "title:KEYWORD_ONLY='Head map through time'",
+      "vmin:KEYWORD_ONLY=None",
+      "vmax:KEYWORD_ONLY=None",
+      "shared_color_scale:KEYWORD_ONLY=True",
+      "embed_frames:KEYWORD_ONLY=True",
+      "frame_directory:KEYWORD_ONLY=None",
+      "frame_indices:KEYWORD_ONLY=None",
+      "frame_stride:KEYWORD_ONLY=1",
+      "max_frames:KEYWORD_ONLY=None",
+      "resume:KEYWORD_ONLY=False",
+      "progress:KEYWORD_ONLY=False"
+    ],
+    "export_matplotlib_slider_html": [
+      "render_frame:POSITIONAL_OR_KEYWORD=<required>",
+      "frame_values:POSITIONAL_OR_KEYWORD=<required>",
+      "output_path:POSITIONAL_OR_KEYWORD=<required>",
+      "labels:KEYWORD_ONLY=None",
+      "title:KEYWORD_ONLY='Model results through time'",
+      "dpi:KEYWORD_ONLY=140",
+      "interval_ms:KEYWORD_ONLY=700",
+      "close_figures:KEYWORD_ONLY=True",
+      "embed_frames:KEYWORD_ONLY=True",
+      "frame_directory:KEYWORD_ONLY=None",
+      "frame_indices:KEYWORD_ONLY=None",
+      "frame_stride:KEYWORD_ONLY=1",
+      "max_frames:KEYWORD_ONLY=None",
+      "resume:KEYWORD_ONLY=False",
+      "progress:KEYWORD_ONLY=False"
+    ],
+    "find_pest_runs": [
+      "root:POSITIONAL_OR_KEYWORD=<required>",
+      "model_name:KEYWORD_ONLY=None",
+      "model:KEYWORD_ONLY=None",
+      "model_factory:KEYWORD_ONLY=None"
+    ],
+    "ghb_spec": [
+      "stress_period_data:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='ghb'",
+      "auxiliary:KEYWORD_ONLY=None",
+      "boundnames:KEYWORD_ONLY=False",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "grid_ref": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "lak_connection": [
+      "lak_spec:POSITIONAL_OR_KEYWORD=<required>",
+      "lake_id:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "lak_spec": [
+      "packagedata:POSITIONAL_OR_KEYWORD=<required>",
+      "connectiondata:POSITIONAL_OR_KEYWORD=<required>",
+      "perioddata:POSITIONAL_OR_KEYWORD=<required>",
+      "nlakes:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY='lak'",
+      "noutlets:KEYWORD_ONLY=0",
+      "ntables:KEYWORD_ONLY=0",
+      "mover:KEYWORD_ONLY=False",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "load_mf6_run": [
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "model_name:KEYWORD_ONLY=None",
+      "crs:KEYWORD_ONLY=None",
+      "verbosity_level:KEYWORD_ONLY=0"
+    ],
+    "load_run": [
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "executable:KEYWORD_ONLY=None",
+      "load:KEYWORD_ONLY=True"
+    ],
+    "mf.exchange": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "target:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "mf.exchange.gwfgwe": [
+      "flow:POSITIONAL_OR_KEYWORD=<required>",
+      "energy:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "mf.exchange.gwfgwf": [
+      "first:POSITIONAL_OR_KEYWORD=<required>",
+      "second:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "mf.exchange.gwfgwt": [
+      "flow:POSITIONAL_OR_KEYWORD=<required>",
+      "transport:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "mf.exchange.gwfprt": [
+      "flow:POSITIONAL_OR_KEYWORD=<required>",
+      "particles:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "modflow_surfaces": [
+      "source:POSITIONAL_OR_KEYWORD=<required>",
+      "resample:KEYWORD_ONLY=True"
+    ],
+    "mvr_spec": [
+      "packages:POSITIONAL_OR_KEYWORD=<required>",
+      "perioddata:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='mvr'",
+      "maxmvr:KEYWORD_ONLY=None",
+      "maxpackages:KEYWORD_ONLY=None",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "open_prt_run": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY=None"
+    ],
+    "patch_simulation_plot": [
+      "sim:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "plot_model_head_map": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "head_data:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY=0",
+      "ax:KEYWORD_ONLY=None",
+      "style:KEYWORD_ONLY=None",
+      "title:KEYWORD_ONLY=None",
+      "vmin:KEYWORD_ONLY=None",
+      "vmax:KEYWORD_ONLY=None"
+    ],
+    "plot_particle_pathlines": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "pathlines:POSITIONAL_OR_KEYWORD=<required>",
+      "layer:KEYWORD_ONLY='all'",
+      "ax:KEYWORD_ONLY=None",
+      "head_data:KEYWORD_ONLY=None",
+      "head_layer:KEYWORD_ONLY=0",
+      "pathline_color:KEYWORD_ONLY=None",
+      "pathline_alpha:KEYWORD_ONLY=0.7",
+      "pathline_linewidth:KEYWORD_ONLY=1.0",
+      "show_grid:KEYWORD_ONLY=True",
+      "grid_alpha:KEYWORD_ONLY=0.25",
+      "title:KEYWORD_ONLY='Particle pathlines'"
+    ],
+    "prepare_particle_tracking": [
+      "model:KEYWORD_ONLY=<required>",
+      "particles:KEYWORD_ONLY=<required>",
+      "porosity:KEYWORD_ONLY=0.2",
+      "output_path:KEYWORD_ONLY=None",
+      "execute:KEYWORD_ONLY=False",
+      "convert_output:KEYWORD_ONLY=False",
+      "write_diagnostics:KEYWORD_ONLY=True",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "rch_spec": [
+      "stress_period_data:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='rch'",
+      "boundnames:KEYWORD_ONLY=False",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "read_gpkg": [
+      "gpkg_path:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "read_listing_outcome": [
+      "workspace:POSITIONAL_OR_KEYWORD=<required>",
+      "since:KEYWORD_ONLY=None"
+    ],
+    "read_shp_gpkg": [
+      "files:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "read_usg": [
+      "nam:POSITIONAL_OR_KEYWORD=<required>",
+      "gsf:KEYWORD_ONLY=None",
+      "crs:KEYWORD_ONLY=None",
+      "nper:KEYWORD_ONLY=None",
+      "require_layered:KEYWORD_ONLY=True",
+      "read_boundaries:KEYWORD_ONLY=True"
+    ],
+    "ref": [
+      "key:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "riv_spec": [
+      "stress_period_data:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='riv'",
+      "auxiliary:KEYWORD_ONLY=None",
+      "boundnames:KEYWORD_ONLY=False",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "run_particle_tracking": [
+      "model:KEYWORD_ONLY=<required>",
+      "particles:KEYWORD_ONLY=<required>",
+      "porosity:KEYWORD_ONLY=0.2",
+      "output_path:KEYWORD_ONLY=None",
+      "execute:KEYWORD_ONLY=True",
+      "convert_output:KEYWORD_ONLY=True",
+      "write_diagnostics:KEYWORD_ONLY=True",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
+    "sfr_connection": [
+      "sfr_spec:POSITIONAL_OR_KEYWORD=<required>",
+      "stream_id:POSITIONAL_OR_KEYWORD=<required>",
+      "at:POSITIONAL_OR_KEYWORD='downstream'"
+    ],
+    "sfr_spec": [
+      "packagedata:POSITIONAL_OR_KEYWORD=<required>",
+      "connectiondata:POSITIONAL_OR_KEYWORD=<required>",
+      "perioddata:POSITIONAL_OR_KEYWORD=<required>",
+      "nreaches:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY='sfr'",
+      "mover:KEYWORD_ONLY=False",
+      "diversions:KEYWORD_ONLY=None",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "simple_model_spec": [
+      "config:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "uzf_spec": [
+      "packagedata:POSITIONAL_OR_KEYWORD=<required>",
+      "perioddata:POSITIONAL_OR_KEYWORD=<required>",
+      "nuzfcells:KEYWORD_ONLY=None",
+      "name:KEYWORD_ONLY='uzf'",
+      "mover:KEYWORD_ONLY=False",
+      "simulate_et:KEYWORD_ONLY=False",
+      "options:VAR_KEYWORD=<required>"
+    ],
+    "validate_surface_water_configuration": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "nlakes:KEYWORD_ONLY=None",
+      "lak_packagedata:KEYWORD_ONLY=None",
+      "lak_connectiondata:KEYWORD_ONLY=None",
+      "lak_perioddata:KEYWORD_ONLY=None",
+      "sfr:KEYWORD_ONLY=None",
+      "maxmvr:KEYWORD_ONLY=None",
+      "maxpackages:KEYWORD_ONLY=None",
+      "mvr_packages:KEYWORD_ONLY=None",
+      "mvr_perioddata:KEYWORD_ONLY=None"
+    ],
+    "wel_spec": [
+      "stress_period_data:POSITIONAL_OR_KEYWORD=<required>",
+      "name:KEYWORD_ONLY='wel'",
+      "auxiliary:KEYWORD_ONLY=None",
+      "boundnames:KEYWORD_ONLY=True",
+      "options:VAR_KEYWORD=<required>"
+    ]
+  },
   "signatures": {
     "adv": {
       "__call__": [

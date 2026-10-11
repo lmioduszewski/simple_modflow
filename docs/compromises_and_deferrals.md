@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 442 entries (447 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 443 entries (448 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 443 | The API snapshot pins the signature of every public callable, the set `test_public_parameters_documented` m... | 2026-10-11 |
 | 442 | A TDIS's time unit has one reader, `hydraulics.declared_time_unit`, and one table of MF6's six words | 2026-10-11 |
 | 441 | Defects the single-model read views' docstring pass found and documented rather than fixed | 2026-10-11 |
 | 440 | Defects the LAK/SFR/surface-water, budget-term and HFB views' docstring pass found and documented rather th... | 2026-10-11 |
@@ -6567,10 +6568,12 @@ same day, which is the useful part of the result.
         property each class DEFINES, under `Project.members`, `Run.members`,
         `SaveReport.members` and one per library. Verified by deleting
         `Project.package` and watching the snapshot test fail.
-        **Signatures are deliberately NOT captured** for this tier: these are
+        ~~**Signatures are deliberately NOT captured** for this tier: these are
         hand-written verbs whose parameters change often, and the value is in
         noticing a verb appearing or vanishing, not in churning the snapshot on
-        every keyword added.
+        every keyword added.~~ -- reversed 2026-10-11 (ledger 443): five run
+        and grid-move verbs changed their defaults unrecorded, so every public
+        method's signature is pinned now.
       - **`RunRecord` was designed and never built -- correctly.** Every field it
         proposed already lives on `Run` (`status`, `success`, the timestamps,
         `metadata`, and `spec_block`, the verbatim `_spec_summary` payload), so
@@ -6799,7 +6802,9 @@ same day, which is the useful part of the result.
         every historical run manifest report `state='edited'`, and the vocabulary
         work has `disabled()` (the METHOD) on its cut list, one careless step
         from the field. `spec_fields()` covers that.
-      - **Names only, not signatures, and that is a KNOWN limit.** `members()`
+      - ~~**Names only, not signatures, and that is a KNOWN limit.**~~ -- closed
+        2026-10-11 by ledger 443, which pins every public signature; the
+        reasoning as it stood: `members()`
         deliberately captures no parameters (its own docstring says why), so this
         catches a verb appearing or vanishing and NOT a signature widening --
         `SimulationSpec.models` changing from `tuple[ModelSpec, ...]` to a union
@@ -18858,3 +18863,20 @@ same day, which is the useful part of the result.
       `test_only_the_one_reader_reads_a_tdis_time_unit` (an AST sweep) fails naming
       `prt.py` and `package_budget.py` with their readers restored, and
       `test_a_prt_tdis_declares_no_unit_for_a_flow_tdis_saying_unknown` with prt's.
+
+443. **The API snapshot pins the signature of every public callable, the set `test_public_parameters_documented` measures (2026-10-11).**
+     Ledgers 190 and 197 pinned the project, run and spec verbs by NAME only, on purpose,
+     so on 2026-10-11 `load_run`, `Run.load`, `Run.reopen` and both `with_grid` verbs
+     changed their defaults with `derive_api_snapshot.py --check` green. Chosen: close it
+     by RULE, not by adding five names -- the new `public_signatures` dimension pins every
+     callable `scripts/public_surface.py` discovers (`__all__`, `__engine__`, helper
+     methods, every public method an exported class defines; 651 beyond the 40 helpers
+     `signatures` already held), and that discovery MOVED there from the docstring test,
+     which now imports it: what must be documented and what is pinned are one walk. The
+     cost 190 named is accepted: a keyword added anywhere public is now a snapshot diff.
+     Three reprs are normalized because they differ by run or machine: an object's
+     ADDRESS (`LayerStack.replace`'s sentinel), a set's hash ORDER
+     (`build_canonical_model`'s frozensets, measured differing between two runs) and a
+     path's class and home directory (`Path('~/mf6')`; CI runs Windows too). Not
+     covered: what is never exported -- the read-grammar views and `AoiLibrary`
+     (`project.aoi`, whose member NAMES `surfaces` still pins).

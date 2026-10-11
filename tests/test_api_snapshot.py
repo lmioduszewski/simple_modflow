@@ -2,7 +2,10 @@
 
 ``tests/api_snapshot.json`` records the public shape of the package API BEFORE
 the 4.7 consolidation: helper signatures, ``*_spec`` outputs from fixed inputs,
-and the package set visible at every surface that encodes package knowledge.
+and the package set visible at every surface that encodes package knowledge --
+and, since ledger 443, the signature of every other public callable
+(``scripts/public_surface.py``'s discovery), so a default changing on
+``Run.reopen`` or ``ModelSpec.with_grid`` shows in the diff.
 The consolidation collapses 11 spec factories, 11 helper classes and 7
 GeoPackage resolvers into parameterized implementations; without this file,
 "behaviour-preserving" would be a claim rather than something anyone can check.
@@ -44,7 +47,7 @@ def rebuilt() -> dict:
 def test_snapshot_matches_the_current_api(snapshot, rebuilt):
     """The checked-in snapshot must equal what the code produces right now."""
 
-    for dimension in ("signatures", "specs", "surfaces"):
+    for dimension in ("signatures", "public_signatures", "specs", "surfaces"):
         current = rebuilt[dimension]
         stored = snapshot[dimension]
 
@@ -100,6 +103,77 @@ def test_snapshot_covers_the_whole_public_package_surface(snapshot):
     # every list BC records all three documented entry points
     for helper in ("chd", "ghb", "drn", "riv", "wel", "rch", "evt"):
         assert {"__call__", "flopy", "gpkg"} <= set(snapshot["signatures"][helper]), helper
+
+
+def test_every_public_callable_has_its_signature_pinned(snapshot):
+    """The snapshot pins what ``test_public_parameters_documented`` measures.
+
+    Until ledger 443 only the package helpers' signatures were pinned; the
+    project, run and spec verbs were pinned by NAME only (ledgers 190 and 197),
+    so ``load_run``, ``Run.load``, ``Run.reopen`` and both ``with_grid`` verbs
+    changed their defaults with ``--check`` reporting the snapshot up to date.
+    The rule is the discovery, not a list, so this fails naming any public
+    callable that is in neither signature dimension.
+    """
+
+    sys.path.insert(0, str(DERIVE_SCRIPT.parent))
+    from public_surface import discover
+
+    subjects, _skipped = discover()
+    helpers = snapshot["signatures"]
+    pinned = snapshot["public_signatures"]
+
+    def in_helpers(qualname: str) -> bool:
+        parts = qualname.removeprefix("mf.").split(".")
+        if parts[0] not in helpers:
+            return False
+        return len(parts) == 1 or parts[1] in helpers[parts[0]]
+
+    unpinned = sorted(
+        s.qualname for s in subjects
+        if s.qualname not in pinned and not in_helpers(s.qualname)
+    )
+    assert not unpinned, f"public callables with no pinned signature: {unpinned}"
+    for qualname in (
+        "load_run",
+        "Run.load",
+        "Run.reopen",
+        "ModelSpec.with_grid",
+        "SimulationSpec.with_grid",
+        "Project.reopen_run",
+        "RunLibrary.discover",
+    ):
+        assert qualname in pinned, qualname
+
+
+def test_a_changed_default_on_a_run_or_spec_verb_moves_the_snapshot(
+    snapshot, monkeypatch
+):
+    """The failure ledger 443 closes: a default changing on a public verb.
+
+    Each default is changed in place, the way an edit to the ``def`` line would
+    change it, and the rebuilt dimension must disagree with the stored one.
+    """
+
+    import myflopy as mf
+
+    sys.path.insert(0, str(DERIVE_SCRIPT.parent))
+    from derive_api_snapshot import collect_public_signatures
+
+    targets = {
+        "load_run": mf.load_run,
+        "Run.reopen": mf.Run.reopen.__func__,
+        "ModelSpec.with_grid": mf.ModelSpec.with_grid,
+    }
+    for function in targets.values():
+        changed = dict(function.__kwdefaults__)
+        name = next(iter(changed))
+        changed[name] = "a-default-nobody-wrote"
+        monkeypatch.setattr(function, "__kwdefaults__", changed)
+
+    rebuilt = collect_public_signatures()
+    for qualname in targets:
+        assert rebuilt[qualname] != snapshot["public_signatures"][qualname], qualname
 
 
 def test_surfaces_dimension_names_the_known_inconsistencies(snapshot):
