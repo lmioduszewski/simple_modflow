@@ -574,3 +574,31 @@ def test_two_spreads_with_one_mode_still_build(tmp_path, grid_and_context):
     records = _records(spec)
     assert sum(r[2] for r in records) == pytest.approx(1.0)
     assert sum(r[3] for r in records) == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize("route", ["source", "eager", "lazy"])
+def test_a_spread_refusal_names_the_call_that_reached_it(tmp_path, grid_and_context, route):
+    """Both declaration-time Spread refusals name the route actually taken.
+
+    They said `mf.<pkg>.gpkg` whichever call reached them, so a caller of
+    `GeoPackageSource(...).drn(...)` was told about a helper they never called
+   .
+    """
+
+    from myflopy.geopackage import GeoPackageSource
+
+    _, ctx = grid_and_context
+    path = _evt_file(tmp_path)
+    named = {"source": "GeoPackageSource", "eager": "mf", "lazy": "mf"}[route]
+    calls = {
+        "source": lambda pkg, **kw: getattr(
+            GeoPackageSource(path, ctx, nper=1, layer="bc"), pkg)(**kw),
+        "eager": lambda pkg, **kw: getattr(mf, pkg).gpkg(path, layer="bc", context=ctx,
+                                                         nper=1, **kw),
+        "lazy": lambda pkg, **kw: getattr(mf, pkg).gpkg(path, layer="bc", nper=1, **kw),
+    }[route]
+    spelled = "GeoPackageSource.{}" if named == "GeoPackageSource" else "mf.{}.gpkg"
+    with pytest.raises(TypeError, match=rf"^{spelled.format('drn')}: elevation=mf\.Spread"):
+        calls("drn", elevation=Spread("surface"), conductance="rate")
+    with pytest.raises(ValueError, match=rf"^{spelled.format('evt')}: rate=Spread"):
+        calls("evt", rate=Spread("rate"), depth=Spread("depth", mode="retained"))

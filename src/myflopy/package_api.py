@@ -848,6 +848,7 @@ def _build_lazy_list_bc(package_class, model, *, _spec, stress_period_data, **op
         snap_within=recipe.snap_within,
         min_above_bottom=recipe.min_above_bottom,
     )
+    source._verb = "mf.{package}.gpkg"
     kwargs = dict(recipe.values)
     kwargs["name"] = _spec.name
     kwargs["boundnames"] = recipe.boundnames
@@ -1441,8 +1442,8 @@ def _lazy_bc_spec(
     # declaration has no mesh yet, and a number resolved now would carry the OLD grid's
     # cell width across `with_grid`, which is the stale-cellid defect in another costume
     # (ledger 288).
-    refuse_spread_on_elevation(package, values)
-    refuse_mixed_spread_modes(package, values)
+    refuse_spread_on_elevation(package, values, verb=f"mf.{package}.gpkg")
+    refuse_mixed_spread_modes(package, values, verb=f"mf.{package}.gpkg")
     check_gaps(gaps, verb=f"mf.{package}.gpkg")
     check_placement_options(
         min_above_bottom=min_above_bottom, snap_within=snap_within, verb=f"mf.{package}.gpkg"
@@ -1506,9 +1507,12 @@ def _source(
     snap_within: float | None = None,
     min_above_bottom: float | None = None,
 ) -> GeoPackageSource:
-    """Return a configured GeoPackage source for package-first helpers."""
+    """Return a configured GeoPackage source for package-first helpers.
 
-    return GeoPackageSource(
+    Its refusals name ``mf.<pkg>.gpkg``, the call the caller made.
+    """
+
+    source = GeoPackageSource(
         path,
         context,
         nper,
@@ -1522,6 +1526,8 @@ def _source(
         snap_within=snap_within,
         min_above_bottom=min_above_bottom,
     )
+    source._verb = "mf.{package}.gpkg"
+    return source
 
 
 def tdis(

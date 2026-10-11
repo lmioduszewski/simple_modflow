@@ -999,13 +999,15 @@ def _fields_of_kind(kind: str) -> frozenset[tuple[str, str]]:
 _ELEVATION_FIELDS = _fields_of_kind("elevation")
 
 
-def refuse_spread_on_elevation(package: str, values) -> None:
+def refuse_spread_on_elevation(package: str, values, *, verb: str) -> None:
     """Refuse ``Spread`` on a field that is an ELEVATION, at the CALL.
 
     Needs no grid, so it belongs at declaration -- the rule `_lazy_bc_spec` already
     follows for a missing file and ``nper >= 1``. Called from BOTH paths: the eager one
     reaches `_bc_from_features`, and a lazy declaration never does, so a single site
-    would have covered only half the API (ledger 289).
+    would have covered only half the API (ledger 289). ``verb`` is the call the message
+    names -- the route actually taken, ``mf.<pkg>.gpkg`` or
+    ``GeoPackageSource.<pkg>``.
     """
 
     # `values` is keyed by the HELPER's argument names, which is the namespace
@@ -1014,7 +1016,7 @@ def refuse_spread_on_elevation(package: str, values) -> None:
     for gpkg_field, spec in (values or {}).items():
         if isinstance(spec, Spread) and (package, gpkg_field) in _ELEVATION_FIELDS:
             raise TypeError(
-                f"mf.{package}.gpkg: {gpkg_field}=mf.Spread(...) divides a feature's "
+                f"{verb}: {gpkg_field}=mf.Spread(...) divides a feature's "
                 f"total across the cells it covers, and {gpkg_field} is an ELEVATION -- "
                 "there is no total to divide, so each cell would get a FRACTION of the "
                 "elevation you declared (measured: a declared 75.0 written as 2.06 to "
@@ -1023,7 +1025,7 @@ def refuse_spread_on_elevation(package: str, values) -> None:
             )
 
 
-def refuse_mixed_spread_modes(package: str, values) -> None:
+def refuse_mixed_spread_modes(package: str, values, *, verb: str) -> None:
     """Refuse two :class:`Spread` fields of one call that disagree on ``mode``, at the CALL.
 
     A feature has ONE set of cell shares, so a call has one mode; the share step read
@@ -1031,8 +1033,9 @@ def refuse_mixed_spread_modes(package: str, values) -> None:
     ``rate`` clipped and ``depth`` retained wrote the depth clipped). Refused rather
     than resolved per field -- the two disagreeing is a declaration nobody meant
     (ledger 396). Called from the eager and the lazy path, as
-    :func:`refuse_spread_on_elevation` is. ``min_share`` and ``warn_below`` are not
-    refused: their combination (largest, smallest) is documented and loses nothing.
+    :func:`refuse_spread_on_elevation` is, and names ``verb`` as it does.
+    ``min_share`` and ``warn_below`` are not refused: their combination (largest,
+    smallest) is documented and loses nothing.
     """
 
     spreads = {
@@ -1043,7 +1046,7 @@ def refuse_mixed_spread_modes(package: str, values) -> None:
         named = ", ".join(f"{name}=Spread({spec.field!r}, mode={spec.mode!r})"
                           for name, spec in spreads.items())
         raise ValueError(
-            f"mf.{package}.gpkg: {named} -- one feature's cells take ONE set of shares, "
+            f"{verb}: {named} -- one feature's cells take ONE set of shares, "
             "so every Spread in a call must use the same mode. Pick 'clip' (the part "
             "off the grid is not written) or 'retained' (the total is kept on the part "
             "that remains) for all of them."
@@ -1243,6 +1246,10 @@ class GeoPackageSource:
     _source_crs: Any = field(default=None, init=False, repr=False)
     #: What became of the features on the last build, for the metadata stamp.
     last_coverage: Any = field(default=None, init=False, repr=False, compare=False)
+    #: The call a declaration-time refusal names, formatted with ``package=``. The
+    #: ``mf.<pkg>.gpkg`` helpers set ``"mf.{package}.gpkg"`` on the source they build,
+    #: so each route is named as the caller spelled it.
+    _verb: str = field(default="GeoPackageSource.{package}", init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         """Coerce ``path`` and validate the file exists, a grid is present, and ``nper >= 1``."""
@@ -2087,8 +2094,9 @@ class GeoPackageSource:
             f"record order {expected}"
         )
 
-        refuse_spread_on_elevation(package, fields)
-        refuse_mixed_spread_modes(package, fields)
+        verb = self._verb.format(package=package)
+        refuse_spread_on_elevation(package, fields, verb=verb)
+        refuse_mixed_spread_modes(package, fields, verb=verb)
 
         data_options: dict[str, Any] = {"boundnames": boundnames}
         if descriptor.capabilities.edges_only:
