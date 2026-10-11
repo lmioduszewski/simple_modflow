@@ -859,6 +859,11 @@ instead of `unverifiable` and the build accepts them. Serves `npf` `k`/`k22`/`k3
 | `rule` | the CONDUCTIVITY rule: `"geometric"` (default), `"mean"`, `"harmonic"`, `"majority"` |
 | `uncovered` | `"nearest"` (default, fills and warns in detail) or `"raise"` |
 
+`rule=` and `uncovered=` are checked at the call: an unknown value raises even when no
+package holds an array to carry, and either one given without `remap=True` raises naming
+`remap=True` rather than being ignored. `name=` derives a named variant as
+`with_packages(name=)` does (`run_name` and `derived_from` follow it).
+
 **Use it for an array with no recipe** — a PEST-calibrated K field, an array read out of an
 imported model. Where the package has a source, re-declare it instead: that measured 7.1%
 worst-case boundary-flux error against this engine's 12.5% at best.

@@ -1256,6 +1256,44 @@ def _relazified(package: Any) -> Any:
     )
 
 
+def _remap_choices(
+    remap: bool, rule: str | None, uncovered: str | None
+) -> tuple[str | None, str | None]:
+    """Check ``with_grid``'s ``rule=``/``uncovered=`` AT THE CALL; return them resolved.
+
+    Both act only under ``remap=True``, so given without it they are REFUSED, naming
+    ``remap=True`` -- a ``rule=`` the move then ignored read as a rule applied. Under
+    ``remap=True`` an unknown value raises here, before any work, instead of only once
+    some package turned out to hold an array to carry: a typo was accepted whenever
+    there was nothing to remap.
+    """
+
+    if not remap:
+        given = [
+            f"{label}={value!r}"
+            for label, value in (("rule", rule), ("uncovered", uncovered))
+            if value is not None
+        ]
+        if given:
+            raise ValueError(
+                f"{' and '.join(given)} only act{'s' if len(given) == 1 else ''} with "
+                "remap=True, which carries per-cell arrays onto the new mesh by area "
+                "overlay. Pass remap=True, or drop "
+                + ("it." if len(given) == 1 else "them.")
+            )
+        return None, None
+    from myflopy.modflow.mf6.grid.remap import (
+        DEFAULT_RULE,
+        DEFAULT_UNCOVERED,
+        check_remap_choices,
+    )
+
+    rule = DEFAULT_RULE if rule is None else rule
+    uncovered = DEFAULT_UNCOVERED if uncovered is None else uncovered
+    check_remap_choices(rule, uncovered)
+    return rule, uncovered
+
+
 def _remapped_package(package, *, old_polys, new_polys, ncpl, domain, rule, uncovered):
     """Carry one package's per-cell arrays onto the new mesh, or leave it alone.
 
@@ -4494,8 +4532,8 @@ class ModelSpec:
         *,
         grid_free: tuple[str, ...] | list[str] = (),
         remap: bool = False,
-        rule: str = "geometric",
-        uncovered: str = "nearest",
+        rule: str | None = None,
+        uncovered: str | None = None,
     ) -> ModelSpec:
         """Return a copy on ``grid``, with everything derived from the old one dropped.
 
@@ -4559,19 +4597,20 @@ class ModelSpec:
             once a package has an array to carry -- when the two meshes are in
             different frames (CRS, or no overlap), or the array is an integer
             flag or one with no measured rule. Default ``False``.
-        rule : str, optional
+        rule : str or None, optional
             The averaging rule for the conductivities (``k``/``k22``/``k33``)
             under ``remap=True``: ``"geometric"``, ``"mean"``, ``"harmonic"`` or
             ``"majority"``; ``strt``/``ss``/``sy`` always take the area-weighted
-            mean. Any other value raises ``ValueError``, but only once a package
-            has an array to carry. Ignored without ``remap``. Default
-            ``"geometric"``.
-        uncovered : str, optional
+            mean. Any other value raises ``ValueError`` at the call, whether or
+            not a package has an array to carry. Given without ``remap=True`` it
+            raises ``ValueError`` naming ``remap=True``. Default ``None``:
+            ``"geometric"`` under ``remap=True``.
+        uncovered : str or None, optional
             For ``remap=True``, what a new cell no old cell reaches gets:
             ``"nearest"`` (the nearest old cell's value, reported) or
-            ``"raise"`` (``ValueError``). Checked, like ``rule``, only once a
-            package has an array to carry. Ignored without ``remap``. Default
-            ``"nearest"``.
+            ``"raise"`` (``ValueError``). Checked at the call like ``rule``, and
+            likewise refused without ``remap=True``. Default ``None``:
+            ``"nearest"`` under ``remap=True``.
 
         Returns
         -------
@@ -4581,6 +4620,7 @@ class ModelSpec:
             described above.
         """
 
+        rule, uncovered = _remap_choices(remap, rule, uncovered)
         free = tuple(grid_free)
         # The OLD mesh, still in hand: `with_grid` returns a copy and does not mutate,
         # so `self.context.grid` is the grid these packages were declared on. It is what
@@ -5678,8 +5718,8 @@ class SimulationSpec:
         name: str | None = None,
         grid_free: tuple[str, ...] | list[str] = (),
         remap: bool = False,
-        rule: str = "geometric",
-        uncovered: str = "nearest",
+        rule: str | None = None,
+        uncovered: str | None = None,
     ) -> SimulationSpec:
         """Return a copy moved to ``grid``, with everything derived from the old one gone.
 
@@ -5690,7 +5730,8 @@ class SimulationSpec:
         because coupled models must share a mesh -- MF6 requires it for
         ``gwfgwt``/``gwfgwe``/``gwfprt`` and cannot detect a same-size violation
         (ledger 268), so moving one and stranding its sibling is the failure that check
-        exists to catch. ``name`` renames the result in the same step.
+        exists to catch. ``name`` derives a named variant in the same step, as
+        ``with_packages(name=)`` does.
 
         ``grid_free`` names packages the caller asserts are mesh-independent, so they
         are not stamped. Everything else that names cells without a pin IS stamped and
@@ -5711,10 +5752,11 @@ class SimulationSpec:
             a model with neither is left alone, so a simulation of gridless
             models moves nothing (and says so only in ``lineage``).
         name : str, optional
-            A new simulation name for the result. It only renames: unlike
-            ``with_packages(name=)`` it does not go through :meth:`derive`, so
-            ``run_name`` and ``derived_from`` keep their old values. Default
-            ``None`` keeps the name.
+            Derive a named variant in the same step, through :meth:`derive` as
+            ``with_packages(name=)`` does: ``name`` becomes the simulation name
+            AND its ``run_name``, the current name its ``derived_from``, and a
+            ``derive`` record follows the ``with_grid`` one in ``lineage``.
+            Default ``None`` keeps the name.
         grid_free : sequence of str, optional
             Package names (a ref's library key) asserted mesh-independent in
             every moved model; recorded in the ``with_grid`` lineage entry.
@@ -5722,15 +5764,18 @@ class SimulationSpec:
         remap : bool, optional
             Carry per-cell arrays onto the new mesh by area overlay, per
             :meth:`ModelSpec.with_grid`. Default ``False``.
-        rule : str, optional
+        rule : str or None, optional
             The averaging rule for the conductivities (``k``/``k22``/``k33``)
             under ``remap=True``: ``"geometric"``, ``"mean"``, ``"harmonic"`` or
             ``"majority"``; ``strt``/``ss``/``sy`` always take the area-weighted
-            mean. Ignored without ``remap``. Default ``"geometric"``.
-        uncovered : str, optional
+            mean. Any other value raises ``ValueError`` at the call, even when no
+            model moves; given without ``remap=True`` it raises ``ValueError``
+            naming ``remap=True``. Default ``None``: ``"geometric"`` under
+            ``remap=True``.
+        uncovered : str or None, optional
             For ``remap=True``: ``"nearest"`` or ``"raise"`` for a new cell no old
-            cell reaches, per :meth:`ModelSpec.with_grid`. Ignored without
-            ``remap``. Default ``"nearest"``.
+            cell reaches, per :meth:`ModelSpec.with_grid`. Checked and refused
+            like ``rule``. Default ``None``: ``"nearest"`` under ``remap=True``.
         """
 
         if isinstance(grid, GridRef):
@@ -5740,6 +5785,7 @@ class SimulationSpec:
         else:
             grid_label = "object"
 
+        rule, uncovered = _remap_choices(remap, rule, uncovered)
         free = tuple(grid_free)
         if on is not None:
             moved = self.with_model(
@@ -5774,7 +5820,10 @@ class SimulationSpec:
                 },
             ),
         )
-        return replace(moved, name=name) if name is not None else moved
+        # `derive`, as `with_packages(name=)`: a bare rename kept the SOURCE's
+        # `run_name`, and `build()` defaults its workspace to `run_name`, so the
+        # variant wrote over the source variant's run directory.
+        return moved.derive(name) if name is not None else moved
 
     def move_report(
         self, *, on: str | None = None, grid_free: tuple[str, ...] | list[str] = ()

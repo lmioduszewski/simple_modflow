@@ -98,6 +98,28 @@ def test_with_grid_drops_everything_derived_from_the_old_mesh(tmp_path, boundary
     assert context.grid is None and context.domain is None and context.surfaces is None
 
 
+def test_a_named_move_derives_and_builds_into_its_own_run_directory(
+    tmp_path, boundary, monkeypatch
+):
+    """`with_grid(name=)` only RENAMED, where `with_packages(name=)` derives.
+
+    The variant kept the source's `run_name`, and `build()` defaults its workspace to
+    `run_name`: the moved model was written over the source variant's run directory.
+    """
+
+    source = _lazy_simulation(boundary, name="base").derive("a")
+    moved = source.with_grid(_grid_spec(boundary, 12_000.0), name="b")
+
+    assert (moved.name, moved.run_name, moved.derived_from) == ("b", "b", "a")
+    assert [entry["operation"] for entry in moved.lineage[-2:]] == ["with_grid", "derive"]
+    assert moved.lineage[-1] == {"operation": "derive", "from": "a", "to": "b"}
+
+    monkeypatch.chdir(tmp_path)  # build() with no workspace writes ./<run_name>
+    run = moved.build()
+    assert run.name == "b"
+    assert (tmp_path / "b").is_dir() and not (tmp_path / "a").exists()
+
+
 def test_the_lineage_records_the_move(tmp_path, boundary):
     moved = _lazy_simulation(boundary).with_grid(_grid_spec(boundary, 12_000.0))
 

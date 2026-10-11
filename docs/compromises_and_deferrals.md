@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 385 entries (390 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 386 entries (391 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 386 | `with_grid`'s `rule=`/`uncovered=` are checked at the call and refused without `remap=True` | 2026-10-11 |
 | 385 | The prior `run_ies()`/`prior()` hand PESTPP-IES holds every adjustable parameter, each correlated pilot-poi... | 2026-10-11 |
 | 384 | `cal.draw_prior()` defaults to `use_specsim=False`, and `True` off a regular structured grid is refused nam... | 2026-10-11 |
 | 383 | A PEST template holds the simulation's input files and nothing else of the run: the staging copy is what... | 2026-10-11 |
@@ -17548,3 +17549,13 @@ same day, which is the useful part of the result.
       Revert check: the old join fails both cases of
       `test_the_prior_holds_every_parameter_with_the_correlated_pilot_draw` and of
       `test_pestpp_ies_runs_the_prior_it_is_handed`, each a real PESTPP-IES prior run.
+
+386. **`with_grid`'s `rule=`/`uncovered=` are checked at the call and refused without `remap=True` (2026-10-11).**
+     Both were validated only inside `remap_arrays`, reached for a package holding an
+     ARRAY, so `rule="geometrc"` was accepted whenever nothing needed carrying; without
+     `remap=True` both were ignored. One check, `remap.check_remap_choices`, now runs at
+     `ModelSpec.with_grid` and `SimulationSpec.with_grid` (even when no model moves). Both
+     default to `None` -- resolving to `"geometric"`/`"nearest"` under `remap=True` -- so
+     the call can tell a given value from the default. Judgment call: ANY value given
+     without `remap=True` is refused naming `remap=True`, the default spelled out
+     (`rule="geometric"`) included -- it is still an argument the move would ignore.

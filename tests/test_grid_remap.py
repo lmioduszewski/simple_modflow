@@ -316,6 +316,46 @@ def test_an_unknown_keyword_value_is_refused(meshes, kwargs, match):
         )
 
 
+@pytest.mark.parametrize("tier", ["simulation", "model"])
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [({"rule": "geometrc"}, "is not a rule"), ({"uncovered": "neerest"}, "is not a mode")],
+)
+def test_a_typo_is_refused_at_the_call_with_nothing_to_remap(meshes, tier, kwargs, match):
+    """The check lived in `remap_arrays`, reached only for a package holding an ARRAY.
+
+    `ic(strt=40.0)` and `npf(k=1.0)` carry none, so `rule="geometrc"` was accepted.
+    """
+
+    fine, coarse = meshes
+    sim = _sim(fine, k=1.0)
+    target = sim if tier == "simulation" else sim.model("m")
+    with pytest.raises(ValueError, match=match):
+        target.with_grid(coarse, remap=True, **kwargs)
+
+
+@pytest.mark.parametrize("tier", ["simulation", "model"])
+@pytest.mark.parametrize(
+    "kwargs", [{"rule": "harmonic"}, {"uncovered": "raise"}, {"rule": "geometric"}]
+)
+def test_rule_or_uncovered_without_remap_is_refused_naming_remap(
+    meshes, lens, tier, kwargs
+):
+    """Without `remap=True` both were IGNORED: a `rule=` read as a rule applied."""
+
+    fine, coarse = meshes
+    sim = _sim(fine, k=lens)
+    target = sim if tier == "simulation" else sim.model("m")
+    with pytest.raises(ValueError, match=r"only acts? with remap=True"):
+        target.with_grid(coarse, **kwargs)
+    # A simulation with no gridded model moves nothing, and still refuses.
+    if tier == "simulation":
+        bare = mf.simulation(mf.gwf("m", packages=[mf.npf(k=1.0)]), name="s",
+                             packages=[mf.tdis(nper=1)])
+        with pytest.raises(ValueError, match="remap=True"):
+            bare.with_grid(coarse, **kwargs)
+
+
 def test_a_deferred_grid_model_refuses_remap_by_name(meshes):
     """There are no values on a mesh yet, so there is nothing to carry.
 

@@ -61,6 +61,11 @@ FLAG_ARRAYS: frozenset[str] = frozenset({"icelltype", "iconvert", "irch", "ievt"
 #: What a new cell with NO old cell under it means.
 UNCOVERED_MODES: tuple[str, ...] = ("nearest", "raise")
 
+#: The conductivity rule and the uncovered mode a remap uses when the caller names none:
+#: geometric is never best and never catastrophic (see ``CONDUCTIVITY_ARRAYS``).
+DEFAULT_RULE = "geometric"
+DEFAULT_UNCOVERED = "nearest"
+
 #: Ratio between the arithmetic and harmonic means above which the choice of rule is
 #: reported as material. 2.0 is a factor of two in a conductivity, which is the point at
 #: which a modeller would want to know rather than a threshold with physics behind it.
@@ -101,6 +106,26 @@ def _nearest_old_value(old_polys, new_polys, values, targets, *, active=None):
     return np.asarray(values, dtype=float)[usable][index], float(np.max(distance))
 
 
+def check_remap_choices(rule: str, uncovered: str) -> None:
+    """Raise ``ValueError`` naming the choices when ``rule``/``uncovered`` is not one.
+
+    The one check, run by :func:`remap_arrays` and at the ``with_grid`` CALL -- which
+    must not wait for a package with an array to carry, or a typo is accepted
+    whenever there is nothing to remap.
+    """
+
+    if rule not in REMAP_RULES:
+        raise ValueError(
+            f"rule={rule!r} is not a rule. Use one of "
+            + ", ".join(repr(name) for name in REMAP_RULES) + "."
+        )
+    if uncovered not in UNCOVERED_MODES:
+        raise ValueError(
+            f"uncovered={uncovered!r} is not a mode. Use one of "
+            + ", ".join(repr(name) for name in UNCOVERED_MODES) + "."
+        )
+
+
 def remap_arrays(
     options: dict,
     *,
@@ -108,8 +133,8 @@ def remap_arrays(
     new_polys,
     cellwise: tuple[str, ...],
     package: str,
-    rule: str = "geometric",
-    uncovered: str = "nearest",
+    rule: str = DEFAULT_RULE,
+    uncovered: str = DEFAULT_UNCOVERED,
     domain=None,
     verb: str = "with_grid(remap=True)",
 ) -> tuple[dict, dict]:
@@ -126,16 +151,7 @@ def remap_arrays(
     mesh -- and ``reached`` says nothing about it.
     """
 
-    if rule not in REMAP_RULES:
-        raise ValueError(
-            f"rule={rule!r} is not a rule. Use one of "
-            + ", ".join(repr(name) for name in REMAP_RULES) + "."
-        )
-    if uncovered not in UNCOVERED_MODES:
-        raise ValueError(
-            f"uncovered={uncovered!r} is not a mode. Use one of "
-            + ", ".join(repr(name) for name in UNCOVERED_MODES) + "."
-        )
+    check_remap_choices(rule, uncovered)
 
     refused = sorted(set(cellwise) & FLAG_ARRAYS)
     if refused:
