@@ -761,8 +761,9 @@ def test_a_discovered_run_reports_its_files_timestamps_not_the_scans(tmp_path):
 def _calibration_tree(runs_dir: Path) -> Path:
     """A calibration beside a run: template, both masters, three workers.
 
-    Each is a wholesale copy of the model workspace, so each carries an
-    ``mfsim.nam`` -- which is why they flooded the ledger.
+    Each holds a copy of the model's MF6 inputs (the whole model workspace until
+    ledger 383), so each carries an ``mfsim.nam`` -- which is why they flooded
+    the ledger.
     """
 
     pest = runs_dir / "baseline.pest"

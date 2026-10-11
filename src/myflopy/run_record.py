@@ -121,8 +121,9 @@ def pest_tree_root(workspace: Path, root: Path) -> Path | None:
 
     A calibration builds into ``<model workspace>.pest/`` -- a SIBLING of the run
     directory, so inside the project root -- holding the PstFrom template,
-    ``<name>_ies_master``, ``<name>_prior_master`` and every pyEMU worker. Each is
-    a wholesale copy of the model workspace, so each carries an ``mfsim.nam`` and
+    ``<name>_ies_master``, ``<name>_prior_master`` and every pyEMU worker. Each holds
+    a copy of the model's MF6 inputs (the whole model workspace until ledger
+    383), so each carries an ``mfsim.nam`` and
     would otherwise be listed as a run: one calibration with 8 workers becomes
     ~11 rows in a ledger whose job is telling you what you ran.
 

@@ -1053,8 +1053,8 @@ def test_model_pest_factory_binds_model_and_default_workspace(tmp_path):
     assert cal.model is model
     assert cal.start_datetime == "2021-03-01"
     # Default workspace lands BESIDE the model -- a sibling directory, not a
-    # child -- so PstFrom's copy of the model workspace cannot swallow it
-    # (ledger 107), while model.pest_runs still finds it.
+    # child -- so a build cannot write into the run (ledgers 107, 360), while
+    # model.pest_runs still finds it.
     assert cal.template_workspace == model.workspace.parent / f"{model.workspace.name}.pest" / "calib"
     assert model.workspace not in cal.template_workspace.parents
 
@@ -1237,9 +1237,9 @@ def test_discovery_finds_runs_in_both_the_current_and_legacy_roots(tmp_path):
 
 
 def test_a_legacy_run_copied_into_a_template_is_not_listed_twice(tmp_path):
-    """A template is a COPY of the model workspace, so a calibration that lived
-    inside it (the pre-2026-07-29 default) rides along into every template built
-    afterwards. Listing that copy as a run of its own shows the same
+    """A template built before ledger 383 is a COPY of the whole model
+    workspace, so a calibration that lived inside it (the pre-2026-07-29 default)
+    rode along into every template built then. Listing that copy as a run of its own shows the same
     calibration twice, and ``review()`` on the copy opens a directory nothing
     ever ran in."""
 

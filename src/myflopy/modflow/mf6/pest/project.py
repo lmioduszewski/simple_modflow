@@ -918,10 +918,12 @@ class PestProject:
     def _refuse_a_workspace_over_the_run(self) -> None:
         """Refuse a template or staging directory that is, contains or sits inside the run directory.
 
-        A build deletes both directories and copies the run directory into them, so
-        one that contains the run deletes it, and one inside it copies the run into
-        itself -- ``pest/<name>/pest/<name>/...``, 17 GB 40 levels deep (ledger 107).
-        Refused whatever the directory holds, a build's marker included (ledger 360).
+        A build deletes both directories and writes into them, so one that contains
+        the run deletes it, and one inside it writes into the run, which a build only
+        reads (ledger 356). While the build copied the WHOLE run directory (until
+        ledger 383) one inside it also copied the run into itself --
+        ``pest/<name>/pest/<name>/...``, 17 GB 40 levels deep (ledger 107). Refused
+        whatever the directory holds, a build's marker included (ledger 360).
         Called when the project is made and again by :meth:`build`.
 
         Raises
@@ -948,8 +950,8 @@ class PestProject:
                 f"{str(self.template_workspace)!r}: {what} {relation} the "
                 f"model's run directory" + ("" if relation == "IS" else f" {run}")
                 + ". A build deletes its workspace and the staging directory beside it, "
-                "then copies the run directory into them, so the run would be deleted, "
-                "or copied into itself.\n\n" + self._where_to_build_instead()
+                "then writes into them, so the run would be deleted, or written into.\n\n"
+                + self._where_to_build_instead()
             )
 
     def _clearance(self, directory: Path, role: str) -> str:

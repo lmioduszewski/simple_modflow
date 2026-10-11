@@ -234,10 +234,12 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None,
         # master copies to avoid listing the same run several times.
         if meta_path.parent.name.endswith("_master"):
             continue
-        # Same reason, one level up: a template is a COPY of the model workspace,
-        # so a calibration that lived inside that workspace (the pre-2026-07-29
-        # default) is copied into every template built afterwards. A run nested
-        # inside another run's template is that copy, never a run of its own.
+        # Same reason, one level up: a template built before ledger 383 is a
+        # COPY of the whole model workspace, so a calibration that lived inside
+        # that workspace (the pre-2026-07-29 default) was copied into every
+        # template built then. A run nested inside another run's template is that
+        # copy, never a run of its own. (A template now holds the run's MF6
+        # inputs only, so no new one carries a nested calibration.)
         if _is_inside_another_template(meta_path, root):
             continue
         try:

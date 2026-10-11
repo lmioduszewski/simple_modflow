@@ -1035,9 +1035,9 @@ class RunLibrary(SpecLibrary["Run"]):
     def calibrations(self) -> pd.DataFrame:
         """The PEST calibration trees under this project, which are NOT runs.
 
-        A calibration's template, IES/prior masters and every pyEMU worker are
-        each a full copy of the model workspace, so each carries an
-        ``mfsim.nam``. Listing them as runs floods the ledger -- one calibration
+        A calibration's template, IES/prior masters and every pyEMU worker each
+        hold a copy of the model's MF6 inputs (the whole model workspace until
+        ledger 383), so each carries an ``mfsim.nam``. Listing them as runs floods the ledger -- one calibration
         with 8 workers adds ~11 rows -- and conflates a tool's scratch space with
         work you did. They are excluded and counted here instead, and the run
         repr says how many, so nothing is silently absent.
