@@ -99,7 +99,7 @@ class ModelView(SimulationBase):
 def load_run(
     workspace: Path | str,
     *,
-    executable: str = "mf6",
+    executable: str | None = None,
     load: bool = True,
 ) -> Run:
     """Reopen a previously prepared/executed :class:`Run` from its workspace.
@@ -115,10 +115,13 @@ def load_run(
         The run directory (``<project>/runs/<name>``). With a ``run.json``
         manifest it is reopened as :meth:`Run.reopen` does; without one it is
         opened as a bare MF6 workspace (``status="loaded"``).
-    executable : str, optional
-        MF6 executable name/path (default ``"mf6"``) for a later
-        ``run.execute()``. Used only when the workspace has NO manifest: a
-        manifest-bearing run takes the executable its manifest recorded.
+    executable : str or None, optional
+        MF6 executable name/path for a later ``run.execute()``, also set on the
+        simulation ``load=True`` opens. A string WINS over the executable a
+        ``run.json`` manifest recorded -- the way to re-run a run with another
+        MF6 build, or on a machine where the recorded path does not exist.
+        ``None`` (the default) keeps the manifest's executable, or ``"mf6"`` when
+        the workspace has no manifest or the manifest records none.
     load : bool, optional
         ``True`` (the default) loads the FloPy simulation from the MF6 files now
         (``run.open()``; no ``mfsim.nam`` then raises ``FileNotFoundError``);
@@ -2470,7 +2473,13 @@ class Run:
         self.save_manifest()
 
     @classmethod
-    def reopen(cls, workspace: Path | str, *, load: bool = True) -> Run:
+    def reopen(
+        cls,
+        workspace: Path | str,
+        *,
+        executable: str | None = None,
+        load: bool = True,
+    ) -> Run:
         """Reopen a run from its manifest and optionally load the MF6 simulation.
 
         The spec is revived from the run's frozen snapshot when it has one, else
@@ -2483,6 +2492,11 @@ class Run:
         workspace : str or pathlib.Path
             The run directory, holding ``run.json``; none raises
             ``FileNotFoundError``.
+        executable : str or None, optional
+            MF6 executable name/path for a later :meth:`execute`, also set on the
+            simulation ``load=True`` opens. A string WINS over the executable the
+            manifest recorded; ``None`` (the default) keeps the recorded one, or
+            ``"mf6"`` when the manifest records none.
         load : bool, optional
             ``True`` (the default) also loads the FloPy simulation from the MF6
             files (:meth:`open`, which raises ``FileNotFoundError`` without an
@@ -2498,7 +2512,13 @@ class Run:
         run = cls(
             name=run_data["name"],
             workspace=workspace,
-            executable=run_data.get("executable", "mf6"),
+            # An explicit argument wins: it is the caller choosing the MF6 build
+            # to run now, and the recorded one may not exist on this machine.
+            executable=(
+                executable
+                if executable is not None
+                else run_data.get("executable") or "mf6"
+            ),
             status=run_data.get("status", "created"),
             created_at=run_data.get("created_at") or _utc_now(),
             updated_at=run_data.get("updated_at") or _utc_now(),
@@ -2529,7 +2549,11 @@ class Run:
 
     @classmethod
     def load(
-        cls, workspace: Path | str, *, executable: str = "mf6", load: bool = True
+        cls,
+        workspace: Path | str,
+        *,
+        executable: str | None = None,
+        load: bool = True,
     ) -> Run:
         """Open a native MF6 workspace, with or without a myflopy manifest.
 
@@ -2539,10 +2563,12 @@ class Run:
             The MF6 run directory. With a ``run.json`` it is reopened by
             :meth:`reopen`; without one it becomes a run named after the
             directory with ``status="loaded"``.
-        executable : str, optional
-            MF6 executable name/path for a later :meth:`execute`. Default
-            ``"mf6"``. Used only when there is NO manifest; a manifest-bearing
-            run takes the executable it recorded.
+        executable : str or None, optional
+            MF6 executable name/path for a later :meth:`execute`, also set on the
+            simulation ``load=True`` opens. A string WINS over the executable a
+            ``run.json`` manifest recorded; ``None`` (the default) keeps the
+            recorded one, or ``"mf6"`` when there is no manifest or it records
+            none.
         load : bool, optional
             ``True`` (the default) loads the FloPy simulation now (:meth:`open`;
             no ``mfsim.nam`` raises ``FileNotFoundError``); ``False`` defers it.
@@ -2551,11 +2577,11 @@ class Run:
         workspace = Path(workspace)
         manifest_path = workspace / RUN_MANIFEST_NAME
         if manifest_path.exists():
-            return cls.reopen(workspace, load=load)
+            return cls.reopen(workspace, executable=executable, load=load)
         run = cls(
             name=workspace.name,
             workspace=workspace,
-            executable=executable,
+            executable=executable if executable is not None else "mf6",
             status="loaded",
         )
         if load:

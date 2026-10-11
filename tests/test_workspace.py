@@ -626,6 +626,42 @@ def test_a_native_workspace_carries_no_spec_block(tmp_path):
     assert native.to_dict()["spec"] is None
 
 
+@pytest.mark.skipif(shutil.which("mf6") is None, reason="needs the mf6 executable")
+def test_an_explicit_executable_wins_over_the_one_a_run_recorded(tmp_path):
+    """``load_run(ws, executable=...)`` used to run the MANIFEST's executable.
+
+    The argument was read only for a workspace with no ``run.json``, so a run
+    recorded on another machine (or with another MF6 build) re-ran with a path
+    the caller had just overridden. ``None`` keeps the recorded one.
+    """
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    run = project.prepare_run(
+        "baseline", _tiny_flow_spec(), executable="mf6-not-on-this-machine"
+    )
+    run.write()
+    real = shutil.which("mf6")
+
+    kept = mf.load_run(run.workspace, load=False)
+    assert kept.executable == "mf6-not-on-this-machine"
+    assert mf.Run.load(run.workspace, load=False).executable == (
+        "mf6-not-on-this-machine"
+    )
+
+    chosen = mf.load_run(run.workspace, executable=real)
+    assert chosen.executable == real
+    assert chosen.simulation.exe_name == real
+    assert mf.Run.reopen(run.workspace, executable=real, load=False).executable == real
+    ok, _ = chosen.execute()
+    assert ok
+    recorded = json.loads(run.manifest_path.read_text())["run"]["executable"]
+    assert recorded == real
+
+    run.manifest_path.unlink()
+    assert mf.Run.load(run.workspace, load=False).executable == "mf6"
+    assert mf.Run.load(run.workspace, executable=real, load=False).executable == real
+
+
 def test_one_unserializable_simulation_no_longer_costs_the_whole_library(tmp_path):
     """``save()`` used to refuse everything when any simulation embedded an array.
 
