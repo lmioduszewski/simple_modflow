@@ -565,7 +565,7 @@ class UsgModel:
         start_date_time: str | None = None,
         save_budget: bool = True,
         complexity: str = "COMPLEX",
-        include: tuple[str, ...] | None = None,
+        include: str | tuple[str, ...] | None = None,
         fix_for_mf6: bool = False,
         local_origin: bool = True,
     ) -> SimulationSpec:
@@ -615,13 +615,17 @@ class UsgModel:
             acceleration (and, for a Newton SMS that sets them, its
             delta-bar-delta under-relaxation and backtracking) are passed
             beside the preset and override its values.
-        include : iterable of str, optional
+        include : str or iterable of str, optional
             Restrict the optional packages to these names, case-insensitive:
             any of ``"chd"``, ``"drn"``, ``"ghb"``, ``"riv"``, ``"wel"``,
-            ``"rch"``, ``"evt"`` and ``"hfb"``, e.g. ``("chd", "drn")``. A name
-            outside that list is ignored without a message, and so a bare string
-            (``"chd"``, read letter by letter) keeps none of them. DISV, NPF, IC, STO
-            and OC are always written. Default ``None`` converts everything that
+            ``"rch"``, ``"evt"`` and ``"hfb"``, e.g. ``("chd", "drn")``. A single
+            string is one name, so ``include="chd"`` keeps CHD alone. A name
+            outside that list raises ``ValueError`` naming the valid ones, and an
+            item that is not a string raises ``TypeError``; both are checked
+            before anything is converted (ledger 429). A package named here
+            that the model does not have is not an error -- it is simply not
+            written. An empty iterable keeps none of them. DISV, NPF, IC, STO and
+            OC are always written. Default ``None`` converts everything that
             mapped.
         fix_for_mf6 : bool, optional
             Apply the smallest edits that make MODFLOW 6 accept the model. Per
@@ -678,7 +682,10 @@ class UsgModel:
         Raises
         ------
         ValueError
-            When the model has no grid (it was read without a ``.gsf``).
+            When the model has no grid (it was read without a ``.gsf``), or
+            ``include`` names a package outside the optional list.
+        TypeError
+            When an item of ``include`` is not a string.
         """
 
         from myflopy.modflow.usg.convert import to_mf6

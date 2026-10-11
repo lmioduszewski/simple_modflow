@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 428 entries (433 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 429 entries (434 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 429 | `usg.to_mf6(include=)` takes a single string as ONE package name and refuses any name outside its optional... | 2026-10-11 |
 | 428 | A list boundary on a removed cell is told to move its cellid when it was written as given, and to re-declar... | 2026-10-11 |
 | 427 | A build refusal groups its complaints by what each is about, each group under its own heading and advice | 2026-10-11 |
 | 426 | A feature's stress period is a whole number naming one of the simulation's periods, read by the layer colum... | 2026-10-11 |
@@ -18399,3 +18400,14 @@ same day, which is the useful part of the result.
       from BEFORE the cut". The family closing names no cause at all; each line names its
       own. Not done: an EDITED pinned package (`PIN_VOIDED`) is still told to re-declare,
       though the edit may have typed the cellid.
+
+429. **`usg.to_mf6(include=)` takes a single string as ONE package name and refuses any name outside its optional list (2026-10-11).**
+     A name it did not know was skipped in silence, so `("chd", "dnr")` wrote no drains,
+     and a bare `"chd"` was iterated letter by letter and kept nothing. Chosen: ACCEPT a
+     string as one name rather than refuse it naming the tuple spelling -- in this slot a
+     string can only mean a package, so there is nothing to guess, and refusing would make
+     the commonest one-package call fail. Any name outside `chd`/`drn`/`ghb`/`riv`/`wel`/
+     `rch`/`evt`/`hfb` (an always-written `"disv"` included) raises `ValueError` naming
+     them, a non-string item `TypeError`, both before any finding is logged. A VALID name
+     the model has no package for is not an error: `include=` is a filter over what
+     converted, and the same tuple then serves several models.

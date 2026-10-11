@@ -1113,3 +1113,48 @@ def test_a_numpy_integer_crs_is_an_epsg_code(usg_workspace):
     model.grid.crs = np.int64(2926)
     assert type(model.grid.crs) is str and model.grid.crs == "EPSG:2926"
     assert model.grid.gdf_vorPolys.crs == "EPSG:2926"
+
+
+# --- include= names packages, and only packages (ledger 429) ------------
+
+
+def _package_names(sim):
+    return [p.name for p in sim.models[0].packages]
+
+
+def test_a_bare_string_include_is_one_package_name(usg):
+    """``include="chd"`` was iterated letter by letter and kept no package at all."""
+
+    names = _package_names(usg.to_mf6("tiny", start_date_time="2020-01-01", include="CHD"))
+    assert names == ["disv", "npf", "ic", "sto", "chd", "oc"]
+
+
+@pytest.mark.parametrize("include", [("chd", "dnr"), "rech", ("disv",)])
+def test_an_unknown_include_name_is_refused_naming_the_valid_ones(below_bottom, include, caplog):
+    """A misspelt ``"dnr"`` dropped the drains in silence; it is refused before anything.
+
+    ``below_bottom`` logs a finding on every conversion, so an empty log shows the
+    refusal came first.
+    """
+
+    with caplog.at_level("WARNING", logger="myflopy.modflow.usg.convert"):
+        with pytest.raises(ValueError, match=r"include= chooses among 'chd', 'drn'.*'hfb'") as raised:
+            below_bottom().to_mf6("tiny", start_date_time="2020-01-01", include=include)
+    bad = include if isinstance(include, str) else include[-1]
+    assert repr(bad) in str(raised.value)
+    assert "always written" in str(raised.value)
+    assert not caplog.records, "refused before any conversion work or finding is logged"
+
+
+def test_an_include_item_that_is_not_a_string_is_refused(usg):
+    with pytest.raises(TypeError, match=r"include=\('chd', 3\)\): 3 is not a package name"):
+        usg.to_mf6("tiny", start_date_time="2020-01-01", include=("chd", 3))
+
+
+def test_include_names_a_package_the_model_lacks_without_complaint(usg):
+    """``"ghb"`` is a valid name; the synthetic model just has no GHB to write."""
+
+    names = _package_names(
+        usg.to_mf6("tiny", start_date_time="2020-01-01", include=("ghb", "drn"))
+    )
+    assert names == ["disv", "npf", "ic", "sto", "drn", "oc"]

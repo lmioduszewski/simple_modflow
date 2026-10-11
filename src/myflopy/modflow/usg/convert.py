@@ -28,6 +28,10 @@ __all__ = ["Finding", "conversion_notes", "mf6_findings", "to_mf6"]
 #: USG list packages and the MODFLOW 6 factory that receives them.
 _LIST_TARGETS = {"CHD": "chd", "DRN": "drn", "GHB": "ghb", "RIV": "riv", "WEL": "wel"}
 
+#: The packages ``to_mf6(include=...)`` chooses among. Everything else it writes --
+#: DISV, NPF, IC, STO, OC -- is written whatever ``include`` says.
+_OPTIONAL_PACKAGES = (*_LIST_TARGETS.values(), "rch", "evt", "hfb")
+
 #: The elevation fields MODFLOW 6 measures against the cell bottom, and the column each
 #: one occupies in a MODFLOW-USG record (column 0 is the node). A USG ``RIV`` record is
 #: ``node, stage, cond, rbot`` -- the same order MODFLOW 6 writes -- and ``rbot`` is the
@@ -337,7 +341,7 @@ def to_mf6(
     start_date_time: str | None = None,
     save_budget: bool = True,
     complexity: str = "COMPLEX",
-    include: tuple[str, ...] | None = None,
+    include: str | tuple[str, ...] | None = None,
     fix_for_mf6: bool = False,
     local_origin: bool = True,
 ) -> SimulationSpec:
@@ -348,6 +352,7 @@ def to_mf6(
             "conversion needs the grid geometry: a USG DISU carries no coordinates, so "
             "read_usg() must be given the model's .gsf file"
         )
+    wanted = _included(include)
 
     if not fix_for_mf6:
         for finding in mf6_findings(model):
@@ -366,7 +371,6 @@ def to_mf6(
                     finding.fix,
                 )
 
-    wanted = {p.lower() for p in include} if include is not None else None
     keep = lambda pkg: wanted is None or pkg in wanted  # noqa: E731
 
     grid_props = model.grid.get_disv_gridprops()
@@ -484,6 +488,36 @@ def to_mf6(
 
 
 # ---------------------------------------------------------------- pieces
+
+
+def _included(include) -> set[str] | None:
+    """``to_mf6``'s ``include=`` as a set of package names, or ``None`` for all of them.
+
+    A bare string is ONE name: ``include="chd"`` keeps CHD. Iterated as given it was
+    read letter by letter, and since no package is called ``"c"`` it kept none, in
+    silence -- as did a misspelt name in a tuple. A name outside
+    :data:`_OPTIONAL_PACKAGES`, or an item that is not a string, is refused naming the
+    names it can be (ledger 429).
+    """
+
+    if include is None:
+        return None
+    names = (include,) if isinstance(include, str) else tuple(include)
+    valid = ", ".join(repr(name) for name in _OPTIONAL_PACKAGES)
+    for name in names:
+        if not isinstance(name, str):
+            raise TypeError(
+                f"to_mf6(include={include!r}): {name!r} is not a package name; include= "
+                f"takes names among {valid}"
+            )
+    unknown = [name for name in names if name.lower() not in _OPTIONAL_PACKAGES]
+    if unknown:
+        raise ValueError(
+            f"to_mf6(include={include!r}): {', '.join(repr(n) for n in unknown)} "
+            f"{'is not an optional package' if len(unknown) == 1 else 'are not optional packages'}. "
+            f"include= chooses among {valid}; DISV, NPF, IC, STO and OC are always written"
+        )
+    return {name.lower() for name in names}
 
 
 def _localize(grid_props: dict, *, shift: bool):
