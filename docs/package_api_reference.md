@@ -819,8 +819,9 @@ declaration builds on any mesh and `with_grid` reads it `rebuilt` (ledger 304). 
 declaration on that mesh.
 
 It needs no grid at all — the cell set, the `iuzno` numbering and `ivertcon` come from the
-idomain — so it also accepts a bare `ModelContext(domain=...)` or a model with no context,
-where the mesh arrives through a hand-written discretization. And unlike every other lazy
+idomain — so it also accepts a bare `ModelContext(domain=...)`, a context holding only a
+grid, or a model with no context, where the mesh arrives through a hand-written
+discretization; with no domain anywhere every cell is active, as in MF6 (ledger 380). And unlike every other lazy
 form it names no file, so there is nothing to bundle or fingerprint; a recipe of scalars
 also means a model carrying a lazy UZF **saves**, where the eager form (records of cellid
 tuples) persists nothing.

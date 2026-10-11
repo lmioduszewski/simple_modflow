@@ -233,7 +233,7 @@ def test_two_lazy_declarations_of_the_same_thing_digest_alike(meshes):
     assert package_digest(mf.uzf(**ARGS)) != package_digest(mf.uzf(**{**ARGS, "vks": 2.0}))
 
 
-@pytest.mark.parametrize("context", ["none", "domain-only"])
+@pytest.mark.parametrize("context", ["none", "domain-only", "grid-only"])
 def test_a_lazy_uzf_needs_no_GRID_only_a_domain(meshes, tmp_path, context):
     """`needs_grid=False`, and this is the test that holds it.
 
@@ -251,9 +251,14 @@ def test_a_lazy_uzf_needs_no_GRID_only_a_domain(meshes, tmp_path, context):
     small, _ = meshes
     gridprops = small.get_disv_gridprops()
     disv = mf.disv(nlay=3, top=100.0, botm=[80.0, 60.0, 40.0], **gridprops)
-    kwargs = {} if context == "none" else {
-        "context": ModelContext(domain=np.ones((3, small.ncpl), dtype=int))
-    }
+    # "grid-only": a context with a grid and NO domain, beside a DISV that declares no
+    # idomain -- every cell active, as in MF6. It raised "ModelContext.domain is required"
+    # while the no-context model built (ledger 380).
+    kwargs = {
+        "none": {},
+        "domain-only": {"context": ModelContext(domain=np.ones((3, small.ncpl), dtype=int))},
+        "grid-only": {"context": ModelContext(grid=small)},
+    }[context]
     sim = mf.simulation(
         mf.gwf("m", packages=[disv, mf.npf(k=1.0), mf.ic(strt=50.0), mf.uzf(**ARGS)],
                **kwargs),

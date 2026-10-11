@@ -512,6 +512,28 @@ def test_the_array_form_resolves_its_layer_index_at_build_time(
         assert np.array_equal(resolved, np.asarray(eager.options[index]))
 
 
+@pytest.mark.parametrize("package", ["rch", "evt"])
+def test_the_array_form_builds_on_a_context_with_a_grid_and_no_domain(
+    tmp_path, triangulated_grid, package
+):
+    """No domain on the context and no `idomain=` on the DISV is every cell active, as in
+    MF6 -- with a grid on the context too. It raised "irch='top_active' needs the model's
+    active-cell array" there, while the same model with no context built (ledger 380).
+    """
+
+    disv = mf.disv(nlay=2, top=100.0, botm=[50.0, 0.0], **triangulated_grid.get_disv_gridprops())
+    lazy = (
+        mf.rch.array(recharge=6.0e-4)
+        if package == "rch"
+        else mf.evt.array(rate=2.0e-3, depth=2.5)
+    )
+    built = _build(tmp_path, triangulated_grid, lazy, discretization=disv)
+    index = "irch" if package == "rch" else "ievt"
+    resolved = getattr(built.get_package(package), index).get_data()
+    resolved = np.asarray(resolved[0] if isinstance(resolved, dict) else resolved)
+    assert resolved.tolist() == [0] * int(triangulated_grid.ncpl)
+
+
 def test_the_array_form_is_what_made_a_model_unsaveable(tmp_path, triangulated_grid):
     """The payoff, stated as the defect it removes.
 

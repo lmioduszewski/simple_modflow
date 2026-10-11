@@ -210,3 +210,28 @@ def test_edges_only_off_is_unaffected_by_the_edge_set(tmp_path):
     spec = source.chd(head="head", edges_only=False)
     written = sorted({cell for (_l, cell), *_r in spec.options["stress_period_data"][0]})
     assert written == [c for c in range(N * N) if c != CENTRE]
+
+
+def test_a_lazy_declaration_leaves_the_grids_idomain_file_deciding(tmp_path):
+    """Built lazily beside a DISV with no `idomain=`, the grid's file still decides.
+
+    `_lazy_resolution_context` writes "every cell active" for a model with no domain
+    anywhere -- but only for the builders that read nothing else (ledger 380). Here
+    an all-ones domain would WIN over the file (the test above) and drop the hole's ring.
+    """
+
+    import myflopy as mf
+
+    idomain = tmp_path / "idomain.gpkg"
+    x, y = (CENTRE % N) * D, (CENTRE // N) * D
+    gpd.GeoDataFrame(
+        {"name": ["hole"]}, geometry=[box(x, y, x + D, y + D)], crs=CRS
+    ).to_file(idomain, driver="GPKG")
+    vor = _grid(idomain_path=idomain)
+    _covering_source(tmp_path, vor, None)      # writes band.gpkg
+    disv = mf.disv(nlay=1, top=10.0, botm=[0.0], **vor.get_disv_gridprops())
+    lazy = mf.chd.gpkg(tmp_path / "band.gpkg", layer="chd", nper=1, head="head", edges_only=True)
+    model = mf.gwf("m", context=ModelContext(grid=vor), packages=[disv, lazy])
+    built = mf.simulation(model, name="s").build_flopy(tmp_path / "ws")
+    rows = built.simulation.get_model("m").get_package("chd").stress_period_data.get_data()[0]
+    assert sorted(int(row[0][1]) for row in rows) == sorted(OUTER + FACE_NEIGHBOURS_OF_CENTRE)

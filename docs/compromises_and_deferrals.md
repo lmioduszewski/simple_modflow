@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 379 entries (384 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 380 entries (385 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 380 | A lazy UZF or array-form RCH/EVT builds on a context holding a grid and no domain, every cell active as in MF6 | 2026-10-11 |
 | 379 | A lazy recipe refuses a per-cell value of ANY array-like kind, and reads a numpy integer key as a period | 2026-10-11 |
 | 378 | A flow barrier builds on any discretization -- DIS, DISV or DISU, under any name or through `mf.ref` -- and... | 2026-10-11 |
 | 377 | Reconciling layer surfaces never reaches a `LayerStack` unit at or above its own `min_thickness`, reads row... | 2026-10-11 |
@@ -11289,7 +11290,8 @@ same day, which is the useful part of the result.
       this repo's own examples use. `_lazy_resolution_context` grew `needs_grid=False`
       rather than a sibling, so the ordering and ncpl-agreement rules stay in one place.
       It also synthesizes an ALL-ACTIVE domain when there is neither a context nor an
-      `idomain=` on the discretization -- an absent IDOMAIN means every cell active in
+      `idomain=` on the discretization (also beside a context holding only a grid, for
+      the domain-only builders, since ledger 380) -- an absent IDOMAIN means every cell active in
       MF6, so saying so is not a guess -- because otherwise both routes to a cell count
       are None and `_ArealBuilder` dies five frames down naming neither the package nor
       the fix.
@@ -15310,7 +15312,8 @@ same day, which is the useful part of the result.
       (ledger 377).
       ~~`mf.hfb` refused on any discretization but a spec named `disv`; a lazy `mf.rch`/
       `mf.evt`/`mf.uzf` refusing a per-cell list but accepting the same values as an
-      ndarray~~ -- fixed, entries rewritten (ledgers 378, 379).
+      ndarray; a lazy `mf.uzf` documented as raising on a context holding a grid but no
+      domain~~ -- fixed, entries rewritten (ledgers 378, 379, 380).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17401,3 +17404,20 @@ same day, which is the useful part of the result.
       Revert check: the old predicate fails both `test_a_per_cell_ARRAY_is_refused_like_a_list`
       cases, four `test_cell_identity_the_caller_chose_is_refused_in_a_lazy_recipe` cases
       and the `np.int64`-key case of `test_the_movable_shapes_are_accepted`.
+
+380. **A lazy UZF or array-form RCH/EVT builds on a context holding a grid and no domain, every cell active as in MF6 (2026-10-11).**
+      `_lazy_resolution_context` wrote the all-active domain (no context domain, no
+      `idomain=` on the DISV) only when the context had NO grid, because the list areal
+      builders fall back to `grid.ncpl`. UZF and the array forms have no such fallback, so
+      the same model raised with `ModelContext(grid=g)` and built with no context
+      (measured: 18 UZF cells either way now on a 9-cell, 2-layer grid; `irch` all 0).
+      **Judgment call:** the all-active domain is written for the DOMAIN-ONLY builders
+      (`needs_grid=False`: areal, array, UZF) and NOT for a `.gpkg` source, which reads an
+      absent domain as "the grid's own `idomain_path` decides" (ledgers 209, 246) -- an
+      all-ones array there would overrule that file, and nothing tested it until
+      `test_a_lazy_declaration_leaves_the_grids_idomain_file_deciding`. The list areal
+      builders on a grid-only context now see an all-ones domain where they used
+      `grid.ncpl`; the records are the same.
+      Revert check: the old condition fails `test_a_lazy_uzf_needs_no_GRID_only_a_domain
+      [grid-only]` and both `test_the_array_form_builds_on_a_context_with_a_grid_and_no_domain`
+      cases; dropping the `needs_grid` guard fails the idomain-file test.

@@ -768,13 +768,20 @@ def _lazy_resolution_context(model, spec_name: str, *, needs_grid: bool = True):
         idomain = getattr(discretization, "idomain", None)
         domain = idomain.get_data() if idomain is not None else None
 
-    if domain is None and grid is None and ncpl is not None:
-        # Nothing left to count cells with: no context, and a discretization declared
-        # without `idomain=`. The areal builders fall back to `context.grid.ncpl` for
-        # their cell list, so both routes are None here and they die five frames down
-        # with a message naming neither the package nor the fix. An absent IDOMAIN means
-        # every cell ACTIVE in MF6, so saying that outright is not a guess -- it is the
-        # same model, written down (ledger 284).
+    if domain is None and ncpl is not None and not needs_grid:
+        # No domain anywhere: neither the context nor the discretization (declared without
+        # `idomain=`) gives one. An absent IDOMAIN means every cell ACTIVE in MF6, so saying
+        # that outright is not a guess -- it is the same model, written down (ledger 284).
+        # Without it the areal builders die five frames down naming neither the package nor
+        # the fix when there is no grid either. It was conditioned on `grid is None`, since
+        # the LIST areal builders fall back to the grid's `ncpl` -- but UZF and the ARRAY
+        # forms have no such fallback, so a lazy `mf.uzf` ("ModelContext.domain is
+        # required") and `mf.rch.array` ("irch='top_active' needs the model's active-cell
+        # array") raised on a model whose context carried a grid, while the same model with
+        # no context built (ledger 380). Every-cell-active is the answer on both routes.
+        # NOT for a `needs_grid` caller: a `.gpkg` source reads an absent domain as "let
+        # the grid's own `idomain_path` decide" (ledgers 209, 246), and an all-ones array
+        # here would overrule that file.
         nlay = getattr(getattr(discretization, "nlay", None), "get_data", lambda: None)()
         domain = np.ones((int(nlay or 1), int(ncpl)), dtype=int)
 
@@ -5859,8 +5866,8 @@ class _UZFPackage:
             without it). Default ``None`` makes the spec LAZY: it resolves at build
             from the model's domain -- the context's, else the built
             discretization's ``idomain`` -- and needs no grid. With neither, every
-            cell is active only when the model's context carries no grid either;
-            a context holding a grid but no domain raises ``ValueError`` at build.
+            cell is active, as in MF6 when IDOMAIN is absent, whether or not the
+            model's context carries a grid.
             The lazy form refuses (``TypeError``) an explicit ``cells`` list, a
             per-cell value of any array-like kind (list, tuple, ndarray, Series)
             or a cell mapping for any value, and ``mover=True``; each of those
