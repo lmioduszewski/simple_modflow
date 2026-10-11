@@ -45,7 +45,7 @@ from shapely.geometry import LineString, Point
 import myflopy as mf
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 from myflopy.modflow.mf6.surface_water_validation import validate_sfr_configuration
-from tests.test_sfr_builder import _builder
+from tests.test_sfr_builder import _builder, _grid
 
 LINES = {
     "source": LineString([(120.0, 150.0), (480.0, 150.0)]),
@@ -122,6 +122,50 @@ def _run(root, builder: mf.SFRBuilder, kinds=("UPSTREAM-FLOW",), **options) -> p
 @pytest.mark.parametrize("layer", [np.int64(0), np.int32(0), np.uint8(0)])
 def test_a_numpy_integer_layer_is_a_layer(layer):
     assert _builder(reach_layer=layer).reaches["cellid"].tolist() == _builder(reach_layer=0).reaches["cellid"].tolist()
+
+
+def _two_layers(**values) -> mf.SFRBuilder:
+    return _builder(context=mf.ModelContext(grid=_grid(), domain=np.ones((2, 6), dtype=int)), **values)
+
+
+def _layers(builder) -> set[int]:
+    return {layer for layer, _ in builder.reaches["cellid"]}
+
+
+@pytest.mark.parametrize("layer", [1.0, np.float64(1.0), np.float32(1.0)])
+def test_a_whole_float_layer_is_that_layer(layer):
+    # It fell through to the column-name branch: "Reach-layer field is missing: 1.0".
+    assert _layers(_two_layers(reach_layer=layer)) == {1}
+    assert _layers(_two_layers(reach_layer={"tributary": layer, "main": layer})) == {1}
+    assert _layers(_two_layers(streams=_builder().streams.assign(lay=[layer, layer]), reach_layer="lay")) == {1}
+
+
+@pytest.mark.parametrize(
+    ("layer", "why"),
+    [
+        (1.5, r"1\.5 is not a whole layer number"),
+        (True, r"True is a bool, not a layer number"),
+        (np.bool_(True), r"np\.True_ is a bool, not a layer number"),
+        (-1, r"-1, a layer this model does not have -- they run 0 to 1"),
+        (2, r"2, a layer this model does not have -- they run 0 to 1"),
+        (np.nan, r"it is empty"),
+        ([0, 1], r"\[0, 1\] is not a layer number"),
+    ],
+)
+def test_a_layer_that_names_no_model_layer_is_refused(layer, why):
+    with pytest.raises(ValueError, match=rf"SFR reach_layer names no model layer: {why}"):
+        _ = _two_layers(reach_layer=layer).reaches
+
+
+def test_a_fraction_in_a_mapping_or_a_column_is_refused_not_truncated():
+    # int() made 0.7 layer 0 in both, a layer nobody wrote.
+    with pytest.raises(ValueError, match=r"SFR reach_layer\['main'\] names no model layer: 0\.7 is not a whole"):
+        _ = _two_layers(reach_layer={"tributary": 0, "main": 0.7}).reaches
+    with pytest.raises(
+        ValueError,
+        match=r"SFR reach_layer column 'lay' for stream 'tributary' names no model layer: .*0\.7.* is not a whole",
+    ):
+        _ = _two_layers(streams=_builder().streams.assign(lay=[0.7, 1.0]), reach_layer="lay").reaches
 
 
 def test_numpy_period_and_reach_keys_are_periods_and_reaches():

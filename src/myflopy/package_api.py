@@ -6165,7 +6165,7 @@ class _SFRPackage:
         diversions: tuple[StreamDiversion, ...] = (),
         connection_tolerance: float | None = None,
         reverse_streams: tuple[str, ...] = (),
-        reach_layer: int | str | Mapping[str, int] = "top_active",
+        reach_layer: int | float | str | Mapping[str, int] = "top_active",
         width: Any = 10.0,
         gradient: Any = 0.001,
         reach_top: Any = None,
@@ -6328,12 +6328,15 @@ class _SFRPackage:
             lines digitized mouth-first; compared as strings. A bare string is
             iterated character by character, so give even one id as a tuple,
             ``("main",)``. Default ``()``.
-        reach_layer : int, str or Mapping[str, int], optional
-            Zero-based layer each reach sits in. An integer -- a Python or a numpy
-            one -- is every reach's layer; a mapping is
-            ``{stream_id: layer}``, where a stream missing from it raises
+        reach_layer : int, float, str or Mapping[str, int], optional
+            Zero-based layer each reach sits in. A number is every reach's layer; a
+            mapping is ``{stream_id: layer}``, where a stream missing from it raises
             ``KeyError``; any other string names a stream-table column holding each
-            stream's layer (``ValueError`` when missing). Default
+            stream's layer (``ValueError`` when missing). Every layer so given must
+            be a WHOLE number -- a Python or numpy integer, or a float such as
+            ``1.0`` -- at or above 0 and, when ``context.domain`` is
+            two-dimensional, below its layer count; a fraction, a ``bool``, a NaN
+            or anything else raises ``ValueError`` naming the value. Default
             ``"top_active"``: the top layer with ``idomain > 0`` in the reach's
             column of ``context.domain`` -- a column with none raises
             ``ValueError`` -- or layer 0 when the context has no domain or a

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 411 entries (416 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 412 entries (417 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 412 | An SFR `reach_layer` is a WHOLE number, a float such as `1.0` included, inside the domain's layers | 2026-10-11 |
 | 411 | `protect_sources` / `protected_labels` still change no mesh: every refinement ring vertex stays fixed, beca... | 2026-10-11 |
 | 410 | `max_optimization_points` is removed from the mesh optimizer and `GridSpec.voronoi`, and the optimizer's de... | 2026-10-11 |
 | 409 | Declaring the domain again on one `TriangleGrid` replaces the previous domain's background sizing region;... | 2026-10-11 |
@@ -18038,3 +18039,19 @@ same day, which is the useful part of the result.
       something needs ring vertices that slide ALONG their segment, a design not settled
       here. The `optimize_seeds` docstring already states that ring vertices are always
       fixed.
+
+412. **An SFR `reach_layer` is a WHOLE number, a float such as `1.0` included, inside the domain's layers (2026-10-11).**
+      A float `reach_layer` fell through to the column-name branch ("Reach-layer field is
+      missing: 1.0"), a fraction in a mapping or a stream-table column was truncated by
+      `int()` into a layer nobody wrote, and a negative layer or one past the domain was
+      written as given. **Judgment call:** a whole float is ACCEPTED as that layer, not
+      refused naming its type -- the rule the other layer and period readers already
+      apply (`geopackage._layer_index`, ledger 393; `_numeric_periods`, ledger 340: `1.0`
+      is 1). `SFRBuilder` reads all three spellings through `_layer_index` itself; a
+      `bool` is refused before it (ledger 265's rule; `_layer_index` would read `True` as
+      1 and was left so for the GeoPackage builders). The upper bound is checked only
+      where `context.domain` is two-dimensional. `_layer_index` no longer names
+      `layer_base=` when the base is 0, the spelling of a caller that has none.
+      Revert check: the old branch fails the three `test_a_whole_float_layer_is_that_layer`
+      cases, all seven `test_a_layer_that_names_no_model_layer_is_refused` cases and
+      `test_a_fraction_in_a_mapping_or_a_column_is_refused_not_truncated`.

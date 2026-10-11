@@ -695,10 +695,10 @@ def _layer_index(value: Any, *, base: int, nlay: int | None) -> tuple[int | None
     top = None if nlay is None else int(nlay) + int(base) - 1
     if layer < 0 or (nlay is not None and layer >= int(nlay)):
         span = f"{int(base)} to {top}" if top is not None else f"{int(base)} up"
-        return None, (
-            f"{int(number)}, a layer this model does not have -- with "
-            f"layer_base={int(base)} they run {span}"
-        )
+        # A zero base is also how a caller with no `layer_base=` asks (SFR's
+        # reach_layer), so it is not named there.
+        numbered = f"with layer_base={int(base)} they run" if int(base) else "they run"
+        return None, f"{int(number)}, a layer this model does not have -- {numbered} {span}"
     return layer, ""
 
 

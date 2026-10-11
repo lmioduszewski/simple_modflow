@@ -18,6 +18,7 @@ from shapely.geometry import Point
 from shapely.ops import nearest_points
 
 from myflopy.advanced import sfr_spec
+from myflopy.geopackage import _layer_index
 from myflopy.grid_identity import pin_metadata
 from myflopy.modflow.mf6.grid.geometry import _SLIVER_WIDTH, top_active_layer
 from myflopy.modflow.mf6.surface_water_validation import _REACH_VALUES, _reach_value_fault
@@ -291,15 +292,18 @@ class SFRBuilder:
     reverse_streams : sequence of str, optional
         Stream ids whose line is reversed when the stream table is built, for
         lines digitized mouth-first. Ids are compared as strings. Default ``()``.
-    reach_layer : int, str or Mapping[str, int], optional
-        Zero-based layer each reach sits in. An integer -- a Python or a numpy
-        one -- is every reach's layer; a mapping is ``{stream_id: layer}`` (a
-        stream missing from it raises ``KeyError``); a string other than
-        ``"top_active"`` names a stream-table column holding each stream's
-        layer. Default ``"top_active"``: the top
-        layer with ``idomain > 0`` in the reach's column of ``context.domain``
-        -- a column with none raises ``ValueError`` -- or layer 0 when the
-        context has no domain or a one-dimensional one.
+    reach_layer : int, float, str or Mapping[str, int], optional
+        Zero-based layer each reach sits in. A number is every reach's layer; a
+        mapping is ``{stream_id: layer}`` (a stream missing from it raises
+        ``KeyError``); a string other than ``"top_active"`` names a stream-table
+        column holding each stream's layer. Every layer so given must be a WHOLE
+        number -- a Python or numpy integer, or a float such as ``1.0`` -- at or
+        above 0 and, when ``context.domain`` is two-dimensional, below its layer
+        count; a fraction, a ``bool``, a NaN or anything else raises
+        ``ValueError`` naming the value when the reaches are resolved. Default
+        ``"top_active"``: the top layer with ``idomain > 0`` in the reach's column
+        of ``context.domain`` -- a column with none raises ``ValueError`` -- or
+        layer 0 when the context has no domain or a one-dimensional one.
     width : float, str, Mapping, or sequence, optional
         Reach width, MF6 ``RWID``, in model length units; default 10.0. Any of
         the per-reach shapes in the Notes. :meth:`validate` refuses a width
@@ -452,7 +456,7 @@ class SFRBuilder:
     diversions: tuple[StreamDiversion, ...] = ()
     connection_tolerance: float | None = None
     reverse_streams: tuple[str, ...] = ()
-    reach_layer: int | str | Mapping[str, int] = "top_active"
+    reach_layer: int | float | str | Mapping[str, int] = "top_active"
     width: Any = 10.0
     gradient: Any = 0.001
     reach_top: Any = None
@@ -725,17 +729,19 @@ class SFRBuilder:
     def _layer_for_cell(self, stream_id: str, cell: int) -> int:
         """The model layer a reach sits in: a constant, a per-stream map, a field, or ``top_active``."""
 
-        if _is_integer(self.reach_layer):
-            return int(self.reach_layer)
+        domain = self.context.domain
         if isinstance(self.reach_layer, Mapping):
-            return int(self.reach_layer[stream_id])
-        if self.reach_layer != "top_active":
+            return self._layer_number(self.reach_layer[stream_id], f"reach_layer[{stream_id!r}]")
+        if isinstance(self.reach_layer, str) and self.reach_layer != "top_active":
             row = self.stream_table.loc[stream_id]
             if self.reach_layer not in row:
                 raise ValueError(f"Reach-layer field is missing: {self.reach_layer}")
-            return int(row[self.reach_layer])
-
-        domain = self.context.domain
+            return self._layer_number(
+                row[self.reach_layer],
+                f"reach_layer column {self.reach_layer!r} for stream {stream_id!r}",
+            )
+        if not isinstance(self.reach_layer, str):
+            return self._layer_number(self.reach_layer, "reach_layer")
         if domain is None:
             return 0
         values = np.asarray(domain)
@@ -942,6 +948,31 @@ class SFRBuilder:
         distances = reaches.geometry.distance(point)
         tied = distances[distances <= distances.min() + _SLIVER_WIDTH].index
         return int(reaches.loc[tied, "sequence"].idxmax())
+
+    def _layer_number(self, value: Any, where: str) -> int:
+        """One ``reach_layer`` value as a zero-based layer, or ``ValueError`` naming it.
+
+        The layer rule the GeoPackage builders read a layer column by
+        (``geopackage._layer_index``): a WHOLE number -- ``1``, ``numpy.int64(1)``,
+        ``1.0`` -- at or above 0 and, where the context's two-dimensional ``domain``
+        says how many layers there are, below that. A float fell through to the
+        column-name branch ("Reach-layer field is missing: 1.0"), a fraction in a
+        mapping or a column was truncated by ``int()`` into a layer nobody wrote, and
+        a negative layer or one past the domain was written. A ``bool`` is not a
+        layer (ledger 265's numeric-scalar rule; :func:`_is_integer`; ledger 412).
+        """
+
+        domain = self.context.domain
+        nlay = int(np.shape(domain)[0]) if domain is not None and np.ndim(domain) == 2 else None
+        if isinstance(value, (bool, np.bool_)):
+            why = f"{value!r} is a bool, not a layer number"
+        else:
+            layer, why = _layer_index(value, base=0, nlay=nlay)
+            if layer is not None:
+                return layer
+        raise ValueError(
+            f"SFR {where} names no model layer: {why}. A layer is a zero-based whole number."
+        )
 
     @property
     def resolved_connections(self) -> tuple[tuple[int, int], ...]:
