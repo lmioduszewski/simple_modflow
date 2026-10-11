@@ -668,17 +668,20 @@ def _finite(value, *, field: RowValue, label: str, source: str):
     return value
 
 
-def _layer_index(value: Any, *, base: int, nlay: int | None) -> tuple[int | None, str]:
-    """``(zero-based model layer, "")`` for one ``layer_field`` value, or ``(None, why)``.
+def _numbered_index(
+    value: Any, *, base: int, count: int | None, noun: str, owner: str, base_keyword: str
+) -> tuple[int | None, str]:
+    """``(zero-based index, "")`` for one numbered attribute value, or ``(None, why)``.
 
-    The ONE reading of a feature's layer column, for :func:`array_from_polygons` and
-    every :class:`GeoPackageSource` builder. A value is a WHOLE number at or above
-    ``base`` -- and, where the caller knows ``nlay``, below ``base + nlay``. The
-    polygon map checked only the upper bound, so a feature numbered below ``base``
-    matched no layer and painted NOTHING in silence: measured, two zones at ``lay`` 0
-    and 1 with ``layer_base=1`` gave the first zone's cells the default and no warning
-    (ledger 393). A fractional value was truncated by ``int()`` into a layer
-    nobody wrote, and a NULL raised numpy's bare "cannot convert float NaN".
+    The ONE reading of a GeoPackage column that NUMBERS something -- a layer
+    (:func:`_layer_index`) or a stress period (:func:`_period_index`). A value is a
+    WHOLE number at or above ``base`` -- and, where ``count`` is known, below
+    ``base + count``. An integral float (``2.0``, what a column holding a NULL reads
+    back as) and a numpy integer are that number; text that parses as one is too. A
+    fraction is refused rather than truncated by ``int()`` into a number nobody wrote,
+    and a NULL rather than raising numpy's bare "cannot convert float NaN". ``noun``
+    names what is numbered, ``owner`` what has them, ``base_keyword`` the argument
+    that says how the column counts.
     """
 
     if value is None:
@@ -686,20 +689,54 @@ def _layer_index(value: Any, *, base: int, nlay: int | None) -> tuple[int | None
     try:
         number = float(value)
     except (TypeError, ValueError):
-        return None, f"{value!r} is not a layer number"
+        return None, f"{value!r} is not a {noun} number"
     if not np.isfinite(number):
         return None, "it is empty (a GeoPackage NULL)" if np.isnan(number) else f"it is {number}"
     if not number.is_integer():
-        return None, f"{value!r} is not a whole layer number"
-    layer = int(number) - int(base)
-    top = None if nlay is None else int(nlay) + int(base) - 1
-    if layer < 0 or (nlay is not None and layer >= int(nlay)):
+        return None, f"{value!r} is not a whole {noun} number"
+    index = int(number) - int(base)
+    top = None if count is None else int(count) + int(base) - 1
+    if index < 0 or (count is not None and index >= int(count)):
         span = f"{int(base)} to {top}" if top is not None else f"{int(base)} up"
-        # A zero base is also how a caller with no `layer_base=` asks (SFR's
+        # A zero base is also how a caller with no `<noun>_base=` asks (SFR's
         # reach_layer), so it is not named there.
-        numbered = f"with layer_base={int(base)} they run" if int(base) else "they run"
-        return None, f"{int(number)}, a layer this model does not have -- {numbered} {span}"
-    return layer, ""
+        numbered = f"with {base_keyword}={int(base)} they run" if int(base) else "they run"
+        return None, f"{int(number)}, a {noun} {owner} does not have -- {numbered} {span}"
+    return index, ""
+
+
+def _layer_index(value: Any, *, base: int, nlay: int | None) -> tuple[int | None, str]:
+    """``(zero-based model layer, "")`` for one ``layer_field`` value, or ``(None, why)``.
+
+    The reading of a feature's layer column for :func:`array_from_polygons`, every
+    :class:`GeoPackageSource` builder and SFR's ``reach_layer``, by
+    :func:`_numbered_index`. The polygon map checked only the upper bound, so a
+    feature numbered below ``base`` matched no layer and painted NOTHING in silence:
+    measured, two zones at ``lay`` 0 and 1 with ``layer_base=1`` gave the first zone's
+    cells the default and no warning (ledger 393). A fractional value was truncated by
+    ``int()`` into a layer nobody wrote, and a NULL raised numpy's bare "cannot convert
+    float NaN".
+    """
+
+    return _numbered_index(
+        value, base=base, count=nlay, noun="layer", owner="this model",
+        base_keyword="layer_base",
+    )
+
+
+def _period_index(value: Any, *, base: int, nper: int) -> tuple[int | None, str]:
+    """``(zero-based stress period, "")`` for one ``period_field`` value, or ``(None, why)``.
+
+    The layer column's rule (:func:`_numbered_index`), with the simulation's ``nper``
+    as the upper bound. ``GeoPackageSource`` read ``int(value)``, so ``1.5`` with
+    ``period_base=1`` put the feature in period 0 beside the one declared for it, and a
+    NULL raised numpy's bare "cannot convert float NaN to integer" (ledger 426).
+    """
+
+    return _numbered_index(
+        value, base=base, count=nper, noun="stress period", owner="this simulation",
+        base_keyword="period_base",
+    )
 
 
 def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) -> np.ndarray:
@@ -1145,8 +1182,11 @@ class GeoPackageSource:
         feature in the top layer.
     period_field : str, optional
         Attribute column giving the ONE stress period a feature applies to, read as
-        ``int(value) - period_base``; a period outside ``0 .. nper - 1`` raises
-        ``ValueError``. ``None`` (the default) applies every feature to every period.
+        ``value - period_base``. A value that is not a whole number naming a period
+        ``0 .. nper - 1`` -- a NULL, a fraction, one below ``period_base`` or past the
+        last period -- raises ``ValueError`` naming the feature; ``2.0``, a numpy
+        integer and the text ``"2"`` all read as 2, as in ``layer_field``. ``None``
+        (the default) applies every feature to every period.
         :meth:`k_array` does not read it.
     layer_base : int, default 1
         Subtracted from each ``layer_field`` value: ``1`` reads one-based (GIS-style)
@@ -1270,14 +1310,25 @@ class GeoPackageSource:
             )
         return layer
 
-    def _periods(self, row) -> range | tuple[int]:
-        """The stress periods a feature applies to: all periods, or its single ``period_field``."""
+    def _periods(self, index: Any, row) -> range | tuple[int]:
+        """The stress periods a feature applies to: all periods, or its single ``period_field``.
+
+        Read by :func:`_period_index`, the layer column's rule: a value naming no stress
+        period of the simulation -- a NULL, a fraction, one outside ``period_base`` to
+        ``period_base + nper - 1`` -- raises naming the feature (ledger 426).
+        """
 
         if self.period_field is None:
             return range(self.nper)
-        period = int(row[self.period_field]) - self.period_base
-        if period not in range(self.nper):
-            raise ValueError(f"GeoPackage period is outside the simulation: {period}")
+        period, why = _period_index(
+            row[self.period_field], base=self.period_base, nper=self.nper
+        )
+        if period is None:
+            raise ValueError(
+                f"GeoPackage '{self.path.name}': feature {self._feature_label(index, row)} "
+                f"names no stress period in {self.period_field!r}: {why}. Correct the "
+                "column, or set `period_base=` to how its periods are numbered."
+            )
         return (period,)
 
     def _cells(self, geometry, *, layer: int, edges_only: bool = False) -> list[int]:
@@ -1706,7 +1757,7 @@ class GeoPackageSource:
                 if boundnames and self.name_field is not None
                 else str(index)
             )
-            for period in self._periods(row):
+            for period in self._periods(index, row):
                 for cell, share in shares:
                     values = [
                         self._value(

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 425 entries (430 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 426 entries (431 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 426 | A feature's stress period is a whole number naming one of the simulation's periods, read by the layer colum... | 2026-10-11 |
 | 425 | A reproducer that runs PEST++ makes `PYTHONPATH` absolute at start, through the one helper... | 2026-10-11 |
 | 424 | A correlated pilot-point prior is pyEMU's geostatistical draw, its variance set by the bounds as a `grid` p... | 2026-10-11 |
 | 423 | A target named `per` or `time`, in any case, is refused when the set is built | 2026-10-11 |
@@ -18344,3 +18345,18 @@ same day, which is the useful part of the result.
       trap (CLAUDE.md states it); making the library rewrite it was out of this scope.
       Test: `tests/test_reproducers_make_pythonpath_absolute.py` (discovers the scripts
       by what they run; fails naming one whose call is removed).
+
+426. **A feature's stress period is a whole number naming one of the simulation's periods, read by the layer column's rule (2026-10-11).**
+      `GeoPackageSource._periods` read `int(row[period_field])`: measured, `1.5` with
+      `period_base=1` and `nper=2` put the feature in period 0 beside the feature declared
+      there, with nothing said, and a NULL died with numpy's bare "cannot convert float NaN
+      to integer". Both now raise naming the file, the feature and the column, as does a
+      period outside the simulation (which named neither). **Judgment call:** the same
+      reading as `layer_field` (ledger 393) -- one helper, `geopackage._numbered_index`,
+      behind `_layer_index` and `_period_index` -- so a fraction is REFUSED, not
+      truncated, and `2.0` (what a column holding a NULL reads back as), a numpy integer
+      and the text `"2"` all read as 2. A `bool` reads as 0/1 in both columns, as ledger
+      412 left the layer column. A feature that lands on no cell is skipped before its
+      period is read, as before.
+      Revert check: the old `_periods` fails the four
+      `test_a_feature_naming_no_stress_period_is_refused_by_name` cases.

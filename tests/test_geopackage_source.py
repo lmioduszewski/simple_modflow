@@ -3,6 +3,7 @@ from __future__ import annotations
 import flopy
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pytest
 from shapely.geometry import Polygon
 
@@ -380,3 +381,61 @@ def test_a_feature_naming_no_layer_is_refused_by_name(tmp_path):
             source.drn()
         with pytest.raises(ValueError, match=f"feature 'right' .*{why}"):
             source.k_array(nlay=2, defaults=1.0)
+
+
+def _write_periods(path, periods) -> None:
+    gpd.GeoDataFrame(
+        {"name": ["first", "second"], "layer": [1, 1], "period": periods, "rate": [-1.0, -2.0]},
+        geometry=[Polygon([(0.0, 0.0), (0.99, 0.0), (0.99, 1.0), (0.0, 1.0)])] * 2,
+        crs="EPSG:2927",
+    ).to_file(path, driver="GPKG")
+
+
+@pytest.mark.parametrize(
+    ("periods", "why"),
+    [
+        ([1, 1.5], r"1\.5 is not a whole stress period number"),
+        ([1, None], r"it is empty \(a GeoPackage NULL\)"),
+        ([1, 0], r"0, a stress period this simulation does not have -- with period_base=1 they run 1 to 2"),
+        ([1, 3], r"3, a stress period this simulation does not have -- with period_base=1 they run 1 to 2"),
+    ],
+    ids=["fraction", "null", "below-the-base", "past-nper"],
+)
+def test_a_feature_naming_no_stress_period_is_refused_by_name(tmp_path, periods, why):
+    """The period column is read by the layer column's rule (ledger 426).
+
+    `int()` TRUNCATED `1.5` with `period_base=1` into period 0, where the feature then
+    applied beside the one declared for it, and a NULL raised numpy's bare "cannot
+    convert float NaN to integer", naming neither the file nor the feature.
+    """
+
+    path = tmp_path / "w.gpkg"
+    _write_periods(path, periods)
+    source = GeoPackageSource(
+        path, ModelContext(grid=_two_cell_grid()), nper=2, period_field="period", period_base=1
+    )
+    with pytest.raises(
+        ValueError, match=rf"'w.gpkg': feature 'second' names no stress period in 'period': {why}"
+    ):
+        source.wel()
+
+
+@pytest.mark.parametrize(
+    "second", [2.0, np.int64(2), "2"], ids=["integral-float", "numpy-int", "text"]
+)
+def test_a_whole_period_reads_as_that_period_in_any_spelling(tmp_path, second):
+    """A float column (what a column with a NULL in it reads back as), a numpy integer and
+    text all name the period, as they name a layer (ledger 426)."""
+
+    path = tmp_path / "w.gpkg"
+    _write_periods(path, [1, 2])
+    source = GeoPackageSource(
+        path, ModelContext(grid=_two_cell_grid()), nper=2, period_field="period", period_base=1
+    )
+    frame = source.gdf.copy()
+    frame["period"] = pd.Series([1, second], dtype=object, index=frame.index)
+    source._gdf = frame
+    assert source.wel().options["stress_period_data"] == {
+        0: [[(0, 0), -1.0, "first"]],
+        1: [[(0, 0), -2.0, "second"]],
+    }

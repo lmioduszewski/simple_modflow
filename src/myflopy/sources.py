@@ -506,7 +506,9 @@ class BoundarySource(DataSourceSpec):
         naming the feature.
     period_field : str or None, optional
         Attribute column giving the ONE stress period a feature applies to, numbered
-        from ``period_base``; a period outside ``0..nper-1`` raises ``ValueError``.
+        from ``period_base``. A value that is not a whole number naming a period
+        ``0..nper-1`` (a NULL, a fraction, one below the base or past the last period)
+        raises ``ValueError`` naming the feature, as ``layer_field`` does.
         ``None`` (the default) applies every feature to all ``nper`` periods.
     layer_base : int, default 1
         What the first model layer is called in ``layer_field``: ``1`` for the usual

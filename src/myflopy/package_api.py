@@ -3684,6 +3684,9 @@ class _CHDPackage:
             Attribute column giving each feature's model layer (see ``layer_base``).
         period_field : str, optional
             Attribute column giving a feature's stress period (``None`` = all periods).
+            A value that is not a whole period number of the simulation -- a NULL, a
+            fraction, one outside ``period_base`` to ``period_base + nper - 1`` --
+            raises ``ValueError`` naming the feature.
         layer_base : int, default 1
             Index base of ``layer_field`` values (1 = one-based GIS convention).
         period_base : int, default 0
@@ -3950,7 +3953,10 @@ class _GHBPackage:
             (the default) applies every feature to all ``nper`` periods. Use it when
             the file holds one row per feature per period; for values that change in
             time on a fixed set of features, pass a *list* of column names as the
-            value instead -- it is indexed by period.
+            value instead -- it is indexed by period. A value that is not a whole
+            period number of the simulation -- a NULL, a fraction, one outside
+            ``period_base`` to ``period_base + nper - 1`` -- raises ``ValueError``
+            naming the feature.
         layer_base : int, default 1
             Index base of ``layer_field``. ``1`` matches the usual GIS convention of
             numbering layers from one; pass ``0`` for a zero-based column.
@@ -4206,7 +4212,10 @@ class _DRNPackage:
             (the default) applies every feature to all ``nper`` periods. Use it when
             the file holds one row per feature per period; for values that change in
             time on a fixed set of features, pass a *list* of column names as the
-            value instead -- it is indexed by period.
+            value instead -- it is indexed by period. A value that is not a whole
+            period number of the simulation -- a NULL, a fraction, one outside
+            ``period_base`` to ``period_base + nper - 1`` -- raises ``ValueError``
+            naming the feature.
         layer_base : int, default 1
             Index base of ``layer_field``. ``1`` matches the usual GIS convention of
             numbering layers from one; pass ``0`` for a zero-based column.
@@ -4483,7 +4492,10 @@ class _RIVPackage:
             (the default) applies every feature to all ``nper`` periods. Use it when
             the file holds one row per feature per period; for values that change in
             time on a fixed set of features, pass a *list* of column names as the
-            value instead -- it is indexed by period.
+            value instead -- it is indexed by period. A value that is not a whole
+            period number of the simulation -- a NULL, a fraction, one outside
+            ``period_base`` to ``period_base + nper - 1`` -- raises ``ValueError``
+            naming the feature.
         layer_base : int, default 1
             Index base of ``layer_field``. ``1`` matches the usual GIS convention of
             numbering layers from one; pass ``0`` for a zero-based column.
@@ -4747,7 +4759,10 @@ class _WELPackage:
             (the default) applies every feature to all ``nper`` periods. Use it when
             the file holds one row per feature per period; for values that change in
             time on a fixed set of features, pass a *list* of column names as the
-            value instead -- it is indexed by period.
+            value instead -- it is indexed by period. A value that is not a whole
+            period number of the simulation -- a NULL, a fraction, one outside
+            ``period_base`` to ``period_base + nper - 1`` -- raises ``ValueError``
+            naming the feature.
         layer_base : int, default 1
             Index base of ``layer_field``. ``1`` matches the usual GIS convention of
             numbering layers from one; pass ``0`` for a zero-based column.
@@ -5223,7 +5238,10 @@ class _RCHPackage:
             (the default) applies every feature to all ``nper`` periods. Use it when
             the file holds one row per feature per period; for values that change in
             time on a fixed set of features, pass a *list* of column names as the
-            value instead -- it is indexed by period.
+            value instead -- it is indexed by period. A value that is not a whole
+            period number of the simulation -- a NULL, a fraction, one outside
+            ``period_base`` to ``period_base + nper - 1`` -- raises ``ValueError``
+            naming the feature.
         layer_base : int, default 1
             Index base of ``layer_field``. ``1`` matches the usual GIS convention of
             numbering layers from one; pass ``0`` for a zero-based column.
@@ -5766,7 +5784,10 @@ class _EVTPackage:
             (the default) applies every feature to all ``nper`` periods. Use it when
             the file holds one row per feature per period; for values that change in
             time on a fixed set of features, pass a *list* of column names as the
-            value instead -- it is indexed by period.
+            value instead -- it is indexed by period. A value that is not a whole
+            period number of the simulation -- a NULL, a fraction, one outside
+            ``period_base`` to ``period_base + nper - 1`` -- raises ``ValueError``
+            naming the feature.
         layer_base : int, default 1
             Index base of ``layer_field``. ``1`` matches the usual GIS convention of
             numbering layers from one; pass ``0`` for a zero-based column.

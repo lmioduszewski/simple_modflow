@@ -119,7 +119,9 @@ Each list BC offers up to three forms; the record fields are its input nouns:
   may have none); a feature that misses while others land is WARNED by name (ledger 211).
   A column named anywhere in the call -- inside `mf.Spread(...)` too -- is checked before
   any record is built (`is missing fields: ...`); a `layer_field` value that is not a
-  whole number at or above `layer_base` is refused naming the feature; and
+  whole number at or above `layer_base`, and a `period_field` value that is not a whole
+  number naming one of the `nper` periods counted from `period_base` (a NULL, a fraction,
+  one outside them), are refused naming the feature (ledger 426); and
   `min_above_bottom=` on a model carrying no layer elevations (no `context.surfaces`, no
   `grid.gdf_topbtm`) RAISES rather than writing the records unlifted. A RIV stage below
   its own `rbot` is refused whether or not the model has elevations (ledger 395).
