@@ -72,10 +72,7 @@ def _second_sampling(stack, vor, **kw):
     """The route `LayerStack.to_disv` took before C4: sample the stack again."""
 
     min_thk, pinch = stack._per_layer_config(kw["default_min_thickness"], kw["default_pinch"])
-    _, units = stack._expanded_layers()
-    seps, triggers = stack._reconcile_separations(min_thk, pinch, kw["min_sep"], units)
-    trigger = stack._trigger_sep(None)
-    triggers = [trigger if value is None else value for value in triggers]
+    seps, triggers = stack._reconcile_separations(min_thk, pinch, kw["min_sep"], None)
     rec_on, which = _reconcile_args("bottom")
     result = stack.build(vor, **kw)
     return stack._layer_surfaces().to_disv(

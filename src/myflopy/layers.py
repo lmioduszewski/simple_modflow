@@ -338,6 +338,14 @@ def _sub_surface(surface: Surface, share: float, step: float, unit: str) -> Surf
     return Surface.toward(surface, step)
 
 
+#: A pinching slice's reconcile trigger sits this fraction UNDER its share of the
+#: unit's minimum thickness. The pinch rule is STRICTLY below the minimum, so a unit
+#: exactly at it is present and the engine's "at or below the trigger" must not reach
+#: it; 1e-9 is far above the ~1e-15 a split's ``toward`` arithmetic leaves in a slice
+#: and far below any thickness a modeller declares (ledger 377).
+_UNDER_THE_MINIMUM = 1.0 - 1e-9
+
+
 def _unit_thickness(thickness: np.ndarray, units: dict[str, list[int]]) -> np.ndarray:
     """Each layer's thickness replaced by its UNIT's total.
 
@@ -4492,40 +4500,66 @@ class LayerStack:
         ]
         return min_thk, pinch
 
-    @staticmethod
-    def _reconcile_separations(min_thk, pinch, fallback: float, units=None):
+    def _layer_shares(self) -> list[float]:
+        """Each MODEL layer's share of its unit, in :meth:`_expanded_layers` order."""
+
+        return [
+            share
+            for layer in self._layers
+            for share in _split_shares(layer.split, layer.name)
+        ]
+
+    def _reconcile_separations(self, min_thk, pinch, min_sep: float, trigger_sep):
         """Per-layer ``(min_sep, trigger_sep)`` for reconcile, from each layer's policy.
+
+        One rule: **reconcile never reaches a unit at or above its own
+        ``min_thickness``** (ledger 377). The engine SETS every contact at most
+        ``trigger_sep`` apart to exactly ``min_sep``, so a trigger above a unit's
+        minimum thins a unit that is present.
 
         A ``"floor"`` layer declares a real minimum thickness, so reconcile enforces
         **its own** ``min_thickness`` -- that is what makes ``min_thickness`` set
-        geometry rather than only decide an idomain value.
+        geometry rather than only decide an idomain value. Its separation and its
+        trigger are both that minimum, so reconcile only ever OPENS it. An explicit
+        ``trigger_sep`` replaces a floor layer's trigger, as documented on
+        :meth:`build`; it then holds a thicker unit at its minimum too.
 
         A ``"passthrough"`` or ``"inactive"`` layer must be allowed to come out too
         thin, because being too thin is the signal that it pinches out. Reconcile
-        gives those only the ``fallback`` separation, just enough to keep the stack
-        ordered, and ``min_thickness`` stays a pure threshold for them.
+        gives those only the fallback ``min_sep``, just enough to keep the stack
+        ordered, and ``min_thickness`` stays a pure threshold for them. Its trigger
+        is the stack trigger (``trigger_sep``, else ``1.0 / <largest split>``) but
+        never more than :data:`_UNDER_THE_MINIMUM` of its own minimum: a 0.8 ft clay
+        with ``min_thickness=0.5`` was crushed to 0.1 ft under the 1.0 trigger and
+        switched off. A unit below its minimum is crushed to ``min_sep`` and
+        pinched exactly as before.
 
-        ``min_thickness`` is declared for the UNIT, so a split unit's separation is
-        divided among its slices: three slices of a 3 ft minimum get 1 ft each and the
-        unit still comes out 3 ft. Handing every slice the unit's own figure would
-        inflate the unit by its split factor -- the same failure ledger 158 records
-        for the pinch threshold, which bites the geometry just as hard.
+        ``min_thickness`` is declared for the UNIT, so a split unit's minimum is
+        divided among its slices BY SHARE: three equal slices of a 3 ft minimum get
+        1 ft each and the unit still comes out 3 ft. Handing every slice the unit's
+        own figure would inflate the unit by its split factor -- the same failure
+        ledger 158 records for the pinch threshold -- and dividing it equally held
+        a 0.2 ft slice of a ``split=[0.9, 0.1]`` unit at 1.0 ft, pushing the unit's
+        base 0.8 ft down.
+
+        The stack trigger is scaled by the largest split because the engine's
+        1.0 length unit is sized for geologic units, and applied unchanged to their
+        SLICES it was destructive: a 2.4 ft unit split three ways came back
+        ``[0.1, 1.5, 0.1]`` (ledger 158). An unsplit stack keeps the historical 1.0.
         """
 
-        shares = [1] * len(min_thk)
-        for indices in (units or {}).values():
-            for index in indices:
-                if 0 <= index < len(shares):
-                    shares[index] = len(indices)
-
+        stack_trigger = (
+            float(trigger_sep) if trigger_sep is not None else 1.0 / self._max_split()
+        )
         seps, triggers = [], []
-        for thickness, policy, n in zip(min_thk, pinch, shares, strict=False):
+        for thickness, policy, share in zip(min_thk, pinch, self._layer_shares(), strict=True):
+            own = float(thickness) * share
             if policy == "floor":
-                seps.append(float(thickness) / n)
-                triggers.append(float(thickness) / n)
+                seps.append(own)
+                triggers.append(own if trigger_sep is None else stack_trigger)
             else:
-                seps.append(float(fallback))
-                triggers.append(None)      # caller fills the stack-wide trigger
+                seps.append(float(min_sep))
+                triggers.append(min(stack_trigger, own * _UNDER_THE_MINIMUM))
         return seps, triggers
 
     def _max_split(self) -> int:
@@ -4535,26 +4569,6 @@ class LayerStack:
             (len(_split_shares(layer.split, layer.name)) for layer in self._layers),
             default=1,
         )
-
-    def _trigger_sep(self, trigger_sep):
-        """Resolve ``trigger_sep=None`` to a value that suits the discretization.
-
-        Reconcile rewrites any layer thinner than ``trigger_sep`` to exactly
-        ``min_sep``. The engine's default of 1.0 length unit is sized for
-        geologic units, and applying it unchanged to their SLICES is destructive:
-        a 2.4 ft unit split three ways comes back ``[0.1, 1.5, 0.1]`` -- 1.7 ft
-        of 2.4, with the base moved and the layer below silently absorbing the
-        difference. Dividing by the largest split restores it to an exact
-        ``[0.8, 0.8, 0.8]``, because the trigger then means the same fraction of
-        a slice that 1.0 meant of a unit.
-
-        Pass a number to override. An unsplit stack is unaffected: the maximum
-        split is 1, so this returns the historical 1.0.
-        """
-
-        if trigger_sep is not None:
-            return float(trigger_sep)
-        return 1.0 / self._max_split()
 
     def _named_surfaces(self) -> list[tuple[str, Surface]]:
         """``(key, surface)`` for the top, each unit's bottom and each excavation's bed.
@@ -4681,16 +4695,24 @@ class LayerStack:
             **Fallback** separation, used only for layers that pinch
             (``"passthrough"`` / ``"inactive"``) -- enough to keep the stack ordered
             while still letting them come out thin enough to pinch. A ``"floor"``
-            layer ignores it and uses its own ``min_thickness`` instead, which is
-            how ``min_thickness`` comes to set geometry.
+            layer ignores it and uses its own ``min_thickness`` instead (a split
+            unit's divided among its slices by share), which is how
+            ``min_thickness`` comes to set geometry.
         trigger_sep : float, optional
-            The separation below which reconcile ACTS -- surfaces closer than
-            this are treated as conflicting even if they never actually cross,
-            and the thinner layer is rewritten to ``min_sep``. Defaults to
+            The separation at or below which reconcile ACTS -- surfaces this close
+            are treated as conflicting even if they never actually cross, and the
+            layer between them is SET to its separation. Defaults to
             ``1.0 / <largest split>``: the historical 1 length unit for an
             unsplit stack, and proportionally smaller once a unit is cut into
             slices, so that splitting a unit does not shrink it. Pass a number to
-            override.
+            override. It never reaches a pinching unit at or above its own
+            ``min_thickness``: such a layer's trigger is capped just under its
+            (share of its) minimum, so a 0.8 ft clay with ``min_thickness=0.5``
+            stays 0.8 ft and active, and only a unit below its minimum is crushed
+            to ``min_sep`` and pinched (ledger 377). A ``"floor"`` layer's
+            trigger is its own minimum when this is omitted, and this number
+            when given -- so a large one holds a thicker floor unit at its
+            minimum too.
         method : str, default "area"
             Raster sampling method: ``"area"`` (area-weighted) or ``"centroid"``.
         refresh : bool, default False
@@ -4762,12 +4784,7 @@ class LayerStack:
         ls = self._layer_surfaces()
         rec_on, which = _reconcile_args(reconcile)
         min_thk, pinch = self._per_layer_config(default_min_thickness, default_pinch)
-        seps, triggers = self._reconcile_separations(min_thk, pinch, min_sep, units)
-        stack_trigger = self._trigger_sep(trigger_sep)
-        if trigger_sep is not None:
-            triggers = [stack_trigger] * len(triggers)
-        else:
-            triggers = [stack_trigger if v is None else v for v in triggers]
+        seps, triggers = self._reconcile_separations(min_thk, pinch, min_sep, trigger_sep)
         gdf = ls.sample(
             vor, reconcile=rec_on, which=which, min_sep=seps,
             trigger_sep=triggers,
@@ -4777,7 +4794,7 @@ class LayerStack:
         thickness = ls._thickness(gdf)
         ls._validate_pinch_invariant(
             min_thk, pinch, thickness.shape[0],
-            {"reconcile": rec_on, "min_sep": min_sep},
+            {"reconcile": rec_on, "min_sep": seps},
         )
         idomain = ls._idomain_from_thickness(
             _unit_thickness(thickness, units), min_thk, pinch

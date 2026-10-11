@@ -2539,8 +2539,10 @@ def disv(
         Layer-stack forms: the separation, length units, reconcile leaves between a
         PINCHING unit's surfaces; a ``"floor"`` unit uses its own minimum thickness.
     trigger_sep : float, optional
-        Layer-stack forms: the separation below which reconcile acts at all, length
-        units. Omitted, ``1.0 / <largest split>``.
+        Layer-stack forms: the separation at or below which reconcile acts at all,
+        length units. Omitted, ``1.0 / <largest split>``. Never reaches a pinching
+        unit at or above its own ``min_thickness``; full text on
+        :meth:`LayerStack.build`.
     method : {"area", "centroid"}, default "area"
         Layer-stack forms: how a raster is sampled onto a cell -- area-weighted, or
         the value at its centroid.

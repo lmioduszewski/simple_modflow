@@ -28,6 +28,7 @@ from myflopy._defaults import DEFAULT_EPSG
 from myflopy._logging import get_logger
 from myflopy.areas import Area
 from myflopy.modflow.mf6.grid.geometry import (
+    _per_contact,
     centroid_zones,
     footprint_cells,
     geometry_first,
@@ -1934,12 +1935,19 @@ class LayerSurfaces:
         reconcile : bool, default True
             Enforce layer ordering where surfaces cross or crowd. ``False``
             returns the raw sampled surfaces, crossings and all.
-        min_sep : float, default 0.1
-            The separation reconcile enforces where it acts.
-        trigger_sep : float, default 1
-            How close counts as a conflict. Surfaces nearer than this are
-            separated even if they never actually cross, so the default treats
-            "within 1 length unit" as touching.
+        min_sep : float or sequence of float, default 0.1
+            The separation reconcile sets where it acts: a scalar for every contact,
+            or one value per layer (one fewer than the surfaces), else
+            ``ValueError``.
+        trigger_sep : float or sequence of float, default 1
+            How close counts as a conflict: a contact at most this far apart is SET
+            to exactly ``min_sep``, even if the surfaces never cross -- which THINS
+            a layer between ``min_sep`` and ``trigger_sep`` thick (with the
+            defaults a 0.8 ft layer comes back 0.1 ft, and under
+            :meth:`top_botm_idomain` it then pinches whatever its minimum
+            thickness). A scalar, or one value per layer as ``min_sep``.
+            ``LayerStack`` caps it per layer so that a unit at or above its own
+            ``min_thickness`` is never reached (ledger 377).
         which : {'bottom', 'top'}, default 'bottom'
             Which side gives way. ``'bottom'`` lowers the deeper surface to
             ``upper - min_sep`` and cascades downward, leaving the model top
@@ -2081,19 +2089,23 @@ class LayerSurfaces:
         Reconcile gives it only the fallback ``min_sep``, so if the fallback is not
         below the threshold nothing can ever be thin enough to pinch and the policy is
         a silent no-op.
+
+        ``min_sep`` is read as reconcile reads it -- a scalar or one value per layer,
+        through the same ``_per_contact`` -- and each layer is checked against its
+        OWN separation (ledger 377; a list raised ``TypeError`` here).
         """
 
         if not sample_kwargs.get("reconcile", True):
             return
-        min_sep = sample_kwargs.get("min_sep", 0.1)
+        seps = _per_contact(sample_kwargs.get("min_sep", 0.1), nlay, "min_sep")
         min_thk = _as_per_layer(minimum_thickness, nlay, "minimum_thickness")
         policy = _as_per_layer(pinch, nlay, "pinch")
         for i in range(nlay):
             if policy[i] in ("passthrough", "inactive") and not (
-                min_sep < float(min_thk[i])
+                seps[i] < float(min_thk[i])
             ):
                 raise ValueError(
-                    f"layer {i}: the fallback min_sep ({min_sep}) must be below its "
+                    f"layer {i}: the fallback min_sep ({seps[i]}) must be below its "
                     f"min_thickness ({min_thk[i]}) for pinch={policy[i]!r} to ever "
                     "fire -- reconcile would otherwise inflate every thin cell past "
                     "the threshold. Either lower min_sep, raise this layer's "
@@ -2163,8 +2175,8 @@ class LayerSurfaces:
             ``min_sep`` (default 0.1) strictly below its ``minimum_thickness``,
             because reconcile would otherwise open every thin contact past the
             threshold and the policy could never fire -- that raises ``ValueError``.
-            That check takes ``min_sep`` as a scalar: a per-layer list, which the
-            reconcile step itself accepts, raises ``TypeError`` here.
+            A per-layer ``min_sep`` is checked layer by layer, each pinching layer
+            against its own separation.
 
         Returns
         -------

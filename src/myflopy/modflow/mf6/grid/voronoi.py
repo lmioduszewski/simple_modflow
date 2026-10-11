@@ -2082,23 +2082,26 @@ class VoronoiGridPlus(VoronoiGrid):
         """Reconcile top/bottom surfaces so adjacent layers do not overlap.
 
         Surfaces are read POSITIONALLY, top first: column 0 is the model top and
-        each later column the next bottom down. Contacts are handled top-down, each
-        against the already-adjusted surface above it. At a contact, every row whose
+        each later column the next bottom down; rows are read by position too, so
+        any index works and is carried to the result. At a contact, every row whose
         lower surface is at most ``trigger_sep`` below the upper one -- or above
         it -- is SET to exactly ``min_sep`` apart. That can THIN a layer as well as
         open one: measured with the defaults, a bottom 0.5 below the top was moved
-        UP to 0.1 below it. Returns a new frame; neither ``df`` nor the grid's
-        :attr:`gdf_topbtm` is changed.
+        UP to 0.1 below it (``LayerStack`` never lets that reach a unit at or above
+        its own ``min_thickness``; this method does what it says to whatever it is
+        given). Each contact is handled once, against a neighbour that is already
+        final, so every contact ends exactly ``min_sep`` apart or farther than
+        ``trigger_sep`` (ledger 377). Returns a new frame; neither ``df`` nor
+        the grid's :attr:`gdf_topbtm` is changed.
 
         Parameters
         ----------
         df : pandas.DataFrame or geopandas.GeoDataFrame, optional
             The surfaces, one column each. A GeoDataFrame's ``geometry`` column is
             dropped; every other value is coerced to a number, anything that is not
-            one becoming NaN (a NaN is never treated as conflicting). Its index must
-            be ``0..n-1`` in order: row LABELS are used as POSITIONS, so another
-            index raises ``IndexError`` or edits the wrong rows (measured). Default
-            None: a copy of :attr:`gdf_topbtm`.
+            one becoming NaN (a NaN is never treated as conflicting). Any index:
+            rows are taken by position and the index is carried to the result.
+            Default None: a copy of :attr:`gdf_topbtm`.
         min_sep : float or sequence of float, optional
             The separation set at a conflicting contact, in elevation units. A
             scalar applies to every contact; a sequence gives one per bottom surface
@@ -2115,10 +2118,11 @@ class VoronoiGridPlus(VoronoiGrid):
             defaults and a gap of 0.5: ``"bottom"`` moved the bottom UP to 0.1
             below the top, ``"top"`` moved the top DOWN to 0.1 above the bottom).
             ``"bottom"`` (default) moves the lower one, so the model top never
-            moves. ``"top"`` moves the upper one, model top included, and does not
-            revisit the contact above it, which can then be left closer than
-            ``min_sep``. Anything else raises ``ValueError`` (when the frame has at
-            least two columns).
+            moves; contacts are handled top-down. ``"top"`` moves the upper one,
+            model top included, and handles the contacts bottom-up, so a raised
+            surface is checked again against the one above it (measured:
+            ``[10.0, 9.5, 9.45]`` gives ``[9.65, 9.55, 9.45]``). Anything else
+            raises ``ValueError``.
 
         Returns
         -------
@@ -2163,8 +2167,8 @@ class VoronoiGridPlus(VoronoiGrid):
         reconcile : bool, optional
             Default True: pass the result through :meth:`reconcile_surfaces` with
             its defaults (``min_sep=0.1``, ``trigger_sep=1``, ``which="bottom"``),
-            which returns a plain DataFrame without geometry and needs the ``0..n-1``
-            index that method needs. False: return the adjusted copy as it is.
+            which returns a plain DataFrame without geometry, keeping the index.
+            False: return the adjusted copy as it is.
 
         Returns
         -------
@@ -2187,22 +2191,23 @@ class VoronoiGridPlus(VoronoiGrid):
         buffer=1,
         layer_bottom_name=1,
         min_sep=None,
+        trigger_sep=1,
     ) -> pd.DataFrame:
         """Drop one bottom under selected cells below their neighbours' tops.
 
         For each cell ``shp`` reaches, the ``layer_bottom_name`` surface is set to
         the LOWEST model top (column label ``0``) among its face neighbours, less
-        ``buffer``; the frame is then passed through :meth:`reconcile_surfaces`.
+        ``buffer``; the frame is then passed through :meth:`reconcile_surfaces`
+        with ``min_sep`` and ``trigger_sep``.
 
         Parameters
         ----------
         elev_df : pandas.DataFrame, optional
             The surfaces, with the model top under column label ``0`` (else
-            ``KeyError``) and a ``0..n-1`` index. A frame you pass is MODIFIED in
-            place (its ``layer_bottom_name`` column is replaced) before the
-            reconciled copy is returned -- passing :attr:`gdf_topbtm` itself edits
-            the grid's table. Default None: :meth:`reconcile_surfaces` of
-            :attr:`gdf_topbtm` with ``min_sep``.
+            ``KeyError``) and indexed by cell id. Copied: the frame you pass, and
+            :attr:`gdf_topbtm`, are never written. Default None:
+            :meth:`reconcile_surfaces` of :attr:`gdf_topbtm` with ``min_sep`` and
+            ``trigger_sep``.
         shp : shapely geometry, GeoDataFrame, GeoSeries, str or pathlib.Path
             The features whose cells to lower, chosen by
             :meth:`get_vor_cells_as_series`'s default rule (by coverage). Required:
@@ -2214,9 +2219,13 @@ class VoronoiGridPlus(VoronoiGrid):
             The column label of the surface to set. Under integer labels ``1`` is the
             first layer's bottom (the default).
         min_sep : float or sequence of float, optional
-            ``min_sep`` for the reconcile that builds the default ``elev_df``
-            (``None``: ``0.1``); unused when ``elev_df`` is given. The final
-            reconcile uses :meth:`reconcile_surfaces`' defaults whatever this is.
+            The separation both reconciles set at a conflicting contact -- the one
+            building the default ``elev_df`` and the final one -- as
+            :meth:`reconcile_surfaces` takes it (``None``: ``0.1``). Default None.
+        trigger_sep : float or sequence of float, optional
+            The separation at or below which both reconciles count a contact as
+            conflicting, as :meth:`reconcile_surfaces` takes it (``None``: ``0.1``).
+            Default ``1``.
 
         Returns
         -------
@@ -2230,6 +2239,7 @@ class VoronoiGridPlus(VoronoiGrid):
             buffer=buffer,
             layer_bottom_name=layer_bottom_name,
             min_sep=min_sep,
+            trigger_sep=trigger_sep,
         )
 
     @classmethod

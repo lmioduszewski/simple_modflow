@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 376 entries (381 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 377 entries (382 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 377 | Reconciling layer surfaces never reaches a `LayerStack` unit at or above its own `min_thickness`, reads row... | 2026-10-11 |
 | 376 | A region's tuple cellid is the grid's own: `(layer, row, col)` on DIS | 2026-10-11 |
 | 375 | `add_group` registers nothing unless every member is accepted | 2026-10-11 |
 | 374 | A group or diff opens each workspace path in the CRS its run recorded | 2026-10-11 |
@@ -15298,6 +15299,12 @@ same day, which is the useful part of the result.
       models and as never reading a run's recorded CRS; `add_group` as leaving a refused
       group half-registered; `add_region` as reading a tuple's SECOND item as the cell~~
       -- fixed, entries rewritten (ledgers 373 to 376).
+      ~~`vor.reconcile_surfaces` documented as reading row LABELS as positions and, under
+      `which="top"`, as leaving the contact above a raised surface closer than `min_sep`;
+      `vor.adjust_top_btm_overlaps` as reconciling with the defaults whatever its `min_sep`
+      and as writing into the caller's `elev_df`; and a per-layer `min_sep` as raising
+      `TypeError` in `LayerSurfaces.top_botm_idomain`~~ -- fixed, entries rewritten
+      (ledger 377).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17308,3 +17315,48 @@ same day, which is the useful part of the result.
      (every package INPUT table, so `model.chd.inputs.get()` and the diff's value tier) still
      reads a DIS `(layer, row, col)` as `(layer, row)` -- measured: two identical DIS runs
      diff as 12 CHD value cells changed. Reported, not fixed here.
+
+377. **Reconciling layer surfaces never reaches a `LayerStack` unit at or above its own `min_thickness`, reads rows by position, settles every contact under `which="top"`, and uses the caller's separations and frame (2026-10-11).**
+      **The rule, chosen:** `LayerStack._reconcile_separations` caps a PINCHING layer's
+      trigger at `_UNDER_THE_MINIMUM` (1 - 1e-9) of its share of the unit minimum, so the
+      engine's "set every contact at most `trigger_sep` apart to exactly `min_sep`" can
+      only reach a unit already below its minimum. A 0.8 ft clay with `min_thickness=0.5`
+      and `pinch="inactive"` came back 0.1 ft and idomain 0 (the stack trigger was 1.0);
+      it is 0.8 ft and active, also under an explicit `trigger_sep=2`. A unit below its
+      minimum is crushed to `min_sep` and pinched exactly as before. The tolerance is there
+      because the pinch rule is STRICTLY below and the engine's trigger is "at or below": a
+      unit exactly at its minimum was crushed too. **Kept, judgment call:** an explicit
+      `trigger_sep` still replaces a `"floor"` layer's trigger (documented, and
+      `test_trigger_sep_can_be_overridden` asserts it) -- a floor unit stays active, so the
+      silent loss is the pinching one. **The ENGINE keeps its documented rule** for direct
+      callers (`vor.reconcile_surfaces`, `LayerSurfaces`): its docstrings now say it THINS.
+      **Same pass, the minimum is divided BY SHARE**, for floor and pinching slices alike:
+      divided equally, a 2 ft floor unit at its 2 ft minimum split `[0.9, 0.1]` had its
+      0.2 ft slice held at 1.0 ft and its base pushed 0.8 ft down.
+      **Measured, what moves:** every `LayerStack` the test suite builds (129 distinct
+      declarations, recorded at `_build` under both trees), `layer_management_workflow`'s
+      9 and the reproducers' and examples' 21 came out byte-identical -- none was a bug
+      case; the canonical model builds no stack. Only the cases in
+      `docs/reproducers/reconcile_present_units.py` move.
+      **Engine fixes, no judgment call:** `reconcile_surfaces` works on positions and keeps
+      the index (index `[10, 11]` raised `IndexError`; `[1, 0]` moved the clear row and left
+      the conflicting one); `which="top"` walks the contacts bottom-up so a raised surface
+      is checked against the one above (`[10.0, 9.5, 9.45]` gave `[9.6, 9.55, 9.45]`, now
+      `[9.65, 9.55, 9.45]`); an unknown `which` raises whatever the column count.
+      `adjust_top_btm_overlaps` passes `min_sep` and a new `trigger_sep` to BOTH reconciles
+      (the final one ran on the defaults, undoing `min_sep=1` to 0.1 everywhere) and copies
+      `elev_df`. `_validate_pinch_invariant` reads `min_sep` through `_per_contact` and
+      compares per layer (a list raised `TypeError`); `LayerStack` hands it the per-layer
+      separations it reconciled with. **Not touched:** ledger 165 (a pinched-out split
+      unit still grows by `(N-1) * min_sep`), and a `trigger_sep` below `min_sep`, which
+      leaves contacts between them closer than `min_sep` by the engine's own definition.
+      Tests: `tests/test_reconcile_contacts.py` -- the old engine fails the three index
+      tests and both `which="top"` tests; a top-down `"top"` walk fails
+      `test_top_reconcile_rechecks_the_contact_above_a_raised_surface` and
+      `test_every_contact_ends_at_min_sep_or_clear_of_the_trigger[top]`; no cap fails the
+      five pinching-unit tests, a cap with no tolerance
+      `test_a_unit_exactly_at_its_minimum_is_present`; equal division
+      `test_a_floor_unit_split_unequally_keeps_its_base_and_its_shares`; the final
+      reconcile on defaults fails the three `adjust_top_btm_overlaps` tests and no copy
+      `test_the_callers_frame_is_not_written`; the scalar pinch check fails both per-layer
+      `min_sep` tests (and 18 in `tests/test_layers.py`, which now pass a list).

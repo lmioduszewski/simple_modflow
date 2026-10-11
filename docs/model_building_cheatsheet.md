@@ -893,7 +893,10 @@ stack = (mf.LayerStack(top=ground, length_units="feet")
 `min_thickness` is a real minimum under the default `pinch="floor"`: reconcile holds
 the layer open at it, so `.add("sand", thickness=0.4, min_thickness=5)` builds 5 ft,
 not 0.4. `min_sep` is only the fallback for layers that pinch. A split unit divides
-its minimum among its slices, so the unit keeps the thickness you declared.
+its minimum among its slices by their shares, so the unit keeps the thickness you
+declared. Reconcile never reaches a PINCHING unit at or above its own `min_thickness`
+-- a 0.8 ft clay with `min_thickness=0.5, pinch="inactive"` builds 0.8 ft and active --
+and a unit below it is crushed to `min_sep` and pinched (ledger 377).
 
 with `pinch="passthrough"` the cut-out layers read `idomain = -1` instead — same
 geometry, but flow still passes vertically through the gap. **That is usually the

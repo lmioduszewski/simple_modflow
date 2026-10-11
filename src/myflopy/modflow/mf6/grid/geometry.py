@@ -1512,42 +1512,44 @@ def refuse_footprint_misses(
 def reconcile_surfaces(vor, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):
     """Adjust stacked surface elevations to preserve layer ordering.
 
-    ``min_sep`` is the separation opened where two surfaces conflict, and
-    ``trigger_sep`` the separation below which they count as conflicting. Both accept
-    a scalar applied to every contact, or **one value per layer** -- which is what
-    lets a stack declare a per-unit minimum thickness rather than one number for the
-    whole model. A per-layer sequence has one entry per BOTTOM surface, so it is one
-    shorter than the frame's column count (the model top is never moved by
-    ``which="bottom"``).
+    ``min_sep`` is the separation SET where two surfaces conflict, and
+    ``trigger_sep`` the separation at or below which they count as conflicting -- so
+    a contact between ``min_sep`` and ``trigger_sep`` apart is moved CLOSER, which
+    thins a layer as well as opening one. Both accept a scalar applied to every
+    contact, or **one value per layer** -- which is what lets a stack declare a
+    per-unit minimum thickness rather than one number for the whole model. A
+    per-layer sequence has one entry per BOTTOM surface, so it is one shorter than
+    the frame's column count.
 
-    Corrections cascade downward because each contact is compared against the
-    already-adjusted surface above it.
+    Rows are taken by POSITION, whatever the frame's index (ledger 377): the
+    index is carried to the result untouched. ``which="bottom"`` walks the contacts
+    top-down, moving each lower surface against the already-adjusted one above it;
+    ``which="top"`` walks them bottom-up, moving each upper surface against the
+    already-adjusted one below it. Either way a contact is final once handled, so
+    every contact ends exactly ``min_sep`` apart or farther than ``trigger_sep``.
     """
+    if which not in ('bottom', 'top'):
+        raise ValueError(f'which arg {which} is not valid. Must be "top" or "bottom"')
     df = vor.gdf_topbtm.copy() if df is None else df
     if isinstance(df, gpd.GeoDataFrame):
-        df = df.drop(columns='geometry').map(lambda x: pd.to_numeric(x, errors='coerce'))
-    else:
-        df = df.map(lambda x: pd.to_numeric(x, errors='coerce'))
+        df = df.drop(columns='geometry')
+    df = df.map(lambda x: pd.to_numeric(x, errors='coerce'))
 
-    labels = list(df.columns)
-    df = df.loc[:, labels]
-    n_bottoms = max(len(labels) - 1, 0)
+    values = df.to_numpy(dtype=float, copy=True)
+    n_bottoms = max(values.shape[1] - 1, 0)
     seps = _per_contact(min_sep, n_bottoms, 'min_sep')
     triggers = _per_contact(trigger_sep, n_bottoms, 'trigger_sep')
-    for i, label in enumerate(labels):
-        if i == 0:
-            continue
-        sep, trigger = seps[i - 1], triggers[i - 1]
-        diffs = df.diff(axis=1)
-        diff_list = list(diffs[diffs[label] >= -trigger].index)
+    contacts = range(1, n_bottoms + 1) if which == 'bottom' else range(n_bottoms, 0, -1)
+    for i in contacts:
+        upper, lower = values[:, i - 1], values[:, i]
+        # A NaN on either side compares False, so it is never a conflict.
+        conflict = lower - upper >= -triggers[i - 1]
         if which == 'bottom':
-            df.iloc[diff_list, i] = df.iloc[diff_list, (i - 1)] - sep
-        elif which == 'top':
-            df.iloc[diff_list, (i - 1)] = df.iloc[diff_list, i] + sep
+            values[conflict, i] = upper[conflict] - seps[i - 1]
         else:
-            raise ValueError(f'which arg {which} is not valid. Must be "top" or "bottom"')
+            values[conflict, i - 1] = lower[conflict] + seps[i - 1]
 
-    return df
+    return pd.DataFrame(values, index=df.index, columns=df.columns)
 
 
 def _per_contact(value, n: int, name: str) -> list[float]:
@@ -1587,11 +1589,20 @@ def adjust_top_btm_overlaps(
     buffer=1,
     layer_bottom_name=1,
     min_sep=None,
+    trigger_sep=1,
 ) -> pd.DataFrame:
     """
     Lower selected bottoms so they overlap adjacent cell tops consistently.
+
+    Both reconciles -- the one building a default ``elev_df`` and the final one --
+    use the caller's ``min_sep`` and ``trigger_sep``, and a frame passed in is
+    copied, never written (ledger 377).
     """
-    elev_df = vor.reconcile_surfaces(min_sep=min_sep) if elev_df is None else elev_df
+    elev_df = (
+        vor.reconcile_surfaces(min_sep=min_sep, trigger_sep=trigger_sep)
+        if elev_df is None
+        else elev_df.copy()
+    )
     # One entry per geometry, each a LIST of cells: `selected_cells` is the one
     # copy of that flattening.
     cell_ids = selected_cells(vor.get_vor_cells_as_series(shp_path))
@@ -1609,7 +1620,7 @@ def adjust_top_btm_overlaps(
     column = elev_df[layer_bottom_name].copy()
     column.update(new_bottoms)
     elev_df[layer_bottom_name] = column
-    return vor.reconcile_surfaces(df=elev_df)
+    return vor.reconcile_surfaces(df=elev_df, min_sep=min_sep, trigger_sep=trigger_sep)
 
 
 #: Below this FRACTION of a cell's own area, an uncovered sliver is arithmetic noise
