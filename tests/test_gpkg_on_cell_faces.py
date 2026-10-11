@@ -18,7 +18,6 @@ than ``_SLIVER_WIDTH`` is dropped as well.
 
 from __future__ import annotations
 
-
 import geopandas as gpd
 import numpy as np
 import pytest

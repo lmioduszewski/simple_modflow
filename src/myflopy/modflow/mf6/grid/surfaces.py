@@ -156,7 +156,7 @@ def check_gaps(gaps: str, *, verb: str) -> str:
 def _fill_nearest(values: np.ndarray, xs, ys, missing: np.ndarray) -> np.ndarray:
     """Copy each gap's value from the nearest cell that HAS one, by centroid distance."""
 
-    from scipy.spatial import cKDTree           # heavy; only this mode needs it
+    from scipy.spatial import cKDTree  # heavy; only this mode needs it
 
     have = np.flatnonzero(np.isfinite(values))
     tree = cKDTree(np.column_stack([np.asarray(xs)[have], np.asarray(ys)[have]]))

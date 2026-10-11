@@ -302,7 +302,7 @@ def package_output_df(
         )
 
     frames = []
-    for record, label in zip(records, labels):
+    for record, label in zip(records, labels, strict=True):
         frame = pd.DataFrame(record)
         frame["kstpkper"] = [label for _ in range(len(frame))]
         frames.append(frame)

@@ -22,9 +22,9 @@ from typing import Any
 
 import numpy as np
 
-from myflopy.specs import ModelContext, PackageSpec
 from myflopy.grid_identity import pin_metadata
 from myflopy.modflow.mf6.grid.geometry import top_active_layer
+from myflopy.specs import ModelContext, PackageSpec
 
 CellId = tuple[int, int]
 

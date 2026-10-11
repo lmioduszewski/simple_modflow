@@ -351,11 +351,10 @@ def test_an_hfb_is_not_condemned_by_its_requires(surface_water):
     rebuilt, which is both wrong and very common (a lazy disv is always `rebuilt`).
     """
 
-    from myflopy.grid_identity import INDEXED_PACKAGES, package_moves
-
+    import pandas as pd
     from shapely.geometry import LineString
 
-    import pandas as pd
+    from myflopy.grid_identity import INDEXED_PACKAGES, package_moves
 
     small, _ = _flat_meshes()
     surfaces = pd.DataFrame({0: np.full(small.ncpl, 60.0), 1: np.full(small.ncpl, 0.0)})

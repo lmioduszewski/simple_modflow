@@ -56,7 +56,7 @@ def run(tmp_path_factory):
 
 def test_both_chds_are_in_the_head_table(run):
     table = run.model("flow").chd.inputs.head.get()
-    assert sorted(zip(table["pname"], table["cell"], table["head"])) == [
+    assert sorted(zip(table["pname"], table["cell"], table["head"], strict=True)) == [
         ("CHD", 0, 6.0), ("CHD_EAST", 8, 4.0),
     ]
 

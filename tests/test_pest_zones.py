@@ -250,7 +250,7 @@ def test_a_cell_too_small_for_a_pixel_centre_takes_the_label_under_its_centroid(
 
     centroids = cells.geometry.centroid
     with rasterio.open(path) as src:
-        expected = np.array([band[src.index(x, y)] for x, y in zip(centroids.x, centroids.y)])
+        expected = np.array([band[src.index(x, y)] for x, y in zip(centroids.x, centroids.y, strict=True)])
     assert 0 not in spec.ids
     assert np.array_equal(spec.values, expected)
 

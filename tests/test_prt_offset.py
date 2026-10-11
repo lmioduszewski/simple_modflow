@@ -46,7 +46,7 @@ def _write_offset_gsf(path):
 
 
 @pytest.fixture(scope="module")
-def offset_run(usg_workspace, tmp_path_factory):
+def offset_run(usg_workspace, tmp_path_factory):  # noqa: F811 -- the imported fixture
     """The synthetic USG model at State Plane, converted and prepared (not yet run)."""
 
     gsf = usg_workspace.parent / "tiny_offset.gsf"

@@ -9,7 +9,6 @@ be rebuilt at all. The frozen snapshot is the second route back.
 from __future__ import annotations
 
 import json
-import shutil
 
 import numpy as np
 import pytest
@@ -368,9 +367,8 @@ def test_a_freeze_failure_does_not_fail_a_build(tmp_path, caplog, monkeypatch):
 
     import logging
 
-    from myflopy.workspace import Project
-
     import myflopy.workspace as ws
+    from myflopy.workspace import Project
 
     def explode(*_args, **_kwargs):
         raise OSError("no space left on device")

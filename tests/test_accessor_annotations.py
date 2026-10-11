@@ -15,7 +15,6 @@ then propagate.
 from __future__ import annotations
 
 import inspect
-import typing
 
 import pytest
 

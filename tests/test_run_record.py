@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 import myflopy as mf
-from myflopy.run_record import ListingOutcome, read_listing_outcome
+from myflopy.run_record import read_listing_outcome
 from myflopy.specs import ModelContext
 from myflopy.workspace import Project, Run
 
