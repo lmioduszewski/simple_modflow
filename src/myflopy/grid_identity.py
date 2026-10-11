@@ -2484,7 +2484,11 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
     # one the caller typed either (ledger 382).
     for package in packages:
         negative = sorted(
-            {cellid for cellid in _cellids_in(package.options) if min(cellid) < 0}
+            {
+                cellid
+                for cellid in _cellids_in(getattr(package, "options", None) or {})
+                if min(cellid) < 0
+            }
         )
         if negative:
             listing = ", ".join(str(cellid) for cellid in negative[:5])
