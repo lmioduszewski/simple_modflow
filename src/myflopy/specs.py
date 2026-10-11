@@ -3054,9 +3054,11 @@ class GridSpec:
             A key nothing reads raises ``TypeError`` naming it, the nearest
             match and every accepted key -- here and again at :meth:`resolve`,
             where a saved spec arrives (ledger 417) -- and so do two
-            spellings of one option, e.g. ``max_area`` beside
-            ``boundary_max_area``. ``"idomain"`` raises ``TypeError`` (see
-            ``**engine_options``).
+            spellings of one option: ``max_area``/``default_cell_area`` beside
+            ``boundary_max_area``, a ``default_*_area`` beside its
+            ``*_max_area``, ``line_buffer`` beside ``breakline_buffer``,
+            ``angle`` beside ``min_angle``, ``workspace`` beside ``model_ws``.
+            ``"idomain"`` raises ``TypeError`` (see ``**engine_options``).
         triangle_options : dict, optional
             Keyword arguments for ``TriangleGrid(...)`` -- ``angle``,
             ``maximum_area`` (the global cap, not ``max_area``), ``nodes``,
@@ -3077,6 +3079,8 @@ class GridSpec:
         **engine_options
             Stage options routed by name -- ``min_angle``, ``maximum_area``,
             ``profile``, ``idomain_path``, ``optimize`` and friends.
+            ``min_angle`` is Triangle's ``angle``: giving both raises
+            ``TypeError`` (the later keyword won, in silence).
             **``maximum_area`` is not ``max_area``**: ``maximum_area`` is
             Triangle's GLOBAL cap on every triangle's area, applied ON TOP of
             the boundary's and each refinement's own size, so the smaller limit
@@ -3247,6 +3251,13 @@ class GridSpec:
         merged_voronoi_options = {
             **({} if voronoi_options is None else voronoi_options)
         }
+        if "min_angle" in engine_options and "angle" in engine_options:
+            # Both write Triangle's `angle`; the later keyword won in silence.
+            raise TypeError(
+                "GridSpec.voronoi() got min_angle= and angle=, which are spellings of "
+                "ONE option (Triangle's minimum angle); only the later keyword was "
+                "ever read. Give one."
+            )
         for key, value in engine_options.items():
             if key == "min_angle":
                 merged_triangle_options["angle"] = value
@@ -3611,14 +3622,18 @@ _GRID_REMOVED_OPTION_KEYS: dict[str, str] = {
         "never applied, so deleting it changes no mesh"
     ),
 }
-#: Spellings of ONE option: the resolver takes the first present and ignored the
-#: rest, so giving two is refused (ledger 417). ``max_area`` is the BACKGROUND
-#: cell size, not ``maximum_area`` -- Triangle's global cap.
+#: Spellings of ONE option, each group in the order the resolver reads them: it
+#: takes the first present and ignored the rest, so giving two is refused (ledger
+#: 417). ``max_area`` is the BACKGROUND cell size, not ``maximum_area`` --
+#: Triangle's global cap. ``min_angle`` is read as Triangle's ``angle`` and wins over
+#: an ``angle`` key in the same dict; ``model_ws`` wins over ``workspace``.
 _GRID_OPTION_ALIASES: tuple[tuple[str, ...], ...] = (
     ("boundary_max_area", "default_cell_area", "max_area"),
     ("refinement_max_area", "default_refinement_area"),
     ("breakline_max_area", "default_breakline_area"),
     ("breakline_buffer", "line_buffer"),
+    ("min_angle", "angle"),
+    ("model_ws", "workspace"),
 )
 
 
@@ -3640,7 +3655,9 @@ def _check_grid_option_keys(
         unknown = sorted(str(key) for key in given if key not in accepted)
         if not unknown:
             continue
-        key = unknown[0]
+        # A removed key is explained even when another unknown key sorts first.
+        removed = [name for name in unknown if name in _GRID_REMOVED_OPTION_KEYS]
+        key = removed[0] if removed else unknown[0]
         if key in _GRID_REMOVED_OPTION_KEYS:
             reason = (
                 f" {key!r} {_GRID_REMOVED_OPTION_KEYS[key]}; delete it from the "
@@ -3659,8 +3676,8 @@ def _check_grid_option_keys(
         if len(given) > 1:
             raise TypeError(
                 f"{where}: options give {' and '.join(map(repr, given))}, which are "
-                f"spellings of ONE option ({group[0]!r}); only the first was ever read. "
-                "Give one."
+                f"spellings of ONE option ({group[0]!r}); only {given[0]!r} was ever "
+                "read. Give one."
             )
 
 

@@ -221,6 +221,10 @@ def test_every_key_the_options_dicts_route_is_accepted(tmp_path):
         {"refinement_max_area": 1.0, "default_refinement_area": 2.0},
         {"breakline_max_area": 1.0, "default_breakline_area": 2.0},
         {"breakline_buffer": 5, "line_buffer": 6},
+        # Review of G5: the resolver read min_angle over angle and model_ws over
+        # workspace, in silence, while the docs said two spellings raise.
+        {"min_angle": 30, "angle": 20},
+        {"model_ws": "a", "workspace": "b"},
     ],
 )
 def test_two_spellings_of_one_option_are_refused(tmp_path, spellings):
@@ -277,3 +281,24 @@ def test_a_saved_project_carrying_a_removed_key_opens_and_refuses_at_resolve(tmp
     assert loaded.grid("g").mesh_options == {"max_optimization_points": 250}
     with pytest.raises(TypeError, match=r"was removed \(ledger 410\).*delete it from the spec's mesh_options"):
         loaded.grid("g").resolve(workspace=tmp_path / "ws", build=False)
+
+
+def test_the_refusal_names_the_spelling_the_resolver_read(tmp_path):
+    with pytest.raises(TypeError, match=r"only 'min_angle' was ever read"):
+        GridSpec.voronoi(
+            boundary=_boundary(tmp_path), crs="EPSG:2927",
+            options={"boundary_max_area": 1000.0, "angle": 20, "min_angle": 30},
+        )
+
+
+def test_min_angle_and_angle_keywords_together_are_refused(tmp_path):
+    # Both wrote triangle_options["angle"]; the later keyword won in silence.
+    with pytest.raises(TypeError, match=r"min_angle= and angle="):
+        _voronoi(tmp_path, min_angle=30, angle=20)
+    assert _voronoi(tmp_path, min_angle=30).triangle_options == {"angle": 30}
+    assert _voronoi(tmp_path, angle=25).triangle_options == {"angle": 25}
+
+
+def test_a_removed_key_is_explained_beside_another_unknown_key(tmp_path):
+    with pytest.raises(TypeError, match=r"'max_optimization_points' was removed \(ledger 410\)"):
+        _voronoi(tmp_path, mesh_options={"abc": 1, "max_optimization_points": 10})

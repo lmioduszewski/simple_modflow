@@ -18143,8 +18143,12 @@ same day, which is the useful part of the result.
       would lock the user out of the file that has to be edited; the refusal comes when
       the grid resolves, naming the key, why it went (`_GRID_REMOVED_OPTION_KEYS`) and
       that deleting it changes no mesh. Spellings of one option (`boundary_max_area` /
-      `default_cell_area` / `max_area`, the two `default_*_area` aliases, `line_buffer`)
-      given together are refused: `_option` read the first and ignored the rest.
+      `default_cell_area` / `max_area`, the two `default_*_area` aliases, `line_buffer`,
+      and -- added in review -- `angle` beside `min_angle`, `workspace` beside `model_ws`)
+      given together are refused, naming the one that was read: `_option` read the
+      first and ignored the rest. So is `GridSpec.voronoi(min_angle=, angle=)`, where
+      the later keyword won. `triangle_options` carrying both `model_ws` and
+      `workspace` is still not checked (a stage dict, below).
       `triangle_options`/`voronoi_options` are not checked here: their constructors
       already raise `TypeError` on an unknown keyword at resolve. The key sets live once,
       in `specs.py` (`_GRID_TRIANGLE_OPTION_KEYS`, `_GRID_MESH_OPTION_KEYS`,
