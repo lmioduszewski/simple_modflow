@@ -20,10 +20,11 @@ from shapely.ops import nearest_points
 from myflopy.advanced import sfr_spec
 from myflopy.grid_identity import pin_metadata
 from myflopy.modflow.mf6.grid.geometry import _SLIVER_WIDTH, top_active_layer
+from myflopy.modflow.mf6.surface_water_validation import _REACH_VALUES, _reach_value_fault
 from myflopy.specs import (
-    _layer_elevations,
     ModelContext,
     PackageSpec,
+    _layer_elevations,
     mf6_length_conversion,
     mf6_time_conversion,
 )
@@ -42,20 +43,6 @@ def _is_integer(value: Any) -> bool:
 
     return isinstance(value, Integral) and not isinstance(value, bool)
 
-
-#: The per-reach ``packagedata`` values :meth:`SFRBuilder.validate` checks: its
-#: position in the row, the argument that sets it, MF6's name for it, whether MF6
-#: takes a time-series name there (``gwf-sfr.dfn``: only ``rhk`` and ``man`` carry
-#: ``time_series true``), and the bound -- ``"positive"``, ``"nonnegative"`` or
-#: ``None`` (any finite number).
-_REACH_VALUES = (
-    (3, "width", "RWID", False, "positive"),
-    (4, "gradient", "RGRD", False, "nonnegative"),
-    (5, "reach_top", "RTP", False, None),
-    (6, "streambed_thickness", "RBTH", False, "positive"),
-    (7, "streambed_k", "RHK", True, "nonnegative"),
-    (8, "roughness", "MAN", True, "positive"),
-)
 
 #: Period settings that are a rate per unit of streambed area (``RAINFALL``,
 #: ``EVAPORATION``, length per time) or a reach's state (``STATUS``): a stream's
@@ -1311,12 +1298,12 @@ class SFRBuilder:
                 raise ValueError(f"SFR {where} has nonpositive length.")
             for position, name, mf6_name, takes_series, bound in _REACH_VALUES:
                 value = row[position]
-                if takes_series and isinstance(value, str):
-                    continue
-                self._check_reach_number(value, name, mf6_name, takes_series, where)
-                if bound == "positive" and value <= 0:
+                fault = _reach_value_fault(value, takes_series, bound)
+                if fault == "number":
+                    self._check_reach_number(value, name, mf6_name, takes_series, where)
+                if fault == "positive":
                     raise ValueError(f"SFR {where} has nonpositive {name} ({mf6_name}): {value!r}.")
-                if bound == "nonnegative" and value < 0:
+                if fault == "nonnegative":
                     raise ValueError(f"SFR {where} has negative {name} ({mf6_name}): {value!r}.")
         valid_reaches = set(self.reaches.index)
         for period, settings in self.perioddata.items():

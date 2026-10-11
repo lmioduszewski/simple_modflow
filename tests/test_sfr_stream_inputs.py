@@ -43,6 +43,7 @@ from shapely.geometry import LineString, Point
 
 import myflopy as mf
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+from myflopy.modflow.mf6.surface_water_validation import validate_sfr_configuration
 from tests.test_sfr_builder import _builder
 
 LINES = {
@@ -341,6 +342,43 @@ def test_a_time_series_name_is_kept_where_mf6_takes_one(argument, mf6_name):
     spec = _builder(**{argument: "ts1"}).build()
     position = {"streambed_k": 7, "roughness": 8}[argument]
     assert {row[position] for row in spec.options["packagedata"]} == {"ts1"}
+
+
+CODES = {
+    "width": "sfr_reach_width", "gradient": "sfr_reach_gradient", "reach_top": "sfr_reach_top",
+    "streambed_thickness": "sfr_streambed_thickness", "streambed_k": "sfr_streambed_k",
+    "roughness": "sfr_mannings",
+}
+
+
+@pytest.mark.parametrize(("argument", "mf6_name"), SERIES_TOO)
+def test_validate_sfr_configuration_takes_a_time_series_name_where_mf6_does(argument, mf6_name):
+    # It reported 'must be non-negative' / 'must be positive' for every reach,
+    # though MF6 runs RHK and MAN given as a time series (ledger 365).
+    report = validate_sfr_configuration(_builder(**{argument: "ts1"}))
+    assert report.ok, report.to_frame().to_string()
+
+
+@pytest.mark.parametrize(("argument", "mf6_name"), NUMERIC_ONLY)
+def test_validate_sfr_configuration_refuses_a_string_where_mf6_reads_a_number(argument, mf6_name):
+    report = validate_sfr_configuration(_builder(**{argument: "ts1"}))
+    assert {issue.code for issue in report.errors} == {CODES[argument]}
+    assert all("not a time-series name" in issue.message for issue in report.errors)
+
+
+@pytest.mark.parametrize(("argument", "mf6_name"), NUMERIC_ONLY + SERIES_TOO)
+@pytest.mark.parametrize("value", ["ts1", np.nan, None, 0.0, -1.0, np.float64(2.0), True])
+def test_validate_sfr_configuration_and_the_builder_agree(argument, mf6_name, value):
+    """One rule: the report finds a fault in a per-reach value exactly when ``validate`` raises."""
+
+    builder = _builder(streams=_builder().streams.assign(value=value), **{argument: "value"})
+    try:
+        builder.validate()
+        refused = False
+    except ValueError:
+        refused = True
+    codes = {issue.code for issue in validate_sfr_configuration(builder).errors}
+    assert (CODES[argument] in codes) == refused
 
 
 def test_the_bounds_name_the_stream_and_the_value():

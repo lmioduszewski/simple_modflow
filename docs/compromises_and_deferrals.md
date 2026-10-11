@@ -17237,8 +17237,13 @@ same day, which is the useful part of the result.
       RWID, RGRD, RTP and RBTH -- so a string there is kept and its bound not checked.
       **Judgment call:** that string is not checked against a declared `timeseries=`,
       since a time series can be attached to the FloPy package after the build.
-      **Not fixed:** `validate_sfr_configuration` (`surface_water_validation.py`) still
-      reports a time-series RHK or MAN as an error.
+      ~~**Not fixed:** `validate_sfr_configuration` (`surface_water_validation.py`) still
+      reports a time-series RHK or MAN as an error.~~ Fixed: it judges every per-reach
+      value by the same helper as `validate` (`sfr._reach_value_fault`), so a
+      time-series RHK/MAN is clean, a string RWID/RGRD/RTP/RBTH is reported as one MF6
+      reads as a number, and a NaN or a bool -- which its `float()` coercion passed --
+      is reported too (new code `sfr_reach_top`). Revert check: the
+      `test_validate_sfr_configuration_*` cases (22 fail).
       Revert check: the check removed -> the `test_a_string_naming_no_column_...`,
       `test_a_mapping_matching_no_reach_...` and `test_an_empty_column_...` cases fail
       (16); the time-series exemption removed -> both

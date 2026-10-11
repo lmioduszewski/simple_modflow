@@ -10,6 +10,7 @@ builder layer with clearer error messages.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from numbers import Real
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -236,6 +237,68 @@ def _coerce_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+#: The per-reach ``packagedata`` values ``SFRBuilder.validate`` and
+#: :func:`validate_sfr_configuration` check: its position in the row, the argument
+#: that sets it, MF6's name for it, whether MF6 takes a time-series name there (``gwf-sfr.dfn``: only ``rhk`` and ``man`` carry
+#: ``time_series true``), and the bound -- ``"positive"``, ``"nonnegative"`` or
+#: ``None`` (any finite number).
+_REACH_VALUES = (
+    (3, "width", "RWID", False, "positive"),
+    (4, "gradient", "RGRD", False, "nonnegative"),
+    (5, "reach_top", "RTP", False, None),
+    (6, "streambed_thickness", "RBTH", False, "positive"),
+    (7, "streambed_k", "RHK", True, "nonnegative"),
+    (8, "roughness", "MAN", True, "positive"),
+)
+
+
+def _reach_value_fault(value: Any, takes_series: bool, bound: str | None) -> str | None:
+    """What is wrong with one per-reach ``packagedata`` value as MF6 reads it, or ``None``.
+
+    The ONE rule behind :meth:`~myflopy.modflow.mf6.sfr.SFRBuilder.validate` and
+    :func:`validate_sfr_configuration` (ledger 365), stated here in import layer 0 so
+    both can import it: a string is a time-series name where MF6 takes one
+    (``takes_series``, from :data:`_REACH_VALUES`) and nothing is checked of it;
+    anything else must be a finite real number -- ``"number"`` otherwise -- inside
+    ``bound``, else ``"positive"`` or ``"nonnegative"``, the bound it breaks.
+    """
+
+    if takes_series and isinstance(value, str):
+        return None
+    if not (isinstance(value, Real) and not isinstance(value, bool) and np.isfinite(value)):
+        return "number"
+    if bound == "positive" and value <= 0:
+        return "positive"
+    if bound == "nonnegative" and value < 0:
+        return "nonnegative"
+    return None
+
+
+#: The finding code for each per-reach value of :data:`_REACH_VALUES`.
+_SFR_REACH_CODES = {
+    "width": "sfr_reach_width",
+    "gradient": "sfr_reach_gradient",
+    "reach_top": "sfr_reach_top",
+    "streambed_thickness": "sfr_streambed_thickness",
+    "streambed_k": "sfr_streambed_k",
+    "roughness": "sfr_mannings",
+}
+
+
+def _sfr_reach_message(name: str, mf6_name: str, takes_series: bool, fault: str) -> str:
+    """The finding for a per-reach SFR value ``_reach_value_fault`` objects to."""
+
+    if fault == "number":
+        accepted = (
+            "a finite number or a time-series name"
+            if takes_series
+            else "a finite number -- MF6 reads it as a number, not a time-series name"
+        )
+        return f"SFR {name} ({mf6_name}) must be {accepted}."
+    words = {"positive": "positive", "nonnegative": "non-negative"}[fault]
+    return f"SFR {name} ({mf6_name}) must be {words}."
 
 
 def _normalize_lak_connection_rows(connectiondata: list | None) -> list[list]:
@@ -663,7 +726,37 @@ def validate_sfr_configuration(
     sfr: SFRBuilder,
     model: SimulationBase | None = None,
 ) -> SurfaceWaterValidationReport:
-    """Validate an SFR builder's derived reach and connection data."""
+    """Validate an SFR builder's derived reach and connection data.
+
+    Findings are collected, not raised. The per-reach ``packagedata`` values are
+    judged by the builder's own rule (:meth:`SFRBuilder.validate
+    <myflopy.modflow.mf6.sfr.SFRBuilder.validate>`, ledger 365): each
+    must be a finite number, except that ``streambed_k`` (RHK) and ``roughness``
+    (MAN) may be a string, read by MF6 as a time-series name and not
+    bound-checked -- the only two MF6 takes one for; then positive width,
+    streambed thickness and roughness, non-negative gradient and streambed K. Also
+    checked: reach numbering, cell ids against ``model``, positive length,
+    ``ncon`` against the connection rows, and period keys and reaches.
+
+    Parameters
+    ----------
+    sfr : SFRBuilder
+        The builder whose ``packagedata``, ``connectiondata``, ``perioddata`` and
+        ``total_nreaches`` are read; reading them resolves the builder, which can
+        raise.
+    model : SimulationBase or None, optional
+        The model the cell ids, cell elevations and period keys are checked
+        against, read duck-typed as in
+        :func:`validate_surface_water_configuration`. Default ``None`` skips those
+        checks.
+
+    Returns
+    -------
+    SurfaceWaterValidationReport
+        Every finding; codes ``sfr_reach_width``, ``sfr_reach_gradient``,
+        ``sfr_reach_top``, ``sfr_streambed_thickness``, ``sfr_streambed_k`` and
+        ``sfr_mannings`` for the per-reach values.
+    """
 
     report = SurfaceWaterValidationReport()
     packagedata = sfr.packagedata
@@ -704,12 +797,10 @@ def validate_sfr_configuration(
         rno = _coerce_int(row[0])
         cellid = row[1]
         rlen = _coerce_float(row[2])
-        rwid = _coerce_float(row[3])
-        rgrd = _coerce_float(row[4])
-        rtp = _coerce_float(row[5])
-        rbth = _coerce_float(row[6])
-        rhk = _coerce_float(row[7])
-        man = _coerce_float(row[8])
+        # Read here only for the cell comparisons below; every per-reach value's own
+        # check is the builder's rule, in the loop further down.
+        rtp = row[5] if _reach_value_fault(row[5], False, None) is None else None
+        rbth = row[6] if _reach_value_fault(row[6], False, None) is None else None
         ncon = _coerce_int(row[9])
 
         if rno is None or rno < 0:
@@ -771,31 +862,15 @@ def validate_sfr_configuration(
 
         if rlen is None or rlen <= 0:
             report.add_error("sfr_reach_length", "SFR reach lengths must be positive.", rno=rno, rlen=row[2])
-        if rwid is None or rwid <= 0:
-            report.add_error("sfr_reach_width", "SFR reach widths must be positive.", rno=rno, rwid=row[3])
-        if rgrd is None or rgrd < 0:
-            report.add_error("sfr_reach_gradient", "SFR reach gradients must be non-negative.", rno=rno, rgrd=row[4])
-        if rbth is None or rbth <= 0:
-            report.add_error(
-                "sfr_streambed_thickness",
-                "SFR streambed thickness must be positive.",
-                rno=rno,
-                rbth=row[6],
-            )
-        if rhk is None or rhk < 0:
-            report.add_error(
-                "sfr_streambed_k",
-                "SFR streambed hydraulic conductivity must be non-negative.",
-                rno=rno,
-                rhk=row[7],
-            )
-        if man is None or man <= 0:
-            report.add_error(
-                "sfr_mannings",
-                "SFR Manning's n values must be positive.",
-                rno=rno,
-                man=row[8],
-            )
+        for position, name, mf6_name, takes_series, bound in _REACH_VALUES:
+            fault = _reach_value_fault(row[position], takes_series, bound)
+            if fault is not None:
+                report.add_error(
+                    _SFR_REACH_CODES[name],
+                    _sfr_reach_message(name, mf6_name, takes_series, fault),
+                    rno=rno,
+                    **{mf6_name.lower(): row[position]},
+                )
 
         if row_index < len(connectiondata):
             conn_row = connectiondata[row_index]
@@ -1122,7 +1197,9 @@ def validate_surface_water_configuration(
         An :class:`~myflopy.modflow.mf6.sfr.SFRBuilder`, checked through its
         derived ``packagedata``, ``connectiondata`` and ``perioddata``: reach
         numbering, cell ids against the model, positive length, width,
-        thickness and roughness, non-negative gradient and streambed K,
+        thickness and roughness, non-negative gradient and streambed K -- a
+        string streambed K or roughness is a time-series name, which MF6 takes
+        there and nowhere else in the reach data, and is not bound-checked --
         ``ncon`` against the connection rows, and period keys against
         ``model.nper``. A reach top above its cell top, a streambed bottom below
         its cell bottom, two reaches in one cell and a negative inflow are
