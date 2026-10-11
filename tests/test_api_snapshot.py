@@ -176,6 +176,37 @@ def test_a_changed_default_on_a_run_or_spec_verb_moves_the_snapshot(
         assert rebuilt[qualname] != snapshot["public_signatures"][qualname], qualname
 
 
+def test_an_annotation_change_is_not_pinned():
+    """The documented LIMIT of ``public_signatures`` (ledger 443): a type is not pinned.
+
+    Each row is a parameter's name, kind and default, so ledger 197's own example
+    -- ``SimulationSpec.models`` widened from ``tuple[ModelSpec, ...]`` to a union
+    -- leaves ``--check`` green. That is stated in the ledger, ``CLAUDE.md`` and
+    ``docs/package_api_reference.md``; if annotations are ever pinned this fails,
+    and those three must say so.
+    """
+
+    import inspect
+
+    import myflopy as mf
+
+    sys.path.insert(0, str(DERIVE_SCRIPT.parent))
+    from derive_api_snapshot import _parameters
+
+    signature = inspect.signature(mf.SimulationSpec)
+    widened = signature.replace(
+        parameters=[
+            parameter.replace(annotation="tuple[ModelSpec, ...] | list[ModelSpec]")
+            if name == "models"
+            else parameter
+            for name, parameter in signature.parameters.items()
+        ],
+        return_annotation="SimulationSpec | None",
+    )
+    assert widened != signature
+    assert _parameters(widened) == _parameters(signature)
+
+
 def test_surfaces_dimension_names_the_known_inconsistencies(snapshot):
     """The surfaces block is 4.7's site inventory -- it must stay comprehensive.
 

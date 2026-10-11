@@ -829,8 +829,8 @@ The retired spelling must not survive anywhere an IDE reads — not in `dir()`,
   colors against the shared scale, and the deprecated spellings.
 - `tests/test_colorscale_policy.py` pins the colorscale policy.
 - `tests/test_deprecation.py` pins D12 hiding and the compatibility registry.
-- `tests/api_snapshot.json` records the public surface, every public signature
-  included (ledger 443); regenerate with `scripts/derive_api_snapshot.py` and
+- `tests/api_snapshot.json` records the public surface, every public callable's
+  parameter names, kinds and defaults included -- not annotations (ledger 443); regenerate with `scripts/derive_api_snapshot.py` and
   review the diff.
 - `tests/test_plot_vocabulary.py` pins the verb set at every scope (module,
   model, grid, stack), that no scope invents a verb, and that every retired

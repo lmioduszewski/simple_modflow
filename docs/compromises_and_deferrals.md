@@ -6803,8 +6803,11 @@ same day, which is the useful part of the result.
         work has `disabled()` (the METHOD) on its cut list, one careless step
         from the field. `spec_fields()` covers that.
       - ~~**Names only, not signatures, and that is a KNOWN limit.**~~ -- closed
-        2026-10-11 by ledger 443, which pins every public signature; the
-        reasoning as it stood: `members()`
+        2026-10-11 for PARAMETERS by ledger 443, which pins every public
+        callable's parameter names, kinds and defaults, so `with_packages(...,
+        slot=)` now shows in the diff; NOT for TYPES -- annotations are not pinned,
+        and the `SimulationSpec.models` widening below still leaves `--check` green
+        (measured 2026-10-11, ledger 443). The reasoning as it stood: `members()`
         deliberately captures no parameters (its own docstring says why), so this
         catches a verb appearing or vanishing and NOT a signature widening --
         `SimulationSpec.models` changing from `tuple[ModelSpec, ...]` to a union
@@ -18879,4 +18882,11 @@ same day, which is the useful part of the result.
      (`build_canonical_model`'s frozensets, measured differing between two runs) and a
      path's class and home directory (`Path('~/mf6')`; CI runs Windows too). Not
      covered: what is never exported -- the read-grammar views and `AoiLibrary`
-     (`project.aoi`, whose member NAMES `surfaces` still pins).
+     (`project.aoi`, whose member NAMES `surfaces` still pins). Not pinned: a
+     parameter's ANNOTATION -- each row is name, kind and default, as the helpers'
+     `signatures` rows always were -- so a type-only change passes `--check`
+     (measured: `SimulationSpec.models` widened to `tuple[...] | list[...]`, ledger
+     197's own example, left it "up to date"). Pinning them is possible -- every
+     annotation of the 715 discovered callables reads the same under Python 3.10 and
+     3.14 -- and was not done here; `test_an_annotation_change_is_not_pinned` holds
+     the limit, so pinning them must update this entry.
