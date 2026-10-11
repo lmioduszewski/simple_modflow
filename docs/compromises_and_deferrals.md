@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 370 entries (375 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 371 entries (376 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 371 | A target set's `to_wide()` refuses two values for one target in one period, through the check `compare()` a... | 2026-10-11 |
 | 370 | A USG period short of its `ITMP` is refused, and so is a grid CRS of `None` | 2026-10-11 |
 | 369 | A USG export's `resolution` is in the OUTPUT CRS's units, and every raster uses it | 2026-10-11 |
 | 368 | Setting a grid's CRS RELABELS the grid and every frame it caches; it never reprojects | 2026-10-11 |
@@ -17200,3 +17201,25 @@ same day, which is the useful part of the result.
      read) is refused BEFORE anything changes -- it raised from geopandas halfway
      through the relabel, leaving the grid and its frames on `None` -- and a numpy
      integer is an EPSG code like an `int` (`normalize_crs`).
+
+371. **A target set's `to_wide()` refuses two values for one target in one period, through the check `compare()` and the PEST build read, naming each row (2026-10-11).**
+      Ledger 340's leftover. `HeadTargets`/`ConcTargets`, `LakeStageTargets`,
+      `SfrStageTargets`, `SfrFlowTargets` and `DrnFlowTargets` pivoted with
+      `aggfunc="first"`, so `to_wide()` kept the first of two readings in silence (measured:
+      `[10.0, 11.0]` at period 0 read 10.0, on all six) while `compare()` and the build
+      refused the set. Each now calls `_shared._measured_periods` first, and its message
+      names every colliding row's value and `time` as given (`'w' at period 1: 2 values
+      (11.0 at time 1, 12.0 at time 1)`) -- for `compare()` and the build too.
+      **`aggfunc` is not a parameter** -- it was always internal -- and after the check a
+      (target, time) cell holds at most one value, so `"first"` only prefers it over a
+      blank row (and, for `HeadTargets`, over the copy `get()` makes for a well's second
+      screen, which is one value and is not refused). Kept, not removed.
+      **Judgment call: a `time` that is no stress period is refused by `to_wide()` too**
+      (`0.5`, a date string), since the duplicates are defined per period. It reshaped such
+      a set before; nothing downstream could use it, as `compare()` and the build refuse
+      it, and no caller in `src/`, the tests, examples or notebooks passes one.
+      **Not changed:** a target whose every row is blank still has no column (pivot_table
+      drops it); `compare()` keeps those rows.
+      Test: `tests/test_pest_handed_targets.py::test_to_wide_refuses_two_measurements_of_one_target_in_one_period_naming_both`
+      (all six families fail with the calls removed);
+      `test_to_wide_keeps_one_column_for_a_two_screen_well` guards the false refusal.

@@ -261,6 +261,64 @@ def test_two_measurements_of_one_target_in_one_period_are_refused(toy, tmp_path)
     assert blank.compare(toy)["head_target"].notna().sum() == 1
 
 
+def _wide_family(family, values):
+    """One target ``w`` of ``family``, given the long ``time``/``name``/``value`` rows."""
+
+    frame = pd.DataFrame(values, columns=["time", "name", "value"])
+    sign = -1.0 if family in ("sfr_flow", "drn") else 1.0
+    frame["value"] = frame["value"] * sign
+    column = {"head": "head", "conc": "conc", "lake": "stage", "sfr_stage": "stage",
+              "sfr_flow": "flow", "drn": "flow"}[family]
+    frame = frame.rename(columns={"value": column})
+    make = {
+        "head": lambda: mf.HeadTargets(locations={"w": 22}, values=frame),
+        "conc": lambda: mf.ConcTargets(locations={"w": 22}, values=frame),
+        "lake": lambda: mf.LakeStageTargets(locations={"w": 0}, values=frame),
+        "sfr_stage": lambda: mf.SfrStageTargets(locations={"w": 1}, values=frame),
+        "sfr_flow": lambda: mf.SfrFlowTargets(locations={"w": 3}, values=frame),
+        "drn": lambda: mf.DrnFlowTargets(locations={"w": [20]}, values=frame),
+    }[family]
+    return make(), sign
+
+
+@pytest.mark.parametrize("family", ["head", "conc", "lake", "sfr_stage", "sfr_flow", "drn"])
+def test_to_wide_refuses_two_measurements_of_one_target_in_one_period_naming_both(family):
+    """``to_wide()`` pivoted with ``aggfunc="first"`` and kept the first of two readings
+    in silence, while ``compare()`` and the PEST build refuse the same set (ledger 340).
+    It reads the same check now (ledger 371), whose message names each row."""
+
+    twice, sign = _wide_family(family, [(0, "w", 10.0), (1, "w", 11.0), (1, "w", 12.0)])
+    first, second = _shown_values(11.0 * sign, 12.0 * sign)
+    with pytest.raises(ValueError, match=(
+            rf"\.to_wide\(\): two or more measurements of one target in one stress period "
+            rf"-- 'w' at period 1: 2 values \({first} at time 1, {second} at time 1\)")):
+        twice.to_wide()
+    # A blank row is not a measurement: it collides with nothing, and the value reads.
+    blank, sign = _wide_family(family, [(0, "w", 10.0), (1, "w", None), (1, "w", 12.0)])
+    assert blank.to_wide()["w"].tolist() == [10.0 * sign, 12.0 * sign]
+    # A key that is no stress period is refused here as compare() refuses it.
+    fraction, _ = _wide_family(family, [(0.5, "w", 10.0)])
+    with pytest.raises(ValueError, match=r"\.to_wide\(\) reads `time` as a zero-based stress "
+                                         r"period, and 0\.5 is not a whole number"):
+        fraction.to_wide()
+
+
+def _shown_values(*values):
+    return [re.escape(repr(float(value))) for value in values]
+
+
+def test_to_wide_keeps_one_column_for_a_two_screen_well():
+    """``get()`` repeats each value row for each screen of a well; that is one value,
+    not two measurements, so the check reads the values as given and passes."""
+
+    well = mf.HeadTargets(
+        locations=pd.DataFrame({"name": ["w", "w"], "cell": [22, 22], "layer": [0, 1]}),
+        values=pd.DataFrame({"time": [0, 1], "w": [10.0, 11.0]}))
+    wide = well.to_wide()
+    assert wide.columns.tolist() == ["time", "w"]
+    assert wide["w"].tolist() == [10.0, 11.0]
+
+
 # -- (d): nothing is history-matched that nobody measured -----------------------
 
 

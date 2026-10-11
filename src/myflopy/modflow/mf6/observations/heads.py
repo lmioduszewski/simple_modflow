@@ -450,8 +450,41 @@ class HeadTargets:
         return self.get()
 
     def to_wide(self) -> pd.DataFrame:
-        """Return the target table in wide format with one column per location."""
+        """Return the target table in wide format with one column per location.
 
+        One row per distinct ``time`` label, as given, and one column per target
+        name holding its target value (a head, or a concentration on
+        ``ConcTargets``). Two rows HOLDING a value for one target in one stress
+        period are REFUSED -- names compared stripped and lower-cased -- by the check
+        :meth:`compare` and the PEST build read (ledger 340): this used to keep
+        the first in silence (``pivot_table(aggfunc="first")``), so the wide
+        table and the build disagreed about the same set (ledger 371). A
+        blank row is unmeasured and never collides; a target whose every row is
+        blank has no column, as before.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` plus one float column per target name.
+
+        Raises
+        ------
+        ValueError
+            When a ``time`` label is not a zero-based stress period -- not a
+            number, or one with a fraction (``1.0`` is period 1) -- or two rows
+            hold a value for one target in one period, naming the target, the
+            period and the count.
+        """
+
+        _measured_periods(
+            self._values,
+            value_column="head_target",
+            name_column="name_key",
+            caller=f"{type(self).__name__}.to_wide()",
+        )
+        # After the check a (target, time) cell holds at most ONE value, so
+        # "first" only prefers it over blank rows (and, for a two-screen well,
+        # over the copy ``get()`` makes for its second screen).
         frame = self.get().pivot_table(
             index="time",
             columns="name",

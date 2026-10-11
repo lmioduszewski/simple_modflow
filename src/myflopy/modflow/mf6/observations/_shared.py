@@ -1684,7 +1684,9 @@ def _measured_periods(
     ------
     ValueError
         As :func:`_numeric_periods`; or when two rows hold a value for one target
-        in one period, naming up to five such keys.
+        in one period, naming up to five such keys and, for each, every row's
+        value and ``time`` as given (``to_wide()`` reads this too, ledger
+        371).
     """
 
     per = _numeric_periods(values, caller=caller)
@@ -1697,13 +1699,20 @@ def _measured_periods(
             "key": _normalize_identifier_series(values[name_column]),
             "name": values["name"] if "name" in values.columns else values[name_column],
             "per": per,
+            "time": values["time"] if "time" in values.columns else per,
+            "value": values[value_column] if value_column in values.columns else np.nan,
         }
     )[held.to_numpy()]
     repeated = keys.duplicated(subset=["key", "per"], keep=False)
     if repeated.any():
         groups = keys[repeated].groupby(["key", "per"], sort=True)
         listing = [
-            f"{_shown(group['name'].iloc[0])} at period {period}: {len(group)} values"
+            f"{_shown(group['name'].iloc[0])} at period {period}: {len(group)} values ("
+            + ", ".join(
+                f"{_shown(row.value)} at time {_shown(row.time)}"
+                for row in group.itertuples(index=False)
+            )
+            + ")"
             for (_key, period), group in list(groups)[:5]
         ]
         more = groups.ngroups - len(listing)

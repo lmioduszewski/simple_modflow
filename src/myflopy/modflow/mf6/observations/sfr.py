@@ -265,10 +265,37 @@ class SfrStageTargets:
         return self.get()
 
     def to_wide(self) -> pd.DataFrame:
-        """Return the target table in wide format with one column per reach series."""
+        """Return the target table in wide format with one column per reach series.
+
+        One row per distinct ``time`` label, as given, and one column per target
+        name holding its observed stage, in model length units; a set given no values gives ``time`` and one
+        empty column per target. Two rows HOLDING a value for one target in one
+        stress period are REFUSED -- names compared stripped and lower-cased --
+        by the check :meth:`compare` and the PEST build read (ledger 340): this
+        used to keep the first in silence (``pivot_table(aggfunc="first")``), so
+        the wide table and the build disagreed about the same set (ledger
+        371). A blank row is unmeasured and never collides; a target whose
+        every row is blank has no column, as before.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` plus one float column per target name.
+
+        Raises
+        ------
+        ValueError
+            When a ``time`` label is not a zero-based stress period -- not a
+            number, or one with a fraction (``1.0`` is period 1) -- or two rows
+            hold a value for one target in one period, naming the target, the
+            period and the count.
+        """
 
         if self._values.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
+        _measured_periods(self._values, value_column="stage_target", caller="SfrStageTargets.to_wide()")
+        # After the check a (target, time) cell holds at most ONE value, so
+        # "first" only prefers it over blank rows.
         frame = self.get().pivot_table(index="time", columns="name", values="stage_target", aggfunc="first").reset_index()
         frame.columns.name = None
         return frame
@@ -769,10 +796,37 @@ class SfrFlowTargets:
         return self.get()
 
     def to_wide(self) -> pd.DataFrame:
-        """Return the target table in wide format with one column per reach series."""
+        """Return the target table in wide format with one column per reach series.
+
+        One row per distinct ``time`` label, as given, and one column per target
+        name holding its observed flow, in model flow units and MF6's sign (ledger 350); a set given no values gives ``time`` and one
+        empty column per target. Two rows HOLDING a value for one target in one
+        stress period are REFUSED -- names compared stripped and lower-cased --
+        by the check :meth:`compare` and the PEST build read (ledger 340): this
+        used to keep the first in silence (``pivot_table(aggfunc="first")``), so
+        the wide table and the build disagreed about the same set (ledger
+        371). A blank row is unmeasured and never collides; a target whose
+        every row is blank has no column, as before.
+
+        Returns
+        -------
+        pandas.DataFrame
+            ``time`` plus one float column per target name.
+
+        Raises
+        ------
+        ValueError
+            When a ``time`` label is not a zero-based stress period -- not a
+            number, or one with a fraction (``1.0`` is period 1) -- or two rows
+            hold a value for one target in one period, naming the target, the
+            period and the count.
+        """
 
         if self._values.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
+        _measured_periods(self._values, value_column="flow_target", caller="SfrFlowTargets.to_wide()")
+        # After the check a (target, time) cell holds at most ONE value, so
+        # "first" only prefers it over blank rows.
         frame = self.get().pivot_table(index="time", columns="name", values="flow_target", aggfunc="first").reset_index()
         frame.columns.name = None
         return frame

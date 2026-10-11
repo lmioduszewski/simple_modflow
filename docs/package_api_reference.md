@@ -701,10 +701,11 @@ routes of one reach differ there. The target's `.plot` pictures do not draw the 
 and its statistics, and `residuals_by_period` out of the period's mean (ledger 355).
 
 **A target's `time` is a zero-based stress period, read by NUMBER, one rule for
-`compare()` and the PEST build** (`_shared._numeric_periods`, ledger 340): `1.0` is
+`compare()`, `to_wide()` and the PEST build** (`_shared._numeric_periods`, ledger 340): `1.0` is
 period 1, and a key with a fraction (`1.5`, which was truncated to 1) is refused. Two
-values for one target in one period are refused in both, naming them -- the build kept
-the last. A blank value is unmeasured; a value that is not a finite number (`"12,5"`,
+values for one target in one period are refused in both, naming each row's value and
+`time` -- the build kept the last -- and by `to_wide()` too, which kept the FIRST
+(ledger 371). A blank value is unmeasured; a value that is not a finite number (`"12,5"`,
 `inf`) is refused when the targets are built, naming the target and its column.
 
 **What PEST is handed is exactly the targets** (ledger 340). `cal.build()` matches each
