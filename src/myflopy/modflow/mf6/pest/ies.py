@@ -37,12 +37,14 @@ import plotly.graph_objects as go
 from myflopy import viz
 from myflopy._logging import get_logger
 from myflopy._optional import require
+from myflopy.modflow.mf6.grid.geometry import model_cell_polygons
 from myflopy.modflow.mf6.grid.plotting import _choropleth_factory
 from myflopy.modflow.mf6.package_plotting import (
     _red_white_blue_diverging_colorscale,
     _symmetric_color_limit,
 )
 from myflopy.modflow.mf6.pest.forward_run import read_target_table
+from myflopy.modflow.mf6.pest.native_parameters import array_row_length
 from myflopy.modflow.utils.datatypes.choros import mpl_colormap_for
 from myflopy.modflow.utils.datatypes.hover import (
     parameter_field_hover,
@@ -1606,7 +1608,17 @@ class IesResults:
                 "model), or name one yourself with review(model=...) / "
                 "IesResults(..., model=...)."
             )
-        ncpl = int(self.model.vor.ncpl)
+        ncpl = len(model_cell_polygons(self.model))
+        # A captured array is written as pyEMU reads it: one value per line on
+        # DISV, one grid ROW per line on DIS, where an observation's `i`/`j` are
+        # the row and column -- reading `i` alone as the cell put every value of a
+        # row on cell `row` (ledger 420).
+        flopy_grid = getattr(getattr(self.model, "gwf", None), "modelgrid", None)
+        row_length = array_row_length(flopy_grid) if flopy_grid is not None else 1
+
+        def flat_index(match) -> int:
+            return int(match.group(1)) * row_length + int(match.group(2))
+
         # JSON round-trips the int layer keys to strings.
         layer_prefixes = {int(k): v for k, v in (info.get("layer_prefixes") or {}).items()}
         mapping: dict[str, int] = {}
@@ -1625,7 +1637,7 @@ class IesResults:
                     continue
                 match = self._ARR_RE.search(name)
                 if match:
-                    mapping[name] = int(match.group(1))
+                    mapping[name] = flat_index(match)
         else:
             # A single whole-grid array covering every layer at once, which is
             # how MF6 writes griddata with no LAYERED keyword (MST porosity):
@@ -1635,8 +1647,8 @@ class IesResults:
                 if token not in name:
                     continue
                 match = self._ARR_RE.search(name)
-                if match and int(match.group(1)) // ncpl == int(layer):
-                    mapping[name] = int(match.group(1)) % ncpl
+                if match and flat_index(match) // ncpl == int(layer):
+                    mapping[name] = flat_index(match) % ncpl
         if not mapping:
             raise ValueError(f"No captured field cells found for layer {layer}.")
         return mapping

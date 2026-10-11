@@ -213,3 +213,22 @@ def test_spectral_simulation_draws_on_a_dis_model(built):
     assert len(grid) == NLAY * NROW * NCOL
     assert ensemble.shape[0] == 4 and set(grid) <= set(ensemble.columns)
     assert ensemble.loc[:, grid].to_numpy().std() > 0
+
+
+@pytest.mark.slow
+def test_a_captured_dis_field_reviews_on_its_own_cells(tmp_path):
+    """A captured array on DIS is written a grid row per line, so its observations are
+    named ``i:<row>_j:<col>``; the review read ``i`` alone as the cell, putting every
+    value of a row on cell ``row``. Each value is on cell ``row * ncol + col`` now."""
+
+    model = mf.load_mf6_run(_dis_run(tmp_path / "run"))
+    cal = model.pest("cap", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.5, 2.0), capture=True)
+    cal.observe(_heads())
+    _build(cal, "cap")
+    results = cal.prior(reals=3)
+    for layer in range(NLAY):
+        field = results.field("k", layer=layer)
+        assert field["cell"].tolist() == list(range(NROW * NCOL))
+        # PESTPP-IES writes its ensembles to six significant digits.
+        assert np.allclose(field["base"], K[layer].reshape(-1), rtol=1e-5)

@@ -18242,10 +18242,16 @@ same day, which is the useful part of the result.
       package helpers leave DISV-only.
       **DISU's columns are by format, not by run**: `list_columns` gives a one-column
       cellid there, but no PEST build of a DISU model was run.
-      Tests: `tests/test_pest_structured_grid.py` (6; the forward run scaling K, K33 by
+      **The review reads a DIS capture by row AND column** (found once DIS built): a
+      captured array's observations are `arr_i:<row>_j:<col>`, and `IesResults.field`
+      read `i` alone as the cell, putting a row's 6 values on cell `row`. It reads cell
+      `row * ncol + col` now (`array_row_length`). **Not done:** the review's MAPS on a
+      live `mf.dis` view (`model.vor` is `None`) -- maps of a DIS model draw through a
+      reopened run (`load_mf6_run`), which has one.
+      Tests: `tests/test_pest_structured_grid.py` (7; the forward run scaling K, K33 by
       zone and every CHD head with cellids intact, a PESTPP-IES prior, the `mf.dis` route
-      with pilot points and list zones, spectral simulation). Each piece reverted alone
-      fails a named test there.
+      with pilot points and list zones, spectral simulation, a captured field's review).
+      Each piece reverted alone fails a named test there.
 
 421. **A PEST build refuses an input named by a RELATIVE path out of the run directory, naming it and the package that names it; an absolute name is read in place (2026-10-11).**
       Ledger 383's "not copied": `../gwf/gwf.hds` from a GWT FMI, or `OPEN/CLOSE
