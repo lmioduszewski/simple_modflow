@@ -392,6 +392,55 @@ def test_a_REFUSED_save_copies_nothing_and_moves_nothing(tmp_path):
     assert str(project.grid("g").boundary.path) == str(source)
 
 
+def test_a_save_REFUSED_for_a_key_clash_copies_nothing_and_moves_nothing(tmp_path):
+    """The clash refusal ran AFTER bundling, so ledger 292's state came back by it.
+
+    Two keys mapping to one spec file are refused before anything is written -- but
+    not before `bundle_sources=True` had copied the source into `inputs/` and
+    repointed the LIVE package at the copy, so the project kept reading the copy
+    while edits went to the original. `validate()` has no clash check, so
+    `strict=True` did not catch it first.
+    """
+
+    source = _bc_gpkg(tmp_path / "gis" / "c.gpkg")
+    root = tmp_path / "proj"
+    project = Project(root, name="p")
+    lazy = mf.chd.gpkg(source, nper=1, head="head")
+    project.add_package("chd/high k", lazy)
+    project.add_package("chd/high_k", mf.npf(k=1.0))
+    before = project.packages["chd/high k"].inputs
+
+    with pytest.raises(ValueError, match="map to the same file"):
+        project.save(bundle_sources=True)
+
+    assert not (root / "inputs").exists()
+    assert project.packages["chd/high k"].inputs == before
+    assert not (root / "specs").exists()
+
+
+def test_a_save_that_cannot_build_its_document_bundles_nothing(tmp_path, monkeypatch):
+    """The third refusal (ledger 312's document) ran after bundling too."""
+
+    from myflopy.areas import Area
+
+    source = _bc_gpkg(tmp_path / "gis" / "c.gpkg")
+    root = tmp_path / "proj"
+    project = Project(root, name="p")
+    project.add_package("chd/lazy", mf.chd.gpkg(source, nper=1, head="head"))
+    project.add_aoi("site", (0.0, 0.0, 10.0, 10.0))
+    before = project.packages["chd/lazy"].inputs
+
+    def broken(self):
+        raise RuntimeError("cannot serialize")
+
+    monkeypatch.setattr(Area, "to_dict", broken)
+    with pytest.raises(RuntimeError):
+        project.save(bundle_sources=True)
+
+    assert not (root / "inputs").exists()
+    assert project.packages["chd/lazy"].inputs == before
+
+
 # ----------------------------------------------- lazy packages: the second carrier
 
 

@@ -3505,10 +3505,10 @@ class Project:
         ------
         ValueError
             With ``strict=True`` when :meth:`validate` reports anything; when two
-            library keys map to the same file (checked before any spec file is
-            written, but AFTER ``bundle_sources=True`` has copied and repointed);
-            and, after writing, when a simulation was skipped for a dangling
-            reference or an unknown ``derived_from``.
+            library keys map to the same file (checked before anything is bundled
+            or written, so a refused save leaves ``inputs/``, the live registry and
+            the disk as they were); and, after writing, when a simulation was
+            skipped for a dangling reference or an unknown ``derived_from``.
         """
 
         dropped = self._report_dropped_contexts()
@@ -3520,18 +3520,28 @@ class Project:
                 + "\n".join(f"- {issue}" for issue in issues)
             )
 
-        # AFTER the strict refusal, never before. Bundling COPIES FILES and repoints the
-        # live registry, so running it first left a refused save with a populated
-        # `inputs/`, the in-memory recipes pointing into it, and no spec file written --
-        # a state nothing on disk records, and one a later plain `save()` would then
-        # persist without the user ever asking for an archive (ledger 292).
-        bundled: list[tuple[str, str]] = []
-        not_bundled: list[tuple[str, str]] = []
-        if bundle_sources:
-            bundled, not_bundled = self._bundle_grid_sources()
-            package_copies, package_notes = self._bundle_package_sources()
-            bundled += package_copies
-            not_bundled += package_notes
+        # Checked BEFORE the write, unlike the dangling-ref case below: two keys
+        # that name one file cannot be written harmlessly -- the second silently
+        # overwrites the first, and the reload hands the survivor back under both
+        # keys. Refusing costs a rename; writing costs a spec. And BEFORE bundling,
+        # for ledger 292's reason: run after it, a refused save had already copied
+        # the sources into `inputs/` and repointed the live registry at the copies,
+        # so the project went on reading them while edits reached the originals.
+        clashes = [
+            *_colliding_keys(self.packages, self.layout.package_spec_path),
+            *_colliding_keys(self.grids, self.layout.grid_spec_path),
+        ]
+        if clashes:
+            raise ValueError(
+                "Project cannot be saved -- these library keys map to the same "
+                "file, so one would silently overwrite the other. Rename one of "
+                "each pair:\n"
+                + "\n".join(
+                    f"- '{first}' and '{second}' both -> "
+                    f"{path.relative_to(self.root).as_posix()}"
+                    for first, second, path in clashes
+                )
+            )
 
         # Two kinds of un-persistable simulation, handled differently on purpose.
         # An embedded array is nothing the caller can fix at save time, so it is
@@ -3558,26 +3568,6 @@ class Project:
 
         skipped_names = {name for name, _ in skipped}
 
-        # Checked BEFORE the write, unlike the dangling-ref case below: two keys
-        # that name one file cannot be written harmlessly -- the second silently
-        # overwrites the first, and the reload hands the survivor back under both
-        # keys. Refusing costs a rename; writing costs a spec.
-        clashes = [
-            *_colliding_keys(self.packages, self.layout.package_spec_path),
-            *_colliding_keys(self.grids, self.layout.grid_spec_path),
-        ]
-        if clashes:
-            raise ValueError(
-                "Project cannot be saved -- these library keys map to the same "
-                "file, so one would silently overwrite the other. Rename one of "
-                "each pair:\n"
-                + "\n".join(
-                    f"- '{first}' and '{second}' both -> "
-                    f"{path.relative_to(self.root).as_posix()}"
-                    for first, second, path in clashes
-                )
-            )
-
         written_names = [
             name for name in self.simulations if name not in skipped_names
         ]
@@ -3585,6 +3575,20 @@ class Project:
         # leave a manifest pointing at a spec file that was never written, which
         # `Project.load` then refuses (ledger 312).
         document = self._project_dict(simulations=written_names)
+        # AFTER every refusal, never before: the strict one, the key clash and the
+        # document above. Bundling COPIES FILES and repoints the live registry, so
+        # running it first left a refused save with a populated `inputs/`, the
+        # in-memory recipes pointing into it, and no spec file written -- a state
+        # nothing on disk records, and one a later plain `save()` would then persist
+        # without the user ever asking for an archive (ledger 292). The document holds
+        # library KEYS, never paths, so it is the same built before the repoint.
+        bundled: list[tuple[str, str]] = []
+        not_bundled: list[tuple[str, str]] = []
+        if bundle_sources:
+            bundled, not_bundled = self._bundle_grid_sources()
+            package_copies, package_notes = self._bundle_package_sources()
+            bundled += package_copies
+            not_bundled += package_notes
         self.layout.ensure()
         _write_json(
             self.manifest_path,
