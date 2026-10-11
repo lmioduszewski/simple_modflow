@@ -171,7 +171,26 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         self.area_list = [cell.area for cell in self.vor_list]
         self.x_list = [cell.centroid.xy[0][0] for cell in self.vor_list]
         self.y_list = [cell.centroid.xy[1][0] for cell in self.vor_list]
-        self.crs = self.vor.crs
+
+    @property
+    def crs(self):
+        """The CRS of the cells this file is read on: the grid's ``crs``, read live.
+
+        It was copied from ``vor.crs`` when the reader was built, so relabelling the
+        grid afterwards (``grid.crs = ...``, ledger 368) left the reader on the old
+        label (ledger 431). Setting it here is refused: the CRS is the grid's,
+        so relabel the grid.
+        """
+
+        return self.vor.crs
+
+    @crs.setter
+    def crs(self, value):
+        raise AttributeError(
+            f"{type(self).__name__}.crs = {value!r}: a results reader has no CRS of its "
+            "own -- it reads its grid's. Relabel the grid instead: "
+            f"grid.crs = {value!r} (this reader's grid is its .vor)."
+        )
 
     @property
     def all_values(self):

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 430 entries (435 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 431 entries (436 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 431 | A frame a grid caches is in the grid's CRS or refused, and a heads reader and a legacy `Boundaries` read th... | 2026-10-11 |
 | 430 | A USG export's boundary layers hold every cell ANY period names, each row saying which periods it acts in,... | 2026-10-11 |
 | 429 | `usg.to_mf6(include=)` takes a single string as ONE package name and refuses any name outside its optional... | 2026-10-11 |
 | 428 | A list boundary on a removed cell is told to move its cellid when it was written as given, and to re-declar... | 2026-10-11 |
@@ -17321,9 +17322,10 @@ same day, which is the useful part of the result.
      their own to reproject FROM. `crs` is now a property: the setter relabels the two
      cached frames IN PLACE (the gdf_topbtm getter's identity rule, ledger 196) and drops
      the lat/lon caches and `grid_centroid`, which are reprojections. A grid pickled with
-     `crs` in `__dict__` is moved to `_crs` on load. NOT closed: `grid.gdf_vorPolys = frame`
+     `crs` in `__dict__` is moved to `_crs` on load. ~~NOT closed: `grid.gdf_vorPolys = frame`
      and `get_gdf_vorPolys(crs=other)` can still install a frame whose label differs from
-     `grid.crs` -- the second documents it as a side effect. Reproducer:
+     `grid.crs` -- the second documents it as a side effect.~~ **Closed in ledger
+     431: both are refused, as is `grid.gdf_topbtm = frame` in another CRS.** Reproducer:
      `docs/reproducers/usg_switch_off_crs_pixels.py` part 2.
 
 369. **A USG export's `resolution` is in the OUTPUT CRS's units, and every raster uses it (2026-10-11).**
@@ -18432,3 +18434,21 @@ same day, which is the useful part of the result.
      Trails (72 periods): DRN 205 / GHB 88 / CHD 69 rows, every value, geometry and cycle
      column identical to before, two columns added -- its BC cell sets never change.
      Reproducer: `docs/reproducers/usg_boundary_periods.py`.
+
+431. **A frame a grid caches is in the grid's CRS or refused, and a heads reader and a legacy `Boundaries` read the grid's CRS live (2026-10-11).**
+     Ledger 368 left four routes to one grid with two CRSs: the `gdf_vorPolys` and
+     `gdf_topbtm` setters stored a frame in any CRS, `get_gdf_vorPolys(crs=other)` built
+     the cache under `other`'s label, and `HeadsPlus` (any `DependentVariableFile`) and
+     `Boundaries` COPIED `vor.crs` when built, so a relabel left them behind. Chosen:
+     REFUSE a frame in another CRS, naming `grid.crs = ...` (relabel) and
+     `frame.to_crs(grid.crs)` (reproject), rather than relabel the grid to follow the
+     frame or reproject it silently -- which of the two the caller means is not in the
+     frame; one with NO CRS takes the grid's label in place (the object stored is the one
+     given, ledger 196's identity rule). `get_gdf_vorPolys` keeps `crs=` for a spelling of
+     the grid's own CRS. A reader's `crs` is a property of its grid and setting it is
+     refused (`AttributeError` naming `grid.crs =`). `Boundaries.crs` is the `crs=` given,
+     else the grid's, live, and a relabel drops its lazily cached source frame and cell
+     sets (they were reprojected to the OLD label); a `boundary_dict` a builder already
+     assembled is NOT dropped -- it is a build's output, rebuilt by building again. An
+     explicit `Boundaries(crs=)` other than the grid's is still accepted and reprojects
+     the source away from the grid's frame -- not touched here.

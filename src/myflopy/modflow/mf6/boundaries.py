@@ -67,7 +67,9 @@ class Boundaries:
         uid
             Unique-id field in the geometry attributes.
         crs
-            EPSG code or CRS string for the geometry source.
+            EPSG code or CRS string the geometry source is reprojected to. Default
+            None: the grid's ``crs``, read LIVE, so relabelling the grid after this
+            object is built reaches it (ledger 431).
         bound_type
             Short identifier such as ``"drn"`` or ``"rch"``.
         idomain, idomain_path
@@ -79,7 +81,10 @@ class Boundaries:
         # survive even when there is no model (grid-only use), and a missing
         # ``nper`` must not wipe out the grid.
         self.vor = vor if vor is not None else getattr(model, "vor", None)
-        self.crs = crs if crs is not None else getattr(self.vor, "crs", None)
+        # The grid's CRS is read live (the `crs` property): a copy taken here stayed
+        # on the old label after `grid.crs = ...` (ledger 431).
+        self._crs = crs
+        self._gdf_crs = None
         self.nper = getattr(model, "nper", None)
         self.bound_type = bound_type
         self.uid = uid
@@ -100,8 +105,41 @@ class Boundaries:
         self.verbose = False
 
     @property
+    def crs(self):
+        """The CRS the geometry source is reprojected to: the ``crs`` given, else the grid's.
+
+        The grid's is read live, so a grid relabelled after this object was built
+        is followed -- and every frame and cell set cached LAZILY from the source is
+        dropped then, because they were reprojected to the OLD label (ledger
+        431). A :attr:`boundary_dict` a builder already assembled is not: it is
+        an explicit build's output, so rebuild it after relabelling the grid.
+        """
+
+        return self._crs if self._crs is not None else getattr(self.vor, "crs", None)
+
+    def _follow_the_grid_crs(self):
+        """Drop every cache built in another CRS than :attr:`crs` now names."""
+
+        if self._gdf is None or self._gdf_crs == self.crs:
+            return
+        if self._gdf_crs is None:
+            # A frame set from outside (`obj._gdf = frame`) is taken to be in the CRS
+            # the object names when it is first read.
+            self._gdf_crs = self.crs
+            return
+        logger.debug("grid relabelled %s -> %s; rebuilding the boundary source",
+                     self._gdf_crs, self.crs)
+        self._gdf = None
+        self._intersections = None
+        self._edge_intersections = None
+        self._intersections_no_duplicates = None
+        self._vor_bound_polys = None
+        self._rch_scale = None
+
+    @property
     def gdf(self):
         """gets a GeoDataFrame of the shapefile polygons"""
+        self._follow_the_grid_crs()
         if self._gdf is None:
             if self._shp_gpkg is not None:
                 gdf: GeoDataFrame = gpd.read_file(self._shp_gpkg)
@@ -113,6 +151,7 @@ class Boundaries:
                     else:
                         gdf.to_crs(inplace=True, epsg=self.crs)
                 self._gdf = gdf
+                self._gdf_crs = self.crs
         return self._gdf
 
     @property
@@ -144,6 +183,7 @@ class Boundaries:
     def intersections(self):
         """gets a DataFrame with unique ids (uid) for each shapefile polygon and the associated
         intersecting voronoi grid cells"""
+        self._follow_the_grid_crs()
         if self._intersections is None:
             vor_polys = self.vor.gdf_vorPolys
             df_intersect = self.gdf.geometry.apply(
@@ -156,6 +196,7 @@ class Boundaries:
     def edge_intersections(self):
         """gets a DataFrame with unique ids (uid) for each shapefile polygon and the associated
         intersecting voronoi grid cells, but then filters for only those on a grid edge"""
+        self._follow_the_grid_crs()
         if self._edge_intersections is None:
             if self.idomain_path is not None:
                 edge_cells = self.vor.get_grid_edge(idomain_path=self.idomain_path)
@@ -171,6 +212,7 @@ class Boundaries:
     @property
     def intersections_no_duplicates(self):
         """gets a DataFrame of intersecting cells with duplicate cells removed"""
+        self._follow_the_grid_crs()
         if self._intersections_no_duplicates is None:
             seen = set()
             no_dups = self.intersections.copy()
@@ -186,6 +228,7 @@ class Boundaries:
     @property
     def vor_bound_polys(self):
         """gets the intersecting voronoi polygons equivalent to the shapefile polygons"""
+        self._follow_the_grid_crs()
         if self._vor_bound_polys is None:
             vor_polys = self.intersections_no_duplicates.copy()
             vor_polys['geometry'] = vor_polys['no_dup'].apply(lambda x: self.vor.gdf_vorPolys.loc[x].union_all())
@@ -195,6 +238,7 @@ class Boundaries:
     @property
     def shp_to_vor_poly_scale(self):
         """gets a DataFrame giving the scaling between the areas of the shapefile vs. voronoi polys"""
+        self._follow_the_grid_crs()
         if self._rch_scale is None:
             rch_scale = self.gdf.area / self.vor_bound_polys.area
             self._rch_scale = rch_scale

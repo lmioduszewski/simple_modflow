@@ -499,6 +499,12 @@ release-group boundnames; without them it names the fix and offers
   Note the CRS falls back to `"EPSG:2927"` when the spec names none.
 - Grids: `mf.VoronoiGridPlus`, `mf.TriangleGrid`, `mf.GridSpec`; sources:
   `mf.GeoPackageSource`, `mf.read_gpkg`, `mf.read_shp_gpkg`.
+- **A grid keeps ONE CRS.** `grid.crs = ...` RELABELS the grid and every frame it
+  caches, never reprojects (ledger 368). A frame stored as `grid.gdf_vorPolys` or
+  `grid.gdf_topbtm` must be in the grid's CRS -- one with none takes its label, one in
+  another is refused naming `grid.crs = ...` and `frame.to_crs(grid.crs)` -- and so is
+  `get_gdf_vorPolys(crs=other)`; a heads reader's `.crs` and a legacy `Boundaries`'
+  read the grid's live, so a relabel reaches them (ledger 431).
 
 ### Specs & lifecycle
 

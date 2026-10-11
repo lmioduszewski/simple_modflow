@@ -40,6 +40,7 @@ from myflopy.modflow.mf6.grid.geometry import (
 from myflopy.modflow.mf6.grid.geometry import (
     find_adjacent_polygons as geometry_find_adjacent_polygons,
 )
+from myflopy.modflow.mf6.grid.geometry import frame_in_grid_crs, geometry_first
 from myflopy.modflow.mf6.grid.geometry import (
     generate_grid_around_point as geometry_generate_grid_around_point,
 )
@@ -49,7 +50,6 @@ from myflopy.modflow.mf6.grid.geometry import (
 from myflopy.modflow.mf6.grid.geometry import (
     generate_grid_polygons as geometry_generate_grid_polygons,
 )
-from myflopy.modflow.mf6.grid.geometry import geometry_first
 from myflopy.modflow.mf6.grid.geometry import (
     get_centroids as geometry_get_centroids,
 )
@@ -549,8 +549,15 @@ class VoronoiGridPlus(VoronoiGrid):
         ``_nlay`` is dropped as well: it caches on first read and nothing
         invalidated it, so re-attaching a frame with a different layer count left
         the old count in place.
+
+        A GeoDataFrame must be in the grid's :attr:`crs`, as for
+        :attr:`gdf_vorPolys`: with no CRS it takes the grid's label, and in another
+        CRS it is refused naming ``grid.crs = ...`` and ``frame.to_crs(grid.crs)``
+        (ledger 431).
         """
-        self._gdf_topbtm = geometry_first(value)
+        self._gdf_topbtm = geometry_first(
+            frame_in_grid_crs(self, value, spelling="grid.gdf_topbtm = frame")
+        )
         self._nlay = None
         # The excavation records ride WITH these elevations: whoever writes a new
         # table drops the old records, and `LayerBuildResult.attach_to_grid` sets its
@@ -773,8 +780,18 @@ class VoronoiGridPlus(VoronoiGrid):
 
     @gdf_vorPolys.setter
     def gdf_vorPolys(self, value):
-        """Set the cached Voronoi polygon GeoDataFrame."""
-        self._gdf_vorPolys = value
+        """Set the cached Voronoi polygon GeoDataFrame.
+
+        The frame must be in the grid's :attr:`crs`: one with no CRS takes the
+        grid's label, and one in another CRS is REFUSED (``ValueError``) naming
+        ``grid.crs = ...`` to relabel the grid and ``frame.to_crs(grid.crs)`` to
+        reproject the frame -- it was stored as given, leaving one grid with two
+        CRSs (ledger 431). ``None`` drops the cache, so the next read rebuilds
+        it from the vertices.
+        """
+        self._gdf_vorPolys = frame_in_grid_crs(
+            self, value, spelling="grid.gdf_vorPolys = frame"
+        )
 
     @property
     def adjacent_cells_idx(self):
@@ -1221,15 +1238,17 @@ class VoronoiGridPlus(VoronoiGrid):
 
         One polygon per cell, from ``verts``/``iverts``, with a default
         ``RangeIndex``. **Side effect:** the frame REPLACES the cached
-        :attr:`gdf_vorPolys` (and ``x_coords_by_node``/``y_coords_by_node``), so a
-        ``crs`` other than the grid's leaves the cache labelled with it.
+        :attr:`gdf_vorPolys` (and ``x_coords_by_node``/``y_coords_by_node``).
 
         Parameters
         ----------
         crs : str, int or pyproj.CRS, optional
-            The CRS LABEL to stamp on the frame -- it does not reproject; the
-            coordinates stay the grid's. Default None: the grid's :attr:`crs`. Use
-            ``grid.gdf_vorPolys.to_crs(...)`` to reproject instead.
+            Default None: the grid's :attr:`crs`, the label the frame carries. Any
+            other value must NAME the grid's CRS (``2927`` for ``"EPSG:2927"``
+            does): since the frame becomes the grid's cache, another CRS raises
+            ``ValueError`` naming ``grid.crs = ...`` to relabel the grid and
+            ``grid.gdf_vorPolys.to_crs(...)`` to reproject -- it used to leave the
+            cache labelled differently from the grid (ledger 431).
 
         Returns
         -------

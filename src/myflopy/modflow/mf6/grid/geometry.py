@@ -13,6 +13,7 @@ import shapely as shp
 from shapely.geometry import LineString, Polygon
 
 from myflopy._logging import get_logger
+from myflopy.areas import _same_crs
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg, read_vector_layer
 
 logger = get_logger(__name__)
@@ -197,11 +198,84 @@ def shared_face_length(poly1, poly2) -> float:
     return intersection.length
 
 
+def frame_in_grid_crs(vor, frame, *, spelling: str):
+    """``frame`` as a cache of ``vor``: in the grid's CRS, or refused naming ``spelling``.
+
+    One grid keeps one CRS (ledger 368): every frame it caches carries ``vor.crs``.
+    A frame with no CRS takes the grid's label, in place, so the object stored is the
+    object given; a frame labelled with the grid's CRS under another spelling
+    (``2927`` for ``"EPSG:2927"``) is kept as it is; a frame in ANOTHER CRS raises
+    ``ValueError`` naming the two spellings that do what it might mean -- relabel the
+    grid with ``grid.crs = ...``, or reproject the frame into the grid's CRS
+    (ledger 431). ``None``, a frame with no active geometry and a grid with no
+    CRS pass through unchanged.
+
+    Parameters
+    ----------
+    vor : VoronoiGridPlus
+        The grid whose cache the frame becomes; only its ``crs`` is read.
+    frame : geopandas.GeoDataFrame, pandas.DataFrame or None
+        The frame about to be stored.
+    spelling : str
+        How the caller wrote the assignment, opening the refusal, e.g.
+        ``"grid.gdf_vorPolys = frame"``.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame, pandas.DataFrame or None
+        ``frame`` itself, labelled with the grid's CRS when it had none.
+    """
+
+    grid_crs = getattr(vor, "crs", None)
+    if frame is None or grid_crs is None or not isinstance(frame, gpd.GeoDataFrame):
+        return frame
+    if frame._geometry_column_name not in frame.columns:
+        return frame
+    if frame.crs is None:
+        frame.set_crs(grid_crs, inplace=True)
+        return frame
+    if not _same_crs(frame.crs, grid_crs):
+        label = frame.crs.to_string()
+        raise ValueError(
+            f"{spelling}: the frame is in {label} and the grid in {grid_crs!r}, and one "
+            "grid keeps one CRS. If the grid's vertices really are in "
+            f"{label}, relabel the grid first: grid.crs = {label!r}. To store the "
+            f"frame in the grid's CRS instead, reproject it: frame.to_crs({grid_crs!r})."
+        )
+    return frame
+
+
 def get_gdf_vor_polys(vor, crs=None) -> gpd.GeoDataFrame:
+    """Build the GeoDataFrame of the grid's cell polygons and cache it on the grid.
+
+    Parameters
+    ----------
+    vor : VoronoiGridPlus
+        The grid: its ``verts``/``iverts`` give the polygons, its ``crs`` the label.
+    crs : str, int or pyproj.CRS, optional
+        Default None: the grid's ``crs``. Any other value must NAME the grid's CRS
+        (``2927`` for ``"EPSG:2927"`` does): the frame becomes the grid's cached
+        ``gdf_vorPolys``, and one grid keeps one CRS, so another CRS raises
+        ``ValueError`` naming ``grid.crs = ...`` (relabel) and
+        ``grid.gdf_vorPolys.to_crs(...)`` (reproject) -- it used to install a cache
+        labelled differently from the grid (ledger 431).
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        A ``geometry`` column of cell polygons, rows in cell order, labelled with
+        the grid's CRS.
     """
-    Build and cache the GeoDataFrame of Voronoi polygons.
-    """
-    crs = vor.crs if crs is None else crs
+    grid_crs = getattr(vor, "crs", None)
+    if crs is not None and grid_crs is not None and not _same_crs(crs, grid_crs):
+        raise ValueError(
+            f"get_gdf_vorPolys(crs={crs!r}): the grid's CRS is {grid_crs!r}, and the "
+            "frame this builds becomes the grid's cached gdf_vorPolys, so it cannot "
+            "carry another label -- one grid keeps one CRS. To relabel the grid (its "
+            f"vertices already are in {crs!r}): grid.crs = {crs!r}. To have its cells in "
+            f"another CRS: grid.gdf_vorPolys.to_crs({crs!r})."
+        )
+    crs = grid_crs if grid_crs is not None else crs
     vertices_by_cells = []
     xvertices_by_cells = []
     yvertices_by_cells = []
