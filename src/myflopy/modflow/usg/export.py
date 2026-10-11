@@ -372,6 +372,14 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
     one cell each, so an unwrapped conductance is already exact there -- useful as a
     check, and as the fallback if a boundary must not spread at all.
 
+    A source cell is every ``(layer, cell)`` ANY period gives a record, with the
+    values of the first period that does, and a ``periods`` column naming the model
+    periods a record on it is in force (see :func:`_bc_frames`). The model periods in
+    which NO record of the package is in force -- ``ITMP = 0``, all records on CLN
+    nodes, or before the first definition -- go into both manifest entries as
+    ``switched_off_periods``, with a note, because a switch-off has no row of its own
+    (ledger 430).
+
     Why the split is needed at all:
     ``GeoPackageSource._boundary_data`` writes a feature's values to *every* cell the
     feature intersects, which is right for an elevation and wrong for a conductance:
@@ -408,8 +416,19 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
         package = ftype.lower()
         value_columns = [
             c for c in points.columns
-            if c not in ("geometry", "name", "layer", "old_cell", "length_ft")
+            if c not in ("geometry", "name", "layer", "old_cell", "length_ft",
+                         "first_period", "periods")
         ]
+        # A switch-off has no row to show it, so the manifest says it (ledger 430).
+        switched_off = _switched_off(model, ftype)
+        if switched_off:
+            manifest.notes.append(
+                f"{ftype}: no groundwater record is in force in {len(switched_off)} of "
+                f"{model.nper} period(s) (zero-based: {_period_ranges(switched_off)}) -- "
+                "ITMP = 0, every record on a CLN node, or before the first period that "
+                "defines records. Each feature's 'periods' column leaves them out; a "
+                "layer read with nper= applies its features in every period."
+            )
         points.to_file(path, layer=package, driver="GPKG")
         manifest.layers[f"boundaries.gpkg:{package}"] = {
             "features": int(len(points)),
@@ -417,6 +436,8 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
             "consumed_by": f"mf.{package}.gpkg(path, layer='{package}', context=ctx, nper=nper)",
             "columns": value_columns,
             "layer_base": 1,
+            "period_base": 0,
+            "switched_off_periods": switched_off,
             "geometry": "Point",
         }
         lines.to_file(path, layer=f"{package}_lines", driver="GPKG")
@@ -445,6 +466,7 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
         manifest.layers[f"boundaries.gpkg:{package}_lines"] = {
             "features": int(len(lines)),
             "cells_alone_on_a_chain": alone,
+            "switched_off_periods": switched_off,
             "what": f"{ftype} as lines -- BUILD FROM THIS, continuous cell coverage",
             "consumed_by": (
                 f"mf.{package}.gpkg(path, layer='{package}_lines', context=ctx, nper=nper, "
@@ -490,6 +512,15 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
     Both frames hold one row per source cell and the same values; they differ only
     in geometry and in the ``*_per_ft`` twins, which are meaningless on a point.
 
+    The rows are every ``(layer, cell)`` ANY period gives a record, not the first
+    defined period's alone (ledger 430): a cell a later period adds was absent
+    from the export. Each row's values are those of the first period that names it
+    (``first_period``), and ``periods`` lists every model period in which a record
+    on it is in force, reuse resolved -- so a period the package was switched off in
+    (``ITMP = 0``, or every record on a CLN node) is missing from every row's list.
+    When the first value column moves in time, one ``<column>_mNN`` column per model
+    period of its cycle carries it, NaN where the cell has no record in force.
+
     The chains come from face adjacency (see :func:`_adjacency`), so a corner-only
     contact starts a new chain rather than extending one through the corner.
     """
@@ -501,9 +532,7 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
         return None, None
     polys = model.grid.gdf_vorPolys
     columns = [c for c in _BC_VALUES.get(ftype, ()) if c in frame.columns]
-    periods = sorted(frame["period"].unique())
-    cyclic = _cycle_index({int(p): frame[frame["period"] == p][columns[0]].to_numpy()
-                           for p in periods}) if len(periods) > 1 else None
+    acting = model.boundaries[ftype].in_force(model.nper)
 
     package = ftype.lower()
     # CHD's second USG field is EHEAD, the end-of-period ramp; MF6 has one HEAD, so
@@ -512,20 +541,40 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
     if ftype == "CHD":
         canonical["ehead"] = "ehead_usg_only"
 
+    # Each (layer, cell) any period names, with the first defined period naming it.
+    first_period = (
+        frame.groupby(["layer", "cell"], sort=True)["period"].min().astype(int).to_dict()
+    )
+    defining = {
+        int(period): set(zip(block["layer"].astype(int), block["cell"].astype(int), strict=True))
+        for period, block in frame.groupby("period")
+    }
+
+    blocks = {
+        (int(period), int(layer)): block.set_index("cell")
+        for (period, layer), block in frame.groupby(["period", "layer"])
+    }
+
     point_rows, line_rows = [], []
-    first = frame[frame["period"] == periods[0]]
-    for layer, block in first.groupby("layer"):
-        values = block.set_index("cell")
-        cells = list(np.unique(block["cell"].to_numpy()))
+    for layer in sorted({layer for layer, _ in first_period}):
+        cells = [cell for (lay, cell) in first_period if lay == layer]
         for chain_id, walk in enumerate(_chains(cells, model.grid)):
             points = [polys.geometry.iloc[c].centroid for c in walk]
             for index, cell in enumerate(walk):
+                key = (int(layer), int(cell))
+                source = first_period[key]
+                values = blocks[(source, int(layer))]
                 line = _segment_line(points, index)
                 shared = {
                     "name": f"{package}_L{int(layer) + 1}_c{int(cell)}",
                     "layer": int(layer) + 1,
                     "old_cell": int(cell),
                     "length_ft": float(line.length),
+                    "first_period": int(source),
+                    "periods": _period_ranges(
+                        [p for p, act in enumerate(acting)
+                         if act is not None and key in defining.get(act, ())]
+                    ),
                 }
                 for column in columns:
                     shared[canonical[column]] = float(values.loc[cell, column])
@@ -548,12 +597,36 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
 
     out_points = gpd.GeoDataFrame(point_rows, geometry="geometry", crs=polys.crs)
     out_lines = gpd.GeoDataFrame(line_rows, geometry="geometry", crs=polys.crs)
-    if cyclic is not None and len(cyclic["distinct"]) > 1:
-        out_points = _attach_cycle(out_points, frame, columns[0], cyclic,
-                                   name=canonical[columns[0]])
-        out_lines = _attach_cycle(out_lines, frame, columns[0], cyclic,
-                                  name=canonical[columns[0]])
+    out_points = _attach_cycle(out_points, frame, columns[0], acting, name=canonical[columns[0]])
+    out_lines = _attach_cycle(out_lines, frame, columns[0], acting, name=canonical[columns[0]])
     return out_points.to_crs(crs), out_lines.to_crs(crs)
+
+
+def _period_ranges(periods: list[int]) -> str:
+    """Zero-based periods as compact text: ``[0, 1, 2, 5]`` -> ``"0-2,5"``; none -> ``""``."""
+
+    runs: list[str] = []
+    start = previous = None
+    for period in periods:
+        if previous is not None and period == previous + 1:
+            previous = period
+            continue
+        if start is not None:
+            runs.append(f"{start}-{previous}" if previous != start else f"{start}")
+        start = previous = period
+    if start is not None:
+        runs.append(f"{start}-{previous}" if previous != start else f"{start}")
+    return ",".join(runs)
+
+
+def _switched_off(model: UsgModel, ftype: str) -> list[int]:
+    """Model periods in which no groundwater record of ``ftype`` is in force."""
+
+    records = model.boundaries[ftype]
+    return [
+        period for period, act in enumerate(records.in_force(model.nper))
+        if act is None or len(records.periods[act]) == 0
+    ]
 
 
 def _cycle_index(store: dict[int, np.ndarray]) -> dict[str, Any]:
@@ -585,8 +658,15 @@ def _cycle_index(store: dict[int, np.ndarray]) -> dict[str, Any]:
     return {"periods": keys, "index": index, "distinct": distinct, "cycle": period_of_cycle}
 
 
-def _attach_cycle(out, frame, column: str, cyclic: dict[str, Any], *, name: str | None = None):
+def _attach_cycle(out, frame, column: str, acting: list[int | None], *, name: str | None = None):
     """Add one column per cycle position for a BC whose values move in time.
+
+    Each MODFLOW period ``p`` reads the records in force there (``acting[p]``, reuse
+    resolved), so a column is one model period: ``<name>_m01`` is period 0, and a
+    period the package was switched off in is NaN on every row -- it used to be
+    skipped, along with every reused period, so ``_m02`` meant "the second period
+    that DEFINED records" (ledger 430). When the periods repeat in a cycle only
+    its first cycle is written; when every period agrees nothing is.
 
     Keyed on ``(layer, cell)``, not on the cell alone: a boundary is routinely
     applied to the same plan cell in several layers -- Ten Trails' CHD covers 23
@@ -594,21 +674,31 @@ def _attach_cycle(out, frame, column: str, cyclic: dict[str, Any], *, name: str 
     of the three, or raise where a scalar was expected.
     """
 
-    cycle = cyclic["cycle"] or len(cyclic["periods"])
-    for position, period in enumerate(cyclic["periods"][:cycle], start=1):
-        block = frame[frame["period"] == period]
-        if column not in block.columns:
-            continue
-        lookup = {
+    lookups: dict[int, dict[tuple[int, int], float]] = {}
+    for period, block in frame.groupby("period"):
+        lookups[int(period)] = {
             (int(layer) + 1, int(cell)): float(value)
             for layer, cell, value in zip(
                 block["layer"], block["cell"], block[column], strict=False
             )
         }
-        out[f"{name or column}_m{position:02d}"] = [
-            lookup.get((int(layer), int(cell)), np.nan)
-            for layer, cell in zip(out["layer"], out["old_cell"], strict=False)
-        ]
+    keys = list(zip(out["layer"].astype(int), out["old_cell"].astype(int), strict=False))
+    store = {
+        period: np.array(
+            [lookups.get(act, {}).get(key, np.nan) if act is not None else np.nan
+             for key in keys],
+            float,
+        )
+        for period, act in enumerate(acting)
+    }
+    if len(store) < 2:
+        return out
+    cyclic = _cycle_index(store)
+    if len(cyclic["distinct"]) < 2:
+        return out
+    cycle = cyclic["cycle"] or len(cyclic["periods"])
+    for position, period in enumerate(cyclic["periods"][:cycle], start=1):
+        out[f"{name or column}_m{position:02d}"] = store[period]
     return out
 
 
@@ -1422,6 +1512,9 @@ def _readme(model: UsgModel, manifest: ExportManifest) -> str:
         "#   A segment of length 0 is a cell alone on its chain -- nothing shares a face",
         "#   with it, or the walk could not reach it through a branch. Its per-foot twin",
         "#   is NaN, so take that cell from the point layer. The manifest counts them.",
+        "#   A feature is every cell ANY period gives a record: `periods` lists the",
+        "#   zero-based periods one is in force on it, `first_period` the period its",
+        "#   values come from, and a period missing from every row is a switch-off.",
         "```",
         "",
         "## Interpolating a stream profile onto finer reaches",

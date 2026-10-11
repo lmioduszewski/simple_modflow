@@ -1143,6 +1143,15 @@ single number for a bed that varies and `mf.lak` then rejects the cells it misse
   feature total exactly either way — it is the per-foot hand recipe that goes NaN.
 - **A repeated period is written once.** Ten Trails is 72 periods and a strict 12-month
   cycle, so recharge is 11 distinct arrays, not 72; `periods.csv` is the index.
+- **A boundary layer holds every cell ANY period names** (ledger 430) — it took the
+  first defined period's alone, so a cell a later period added was missing. Each row
+  carries `first_period` (whose values it holds) and `periods` (the zero-based periods a
+  record is in force on it, reuse resolved, e.g. `"0-11,24"`); when the first value
+  column moves in time, `<column>_mNN` is model period NN-1, NaN where no record acts.
+  A period with NO record in force (`ITMP = 0`, all on CLN nodes) is listed in the
+  manifest entry's `switched_off_periods`. `usg.boundary_frame(ftype)` still has rows
+  only for periods that define records; its `attrs` (`defined_periods`,
+  `empty_periods`, `reused_periods`) tell a switch-off from a reuse.
 
 What CLN cannot supply is written as a documented default rather than omitted, so a
 missing column never becomes a silent zero: SFR's `rbth` and `man` (CLN routes with a pipe

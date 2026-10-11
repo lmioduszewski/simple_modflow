@@ -224,6 +224,38 @@ class PeriodRecords:
 
         return int(sum(len(v) for v in self.cln_periods.values()))
 
+    def in_force(self, nper: int) -> list[int | None]:
+        """Which defined period's records act in each of ``nper`` model periods.
+
+        A period that is not a key of :attr:`periods` -- reused with ``ITMP < 0``, or
+        past the end of the file -- keeps the records of the last period that
+        defined its own, the way MODFLOW-USG and MODFLOW 6 both read it. A defined
+        period that holds NO groundwater record (``ITMP = 0``, or every record on a
+        CLN node) is in force too, with nothing in it: the package is switched off
+        there until a later period defines records again.
+
+        Parameters
+        ----------
+        nper : int
+            How many model periods to answer for, from period 0. Keys of
+            :attr:`periods` at or beyond it are ignored.
+
+        Returns
+        -------
+        list of (int or None)
+            Entry ``p`` is the zero-based period whose block acts in period ``p``,
+            or ``None`` before the first period that defines records (no record
+            acts there either).
+        """
+
+        acting: list[int | None] = []
+        current: int | None = None
+        for period in range(int(nper)):
+            if period in self.periods:
+                current = period
+            acting.append(current)
+        return acting
+
 
 @dataclass(slots=True)
 class RchData:

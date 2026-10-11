@@ -371,8 +371,12 @@ class UsgModel:
 
         The geometry is the cell polygon, so the frame can be re-mapped onto any
         other grid by intersection -- unlike the node numbers it came from.
-        Only the periods that define their own records appear; a reused period
-        carries the previous period's values by definition.
+        Only the periods that define their own records appear as rows; a reused
+        period carries the previous period's values by definition. A period that
+        defines NO groundwater record -- ``ITMP = 0``, or every record on a CLN
+        node, which switches the package off there -- has no row either, so the
+        rows alone cannot tell it from a reuse: ``frame.attrs`` says which is
+        which (ledger 430).
 
         Parameters
         ----------
@@ -392,6 +396,14 @@ class UsgModel:
             nodes are not in it.
             A package with no groundwater records gives an empty frame with the
             ``period``/``layer``/``cell``/``geometry`` columns only.
+
+            ``frame.attrs`` carries the period bookkeeping the rows cannot, as
+            tuples of zero-based periods: ``"defined_periods"``, every period
+            that defines its own records, an empty one included;
+            ``"empty_periods"``, those of them that define no groundwater record
+            (switched off); and ``"reused_periods"``, those that reused the
+            previous period (``ITMP < 0``). A period in none of them lies past
+            the end of the package file and keeps the last records too.
 
         Raises
         ------
@@ -424,12 +436,23 @@ class UsgModel:
             frame = pd.DataFrame(data)
             frame["geometry"] = cells.geometry.to_numpy()[frame["cell"].to_numpy()]
             frames.append(frame)
-        if not frames:
-            return gpd.GeoDataFrame(
+        if frames:
+            out = gpd.GeoDataFrame(
+                pd.concat(frames, ignore_index=True), crs=getattr(cells, "crs", None)
+            )
+        else:
+            out = gpd.GeoDataFrame(
                 {"period": [], "layer": [], "cell": [], "geometry": []},
                 crs=getattr(cells, "crs", None),
             )
-        return gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs=getattr(cells, "crs", None))
+        # The rows cannot say a period was switched off: it has none, exactly like a
+        # reused one (ledger 430).
+        out.attrs["defined_periods"] = tuple(sorted(int(p) for p in records.periods))
+        out.attrs["empty_periods"] = tuple(
+            sorted(int(p) for p, block in records.periods.items() if len(block) == 0)
+        )
+        out.attrs["reused_periods"] = tuple(int(p) for p in records.reused)
+        return out
 
     def export_gis(
         self,

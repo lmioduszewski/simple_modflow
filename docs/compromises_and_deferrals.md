@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 429 entries (434 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 430 entries (435 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 430 | A USG export's boundary layers hold every cell ANY period names, each row saying which periods it acts in,... | 2026-10-11 |
 | 429 | `usg.to_mf6(include=)` takes a single string as ONE package name and refuses any name outside its optional... | 2026-10-11 |
 | 428 | A list boundary on a removed cell is told to move its cellid when it was written as given, and to re-declar... | 2026-10-11 |
 | 427 | A build refusal groups its complaints by what each is about, each group under its own heading and advice | 2026-10-11 |
@@ -17304,8 +17305,10 @@ same day, which is the useful part of the result.
      `ITMP < 0` stays absent. CHANGES WRITTEN OUTPUT for any converted model with such a
      period. A package with no groundwater record in ANY period is still not written --
      an all-empty package is not a package. `report()` counts the switched-off periods.
-     Not changed: `export_gis`'s boundary layers take their cells from the first defined
-     period, so a switch-off is still invisible there. Reproducer:
+     ~~Not changed: `export_gis`'s boundary layers take their cells from the first defined
+     period, so a switch-off is still invisible there.~~ **Done in ledger 430: the
+     layers hold every period's cells, each naming its periods, and the manifest lists
+     the switched-off periods.** Reproducer:
      `docs/reproducers/usg_switch_off_crs_pixels.py` part 1.
 
 368. **Setting a grid's CRS RELABELS the grid and every frame it caches; it never reprojects (2026-10-11).**
@@ -18411,3 +18414,21 @@ same day, which is the useful part of the result.
      them, a non-string item `TypeError`, both before any finding is logged. A VALID name
      the model has no package for is not an error: `include=` is a filter over what
      converted, and the same tuple then serves several models.
+
+430. **A USG export's boundary layers hold every cell ANY period names, each row saying which periods it acts in, and a switched-off period is named in the manifest (2026-10-11).**
+     `_bc_frames` read the FIRST defined period's cells, so a cell only a later period
+     names was not exported, and `ITMP = 0` left no trace. Chosen: one row per
+     `(layer, cell)` of the union, carrying the values of the FIRST period that names it
+     (`first_period`) -- not the last, nor one row per (cell, period), so the layer stays
+     ordinary input to `mf.<pkg>.gpkg(nper=)` -- plus `periods`, the zero-based model
+     periods a record is in force on it, reuse resolved through one rule,
+     `PeriodRecords.in_force`. The `<column>_mNN` cycle columns are now MODEL periods
+     (NaN where no record acts); they were "the Nth period that DEFINED records", which
+     is the same thing only when every period defines its own. The manifest's
+     `switched_off_periods` and a note name the periods with no record in force;
+     `boundary_frame()` keeps rows only for periods that define records, and says the
+     rest in `attrs`. Not done: a `.gpkg` reader that applies a feature only in its
+     `periods` -- `nper=` still applies every feature in every period. Measured on Ten
+     Trails (72 periods): DRN 205 / GHB 88 / CHD 69 rows, every value, geometry and cycle
+     column identical to before, two columns added -- its BC cell sets never change.
+     Reproducer: `docs/reproducers/usg_boundary_periods.py`.
