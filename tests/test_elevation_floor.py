@@ -167,13 +167,28 @@ def test_a_zero_clearance_still_lands_STRICTLY_above_the_bottom(sloping):
     assert np.all(elevations[lifted] > bottoms[cells][lifted]), "strictly above, never equal"
 
 
-def test_a_negative_clearance_is_refused(sloping):
+@pytest.mark.parametrize("lazy", [False, True], ids=["eager", "lazy"])
+def test_a_negative_clearance_is_refused(sloping, lazy):
+    """At the CALL on both routes: the lazy declaration accepted it and failed only at
+    build, because the check lived in `GeoPackageSource.__post_init__`."""
+
     context, drains, _ = sloping
 
     with pytest.raises(ValueError, match="CLEARANCE"):
         mf.drn.gpkg(
-            drains, context=context, nper=1, elevation="elev",
+            drains, **({} if lazy else {"context": context}), nper=1, elevation="elev",
             conductance="conductance", min_above_bottom=-1.0,
+        )
+
+
+@pytest.mark.parametrize("lazy", [False, True], ids=["eager", "lazy"])
+def test_a_non_positive_snap_distance_is_refused(sloping, lazy):
+    context, drains, _ = sloping
+
+    with pytest.raises(ValueError, match="snap_within .* must be positive"):
+        mf.drn.gpkg(
+            drains, **({} if lazy else {"context": context}), nper=1, elevation="elev",
+            conductance="conductance", snap_within=0.0,
         )
 
 

@@ -872,6 +872,32 @@ def refuse_spread_on_elevation(package: str, values) -> None:
             )
 
 
+def check_placement_options(
+    *, min_above_bottom: float | None, snap_within: float | None, verb: str
+) -> None:
+    """Refuse a negative ``min_above_bottom`` or a non-positive ``snap_within``, at the CALL.
+
+    Neither needs a grid, so both belong at declaration. ONE function for the eager
+    ``GeoPackageSource`` and the lazy ``mf.<pkg>.gpkg`` declaration: the lazy branch
+    never reaches ``__post_init__``, and the copy it kept checked ``snap_within`` but not
+    the clearance, so ``min_above_bottom=-1.0`` was accepted with no ``context=`` and
+    failed at build.
+    """
+
+    if min_above_bottom is not None and float(min_above_bottom) < 0:
+        raise ValueError(
+            f"{verb}: min_above_bottom is a CLEARANCE above the cell bottom and cannot be "
+            f"negative, not {min_above_bottom!r}. 0.0 means as close to the bottom as the "
+            "written file can express."
+        )
+    if snap_within is not None and not (float(snap_within) > 0):
+        raise ValueError(
+            f"{verb}: snap_within is a distance in the grid's own coordinate units and "
+            f"must be positive, not {snap_within!r}. Leave it None for one cell width, "
+            "measured on the cell a feature would snap to."
+        )
+
+
 def _listed(items, limit: int = 10) -> str:
     """The first ``limit`` entries, then a count -- one wording for every listing here."""
 
@@ -1043,18 +1069,11 @@ class GeoPackageSource:
         if self.nper < 1:
             raise ValueError("nper must be at least 1.")
         check_gaps(self.gaps, verb="A GeoPackage source")
-        if self.min_above_bottom is not None and float(self.min_above_bottom) < 0:
-            raise ValueError(
-                "min_above_bottom is a CLEARANCE above the cell bottom and cannot be "
-                f"negative, not {self.min_above_bottom!r}. 0.0 means as close to the "
-                "bottom as the written file can express."
-            )
-        if self.snap_within is not None and not (float(self.snap_within) > 0):
-            raise ValueError(
-                f"snap_within is a distance in the grid's own coordinate units and must "
-                f"be positive, not {self.snap_within!r}. Leave it None for one cell "
-                "width, measured on the cell a feature would snap to."
-            )
+        check_placement_options(
+            min_above_bottom=self.min_above_bottom,
+            snap_within=self.snap_within,
+            verb="A GeoPackage source",
+        )
 
     @property
     def grid(self):

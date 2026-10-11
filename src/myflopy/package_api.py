@@ -56,6 +56,7 @@ from myflopy.geopackage import (
     Spread,
     SurfaceResolver,
     array_from_polygons,
+    check_placement_options,
     refuse_spread_on_elevation,
 )
 from myflopy.grid_identity import (
@@ -1421,11 +1422,9 @@ def _lazy_bc_spec(
     # (ledger 288).
     refuse_spread_on_elevation(package, values)
     check_gaps(gaps, verb=f"mf.{package}.gpkg")
-    if snap_within is not None and not (float(snap_within) > 0):
-        raise ValueError(
-            f"mf.{package}.gpkg: snap_within is a distance in the grid's own coordinate "
-            f"units and must be positive, not {snap_within!r}."
-        )
+    check_placement_options(
+        min_above_bottom=min_above_bottom, snap_within=snap_within, verb=f"mf.{package}.gpkg"
+    )
 
     # ONE read, used twice on purpose. It is the DIGEST's stand-in for the path
     # (`BoundarySource.digest_payload`) and the metadata `runs.drift()`'s source column
@@ -3680,7 +3679,9 @@ class _CHDPackage:
             format, so a value set exactly equal to its cell bottom can round below it and
             MF6's strict comparison trips (measured, 13 of 24 real runs failed), and a CHD
             set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
-            ``stage`` by the same delta, so the declared river depth survives.
+            ``stage`` by the same delta, so the declared river depth survives. A
+            negative value raises ``ValueError`` at the call, with or without
+            ``context=``.
         name : str, default "chd"
             Package name.
         edges_only : bool, default False
@@ -3944,7 +3945,9 @@ class _GHBPackage:
             format, so a value set exactly equal to its cell bottom can round below it and
             MF6's strict comparison trips (measured, 13 of 24 real runs failed), and a CHD
             set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
-            ``stage`` by the same delta, so the declared river depth survives.
+            ``stage`` by the same delta, so the declared river depth survives. A
+            negative value raises ``ValueError`` at the call, with or without
+            ``context=``.
         name : str, default "ghb"
             Package name.
         edges_only : bool, default False
@@ -4195,7 +4198,9 @@ class _DRNPackage:
             format, so a value set exactly equal to its cell bottom can round below it and
             MF6's strict comparison trips (measured, 13 of 24 real runs failed), and a CHD
             set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
-            ``stage`` by the same delta, so the declared river depth survives.
+            ``stage`` by the same delta, so the declared river depth survives. A
+            negative value raises ``ValueError`` at the call, with or without
+            ``context=``.
         name : str, default "drn"
             Package name.
         edges_only : bool, default False
@@ -4465,7 +4470,9 @@ class _RIVPackage:
             format, so a value set exactly equal to its cell bottom can round below it and
             MF6's strict comparison trips (measured, 13 of 24 real runs failed), and a CHD
             set exactly there aborts the solver. On ``riv`` it floors ``rbot`` and raises
-            ``stage`` by the same delta, so the declared river depth survives.
+            ``stage`` by the same delta, so the declared river depth survives. A
+            negative value raises ``ValueError`` at the call, with or without
+            ``context=``.
         name : str, default "riv"
             Package name.
         edges_only : bool, default False
