@@ -31,9 +31,13 @@ viz.mosaic([...panels...], ncols=2)                 # free-form composer (any mi
 - **Hover is sectioned and styled** (`HoverSpec`/`HoverStyle`, exported at the
   top level): a bold primary value, labeled field blocks, an optional per-layer
   / surface-elevation table with dry-cell marking, and a muted footer. Call-site
-  sugar works on every map verb: `hover_layers="active"|"active+strip"|"all"`,
-  `hover_surfaces=True`, `hover_fields=["stage"]`, or a full `hover=HoverSpec(...)`.
-  LAK/SFR exchange maps automatically include the feature's stage.
+  sugar works on every map verb: `hover_layers="active"|"active+strip"|"all"|"none"`
+  (`"none"` drops the per-layer value line altogether; any other spelling raises
+  at the call, naming the four), `hover_surfaces=True`, `hover_fields=["stage"]`,
+  or a full `hover=HoverSpec(...)`. LAK/SFR exchange maps automatically include
+  the feature's stage. A footer's cell area is written in the model's own length
+  unit squared (`ft²`, `m²`, `cm²`, read from its DIS), and with no unit when the
+  model declares none.
 - **Colorscales follow one policy:** diverging red/white/blue only for signed
   gaining/losing "q"-like fields (gaining = blue) and for diff maps
   (negative = red, positive = blue); everything else uses the house

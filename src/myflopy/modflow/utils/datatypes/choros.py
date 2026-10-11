@@ -27,7 +27,7 @@ from myflopy._logging import get_logger
 from myflopy._warnings import stacklevel_outside_package
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.mf6.headsplus import _is_sentinel
-from myflopy.modflow.mf6.hydraulics import flow_model, model_transmissivity
+from myflopy.modflow.mf6.hydraulics import flow_model, model_transmissivity, unit_labels
 from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.extent import Extent, resolve_extent
@@ -38,7 +38,7 @@ from myflopy.modflow.utils.datatypes.features import (
     feature_traces,
     resolve_features,
 )
-from myflopy.modflow.utils.datatypes.hover import thousands_formatter
+from myflopy.modflow.utils.datatypes.hover import check_hover_layers, thousands_formatter
 from myflopy.viz import (
     COLORBAR_MARGIN,
     HIGHLIGHT_DIM_OPACITY,
@@ -497,7 +497,11 @@ class Choro(Picture):
         self._contour_segments = []
         self.hover_spec = hover_spec
         self._hover_override = hover
-        self._hover_layers = hover_layers
+        # Checked at the call, on every route -- the legacy flat hover ignores
+        # it, and a typo there drew the active-layer hover in silence (ledger 400).
+        self._hover_layers = (
+            None if hover_layers is None else check_hover_layers(hover_layers, name="hover_layers")
+        )
         self._hover_surfaces = hover_surfaces
         self._hover_fields = hover_fields
         legacy_locations = kwargs.pop("locs", None)
@@ -1584,6 +1588,9 @@ class Choro(Picture):
             period=period,
             step=step,
             date=date,
+            # The footer writes a cell's area in the model's own unit squared,
+            # read from its DIS as the transmissivity hover reads it (ledger 401).
+            length_unit=unit_labels(self._inputs)[0] if self._inputs is not None else None,
         )
 
     def _wants_surfaces(self) -> bool:

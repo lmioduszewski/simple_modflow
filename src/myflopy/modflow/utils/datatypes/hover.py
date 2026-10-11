@@ -8,7 +8,7 @@ independent:
 - **blocks** -- which payload fields to show and how to group them
   (:class:`Fields` inline or stacked, :class:`LayerTable` for per-layer values).
 - **layers** -- how the main investigated field displays vertically
-  (``"active"`` | ``"active+strip"`` | ``"all"``).
+  (``"active"`` | ``"active+strip"`` | ``"all"`` | ``"none"``, :data:`HOVER_LAYERS`).
 - **surfaces** -- grid-derived elevations (model top + each layer bottom at the
   cell), independent of what is plotted; merges with the layer table on head maps.
 
@@ -48,6 +48,42 @@ def _is_finite_number(value: Any) -> bool:
 #: quantity read in the thousands (transmissivity, ledger 313); below 1 it keeps
 #: significant digits, so a 0.24 aquitard does not read as 0.
 NUMBER_STYLES = ("sig", "thousands")
+
+#: How a hover reads a field with one value per layer (:attr:`HoverSpec.layers`,
+#: ``hover_layers=`` on every map). ``"active"``: the mapped layer's value alone.
+#: ``"active+strip"``: plus one muted line of the other layers' values.
+#: ``"all"``: a table, one row per layer. ``"none"``: no layer readout at all --
+#: the value line is dropped too. Anything else is refused by
+#: :func:`check_hover_layers`; until ledger 400 a typo drew ``"active"``.
+HOVER_LAYERS = ("active", "active+strip", "all", "none")
+
+
+def check_hover_layers(layers: Any, *, name: str = "layers") -> str:
+    """Return ``layers`` when it is one of :data:`HOVER_LAYERS`, else raise.
+
+    The ONE check for the spelling, called by :class:`HoverSpec` and by every map
+    taking ``hover_layers=`` at the call, so a typo is refused before anything is
+    drawn rather than drawing the active-layer hover in its place.
+
+    Parameters
+    ----------
+    layers : str
+        The spelling to check. Compared exactly: ``"All"`` is refused.
+    name : str, optional
+        The argument name the error message uses. Default ``"layers"``.
+
+    Raises
+    ------
+    ValueError
+        When ``layers`` is not one of :data:`HOVER_LAYERS`, naming them.
+    """
+
+    if not isinstance(layers, str) or layers not in HOVER_LAYERS:
+        raise ValueError(
+            f"{name}={layers!r} is not a hover layer mode; use one of "
+            f"{', '.join(repr(mode) for mode in HOVER_LAYERS)}."
+        )
+    return layers
 
 
 def format_number(
@@ -166,7 +202,8 @@ class HoverContext:
     ``{"head": [layer0, layer1, ...]}``) for :class:`LayerTable`. ``top`` and
     ``botm`` (per-layer arrays) drive the surfaces column. Scalars like
     ``period``/``date`` render as static footer text; list-valued footer sources
-    (``area``, ``cells``) become per-cell customdata.
+    (``area``, ``cells``) become per-cell customdata. ``length_unit`` is the
+    model's length unit, which the footer writes the area in, squared.
     """
 
     ncpl: int
@@ -181,6 +218,9 @@ class HoverContext:
     step: int | None = None
     date: str | None = None
     model_name: str | None = None
+    #: The model's length unit abbreviation (``"ft"``, ``"m"``, ``"cm"``), which
+    #: the footer's ``area`` is written in squared; ``None`` writes no unit.
+    length_unit: str | None = None
 
     @property
     def nlay(self) -> int:
@@ -433,19 +473,22 @@ class HoverSpec:
         ``"cell"`` (default) appends ``cell <id>`` to the header from the
         context's ``cells``, when it carries them. Any other value, ``None``
         included, omits it.
-    layers : str, optional
-        How a per-layer ``primary`` shows its layers: ``"active"`` (default) the
-        active layer only; ``"active+strip"`` adds one muted line with the other
-        layers' values; ``"all"`` adds a table with one row per layer, the active
-        row accented. Not validated: any other string (``"none"`` included)
-        behaves as ``"active"``. No effect on a flat ``primary``.
+    layers : {'active', 'active+strip', 'all', 'none'}, optional
+        How a per-layer ``primary`` shows its layers (:data:`HOVER_LAYERS`):
+        ``"active"`` (default) the active layer's value only; ``"active+strip"``
+        adds one muted line with the other layers' values; ``"all"`` adds a table
+        with one row per layer, the active row accented; ``"none"`` shows no
+        layer readout -- the ``Layer N`` value line is dropped too, leaving the
+        header, ``blocks`` and the footer, and ``surfaces`` then draws the
+        elevations alone. Any other value raises ``ValueError`` at construction,
+        naming the four. No effect on a flat ``primary``.
     surfaces : bool or str, optional
         Add the grid's layer elevations from the context's ``top``/``botm``. With
-        a per-layer ``primary`` it forces the layer table (as ``layers="all"``
-        does) and, when the context has ``botm``, gives it a bottom column (plus a
+        a per-layer ``primary`` (and ``layers`` other than ``"none"``) it forces
+        the layer table (as ``layers="all"`` does) and, when the context has ``botm``, gives it a bottom column (plus a
         ``Top`` row when it also has ``top``); then, when ``primary`` is
         ``"head"``, a head below its cell bottom gets a dagger. With a flat or
-        missing ``primary`` it appends an elevations-only table AFTER ``blocks``,
+        missing ``primary``, or ``layers="none"``, it appends an elevations-only table AFTER ``blocks``,
         drawn only when the context has ``botm``. Default ``False``. Read by
         truthiness: a string has no meaning of its own, and any non-empty one
         turns it on as ``True`` does.
@@ -458,8 +501,9 @@ class HoverSpec:
         What the muted last line shows, joined by a minus sign. Recognized keys:
         ``"period"`` (``Period N``), ``"step"`` (``step N``), ``"date"``,
         ``"model"`` (the context's ``model_name``) and ``"area"`` (each cell's area,
-        written ``cell <area> ft²``, at ``max(precision, 5)`` significant
-        digits). The scalar items come first in the order given, then the area.
+        written ``cell <area> <unit>²`` in the context's ``length_unit`` --
+        ``ft²``, ``m²``, ``cm²`` -- or ``cell <area>`` with no unit when the
+        context has none, at ``max(precision, 5)`` significant digits). The scalar items come first in the order given, then the area.
         A key the context has no value for, and any unrecognized key, is
         silently dropped. Default ``("period", "date")``; ``()`` for no footer.
     precision : int, optional
@@ -499,6 +543,11 @@ class HoverSpec:
     style: HoverStyle = field(default_factory=HoverStyle)
     #: Per-field number style (:data:`NUMBER_STYLES`); unnamed fields are ``"sig"``.
     formats: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Refuse a ``layers`` spelling that is not one of :data:`HOVER_LAYERS`."""
+
+        check_hover_layers(self.layers)
 
     def unit(self, name: str) -> str | None:
         """The display unit configured for field ``name`` (or None).
@@ -576,7 +625,8 @@ class HoverSpec:
         When ``layers="all"`` (or surfaces are requested) and the primary field has
         per-layer data, a :class:`LayerTable` is synthesized AHEAD of the user's
         explicit ``blocks``: it is the primary value read across the layers, so it
-        belongs against the value it elaborates.
+        belongs against the value it elaborates. ``layers="none"`` reads no layer
+        of it, so surfaces then take the elevations-only table below.
 
         A surfaces-ONLY table goes LAST instead. It carries no reading of the
         mapped field -- it is the grid's layer frame, context of the same kind as
@@ -587,10 +637,10 @@ class HoverSpec:
 
         blocks: list[HoverBlock] = []
         primary = self.primary
-        want_layers = primary in ctx.layer_fields and self.layers in ("active+strip", "all")
         want_surfaces = bool(self.surfaces)
         surfaces_only = None
-        if primary in ctx.layer_fields and (self.layers == "all" or want_surfaces):
+        reads_layers = primary in ctx.layer_fields and self.layers != "none"
+        if reads_layers and (self.layers == "all" or want_surfaces):
             blocks.append(
                 # the head-below-bottom dagger is head physics: on only for heads,
                 # meaningless for concentration/temperature.
@@ -650,7 +700,11 @@ class HoverSpec:
             asm.value([str(c) for c in ctx.cells])
         asm.text("<br>")
 
-        if self.primary and ctx.has(self.primary):
+        # `layers="none"` is NO layer readout: a per-layer primary's value line
+        # IS its active-layer reading, so it goes too (ledger 400: "none" drew
+        # exactly what "active" drew).
+        hides_primary = self.layers == "none" and self.primary in ctx.layer_fields
+        if self.primary and ctx.has(self.primary) and not hides_primary:
             unit = self.unit(self.primary)
             primary_vals = ctx.formatted(
                 self.primary, precision=self.precision, unit=unit,
@@ -693,7 +747,10 @@ class HoverSpec:
             elif key == "date" and ctx.date is not None:
                 deferred_static.append(str(ctx.date))
             elif key == "area" and ctx.area is not None:
-                ref = asm.footer_ref([format_number(a, precision=max(self.precision, 5)) for a in ctx.area])
+                ref = asm.footer_ref(
+                    [format_number(a, precision=max(self.precision, 5)) for a in ctx.area],
+                    length_unit=ctx.length_unit,
+                )
                 pieces.append(("area", ref))
             elif key == "model" and ctx.model_name is not None:
                 deferred_static.append(str(ctx.model_name))
@@ -791,10 +848,15 @@ class _HoverAssembler:
             joined = f"{NBSP}{MINUS}{NBSP}".join(pieces)
             self._parts.append(f'<span style="color:{spec.style.muted};font-size:10.5px">{joined}</span><br>')
 
-    def footer_ref(self, values: Sequence[Any]) -> str:
-        """Register a per-cell footer column (e.g. cell area) as ``cell <ref> ft²``."""
+    def footer_ref(self, values: Sequence[Any], *, length_unit: str | None = None) -> str:
+        """Register a per-cell area column as ``cell <ref> <length_unit>²``.
 
-        return "cell " + self._register(values) + " ft²"
+        The unit is the model's own, read rather than assumed (it was always
+        ``ft²``, on a model in metres too); with none, the area carries no unit.
+        """
+
+        ref = "cell " + self._register(values)
+        return f"{ref} {length_unit}²" if length_unit else ref
 
     def footer_line(self, joined: str) -> None:
         """Append the assembled footer text as a small muted span (no line break)."""

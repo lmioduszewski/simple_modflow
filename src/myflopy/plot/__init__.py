@@ -438,7 +438,16 @@ def map(      # noqa: A001 - the verb IS `map`
         Replace the sectioned hover outright. See
         :mod:`myflopy.modflow.utils.datatypes.hover`.
     hover_layers : {'active', 'active+strip', 'all', 'none'}, optional
-        How the per-layer profile renders in the hover.
+        How the hover reads a field with one value per layer (heads,
+        concentration, temperature, transmissivity): ``'active'`` the mapped
+        layer's value alone; ``'active+strip'`` adds one line with the other
+        layers' values; ``'all'`` a table with one row per layer, the mapped one
+        accented; ``'none'`` no layer readout -- the value line goes too, leaving
+        the title, ``hover_fields`` and the footer (with ``hover_surfaces``, the
+        elevations alone). Default ``None`` keeps the map's own default
+        (``'active+strip'`` on those fields). Any other value raises
+        ``ValueError`` at the call, naming the four. No effect on a field with
+        one value per cell, nor on the legacy ``custom_hover``.
     hover_surfaces : bool, optional
         Add the model-top / layer-bottom table to the sectioned hover.
     hover_fields : sequence of str, optional
@@ -1709,7 +1718,16 @@ class ModelPlots:
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
         hover_layers : {'active', 'active+strip', 'all', 'none'}, optional
-            How the per-layer profile renders in the hover.
+            How the hover reads a field with one value per layer (heads,
+            concentration, temperature, transmissivity): ``'active'`` the mapped
+            layer's value alone; ``'active+strip'`` adds one line with the other
+            layers' values; ``'all'`` a table with one row per layer, the mapped one
+            accented; ``'none'`` no layer readout -- the value line goes too, leaving
+            the title, ``hover_fields`` and the footer (with ``hover_surfaces``, the
+            elevations alone). Default ``None`` keeps the map's own default
+            (``'active+strip'`` on those fields). Any other value raises
+            ``ValueError`` at the call, naming the four. No effect on a field with
+            one value per cell, nor on the legacy ``custom_hover``.
         hover_surfaces : bool, optional
             Add the model-top / layer-bottom table to the sectioned hover.
         hover_fields : sequence of str, optional

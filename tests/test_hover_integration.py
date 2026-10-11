@@ -355,3 +355,148 @@ def test_the_sibling_sits_with_the_value_even_when_elevations_are_shown(canonica
     head = canonical_run.hds.map(show_layer_elevs=True).get_choropleth().hovertemplate
     assert head.index("Top") < head.index("Period") if "Period" in head else True
     assert "bot" in head
+
+
+# ---------------------------------------------------------------------------
+# `hover_layers` at every scope, and the footer's area unit (ledgers 400,
+# 401). Read off the RENDERED trace -- its hovertemplate and customdata -- of
+# real maps, not a hand-built context.
+# ---------------------------------------------------------------------------
+
+
+def _head_map_traces(canonical_run, scope, **kwargs):
+    """The choropleth traces one scope draws for a head map."""
+
+    from myflopy import plot
+
+    if scope == "free":
+        return [plot.map(canonical_run, layer=1, **kwargs).get_choropleth()]
+    if scope == "bound":
+        return [canonical_run.plot.map(layer=1, **kwargs).get_choropleth()]
+    if scope == "noun":
+        return [canonical_run.hds.map(layer=1, **kwargs).get_choropleth()]
+    figure = canonical_run.hds.mosaic(kind="map", by="layer", **kwargs)
+    return [t for t in figure.data if getattr(t, "type", "") == "choroplethmap"]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("scope", ["free", "bound", "noun", "mosaic"])
+def test_hover_layers_none_shows_no_layer_readout_at_every_scope(canonical_run, scope):
+    """``'none'`` drew exactly the ``'active'`` hover (ledger 400). Now the
+    ``Layer N`` value line goes and nothing else is drawn for the layers."""
+
+    active = _head_map_traces(canonical_run, scope, hover_layers="active")
+    none = _head_map_traces(canonical_run, scope, hover_layers="none")
+    assert len(active) == len(none) >= 1
+    for with_layers, without in zip(active, none, strict=True):
+        assert "Layer " in with_layers.hovertemplate
+        assert "Layer " not in without.hovertemplate
+        assert "L1" not in without.hovertemplate and "L2" not in without.hovertemplate
+        assert "Head" in without.hovertemplate and "Period" in without.hovertemplate
+        assert len(without.customdata[0]) == len(with_layers.customdata[0]) - 1
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("scope", ["free", "bound", "noun", "mosaic"])
+def test_a_hover_layers_typo_is_refused_at_the_call_at_every_scope(canonical_run, scope):
+    """``'al'`` drew the active-layer hover in silence (ledger 400)."""
+
+    with pytest.raises(ValueError, match=r"hover_layers='al'.*'active', 'active\+strip'"):
+        _head_map_traces(canonical_run, scope, hover_layers="al")
+
+
+@pytest.mark.slow
+def test_a_typo_is_refused_where_the_hover_would_have_ignored_it(canonical_run):
+    """A map with no per-layer field, and a noun given its own ``hover=``, never
+    read ``hover_layers`` -- a typo there is still a typo."""
+
+    from myflopy import plot
+    from myflopy.modflow.utils.datatypes.hover import head_hover
+
+    with pytest.raises(ValueError, match="hover_layers='al'"):
+        plot.map(canonical_run, type="ks", hover_layers="al")
+    with pytest.raises(ValueError, match="hover_layers='al'"):
+        canonical_run.hds.map(hover=head_hover(), hover_layers="al")
+
+
+@pytest.mark.slow
+def test_the_lake_footer_writes_the_cell_area_in_feet_on_a_model_in_feet(canonical_run):
+    from myflopy.modflow.mf6.hydraulics import unit_labels
+
+    assert unit_labels(canonical_run)[0] == "ft"
+    trace = canonical_run.lak.results.map(field="q").get_choropleth()
+    footer = trace.hovertemplate.rsplit("<br>", 1)[-1]
+    assert footer.count("cell %{customdata[") == 1 and "]} ft²" in footer
+
+
+@pytest.fixture(scope="module")
+def metres_run(tmp_path_factory):
+    """A real one-layer MF6 run declared in METERS (ledger 401)."""
+
+    import warnings
+
+    import geopandas as gpd
+    import numpy as np
+    from shapely.geometry import box
+
+    import myflopy as mf
+
+    root = tmp_path_factory.mktemp("metres")
+    boundary = root / "boundary.gpkg"
+    x0, y0 = 500_000.0, 5_000_000.0
+    gpd.GeoDataFrame(
+        {"n": ["d"]}, geometry=[box(x0, y0, x0 + 600, y0 + 600)], crs=32610
+    ).to_file(boundary)
+    vor = mf.GridSpec.voronoi(
+        boundary=mf.GeoPackageSourceSpec(path=boundary), max_area=12_000.0
+    ).resolve(workspace=root / "grid")
+    edges = vor.gdf_vorPolys.geometry.bounds
+    chd = [[(0, int(c)), 99.0] for c in np.flatnonzero(edges.minx <= x0 + 1e-6)]
+    chd += [[(0, int(c)), 101.0] for c in np.flatnonzero(edges.maxx >= x0 + 600 - 1e-6)]
+    props = vor.get_disv_gridprops()
+    model = mf.gwf("m", grid=vor, packages=[
+        mf.disv(nlay=1, ncpl=props["ncpl"], nvert=len(props["vertices"]),
+                vertices=props["vertices"], cell2d=props["cell2d"],
+                top=110.0, botm=[[50.0] * props["ncpl"]], length_units="meters"),
+        mf.npf(k=10.0), mf.ic(strt=100.0),
+        mf.chd(stress_period_data={0: chd}),
+        mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
+    ])
+    simulation = mf.simulation(model, name="s", packages=[
+        mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)]), mf.ims(models=["m"])])
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", "Run 'r' built but its frozen snapshot", UserWarning)
+        run = mf.Project(root / "p", name="p").run("r", simulation)
+    assert run.success, "\n".join(run.report[-20:])
+    return run.model()
+
+
+@pytest.mark.slow
+def test_the_footer_writes_the_cell_area_in_square_metres_on_a_model_in_metres(metres_run):
+    """It read ``ft²`` on every model (ledger 401)."""
+
+    from myflopy.modflow.mf6.hydraulics import unit_labels
+    from myflopy.modflow.utils.datatypes.hover import HoverSpec
+
+    assert unit_labels(metres_run)[0] == "m"
+    spec = HoverSpec(primary="head", footer=("area",))
+    for picture in (metres_run.hds.map(hover=spec), metres_run.plot.map(hover=spec)):
+        trace = picture.get_choropleth()
+        footer = trace.hovertemplate.rsplit("<br>", 1)[-1]
+        assert "]} m²" in footer and "ft²" not in footer
+        column = int(footer.split("cell %{customdata[")[1].split("]")[0])
+        areas = [float(row[column]) for row in trace.customdata]
+        assert sum(areas) == pytest.approx(600.0 * 600.0, rel=1e-4)
+
+
+@pytest.mark.slow
+def test_a_model_declaring_no_length_unit_writes_the_area_with_none(sentinel_run):
+    """No unit is read, so none is written -- never a guessed ``ft²``."""
+
+    from myflopy.modflow.mf6.hydraulics import unit_labels
+    from myflopy.modflow.utils.datatypes.hover import HoverSpec
+
+    assert unit_labels(sentinel_run)[0] is None
+    trace = sentinel_run.hds.map(hover=HoverSpec(primary="head", footer=("area",))).get_choropleth()
+    footer = trace.hovertemplate.rsplit("<br>", 1)[-1]
+    assert footer.count("cell %{customdata[") == 1 and "²" not in footer

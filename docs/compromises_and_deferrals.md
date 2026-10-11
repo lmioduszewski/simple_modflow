@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 399 entries (404 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 401 entries (406 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 401 | A hover footer writes a cell's area in the model's own length unit squared, and with no unit when the model... | 2026-10-11 |
+| 400 | `hover_layers="none"` is no layer readout, and a spelling outside the four is refused at the call, at every... | 2026-10-11 |
 | 399 | A model one row or one column wide splits: grid neighbours are computed only for a lake or mover group to k... | 2026-10-11 |
 | 398 | A split simulation runs only from its own workspace, the source simulation's directory is never a split wor... | 2026-10-11 |
 | 397 | A PRT simulation's TDIS names the flow model's time unit, or none when the flow model names none | 2026-10-11 |
@@ -15372,6 +15374,12 @@ same day, which is the useful part of the result.
       397). ~~`ParallelModelWorkflow.run` documented as running the SOURCE model in
       its own directory on `write=False` and as returning normally from a failed run~~ --
       refused and raised, entries rewritten (ledger 398).
+      ~~`export_head_map_slider_html`/`export_head_layer_mosaic_slider_html`/
+      `export_cross_section_slider_html` documented as cutting a too-long `labels` short
+      and raising `IndexError` on a short one; `HoverSpec.layers` as "not validated", with
+      `'none'` drawing `'active'`; the hover footer's area as always `ft²`~~ -- fixed
+      2026-10-11, entries rewritten: one label-count check names both counts on all four
+      exporters, and ledgers 400 and 401.
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17802,3 +17810,36 @@ same day, which is the useful part of the result.
       `test_a_lake_on_a_one_row_grid_is_kept_in_one_partition`,
       `test_the_one_wide_neighbour_map_is_flopys_slow_map` and both cases of
       `test_a_one_wide_model_with_no_lake_or_mover_splits_and_runs` (real MF6 runs).
+
+400. **`hover_layers="none"` is no layer readout, and a spelling outside the four is refused at the call, at every scope (2026-10-11).**
+     `plot.map` documented `{'active', 'active+strip', 'all', 'none'}`, but `HoverSpec`
+     branched only on `'all'` and `'active+strip'`, so `'none'` -- and any typo, `'al'` --
+     drew the `'active'` hover. Judgment call, on what `'none'` means: the `Layer N` value
+     line IS the active layer's reading, so it goes too; the title, cell id, `hover_fields`
+     blocks and footer stay, and `hover_surfaces` then draws the elevations-only table
+     (never a head column). Considered and not taken: removing `'none'` -- it can mean
+     something distinct, and a hover of cell id and area is a real use on a busy mosaic.
+     No effect on a field with one value per cell, as for the other three.
+     One check, `hover.check_hover_layers` (`HOVER_LAYERS`), run by `HoverSpec.__post_init__`,
+     by `Choro.__init__` (so a map whose hover never reads it -- `type="ks"`, the legacy
+     `custom_hover` -- still refuses a typo) and by the head/conc/temp nouns, also beside
+     `hover=`, which then ignores it. The noun's default moved from `"active+strip"` to
+     `None` (resolving to `"active+strip"`), so the spliced `plot.map` entry is true there.
+     Revert check: `test_hover_layers_none_shows_no_layer_readout_at_every_scope[*]` and
+     `test_a_hover_layers_typo_is_refused_at_the_call_at_every_scope[*]` (real maps of the
+     canonical run).
+
+401. **A hover footer writes a cell's area in the model's own length unit squared, and with no unit when the model declares none (2026-10-11).**
+     It wrote `ft²` on every model. `HoverContext.length_unit` carries the unit, which
+     `Choro` reads from the model's DIS through `hydraulics.unit_labels` -- the reader the
+     transmissivity hover already uses -- and `footer_ref` writes `cell <area> m²`.
+     Judgment call: a model whose DIS declares no `LENGTH_UNITS` (and a bare grid) writes
+     the area with NO unit rather than `ft²` -- read, never assumed (ledger 308's rule);
+     this changes the default footer of every such model. Not consulted: the grid's CRS
+     axis unit, which can disagree with LENGTH_UNITS; the area is in grid units either way.
+     Found and NOT fixed: `lak_hover`/`sfr_hover` still hardcode `ft`, `ft²`, `ft³/d`,
+     `ft²/d` on their FIELDS (stage, flow area, q), so a LAK map of a model in metres
+     writes `m²` in its footer beside `ft²` on its flow area.
+     Revert check: `test_the_footer_writes_the_cell_area_in_square_metres_on_a_model_in_metres`
+     (a real MF6 run declared in METERS) and
+     `test_a_model_declaring_no_length_unit_writes_the_area_with_none`.

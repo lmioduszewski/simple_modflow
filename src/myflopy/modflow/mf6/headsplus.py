@@ -42,7 +42,13 @@ from myflopy.modflow.mf6.package_plotting import (
 )
 from myflopy.modflow.mf6.period_end import at_period_end, last_saved_step, period_ends
 from myflopy.modflow.utils.datatypes.datalists import convert_nested_to_int
-from myflopy.modflow.utils.datatypes.hover import HoverSpec, conc_hover, head_hover, temp_hover
+from myflopy.modflow.utils.datatypes.hover import (
+    HoverSpec,
+    check_hover_layers,
+    conc_hover,
+    head_hover,
+    temp_hover,
+)
 
 idxx = pd.IndexSlice  # for easy index slicing in a MultiIndex DataFrame
 
@@ -611,7 +617,7 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         extent=None,
         # -- hover -----------------------------------------------------------
         hover=None,
-        hover_layers: str = "active+strip",
+        hover_layers: str | None = None,
         hover_surfaces: bool = False,
         show_layer_elevs: bool | None = None,
         show_mounding: bool = False,
@@ -630,7 +636,8 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         ``hover`` accepts a :class:`~myflopy.modflow.utils.datatypes.hover.HoverSpec`
         for full control of the sectioned, styled hover; otherwise this field's
         default spec is used. ``hover_layers`` (``"active"`` | ``"active+strip"`` |
-        ``"all"``) sets how the vertical profile shows, and ``hover_surfaces=True``
+        ``"all"`` | ``"none"``; anything else raises, even beside ``hover=``) sets
+        how the vertical profile shows, and ``hover_surfaces=True``
         adds the model-top/layer-bottom column (merged on ``"all"``).
 
         Parameters
@@ -755,7 +762,16 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             Replace the sectioned hover outright. See
             :mod:`myflopy.modflow.utils.datatypes.hover`.
         hover_layers : {'active', 'active+strip', 'all', 'none'}, optional
-            How the per-layer profile renders in the hover.
+            How the hover reads a field with one value per layer (heads,
+            concentration, temperature, transmissivity): ``'active'`` the mapped
+            layer's value alone; ``'active+strip'`` adds one line with the other
+            layers' values; ``'all'`` a table with one row per layer, the mapped one
+            accented; ``'none'`` no layer readout -- the value line goes too, leaving
+            the title, ``hover_fields`` and the footer (with ``hover_surfaces``, the
+            elevations alone). Default ``None`` keeps the map's own default
+            (``'active+strip'`` on those fields). Any other value raises
+            ``ValueError`` at the call, naming the four. No effect on a field with
+            one value per cell, nor on the legacy ``custom_hover``.
         hover_surfaces : bool, optional
             Add the model-top / layer-bottom table to the sectioned hover.
         show_layer_elevs : bool, optional
@@ -809,9 +825,15 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
         if self.model is None:
             raise ValueError(f"{type(self).__name__}.map() requires a parent model.")
         refuse_noun_parameters(f"model.{self._choro_type}", self._choro_type, trace_kwargs)
+        # Checked even beside `hover=`, which then ignores it: a typo must not
+        # pass in silence on one spelling and raise on the other (ledger 400).
+        layers = (
+            "active+strip" if hover_layers is None
+            else check_hover_layers(hover_layers, name="hover_layers")
+        )
         hover = resolve_noun_hover(hover, trace_kwargs)
         if hover is None:
-            hover = self._default_hover(layers=hover_layers, surfaces=hover_surfaces)
+            hover = self._default_hover(layers=layers, surfaces=hover_surfaces)
         choro = self.model.plot.map(
             per=per,
             kstpkper=kstpkper,

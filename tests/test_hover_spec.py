@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from myflopy.modflow.utils.datatypes.hover import (
+    NBSP,
     HoverContext,
     HoverSpec,
     HoverStyle,
@@ -185,11 +186,74 @@ def test_with_style_overrides_accent_and_reaches_hoverlabel():
 
 
 def test_footer_area_and_period_render():
-    ctx = HoverContext(ncpl=1, payload={"head": [9.0]}, cells=[1], period=2, area=[9812.0])
+    ctx = HoverContext(
+        ncpl=1, payload={"head": [9.0]}, cells=[1], period=2, area=[9812.0], length_unit="ft"
+    )
     spec = HoverSpec(primary="head", title="Head", footer=("period", "area"))
     customdata, template, _ = _render(spec, ctx)
     assert "Period 2" in template
     assert "ft²" in template  # area unit in footer
+
+
+@pytest.mark.parametrize("unit", ["ft", "m", "cm", None])
+def test_the_footer_writes_the_area_in_the_contexts_length_unit_squared(unit):
+    """It was ``ft²`` on every model, a model in metres too (ledger 401); with
+    no unit known it writes none rather than guessing one."""
+
+    ctx = HoverContext(ncpl=1, payload={"head": [9.0]}, cells=[1], area=[9812.0], length_unit=unit)
+    _, template, _ = _render(HoverSpec(primary="head", footer=("area",)), ctx)
+    footer = template.rsplit("<br>", 1)[-1]
+    assert footer.count("cell %{customdata[") == 1
+    if unit is None:
+        assert "²" not in footer
+    else:
+        assert f"]}} {unit}²" in footer
+        assert all(f" {other}²" not in footer for other in {"ft", "m", "cm"} - {unit})
+
+
+# --- layers: the four spellings, and "none" ----------------------------------------
+@pytest.mark.parametrize("spelling", ["al", "active_strip", "None", "", None, "ALL"])
+def test_a_layers_spelling_outside_the_four_is_refused_naming_them(spelling):
+    """A typo drew the active-layer hover in silence (ledger 400)."""
+
+    from myflopy.modflow.utils.datatypes.hover import HOVER_LAYERS
+
+    assert HOVER_LAYERS == ("active", "active+strip", "all", "none")
+    with pytest.raises(ValueError, match="'active', 'active\\+strip', 'all', 'none'"):
+        HoverSpec(primary="head", layers=spelling)
+    with pytest.raises(ValueError, match="'active', 'active\\+strip', 'all', 'none'"):
+        head_hover(layers=spelling)
+
+
+def test_layers_none_shows_no_layer_readout():
+    """``"none"`` rendered exactly as ``"active"`` (ledger 400): now the
+    active-layer value line goes, and no strip or table is drawn."""
+
+    ctx = _head_ctx()
+    active_data, active, _ = _render(head_hover(layers="active"), ctx)
+    data, template, _ = _render(head_hover(layers="none"), ctx)
+    assert "Layer 3" in active and "Layer 3" not in template
+    assert "L1" not in template and "L5" not in template
+    assert len(data[0]) == len(active_data[0]) - 1  # the value column is gone
+    assert "Head" in template and "Period 3" in template  # title and footer stay
+    assert "12" not in [str(v).strip() for v in data[0]]  # cell 0's active head, 10 + 2
+
+
+def test_layers_none_with_surfaces_draws_the_elevations_alone():
+    ctx = _head_ctx()
+    data, template, _ = _render(head_hover(layers="none", surfaces=True), ctx)
+    assert "bot" in template and "Top" in template  # the elevations-only table
+    assert "Layer 3" not in template
+    assert f"{NBSP * 4}head" not in template  # no head column beside the bottoms
+    cell0 = [str(v).strip() for v in data[0]]
+    assert "12" not in cell0 and not any("†" in v for v in cell0)  # no head value
+
+
+def test_layers_none_leaves_a_flat_primary_alone():
+    ctx = HoverContext(ncpl=1, payload={"k": [3.0]}, cells=[0])
+    _, none, _ = _render(HoverSpec(primary="k", layers="none"), ctx)
+    _, active, _ = _render(HoverSpec(primary="k", layers="active"), ctx)
+    assert none == active
 
 
 def test_customdata_row_count_matches_cells_and_column_length_validated():
