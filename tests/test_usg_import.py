@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import shapely
 
 flopy = pytest.importorskip("flopy")
 
@@ -995,3 +996,53 @@ def test_read_hfb_is_n_by_3_even_with_no_barrier(tmp_path, barriers):
     nam = _write_usg_model(tmp_path, packages={"HFB6": (16, "tiny.hfb", lines)})
     model = read_usg(nam, gsf=tmp_path / "tiny.gsf", crs="EPSG:2927")
     assert model.hfb.shape == (barriers, 3)
+
+
+# --- one CRS per grid (ledger 368) ------------------------------------
+
+
+def test_to_mf6_crs_relabels_every_frame_the_grid_caches(usg_workspace):
+    """``to_mf6(crs=)`` is a RELABEL, and the grid then reports ONE CRS.
+
+    Assigning only ``grid.crs`` left ``gdf_vorPolys``/``gdf_topbtm`` (built by
+    ``read_usg``) and the lat/lon frames on the old label, and readers split between
+    the two: the GIS export read the frames, the heads/run readers the attribute.
+    """
+
+    model = read_usg(usg_workspace, gsf=usg_workspace.parent / "tiny.gsf", crs="EPSG:2927")
+    grid = model.grid
+    topbtm = grid.gdf_topbtm
+    xy = grid.gdf_vorPolys.geometry.get_coordinates().to_numpy().copy()
+    old_latlon = grid.gdf_latlon.total_bounds.copy()
+
+    model.to_mf6("tiny", start_date_time="2020-01-01", crs="EPSG:2926")
+
+    assert grid.crs == "EPSG:2926"
+    assert grid.gdf_vorPolys.crs == "EPSG:2926"
+    assert grid.gdf_topbtm.crs == "EPSG:2926"
+    assert grid.gdf_topbtm is topbtm, "relabelled in place, so a held reference agrees"
+    assert np.array_equal(grid.gdf_vorPolys.geometry.get_coordinates().to_numpy(), xy), (
+        "a relabel, never a reprojection"
+    )
+    expected = grid.gdf_vorPolys.to_crs("EPSG:4326").total_bounds
+    assert np.allclose(grid.gdf_latlon.total_bounds, expected)
+    assert not np.allclose(grid.gdf_latlon.total_bounds, old_latlon), (
+        "the lat/lon frame is a reprojection, so it must be rebuilt from the new label"
+    )
+    lon, lat = grid.points_to_latlon(np.array([10.0]), np.array([10.0]))
+    assert grid.gdf_latlon.union_all().buffer(1e-9).contains(
+        shapely.Point(lon[0], lat[0])
+    ), "points and cells are placed from the same label"
+
+
+def test_a_grid_pickled_while_crs_was_an_attribute_still_reads_its_crs(usg):
+    """Old pickles carry ``crs`` in ``__dict__``, which the property would shadow."""
+
+    from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+
+    state = {k: v for k, v in usg.grid.__getstate__().items() if k != "_crs"}
+    state["crs"] = "EPSG:2927"
+    old = VoronoiGridPlus.__new__(VoronoiGridPlus)
+    old.__setstate__(state)
+    assert old.crs == usg.grid.crs == "EPSG:2927"
+    assert "crs" not in old.__dict__

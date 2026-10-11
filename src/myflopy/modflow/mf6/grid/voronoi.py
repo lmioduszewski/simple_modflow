@@ -216,7 +216,8 @@ class VoronoiGridPlus(VoronoiGrid):
             location-agnostic model at that CRS's origin on purpose). ``None`` is
             not usable: the constructor reprojects the cells to lat/lon for
             ``grid_centroid``, and geopandas refuses an unreferenced frame
-            (``ValueError``, measured).
+            (``ValueError``, measured). Assigning :attr:`crs` later RELABELS the
+            grid and every frame it caches; it never reprojects.
         rasters : list of pathlib.Path or float, optional
             Surfaces to sample onto the cells the first time :attr:`gdf_topbtm` is
             read, in order: the model top, then one bottom per layer (column labels
@@ -394,9 +395,14 @@ class VoronoiGridPlus(VoronoiGrid):
         """Restore state, leaving dropped caches empty for lazy recomputation.
 
         Never repairs: a pickled grid is the grid something was built on. One saved
-        before ledger 316 has no ``tessellation_report`` and reads ``None``.
+        before ledger 316 has no ``tessellation_report`` and reads ``None``. One saved
+        while :attr:`crs` was a plain attribute carries it under ``"crs"``, which the
+        property would shadow; it is moved to ``"_crs"`` (ledger 368).
         """
 
+        state = dict(state)
+        if "crs" in state:
+            state.setdefault("_crs", state.pop("crs"))
         self.__dict__.update(state)
         for key in self._PICKLE_VOLATILE:
             self.__dict__.setdefault(key, None)
@@ -677,6 +683,43 @@ class VoronoiGridPlus(VoronoiGrid):
         if self._nja is None:
             self.get_disu_connectivity()
         return self._nja
+
+    @property
+    def crs(self):
+        """The CRS the grid's coordinates are in, and the label on every frame it caches.
+
+        Setting it RELABELS, never reprojects: it declares that the vertices already
+        are in that CRS. The cached :attr:`gdf_vorPolys` and :attr:`gdf_topbtm` take
+        the new label in place (the same objects, so a reference held elsewhere agrees
+        too), and the lat/lon frames (:attr:`gdf_latlon`, :attr:`latlon`) and
+        ``grid_centroid``, which are REPROJECTIONS of the cells, are rebuilt from it.
+        Assigning only the attribute left one grid reporting two CRSs -- the grid's
+        own and its frames' -- and the readers split between them (ledger 368).
+        To move the coordinates instead, reproject a frame:
+        ``grid.gdf_vorPolys.to_crs(...)``.
+
+        A bare EPSG code (``2927`` or ``"2927"``) is stored as ``"EPSG:2927"``
+        (:func:`normalize_crs`); anything else as given.
+        """
+        return self.__dict__.get("_crs")
+
+    @crs.setter
+    def crs(self, value):
+        value = normalize_crs(value)
+        changed = "_crs" in self.__dict__ and self.__dict__["_crs"] != value
+        self.__dict__["_crs"] = value
+        if not changed:
+            return
+        for key in ("_gdf_vorPolys", "_gdf_topbtm"):
+            frame = self.__dict__.get(key)
+            if frame is not None and hasattr(frame, "set_crs"):
+                frame.set_crs(value, allow_override=True, inplace=True)
+        # Reprojections of the cells: computed from the OLD label, so they are wrong.
+        self._gdf_latlon = None
+        self._latlon = None
+        if "grid_centroid" in self.__dict__:
+            self.grid_centroid = self.get_grid_centroid()
+        logger.debug("grid relabelled as %s; lat/lon frames rebuilt", value)
 
     @property
     def gdf_vorPolys(self):

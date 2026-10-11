@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 367 entries (372 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 368 entries (373 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 368 | Setting a grid's CRS RELABELS the grid and every frame it caches; it never reprojects | 2026-10-11 |
 | 367 | A USG list-BC period that defined no groundwater record is an EMPTY MODFLOW 6 period, not a missing one | 2026-10-11 |
 | 366 | An SFR network MF6's upstream-fraction check stops on is refused at build, the default diversion placement... | 2026-10-11 |
 | 365 | A per-reach SFR value must be a finite number, or a time-series name where MF6 takes one | 2026-10-11 |
@@ -17144,3 +17145,17 @@ same day, which is the useful part of the result.
      an all-empty package is not a package. `report()` counts the switched-off periods.
      Not changed: `export_gis`'s boundary layers take their cells from the first defined
      period, so a switch-off is still invisible there.
+
+368. **Setting a grid's CRS RELABELS the grid and every frame it caches; it never reprojects (2026-10-11).**
+     `VoronoiGridPlus.crs` was a plain attribute, so `usg.to_mf6(crs="EPSG:2926")` left
+     `gdf_vorPolys`/`gdf_topbtm` (built by `read_usg`) on EPSG:2927 and the lat/lon frames
+     reprojected from 2927, while `points_to_latlon`, the heads and run readers read 2926 --
+     one grid, two CRSs, and the readers split between them. Relabel, not reproject,
+     because that is what `to_mf6`'s and `read_usg`'s `crs=` always documented ("an
+     assertion about its coordinates") and because a grid's vertices carry no CRS of
+     their own to reproject FROM. `crs` is now a property: the setter relabels the two
+     cached frames IN PLACE (the gdf_topbtm getter's identity rule, ledger 196) and drops
+     the lat/lon caches and `grid_centroid`, which are reprojections. A grid pickled with
+     `crs` in `__dict__` is moved to `_crs` on load. NOT closed: `grid.gdf_vorPolys = frame`
+     and `get_gdf_vorPolys(crs=other)` can still install a frame whose label differs from
+     `grid.crs` -- the second documents it as a side effect.

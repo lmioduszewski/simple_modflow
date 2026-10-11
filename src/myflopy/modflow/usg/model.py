@@ -574,12 +574,15 @@ class UsgModel:
             ``<name>.cbc`` and the model the IMS solution claims.
         crs : str, optional
             Coordinate reference system to stamp on the grid, e.g.
-            ``"EPSG:2927"``. It is assigned to ``self.grid.crs`` -- the same grid
-            object the returned spec's ``ModelContext`` holds, so this model's
-            grid changes too -- and nothing is reprojected. Only that attribute
-            moves: ``grid.gdf_vorPolys`` and ``grid.gdf_topbtm``, already built
-            by :func:`read_usg`, keep the CRS they were built with. Default
-            ``None`` leaves the grid's CRS as :func:`read_usg` set it.
+            ``"EPSG:2927"`` -- a RELABEL, saying the ``.gsf`` coordinates already
+            are in that CRS; nothing is reprojected. It is assigned to
+            ``self.grid.crs`` (the same grid object the returned spec's
+            ``ModelContext`` holds, so this model's grid changes too), and the
+            grid's setter carries it to every frame the grid caches:
+            ``grid.gdf_vorPolys`` and ``grid.gdf_topbtm`` take the new label, and
+            the lat/lon frames are rebuilt from it, so the grid reports ONE CRS
+            (ledger 368). Default ``None`` leaves the grid's CRS as
+            :func:`read_usg` set it.
         newton : bool, optional
             ``True``/``False`` forces the Newton formulation on or off in the
             model's ``NEWTONOPTIONS``. Default ``None`` follows the SMS package:
