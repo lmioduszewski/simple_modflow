@@ -1155,7 +1155,11 @@ single number for a bed that varies and `mf.lak` then rejects the cells it misse
   record is in force on it, reuse resolved, e.g. `"0-11,24"`); when the first value
   column moves in time, `<column>_mNN` is model period NN-1, NaN where no record acts.
   A period with NO record in force (`ITMP = 0`, all on CLN nodes) is listed in the
-  manifest entry's `switched_off_periods`. `usg.boundary_frame(ftype)` still has rows
+  manifest entry's `switched_off_periods`, and a feature in force in only SOME of the
+  package's periods (its cell added or dropped between them) is counted as
+  `features_in_some_periods`, with a note: a layer read with `nper=` applies every
+  feature in every period, so check that count before rebuilding from it.
+  `usg.boundary_frame(ftype)` still has rows
   only for periods that define records; its `attrs` (`defined_periods`,
   `empty_periods`, `reused_periods`) tell a switch-off from a reuse.
 

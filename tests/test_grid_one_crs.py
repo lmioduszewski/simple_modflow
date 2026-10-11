@@ -90,3 +90,39 @@ def test_a_heads_reader_follows_a_relabel_of_its_grid(canonical_run):
     assert heads.crs == "EPSG:2926"
     with pytest.raises(AttributeError, match=r"grid.crs = 'EPSG:2855'"):
         heads.crs = "EPSG:2855"
+
+
+@pytest.mark.parametrize("builder", ["recharge", "ghb"])
+def test_a_legacy_builders_own_cell_sets_follow_a_relabel_of_its_grid(tmp_path, builder):
+    """A subclass's cached cells followed the OLD label beside a refreshed source.
+
+    ``RechargeFromShp.cell_ids`` and ``GHBFromVector.cell_ids`` cache the cells the
+    source covers; the base class dropped only its own caches on a relabel, so the
+    object answered ``intersections`` on the new label and ``cell_ids`` on the old
+    one; and ``GHBFromVector.line_ghb`` was built with a COPY of the grid's CRS
+    (Review of U6, ledger 431).
+    """
+
+    from myflopy.modflow.mf6.ghb import GHBFromVector
+    from myflopy.modflow.mf6.recharge import RechargeFromShp
+
+    grid = square_grid()
+    source = tmp_path / "zone.gpkg"
+    gpd.GeoDataFrame(
+        {"uid": ["z"], "rate": [1.0]}, geometry=[grid.gdf_vorPolys.geometry.iloc[5]],
+        crs="EPSG:2927",
+    ).to_file(source)
+    if builder == "recharge":
+        boundary = RechargeFromShp(vor=grid, shp_gpkg=source, uid="uid", rch_fields=["rate"])
+    else:
+        boundary = GHBFromVector(
+            vor=grid, shp_gpkg=source, line_shp=source, uid="uid", crs=None, fields=["rate"]
+        )
+    assert 5 in boundary.cell_ids["z"]
+    line = boundary.line_ghb if builder == "ghb" else None
+
+    grid.crs = "EPSG:2926"
+    if line is not None:  # the line source it builds follows the grid too
+        assert line.crs == "EPSG:2926"
+    assert boundary.intersections.loc["z"] == []
+    assert boundary.cell_ids == {"z": []}

@@ -112,4 +112,18 @@ def test_a_package_that_never_moves_writes_no_cycle_columns(tmp_path):
     manifest = ExportManifest(directory=tmp_path, crs=CRS, nper=NPER)
     _export_boundaries(model, tmp_path, CRS, manifest)
     assert manifest.layers["boundaries.gpkg:drn"]["switched_off_periods"] == []
+    assert manifest.layers["boundaries.gpkg:drn"]["features_in_some_periods"] == 0
     assert not manifest.notes
+
+
+def test_the_manifest_counts_features_in_force_in_only_some_periods(tmp_path):
+    """Cell 2 acts in period 1 alone of the package's 0-1: a layer read with nper= would
+    apply it in period 0 too, and only its own row said otherwise (Review of U6, ledger
+    430). The two drains on cells 0 and 1 act in every period the package does."""
+
+    manifest = ExportManifest(directory=tmp_path, crs=CRS, nper=NPER)
+    _export_boundaries(_drain_model(), tmp_path, CRS, manifest)
+    assert manifest.layers["boundaries.gpkg:drn"]["features_in_some_periods"] == 1
+    assert manifest.layers["boundaries.gpkg:drn_lines"]["features_in_some_periods"] == 1
+    assert any("1 of 3 feature(s) are in force in only some of the periods the package "
+               "is (0-1)" in note for note in manifest.notes)

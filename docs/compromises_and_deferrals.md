@@ -18430,7 +18430,9 @@ same day, which is the useful part of the result.
      `switched_off_periods` and a note name the periods with no record in force;
      `boundary_frame()` keeps rows only for periods that define records, and says the
      rest in `attrs`. Not done: a `.gpkg` reader that applies a feature only in its
-     `periods` -- `nper=` still applies every feature in every period. Measured on Ten
+     `periods` -- `nper=` still applies every feature in every period, so the manifest
+     also counts the features in force in only SOME of the package's periods
+     (`features_in_some_periods`, with a note; added in review). Measured on Ten
      Trails (72 periods): DRN 205 / GHB 88 / CHD 69 rows, every value, geometry and cycle
      column identical to before, two columns added -- its BC cell sets never change.
      Reproducer: `docs/reproducers/usg_boundary_periods.py`.
@@ -18448,7 +18450,9 @@ same day, which is the useful part of the result.
      the grid's own CRS. A reader's `crs` is a property of its grid and setting it is
      refused (`AttributeError` naming `grid.crs =`). `Boundaries.crs` is the `crs=` given,
      else the grid's, live, and a relabel drops its lazily cached source frame and cell
-     sets (they were reprojected to the OLD label); a `boundary_dict` a builder already
+     sets (they were reprojected to the OLD label) -- a subclass's too, named in
+     `_CRS_DERIVED` (`RechargeFromShp`/`GHBFromVector` `cell_ids`; review); a
+     `boundary_dict` a builder already
      assembled is NOT dropped -- it is a build's output, rebuilt by building again. An
      explicit `Boundaries(crs=)` other than the grid's is still accepted and reprojects
      the source away from the grid's frame -- not touched here.

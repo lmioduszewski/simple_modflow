@@ -378,7 +378,10 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
     which NO record of the package is in force -- ``ITMP = 0``, all records on CLN
     nodes, or before the first definition -- go into both manifest entries as
     ``switched_off_periods``, with a note, because a switch-off has no row of its own
-    (ledger 430).
+    (ledger 430). Both entries count, as ``features_in_some_periods``, the
+    features in force in only some of the periods the package is -- a cell added or
+    dropped between periods -- with a note too, since a layer read with ``nper=``
+    applies every feature in every period.
 
     Why the split is needed at all:
     ``GeoPackageSource._boundary_data`` writes a feature's values to *every* cell the
@@ -429,6 +432,20 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
                 "defines records. Each feature's 'periods' column leaves them out; a "
                 "layer read with nper= applies its features in every period."
             )
+        # A feature the package's records name in only SOME of its periods is the same
+        # trap without a switch-off: read with nper= it acts in all of them, and only
+        # its own 'periods' column said otherwise (Review of U6, ledger 430).
+        everywhere = _period_ranges(
+            [p for p in range(int(model.nper)) if p not in set(switched_off)]
+        )
+        partial = int((points["periods"] != everywhere).sum())
+        if partial:
+            manifest.notes.append(
+                f"{ftype}: {partial} of {len(points)} feature(s) are in force in only some "
+                f"of the periods the package is ({everywhere or 'none'}) -- their cell is "
+                "added or dropped between periods. A layer read with nper= applies them in "
+                "every period; each one's 'periods' column names where it acts."
+            )
         points.to_file(path, layer=package, driver="GPKG")
         manifest.layers[f"boundaries.gpkg:{package}"] = {
             "features": int(len(points)),
@@ -438,6 +455,7 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
             "layer_base": 1,
             "period_base": 0,
             "switched_off_periods": switched_off,
+            "features_in_some_periods": partial,
             "geometry": "Point",
         }
         lines.to_file(path, layer=f"{package}_lines", driver="GPKG")
@@ -467,6 +485,7 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
             "features": int(len(lines)),
             "cells_alone_on_a_chain": alone,
             "switched_off_periods": switched_off,
+            "features_in_some_periods": partial,
             "what": f"{ftype} as lines -- BUILD FROM THIS, continuous cell coverage",
             "consumed_by": (
                 f"mf.{package}.gpkg(path, layer='{package}_lines', context=ctx, nper=nper, "

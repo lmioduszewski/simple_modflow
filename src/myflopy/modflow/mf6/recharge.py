@@ -137,6 +137,9 @@ class RCHBuilder(_ArealBuilder):
 class RechargeFromShp(Boundaries):
     """Build recharge stress-period data from polygon GIS inputs."""
 
+    # Cell sets and areas from the source frame: a relabelled grid drops them with it.
+    _CRS_DERIVED = (*Boundaries._CRS_DERIVED, "_cell_ids", "_rch_fields", "_recharges")
+
     def __init__(
             self,
             model: SimulationBase = None,
@@ -211,6 +214,7 @@ class RechargeFromShp(Boundaries):
     def cell_ids(self):
         """gets cell ids for each recharge polygon in the shapefile as a dict. Keys are
         unique ids (uids)"""
+        self._follow_the_grid_crs()
         if self._cell_ids is None:
             cell_ids = self.intersections_no_duplicates
             cell_ids = cell_ids['no_dup'].to_dict()

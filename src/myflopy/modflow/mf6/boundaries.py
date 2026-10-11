@@ -104,6 +104,21 @@ class Boundaries:
         self.limit_to_k33_by = 0.1
         self.verbose = False
 
+    #: The lazy caches computed in :attr:`crs`: the source frame and every cell set,
+    #: area or value derived from it. A relabel of the grid drops them all (ledger
+    #: 431). A subclass that caches more from them names its own here, and its
+    #: property calls :meth:`_follow_the_grid_crs` before reading its cache -- a
+    #: subclass cache left out stayed on the OLD label beside a refreshed source
+    #: (Review of U6, ledger 431).
+    _CRS_DERIVED: tuple[str, ...] = (
+        "_gdf",
+        "_intersections",
+        "_edge_intersections",
+        "_intersections_no_duplicates",
+        "_vor_bound_polys",
+        "_rch_scale",
+    )
+
     @property
     def crs(self):
         """The CRS the geometry source is reprojected to: the ``crs`` given, else the grid's.
@@ -129,12 +144,8 @@ class Boundaries:
             return
         logger.debug("grid relabelled %s -> %s; rebuilding the boundary source",
                      self._gdf_crs, self.crs)
-        self._gdf = None
-        self._intersections = None
-        self._edge_intersections = None
-        self._intersections_no_duplicates = None
-        self._vor_bound_polys = None
-        self._rch_scale = None
+        for name in self._CRS_DERIVED:
+            setattr(self, name, None)
 
     @property
     def gdf(self):

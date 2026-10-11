@@ -31,6 +31,9 @@ logger = get_logger(__name__)
 class GHBFromVector(Boundaries):
     """Build MF6 GHB stress-period data from GIS features and per-period values."""
 
+    # Cell sets and areas from the source frame: a relabelled grid drops them with it.
+    _CRS_DERIVED = (*Boundaries._CRS_DERIVED, "_cell_ids", "_recharges")
+
     def __init__(
             self,
             model: SimulationBase = None,
@@ -87,6 +90,7 @@ class GHBFromVector(Boundaries):
     def cell_ids(self):
         """gets cell ids for each recharge polygon in the shapefile as a dict. Keys are
         unique ids (uids)"""
+        self._follow_the_grid_crs()
         if self._cell_ids is None:
             cell_ids = self.intersections_no_duplicates
             cell_ids = cell_ids['no_dup'].to_dict()
@@ -155,7 +159,9 @@ class GHBFromVector(Boundaries):
 
         if self._line_ghb is None:
             assert isinstance(self.line_shp, Path), 'No line shapefile provided. Set the line_shp attribute'
-            line_ghb = Boundaries(self.model, self.vor, self.line_shp, self.uid, self.crs, bound_type='ghb')
+            # `self._crs`, not `self.crs`: with none given the line follows the grid's
+            # CRS live too, rather than a copy of it (ledger 431).
+            line_ghb = Boundaries(self.model, self.vor, self.line_shp, self.uid, self._crs, bound_type='ghb')
             self._line_ghb = line_ghb
         return self._line_ghb
 
