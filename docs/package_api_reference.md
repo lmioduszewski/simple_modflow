@@ -830,7 +830,7 @@ Refused at the declaration, each still available with `context=`:
 | refused lazily | why |
 | --- | --- |
 | `cells=[(0, 1), …]` | you cannot pin cell numbers the caller typed |
-| a per-cell `vks`/`finf`/… | its length is the cell count of the mesh it was written for |
+| a per-cell `vks`/`finf`/… -- a list, tuple, ndarray or Series (ledger 379) | its length is the cell count of the mesh it was written for |
 | `mover=True` | a UZF mover endpoint is a hand-typed `iuzno`, an enumeration over ACTIVE CELLS — in range on every mesh and a different column on each |
 
 `mf.sfr` and `mf.lak` still require `context=`.

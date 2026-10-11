@@ -899,8 +899,9 @@ def _refuse_caller_typed_cells(
       not survive a JSON round trip either: ``_json_value`` stringifies them and
       ``_spec_value`` revives only int-like keys, so ``(0, 3)`` comes back ``'(0, 3)'``.
     * a ``{cellid: value}`` mapping, for the same two reasons.
-    * a per-cell SEQUENCE, whose length is the selected-cell count on the mesh it was
-      written for.
+    * a per-cell value -- a list, tuple, ndarray, pandas Series or any other array-like
+      of one or more dimensions, bare or inside a period -- whose length is the
+      selected-cell count on the mesh it was written for.
 
     All four are still available EAGERLY -- `context=` resolves them against a known
     grid and pins the result -- so this refuses a combination, not a capability, and
@@ -915,9 +916,21 @@ def _refuse_caller_typed_cells(
     """
 
     def caller_typed(value) -> bool:
+        # A PERIOD key is an integer, a numpy one included (`isinstance(np.int64(0), int)`
+        # is False, ledger 265); anything else keys by cell.
         if isinstance(value, Mapping):
-            return not all(isinstance(key, int) for key in value)
-        return isinstance(value, Sequence) and not isinstance(value, str)
+            return not all(
+                isinstance(key, (int, np.integer)) and not isinstance(key, bool)
+                for key in value
+            )
+        if isinstance(value, (str, bytes)):
+            return False
+        # ANY array-like is per-cell, not only a `Sequence`: an ndarray and a pandas
+        # Series are not `collections.abc.Sequence`s, so the lazy form accepted the same
+        # per-cell values it refused as a list -- read `rebuilt` across `with_grid` while
+        # riding the recipe by POSITION, and made the spec unsaveable, since `to_dict`
+        # refuses an ndarray (ledger 379). A 0-d array is a scalar.
+        return isinstance(value, Sequence) or np.ndim(value) > 0
 
     offenders: list[str] = []
     if not isinstance(recipe.get("cells", default_cells), str):
@@ -4797,6 +4810,12 @@ class _RCHPackage:
             Direct form: ``{period: [[cellid, recharge], ...]}``.
         context : ModelContext, optional
             Builder form: carries the grid/domain used to select recharge cells.
+            Omitted with ``nper`` and a value given, the spec is LAZY and resolves
+            at build against the model's grid; it then refuses (``TypeError``,
+            naming ``context=``) anything that names cells -- an explicit ``cells``
+            list, ``name_by_cell``, a ``{cellid: value}`` mapping and a per-cell
+            value of any array-like kind (list, tuple, ndarray, Series), bare or
+            inside a period.
         nper : int, optional
             Builder form: number of stress periods.
         recharge : scalar, sequence, or {period: ...}, optional
@@ -5278,6 +5297,12 @@ class _EVTPackage:
         context : ModelContext, optional
             Builder form: carries the grid/domain used to select ET cells and the
             surfaces used to resolve the ET surface elevation.
+            Omitted with ``nper`` and a value given, the spec is LAZY and resolves
+            at build against the model's grid; it then refuses (``TypeError``,
+            naming ``context=``) anything that names cells -- an explicit ``cells``
+            list, ``name_by_cell``, a ``{cellid: value}`` mapping and a per-cell
+            value of any array-like kind (list, tuple, ndarray, Series), bare or
+            inside a period.
         nper : int, optional
             Builder form: number of stress periods.
         rate, depth : scalar, sequence, or {period: ...}, optional
@@ -5837,8 +5862,9 @@ class _UZFPackage:
             cell is active only when the model's context carries no grid either;
             a context holding a grid but no domain raises ``ValueError`` at build.
             The lazy form refuses (``TypeError``) an explicit ``cells`` list, a
-            per-cell list, tuple or cell mapping for any value, and
-            ``mover=True``; each of those works with ``context=``.
+            per-cell value of any array-like kind (list, tuple, ndarray, Series)
+            or a cell mapping for any value, and ``mover=True``; each of those
+            works with ``context=``.
         nper : int
             Number of stress periods; must be at least 1 (``ValueError``).
         vks : float or per-cell value

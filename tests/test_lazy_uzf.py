@@ -150,6 +150,17 @@ def test_a_per_cell_value_is_refused(meshes, field):
         mf.uzf(**{**ARGS, field: [1.0] * small.ncpl})
 
 
+@pytest.mark.parametrize("shape", ["column", "layered"])
+def test_a_per_cell_ARRAY_is_refused_like_a_list(meshes, shape):
+    """An ndarray is not a `collections.abc.Sequence`, so it was accepted, read `rebuilt`
+    across a move and made the spec unsaveable (ledger 379)."""
+
+    small, _ = meshes
+    values = np.ones(small.ncpl) if shape == "column" else np.ones((3, small.ncpl))
+    with pytest.raises(TypeError, match="vks= is per-cell.*context="):
+        mf.uzf(**{**ARGS, "vks": values})
+
+
 def test_mover_is_refused_on_a_lazy_declaration(meshes):
     """A UZF mover endpoint is a hand-typed `iuzno` -- an enumeration over ACTIVE CELLS.
 

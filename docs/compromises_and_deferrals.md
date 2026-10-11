@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 378 entries (383 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 379 entries (384 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 379 | A lazy recipe refuses a per-cell value of ANY array-like kind, and reads a numpy integer key as a period | 2026-10-11 |
 | 378 | A flow barrier builds on any discretization -- DIS, DISV or DISU, under any name or through `mf.ref` -- and... | 2026-10-11 |
 | 377 | Reconciling layer surfaces never reaches a `LayerStack` unit at or above its own `min_thickness`, reads row... | 2026-10-11 |
 | 376 | A region's tuple cellid is the grid's own: `(layer, row, col)` on DIS | 2026-10-11 |
@@ -11293,8 +11294,9 @@ same day, which is the useful part of the result.
       are None and `_ArealBuilder` dies five frames down naming neither the package nor
       the fix.
       **What a recipe may NOT carry is cell identity the caller chose**: an explicit
-      `cells=` list, `name_by_cell=`, a `{cellid: value}` mapping, or a per-cell sequence.
-      All four are refused at the call, naming `context=`. The `cells=` list is the sharp
+      `cells=` list, `name_by_cell=`, a `{cellid: value}` mapping, or a per-cell sequence
+      (any array-like since ledger 379 -- an ndarray or Series slipped through as not
+      a `Sequence`). All four are refused at the call, naming `context=`. The `cells=` list is the sharp
       one -- measured before the refusal, a lazy `cells=[1, 2, 3]` built the SAME three
       records at ncpl 28 and at ncpl 92, reported `rebuilt`, and warned about nothing.
       `name_by_cell` does not even error on another mesh: it MISSES and falls back to a
@@ -15306,6 +15308,9 @@ same day, which is the useful part of the result.
       and as writing into the caller's `elev_df`; and a per-layer `min_sep` as raising
       `TypeError` in `LayerSurfaces.top_botm_idomain`~~ -- fixed, entries rewritten
       (ledger 377).
+      ~~`mf.hfb` refused on any discretization but a spec named `disv`; a lazy `mf.rch`/
+      `mf.evt`/`mf.uzf` refusing a per-cell list but accepting the same values as an
+      ndarray~~ -- fixed, entries rewritten (ledgers 378, 379).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17382,3 +17387,17 @@ same day, which is the useful part of the result.
       Revert check: restoring `requires=("disv",)` and the bare class fails the eight
       `test_hfb.py` tests from `test_a_barrier_names_no_spec_it_requires` down
       (`test_a_barrier_runs_on_a_structured_model` runs MF6 on DIS).
+
+379. **A lazy recipe refuses a per-cell value of ANY array-like kind, and reads a numpy integer key as a period (2026-10-11).**
+      `_refuse_caller_typed_cells` tested `isinstance(value, Sequence)`, which an ndarray
+      and a pandas Series are not, so `mf.uzf(vks=np.ones((2, 16)))` and
+      `mf.rch(recharge=np.full(16, 1e-3))` with no `context=` were ACCEPTED, read
+      `rebuilt` across `with_grid` while their values rode the recipe by POSITION, and made
+      `to_dict` raise -- the list form of the same values was refused. **Judgment call:**
+      per-cell is now "not a string, and a `Sequence` or `np.ndim(value) > 0`" -- so a 0-d
+      array stays a scalar (it digests and round-trips as one) and a DataFrame is refused.
+      A `{np.int64(0): ...}` period mapping was refused as cell-keyed (`np.int64` is not
+      an `int`, ledger 265); it is a period now, and digests equal to `{0: ...}`.
+      Revert check: the old predicate fails both `test_a_per_cell_ARRAY_is_refused_like_a_list`
+      cases, four `test_cell_identity_the_caller_chose_is_refused_in_a_lazy_recipe` cases
+      and the `np.int64`-key case of `test_the_movable_shapes_are_accepted`.

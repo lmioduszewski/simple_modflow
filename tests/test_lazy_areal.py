@@ -253,6 +253,13 @@ def test_a_lazy_package_declared_before_the_discretization_is_refused_by_name(
         (lambda n: mf.rch(nper=1, recharge=[6e-4] * n), "recharge"),
         (lambda n: mf.rch(nper=1, recharge={0: [6e-4] * n}), "recharge"),
         (lambda n: mf.evt(nper=1, rate=1e-3, depth=2.0, surface=[10.0] * n), "surface"),
+        # Array-likes that are not a `Sequence` were ACCEPTED, read `rebuilt` and made the
+        # spec unsaveable (ledger 379).
+        (lambda n: mf.rch(nper=1, recharge=np.full(n, 6e-4)), "recharge"),
+        (lambda n: mf.rch(nper=1, recharge={0: np.full(n, 6e-4)}), "recharge"),
+        (lambda n: mf.rch(nper=1, recharge=__import__("pandas").Series(np.full(n, 6e-4))), "recharge"),
+        (lambda n: mf.rch(nper=1, recharge=(6e-4,) * n), "recharge"),
+        (lambda n: mf.evt(nper=1, rate=1e-3, depth=np.full(n, 2.0)), "depth"),
     ],
 )
 def test_cell_identity_the_caller_chose_is_refused_in_a_lazy_recipe(
@@ -281,6 +288,9 @@ def test_cell_identity_the_caller_chose_is_refused_in_a_lazy_recipe(
         lambda: mf.rch(nper=2, recharge={0: 6e-4, 1: 3e-4}),
         lambda: mf.evt(nper=1, rate=1e-3, depth=2.0),
         lambda: mf.evt(nper=1, rate=1e-3, depth=2.0, surface=mf.CellSurfaceOffset("model_top", offset=-2.0)),
+        # A numpy PERIOD key is a period, and a 0-d array a scalar (ledger 379).
+        lambda: mf.rch(nper=2, recharge={np.int64(0): 6e-4, 1: 3e-4}),
+        lambda: mf.rch(nper=1, recharge=np.array(6e-4)),
     ],
 )
 def test_the_movable_shapes_are_accepted(declare):
