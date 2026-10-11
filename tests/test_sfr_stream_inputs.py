@@ -157,6 +157,15 @@ def test_a_layer_that_names_no_model_layer_is_refused(layer, why):
         _ = _two_layers(reach_layer=layer).reaches
 
 
+def test_a_whole_number_written_as_text_is_that_layer_and_other_text_is_refused():
+    # The GeoPackage builders' layer rule (geopackage._layer_index) reads text as its
+    # number; the reach_layer docstring says so, and this keeps it true.
+    assert _layers(_two_layers(reach_layer={"tributary": "1", "main": "1"})) == {1}
+    assert _layers(_two_layers(streams=_builder().streams.assign(lay=["1", "1"]), reach_layer="lay")) == {1}
+    with pytest.raises(ValueError, match=r"SFR reach_layer\['main'\] names no model layer: 'one' is not a layer number"):
+        _ = _two_layers(reach_layer={"tributary": 0, "main": "one"}).reaches
+
+
 def test_a_fraction_in_a_mapping_or_a_column_is_refused_not_truncated():
     # int() made 0.7 layer 0 in both, a layer nobody wrote.
     with pytest.raises(ValueError, match=r"SFR reach_layer\['main'\] names no model layer: 0\.7 is not a whole"):

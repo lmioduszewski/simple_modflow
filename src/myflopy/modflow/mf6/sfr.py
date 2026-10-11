@@ -299,8 +299,11 @@ class SFRBuilder:
         column holding each stream's layer. Every layer so given must be a WHOLE
         number -- a Python or numpy integer, or a float such as ``1.0`` -- at or
         above 0 and, when ``context.domain`` is two-dimensional, below its layer
-        count; a fraction, a ``bool``, a NaN or anything else raises
-        ``ValueError`` naming the value when the reaches are resolved. Default
+        count. A whole number written as text (``"1"``, a text column) is read
+        as that number, as the GeoPackage builders read a layer column; a
+        fraction, a ``bool``, a NaN, text that is no number, or anything else
+        that is not a number raises ``ValueError`` naming the value when the
+        reaches are resolved. Default
         ``"top_active"``: the top layer with ``idomain > 0`` in the reach's column
         of ``context.domain`` -- a column with none raises ``ValueError`` -- or
         layer 0 when the context has no domain or a one-dimensional one.

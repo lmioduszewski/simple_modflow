@@ -17244,7 +17244,7 @@ same day, which is the useful part of the result.
       since a time series can be attached to the FloPy package after the build.
       ~~**Not fixed:** `validate_sfr_configuration` (`surface_water_validation.py`) still
       reports a time-series RHK or MAN as an error.~~ Fixed: it judges every per-reach
-      value by the same helper as `validate` (`sfr._reach_value_fault`), so a
+      value by the same helper as `validate` (`surface_water_validation._reach_value_fault`), so a
       time-series RHK/MAN is clean, a string RWID/RGRD/RTP/RBTH is reported as one MF6
       reads as a number, and a NaN or a bool -- which its `float()` coercion passed --
       is reported too (new code `sfr_reach_top`). Revert check: the
@@ -18072,6 +18072,10 @@ same day, which is the useful part of the result.
       no value of it but the default can act; given anyway it reaches `mvr_spec` through
       `**options` and is refused there. `modelnames=False` still passes. The FloPy
       artifact restore (`project/components.py`) still carries a loaded package's value.
+      **Cost:** every `mf.mvr` declaration's `package_digest` moves, since its options
+      carried `modelnames: False`; a saved spec keeps the options it was saved with, so
+      only a mover DECLARED again reads `edited` in `runs.drift()`. Measured: no
+      `project_spec.json` under `examples/` or the user's model tree carries one.
       Revert check: the three `test_mvr_modelnames_is_refused_naming_mf6s_rule` cases and
       `test_mf_mvr_takes_no_modelnames_and_refuses_one_given`;
       `test_mf6_refuses_modelnames_on_a_models_mover_in_either_layout` pins MF6's premise.
