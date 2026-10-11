@@ -99,8 +99,9 @@ def part_3(root: pathlib.Path) -> None:
             legacy = PRT(model=model, name="legacy", mf_folder_path=root)
         legacy.tdis.write()
         written = _tdis_line(legacy.model_output_folder_path)
-        # The legacy PRT simulation itself is not runnable (it pairs PRT with IMS), so
-        # its TDIS is checked under a flow model, where MF6 parses TDIS the same way.
+        # Only the legacy PRT's TDIS is in question, and this script builds none of the
+        # rest of a PRT simulation, so that TDIS file is run under the two-cell flow
+        # model instead: TDIS is a simulation-level file MF6 reads before any model.
         check = root / f"part3_check_{word}"
         sim = _flow_sim(check)
         sim.write_simulation(silent=True)
