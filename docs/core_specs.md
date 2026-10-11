@@ -270,8 +270,8 @@ Diversions are always explicit:
 diversion = StreamDiversion(
     source="main_stem",
     receiver="canal",
-    source_location="downstream",
-    receiver_location="nearest",
+    source_location=Point(headgate_x, headgate_y),  # a reach above main_stem's last
+    receiver_location="upstream",                   # the canal's first reach
     priority="FRACTION",
     amount={0: 0.25, 1: 0.40},
 )
@@ -279,7 +279,15 @@ diversion = StreamDiversion(
 
 A diversion is also written as the reach connection MF6 diverts along, so the
 two streams need no `StreamConnection` between them; one naming the same two
-reaches is not written twice (ledger 364).
+reaches is not written twice (ledger 364). MF6 sends the water a diversion
+does not take on down the source reach's OTHER downstream reaches, so the source
+reach must have one: the default `source_location="downstream"` -- the stream's
+last reach -- works only when the stream flows on into another, and the build
+refuses it otherwise. The receiving reach carries an upstream fraction of 0, so
+no other reach may flow into it alone: divert into a reach nothing else flows
+into, such as a canal's first. Both refusals, and a `StreamConnection` leaving a
+stream above its last reach (two downstream reaches), are what MF6 itself stops
+on (ledger 366).
 
 Inspect `sfr.network` before grid mapping and `sfr.reaches` afterward.
 Multiple reaches may occupy the same groundwater cell without losing their

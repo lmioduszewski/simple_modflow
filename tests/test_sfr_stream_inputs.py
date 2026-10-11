@@ -31,6 +31,7 @@ headwater) and ``canal`` (2 reaches), 270 ft apart.
 
 from __future__ import annotations
 
+import re
 import warnings
 
 import flopy
@@ -234,6 +235,73 @@ def test_mf6_runs_a_diversion_and_the_water_arrives(tmp_path, form):
     assert flows[f"upstream_flow_{receiver}"] == pytest.approx(0.25 * leaving, rel=1e-4)
     after = builder.stream_reaches["source"][builder.stream_reaches["source"].index(source) + 1]
     assert flows[f"upstream_flow_{after}"] == pytest.approx(0.75 * leaving, rel=1e-4)
+
+
+#: Networks MF6's ``sfr_check_ustrf`` stops on (ledger 366), and what
+#: ``validate`` says for each. ``mid`` is ``source``'s third reach.
+_MID = Point(300.0, 150.0)
+UNRUNNABLE = {
+    "default source_location: the last reach": (
+        {"diversions": (mf.StreamDiversion("source", "canal", amount=0.25),)},
+        r"SFR diversion from reach 3 \(stream 'source'\) to reach 5 \(stream 'canal'\): MF6 diverts only "
+        r"from a reach that has a downstream reach of its own .* source_location above",
+        r"Upstream fractions for reach +4 is not equal to one \(0\.0",
+    ),
+    "into a reach another reach flows into": (
+        {"diversions": (mf.StreamDiversion("source", "canal", amount=0.25, source_location=_MID, receiver_location="downstream"),)},
+        r"SFR reach 5 \(stream 'canal'\) receives a diversion from reach 2 \(stream 'source'\) and is also "
+        r"the only reach that reach 4 \(stream 'canal'\) flows into: .* receiver_location='upstream'",
+        r"Upstream fractions for reach +5 is not equal to one \(0\.0",
+    ),
+    "a StreamConnection above the last reach": (
+        {"connections": (
+            mf.StreamConnection("source", "canal", source_location=_MID, receiver_location="upstream"),
+            mf.StreamConnection("canal", None),
+        )},
+        r"SFR reach 2 \(stream 'source'\) flows into reach 3 \(stream 'source'\), reach 4 \(stream "
+        r"'canal'\), whose upstream fractions \(USTRF\) sum to 2; MF6 requires one",
+        r"Upstream fractions for reach +3 is not equal to one \(2\.0",
+    ),
+}
+
+
+@pytest.mark.parametrize("form", list(UNRUNNABLE))
+def test_a_network_mf6_cannot_run_is_refused_naming_the_reaches(form):
+    values, refusal, _ = UNRUNNABLE[form]
+    with pytest.raises(ValueError, match=refusal):
+        _sfr_builder(**values).build()
+
+
+@pytest.mark.parametrize("form", list(UNRUNNABLE))
+def test_mf6_stops_on_each_network_validate_refuses(tmp_path, form):
+    """The same tables written past ``validate`` (``mf.sfr.flopy``): MF6 stops on
+    each, which is what makes the refusal a description of MF6 and not a guess."""
+
+    values, _, mf6_says = UNRUNNABLE[form]
+    builder = _sfr_builder(**values)
+    grid = builder.grid
+    props = grid.get_disv_gridprops()
+    xy = np.array([(c[1], c[2]) for c in props["cell2d"]])
+    edge = np.flatnonzero((xy[:, 0] < 100.0) | (xy[:, 0] > 500.0))
+    sfr = mf.sfr.flopy(
+        packagedata=builder.packagedata, connectiondata=builder.connectiondata,
+        perioddata=builder.perioddata, diversions=builder.diversiondata or None,
+    )
+    model = mf.gwf("m", grid=grid, packages=[
+        mf.disv(nlay=1, ncpl=grid.ncpl, nvert=len(props["vertices"]), vertices=props["vertices"],
+                cell2d=props["cell2d"], top=110.0, botm=[0.0]),
+        mf.npf(k=10.0, icelltype=0), mf.ic(strt=90.0),
+        mf.chd(stress_period_data={0: [[(0, int(c)), 90.0] for c in edge]}),
+        sfr,
+        mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
+    ])
+    simulation = mf.simulation(model, name="s", packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        run = mf.Project(tmp_path / "p", name="p").run("r", simulation)
+    assert not run.success
+    listing = " ".join((tmp_path / "p").rglob("mfsim.lst").__next__().read_text().split())
+    assert re.search(mf6_says, listing), listing[-600:]
 
 
 # -- [47] a per-reach value is a number, or a time-series name where MF6 takes one ----

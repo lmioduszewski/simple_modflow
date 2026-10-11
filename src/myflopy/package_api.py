@@ -6142,7 +6142,10 @@ class _SFRPackage:
             replaces the inferred link for its ``source`` in every mode, and of two
             with the same ``source`` the later wins; ``receiver=None`` marks a true
             outlet. A stream id not in the stream table, or links that route water
-            in a cycle, raise ``ValueError``. Default ``()``.
+            in a cycle, raise ``ValueError``, and so does a link leaving its source
+            above the stream's last reach (a ``Point`` ``source_location``): that
+            reach would flow into two reaches, which MF6 refuses -- a partial split
+            is a ``StreamDiversion`` (ledger 366). Default ``()``.
         diversions : sequence of StreamDiversion, optional
             Partial splits (:class:`StreamDiversion`), each written as an MF6
             ``DIVERSIONS`` record on its source reach plus a ``DIVERSION`` setting
@@ -6151,7 +6154,11 @@ class _SFRPackage:
             written once when a ``StreamConnection`` names the same pair -- so the
             two streams need no other link (ledger 364); the receiving reach
             gets ``USTRF`` 0.0. An unknown stream id or ``priority`` raises
-            ``ValueError``. Default ``()``.
+            ``ValueError``, and so do the two placements MF6 cannot run (ledger
+            366): a source reach with no downstream reach of its own -- the
+            default ``source_location``, the stream's last reach, when the stream
+            flows into no other; give a ``Point`` above it -- and a receiving reach
+            another reach flows into alone. Default ``()``.
         connection_tolerance : float or None, optional
             Largest distance, in model length units, from a stream's last vertex to
             another stream for ``connection_mode="automatic"`` to connect them.

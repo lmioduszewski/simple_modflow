@@ -1,12 +1,12 @@
 """What MF6 does with three SFR inputs ``mf.sfr``/``SFRBuilder`` write.
 
-Ledger 363, ledger 364 and ledger 365.
+Ledger 363, ledger 364, ledger 365 and ledger 366.
 
     PYTHONPATH=src /home/lukem/python/envs/gw/bin/python docs/reproducers/sfr_stream_inputs.py
 
 Run on d71e421's ``src`` it prints the "before": sections A1 and A3 refused by MF6,
-section C's stream-keyed rainfall on 2 of 6 reaches. Section B uses ``mf.sfr.flopy``
-only, so it measures MF6 on any tree.
+section C's stream-keyed rainfall on 2 of 6 reaches. Sections B and D use ``mf.sfr.flopy``
+only, so they measure MF6 on any tree (D's "validate" line needs this tree's builder).
 
 THE SETUP. One small model: a 6 x 6 irregular Voronoi grid of ~100 ft cells, one
 confined layer (top 110, bottom 0, K 10), CHD at 90 ft on the west and east edges, one
@@ -31,12 +31,25 @@ WHAT IT MEASURES
      reach's width x length. RAINFALL is a rate per unit of streambed area -- MF6 rains
      rate x width x length on a reach -- so each reach takes the rate unchanged and the
      two spellings must agree.
+  D. Networks a diversion makes that MF6 cannot run (ledger 366), written straight
+     from the builder's tables -- ``SFRBuilder.validate`` refuses each of them now. MF6's
+     ``sfr_check_ustrf`` wants every reach's downstream reaches' USTRF to sum to one,
+     diversion receivers included, and a receiving reach's USTRF to be 0: (1) the
+     DEFAULT ``source_location="downstream"`` on a stream with no outlet connection --
+     its last reach's only downstream reach is the receiver -- stops on "Upstream
+     fractions ... not equal to one (0.0)"; (2) the same with the receiver's USTRF set
+     to 1, which MF6 tolerates with a warning when the receiver is the source's only
+     downstream reach, CRASHES MF6 6.8 in that warning ("End of record",
+     ``gwf-sfr.f90``); (3) a diversion into the canal's SECOND reach, whose first reach
+     then has no USTRF to flow by; (4) a ``StreamConnection`` leaving ``source`` at its
+     third reach (no diversion): that reach then has two downstream reaches of USTRF 1.
 """
 
 from __future__ import annotations
 
 import pathlib
 import shutil
+import subprocess
 import tempfile
 import warnings
 
@@ -173,12 +186,47 @@ def _section_c(root):
         print(f"   {'':>11}  / (width x length) {[round(float(q) / float(a), 5) for q, a in zip(rain['q'], area, strict=True)]}")
 
 
+def _section_d(root):
+    print("\nD. networks MF6 cannot run, written without SFRBuilder.validate")
+    mid = Point(300.0, 150.0)
+    forms = {
+        "1 default source_location (last reach)": (_builder(diversions=(mf.StreamDiversion("source", "canal", amount=0.25),)), None),
+        "2 the same, receiving USTRF 1": (_builder(diversions=(mf.StreamDiversion("source", "canal", amount=0.25),)), 1.0),
+        "3 into the canal's second reach": (_builder(diversions=(mf.StreamDiversion(
+            "source", "canal", amount=0.25, source_location=mid, receiver_location="downstream"),)), None),
+        "4 a StreamConnection from the third reach": (_builder(connections=(
+            mf.StreamConnection("source", "canal", source_location=mid, receiver_location="upstream"),
+            mf.StreamConnection("canal", None))), None),
+    }
+    for label, (builder, receiving_ustrf) in forms.items():
+        packagedata = builder.packagedata
+        for _, _, receiver, _ in builder.resolved_diversions:
+            if receiving_ustrf is not None:
+                packagedata[receiver][10] = receiving_ustrf
+        try:
+            builder.validate()
+            refusal = "none"
+        except ValueError as error:
+            refusal = str(error).split(":")[0]
+        sfr = mf.sfr.flopy(packagedata=packagedata, connectiondata=builder.connectiondata,
+                           perioddata=builder.perioddata, diversions=builder.diversiondata or None)
+        ok, workspace, errors = _run(root / f"d{label.split()[0]}", builder.grid, sfr)
+        crash = ""
+        if not ok and not errors:  # no ERROR REPORT: rerun MF6 to read how it stopped
+            result = subprocess.run(["mf6"], cwd=workspace, capture_output=True, text=True, check=False)
+            crash = next((line.strip() for line in (result.stdout + result.stderr).splitlines()
+                          if "Fortran runtime error" in line), "no error report")
+        print(f"   {label}: {'runs' if ok else 'MF6 refused: ' + (' '.join(errors) or crash)}")
+        print(f"      validate: {refusal}")
+
+
 def main() -> None:
     root = pathlib.Path(tempfile.mkdtemp(prefix="sfr_stream_inputs_"))
     try:
         _section_a(root)
         _section_b(root)
         _section_c(root)
+        _section_d(root)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

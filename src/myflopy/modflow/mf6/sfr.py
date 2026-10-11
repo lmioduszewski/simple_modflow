@@ -96,6 +96,10 @@ class StreamConnection:
         two lines cross (``ValueError`` if they do not); a ``Point`` is used as
         given. The source reach is the reach of ``source`` nearest that point.
         Any other string raises ``ValueError`` when the connection is resolved.
+        A source reach above the stream's last one already flows into the next
+        reach of its stream; the second downstream reach makes MF6's upstream
+        fractions sum to two, so :meth:`SFRBuilder.validate` refuses it -- a
+        partial split is a :class:`StreamDiversion` (ledger 366).
     receiver_location : str or shapely.geometry.Point, optional
         Where on ``receiver`` the water enters, with the same vocabulary.
         Default ``"nearest"``: the point ``source_location`` resolved to,
@@ -134,8 +138,13 @@ class StreamDiversion:
     as one, from the source reach to the receiving reach (ledger 364) --
     once, when a :class:`StreamConnection` names the same two reaches too. The
     streams need no other link. The water the diversion does not take goes on
-    to the source reach's other downstream reaches by their ``USTRF``, or leaves
-    the network when it has none.
+    to the source reach's other downstream reaches by their ``USTRF``, so MF6
+    needs the source reach to HAVE one: the default ``source_location``, the
+    stream's last reach, works only when the stream flows on into another, and
+    :meth:`SFRBuilder.validate` refuses it otherwise, naming a ``Point`` above
+    the last reach or an onward :class:`StreamConnection`. And because the
+    receiving reach's ``USTRF`` is 0, no other reach may flow into it alone --
+    divert into a reach nothing else flows into (ledger 366).
 
     Parameters
     ----------
@@ -151,11 +160,16 @@ class StreamDiversion:
         it gets no ``DIVERSION`` setting; anything else is written unchanged for
         every period. Not checked here.
     source_location : str or shapely.geometry.Point, optional
-        Where on ``source`` the diversion leaves; default ``"downstream"``. Same
-        vocabulary and resolution as :class:`StreamConnection`.
+        Where on ``source`` the diversion leaves; default ``"downstream"``, the
+        stream's last reach -- refused by :meth:`SFRBuilder.validate` unless the
+        stream flows on into another, since MF6 diverts only from a reach with a
+        downstream reach of its own (above). Same vocabulary and resolution as
+        :class:`StreamConnection`.
     receiver_location : str or shapely.geometry.Point, optional
         Where on ``receiver`` the diverted water enters; default ``"nearest"``.
-        Same vocabulary and resolution as :class:`StreamConnection`.
+        Same vocabulary and resolution as :class:`StreamConnection`. The reach
+        it names must be one no other reach flows into alone -- ``"upstream"``
+        on a stream nothing joins -- or :meth:`SFRBuilder.validate` refuses it.
     priority : str, optional
         MF6 SFR ``CPRIOR``: ``"FRACTION"`` (default), ``"EXCESS"``,
         ``"THRESHOLD"`` or ``"UPTO"``, case-insensitive and written upper-case.
@@ -276,8 +290,9 @@ class SFRBuilder:
     diversions : sequence of StreamDiversion, optional
         Explicit partial splits, written as MF6 ``DIVERSIONS`` records,
         ``DIVERSION`` period settings and a reach connection from the source
-        reach to the receiving reach (see :class:`StreamDiversion`). Default
-        ``()``.
+        reach to the receiving reach (see :class:`StreamDiversion`, including
+        the two placements MF6 cannot run and :meth:`validate` refuses).
+        Default ``()``.
     connection_tolerance : float or None, optional
         Largest distance, in model length units, between a stream's downstream
         end and another stream for ``connection_mode="automatic"`` to connect
@@ -1278,6 +1293,12 @@ class SFRBuilder:
         365). Then the bounds: positive length, width, streambed thickness and
         roughness; non-negative gradient and streambed conductivity; ``reach_top``
         any finite number. Every period setting must name a reach that exists.
+        Last, the routing MF6 checks before it runs: every reach's downstream
+        reaches must carry upstream fractions (``USTRF``) summing to one, which
+        refuses a diversion from a reach with no downstream reach of its own, a
+        diversion into a reach another reach flows into alone, and a
+        :class:`StreamConnection` leaving a stream above its last reach (ledger
+        366).
         """
 
         if self.total_nreaches == 0:
@@ -1302,6 +1323,71 @@ class SFRBuilder:
             for setting in settings:
                 if setting[0] not in valid_reaches:
                     raise ValueError(f"SFR period {period} references unknown reach {setting[0]}.")
+        self._check_upstream_fractions(stream_of)
+
+    def _check_upstream_fractions(self, stream_of: Mapping[int, Any]) -> None:
+        """Refuse a network MF6's ``sfr_check_ustrf`` stops on, naming the reaches.
+
+        MF6 requires, for every reach with a downstream connection, that the
+        ``USTRF`` of its downstream reaches sum to one -- diversion receivers
+        included -- and a diversion's receiving reach to carry ``USTRF`` 0 (which
+        this builder writes). So a diversion needs its source reach to have a
+        downstream reach of its own, and its receiving reach to have no other
+        reach flowing into it alone. Neither was checked, and MF6 stopped with
+        "Upstream fractions for reach N is not equal to one (0.0)" -- for the
+        DEFAULT ``source_location="downstream"`` on a stream with no outlet
+        connection among them. The other way out, a receiving ``USTRF`` of 1,
+        crashes MF6 6.8 in its own warning (``gwf-sfr.f90``, "End of record"),
+        measured in ``docs/reproducers/sfr_stream_inputs.py`` D (ledger 366).
+        """
+
+        ustrf = {int(row[0]): float(row[10]) for row in self.packagedata}
+        diverted_from: dict[int, list[int]] = {}
+        for _, source, receiver, _ in self.resolved_diversions:
+            diverted_from.setdefault(int(receiver), []).append(int(source))
+
+        def named(rno: int) -> str:
+            return f"reach {rno} (stream {stream_of[rno]!r})"
+
+        for row in self.connectiondata:
+            rno = int(row[0])
+            downstream = [int(-value) for value in row[1:] if value < 0 or np.signbit(value)]
+            if not downstream:
+                continue
+            total = sum(ustrf[reach] for reach in downstream)
+            if abs(total - 1.0) <= 1.0e-6:
+                continue
+            receivers = [reach for reach in downstream if reach in diverted_from]
+            if total == 0.0 and receivers and all(rno in diverted_from[reach] for reach in downstream):
+                raise ValueError(
+                    f"SFR diversion from {named(rno)} to "
+                    f"{', '.join(named(reach) for reach in downstream)}: MF6 diverts only from a "
+                    "reach that has a downstream reach of its own besides the receiving one, "
+                    f"for the water the diversion does not take, and {named(rno)} has none -- it "
+                    f"is the last reach of {stream_of[rno]!r}, which flows into no other stream. "
+                    "Give the StreamDiversion a source_location above the stream's last reach "
+                    f"(a Point on it), or connect {stream_of[rno]!r} onward with a "
+                    "StreamConnection (ledger 366)."
+                )
+            if total == 0.0 and receivers:
+                sources = sorted({source for reach in receivers for source in diverted_from[reach]})
+                raise ValueError(
+                    f"SFR {', '.join(named(reach) for reach in receivers)} receives a diversion from "
+                    f"{', '.join(named(source) for source in sources)} and is also the only reach "
+                    f"that {named(rno)} flows into: MF6 takes the upstream fraction (USTRF) of a "
+                    f"diversion's receiving reach as 0, which leaves the water of {named(rno)} "
+                    "nowhere to go. "
+                    "Divert into a reach nothing else flows into -- receiver_location='upstream' "
+                    "on a stream no other stream joins, or a Point on that reach "
+                    "(ledger 366)."
+                )
+            raise ValueError(
+                f"SFR {named(rno)} flows into "
+                f"{', '.join(named(reach) for reach in downstream)}, whose upstream fractions "
+                f"(USTRF) sum to {total:g}; MF6 requires one. A StreamConnection leaving a "
+                "stream above its last reach gives that reach a second downstream reach -- "
+                "use a StreamDiversion for a partial split (ledger 366)."
+            )
 
     def _check_reach_number(
         self, value: Any, name: str, mf6_name: str, takes_series: bool, where: str

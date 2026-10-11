@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 365 entries (370 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 366 entries (371 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 366 | An SFR network MF6's upstream-fraction check stops on is refused at build, the default diversion placement... | 2026-10-11 |
 | 365 | A per-reach SFR value must be a finite number, or a time-series name where MF6 takes one | 2026-10-11 |
 | 364 | A `StreamDiversion` is a reach connection too, so it runs with no `StreamConnection` between its streams | 2026-10-11 |
 | 363 | A stream-keyed `rainfall`/`evaporation`/`status` reaches EVERY reach of the stream, and a reach key beats i... | 2026-10-11 |
@@ -17078,7 +17079,10 @@ same day, which is the useful part of the result.
       from a stream and rejoining it) is a cycle between streams and not between
       reaches, and the edge would refuse it. A diversion whose source and receiver are
       one reach is not checked. A model that used the StreamConnection workaround
-      writes the same file.
+      writes the same file. **It runs only where MF6's upstream fractions allow** --
+      a source reach with a downstream reach of its own, a receiver nothing else flows
+      into alone; the DEFAULT `source_location` on an outlet stream is neither, and is
+      refused at build (ledger 366).
       Revert check: no connection -> `test_a_diversion_is_a_reach_connection_written_once`
       and `test_mf6_runs_a_diversion_and_the_water_arrives[diversion alone]` /
       `[into reach 0]` fail; `-0` for `-0.0` -> `test_a_diversion_into_reach_0_is_written_downstream`
@@ -17103,3 +17107,27 @@ same day, which is the useful part of the result.
       (16); the time-series exemption removed -> both
       `test_a_time_series_name_is_kept_where_mf6_takes_one` cases and
       `test_mf6_runs_streambed_k_and_roughness_given_as_time_series`.
+
+366. **An SFR network MF6's upstream-fraction check stops on is refused at build, the default diversion placement included (2026-10-11).**
+      MF6's `sfr_check_ustrf` wants every reach's downstream reaches' USTRF to sum to
+      one -- diversion receivers INCLUDED, though routing skips them -- and a receiving
+      reach's USTRF to be 0. So a diversion from a reach with no downstream reach of its
+      own (the DEFAULT `source_location="downstream"` on a stream that flows into no
+      other: "Upstream fractions ... (0.0)"), a diversion into a reach another reach
+      flows into alone (same, on that reach), and a `StreamConnection` leaving a stream
+      above its last reach (sum 2) all built and stopped in MF6; 364's own tests
+      used a mid-stream source and missed the first. `SFRBuilder.validate` now checks
+      the sum on the tables it writes and names the reaches and the spelling
+      (reproducer D; `test_mf6_stops_on_each_network_validate_refuses` runs MF6 on each).
+      **Judgment calls:** REFUSED, not repaired. A receiving USTRF of 1 is MF6's
+      tolerated case when the receiver is the source's only downstream reach -- and it
+      CRASHES MF6 6.8 inside that warning (`gwf-sfr.f90`, "End of record", D2), so it is
+      not written. The default `source_location` is NOT changed (it is right wherever
+      the source stream flows on). A DIVERSION is the only partial split; a mid-stream
+      connection is not turned into one. **Not modelled: `status`.** MF6 re-checks the
+      sum after each period's STATUS settings and leaves INACTIVE reaches out of it, so
+      a period that deactivates a reach's only other downstream reach still stops MF6
+      there, unrefused; and a network refused here would run while its offending reach
+      is INACTIVE in every period, a case that seemed not worth a per-period model.
+      Revert check: the check removed -> the three
+      `test_a_network_mf6_cannot_run_is_refused_naming_the_reaches` cases fail.
