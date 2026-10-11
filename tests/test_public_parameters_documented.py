@@ -92,7 +92,8 @@ NAMED = (
 #: Floors, not exact counts: a discovery that silently finds nothing must fail,
 #: but a new public method must not. Measured 2026-09-27: 171 / 24 / 28 / 492, each
 #: function counted once however many exported classes inherit it; ``reached``
-#: measured 2026-10-11: 400 callables on 162 classes (ledger 436).
+#: measured 2026-10-11: 400 callables on 169 classes (ledger 436). The
+#: class count reads the ``Returns`` sections, so it moves with them.
 MIN_CALLABLES = {"all": 165, "engine": 22, "helper": 26, "method": 470, "reached": 390}
 
 
@@ -462,13 +463,18 @@ def reached_classes(exported):
       ``return X(...)`` in it builds (``stack.plot.map()`` returns a
       ``LayerThicknessMap`` while its generated ``Returns`` says ``Choro``) -- NOT the
       rest of its body, which names every class it merely USES: following whole
-      bodies instead reached 27 classes these rules do not (188 against 162), all
+      bodies instead reached 27 classes these rules do not (196 against 169), all
       internal (``Boundaries`` and its legacy subclasses, hover blocks,
       grid-building records, ``_Bundler``).
 
     And from every class reached to its subclasses, because an accessor typed as a
     base (``CellBudgetResultsExplorer``) answers a subclass
     (``LakBudgetResultsExplorer``).
+
+    Blind spot: an attribute assigned OUTSIDE ``__init__`` is not an edge
+    (``vor.tessellation_report``, set by the repair, is a ``TessellationReport``
+    found by nothing here); its one public method takes no parameter, so nothing
+    measurable is missed today.
 
     Measured 2026-10-11 against walking a run canonical model's attributes, and a
     ``ModelGroup`` and a ``ModelDiff`` of it, by ``getattr``: each of the 107 classes

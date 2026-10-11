@@ -42,7 +42,7 @@
 | 439 | Defects the group read views' docstring pass found and documented rather than fixed | 2026-10-11 |
 | 438 | Defects the lane-D docstring pass found and documented rather than fixed | 2026-10-11 |
 | 437 | A bound plot verb documents only the parameters it accepts | 2026-10-11 |
-| 436 | The docstring guard reaches the read-grammar views: a static walk from the exported surface finds 162 more... | 2026-10-11 |
+| 436 | The docstring guard reaches the read-grammar views: a static walk from the exported surface finds 169 more... | 2026-10-11 |
 | 435 | `LayerTable` has no `layers` field, and a slider refuses one string as `labels` | 2026-10-11 |
 | 434 | The LAK/SFR exchange, stage and group diff hovers write each field in the model's own length and time units | 2026-10-11 |
 | 433 | `ModelContext(length_units=)` is checked at construction, and a surface declaring `units=` sampled with no... | 2026-10-11 |
@@ -18538,7 +18538,7 @@ same day, which is the useful part of the result.
       Revert check: `tests/test_hover_model_units.py::test_a_layer_table_has_no_layers_field_that_nothing_reads`,
       `tests/test_interactive_plotting.py::test_slider_refuses_one_string_as_labels`.
 
-436. **The docstring guard reaches the read-grammar views: a static walk from the exported surface finds 162 more classes and 400 callables, with no list (2026-10-11).**
+436. **The docstring guard reaches the read-grammar views: a static walk from the exported surface finds 169 more classes and 400 callables, with no list (2026-10-11).**
       `tests/test_public_parameters_documented.py`'s `reached_classes` adds a `reached`
       tier: every myflopy class a user gets to from `__all__`/`__engine__`/the helpers by
       reading an attribute (a property, `__getattr__`, or what `__init__` assigns to any
@@ -18552,16 +18552,19 @@ same day, which is the useful part of the result.
       Return annotations alone missed 56 of the 107 (`model.hds`, `model.budget`, every
       `group.*`/`diff.*` namespace is unannotated) and `SpatialView`'s subclasses miss
       every namespace that draws nothing. **A method's BODY is not followed** -- doing so
-      reached 27 more classes (188 against 162), all internal (`Boundaries`, hover blocks,
+      reached 27 more classes (196 against 169), all internal (`Boundaries`, hover blocks,
       grid-building records). It imports every myflopy module to resolve names imported
       under `TYPE_CHECKING` or inside functions; collection time did not move measurably
       (4.6-4.9 s against 4.4-5.2 s for the script on a shared machine).
       **Scope cuts:** a reached class's CONSTRUCTOR is not measured (myflopy builds every
       one); its `__call__`/`__getitem__` are, but an EXPORTED class's are still not (that
       tier is unchanged); `myflopy._vendor.figs` is left out, because its README forbids
-      editing the snapshot by hand (`GridMesh.fig` reaches it). A generated method is
+      editing the snapshot by hand (`GridMesh.fig` reaches it); an attribute assigned
+      outside `__init__` is not an edge (`vor.tessellation_report`, whose one method takes
+      no parameter, so nothing measurable is missed). A generated method is
       measured by the text in its source, fence included, as in the other tiers.
-      **Counts.** 400 callables on 162 classes; at introduction 278 had gaps -- 780
+      **Counts.** 400 callables on 169 classes (re-measured at the commit; the class count reads
+      the `Returns` sections, so it moves with them); at introduction 278 had gaps -- 780
       entries missing or defective across 40 files -- and all 780 are now written. A
       second pass read 745 of them against the code and corrected 126; the last seven
       (`ModelPlots.mosaic`, spliced from `viz.mosaic`'s untyped heads) were written in
