@@ -572,6 +572,53 @@ def test_partition_validation_rejects_disconnected_custom_mask(tmp_path):
         run.validate()
 
 
+def test_validate_reads_the_grids_cached_neighbour_map(tmp_path):
+    """validate() reuses FloPy's neighbour map rather than rebuilding it on every call.
+
+    It called ``modelgrid.neighbors(reset=True, fast=False)``, which replaced FloPy's
+    cached map with a fresh slow-path build each time; it reads ``_grid_neighbors``
+    now, the helper every partition walk uses (ledger 399).
+    """
+
+    sim = flopy.mf6.MFSimulation(sim_name="cached", sim_ws=tmp_path / "source")
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="gwf")
+    # an idomain makes FloPy keep ONE grid object (with none it builds a new one,
+    # and so a new cache, on every `gwf.modelgrid`)
+    flopy.mf6.ModflowGwfdis(
+        gwf, nlay=1, nrow=3, ncol=4, delr=1.0, delc=1.0, top=10.0, botm=0.0, idomain=1
+    )
+    assert gwf.modelgrid is gwf.modelgrid
+    run = ParallelSplitRun(
+        SimpleNamespace(gwf=gwf),
+        SimpleNamespace(_fdigits=1),
+        _FakeSimulation([]),
+        np.array([[0, 0, 1, 1]] * 3),
+        tmp_path / "split",
+    )
+    cached = parallel._grid_neighbors(gwf.modelgrid)
+    assert run.validate()["contiguous"].all()
+    run.validate()
+    assert parallel._grid_neighbors(gwf.modelgrid) is cached
+
+
+def test_validate_checks_a_one_row_grid(tmp_path):
+    """The one-wide grid that FloPy's fast path cannot build still validates."""
+
+    sim = flopy.mf6.MFSimulation(sim_name="row", sim_ws=tmp_path / "source")
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="gwf")
+    flopy.mf6.ModflowGwfdis(gwf, nlay=1, nrow=1, ncol=6, delr=1.0, delc=1.0, top=10.0, botm=0.0)
+
+    def split(mask):
+        return ParallelSplitRun(
+            SimpleNamespace(gwf=gwf), SimpleNamespace(_fdigits=1), _FakeSimulation([]),
+            np.array([mask]), tmp_path / "split",
+        )
+
+    assert split([0, 0, 0, 1, 1, 1]).validate()["contiguous"].all()
+    with pytest.raises(ParallelCompatibilityError, match="contiguous"):
+        split([0, 1, 0, 1, 1, 1]).validate()
+
+
 @pytest.mark.canonical
 def test_canonical_model_prepares_contiguous_partitions_across_representative_part_counts(
     canonical_model, tmp_path

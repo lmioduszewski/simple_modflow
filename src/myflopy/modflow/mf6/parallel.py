@@ -346,6 +346,11 @@ def _grid_neighbors(modelgrid) -> dict:
     raises ``ValueError: negative dimensions`` on a grid one row or one column
     wide; its slow path gives the same map on every other grid measured (2x2,
     2x5, 3x3, 3x6), so a one-wide grid takes that (ledger 399).
+
+    FloPy's cached map is reused, never reset: the partition walks and
+    :meth:`ParallelSplitRun.validate` read the same rook map FloPy's splitter has
+    already built on the source grid, and resetting it rebuilt the whole map
+    through the slow path on every validate.
     """
 
     one_wide = getattr(modelgrid, "grid_type", None) == "structured" and 1 in (
@@ -860,7 +865,7 @@ class ParallelSplitRun:
         if modelgrid is None:
             result["contiguous"] = True
             return result
-        neighbors = modelgrid.neighbors(reset=True, fast=False)
+        neighbors = _grid_neighbors(modelgrid)
         flat_mask = self.mask.reshape(-1)
         contiguous = {}
         for partition_id in self.partition_ids:
