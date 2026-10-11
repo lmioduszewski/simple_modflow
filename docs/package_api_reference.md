@@ -12,7 +12,9 @@ MODFLOW 6 models in myflopy. Two halves:
 > **Authoritative sources (this doc is the human-readable overview of them):**
 > - Every public signature is pinned in `tests/api_snapshot.json` -- the helpers', and
 >   since ledger 443 every exported function's and every public method's on an
->   exported class; each parameter's name, kind and default, NOT its annotation
+>   exported class or on a class reached from one (ledger 436: the read-grammar views,
+>   `model.plot`, `model.targets`); each parameter's name, kind and default, NOT its
+>   annotation
 >   (regenerate with `python scripts/derive_api_snapshot.py`; the diff
 >   is the public-API change log).
 > - Per-package fields/results/capabilities live in

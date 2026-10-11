@@ -18550,8 +18550,8 @@ same day, which is the useful part of the result.
       `tests/test_interactive_plotting.py::test_slider_refuses_one_string_as_labels`.
 
 436. **The docstring guard reaches the read-grammar views: a static walk from the exported surface finds 169 more classes and 400 callables, with no list (2026-10-11).**
-      `tests/test_public_parameters_documented.py`'s `reached_classes` adds a `reached`
-      tier: every myflopy class a user gets to from `__all__`/`__engine__`/the helpers by
+      `reached_classes` (written in `tests/test_public_parameters_documented.py`, in
+      `scripts/public_surface.py` since ledger 443 landed) adds a `reached` tier: every myflopy class a user gets to from `__all__`/`__engine__`/the helpers by
       reading an attribute (a property, `__getattr__`, or what `__init__` assigns to any
       `self.<name>`), indexing, calling the object, or calling a public method (its return
       annotation, its `Returns` type, or the class a `return X(...)` builds), following
@@ -18875,18 +18875,24 @@ same day, which is the useful part of the result.
      callable `scripts/public_surface.py` discovers (`__all__`, `__engine__`, helper
      methods, every public method an exported class defines; 651 beyond the 40 helpers
      `signatures` already held), and that discovery MOVED there from the docstring test,
-     which now imports it: what must be documented and what is pinned are one walk. The
+     which now imports it: what must be documented and what is pinned are one walk. It
+     landed beside ledger 436's `reached` tier, which the same move carried into
+     `public_surface.py` -- so the rule pins the views a user REACHES too (the read
+     grammar, `model.plot`, `model.targets`, `AoiLibrary`): 403 more rows, 1,054 in
+     `public_signatures`. The
      cost 190 named is accepted: a keyword added anywhere public is now a snapshot diff.
      Three reprs are normalized because they differ by run or machine: an object's
      ADDRESS (`LayerStack.replace`'s sentinel), a set's hash ORDER
      (`build_canonical_model`'s frozensets, measured differing between two runs) and a
      path's class and home directory (`Path('~/mf6')`; CI runs Windows too). Not
-     covered: what is never exported -- the read-grammar views and `AoiLibrary`
-     (`project.aoi`, whose member NAMES `surfaces` still pins). Not pinned: a
+     covered: what neither tier finds -- a reached class's constructor (myflopy builds
+     every one), and an attribute assigned outside `__init__` (ledger 436's blind
+     spot). Not pinned: a
      parameter's ANNOTATION -- each row is name, kind and default, as the helpers'
      `signatures` rows always were -- so a type-only change passes `--check`
      (measured: `SimulationSpec.models` widened to `tuple[...] | list[...]`, ledger
      197's own example, left it "up to date"). Pinning them is possible -- every
-     annotation of the 715 discovered callables reads the same under Python 3.10 and
-     3.14 -- and was not done here; `test_an_annotation_change_is_not_pinned` holds
+     annotation of the 715 callables discovered before the reached tier joined reads
+     the same under Python 3.10 and 3.14 (the 403 reached were not measured) -- and was
+     not done here; `test_an_annotation_change_is_not_pinned` holds
      the limit, so pinning them must update this entry.
