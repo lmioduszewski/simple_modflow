@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 431 entries (436 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 433 entries (438 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 433 | `ModelContext(length_units=)` is checked at construction, and a surface declaring `units=` sampled with no... | 2026-10-11 |
+| 432 | A discretization's `length_units` is checked on every edit route, and the DIS builders write MF6's word for... | 2026-10-11 |
 | 431 | A frame a grid caches is in the grid's CRS or refused, and a heads reader and a legacy `Boundaries` read th... | 2026-10-11 |
 | 430 | A USG export's boundary layers hold every cell ANY period names, each row saying which periods it acts in,... | 2026-10-11 |
 | 429 | `usg.to_mf6(include=)` takes a single string as ONE package name and refuses any name outside its optional... | 2026-10-11 |
@@ -17938,7 +17940,7 @@ same day, which is the useful part of the result.
       (any case) as unit 0, undefined, under Normal termination
       (`docs/reproducers/mf6_length_units.py`: `FT`, `ft`, `M`, `FOO` all 0). The stack
       converted `ft`/`m`/`cm` and wrote them upper-cased. ONE helper,
-      `surfaces._mf6_length_units`, maps every spelling `_LENGTH_TO_FEET` takes to MF6's
+      `_mf6_length_units` (in `myflopy/_length_units.py` since ledger 432), maps every spelling `_LENGTH_TO_FEET` takes to MF6's
       word for `LayerSurfaces.to_disv` and `LayerBuildResult.to_disv`, and refuses any
       other naming them; a test holds the two tables equal. **`LayerStack(length_units=)`
       refuses at construction** -- judgment call: at `to_disv` a lazy `mf.disv(stack)`
@@ -17967,8 +17969,9 @@ same day, which is the useful part of the result.
       `excavate`) call it, and nothing else samples a `Surface`. **`units=` on an
       algebra node itself is REFUSED** -- judgment call: no constructor sets it, and
       whether it overrides or defaults its operands has no obvious reading; on a
-      relative surface it raises as before. With no model unit nothing converts, as
-      before. **What moves:** only values of stacks with a non-model-unit operand or a
+      relative surface it raises as before. ~~With no model unit nothing converts, as
+      before.~~ With no model unit a surface declaring `units=` is refused (ledger
+      433). **What moves:** only values of stacks with a non-model-unit operand or a
       converted propagate-filled raster; `Surface.to_dict` and every digest are
       unchanged (the payload is the declaration). Tests:
       `tests/test_layer_surface_units.py` -- not passing `length_units` to operands
@@ -18456,3 +18459,42 @@ same day, which is the useful part of the result.
      assembled is NOT dropped -- it is a build's output, rebuilt by building again. An
      explicit `Boundaries(crs=)` other than the grid's is still accepted and reprojects
      the source away from the grid's frame -- not touched here.
+
+432. **A discretization's `length_units` is checked on every edit route, and the DIS builders write MF6's word for any spelling a spec already holds (2026-10-11).**
+      Ledger 404's check ran only in `mf.dis`/`mf.disv`/`mf.disu`, so `with_options`,
+      `packages.fork` and `packages.edit` still built `length_units="ft"` as `FT`, unit 0.
+      **Measured first: MF6 computes nothing from the unit.** `lenuni` is read by the
+      listing line and the NetCDF exporters alone (`Dis.f90`/`Disv.f90`/`Disu.f90`), and
+      the canonical testing model run under `FT` and under `feet` writes all 21 output
+      files byte-identical (`docs/reproducers/mf6_length_units.py` PART 3). So the edit
+      routes now REFUSE what the helpers refuse (an abbreviation names its word), keyed
+      on the builder accepting `length_units` and on the OVERRIDE only; and
+      `build_dis`/`build_disv`/`build_disu` MAP an abbreviation a spec already holds --
+      judgment call, normalizing rather than refusing, so a saved project or a frozen
+      run declared `"ft"` still rebuilds: such a run now writes `LENGTH_UNITS feet`
+      (FloPy writes its enum lower case), MF6 reads unit 1 where it read 0, and every
+      number is the same. The spec is not changed, so no digest moves. A word that is
+      neither MF6's nor a known spelling is refused at the builder too -- a saved run
+      holding one (none measured) no longer rebuilds until it is edited. The tables
+      moved to `myflopy/_length_units.py` (import layer 0) so `specs.py` can ask them;
+      `specs.mf6_length_conversion` now reads them too, which adds `metres`/`us-ft`/
+      `usft` there and `centimeter` to the stack. Revert check:
+      `tests/test_length_unit_routes.py::test_every_edit_route_refuses_a_word_mf6_reads_as_undefined`
+      (12 cases), `test_a_spec_holding_an_abbreviation_is_written_as_mf6s_word` and the
+      MF6 run `test_mf6_reads_a_rebuilt_ft_run_as_feet_and_computes_the_same_numbers`.
+
+433. **`ModelContext(length_units=)` is checked at construction, and a surface declaring `units=` sampled with no model unit is refused (2026-10-11).**
+      `ModelContext` took any string (`"inches"` reached `mf.lak`, which refused it only
+      on the branch that converted). It now takes any spelling a `LayerStack` takes, or
+      `None`/`""`/`"unknown"` for no unit -- the three spellings its consumers already
+      read as none -- and raises naming the spellings. `Surface.values` (so
+      `LayerSurfaces.sample`, `sample_bed`, `LayerStack.build` and `mf.lak`'s bed) now
+      refuses a surface declaring `units=` when no model unit is given, naming
+      `length_units=` -- it read a metre DEM as model units, 3.28x off, in silence.
+      Ledger 405's "with no model unit nothing converts, as before" is restated by this
+      entry. A tree with no `units=` anywhere samples unchanged under `None`. No caller
+      in `src/`, `examples/`, the notebooks or the docs relied on the silence (searched);
+      one test asserted it and now asserts the refusal. Revert check:
+      `tests/test_length_unit_routes.py::test_model_context_refuses_a_unit_nothing_reads`,
+      `test_every_sampler_refuses_a_declared_unit_with_no_model_unit`,
+      `test_mf_lak_refuses_a_metre_bed_on_a_context_with_no_unit`.

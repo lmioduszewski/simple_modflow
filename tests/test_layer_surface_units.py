@@ -25,13 +25,11 @@ import pytest
 from shapely.geometry import box
 
 import myflopy as mf
+from myflopy._length_units import _LENGTH_TO_FEET, _MF6_LENGTH_UNITS, _mf6_length_units
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 from myflopy.surfaces import (
-    _LENGTH_TO_FEET,
-    _MF6_LENGTH_UNITS,
     LayerSurfaces,
     Surface,
-    _mf6_length_units,
     sample_bed,
 )
 
@@ -213,9 +211,12 @@ def test_a_converted_raster_fills_from_the_surface_above_as_it_is(tmp_path, vor)
     np.testing.assert_allclose(bottom[~east], 10.0 * M_TO_FT)
 
 
-def test_no_model_unit_converts_nothing_and_units_on_a_non_leaf_are_refused(vor):
+def test_no_model_unit_refuses_a_declared_unit_and_units_on_a_non_leaf_are_refused(vor):
     ground = np.full(vor.ncpl, 200.0)
-    np.testing.assert_allclose(sample_bed(_meters(30.0).capped_at(1000.0), vor, ground), 30.0)
+    # With no model unit there is nothing to convert into: it read 30.0 m as 30.0 in
+    # model units, silently (ledger 433).
+    with pytest.raises(ValueError, match=r"units='meters'.*length_units="):
+        sample_bed(_meters(30.0).capped_at(1000.0), vor, ground)
     import dataclasses
 
     on_algebra = dataclasses.replace(Surface.maximum(_meters(30.0), 0.0), units="meters")

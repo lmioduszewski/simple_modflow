@@ -414,6 +414,9 @@ release-group boundnames; without them it names the fix and offers
 
 - `mf.ModelContext(grid=, domain=, surfaces=, dates=)` — attaches to the **model**
   (`mf.gwf(..., context=ctx)`); carries the grid/idomain/surfaces the GIS-aware helpers use.
+  Its `length_units=` (default `"feet"`) takes any spelling a `LayerStack` takes, or
+  `None`/`"unknown"` for no unit, and refuses anything else at construction (ledger
+  433).
 - `mf.LayerStack(vor, top=...).add(...).build()` — declarative layer top/botm/idomain
   (compiles to `mf.LayerSurfaces` / `mf.Surface`). `vor` is optional: the layering
   can be declared before any grid exists and bound at `build(vor)`.
@@ -423,14 +426,20 @@ release-group boundnames; without them it names the fix and offers
   `units` (unit → layer indices) and `per_layer({unit: value})` for the positional
   per-layer lists `mf.npf`/`sto`/`ic` take.
   `length_units=` (default `"feet"`) takes `feet`/`ft`/`foot`/`us-ft`/`usft`,
-  `meters`/`meter`/`metres`/`m` or `centimeters`/`cm` and refuses any other spelling
+  `meters`/`meter`/`metres`/`m` or `centimeters`/`centimeter`/`cm` and refuses any other spelling
   at the call; `to_disv` writes it as MF6's own word, `FEET`/`METERS`/`CENTIMETERS`
   (MF6 reads any other word -- `FT` was written for `"ft"` -- as undefined, without a
   message; ledger 404). A surface's `units=` is converted to it WHEREVER the
   surface sits: `mf.Raster(dem, units="meters").capped_at(ground)` caps the DEM in
-  feet, each operand converted before they combine (ledger 405). The raw
-  `length_units=` option of `mf.dis`/`mf.disv`/`mf.disu` is written as given, so it
-  must already be MF6's word (`"ft"` raises naming `"feet"`).
+  feet, each operand converted before they combine (ledger 405). With
+  `length_units=None` there is nothing to convert into, so a surface declaring
+  `units=` RAISES naming `length_units=` -- it was read as model units in silence
+  (ledger 433). The raw `length_units=` option of `mf.dis`/`mf.disv`/`mf.disu`
+  must already be MF6's word (`"ft"` raises naming `"feet"`), and so must one given
+  to `with_options`/`packages.fork`/`packages.edit` on a discretization; the DIS
+  builders write an abbreviation an EXISTING spec holds -- a saved project, a
+  frozen run -- as MF6's word (`"ft"` -> `FEET`), and refuse an unknown word
+  (ledger 432).
 - `stack.excavate(bottom, within, *, name=, layer=, min_remnant=0.1)` — a void cut
   into the stack: a pond, basin, pit or trench (ledger 320). Inside `within` — the
   SAME polygons you pass to `mf.lak(lakes=)`, read by the same reader and covering

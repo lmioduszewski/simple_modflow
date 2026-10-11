@@ -17,6 +17,7 @@ import pandas as pd
 from shapely.geometry import Point
 from shapely.ops import nearest_points
 
+from myflopy._length_units import mf6_length_conversion
 from myflopy.advanced import sfr_spec
 from myflopy.geopackage import _layer_index
 from myflopy.grid_identity import pin_metadata
@@ -26,7 +27,6 @@ from myflopy.specs import (
     ModelContext,
     PackageSpec,
     _layer_elevations,
-    mf6_length_conversion,
     mf6_time_conversion,
 )
 
@@ -376,9 +376,10 @@ class SFRBuilder:
         MF6 ``LENGTH_CONVERSION`` for Manning's equation (meters to model length
         units). Default ``None``: from ``context.length_units``, read
         case-insensitively -- ``"feet"`` 3.28081, ``"meters"`` 1.0,
-        ``"centimeters"`` 100.0 (singulars and ``"ft"``/``"m"``/``"cm"`` too),
-        ``None``, ``""`` or ``"unknown"`` 1.0; any other unit raises
-        ``ValueError`` at build.
+        ``"centimeters"`` 100.0 (and every other spelling a ``LayerStack``
+        takes: ``"ft"``, ``"metres"``, ``"cm"``, ...), ``None``, ``""`` or
+        ``"unknown"`` 1.0. ``ModelContext`` refuses any other unit at
+        construction (ledger 433).
     time_conversion : float or None, optional
         MF6 ``TIME_CONVERSION`` (seconds to model time units). Default ``None``:
         from ``context.time_units``, read case-insensitively -- ``"days"``

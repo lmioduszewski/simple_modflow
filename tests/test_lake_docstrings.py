@@ -383,10 +383,9 @@ def test_the_conversions_read_the_unit_names_the_docstring_lists(toy):
         assert word in _entry(call, "length_conversion")
     for word in ('``"d"``', '``"hr"``', '``"min"``', '``"s"``', '``"yr"``'):
         assert word in _entry(call, "time_conversion")
-    ctx = ModelContext(grid=toy["context"].grid, domain=toy["context"].domain, length_units="inches")
-    with pytest.raises(ValueError, match="Unknown length unit 'inches'"):
-        mf.lak(context=ctx, nper=1, lakes=toy["lakes"], lake_id_field="name", starting_stage=11.5,
-               lake_bottom=9.0, connection_modes="rectangular", lake_top=11.0)
+    # Refused where it enters, not at the one consumer that converts (ledger 433).
+    with pytest.raises(ValueError, match=r"ModelContext\(length_units='inches'\)"):
+        ModelContext(grid=toy["context"].grid, domain=toy["context"].domain, length_units="inches")
 
 
 def test_a_flat_bathy_bed_warns_as_the_first_example_says(toy):

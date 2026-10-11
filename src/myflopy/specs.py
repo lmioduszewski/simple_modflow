@@ -30,6 +30,10 @@ from typing import Any, TypeAlias, TypeVar, cast
 import flopy
 
 from myflopy._deprecation import deprecated_instance_getattr
+from myflopy._length_units import (
+    _check_mf6_length_token,
+    check_model_length_units,
+)
 from myflopy._logging import get_logger
 
 # Re-exported so no caller changed when these moved out (ledger 264). Each name is
@@ -1614,7 +1618,8 @@ def fork_package(
 
     So the values are copied and handed to :func:`dataclasses.replace`, which is
     the ordinary construction path -- every check guarding a hand-written
-    ``mf.npf(...)`` guards a forked one.
+    ``mf.npf(...)`` guards a forked one. An edited discretization ``length_units`` must be MF6's
+    own word, as at ``mf.disv`` (ledger 432).
 
     ``deep=True`` (the default) also unaliases options the fork never touched,
     which is where the real hazard lives: :meth:`PackageSpec.with_options`
@@ -1626,6 +1631,11 @@ def fork_package(
     on that same package and opts back into sharing.
     """
 
+    _check_length_units_override(
+        package.builder,
+        overrides,
+        route="packages.edit" if stamp == "edited" else "packages.fork",
+    )
     options = copy.deepcopy(package.options) if deep else dict(package.options)
     # Overrides merge FIRST, so a caller who supplies a corrected filerecord
     # satisfies the rename check below rather than being refused for a value they
@@ -1826,6 +1836,22 @@ def _builder_label_for_error(builder) -> str:
     if targets:
         return " / ".join(target.__name__ for target in targets)
     return getattr(builder, "__name__", type(builder).__name__)
+
+
+def _check_length_units_override(builder, overrides: dict[str, Any], *, route: str) -> None:
+    """Refuse an edited discretization ``length_units`` that is not MF6's own word.
+
+    The declaration rule of ``mf.dis``/``mf.disv``/``mf.disu`` (ledger 404) for the
+    routes that edit an existing spec -- ``with_options``, ``packages.fork``,
+    ``packages.edit`` -- which built a ``FT`` MF6 read as unit 0 (ledger 432).
+    Keyed on the builder ACCEPTING ``length_units``, which only the DIS/DISV/DISU
+    classes do, and on the OVERRIDE only: an option the spec already held is the
+    builder's to map (``_length_units.mf6_length_option``), so a spec loaded from a
+    saved project can still be forked.
+    """
+
+    if "length_units" in overrides and "length_units" in (_accepted_options(builder) or ()):
+        _check_mf6_length_token(overrides["length_units"], helper=route)
 
 
 def _check_options(name: str, builder, options: dict[str, Any]) -> None:
@@ -2167,9 +2193,16 @@ class PackageSpec:
             already supplies (at :meth:`build` rather than here when that recipe
             entry is a source spec). Overriding an option the grid pin certifies
             -- any option, for a pin that names none -- replaces the pin with a
-            ``grid_pin_voided`` record naming the edit.
+            ``grid_pin_voided`` record naming the edit. On a DIS/DISV/DISU, a
+            ``length_units`` must be MF6's own word -- ``"feet"``, ``"meters"``,
+            ``"centimeters"`` or ``"unknown"``, any case -- as at ``mf.disv``:
+            another (``"ft"``, which MF6 reads as undefined) raises ``ValueError``
+            naming the word to write (ledger 432).
         """
 
+        _check_length_units_override(
+            self.builder, overrides, route=f"{self.name}.with_options"
+        )
         return replace(
             self,
             options={**self.options, **overrides},
@@ -3775,13 +3808,10 @@ def _grid_from_dict(data: dict[str, Any] | None) -> GridSpec | GridRef | None:
 
 
 # MF6 Manning/weir conversion factors. LENGTH_CONVERSION scales a length in METERS to
-# the model's length units; TIME_CONVERSION scales a time in SECONDS to the model's time
-# units. Used by SFR (and LAK outlets) so the streamflow equations run in model units.
-_MF6_LENGTH_TO_MODEL = {
-    "meters": 1.0, "meter": 1.0, "m": 1.0,
-    "feet": 3.28081, "foot": 3.28081, "ft": 3.28081,
-    "centimeters": 100.0, "centimeter": 100.0, "cm": 100.0,
-}
+# the model's length units -- `myflopy._length_units.mf6_length_conversion`, which reads
+# the one length-unit table (ledger 433).
+# TIME_CONVERSION scales a time in SECONDS to the model's time units. Used by SFR (and
+# LAK outlets) so the streamflow equations run in model units.
 _MF6_TIME_TO_MODEL = {
     "seconds": 1.0, "second": 1.0, "sec": 1.0, "s": 1.0,
     "minutes": 60.0, "minute": 60.0, "min": 60.0,
@@ -3789,25 +3819,6 @@ _MF6_TIME_TO_MODEL = {
     "days": 86400.0, "day": 86400.0, "d": 86400.0,
     "years": 31557600.0, "year": 31557600.0, "yr": 31557600.0,
 }
-
-
-def mf6_length_conversion(units: str | None) -> float:
-    """Return MF6 ``LENGTH_CONVERSION`` (meters -> model units) for a unit name.
-
-    ``feet`` -> 3.28081, ``meters`` -> 1.0, ``centimeters`` -> 100.0. ``None`` or
-    ``"unknown"`` -> 1.0. Raises ``ValueError`` for an unrecognized unit.
-    """
-    if units is None:
-        return 1.0
-    key = str(units).strip().lower()
-    if key in ("", "unknown"):
-        return 1.0
-    try:
-        return _MF6_LENGTH_TO_MODEL[key]
-    except KeyError as error:
-        raise ValueError(
-            f"Unknown length unit {units!r}; expected feet, meters, or centimeters."
-        ) from error
 
 
 def mf6_time_conversion(units: str | None) -> float:
@@ -3876,14 +3887,19 @@ class ModelContext:
         cell count (or, when 2-D, layer count) disagrees with the built DISV.
         ``None`` leaves activity to the DISV / grid. Not serialized. Default
         ``None``.
-    length_units : str, optional
-        The model's length unit, read by ``mf.sfr``/``mf.lak`` to derive MF6's
-        ``LENGTH_CONVERSION`` when none is given (``"feet"``/``"foot"``/``"ft"``
-        -> 3.28081, ``"meters"``/``"m"`` -> 1.0, ``"centimeters"``/``"cm"``
-        -> 100.0, case-insensitive; ``"unknown"`` or empty -> 1.0; any other
-        name raises ``ValueError`` there) and for flux labels in build
-        warnings. It does NOT set the DISV's ``length_units``. Serialized.
-        Default ``"feet"``.
+    length_units : str or None, optional
+        The model's length unit, in any spelling a ``LayerStack`` takes
+        (``"feet"``/``"foot"``/``"ft"``/``"us-ft"``/``"usft"``,
+        ``"meters"``/``"meter"``/``"metres"``/``"m"``,
+        ``"centimeters"``/``"centimeter"``/``"cm"``, any case), or ``None`` /
+        ``"unknown"`` for no declared unit. Anything else -- ``""`` included --
+        raises ``ValueError`` HERE, at construction (ledger 433). Read by
+        ``mf.sfr``/``mf.lak`` to derive MF6's ``LENGTH_CONVERSION`` when none is
+        given (3.28081 for feet, 1.0 for metres, 100.0 for centimetres, 1.0 with
+        no unit), by ``mf.lak`` to convert a lakebed ``Surface`` declaring
+        ``units=`` (with no unit declared here such a surface is REFUSED), and
+        for flux labels in build warnings. It does NOT set the DISV's
+        ``length_units``. Serialized. Default ``"feet"``.
     time_units : str, optional
         The model's time unit, read the same way for ``TIME_CONVERSION``
         (seconds, minutes, hours, days, years and their short forms). It does
@@ -3905,9 +3921,14 @@ class ModelContext:
     surfaces: Any = None
     dates: Any = None
     domain: Any = None
-    length_units: str = "feet"
+    length_units: str | None = "feet"
     time_units: str = "days"
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Refuse a ``length_units`` no consumer can read (ledger 433)."""
+
+        check_model_length_units(self.length_units)
 
 #: The ``attrs`` key and value a lazy ``mf.disv`` stamps on the elevation table it
 #: publishes onto the model's context: that table IS the built discretization's, so a

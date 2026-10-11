@@ -32,6 +32,7 @@ import numpy as np
 import shapely.geometry as shp
 
 from myflopy._defaults import DEFAULT_CRS
+from myflopy._length_units import _mf6_length_units
 from myflopy._logging import get_logger
 from myflopy._optional import require
 from myflopy.areas import Area
@@ -49,7 +50,6 @@ from myflopy.surfaces import (
     _content_keyed,
     _depends_on_previous,
     _excavate_layers,
-    _mf6_length_units,
     _read_excavation_file,
     _refuse_overlapping_excavations,
     _resolve_excavation,
@@ -3341,11 +3341,12 @@ class LayerStack:
     length_units : str, optional
         The model length unit. Default ``"feet"``. Known spellings, any case:
         ``feet``/``ft``/``foot``/``us-ft``/``usft``, ``meters``/``meter``/
-        ``metres``/``m``, ``centimeters``/``cm``; any other raises ``ValueError``
-        HERE, naming them (ledger 404). ``None`` declares none: nothing is
-        converted and :meth:`to_disv` writes no ``LENGTH_UNITS``, which MF6 reads as
-        undefined -- so MF6's own ``"unknown"`` is refused with a message naming
-        ``None``, the stack's spelling of it. At :meth:`build`
+        ``metres``/``m``, ``centimeters``/``centimeter``/``cm``; any other raises ``ValueError``
+        HERE, naming them (ledger 404). ``None`` declares none: :meth:`to_disv`
+        writes no ``LENGTH_UNITS``, which MF6 reads as undefined -- so MF6's own
+        ``"unknown"`` is refused with a message naming ``None``, the stack's
+        spelling of it -- and a surface declaring ``units=`` cannot be converted,
+        so :meth:`build` RAISES naming ``length_units=`` (ledger 433). At :meth:`build`
         every surface declaring its own ``units=`` is converted into it, an operand
         inside an algebra surface included (``Raster(dem, units="meters")
         .capped_at(...)`` is the DEM in feet, capped). :meth:`to_disv` writes it as

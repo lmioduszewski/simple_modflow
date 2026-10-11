@@ -17,6 +17,21 @@ reads any word it does not know as 0, undefined.
 PART 2 -- what myflopy writes for a stack declared in an abbreviation. Before the fix
 ``LayerStack(length_units="ft").to_disv()`` wrote ``FT`` (and ``"m"`` wrote ``M``),
 so the run reported unit 0; it writes ``FEET``/``METERS`` now and the run reports 1/2.
+
+PART 3 -- does MF6 COMPUTE anything from the unit? (ledger 432) The canonical
+testing model (every package, five OBS families) is written once, copied, its DISV's
+``LENGTH_UNITS feet`` rewritten to ``FT`` in the copy, and both run. Measured: unit 1
+against unit 0, and all 21 output files -- heads, the cell budget, the LAK/SFR/UZF/MVR
+budgets and stages, every OBS CSV, the solver CSVs and the ``.grb`` -- BYTE-IDENTICAL.
+MF6's source agrees: ``lenuni`` is read by the listing line and the NetCDF exporters
+alone. So the unit is a label, and a wrong word moves no number.
+
+PART 4 -- a spec that HOLDS an abbreviation (a saved project, a frozen run, or one
+edited by ``with_options`` before the edit routes were checked) is now written as MF6's
+word by the DIS builder: ``PackageSpec(..., {"length_units": "ft"})`` is handed to FloPy
+as ``FEET`` and written ``LENGTH_UNITS feet`` (FloPy writes its enum in lower case), so a
+rebuilt run reports unit 1 where it ran under 0, with the same numbers (PART 3).
+About 15 s in all (PART 3 builds the canonical model).
 """
 
 from __future__ import annotations
@@ -76,10 +91,62 @@ def part_2(root: pathlib.Path) -> None:
               f"{disv.options['length_units']!r} -> unit {_run(workspace)}")
 
 
+def part_3(root: pathlib.Path) -> None:
+    import filecmp
+    import warnings
+
+    from myflopy.modflow.mf6.canonical_example import (
+        CanonicalModelConfig,
+        build_canonical_model,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model = build_canonical_model(root / "canonical", config=CanonicalModelConfig.testing())
+        model.sim.write_simulation(silent=True)
+    source = pathlib.Path(model.sim.sim_path)
+    inputs = {path.name for path in source.iterdir()}
+    runs = {}
+    for word in ["feet", "FT"]:
+        workspace = root / f"canonical_{word}"
+        shutil.copytree(source, workspace)
+        for disv in workspace.glob("*.disv"):
+            disv.write_text(re.sub(r"LENGTH_UNITS\s+\S+", f"LENGTH_UNITS  {word}",
+                                   disv.read_text()))
+        run = subprocess.run(["mf6"], cwd=workspace, capture_output=True, text=True, check=False)
+        assert "Normal termination" in run.stdout, run.stdout[-1500:]
+        listing = next(path for path in workspace.glob("*.lst") if path.name != "mfsim.lst")
+        unit = UNIT_LINE.search(listing.read_text()).group(1)
+        print(f"PART 3  canonical model under LENGTH_UNITS {word:<4} -> unit {unit}")
+        runs[word] = workspace
+    outputs = sorted(path.name for path in runs["feet"].iterdir()
+                     if path.is_file() and path.suffix != ".lst" and path.name not in inputs)
+    differ = [name for name in outputs
+              if not filecmp.cmp(runs["feet"] / name, runs["FT"] / name, shallow=False)]
+    print(f"PART 3  {len(outputs)} output files compared, {len(differ)} differ: {differ}")
+
+
+def part_4(root: pathlib.Path) -> None:
+    vor = irregular_voronoi_grid(nrow=2, ncol=2, cell_size=100.0)
+    declared = mf.LayerStack(top=100.0).add("a", thickness=10.0).to_disv(vor, attach=False)
+    held = mf.PackageSpec(declared.name, declared.builder,
+                          {**declared.options, "length_units": "ft"})
+    model = mf.gwf("m", packages=[held, mf.npf(k=1.0), mf.ic(strt=95.0),
+                                  mf.chd(stress_period_data={0: [[(0, 0), 95.0]]})])
+    sim = mf.simulation(model, name="s",
+                        packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+    workspace = root / "held_ft"
+    sim.build_flopy(workspace).simulation.write_simulation(silent=True)
+    written = re.search(r"LENGTH_UNITS\s+(\S+)", (workspace / "m.disv").read_text()).group(1)
+    print(f"PART 4  a spec holding 'ft' writes {written!r} -> unit {_run(workspace)}")
+
+
 if __name__ == "__main__":
     root = pathlib.Path(tempfile.mkdtemp(prefix="mf6_length_units_"))
     try:
         part_1(root)
         part_2(root)
+        part_3(root)
+        part_4(root)
     finally:
         shutil.rmtree(root, ignore_errors=True)

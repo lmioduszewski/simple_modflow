@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 import flopy
 
+from myflopy._length_units import mf6_length_option
 from myflopy.specs import PackageSpec
 
 
@@ -232,6 +233,20 @@ def build_oc(model, **options):
     return _dispatch_core_class(_OC_CLASSES, model, "oc")(model, **options)
 
 
+def _mf6_length_word(options: dict[str, Any]) -> dict[str, Any]:
+    """``options`` with ``length_units`` as the word MF6 reads (ledger 432).
+
+    Every route reaches the builder -- a frozen snapshot and a saved project
+    included -- so this is where a spec holding ``"ft"`` (written ``FT``, read by
+    MF6 as unit 0 before) is written ``FEET``; an unknown word raises. The spec
+    itself is not changed, so its digest is not either.
+    """
+
+    if options.get("length_units") is None:
+        return options
+    return {**options, "length_units": mf6_length_option(options["length_units"])}
+
+
 def build_disv(model, **options):
     """Build the DISV package for the model's kind (GWF/GWT/GWE/PRT). Engine under ``mf.disv``.
 
@@ -242,15 +257,19 @@ def build_disv(model, **options):
         (``"gwf6"``, ...) picks the FloPy class.
     **options
         Forwarded to that class (``flopy.mf6.ModflowGwfdisv``, ``ModflowGwtdisv``,
-        ``ModflowGwedisv`` or ``ModflowPrtdisv``).
+        ``ModflowGwedisv`` or ``ModflowPrtdisv``). ``length_units`` is written as MF6's word: one
+        of MF6's four (``feet``/``meters``/``centimeters``/``unknown``, any
+        case) as given, an abbreviation such as ``"ft"`` as ``FEET`` -- which
+        MF6 read as undefined when written ``FT`` (ledger 432).
 
     Raises
     ------
     ValueError
-        ``model.model_type`` is not one of GWF/GWT/GWE/PRT.
+        ``model.model_type`` is not one of GWF/GWT/GWE/PRT; or ``length_units``
+        is a word that is neither MF6's nor a spelling it maps.
     """
 
-    return _dispatch_core_class(_DISV_CLASSES, model, "disv")(model, **options)
+    return _dispatch_core_class(_DISV_CLASSES, model, "disv")(model, **_mf6_length_word(options))
 
 
 def build_dis(model, **options):
@@ -263,15 +282,19 @@ def build_dis(model, **options):
         (``"gwf6"``, ...) picks the FloPy class.
     **options
         Forwarded to that class (``flopy.mf6.ModflowGwfdis``, ``ModflowGwtdis``, ``ModflowGwedis``
-        or ``ModflowPrtdis``).
+        or ``ModflowPrtdis``). ``length_units`` is written as MF6's word: one
+        of MF6's four (``feet``/``meters``/``centimeters``/``unknown``, any
+        case) as given, an abbreviation such as ``"ft"`` as ``FEET`` -- which
+        MF6 read as undefined when written ``FT`` (ledger 432).
 
     Raises
     ------
     ValueError
-        ``model.model_type`` is not one of GWF/GWT/GWE/PRT.
+        ``model.model_type`` is not one of GWF/GWT/GWE/PRT; or ``length_units``
+        is a word that is neither MF6's nor a spelling it maps.
     """
 
-    return _dispatch_core_class(_DIS_CLASSES, model, "dis")(model, **options)
+    return _dispatch_core_class(_DIS_CLASSES, model, "dis")(model, **_mf6_length_word(options))
 
 
 def build_disu(model, **options):
@@ -284,15 +307,19 @@ def build_disu(model, **options):
         (``"gwf6"``, ...) picks the FloPy class.
     **options
         Forwarded to that class (``flopy.mf6.ModflowGwfdisu``, ``ModflowGwtdisu`` or
-        ``ModflowGwedisu``).
+        ``ModflowGwedisu``). ``length_units`` is written as MF6's word: one
+        of MF6's four (``feet``/``meters``/``centimeters``/``unknown``, any
+        case) as given, an abbreviation such as ``"ft"`` as ``FEET`` -- which
+        MF6 read as undefined when written ``FT`` (ledger 432).
 
     Raises
     ------
     ValueError
-        ``model.model_type`` is not one of GWF/GWT/GWE.
+        ``model.model_type`` is not one of GWF/GWT/GWE; or ``length_units``
+        is a word that is neither MF6's nor a spelling it maps.
     """
 
-    return _dispatch_core_class(_DISU_CLASSES, model, "disu")(model, **options)
+    return _dispatch_core_class(_DISU_CLASSES, model, "disu")(model, **_mf6_length_word(options))
 
 
 def _build_two_model_exchange(constructor, simulation, models: tuple[Any, ...], **options):

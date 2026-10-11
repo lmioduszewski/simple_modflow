@@ -25,6 +25,11 @@ import numpy as np
 import shapely as shp
 
 from myflopy._defaults import DEFAULT_EPSG
+from myflopy._length_units import (
+    _declares_no_unit,
+    _length_factor,
+    _mf6_length_units,
+)
 from myflopy._logging import get_logger
 from myflopy.areas import Area
 from myflopy.modflow.mf6.grid.geometry import (
@@ -87,131 +92,6 @@ def _as_per_layer(value, nlay: int, name: str) -> list:
             f"{name} has {len(seq)} entries but there are {nlay} layers."
         )
     return seq
-
-
-# Length-unit handling. Elevations are converted by a single scale factor (same
-# datum, different unit), so only a per-unit "value in feet" table is needed.
-_LENGTH_TO_FEET = {
-    "feet": 1.0, "ft": 1.0, "foot": 1.0, "us-ft": 1.0, "usft": 1.0,
-    "meters": 3.280839895013123, "meter": 3.280839895013123,
-    "metres": 3.280839895013123, "m": 3.280839895013123,
-    "centimeters": 0.03280839895013123, "cm": 0.03280839895013123,
-}
-# Model length unit -> MF6 LENGTH_UNITS token, for EVERY spelling `_LENGTH_TO_FEET`
-# converts (ledger 404). It held only the three long names, and anything else was
-# written upper-cased -- `"ft"` as `FT` -- which MF6 reads as length unit 0, undefined,
-# under Normal termination (docs/reproducers/mf6_length_units.py). The two tables are
-# held together by a test: a spelling the conversion accepts must have a token.
-_MF6_LENGTH_UNITS = {
-    "feet": "FEET", "ft": "FEET", "foot": "FEET", "us-ft": "FEET", "usft": "FEET",
-    "meters": "METERS", "meter": "METERS", "metres": "METERS", "m": "METERS",
-    "centimeters": "CENTIMETERS", "cm": "CENTIMETERS",
-}
-#: The words MF6's DIS/DISV/DISU ``LENGTH_UNITS`` reads (any case); every other word,
-#: ``FT`` included, it reads as 0 -- undefined -- and says nothing.
-_MF6_LENGTH_TOKENS = frozenset({"FEET", "METERS", "CENTIMETERS", "UNKNOWN"})
-
-
-def _mf6_length_units(units: str) -> str:
-    """The MF6 ``LENGTH_UNITS`` word for a model length unit, in any spelling the stack takes.
-
-    The ONE mapping behind ``LayerSurfaces.to_disv`` and ``LayerBuildResult.to_disv``
-    (so ``LayerStack.to_disv`` and ``mf.disv(stack)`` too): every spelling
-    :data:`_LENGTH_TO_FEET` converts maps to ``FEET``/``METERS``/``CENTIMETERS``.
-
-    Parameters
-    ----------
-    units : str
-        A length unit as a ``LayerStack(length_units=)`` or ``to_disv(length_units=)``
-        takes it -- ``"feet"``, ``"ft"``, ``"foot"``, ``"us-ft"``, ``"usft"``,
-        ``"meters"``, ``"meter"``, ``"metres"``, ``"m"``, ``"centimeters"``, ``"cm"`` --
-        in any case.
-
-    Returns
-    -------
-    str
-        ``"FEET"``, ``"METERS"`` or ``"CENTIMETERS"``.
-
-    Raises
-    ------
-    ValueError
-        ``units`` is not one of those spellings (a non-``str`` included), naming them.
-        It used to be written upper-cased, and MF6 reads any word it does not know as
-        length unit 0 without a message. MF6's own ``"unknown"`` is refused too, by a
-        message naming ``length_units=None`` -- the stack's spelling of "no unit",
-        which writes no ``LENGTH_UNITS`` and which MF6 reads as undefined just the same.
-    """
-
-    token = _MF6_LENGTH_UNITS.get(units.lower()) if isinstance(units, str) else None
-    if token is None and isinstance(units, str) and units.strip().upper() == "UNKNOWN":
-        # MF6 KNOWS this word, so the generic message below would be false for it.
-        # A stack has no factor for it; "no unit" is spelled `None`, which writes no
-        # LENGTH_UNITS -- what MF6 reads as UNKNOWN (ledger 404).
-        raise ValueError(
-            f"length_units={units!r} is not a unit a stack can convert into. To declare "
-            "no length unit, pass length_units=None: nothing is converted and no "
-            "LENGTH_UNITS is written, which MF6 reads as undefined (unit 0) exactly as "
-            f"it reads UNKNOWN. Known units: {sorted(_MF6_LENGTH_UNITS)}."
-        )
-    if token is None:
-        raise ValueError(
-            f"Unknown length unit {units!r}; known: {sorted(_MF6_LENGTH_UNITS)}. MF6 "
-            "reads a LENGTH_UNITS word it does not know as 0 (undefined) and says "
-            "nothing, so it is refused here rather than written."
-        )
-    return token
-
-
-def _check_mf6_length_token(value: Any, *, helper: str) -> Any:
-    """Refuse a raw DIS/DISV/DISU ``length_units`` option MF6 would read as undefined.
-
-    The ``**options`` of ``mf.dis``/``mf.disv``/``mf.disu`` are FloPy's own keywords,
-    written as given, so the word must be MF6's: ``feet``, ``meters``, ``centimeters``
-    or ``unknown`` in any case (FloPy and MF6 both upper-case it). Anything else is
-    written and read as 0 -- ``ft`` included -- so it is refused naming the word to
-    write (ledger 404). Mapping it instead would leave two spellings of one
-    package, and its digest, for the same model.
-
-    Parameters
-    ----------
-    value : str or None
-        The ``length_units`` option as passed. ``None`` writes nothing and is
-        returned as is.
-    helper : str
-        The helper's name for the message, e.g. ``"mf.disv"``.
-
-    Returns
-    -------
-    str or None
-        ``value`` unchanged.
-
-    Raises
-    ------
-    ValueError
-        ``value`` is not one of MF6's four words.
-    """
-
-    if value is None or (isinstance(value, str) and value.upper() in _MF6_LENGTH_TOKENS):
-        return value
-    hint = ""
-    if isinstance(value, str) and value.lower() in _MF6_LENGTH_UNITS:
-        hint = f" Write length_units={_MF6_LENGTH_UNITS[value.lower()].lower()!r}."
-    raise ValueError(
-        f"{helper}(length_units={value!r}) is not a word MF6 reads: it takes "
-        f"{sorted(token.lower() for token in _MF6_LENGTH_TOKENS)} (any case), and reads "
-        f"every other word as length unit 0, undefined, without a message.{hint}"
-    )
-
-
-def _length_factor(from_units: str, to_units: str) -> float:
-    """Multiplier converting an elevation from ``from_units`` to ``to_units``."""
-
-    try:
-        return _LENGTH_TO_FEET[from_units.lower()] / _LENGTH_TO_FEET[to_units.lower()]
-    except KeyError as exc:
-        raise ValueError(
-            f"Unknown length unit {exc.args[0]!r}; known: {sorted(_LENGTH_TO_FEET)}."
-        ) from None
 
 
 def _cells_in_zone(vor, zone) -> np.ndarray:
@@ -299,7 +179,10 @@ class Surface:
         ``"ft"``, ``"m"``, ``"cm"``...). Converted by a single factor when sampled
         through something that declares the model's length unit (a ``LayerStack``
         with ``length_units=``, :meth:`LayerSurfaces.sample`, :func:`sample_bed`,
-        ``mf.lak``'s bed); ignored otherwise. Read wherever the surface sits: an
+        ``mf.lak``'s bed). Sampled with NO model length unit (``length_units=None``,
+        or a context's ``"unknown"``) it raises ``ValueError`` naming
+        ``length_units=`` -- it was read as model units in silence (ledger
+        433). Read wherever the surface sits: an
         operand inside an algebra surface (``minimum``, ``shift``, ``where``, ...) is
         converted before the operands combine (ledger 405). Only a ``flat``,
         ``raster``, ``contours``, ``points`` or ``array`` surface takes it -- on a
@@ -1399,14 +1282,16 @@ class Surface:
             (``offset_below``/``constant_thickness``) or an algebra surface carrying
             ``units`` itself raises ``ValueError`` -- the first is a distance in model
             units, and on the second write ``units=`` on the operands. ``None`` (the
-            default) converts nothing, whatever ``units`` the surfaces declare.
-            Passed down to every operand.
+            default) or ``"unknown"`` declares no model unit: a tree with no
+            ``units=`` anywhere is sampled as it is, and a surface declaring
+            ``units=`` raises ``ValueError`` naming ``length_units=`` (ledger
+            433). Passed down to every operand.
 
         Returns
         -------
         numpy.ndarray of float, shape (ncpl,)
-            One elevation per cell, in ``length_units`` when given, else as each
-            surface declares it. ``NaN`` where a raster has no data and nothing
+            One elevation per cell, in ``length_units`` when given, else as the
+            surfaces hold them (none of which declares ``units=``). ``NaN`` where a raster has no data and nothing
             filled it, and where a ``"points"`` interpolation has none.
 
         Raises
@@ -1414,8 +1299,9 @@ class Surface:
         ValueError
             A relative kind with no ``previous``; a ``from_array`` surface of the
             wrong size; an unknown ``fill``; an unknown ``method`` on a raster; with
-            ``length_units`` given, ``units=`` on a relative or algebra surface, or
-            an unknown length unit on either side.
+            ``units=`` on a relative or algebra surface, an unknown length unit on
+            either side, or ``units=`` on a surface sampled with no
+            ``length_units``.
         TypeError
             An unknown ``kind``.
         """
@@ -1426,7 +1312,7 @@ class Surface:
         # silently -- and a `fill="propagate"` raster in metres multiplied the
         # surface it inherited, already in feet, by the same factor.
         factor = 1.0
-        if self.units is not None and length_units is not None:
+        if self.units is not None:
             if self.kind in _RELATIVE_KINDS:
                 raise ValueError(
                     "units= is only supported on absolute surfaces, not relative "
@@ -1439,6 +1325,18 @@ class Surface:
                     "surface takes its units from its operands. Declare units= on "
                     "each operand that is not in model units -- each is converted "
                     "before they combine."
+                )
+            if _declares_no_unit(length_units):
+                # With no model unit a declared `units=` cannot be converted, and it was
+                # read as model units in silence: a metre DEM sampled by a stack declared
+                # `length_units=None` came back 3.28x off (ledger 433).
+                raise ValueError(
+                    f"A {self.kind!r} surface declares units={self.units!r}, but it was "
+                    f"sampled with length_units={length_units!r} -- no model length unit "
+                    "to convert it into. Declare the model's unit: length_units= on the "
+                    "LayerStack, LayerSurfaces.sample/to_disv or sample_bed call, or "
+                    "ModelContext(length_units=) for mf.lak's lake_bottom. Or drop "
+                    "units= if the surface is already in model units."
                 )
             factor = _length_factor(self.units, length_units)
 
@@ -1574,8 +1472,10 @@ def sample_bed(
         The model's length unit. Every surface declaring ``units=`` is converted to
         it (``"meters"`` -> ``"feet"`` multiplies by 3.2808...), an operand of an
         algebra surface included -- ``mf.Raster(dem_m, units="meters").below(3)`` is
-        the DEM in feet less 3 ft (see :meth:`Surface.values`). ``None`` leaves the
-        values as sampled.
+        the DEM in feet less 3 ft (see :meth:`Surface.values`). ``None`` (or
+        ``"unknown"``) declares no unit: a surface declaring ``units=`` then raises
+        ``ValueError`` naming ``length_units=`` (ledger 433), and one declaring
+        none is sampled as it is.
     refresh : bool, default False
         Rebuild a derived (contour) surface's cached raster before sampling, as
         ``LayerStack.build(refresh=True)`` does for every other surface of the stack.
@@ -1591,7 +1491,7 @@ def sample_bed(
     ValueError
         ``units=`` on a relative surface (``offset_below`` / ``constant_thickness``)
         or on an algebra surface itself, which a unit factor cannot convert; an
-        unknown length unit; any refusal :meth:`Surface.values` makes (a
+        unknown length unit; ``units=`` with no ``length_units``; any refusal :meth:`Surface.values` makes (a
         ``from_array`` of the wrong length, ...).
 
     Examples
@@ -2138,7 +2038,10 @@ class LayerSurfaces:
             converted to it, an operand inside an algebra surface included, before
             it combines with anything (:meth:`Surface.values`); ``units=`` on a
             relative or an algebra surface itself raises ``ValueError``, as does an
-            unknown unit name. ``None`` (the default) converts nothing.
+            unknown unit name. ``None`` (the default) declares no unit: a stack
+            whose surfaces declare no ``units=`` is sampled as it is, and one that
+            does raises ``ValueError`` naming ``length_units=`` (ledger
+            433).
         refresh : bool, default False
             Rebuild any derived (contour) caches before sampling.
 
@@ -2481,12 +2384,13 @@ class LayerSurfaces:
             written as DISV ``LENGTH_UNITS`` in MF6's own word: every spelling the
             conversion takes -- ``'feet'``/``'ft'``/``'foot'``/``'us-ft'``/
             ``'usft'``, ``'meters'``/``'meter'``/``'metres'``/``'m'``,
-            ``'centimeters'``/``'cm'``, any case -- becomes ``FEET``, ``METERS`` or
+            ``'centimeters'``/``'centimeter'``/``'cm'``, any case -- becomes ``FEET``, ``METERS`` or
             ``CENTIMETERS``. Any other name raises ``ValueError`` naming those,
             before anything is sampled or attached: MF6 reads a word it does not
             know (``FT`` was written for ``'ft'``) as length unit 0, undefined,
-            without a message. ``None`` (the default) converts nothing and writes no
-            ``LENGTH_UNITS``.
+            without a message. ``None`` (the default) declares no unit: it writes no
+            ``LENGTH_UNITS``, and a surface declaring ``units=`` raises
+            ``ValueError`` in :meth:`sample` (ledger 433).
         name : str, default "disv"
             Forwarded to ``mf.disv(name=)``: the returned spec's name, the key
             ``with_packages(slot=)`` and ``without_packages`` use.

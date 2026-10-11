@@ -197,7 +197,8 @@ def test_sfr_builder_derives_conversions_from_context_units():
 
 
 def test_mf6_unit_conversion_helpers():
-    from myflopy.specs import mf6_length_conversion, mf6_time_conversion
+    from myflopy._length_units import mf6_length_conversion
+    from myflopy.specs import mf6_time_conversion
 
     assert mf6_length_conversion("feet") == pytest.approx(3.28081)
     assert mf6_length_conversion("FEET") == pytest.approx(3.28081)  # case-insensitive

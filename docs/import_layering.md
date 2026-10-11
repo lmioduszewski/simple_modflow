@@ -18,6 +18,7 @@ review the diff, commit the regenerated files together.
 - `myflopy`
 - `myflopy._defaults`
 - `myflopy._deprecation`
+- `myflopy._length_units`
 - `myflopy._logging`
 - `myflopy._optional`
 - `myflopy._warnings`

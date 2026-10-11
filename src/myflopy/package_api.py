@@ -20,6 +20,7 @@ import geopandas as gpd
 import numpy as np
 from shapely.geometry import Point, Polygon
 
+from myflopy._length_units import _check_mf6_length_token
 from myflopy._logging import get_logger
 from myflopy.advanced import (
     _array_bc_spec,
@@ -101,7 +102,6 @@ from myflopy.specs import (
     _layer_elevations,
     stamp_source_hashes,
 )
-from myflopy.surfaces import _check_mf6_length_token
 
 PathLike = Path | str
 
@@ -6454,9 +6454,10 @@ class _SFRPackage:
             MF6 ``LENGTH_CONVERSION`` for Manning's equation (meters to model
             length units), written as given. Default ``None``: from
             ``context.length_units`` -- ``"feet"`` (the context's default) 3.28081,
-            ``"meters"`` 1.0, ``"centimeters"`` 100.0, also as a singular or an
-            abbreviation (``"ft"``, ``"m"``, ``"cm"``) in any case; ``None`` or
-            ``"unknown"`` 1.0. Any other unit raises ``ValueError``.
+            ``"meters"`` 1.0, ``"centimeters"`` 100.0, in any spelling a
+            ``LayerStack`` takes (``"ft"``, ``"metres"``, ``"cm"``, ...) and any
+            case; ``None`` or ``"unknown"`` 1.0. ``ModelContext`` refuses any other
+            unit at construction (ledger 433).
         time_conversion : float or None, optional
             MF6 ``TIME_CONVERSION`` (seconds to model time units), written as
             given. Default ``None``: from ``context.time_units`` -- ``"days"`` (the
@@ -7084,9 +7085,11 @@ class _LAKPackage:
             length units; MF6 uses it only for WEIR and MANNING outlet flows.
             ``None`` derives it from ``context.length_units``, read ignoring
             case and surrounding spaces: 3.28081 for ``"feet"``/``"foot"``/
-            ``"ft"``, 1.0 for ``"meters"``/``"meter"``/``"m"``, 100.0 for
-            ``"centimeters"``/``"centimeter"``/``"cm"``, 1.0 for ``None``,
-            ``""`` or ``"unknown"``, and ``ValueError`` for any other name.
+            ``"ft"``/``"us-ft"``/``"usft"``, 1.0 for ``"meters"``/``"meter"``/
+            ``"metres"``/``"m"``, 100.0 for ``"centimeters"``/``"centimeter"``/
+            ``"cm"``, 1.0 for ``None``, ``""`` or ``"unknown"``.
+            ``ModelContext`` refuses any other name at construction (ledger
+            433).
         time_conversion : float, optional
             Default ``None``. MF6's ``TIME_CONVERSION``, from seconds to model
             time units; also used only for WEIR and MANNING outlets. ``None``

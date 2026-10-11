@@ -337,7 +337,10 @@ another; ledger 406).
 A surface in another length unit says so with `units=`, on the surface itself or
 on any operand of one: `mf.Raster("dem_m.tif", units="meters").below(20)` is the DEM
 in model units, 20 ft lower. Each operand is converted before the operands combine
-(ledger 405).
+(ledger 405). The conversion needs the model's unit, so a stack (or a `sample_bed`/
+`LayerSurfaces.sample` call) with `length_units=None` refuses a surface declaring
+`units=`, naming `length_units=` -- it used to read it as model units, silently
+(ledger 433).
 
 ### `LayerStack` defers its grid too — and keeps per-layer control
 
@@ -1280,7 +1283,8 @@ lake_bottom=mf.Surface.offset_below(6)              # 6 ft below the model top
 A `str` that names a column of `lakes` is still read as the column. A Surface or
 raster is sampled onto the grid **once** — it used to be once per cell read, the
 whole grid each time: 5 samples for a 2-cell pond. `units="meters"` on a Surface
--- or on any operand of algebra on one -- converts to the model's units, and a
+-- or on any operand of algebra on one -- converts to the model's units (the
+context's `length_units`; with none declared, `None`/`"unknown"`, it is refused), and a
 relative Surface measures from the model top.
 
 **A lake covers its cells by AREA** (ledger 241) -- a polygon drawn along cell

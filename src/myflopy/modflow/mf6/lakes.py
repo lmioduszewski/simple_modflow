@@ -22,6 +22,7 @@ from rasterio.features import geometry_mask
 from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 
+from myflopy._length_units import mf6_length_conversion
 from myflopy._logging import get_logger
 from myflopy._warnings import stacklevel_outside_package
 from myflopy.advanced import lak_spec
@@ -48,7 +49,6 @@ from myflopy.specs import (
     ModelContext,
     PackageSpec,
     _layer_elevation_source,
-    mf6_length_conversion,
     mf6_time_conversion,
 )
 from myflopy.surfaces import Surface, sample_bed
@@ -1927,9 +1927,11 @@ class LAKBuilder:
         length units; MF6 uses it only for WEIR and MANNING outlet flows.
         ``None`` derives it from ``context.length_units``, read ignoring
         case and surrounding spaces: 3.28081 for ``"feet"``/``"foot"``/
-        ``"ft"``, 1.0 for ``"meters"``/``"meter"``/``"m"``, 100.0 for
-        ``"centimeters"``/``"centimeter"``/``"cm"``, 1.0 for ``None``,
-        ``""`` or ``"unknown"``, and ``ValueError`` for any other name.
+        ``"ft"``/``"us-ft"``/``"usft"``, 1.0 for ``"meters"``/``"meter"``/
+        ``"metres"``/``"m"``, 100.0 for ``"centimeters"``/``"centimeter"``/
+        ``"cm"``, 1.0 for ``None``, ``""`` or ``"unknown"``.
+        ``ModelContext`` refuses any other name at construction (ledger
+        433).
     time_conversion : float, optional
         Default ``None``. MF6's ``TIME_CONVERSION``, from seconds to model
         time units; also used only for WEIR and MANNING outlets. ``None``
