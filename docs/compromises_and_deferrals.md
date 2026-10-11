@@ -17323,7 +17323,8 @@ same day, which is the useful part of the result.
       only reach a unit already below its minimum. A 0.8 ft clay with `min_thickness=0.5`
       and `pinch="inactive"` came back 0.1 ft and idomain 0 (the stack trigger was 1.0);
       it is 0.8 ft and active, also under an explicit `trigger_sep=2`. A unit below its
-      minimum is crushed to `min_sep` and pinched exactly as before. The tolerance is there
+      minimum is pinched exactly as before, and crushed to `min_sep` only where it is also
+      within the stack trigger (a 1.5 ft clay with min 2 keeps its 1.5 ft, idomain 0). The tolerance is there
       because the pinch rule is STRICTLY below and the engine's trigger is "at or below": a
       unit exactly at its minimum was crushed too. **Kept, judgment call:** an explicit
       `trigger_sep` still replaces a `"floor"` layer's trigger (documented, and

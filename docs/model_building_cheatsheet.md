@@ -896,7 +896,9 @@ not 0.4. `min_sep` is only the fallback for layers that pinch. A split unit divi
 its minimum among its slices by their shares, so the unit keeps the thickness you
 declared. Reconcile never reaches a PINCHING unit at or above its own `min_thickness`
 -- a 0.8 ft clay with `min_thickness=0.5, pinch="inactive"` builds 0.8 ft and active --
-and a unit below it is crushed to `min_sep` and pinched (ledger 377).
+and a unit below it is pinched, crushed to `min_sep` only where it is also within
+`trigger_sep` (1.0 by default): a 1.5 ft clay with `min_thickness=2` stays 1.5 ft and
+reads idomain 0 (ledger 377).
 
 with `pinch="passthrough"` the cut-out layers read `idomain = -1` instead — same
 geometry, but flow still passes vertically through the gap. **That is usually the

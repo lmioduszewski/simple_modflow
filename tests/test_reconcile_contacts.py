@@ -120,6 +120,16 @@ def test_an_explicit_trigger_does_not_switch_off_a_present_pinching_unit(vor):
     assert set(np.unique(result.idomain[0])) == {1}
 
 
+def test_a_unit_below_its_minimum_but_beyond_the_trigger_is_pinched_where_it_lies(vor):
+    """Below its minimum is the pinch verdict; the crush to ``min_sep`` is reconcile's
+    and needs the stack trigger too. A 1.5 ft clay with min 2 is pinched in place."""
+
+    result = _clay(vor, 8.5, min_thickness=2.0)
+    assert np.allclose(result.thickness[0], 1.5)
+    assert np.allclose(result.botm[0], 8.5)
+    assert set(np.unique(result.idomain[0])) == {0}
+
+
 def test_a_floor_unit_split_unequally_keeps_its_base_and_its_shares(vor):
     """A floor unit's minimum is divided among its slices BY SHARE. Divided equally, a
     2 ft unit at its 2 ft minimum split [0.9, 0.1] had its 0.2 ft slice held at 1.0 ft
@@ -221,6 +231,10 @@ def test_the_grid_method_forwards_trigger_sep(vor, tmp_path):
                      crs=vor.crs).to_file(gpkg)
     out = vor.adjust_top_btm_overlaps(shp=gpkg, buffer=0.5, min_sep=1.0, trigger_sep=1.0)
     assert out.loc[4, 1] == pytest.approx(99.0)
+    # a trigger below the 0.5 ft gap leaves it: the method's own default (1) would
+    # have closed it to 1.0, so this is what fails if the method stops forwarding
+    loose = vor.adjust_top_btm_overlaps(shp=gpkg, buffer=0.5, min_sep=1.0, trigger_sep=0.25)
+    assert loose.loc[4, 1] == pytest.approx(99.5)
     pd.testing.assert_frame_equal(vor.gdf_topbtm, table)
 
 

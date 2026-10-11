@@ -4531,8 +4531,9 @@ class LayerStack:
         is the stack trigger (``trigger_sep``, else ``1.0 / <largest split>``) but
         never more than :data:`_UNDER_THE_MINIMUM` of its own minimum: a 0.8 ft clay
         with ``min_thickness=0.5`` was crushed to 0.1 ft under the 1.0 trigger and
-        switched off. A unit below its minimum is crushed to ``min_sep`` and
-        pinched exactly as before.
+        switched off. A unit below its minimum is pinched exactly as before, and
+        crushed to ``min_sep`` only where it is also within the stack trigger: a
+        1.5 ft clay with ``min_thickness=2`` keeps its 1.5 ft and reads idomain 0.
 
         ``min_thickness`` is declared for the UNIT, so a split unit's minimum is
         divided among its slices BY SHARE: three equal slices of a 3 ft minimum get
@@ -4708,8 +4709,10 @@ class LayerStack:
             override. It never reaches a pinching unit at or above its own
             ``min_thickness``: such a layer's trigger is capped just under its
             (share of its) minimum, so a 0.8 ft clay with ``min_thickness=0.5``
-            stays 0.8 ft and active, and only a unit below its minimum is crushed
-            to ``min_sep`` and pinched (ledger 377). A ``"floor"`` layer's
+            stays 0.8 ft and active (ledger 377). A unit below its minimum
+            is pinched, and crushed to ``min_sep`` where it is also within this
+            trigger -- a 1.5 ft clay with ``min_thickness=2`` keeps its 1.5 ft and
+            is pinched without being moved. A ``"floor"`` layer's
             trigger is its own minimum when this is omitted, and this number
             when given -- so a large one holds a thicker floor unit at its
             minimum too.
