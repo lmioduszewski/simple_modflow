@@ -17214,8 +17214,11 @@ same day, which is the useful part of the result.
       the diversion is not an edge of the stream ORDERING, so its receiver may be
       numbered before its source -- MF6 runs that (A3) -- because a bypass (diverted
       from a stream and rejoining it) is a cycle between streams and not between
-      reaches, and the edge would refuse it. A diversion whose source and receiver are
-      one reach is not checked. A model that used the StreamConnection workaround
+      reaches, and the edge would refuse it. ~~A diversion whose source and receiver are
+      one reach is not checked.~~ It is refused at build naming the reach: the written
+      connection joins the reach to itself and MF6 stops reading the package ("Could not
+      fill SFR package IA and JA connection data"), or in some runs SEGFAULTS before its
+      report (reproducer E counts them; `test_mf6_stops_on_each_network_validate_refuses`). A model that used the StreamConnection workaround
       writes the same file. **It runs only where MF6's upstream fractions allow** --
       a source reach with a downstream reach of its own, a receiver nothing else flows
       into alone; the DEFAULT `source_location` on an outlet stream is neither, and is

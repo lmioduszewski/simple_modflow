@@ -1,4 +1,4 @@
-"""What MF6 does with three SFR inputs ``mf.sfr``/``SFRBuilder`` write.
+"""What MF6 does with the SFR inputs ``mf.sfr``/``SFRBuilder`` write.
 
 Ledger 363, ledger 364, ledger 365 and ledger 366.
 
@@ -43,6 +43,13 @@ WHAT IT MEASURES
      ``gwf-sfr.f90``); (3) a diversion into the canal's SECOND reach, whose first reach
      then has no USTRF to flow by; (4) a ``StreamConnection`` leaving ``source`` at its
      third reach (no diversion): that reach then has two downstream reaches of USTRF 1.
+  E. A ``StreamDiversion`` whose source and receiving locations are one reach (ledger
+     364), written past ``validate`` -- which refuses it now -- on (1) ``source``'s
+     headwater reach and (2) the canal's first reach. The diversion is a reach
+     connection, so the reach is connected to itself: MF6 6.8 stops reading the
+     package with "Could not fill SFR package IA and JA connection data", or, in some
+     runs, segfaults before writing that report. Each is run ``E_RUNS`` times and the
+     outcomes counted (measured: segfaults on both, 2 runs of 7 on the second).
 """
 
 from __future__ import annotations
@@ -220,6 +227,42 @@ def _section_d(root):
         print(f"      validate: {refusal}")
 
 
+E_RUNS = 6
+
+
+def _section_e(root):
+    print("\nE. a diversion leaving and entering the same reach, written without SFRBuilder.validate")
+    forms = {
+        "1 source's headwater reach": mf.StreamDiversion(
+            "source", "source", amount=0.25, source_location="upstream", receiver_location="upstream"),
+        "2 the canal's first reach": mf.StreamDiversion(
+            "canal", "canal", amount=0.25, source_location="upstream", receiver_location="upstream"),
+    }
+    for label, diversion in forms.items():
+        builder = _builder(diversions=(diversion,))
+        (_, source, receiver, _), = builder.resolved_diversions
+        try:
+            builder.validate()
+            refusal = "none"
+        except ValueError as error:
+            refusal = str(error).split(":")[0]
+        sfr = mf.sfr.flopy(packagedata=builder.packagedata, connectiondata=builder.connectiondata,
+                           perioddata=builder.perioddata, diversions=builder.diversiondata)
+        ok, workspace, errors = _run(root / f"e{label.split()[0]}", builder.grid, sfr)
+        outcomes = {}
+        for _ in range(E_RUNS):
+            result = subprocess.run(["mf6"], cwd=workspace, capture_output=True, text=True, check=False)
+            text = result.stdout + result.stderr
+            outcome = ("segfault" if "SIGSEGV" in text else
+                       "refused" if "Could not fill SFR package IA and JA" in text else
+                       f"exit {result.returncode}")
+            outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        print(f"   {label}: reach {source} -> reach {receiver}; connectiondata row {builder.connectiondata[source]}")
+        print(f"      first run: {'runs' if ok else 'MF6 refused: ' + (' '.join(errors) or 'no error report')}")
+        print(f"      {E_RUNS} more runs: {outcomes}")
+        print(f"      validate: {refusal}")
+
+
 def main() -> None:
     root = pathlib.Path(tempfile.mkdtemp(prefix="sfr_stream_inputs_"))
     try:
@@ -227,6 +270,7 @@ def main() -> None:
         _section_b(root)
         _section_c(root)
         _section_d(root)
+        _section_e(root)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

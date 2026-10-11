@@ -131,7 +131,10 @@ class StreamDiversion:
     :meth:`SFRBuilder.validate` refuses it otherwise, naming a ``Point`` above
     the last reach or an onward :class:`StreamConnection`. And because the
     receiving reach's ``USTRF`` is 0, no other reach may flow into it alone --
-    divert into a reach nothing else flows into (ledger 366).
+    divert into a reach nothing else flows into (ledger 366). The two locations
+    must resolve to two DIFFERENT reaches: a diversion leaving and entering one
+    reach would connect it to itself, which MF6 cannot read, and
+    :meth:`SFRBuilder.validate` refuses it naming the reach.
 
     Parameters
     ----------
@@ -1285,7 +1288,8 @@ class SFRBuilder:
         refuses a diversion from a reach with no downstream reach of its own, a
         diversion into a reach another reach flows into alone, and a
         :class:`StreamConnection` leaving a stream above its last reach (ledger
-        366).
+        366) -- after a diversion whose source and receiving locations resolve to
+        ONE reach, which would connect that reach to itself.
         """
 
         if self.total_nreaches == 0:
@@ -1310,7 +1314,31 @@ class SFRBuilder:
             for setting in settings:
                 if setting[0] not in valid_reaches:
                     raise ValueError(f"SFR period {period} references unknown reach {setting[0]}.")
+        self._check_diversions_leave_their_reach(stream_of)
         self._check_upstream_fractions(stream_of)
+
+    def _check_diversions_leave_their_reach(self, stream_of: Mapping[int, Any]) -> None:
+        """Refuse a :class:`StreamDiversion` whose source and receiving reach are one reach.
+
+        The diversion is written as a reach connection (ledger 364), so it connected
+        the reach to itself, and MF6 stops reading the package on that: "Could not
+        fill SFR package IA and JA connection data" (measured on a headwater reach
+        and on a canal's first reach, ``docs/reproducers/sfr_stream_inputs.py`` E).
+        On a reach something else flows into, the upstream-fraction check refused
+        it first, blaming the reach above.
+        """
+
+        for diversion, source, receiver, _ in self.resolved_diversions:
+            if source != receiver:
+                continue
+            raise ValueError(
+                f"SFR StreamDiversion({diversion.source!r}, {diversion.receiver!r}) leaves and "
+                f"enters the same reach, reach {source} (stream {stream_of[source]!r}): its "
+                f"source_location={diversion.source_location!r} and "
+                f"receiver_location={diversion.receiver_location!r} resolve to one reach, and MF6 "
+                "cannot connect a reach to itself (it stops reading the package: 'Could not fill "
+                "SFR package IA and JA connection data'). Give the two locations different reaches."
+            )
 
     def _check_upstream_fractions(self, stream_of: Mapping[int, Any]) -> None:
         """Refuse a network MF6's ``sfr_check_ustrf`` stops on, naming the reaches.

@@ -32,6 +32,7 @@ headwater) and ``canal`` (2 reaches), 270 ft apart.
 from __future__ import annotations
 
 import re
+import subprocess
 import warnings
 
 import flopy
@@ -263,7 +264,32 @@ UNRUNNABLE = {
         r"'canal'\), whose upstream fractions \(USTRF\) sum to 2; MF6 requires one",
         r"Upstream fractions for reach +3 is not equal to one \(2\.0",
     ),
+    # A diversion is a reach connection (ledger 364), so one leaving and entering
+    # the same reach connected it to itself; nothing refused it before.
+    "a diversion onto its own headwater reach": (
+        {"diversions": (mf.StreamDiversion(
+            "source", "source", amount=0.25, source_location="upstream", receiver_location="upstream"),)},
+        r"SFR StreamDiversion\('source', 'source'\) leaves and enters the same reach, reach 0 "
+        r"\(stream 'source'\).*cannot connect a reach to itself",
+        r"Could not fill SFR package IA and JA connection data",
+    ),
+    "a diversion onto the canal's first reach": (
+        {"diversions": (mf.StreamDiversion(
+            "canal", "canal", amount=0.25, source_location="upstream", receiver_location="upstream"),)},
+        r"SFR StreamDiversion\('canal', 'canal'\) leaves and enters the same reach, reach 4 "
+        r"\(stream 'canal'\)",
+        r"Could not fill SFR package IA and JA connection data",
+    ),
 }
+
+
+def test_a_diversion_onto_its_own_reach_is_named_before_the_upstream_fractions():
+    """Mid-stream, reach 1 flows into the self-diverting reach alone, which the USTRF
+    check refused blaming reach 1; the refusal names the diversion now."""
+
+    diversion = mf.StreamDiversion("source", "source", amount=0.25, source_location=_MID, receiver_location=_MID)
+    with pytest.raises(ValueError, match=r"leaves and enters the same reach, reach 2 \(stream 'source'\)"):
+        _sfr_builder(diversions=(diversion,)).build()
 
 
 @pytest.mark.parametrize("form", list(UNRUNNABLE))
@@ -301,7 +327,15 @@ def test_mf6_stops_on_each_network_validate_refuses(tmp_path, form):
         warnings.simplefilter("ignore")
         run = mf.Project(tmp_path / "p", name="p").run("r", simulation)
     assert not run.success
-    listing = " ".join((tmp_path / "p").rglob("mfsim.lst").__next__().read_text().split())
+    listing_path = next((tmp_path / "p").rglob("mfsim.lst"))
+    for _ in range(5):
+        listing = " ".join(listing_path.read_text().split())
+        if "ERROR REPORT" in listing:
+            break
+        # MF6 6.8 sometimes SEGFAULTS on a reach connected to itself before it writes
+        # its report (docs/reproducers/sfr_stream_inputs.py E counts how often); run
+        # it again to read what it objects to.
+        subprocess.run(["mf6"], cwd=listing_path.parent, capture_output=True, check=False)
     assert re.search(mf6_says, listing), listing[-600:]
 
 
