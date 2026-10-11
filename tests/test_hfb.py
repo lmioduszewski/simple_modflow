@@ -473,3 +473,119 @@ def test_an_hfb_map_refuses_a_field_override_and_an_unknown_backend(barrier_run)
                  barrier_run.hfb.results.q.map):
         with pytest.raises(ValueError, match="backend must be"):
             verb(backend="nope")
+
+
+# --- any discretization, ordered by TYPE (ledger 378) ---------------------
+
+
+def _row_of_three(name="dis"):
+    """Three 10 ft cells in a row: the smallest model a barrier can act on."""
+
+    return mf.dis(
+        nlay=1, nrow=1, ncol=3, delr=10.0, delc=10.0, top=10.0, botm=[0.0], name=name
+    )
+
+
+def _flow_packages():
+    return [
+        mf.npf(k=1.0),
+        mf.ic(strt=5.0),
+        mf.chd(stress_period_data={0: [[(0, 0, 0), 6.0], [(0, 0, 2), 4.0]]}),
+        mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
+    ]
+
+
+def _two_cell_disv(name):
+    """Two square DISV cells sharing one face, under a name other than ``disv``."""
+
+    vertices = [[0, 0.0, 10.0], [1, 10.0, 10.0], [2, 20.0, 10.0],
+                [3, 0.0, 0.0], [4, 10.0, 0.0], [5, 20.0, 0.0]]
+    cell2d = [[0, 5.0, 5.0, 4, 0, 1, 4, 3], [1, 15.0, 5.0, 4, 1, 2, 5, 4]]
+    return mf.disv(
+        nlay=1, ncpl=2, nvert=6, vertices=vertices, cell2d=cell2d,
+        top=10.0, botm=[0.0], name=name,
+    )
+
+
+def test_a_barrier_names_no_spec_it_requires():
+    """`requires=("disv",)` named a SPEC, so a DIS, a DISU or a renamed DISV was refused."""
+
+    assert mf.hfb(pairs=[(0, 1)], hydchr=1.0).requires == ()
+    assert mf.hfb.flopy(stress_period_data={0: []}).requires == ()
+
+
+@pytest.mark.slow
+def test_a_barrier_runs_on_a_structured_model(tmp_path):
+    """Built AND run on DIS: the barrier moves the middle head from 5.0 to the far end's."""
+
+    import flopy
+
+    heads = {}
+    for label, extra in (
+        ("open", []),
+        ("barrier", [mf.hfb(pairs=[((0, 0, 0), (0, 0, 1))], hydchr=1e-6)]),
+    ):
+        model = mf.gwf("m", packages=[_row_of_three("grid"), *extra, *_flow_packages()])
+        run = mf.simulation(model, name="s").build(workspace=tmp_path / label)
+        run.execute()
+        heads[label] = flopy.utils.HeadFile(tmp_path / label / "m.hds").get_data().ravel()
+    assert heads["open"][1] == pytest.approx(5.0)
+    assert heads["barrier"][1] == pytest.approx(4.0, abs=1e-3)
+
+
+def test_a_barrier_builds_beside_a_renamed_disv(tmp_path):
+    model = mf.gwf(
+        "m",
+        packages=[
+            _two_cell_disv("mesh"),
+            mf.hfb(pairs=[(0, 1)], hydchr=1e-6),
+            mf.npf(k=1.0),
+            mf.ic(strt=5.0),
+        ],
+    )
+    built = mf.simulation(model, name="s").build(workspace=tmp_path)
+    assert built.built.models["m"].packages["hfb"].package_type == "hfb"
+
+
+def test_a_barrier_builds_on_a_disu_model(tmp_path):
+    disu = mf.disu(
+        nodes=2, nja=4, top=10.0, bot=0.0, area=100.0, iac=[2, 2], ja=[0, 1, 1, 0],
+        ihc=[1, 1, 1, 1], cl12=[0.0, 5.0, 0.0, 5.0], hwva=[0.0, 10.0, 0.0, 10.0],
+    )
+    model = mf.gwf(
+        "m",
+        packages=[disu, mf.hfb(pairs=[((0,), (1,))], hydchr=1e-6), mf.npf(k=1.0), mf.ic(strt=5.0)],
+    )
+    built = mf.simulation(model, name="s").build(workspace=tmp_path)
+    assert built.built.models["m"].packages["hfb"].package_type == "hfb"
+
+
+def test_a_barrier_ahead_of_its_discretization_is_refused_by_name(tmp_path):
+    """FloPy builds it and fails only at WRITE, naming neither the package nor the fix."""
+
+    model = mf.gwf(
+        "m",
+        packages=[mf.hfb(pairs=[((0, 0, 0), (0, 0, 1))], hydchr=1e-6), _row_of_three(), *_flow_packages()],
+    )
+    with pytest.raises(ValueError, match=r"'hfb'.*declared BEFORE it.*mf\.dis"):
+        mf.simulation(model, name="s").build(workspace=tmp_path)
+
+
+def test_a_plan_pair_on_a_structured_model_is_refused_naming_the_spelling(tmp_path):
+    model = mf.gwf(
+        "m", packages=[_row_of_three(), mf.hfb(pairs=[(0, 1)], hydchr=1e-6), *_flow_packages()]
+    )
+    with pytest.raises(ValueError, match=r"DIS, whose cellid is \(layer, row, column\)"):
+        mf.simulation(model, name="s").build(workspace=tmp_path)
+
+
+def test_plan_and_full_pairs_do_not_mix():
+    with pytest.raises(ValueError, match="not a mixture"):
+        mf.hfb(pairs=[(0, 1), ((0, 1), (0, 2))], hydchr=1e-6)
+    with pytest.raises(ValueError, match="one shape"):
+        mf.hfb(pairs=[((0, 1), (0, 2)), ((0, 0, 1), (0, 0, 2))], hydchr=1e-6)
+
+
+def test_a_structured_pair_against_a_disv_context_is_refused(ctx):
+    with pytest.raises(ValueError, match=r"DISV mesh, whose cellid is \(layer, cell\)"):
+        mf.hfb(pairs=[((0, 0, 0), (0, 0, 1))], hydchr=1e-6, context=ctx)

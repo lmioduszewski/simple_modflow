@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 377 entries (382 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 378 entries (383 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 378 | A flow barrier builds on any discretization -- DIS, DISV or DISU, under any name or through `mf.ref` -- and... | 2026-10-11 |
 | 377 | Reconciling layer surfaces never reaches a `LayerStack` unit at or above its own `min_thickness`, reads row... | 2026-10-11 |
 | 376 | A region's tuple cellid is the grid's own: `(layer, row, col)` on DIS | 2026-10-11 |
 | 375 | `add_group` registers nothing unless every member is accepted | 2026-10-11 |
@@ -17361,3 +17362,23 @@ same day, which is the useful part of the result.
       reconcile on defaults fails the three `adjust_top_btm_overlaps` tests and no copy
       `test_the_callers_frame_is_not_written`; the scalar pinch check fails both per-layer
       `min_sep` tests (and 18 in `tests/test_layers.py`, which now pass a list).
+
+378. **A flow barrier builds on any discretization -- DIS, DISV or DISU, under any name or through `mf.ref` -- and is ordered after it by TYPE (2026-10-11).**
+      `mf.hfb` carried `requires=("disv",)`, a SPEC name, so every route refused a DIS or
+      DISU model and a DISV named anything else. The order is real -- measured: FloPy builds
+      an HFB declared ahead of its DIS and fails only when WRITING it, naming neither the
+      package nor the fix -- so it is kept, enforced at build by `_build_hfb` through
+      `_built_discretization` (the `package_type` rule the lazy BCs use). The builder is a
+      `functools.partial` over `ModflowGwfhfb`, so the option check is unchanged.
+      **Judgment calls:** a pair of full cellids is accepted in any one shape (`(l, r, c)`
+      on DIS, `(node,)` on DISU; only length 2 was recognised, so a DIS pair died in
+      `int(tuple)`), and the build refuses a cellid whose shape is not the model's
+      discretization's -- a plain-integer plan pair on DIS, which FloPy also reports only
+      at write. A full cellid of another shape beside a context grid is refused at the
+      call (that grid is a DISV mesh). **Digest:** a NEW `mf.hfb` declaration digests
+      differently (builder reference and `requires` are both in `package_digest`); 0
+      stored specs under `examples/` or the user's model tree hold an HFB, and a saved
+      spec keeps its old builder and `requires` and builds as before.
+      Revert check: restoring `requires=("disv",)` and the bare class fails the eight
+      `test_hfb.py` tests from `test_a_barrier_names_no_spec_it_requires` down
+      (`test_a_barrier_runs_on_a_structured_model` runs MF6 on DIS).

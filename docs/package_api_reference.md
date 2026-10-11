@@ -959,6 +959,14 @@ a REGION: cells inside by centroid, and it refuses a cut that leaks.
 Grid verbs underneath: `vor.barrier_faces(geom)`, `vor.enclosed_faces(polygon)`,
 `vor.shared_face(a, b)`.
 
+`mf.hfb(pairs=…)` and `mf.hfb.flopy` work on **any discretization** (ledger 378):
+pass full cellids on DIS (`((lay, row, col), (lay, row, col))`) or DISU
+(`((node,), (node,))`); plain integer pairs are DISV `(layer, cell)`. The
+discretization -- DIS, DISV or DISU, under any name or through `mf.ref` -- must be
+declared first, and the build refuses a barrier ahead of it, or cellids of the wrong
+shape, naming the spelling (FloPy reports both only when writing). The geometry verbs
+(`.line`, `.gpkg`, `.enclose`) need a Voronoi grid on the context, so they are DISV.
+
 ### Importing an existing MODFLOW-USG model
 
 | call | returns | notes |

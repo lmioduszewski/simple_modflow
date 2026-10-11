@@ -634,15 +634,79 @@ def _built_discretization(model):
 
     Found by ``package_type`` rather than by name. ``model.get_package("dis")`` does a
     FloPy PREFIX match and hands back a ``ModflowGwfdisv`` -- measured -- and a name test
-    would miss `mf.disv(stack, name="mesh")` besides. `requires=("disv",)` is wrong for
-    the same reason: it names the myflopy SPEC name, so it false-refuses a renamed
-    discretization and a `mf.ref` whose key differs.
+    would miss `mf.disv(stack, name="mesh")` besides. `mf.hfb` carried
+    `requires=("disv",)` until ledger 378, wrong for the same reason: it names the
+    myflopy SPEC name, so it false-refused a DIS or DISU model, a renamed discretization
+    and a `mf.ref` whose key differs. It orders through this function now.
     """
 
     for package in getattr(model, "packagelist", None) or ():
         if getattr(package, "package_type", None) in _DISCRETIZATION_TYPES:
             return package
     return None
+
+
+#: How many integers a cellid holds on each discretization -- what FloPy expects when it
+#: WRITES a cellid, and so what a cell pair has to carry to reach MF6.
+_CELLID_LENGTH = {"dis": 3, "disv": 2, "disu": 1}
+
+
+def _build_hfb(package_class, model, *, _spec, **options):
+    """Build an HFB after the discretization, found by TYPE (ledger 378).
+
+    The ordering rule ``requires=("disv",)`` used to carry, without its defect: it named
+    the SPEC ``disv``, so a barrier was refused on a DIS or DISU model, beside a DISV
+    declared under another name, and behind an ``mf.ref`` whose resolved name differed.
+    The order itself is load-bearing -- measured: FloPy builds an HFB declared ahead of
+    its DIS and fails only when WRITING it ("Expected a cellid containing 0 integer(s)
+    for grid type DiscretizationType.UNDEFINED"), naming neither the package nor the fix.
+
+    Also refuses a cell pair whose cellids are the wrong SHAPE for the discretization --
+    a plan pair ``(layer, cell)`` on a DIS model, say -- which FloPy likewise accepts here
+    and reports only at write. Records in a form this does not read (a recarray handed
+    to ``mf.hfb.flopy``) are left to FloPy.
+    """
+
+    discretization = _built_discretization(model)
+    if discretization is None:
+        raise ValueError(
+            f"Package {_spec.name!r} is a flow barrier between cells, so the model's "
+            "discretization has to be declared BEFORE it -- `mf.dis`, `mf.disv` or "
+            "`mf.disu`, under any name or through `mf.ref`. Move it ahead of the barrier "
+            "in `packages=[...]`."
+        )
+    expected = _CELLID_LENGTH[discretization.package_type]
+    wrong: list[Any] = []
+    period_data = options.get("stress_period_data")
+    if isinstance(period_data, Mapping):
+        for records in period_data.values():
+            if not isinstance(records, (list, tuple)):
+                continue
+            for record in records:
+                if not isinstance(record, (list, tuple)) or len(record) < 2:
+                    continue
+                for cellid in record[:2]:
+                    if isinstance(cellid, (list, tuple)) and len(cellid) != expected:
+                        wrong.append(tuple(cellid))
+    if wrong:
+        spelling = {
+            "dis": "(layer, row, column)",
+            "disv": "(layer, cell)",
+            "disu": "(node,)",
+        }[discretization.package_type]
+        raise ValueError(
+            f"Package {_spec.name!r}: the model is discretized by "
+            f"{discretization.package_type.upper()}, whose cellid is {spelling}, but "
+            f"{len(wrong)} barrier cellid(s) have another shape (first: {wrong[0]}). "
+            "`mf.hfb(pairs=[(a, b)])` with plain integers writes DISV `(layer, cell)` "
+            f"cellids; on this model pass full cellids, `pairs=[({spelling}, {spelling})]`."
+        )
+    return package_class(model, **options)
+
+
+#: ONE partial, not one per declaration: ``specs._wants_spec`` and the option checks
+#: cache on the builder OBJECT, and a partial hashes by identity.
+_HFB_BUILDER = functools.partial(_build_hfb, flopy.mf6.ModflowGwfhfb)
 
 
 def _lazy_resolution_context(model, spec_name: str, *, needs_grid: bool = True):
@@ -7323,11 +7387,18 @@ class _HFBPackage:
         Parameters
         ----------
         pairs : sequence of pairs
-            Either ``(cell_a, cell_b)`` zero-based plan-cell pairs -- written into
-            every layer named by ``layers`` -- or fully qualified
-            ``((lay, cell), (lay, cell))`` pairs, in which case ``layers`` must
-            be ``None`` (``ValueError`` otherwise). An empty sequence gives a
-            package with no barriers.
+            Either ``(cell_a, cell_b)`` zero-based plan-cell integer pairs on a
+            DISV mesh -- written as ``(layer, cell)`` into every layer named by
+            ``layers`` -- or pairs of full cellids, in which case ``layers`` must
+            be ``None`` (``ValueError`` otherwise): ``((lay, cell), (lay, cell))``
+            on DISV, ``((lay, row, col), (lay, row, col))`` on DIS and
+            ``((node,), (node,))`` on DISU. A mixture of the two forms, or of
+            cellid lengths, raises ``ValueError``, and so does a cellid other than
+            ``(layer, cell)`` when ``context`` carries a grid. The build refuses
+            cellids whose shape is not the model's discretization's, naming the
+            spelling. An empty sequence gives a package with no barriers. The
+            discretization (any type, any name) must be declared before the
+            barrier; the build refuses it otherwise.
         hydchr : float or sequence of float
             Hydraulic characteristic, 1/T (the barrier's K over its thickness;
             ``0`` is impermeable, a negative value is a conductance multiplier).
@@ -7605,14 +7676,18 @@ class _HFBPackage:
         removes every barrier.
 
         Nothing is validated here -- this is the escape hatch, and the pairs go
-        to MODFLOW 6 as given.
+        to MODFLOW 6 as given. The build checks only that the discretization (any
+        type, any name) was declared first and that list-of-records cellids have
+        its shape -- both of which FloPy otherwise reports only at write.
 
         Parameters
         ----------
         stress_period_data : dict
             FloPy's ``{period: [[cellid1, cellid2, hydchr], ...]}``, zero-based
-            periods and ``(layer, cell)`` cellids, ``hydchr`` in 1/T. Handed to
-            ``ModflowGwfhfb`` unchanged and not pinned to any mesh.
+            periods and cellids in the discretization's shape -- ``(layer, cell)``
+            on DISV, ``(layer, row, col)`` on DIS, ``(node,)`` on DISU -- and
+            ``hydchr`` in 1/T. Handed to ``ModflowGwfhfb`` unchanged and not pinned
+            to any mesh.
         name : str, optional
             The spec's name in the model's package list (not the FloPy
             ``pname``). Default ``"hfb"``.
@@ -7631,7 +7706,7 @@ class _HFBPackage:
         values = {"stress_period_data": stress_period_data, **options}
         if print_input:
             values["print_input"] = True
-        return PackageSpec(name, flopy.mf6.ModflowGwfhfb, values, requires=("disv",))
+        return PackageSpec(name, _HFB_BUILDER, values)
 
 
 hfb = _HFBPackage()
@@ -7662,11 +7737,37 @@ def _hfb_records(
     if not pairs:
         return []
 
-    qualified = all(isinstance(a, (tuple, list)) and len(a) == 2 for a, _ in pairs)
-    if qualified and layers is not None:
+    # A pair is QUALIFIED when both ends are full cellids -- `(layer, cell)` on a DISV,
+    # `(layer, row, column)` on a DIS, `(node,)` on a DISU -- and PLAN when both are
+    # integers. Only the length 2 was recognised before ledger 378, so a DIS pair
+    # died in `int(tuple)`. The cellid's shape against the discretization is checked at
+    # build, where the discretization is known (`_build_hfb`).
+    def is_cellid(value) -> bool:
+        return isinstance(value, (tuple, list))
+
+    qualified = all(is_cellid(a) and is_cellid(b) for a, b in pairs)
+    if not qualified and any(is_cellid(a) or is_cellid(b) for a, b in pairs):
         raise ValueError(
-            f"{verb}: pairs are already (layer, cell) qualified, so layers= would be ambiguous."
+            f"{verb}: every pair must be two plan-cell integers `(cell_a, cell_b)` or two "
+            "full cellids `((layer, cell), (layer, cell))` -- not a mixture."
         )
+    if qualified:
+        lengths = {len(cellid) for pair in pairs for cellid in pair}
+        if len(lengths) != 1:
+            raise ValueError(
+                f"{verb}: the pairs mix cellids of {sorted(lengths)} integers; one "
+                "discretization writes one shape."
+            )
+        if layers is not None:
+            raise ValueError(
+                f"{verb}: pairs are already full cellids, so layers= would be ambiguous."
+            )
+        if getattr(context, "grid", None) is not None and lengths != {2}:
+            raise ValueError(
+                f"{verb}: the context's grid is a DISV mesh, whose cellid is "
+                f"(layer, cell), but the pairs hold {lengths.pop()} integers each. Give "
+                "(layer, cell) pairs, or drop context= for a DIS or DISU model."
+            )
 
     if isinstance(hydchr, (int, float)):
         values = [float(hydchr)] * len(pairs)
@@ -7748,7 +7849,7 @@ def _hfb_spec_from_records(
     values = {"stress_period_data": {first_period: records}, **options}
     if print_input:
         values["print_input"] = True
-    spec = PackageSpec(name, flopy.mf6.ModflowGwfhfb, values, requires=("disv",))
+    spec = PackageSpec(name, _HFB_BUILDER, values)
     return (
         spec.with_metadata(**pin_metadata(context, certifies=("stress_period_data",)))
         if context is not None

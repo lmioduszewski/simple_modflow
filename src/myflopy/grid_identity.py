@@ -595,9 +595,10 @@ REMAPPED_FROM = "myflopy_remapped_from"
 #: It exists because ``package_move`` sees ONE package and a mover's staleness lives
 #: entirely in its siblings: nothing about the mover's own options changes when the mesh
 #: does, so it answered "unchanged -- names no cells" beside a stale SFR (ledger 303).
-#: Deliberately NOT ``requires=``, which already means "build this first" and is carried by
-#: ``mf.hfb`` as ``("disv",)`` -- reading that as an index reference would refuse every
-#: barrier whenever the discretization rebuilt, which is a different and correct thing.
+#: Deliberately NOT ``requires=``, which already means "build this first" -- reading that
+#: as an index reference would refuse every package ordered after a discretization
+#: whenever the discretization rebuilt, which is a different and correct thing. (``mf.hfb``
+#: carried ``requires=("disv",)`` until ledger 378; it orders by TYPE at build now.)
 INDEXED_PACKAGES = "grid_indexed_packages"
 
 #: Metadata key listing the packages the caller asserted are mesh-independent, so a

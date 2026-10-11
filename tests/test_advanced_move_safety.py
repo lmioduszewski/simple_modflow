@@ -372,8 +372,8 @@ def test_an_hfb_is_not_condemned_by_its_requires(surface_water):
     # `unchanged` AND carries `requires=`. A real `mf.hfb` is PINNED, so it reads `stale`
     # and the second pass skips it either way -- which is why the first version of this
     # test could not tell the two keys apart and a mutation reading `requires=` passed
-    # all sixteen. This spec is what `mf.hfb`'s ordering dependency looks like without
-    # the pin.
+    # all sixteen. This spec is what an ordering dependency looks like without the pin
+    # (`mf.hfb` carried `requires=("disv",)` until ledger 378).
     import flopy
 
     from myflopy.specs import PackageSpec
