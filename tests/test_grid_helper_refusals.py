@@ -133,6 +133,76 @@ def test_a_lattice_that_cannot_exist_is_refused(spacing, size, match):
         geometry.generate_grid_polygons(Point(0, 0), spacing, size, 0.0)
 
 
+@pytest.mark.parametrize("gap", [-0.1, 2.5, 3.0, float("nan"), float("inf")])
+def test_a_gap_that_leaves_no_box_or_overlaps_is_refused(gap):
+    # Ledger 415: shp.box accepts min > max, so a gap of spacing or more
+    # gave inverted boxes and a negative one overlapping boxes, in silence.
+    with pytest.raises(ValueError, match=r"gap must be a finite number, zero or more and below spacing"):
+        geometry.generate_grid_polygons(Point(0, 0), 2.5, 4, gap)
+    with pytest.raises(ValueError, match=r"gap must be"):
+        VoronoiGridPlus.generate_grid_polygons(Point(0, 0), 2.5, 4, gap)
+
+
+@pytest.mark.parametrize("size", [0, 0.5, 0.999])
+def test_a_size_under_one_step_holds_no_box_and_is_refused(size):
+    # It returned an empty MultiPolygon.
+    with pytest.raises(ValueError, match=r"is under one step, so the lattice holds no box"):
+        geometry.generate_grid_polygons(Point(0, 0), 2.5, size, 0.0)
+    assert len(geometry.generate_grid_polygons(Point(0, 0), 2.5, 1, 0.0).geoms) == 1
+
+
+# --- generate_grid_coordinates --------------------------------------------------
+
+
+def _extent_grid(x0, x1, y0, y1) -> VoronoiGridPlus:
+    verts = np.array([[x0, y0], [x1, y0], [x0, y1], [x1, y1]], dtype=float)
+    return VoronoiGridPlus(
+        verts=verts, iverts=[[0, 2, 3, 1]], xcyc=np.array([[(x0 + x1) / 2, (y0 + y1) / 2]])
+    )
+
+
+def test_grid_coordinates_take_a_fractional_spacing():
+    # Ledger 415: range() refused 2.5 with TypeError.
+    xs, ys = geometry.generate_grid_coordinates(_extent_grid(0.0, 5.0, 0.0, 2.5), 2.5)
+    assert sorted(set(xs)) == [0.0, 2.5, 5.0]
+    assert sorted(set(ys)) == [0.0, 2.5]
+    assert len(xs) == len(ys) == 6
+
+
+def test_grid_coordinates_start_at_a_non_integer_extent_not_its_truncation():
+    # int() truncated 0.7 to 0 and 4.6 to 4: x = 0, 2, 4, the last short of the edge.
+    grid = _extent_grid(0.7, 4.6, -1.3, 0.2)
+    xs, ys = grid.generate_grid_coordinates(2)
+    assert sorted({round(x, 9) for x in xs}) == [0.7, 2.7, 4.7]
+    assert sorted({round(y, 9) for y in ys}) == [-1.3, 0.7]
+
+
+def test_grid_coordinates_on_an_integer_extent_are_unchanged():
+    # What range(int(x_min), int(x_max) + s, s) gave.
+    assert _grid().generate_grid_coordinates(1) == ([0, 0, 1, 1, 2, 2], [0, 1, 0, 1, 0, 1])
+    xs, ys = _extent_grid(0.0, 10.0, 0.0, 10.0).generate_grid_coordinates(4)
+    assert sorted(set(xs)) == [0.0, 4.0, 8.0, 12.0]
+
+
+@pytest.mark.parametrize("spacing", [0, -1.0, float("nan"), True, "2"])
+def test_grid_coordinates_refuse_a_spacing_that_is_not_a_positive_number(spacing):
+    with pytest.raises(ValueError, match=r"grid_spacing must be a finite number above zero"):
+        _grid().generate_grid_coordinates(spacing)
+
+
+# --- set_k_vor refuses an unknown cell -------------------------------------------
+
+
+def test_set_k_vor_refuses_a_cell_id_the_grid_does_not_have_before_writing():
+    # Ledger 415: index.isin matched only the ids the grid has, so a typo'd id
+    # left its cell at k_default in silence.
+    grid = _grid()
+    grid.set_k_vor({5.0: [1]})
+    with pytest.raises(ValueError, match=r"k_dict names cell ids the grid does not have \(K 9.0: \[7\]\)"):
+        grid.set_k_vor({1.0: [0], 9.0: [7]})
+    assert grid.gdf_vorPolys["Kh"].tolist() == [100.0, 5.0]
+
+
 # --- VoronoiGridPlus(crs=None) -------------------------------------------------
 
 

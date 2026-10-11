@@ -248,14 +248,14 @@ class VoronoiGridPlus(VoronoiGrid):
             to lat/lon for ``grid_centroid``, which an unreferenced frame cannot do
             (ledgers 370, 389). Assigning :attr:`crs` later RELABELS the grid
             and every frame it caches; it never reprojects.
-        rasters : list of pathlib.Path or float, optional
+        rasters : list of (str or os.PathLike or float), optional
             Surfaces to sample onto the cells the first time :attr:`gdf_topbtm` is
             read, in order: the model top, then one bottom per layer (column labels
             ``0``, ``1``, ...; ``nlay`` is their count less one). Each item is a
-            ``pathlib.Path`` to a raster (area-weighted mean of the pixels in each
-            cell, ``gaps="warn"``) or a number (a constant column). It must be a
-            LIST: a bare ``Path`` raises ``TypeError`` at that first read, and a
-            ``str`` item raises ``KeyError`` there (see
+            raster path, ``str`` or ``os.PathLike`` (area-weighted mean of the
+            pixels in each cell, ``gaps="warn"``), or a number (a constant column);
+            a bare path is a one-item list, the model top alone. Any other item
+            raises ``TypeError`` naming it at that first read (see
             :meth:`get_raster_vals_at_centroids`). Default None: no surfaces until
             one is assigned to :attr:`gdf_topbtm`.
         name : str, optional
@@ -992,21 +992,22 @@ class VoronoiGridPlus(VoronoiGrid):
             include_interiors=include_interiors,
         )
 
-    def generate_grid_coordinates(self, grid_spacing: int) -> list:
+    def generate_grid_coordinates(self, grid_spacing: float) -> list:
         """Generate regularly spaced coordinates over the grid extent.
 
         Parameters
         ----------
-        grid_spacing : int
-            The step between points in x and in y, in model length units. Must be an
-            ``int`` (it drives ``range``; a float raises ``TypeError``). The points
-            start at the vertex extent's truncated minimum and continue until they
-            reach or pass its truncated maximum, so the last row and column can lie
-            up to one step outside the grid.
+        grid_spacing : float
+            The step between points in x and in y, in model length units: any finite
+            number above zero (``2.5`` works); zero, a negative or a non-finite value
+            raises ``ValueError``. The points start at the vertex extent's minimum,
+            exactly, and continue until they reach or pass its maximum (within 1e-9
+            of a step), so the last row and column can lie up to one step outside
+            the grid.
 
         Returns
         -------
-        tuple of (list of int, list of int)
+        tuple of (list of float, list of float)
             ``(xs, ys)``, one entry per point, x-major.
         """
         return geometry_generate_grid_coordinates(self, grid_spacing)
@@ -1242,7 +1243,7 @@ class VoronoiGridPlus(VoronoiGrid):
 
         Parameters
         ----------
-        rasters : list of pathlib.Path or float
+        rasters : list of (str or os.PathLike or float), or str or os.PathLike
             As for :meth:`get_gdf_topbtm_multilyr`.
         labels : list of str or int, optional
             As for :meth:`get_gdf_topbtm_multilyr`.
@@ -1251,7 +1252,7 @@ class VoronoiGridPlus(VoronoiGrid):
 
     def get_raster_vals_at_centroids(
         self,
-        raster_files: Path | list[Path | int] = None,
+        raster_files: str | Path | list[str | Path | float] = None,
         labels: str | list[str] = None,
         *,
         method: str = "area",
@@ -1268,13 +1269,14 @@ class VoronoiGridPlus(VoronoiGrid):
 
         Parameters
         ----------
-        raster_files : pathlib.Path or list of (pathlib.Path or float)
-            What to sample: one raster ``Path``, or a list whose items are raster
-            ``Path`` objects or numbers (a number becomes a constant column). A
-            raster in another CRS is sampled by reprojecting the cells to it. Only
-            ``pathlib.Path`` is read as a file: a ``str`` -- bare or in the list --
-            is neither a path nor a number and ends in ``KeyError``. Default None:
-            logs a warning and returns ``None``.
+        raster_files : str or os.PathLike, or list of (str or os.PathLike or float)
+            What to sample: one raster path, or a list whose items are raster paths
+            or numbers (a number, numpy's included, becomes a constant column). A
+            path is a ``str`` or any ``os.PathLike`` such as ``pathlib.Path``. A
+            raster in another CRS is sampled by reprojecting the cells to it. Any
+            other item -- a ``bool``, ``None``, a nested list -- raises
+            ``TypeError`` naming it (ledger 414). Default None: logs a warning
+            and returns ``None``.
         labels : str, or list of str or int, optional
             Column names, one per item of ``raster_files`` (a bare ``str`` names the
             one column). Default None: ``0``, ``1``, ... A length mismatch raises
@@ -1315,10 +1317,11 @@ class VoronoiGridPlus(VoronoiGrid):
 
         Parameters
         ----------
-        rasters : list of pathlib.Path or float
-            The model top, then one bottom per layer: raster ``Path`` objects or
-            constant numbers. Must be a list (a bare ``Path`` raises ``TypeError``
-            unless ``labels`` is given); a ``str`` item ends in ``KeyError``.
+        rasters : list of (str or os.PathLike or float), or str or os.PathLike
+            The model top, then one bottom per layer: raster paths (``str`` or
+            ``os.PathLike``) or constant numbers. A bare path is a one-item list.
+            Any other item raises ``TypeError`` naming it, as for
+            :meth:`get_raster_vals_at_centroids`.
         labels : list of str or int, optional
             One column name per item. Default None: ``0``, ``1``, ... -- the same
             integer labels ``LayerBuildResult.attach_to_grid`` writes.
@@ -1522,8 +1525,9 @@ class VoronoiGridPlus(VoronoiGrid):
             ``{K value: cell ids}``: every cell id in a value's list (row labels of
             :attr:`gdf_vorPolys`) gets that key as its K. Each value must be
             list-like. A cell named under several keys takes the LAST one in the
-            dict's order. Each key is read as a ``float``. Default None: no cell is
-            named, so every cell takes ``k_default``.
+            dict's order. Each key is read as a ``float``. An id the grid does not
+            have raises ``ValueError`` naming it, before anything is written.
+            Default None: no cell is named, so every cell takes ``k_default``.
         k_default : float, optional
             The K of every cell no list names, read as a ``float``. Default
             ``100.0``. No unit is assumed: use the model's length/time units.
@@ -1581,7 +1585,8 @@ class VoronoiGridPlus(VoronoiGrid):
         pixel_size : float, optional
             The raster's pixel side, in model length units; the domain's bounds are
             snapped outward to multiples of it. Default ``1``. The plane is
-            evaluated at each pixel's centre.
+            evaluated at each pixel's centre. Anything but a positive finite number
+            raises ``ValueError`` naming it.
         output_filename : str or pathlib.Path, optional
             Where the GeoTIFF is written, overwriting any file there. Default
             ``None``: ``raster.tif`` in the working directory at the time of the
@@ -2070,10 +2075,12 @@ class VoronoiGridPlus(VoronoiGrid):
             number above zero, as for :meth:`generate_grid_around_point`.
         size : float
             The lattice's width in steps, as for :meth:`generate_grid_around_point`:
-            a whole ``size`` gives ``size ** 2`` boxes.
+            a whole ``size`` gives ``size ** 2`` boxes. A size under ``1`` holds no
+            box and raises ``ValueError``.
         gap : float
             The space left between neighbouring boxes, in the same units. ``0``
-            makes them touch.
+            makes them touch. A negative or non-finite gap, or one of ``spacing``
+            or more (no box would be left), raises ``ValueError``.
 
         Returns
         -------
@@ -2303,10 +2310,10 @@ class VoronoiGridPlus(VoronoiGrid):
             code (``2927`` or ``"2927"``) is stored as ``"EPSG:2927"``. Default
             ``"EPSG:2927"``; ``None`` raises ``ValueError`` in the constructor. As
             for :class:`VoronoiGridPlus`.
-        rasters : list of pathlib.Path or float, optional
+        rasters : list of (str or os.PathLike or float), optional
             Surfaces sampled onto the cells the first time :attr:`gdf_topbtm` is read:
-            the model top, then one bottom per layer. Must be a list. Default None.
-            As for :class:`VoronoiGridPlus`.
+            the model top, then one bottom per layer. Default None. As for
+            :class:`VoronoiGridPlus`.
         name : str, optional
             A label stored as ``grid.name``. Default ``"voronoi_grid"``.
         idomain_path : pathlib.Path, optional
@@ -2371,10 +2378,10 @@ class VoronoiGridPlus(VoronoiGrid):
             code (``2927`` or ``"2927"``) is stored as ``"EPSG:2927"``. Default
             ``"EPSG:2927"``; ``None`` raises ``ValueError`` in the constructor. As
             for :class:`VoronoiGridPlus`.
-        rasters : list of pathlib.Path or float, optional
+        rasters : list of (str or os.PathLike or float), optional
             Surfaces sampled onto the cells the first time :attr:`gdf_topbtm` is read:
-            the model top, then one bottom per layer. Must be a list. Default None.
-            As for :class:`VoronoiGridPlus`.
+            the model top, then one bottom per layer. Default None. As for
+            :class:`VoronoiGridPlus`.
         name : str, optional
             A label stored as ``grid.name``. Default ``"voronoi_grid"``.
         idomain_path : pathlib.Path, optional

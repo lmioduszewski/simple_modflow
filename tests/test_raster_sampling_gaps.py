@@ -275,3 +275,51 @@ def test_a_layer_surface_does_not_warn_about_its_own_gaps(gappy, recwarn):
     values = Surface.raster(gappy).values(_real_grid(), method="centroid")
     assert np.isnan(values[3])
     assert [w for w in recwarn if "gave no value" in str(w.message)] == []
+
+
+# --- A raster is any path; anything that is neither a path nor a number is refused
+# (ledger 414). Only ``pathlib.Path`` was read as a file and only the builtin
+# ``int``/``float`` as a constant; every other item was DROPPED, and the call died in
+# ``KeyError: "['z'] not in index"`` naming the label and never the item.
+
+
+def _full(tmp_path):
+    return _raster(tmp_path / "full.tif", np.arange(16.0).reshape(4, 4))
+
+
+@pytest.mark.parametrize("spelling", ["str", "pathlike"])
+def test_a_str_or_pathlike_raster_is_read_like_a_path(tmp_path, spelling):
+    path = _full(tmp_path)
+
+    class _PathLike:
+        def __fspath__(self):
+            return str(path)
+
+    item = str(path) if spelling == "str" else _PathLike()
+    vor = _real_grid()
+    expected = vor.get_raster_vals_at_centroids([path], ["z"], method="centroid")["z"]
+    got = vor.get_raster_vals_at_centroids([item], ["z"], method="centroid")["z"]
+    assert got.tolist() == expected.tolist() == [0.0, 1.0, 2.0, 3.0]
+    bare = vor.get_raster_vals_at_centroids(item, "z", method="centroid")["z"]
+    assert bare.tolist() == expected.tolist()
+
+
+def test_a_numpy_number_is_a_constant_column():
+    vor = _real_grid()
+    got = vor.get_raster_vals_at_centroids([np.int64(3), np.float32(2.5)], ["a", "b"])
+    assert got["a"].tolist() == [3.0] * 4
+    assert got["b"].tolist() == [2.5] * 4
+
+
+@pytest.mark.parametrize("item", [None, True, [1.0], object()])
+def test_an_item_that_is_neither_a_path_nor_a_number_is_refused_naming_it(item):
+    with pytest.raises(TypeError, match=r"raster_files\[1\] is .*a str or os\.PathLike path"):
+        get_raster_vals_at_centroids(_real_grid(), [1.0, item], ["a", "b"])
+
+
+def test_the_layer_list_reads_str_paths_too(tmp_path):
+    path = _full(tmp_path)
+    vor = _real_grid()
+    frame = vor.get_gdf_topbtm_multilyr([str(path), 0.0])
+    assert frame[0].tolist() == pytest.approx([0.0, 1.0, 2.0, 3.0])
+    assert frame[1].tolist() == [0.0] * 4

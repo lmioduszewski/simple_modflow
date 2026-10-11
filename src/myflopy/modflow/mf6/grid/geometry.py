@@ -29,9 +29,11 @@ def get_voronoi_polygons(vor) -> list[Polygon]:
     return polygons
 
 
-def generate_grid_coordinates(vor, grid_spacing: int) -> tuple[list[int], list[int]]:
+def generate_grid_coordinates(vor, grid_spacing: float) -> tuple[list[float], list[float]]:
     """
     Generate evenly spaced coordinates spanning the grid extent.
+
+    Documented on :meth:`VoronoiGridPlus.generate_grid_coordinates`.
     """
     if hasattr(vor, 'x_vor') and hasattr(vor, 'y_vor'):
         xs = np.asarray(vor.x_vor)
@@ -41,17 +43,39 @@ def generate_grid_coordinates(vor, grid_spacing: int) -> tuple[list[int], list[i
         xs = verts[:, 0]
         ys = verts[:, 1]
 
-    x_min = xs.min()
-    x_max = xs.max()
-    y_min = ys.min()
-    y_max = ys.max()
-    x_coords = []
-    y_coords = []
-    for x in range(int(x_min), int(x_max) + grid_spacing, grid_spacing):
-        for y in range(int(y_min), int(y_max) + grid_spacing, grid_spacing):
-            x_coords.append(x)
-            y_coords.append(y)
+    spacing = _positive_step(grid_spacing, 'grid_spacing')
+    x_axis = _extent_axis(float(xs.min()), float(xs.max()), spacing)
+    y_axis = _extent_axis(float(ys.min()), float(ys.max()), spacing)
+    x_coords = [float(x) for x in x_axis for _ in y_axis]
+    y_coords = [float(y) for _ in x_axis for y in y_axis]
     return x_coords, y_coords
+
+
+def _positive_step(value, name: str) -> float:
+    """``value`` as a float, refused by ``name`` unless a finite number above zero."""
+
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, float, np.integer, np.floating))
+        or not np.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError(f"{name} must be a finite number above zero, got {value!r}.")
+    return float(value)
+
+
+def _extent_axis(lo: float, hi: float, spacing: float) -> np.ndarray:
+    """``lo``, ``lo + spacing``, ... up to the first point that reaches or passes ``hi``.
+
+    Ledger 415: this was ``range(int(lo), int(hi) + spacing, spacing)``, which
+    refused a fractional step and truncated each end toward zero, so a non-integer
+    extent was shifted by up to one unit. An integer extent an integer step divides
+    gives the same points as before. ``hi`` within 1e-9 of a step of a point counts
+    as reached, so float noise in the extent does not add a row.
+    """
+
+    count = int(np.ceil((hi - lo) / spacing - 1e-9)) + 1
+    return lo + spacing * np.arange(max(count, 1))
 
 
 def get_centroids(vor) -> tuple[list[float], list[float]]:
@@ -516,8 +540,22 @@ def set_k_vor(vor, k_dict: dict = None, k_default: float = 100.0) -> list[float]
     which warns today and is deprecated to raise.
     """
     frame = vor.gdf_vorPolys
+    mapping = {} if k_dict is None else k_dict
+    # Checked before anything is written (ledger 415): `isin` matched only the
+    # ids the grid has, so a typo'd id left its cell at `k_default` in silence.
+    unknown = {
+        key: [cell for cell in cells if cell not in frame.index]
+        for key, cells in mapping.items()
+    }
+    unknown = {key: cells for key, cells in unknown.items() if cells}
+    if unknown:
+        listing = '; '.join(f'K {key!r}: {cells[:10]!r}' for key, cells in unknown.items())
+        raise ValueError(
+            f"k_dict names cell ids the grid does not have ({listing}); a cell id is a "
+            f"row label of gdf_vorPolys, which holds {len(frame)} cells."
+        )
     frame["Kh"] = float(k_default)
-    for key, cells in ({} if k_dict is None else k_dict).items():
+    for key, cells in mapping.items():
         frame.loc[frame.index.isin(cells), "Kh"] = float(key)
     return frame["Kh"].to_list()
 
@@ -569,6 +607,24 @@ def generate_grid_polygons(
     x_coords = _lattice_axis(center_point.x, spacing, size)
     y_coords = _lattice_axis(center_point.y, spacing, size)
     spacing = float(spacing)
+    # Ledger 415: `shp.box` accepts min > max, so a gap of `spacing` or more
+    # gave inverted or overlapping boxes, and a size under one step an empty
+    # MultiPolygon, all in silence.
+    if (
+        isinstance(gap, (bool, np.bool_))
+        or not isinstance(gap, (int, float, np.integer, np.floating))
+        or not np.isfinite(gap)
+        or not 0 <= gap < spacing
+    ):
+        raise ValueError(
+            f"gap must be a finite number, zero or more and below spacing={spacing!r}; "
+            f"got {gap!r}."
+        )
+    if len(x_coords) < 2:
+        raise ValueError(
+            f"size={size!r} is under one step, so the lattice holds no box; pass a size "
+            "of 1 or more."
+        )
 
     polygons = []
     for x in x_coords[:-1]:

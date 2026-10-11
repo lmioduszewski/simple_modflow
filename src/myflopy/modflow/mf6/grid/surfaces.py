@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import numbers
+import os
 import warnings
 from pathlib import Path
 
@@ -262,9 +264,41 @@ def _resolve_gaps(values, vor, src, xs, ys, *, label, raster_path, gaps: str) ->
     return values
 
 
+def _is_path_like(value) -> bool:
+    """Whether ``value`` names a file: a ``str`` or any ``os.PathLike``."""
+    return isinstance(value, (str, os.PathLike))
+
+
+def _raster_items(raster_files) -> list:
+    """Each item of ``raster_files`` as a raster ``Path`` or a constant ``float``.
+
+    One rule for every sampler entry point (ledger 414): a ``str`` or any
+    ``os.PathLike`` is a raster file, a real number (numpy's included) is a constant
+    column, and anything else is REFUSED naming the item. Only ``pathlib.Path`` and
+    the builtin ``int``/``float`` were recognised before, and an item that was
+    neither was dropped, so a ``str`` path or a ``numpy.int64`` constant ended in
+    ``KeyError: "[...] not in index"`` naming the label instead of the item.
+    """
+    if _is_path_like(raster_files):
+        raster_files = [raster_files]
+    items = []
+    for i, item in enumerate(raster_files):
+        if _is_path_like(item):
+            items.append(Path(item))
+        elif isinstance(item, numbers.Real) and not isinstance(item, (bool, np.bool_)):
+            items.append(float(item))
+        else:
+            raise TypeError(
+                f"raster_files[{i}] is {item!r} ({type(item).__name__}); each item must "
+                "be a raster file -- a str or os.PathLike path -- or a number, which "
+                "becomes a constant column."
+            )
+    return items
+
+
 def get_raster_vals_at_centroids(
     vor,
-    raster_files: Path | list[Path | int | float] | None = None,
+    raster_files: str | os.PathLike | list[str | os.PathLike | float] | None = None,
     labels: str | list[str] | list[int] | None = None,
     *,
     method: str = "area",
@@ -304,8 +338,7 @@ def get_raster_vals_at_centroids(
         logger.warning('no raster files provided; there are no surfaces to sample')
         return None
 
-    if isinstance(raster_files, Path):
-        raster_files = [raster_files]
+    raster_files = _raster_items(raster_files)
     if labels is None:
         labels = list(range(len(raster_files)))
     if isinstance(labels, str):
@@ -323,7 +356,7 @@ def get_raster_vals_at_centroids(
     numeric_vals = {
         labels[i]: val
         for i, val in enumerate(raster_files)
-        if isinstance(val, (int, float))
+        if isinstance(val, float)
     }
     raster_items = [
         (labels[i], path)
@@ -371,6 +404,7 @@ def get_gdf_topbtm_multilyr(
     """
     Build centroid-sampled top and bottom elevations for each model layer.
     """
+    rasters = _raster_items(rasters)
     if labels is None:
         labels = list(range(len(rasters)))
     return get_raster_vals_at_centroids(vor, raster_files=rasters, labels=labels)
@@ -499,7 +533,8 @@ def get_raster_from_strike_dip(
         coordinates.
     pixel_size : float, optional
         Pixel side in model length units; the domain's bounds are snapped outward
-        to multiples of it. Default ``1``.
+        to multiples of it. Default ``1``. Anything but a positive finite number
+        raises ``ValueError`` naming it.
     output_filename : str or pathlib.Path, optional
         Where the GeoTIFF is written, overwriting any file there. Default
         ``raster.tif`` in the working directory at the CALL.
@@ -510,6 +545,17 @@ def get_raster_from_strike_dip(
         :func:`get_raster_vals_at_centroids`' frame, with the samples in ``elev``.
     """
     normal = get_normal_from_strike_and_dip(strike, dip)
+    if (
+        isinstance(pixel_size, (bool, np.bool_))
+        or not isinstance(pixel_size, numbers.Real)
+        or not np.isfinite(pixel_size)
+        or pixel_size <= 0
+    ):
+        raise ValueError(
+            f"pixel_size must be a positive finite number of model length units; "
+            f"got {pixel_size!r}."
+        )
+    pixel_size = float(pixel_size)
     output_filename = Path.cwd() / 'raster.tif' if output_filename is None else Path(output_filename)
     domain = get_domain(vor)
     min_x, min_y, max_x, max_y = domain.bounds

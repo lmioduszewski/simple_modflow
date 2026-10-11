@@ -159,3 +159,15 @@ def test_a_str_output_filename_is_written_and_sampled(grid, tmp_path):
     frame = grid.get_raster_from_strike_dip(0.0, 10.0, KNOWN, pixel_size=20, output_filename=out)
     assert Path(out).exists()
     assert np.isfinite(frame["elev"].to_numpy()).all()
+
+
+@pytest.mark.parametrize("pixel_size", [0, -1.0, float("nan"), float("inf"), "10", True])
+def test_a_pixel_size_that_is_not_a_positive_finite_number_is_refused_naming_it(
+    grid, tmp_path, pixel_size
+):
+    # Ledger 414: it reached numpy and rasterio, which failed with
+    # ZeroDivisionError, "cannot convert float NaN to integer", or a -400x-400 dataset.
+    out = tmp_path / "plane.tif"
+    with pytest.raises(ValueError, match=r"pixel_size must be a positive finite number"):
+        grid.get_raster_from_strike_dip(0.0, 10.0, KNOWN, pixel_size=pixel_size, output_filename=out)
+    assert not out.exists()

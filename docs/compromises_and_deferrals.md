@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 413 entries (418 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 415 entries (420 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 415 | `generate_grid_coordinates` steps from the extent's own minimum by any positive spacing; the box lattice re... | 2026-10-11 |
+| 414 | A raster sample reads a `str` or `os.PathLike` path and a numpy number; any other item is refused naming it | 2026-10-11 |
 | 413 | A model's mover takes no `modelnames`: `mvr_spec` refuses `modelnames=True`, and `mf.mvr`/`MVRBuilder` no l... | 2026-10-11 |
 | 412 | An SFR `reach_layer` is a WHOLE number, a float such as `1.0` included, inside the domain's layers | 2026-10-11 |
 | 411 | `protect_sources` / `protected_labels` still change no mesh: every refinement ring vertex stays fixed, beca... | 2026-10-11 |
@@ -18079,3 +18081,35 @@ same day, which is the useful part of the result.
       Revert check: the three `test_mvr_modelnames_is_refused_naming_mf6s_rule` cases and
       `test_mf_mvr_takes_no_modelnames_and_refuses_one_given`;
       `test_mf6_refuses_modelnames_on_a_models_mover_in_either_layout` pins MF6's premise.
+
+414. **A raster sample reads a `str` or `os.PathLike` path and a numpy number; any other item is refused naming it (2026-10-11).**
+      `get_raster_vals_at_centroids` (and `vor.get_raster_vals_at_centroids`,
+      `get_gdf_topbtm_multilyr`, `VoronoiGridPlus(rasters=)`) read an item as a file only
+      when it was a `pathlib.Path` and as a constant only when a builtin `int`/`float`,
+      and DROPPED everything else, so a `str` path or an `np.int64` died in
+      `KeyError: "['z'] not in index"`. **Accepted, not refused** -- a `str` path is
+      unambiguous, and every other path argument in the library takes one. One helper,
+      `surfaces._raster_items`, classifies each item; a `bool` is refused rather than
+      read as `1.0`/`0.0` (judgment call: no caller means a boolean elevation). A bare
+      path given to `get_gdf_topbtm_multilyr` is a one-item list, the model top alone
+      (it raised `TypeError` from `len(Path)`). `get_raster_from_strike_dip` refuses a
+      `pixel_size` that is not a positive finite number before writing anything.
+      Tests: `tests/test_raster_sampling_gaps.py` (the str/PathLike, numpy and refusal
+      tests), `tests/test_strike_dip_plane.py::test_a_pixel_size_that_is_not_a_positive_finite_number_is_refused_naming_it`.
+
+415. **`generate_grid_coordinates` steps from the extent's own minimum by any positive spacing; the box lattice refuses a gap or size that leaves no box; `set_k_vor` refuses an unknown cell (2026-10-11).**
+      `generate_grid_coordinates` ran `range(int(x_min), int(x_max) + s, s)`, the pattern
+      ledger 390 removed from the point lattice: a fractional step raised and each end
+      was truncated toward zero. **Anchored at the extent's minimum, not centred** --
+      judgment call: its documented contract is "start at the minimum, stop on reaching
+      or passing the maximum", which is kept, and an integer extent an integer step
+      divides gives the same points (pinned); only a non-integer extent moves (0.7..4.6
+      step 2: was 0, 2, 4, now 0.7, 2.7, 4.7). No caller in `src/`, examples or
+      notebooks. `generate_grid_polygons` refuses a negative, non-finite or
+      `>= spacing` gap (`shp.box` accepts min > max, so these gave inverted or
+      overlapping boxes) and a size under one step (an empty `MultiPolygon`).
+      `set_k_vor` refuses, before writing the `"Kh"` column, a cell id the grid does not
+      have (`index.isin` skipped it, leaving that cell at `k_default`).
+      Tests: `tests/test_grid_helper_refusals.py` -- the old code fails every
+      `test_grid_coordinates_*` refusal/placement test, both box-lattice refusals and
+      `test_set_k_vor_refuses_a_cell_id_the_grid_does_not_have_before_writing`.
