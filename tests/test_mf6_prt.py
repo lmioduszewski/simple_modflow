@@ -262,6 +262,53 @@ def test_real_gwf_to_prt_run_and_shared_scene():
         shutil.rmtree(workspace, ignore_errors=True)
 
 
+def test_prt_runs_off_a_flow_model_whose_tdis_names_no_time_unit():
+    """A flow TDIS with no TIME_UNITS gives a PRT TDIS with none (ledger 397).
+
+    A plain ``mf.tdis(...)`` names no unit; FloPy answers ``get_data() -> None``
+    and the PRT TDIS was written ``TIME_UNITS  none``, which MF6 refuses
+    ("Unrecognized input value for TIME_UNITS option"), so the PRT run failed.
+    """
+
+    workspace = _workspace("prt_no_time_units")
+    try:
+        model = _flow_model("prt_no_units", workspace)
+        model.sim.tdis.time_units = None
+        assert model.sim.tdis.time_units.get_data() is None
+        success, _ = model.run_simulation()
+        assert success
+
+        project = PRTProject(
+            model,
+            workspace=workspace / "prt",
+            release_points=PRTReleasePoints.from_cells(model, [0], local_z=0.5),
+        )
+        assert project.tdis.time_units.get_data() is None
+        result = project.run(silent=True)
+
+        assert result.success
+        assert "TIME_UNITS" not in (workspace / "prt" / f"{project.name}.tdis").read_text().upper()
+        assert not result.pathlines.get().empty
+
+        # a declared unit is still copied, and an explicit one still wins
+        model.sim.tdis.time_units = "days"
+        copied = PRTProject(
+            model,
+            workspace=workspace / "prt_days",
+            release_points=PRTReleasePoints.from_cells(model, [0], local_z=0.5),
+        )
+        assert copied.tdis.time_units.get_data().upper() == "DAYS"
+        explicit = PRTProject(
+            model,
+            workspace=workspace / "prt_hours",
+            release_points=PRTReleasePoints.from_cells(model, [0], local_z=0.5),
+            time_units="hours",
+        )
+        assert explicit.tdis.time_units.get_data().upper() == "HOURS"
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
 @pytest.mark.canonical
 def test_canonical_prt_run_stops_at_flow_end_and_writes_pathlines(
     canonical_run,

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 396 entries (401 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 397 entries (402 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 397 | A PRT simulation's TDIS names the flow model's time unit, or none when the flow model names none | 2026-10-11 |
 | 396 | Two `Spread`s of one call with different `mode`s are refused at the call, naming both | 2026-10-11 |
 | 395 | An explicit `min_above_bottom=` on a model with no layer elevations RAISES, and a RIV stage below its... | 2026-10-11 |
 | 394 | `GeoPackageSource.k_array` reads `gaps=`/`snap_within=` and reports a partial miss through `warnings.warn`,... | 2026-10-11 |
@@ -15364,6 +15365,9 @@ same day, which is the useful part of the result.
       stage-below-rbot refusal with it); and several `Spread`s as taking the FIRST one's
       `mode`~~ -- fixed, entries rewritten (ledgers 392 to 396; the column
       check, a plain fix, has none).
+      ~~`PRTProject` documented as writing `TIME_UNITS none`, which MF6 refuses, off a flow
+      TDIS naming no unit~~ -- the PRT TDIS names none either, entry rewritten (ledger
+      397).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17742,3 +17746,15 @@ same day, which is the useful part of the result.
       `refuse_spread_on_elevation` is.
       Revert check: disabling the check fails both
       `test_two_spreads_with_different_modes_are_refused_naming_both` cases.
+
+397. **A PRT simulation's TDIS names the flow model's time unit, or none when the flow model names none (2026-10-11).**
+      `PRTProject` copied the flow TDIS's `TIME_UNITS` through `str()`, and FloPy answers an
+      unset option with `None`, so a plain `mf.tdis(...)` (which names no unit) gave a PRT
+      TDIS written `TIME_UNITS  none`: MF6 stopped on "Unrecognized input value for
+      TIME_UNITS option" and the PRT run failed unless `time_units=` was passed.
+      **Judgment call: mirror, not default** -- an undeclared unit stays undeclared (MF6's
+      own "unknown"), and so does a flow model with NO TDIS, which used to get `"DAYS"`; a
+      unit only labels the listing, and inventing days would label an hourly model's
+      travel times wrong. The pathline hover already shows no unit for one it cannot read.
+      Revert check: `test_prt_runs_off_a_flow_model_whose_tdis_names_no_time_unit`, a real
+      GWF then PRT run.

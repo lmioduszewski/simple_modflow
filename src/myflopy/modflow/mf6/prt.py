@@ -92,11 +92,22 @@ def _tdis_perioddata(model: SimulationBase) -> list[tuple[float, int, float]]:
     ]
 
 
-def _tdis_time_units(model: SimulationBase) -> str:
-    """The flow model's TDIS time units (``"DAYS"`` if unset)."""
+def _tdis_time_units(model: SimulationBase) -> str | None:
+    """The flow model's TDIS ``TIME_UNITS``, or ``None`` when it declares none.
+
+    ``None`` -- no TDIS, or a TDIS naming no unit (what a plain ``mf.tdis(...)``
+    writes) -- means the PRT TDIS mirrors it and writes no ``TIME_UNITS`` either.
+    FloPy's scalar answers ``get_data() -> None`` for an unset option, and
+    ``str()`` of that wrote ``TIME_UNITS none``, which MF6 refuses (ledger
+    397).
+    """
 
     tdis = getattr(model.sim, "tdis", None)
-    return str(_mfdata_value(getattr(tdis, "time_units", None), "DAYS"))
+    value = _mfdata_value(getattr(tdis, "time_units", None))
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _copy_grid_to_prt(flow_model: SimulationBase, prt_model):
@@ -845,11 +856,11 @@ class PRTProject:
         model's saved flows, so these should match the flow run's periods.
     time_units : str, optional
         TDIS time units for the PRT simulation (e.g. ``"DAYS"``). ``None`` (the
-        default) copies the flow simulation's TDIS ``TIME_UNITS``, and uses
-        ``"DAYS"`` only when the flow simulation has no TDIS package at all. A flow
-        TDIS that declares no units is NOT defaulted -- the PRT TDIS is then
-        written ``TIME_UNITS none``, which MF6 refuses -- so pass ``time_units``
-        for such a model.
+        default) copies the flow simulation's TDIS ``TIME_UNITS``; when the flow
+        simulation declares none (a plain ``mf.tdis(...)``, or no TDIS at all) the
+        PRT TDIS declares none either, which MF6 reads as unknown units. Travel
+        times are in the flow model's time unit whatever this says -- it only
+        labels the PRT listing.
     release_perioddata : dict, optional
         PRP ``perioddata``: zero-based stress period -> that period's MF6 release
         settings (``ALL``, ``FIRST``, ``LAST``, ``FREQUENCY``, ``STEPS``), in the
