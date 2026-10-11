@@ -174,7 +174,8 @@ class LakeStageTargets:
     LAK volume, another lake's stage, or a stale copy a previous run left there.
 
     **In a PEST build, its measured observations are in the set's prefix group**
-    (``stage``, or the prefix ``observe(..., prefix=)`` names; ledger 358): a lake
+    (``lak_stage``, or the prefix ``observe(..., prefix=)`` names; ledger 358 --
+    ``stage`` until ledger 372): a lake
     target carries no group label, so to see two sets of lakes apart in PEST++'s phi
     by group, register them as two sets under two prefixes. Its unmeasured periods
     are in ``<prefix>_unmeasured``.

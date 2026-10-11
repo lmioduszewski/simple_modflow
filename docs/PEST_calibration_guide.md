@@ -203,7 +203,7 @@ group its label names:
 | what the observation is | its PEST group (`obgnme`) |
 |---|---|
 | measured, its target labelled `"North Wells"` | `north_wells` — lower-cased, every run of characters other than letters, digits, `_`, `.`, `:`, `-` one `_` |
-| measured, no label (missing or blank) | the set's prefix: `hds`, `conc`, `stage`, `sfr_stage`, `sfr_flow`, `drn_flow` (or the `prefix=` you passed) |
+| measured, no label (missing or blank) | the set's prefix: `hds`, `conc`, `lak_stage`, `sfr_stage`, `sfr_flow`, `drn_flow` (or the `prefix=` you passed) |
 | a period no target measures, a blank target | `<prefix>_unmeasured` (weight 0) |
 | a forecast | the forecast set's prefix (`fore1`, ...); the set's other periods `fore1_unmeasured` |
 
@@ -221,7 +221,7 @@ column of numbers — use `frame["group"].astype("string")`, or
 text **`nan`, `None` or `<NA>`**, which is what `astype(str)` writes for a MISSING label
 and would make one group of every well you left unlabelled (ledger 359); one with no
 letter or digit, one taking a group the build gives a set (`hds`,
-`stage_unmeasured`, ...), and **two different labels that become one name**
+`lak_stage_unmeasured`, ...), and **two different labels that become one name**
 (`"North"` and `"north"`, `"north wells"` and `"north_wells"` — one is very likely a
 typo). Surrounding whitespace is not part of a label. A DRN zone given as several rows
 must carry one label. **A group whose name starts with `l_`, `less`, `g_` or
@@ -253,11 +253,13 @@ Measured on PEST++ 5.2.16: a tag matches ANYWHERE in a group's name (`orth` took
 stops IES ("group 'SOUTH' not identified with any tags"), and so does a group two tags
 match (`north` and `nor`: "mapped to multiple tags") — while the zero-weight
 `*_unmeasured` groups need none. So name groups so that none contains another's name
-(`north` and `north_deep` cannot be given separate fractions). **Two of the default
-prefixes break that rule:** a lake set's `stage` is inside an SFR set's `sfr_stage`, so
-every tag matching the lake's group matches the stream's too and PESTPP-IES stops
-("group 'SFR_STAGE' mapped to multiple tags") — register the lakes under another
-prefix, `cal.observe(lakes, prefix="lake")`, and tag `lake` (measured, ledger 359).
+(`north` and `north_deep` cannot be given separate fractions). **No default prefix
+contains another**, so `hds`, `conc`, `lak_stage`, `sfr_stage`, `sfr_flow` and `drn_flow`
+each take a tag of their own. A lake set's default was `stage` until ledger 372,
+which is inside an SFR set's `sfr_stage`: every tag matching the lake's group matched the
+stream's too and PESTPP-IES stopped ("group 'SFR_STAGE' mapped to multiple tags",
+ledger 359). A template built before then keeps `stage` in its observation names and
+groups -- and, like every template built before ledger 340, must be rebuilt anyway.
 
 ### Noise and structural error
 

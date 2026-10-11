@@ -726,12 +726,12 @@ concentration or DRN-zone target's `group` (`group_column=`) puts each of its ME
 observations in that group, made a PEST name -- lower-cased, every run of characters
 other than letters, digits, `_`, `.`, `:`, `-` one `_` (`"North Wells"` is
 `north_wells`); with no label (missing or blank) it is in its set's prefix (`hds`,
-`stage`, `sfr_flow`, ...), so phi splits by data type out of the box. Every row no target
+`lak_stage`, `sfr_flow`, ...), so phi splits by data type out of the box. Every row no target
 measures is in `<prefix>_unmeasured` and a forecast in its set's prefix (`fore1`), so
 neither joins a group of yours. Lake and SFR targets carry no label: a second set under
-another prefix is a second group (a lake set's default `stage` sits inside `sfr_stage`, so
-give the lakes another prefix to tag them apart in a PESTPP-IES phi-factor file, ledger
-359). `cal.build()` refuses, naming it, a label that is not text (`astype("string")` keeps
+another prefix is a second group. No default prefix is inside another's groups, so each
+takes a PESTPP-IES phi-factor tag of its own: the lake default was `stage`, inside
+`sfr_stage`, until ledger 372 (ledger 359 measured PESTPP-IES refusing it). `cal.build()` refuses, naming it, a label that is not text (`astype("string")` keeps
 a blank blank), is `nan`/`None`/`<NA>` -- what `astype(str)` writes for a missing one --
 holds no letter or digit, takes a group the build gives a set, starts as
 PESTPP-IES reads an INEQUALITY (`l_`, `less`, `g_`, `greater` -- a set prefix too), or

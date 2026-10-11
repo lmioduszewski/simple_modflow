@@ -1149,7 +1149,7 @@ def assign_observation_groups(obs: pd.DataFrame, prepared: list[dict]) -> None:
     * A history-matching target WITH a value -- a measured observation -- is in
       its target's ``group`` label, made a PEST group name by
       :func:`pest_group_name`; with no label (missing, or blank text) it is in
-      its set's prefix (``hds``, ``stage``, ``sfr_flow``, ...), so phi splits by
+      its set's prefix (``hds``, ``lak_stage``, ``sfr_flow``, ...), so phi splits by
       data type out of the box.
     * A forecast target is in its set's prefix (``fore1``, ...); its label is not
       read.

@@ -1091,7 +1091,7 @@ def test_observe_accepts_named_series_targets_with_default_prefix(tmp_path):
     spec = cal.observe(lake)  # bare target set: no spec, no prefix
     assert isinstance(spec, LakeStageObservationSpec)
     assert spec.targets is lake
-    assert spec.prefix == "stage"  # the spec's own default, not "hds"
+    assert spec.prefix == "lak_stage"  # the spec's own default, not "hds"
     assert cal._observation_specs == [spec]
 
     # Unsupported inputs are rejected without pointing at the deleted legacy API.

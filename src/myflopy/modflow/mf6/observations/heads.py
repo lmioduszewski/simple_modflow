@@ -142,7 +142,7 @@ class HeadTargets:
         ``None`` or ``<NA>`` (what ``astype(str)`` writes for a missing label,
         ledger 359), holds no letter or digit, starts as PESTPP-IES reads an
         inequality (``l_``, ``less``, ``g_``, ``greater``), takes a group the
-        build gives a set (``hds``, ``stage_unmeasured``, ...), or becomes the
+        build gives a set (``hds``, ``lak_stage_unmeasured``, ...), or becomes the
         same name as a different label (``"North"`` and ``"north"``) -- naming
         each.
     weight_column : str or None, optional

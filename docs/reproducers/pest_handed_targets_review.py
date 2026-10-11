@@ -131,9 +131,13 @@ def section_b(model, root):
         cal, _pst = _build(model, root / "b2", observe=(pond,))
         template = pathlib.Path(cal.template_workspace)
         again = root / "stage_again.csv"
-        write_named_series_targets("lake_stage", template / "stage_target_locations.csv",
+        # Found by suffix: the lake set's default prefix is ``lak_stage`` since ledger
+        # 372 and was ``stage`` before, and this runs against both trees.
+        (locations,) = template.glob("*_target_locations.csv")
+        (simulated,) = template.glob("*_simulated_lake_stage.csv")
+        write_named_series_targets("lake_stage", locations,
                                    again, sim_ws=model.workspace, model_name="m")
-        base = (template / "stage_simulated_lake_stage.csv").read_text().splitlines()[0]
+        base = simulated.read_text().splitlines()[0]
         return f"base header {base}, forward-run header {again.read_text().splitlines()[0]}"
 
     _attempt("B", "build with heads 007, 0012, NA", heads)

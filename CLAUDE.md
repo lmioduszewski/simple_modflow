@@ -1851,9 +1851,10 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   PESTPP-IES reads as an INEQUALITY on the bare start (`lessard`, `greaterville`;
   measured: phi 0 where the same data scored 424.864; PESTPP-GLM at NOPTMAX=0 does not).
   No length limit (PEST++ 5.2.16 read 5000 characters); a comma or `"` breaks the
-  version-2 file. Lake/SFR targets have no label column -- split them by prefix (and the
-  lake default `stage` sits inside `sfr_stage`, so a phi-factor file cannot tag the two
-  apart until one is re-prefixed, ledger 359). **The
+  version-2 file. Lake/SFR targets have no label column -- split them by prefix. **No
+  default prefix is inside another's groups** (a phi-factor tag matches anywhere in a
+  group name): the lake default is `lak_stage`, was `stage` -- inside `sfr_stage` --
+  until ledger 372; `test_no_default_prefix_is_inside_another_sets_group`. **The
   review draws one time series per target LOCATION** (`IesResults._location_panels`, a
   column found by pyEMU's `<base>_<index>:<value>` name), never per group, and marks only
   MEASURED observations -- per group it drew a group of wells as one zig-zag line, and

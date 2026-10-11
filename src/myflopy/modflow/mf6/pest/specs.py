@@ -247,10 +247,14 @@ class LakeStageObservationSpec:
         Every row no target measures gets weight 0 either way (ledger 340), and a
         forecast's weights are zero regardless.
     prefix : str, optional
-        pyEMU observation-name prefix, default ``"stage"``. It also names the
-        files the build writes (``<prefix>_simulated_lake_stage.csv``,
+        pyEMU observation-name prefix, default ``"lak_stage"``; it is the set's
+        PEST observation group (ledger 358). It also names the files the build
+        writes (``<prefix>_simulated_lake_stage.csv``,
         ``<prefix>_target_values.csv``, ``<prefix>_target_locations.csv``), so
-        two sets need two prefixes.
+        two sets need two prefixes. The default was ``"stage"`` until ledger
+        372: PESTPP-IES matches an ``ies_phi_factor_file`` tag anywhere in
+        a group's name, and ``stage`` is inside an SFR set's ``sfr_stage``, so
+        no tag could give a lake set's group a phi factor of its own.
     targets : LakeStageTargets or None, optional
         The named lake-stage targets. Required in practice: the default
         ``None`` constructs, and ``cal.build()`` then raises ``ValueError``.
@@ -261,7 +265,7 @@ class LakeStageObservationSpec:
     time_column: str = "time"
     value_column: str = "stage"
     weight: float | None = None
-    prefix: str = "stage"
+    prefix: str = "lak_stage"
     targets: LakeStageTargets | None = None
 
 

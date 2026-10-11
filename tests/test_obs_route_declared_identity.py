@@ -594,14 +594,14 @@ def test_the_pest_forward_run_reads_the_package_the_targets_name(two, tmp_path):
     forward = (template / "forward_run.py").read_text()
     assert "package='lak_b'" in forward and "package='drn_b'" in forward
     tables = {name: (template / name).read_text() for name in (
-        "stage_simulated_lake_stage.csv", "drn_flow_simulated_drn_flow.csv")}
+        "lak_stage_simulated_lake_stage.csv", "drn_flow_simulated_drn_flow.csv")}
 
     subprocess.run([sys.executable, "forward_run.py"], cwd=template, check=True,
                    capture_output=True, text=True)
     for name, base in tables.items():
         assert (template / name).read_text() == base, name
     np.testing.assert_array_equal(
-        pd.read_csv(template / "stage_simulated_lake_stage.csv", float_precision="round_trip")["pond"],
+        pd.read_csv(template / "lak_stage_simulated_lake_stage.csv", float_precision="round_trip")["pond"],
         _csv(two, "b.csv")["POND"])
     np.testing.assert_array_equal(
         pd.read_csv(template / "drn_flow_simulated_drn_flow.csv", float_precision="round_trip")["s"],

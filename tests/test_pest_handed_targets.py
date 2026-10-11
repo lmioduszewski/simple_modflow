@@ -197,7 +197,7 @@ def test_a_period_key_written_as_a_float_reaches_its_row_in_every_family(toy, tm
         ("hds_simulated_heads.csv", 1, "W", 51.0),
         ("sfr_flow_simulated_sfr_flow.csv", 1, "a", -7.0),
         ("drn_flow_simulated_drn_flow.csv", 2, "zone", -3.0),
-        ("stage_simulated_lake_stage.csv", 1, "pond", 99.0),
+        ("lak_stage_simulated_lake_stage.csv", 1, "pond", 99.0),
     ):
         name = _observation_at(template, table, period, column)
         assert obs.loc[name, "obsval"] == value, (table, period)
@@ -550,7 +550,7 @@ def test_a_name_pandas_would_read_as_a_number_or_a_blank_reaches_pest_verbatim(
     cal, pst = _build(toy, tmp_path / "pest", observe=(wells, pond))
     template = cal.template_workspace
     heads = template / "hds_simulated_heads.csv"
-    stage = template / "stage_simulated_lake_stage.csv"
+    stage = template / "lak_stage_simulated_lake_stage.csv"
     assert heads.read_text().splitlines()[0] == "per,007,0012,NA"
     assert stage.read_text().splitlines()[0] == "time,007"
     assert pst.nnz_obs == 4
@@ -561,7 +561,7 @@ def test_a_name_pandas_would_read_as_a_number_or_a_blank_reaches_pest_verbatim(
                            sim_ws=toy.workspace)
     assert rewritten.read_text() == heads.read_text()
     lake_again = tmp_path / "stage_again.csv"
-    write_named_series_targets("lake_stage", template / "stage_target_locations.csv",
+    write_named_series_targets("lake_stage", template / "lak_stage_target_locations.csv",
                                lake_again, sim_ws=toy.workspace, model_name="m")
     assert lake_again.read_text().splitlines()[0] == "time,007"
 

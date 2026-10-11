@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 371 entries (376 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 372 entries (377 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 372 | A lake set's default PEST prefix is `lak_stage`, and no default prefix is inside another family's groups, s... | 2026-10-11 |
 | 371 | A target set's `to_wide()` refuses two values for one target in one period, through the check `compare()` a... | 2026-10-11 |
 | 370 | A USG period short of its `ITMP` is refused, and so is a grid CRS of `None` | 2026-10-11 |
 | 369 | A USG export's `resolution` is in the OUTPUT CRS's units, and every raster uses it | 2026-10-11 |
@@ -16870,8 +16871,9 @@ same day, which is the useful part of the result.
       `stage` is inside an SFR set's `sfr_stage`, so every tag matching the lake's group
       matches the stream's: tags `hds`/`stage`/`sfr_stage` stop PESTPP-IES 5.2.16, "group
       'SFR_STAGE' mapped to multiple tags", and with the lakes under `prefix="lake"` it runs
-      (reproducer section D). **Not done:** renaming the lake default, which is every lake
-      observation's NAME (`oname:stage_...`) and so every stored run and forecast list; and
+      (reproducer section D). ~~**Not done:** renaming the lake default, which is every lake
+      observation's NAME (`oname:stage_...`) and so every stored run and forecast list;~~
+      **Renamed `lak_stage` in ledger 372.** **Not done:**
       checking a phi-factor file before `run_ies` -- PEST++ refuses it by name, and
       `pyemu.os_utils.run` raises on its exit. The guide, the API reference and CLAUDE.md
       say to re-prefix.
@@ -17234,3 +17236,29 @@ same day, which is the useful part of the result.
       Test: `tests/test_pest_handed_targets.py::test_to_wide_refuses_two_measurements_of_one_target_in_one_period_naming_both`
       (all six families fail with the calls removed);
       `test_to_wide_keeps_one_column_for_a_two_screen_well` guards the false refusal.
+
+372. **A lake set's default PEST prefix is `lak_stage`, and no default prefix is inside another family's groups, so each takes a phi-factor tag of its own (2026-10-11).**
+      Ledger 359's "not done". The default was `stage`, inside an SFR set's `sfr_stage`, and
+      PESTPP-IES maps an `ies_phi_factor_file` tag to every group CONTAINING it: tagging the
+      default groups `hds`/`stage`/`sfr_stage` stopped PESTPP-IES 5.2.16, "group
+      'SFR_STAGE' mapped to multiple tags: SFR_STAGE STAGE"; under `lak_stage` the same
+      build and tagging run (`docs/reproducers/lake_default_prefix.py`, before and after).
+      **Judgment call: `lak_stage`**, the name the task and the package type give (`lak`),
+      over `lake` (ledger 359's workaround) -- it keeps the `<package>_<quantity>` shape of
+      `sfr_stage`/`sfr_flow`/`drn_flow`. The prefix names every lake observation
+      (`oname:lak_stage_...`), group and file (`lak_stage_simulated_lake_stage.csv`), so a
+      forecast list, a phi-factor file or a script naming the old ones must be updated; a
+      template built with `stage` keeps its names, and every template built before ledger
+      340 must be rebuilt anyway. An explicit `prefix="stage"` still works and still
+      collides. `IesResults` reads the prefix from each run's metadata, so an old run
+      reviews unchanged.
+      **The rule is tested, not listed:** `test_no_default_prefix_is_inside_another_sets_group`
+      discovers every `*ObservationSpec` default in `pest.specs` and checks no prefix is
+      inside another's `<prefix>` or `<prefix>_unmeasured`;
+      `test_the_default_groups_take_one_phi_factor_tag_each` builds heads, a lake and a
+      reach set under their defaults on a real run and checks the control file's groups
+      and that each measured group matches exactly its own tag. Both fail with the
+      default reverted to `stage`.
+      **Not changed:** a FORECAST set's generated prefix `fore1` is inside `fore10`; a
+      forecast is at weight 0, which needs no phi-factor tag (ledger 358), so it cannot
+      collide there.

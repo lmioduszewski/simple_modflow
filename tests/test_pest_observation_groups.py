@@ -93,10 +93,10 @@ def test_a_measured_observation_is_in_its_targets_group_and_nothing_else_joins_i
     assert _members(obs, "south") == _measured(obs, "w10")
     assert _members(obs, "seeps") == _measured(obs, "zone", "drn_flow")
     # No label: the set's prefix.
-    assert _members(obs, "stage") == _measured(obs, "pond", "stage")
+    assert _members(obs, "lak_stage") == _measured(obs, "pond", "lak_stage")
     assert _members(obs, "sfr_flow") == _measured(obs, "a", "sfr_flow")
     # Every other row is its set's `_unmeasured`, at weight 0.
-    for prefix in ("hds", "drn_flow", "stage", "sfr_flow", "fore1"):
+    for prefix in ("hds", "drn_flow", "lak_stage", "sfr_flow", "fore1"):
         rows = obs.loc[obs["obgnme"] == f"{prefix}_unmeasured"]
         assert len(rows) and (rows["weight"] == 0).all(), prefix
     assert sorted(obs.loc[obs["obgnme"] == "hds_unmeasured"].index) == [
@@ -159,13 +159,77 @@ def test_a_set_prefix_pestpp_ies_reads_as_an_inequality_is_refused(toy, tmp_path
         cal.build("ineq.pst", noptmax=0)
 
 
+def _default_prefixes():
+    """Every observation spec's DEFAULT prefix, found from ``pest.specs`` rather than listed."""
+
+    import dataclasses
+
+    from myflopy.modflow.mf6.pest import specs
+
+    found = {}
+    for name in dir(specs):
+        cls = getattr(specs, name)
+        if isinstance(cls, type) and dataclasses.is_dataclass(cls) and name.endswith("ObservationSpec"):
+            fields = {field.name: field for field in dataclasses.fields(cls)}
+            if "prefix" in fields:
+                found[name] = fields["prefix"].default
+    return found
+
+
+def _tags_matching(group: str, tags) -> list[str]:
+    """The ``ies_phi_factor_file`` tags PESTPP-IES maps ``group`` to: each tag found
+    ANYWHERE in the group's name, ignoring case (measured with 5.2.16, ledger 358)."""
+
+    return [tag for tag in tags if tag.lower() in group.lower()]
+
+
+def test_no_default_prefix_is_inside_another_sets_group():
+    """A phi-factor tag matches anywhere in a group's name, and a lake set's default
+    ``stage`` was inside an SFR set's ``sfr_stage``, so no tag could give the lake its
+    own factor: PESTPP-IES stopped, "group 'SFR_STAGE' mapped to multiple tags"
+    (ledger 359). The lake default is ``lak_stage`` now (ledger 372), and no
+    default prefix is inside another family's groups, ``<prefix>_unmeasured`` included."""
+
+    defaults = _default_prefixes()
+    assert defaults["LakeStageObservationSpec"] == "lak_stage"
+    assert len(defaults) == 6 and len(set(defaults.values())) == 6, defaults
+    for owner, prefix in defaults.items():
+        for other, theirs in defaults.items():
+            if other == owner:
+                continue
+            for group in (theirs, f"{theirs}_unmeasured"):
+                assert prefix not in group, (owner, prefix, other, group)
+
+
+def test_the_default_groups_take_one_phi_factor_tag_each(toy, tmp_path):
+    """Heads, a lake and a reach-stage set under their default prefixes: the control
+    file's groups, and each group matched by exactly the one tag of its own set."""
+
+    pond = mf.LakeStageTargets(locations={"pond": 0}, values=pd.DataFrame(
+        {"time": [1.0, 2.0], "pond": [99.0, 98.0]}))
+    gage = mf.SfrStageTargets(locations={"r1": 1}, values=pd.DataFrame(
+        {"time": [0.0, 1.0], "r1": [95.0, 96.0]}))
+    _cal, pst = _build(toy, tmp_path / "pest", observe=(_heads([None, None, None]), pond, gage))
+    obs = pst.observation_data
+    measured = sorted(set(obs.loc[obs["weight"] > 0, "obgnme"]))
+    assert measured == ["hds", "lak_stage", "sfr_stage"]
+    assert sorted(set(obs["obgnme"])) == [
+        "hds", "hds_unmeasured", "lak_stage", "lak_stage_unmeasured", "sfr_stage",
+        "sfr_stage_unmeasured"]
+    assert _members(obs, "lak_stage") == _measured(obs, "pond", "lak_stage")
+    for group in measured:
+        assert _tags_matching(group, measured) == [group], group
+    # What the old default did: the tag `stage` matched the reach set's group as well.
+    assert _tags_matching("sfr_stage", ["hds", "stage", "sfr_stage"]) == ["stage", "sfr_stage"]
+
+
 @pytest.mark.parametrize("label", [1, 2.0, True])
 def test_a_label_that_is_not_text_is_refused_naming_it(toy, tmp_path, label):
     with pytest.raises(ValueError, match=r"not text: 'W2' in set 'hds': " + repr(label).replace(".", r"\.")):
         _build(toy, tmp_path / "pest", observe=(_heads([label, "a", "b"]),))
 
 
-@pytest.mark.parametrize("label", ["stage", "hds_unmeasured", "Fore1"])
+@pytest.mark.parametrize("label", ["lak_stage", "hds_unmeasured", "Fore1"])
 def test_a_label_taking_a_group_the_build_gives_a_set_is_refused(toy, tmp_path, label):
     pond = mf.LakeStageTargets(locations={"pond": 0}, values=pd.DataFrame({"time": [1.0], "pond": [99.0]}))
     fore = mf.HeadTargets(locations={"P": 23}, values=pd.DataFrame({"time": [2], "P": [None]}))

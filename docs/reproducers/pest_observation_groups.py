@@ -325,8 +325,11 @@ def section_d(model, root):
     set's ``sfr_stage``, so no tag can match the lake's group alone (ledger 359)."""
 
     print("D  ies_phi_factor_file on the default prefixes (pestpp-ies NOPTMAX=1, 4 reals):")
+    # The old default spelled out (``stage`` until ledger 372), so this section
+    # measures the same thing on every tree; ``lake_default_prefix.py`` measures the
+    # new default.
     for label, lake_prefix, text in (
-        ("defaults", None, "hds,0.5\nstage,0.25\nsfr_stage,0.25\n"),
+        ("defaults", "stage", "hds,0.5\nstage,0.25\nsfr_stage,0.25\n"),
         ("lake_renamed", "lake", "hds,0.5\nlake,0.25\nsfr_stage,0.25\n"),
     ):
         cal = _calibration(model, root / f"d_{label}", "d")

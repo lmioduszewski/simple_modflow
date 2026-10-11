@@ -352,7 +352,7 @@ def test_the_pest_build_puts_each_period_target_on_its_period_end_row(runs, tmp_
     cal, pst = _build(model, tmp_path / "pest", observe)
     template = cal.template_workspace
     obs = pst.observation_data
-    tables = {"pond": "stage_simulated_lake_stage.csv", "gage": "sfr_stage_simulated_sfr_stage.csv",
+    tables = {"pond": "lak_stage_simulated_lake_stage.csv", "gage": "sfr_stage_simulated_sfr_stage.csv",
               "up": "sfr_flow_simulated_sfr_flow.csv", "seep": "drn_flow_simulated_drn_flow.csv"}
     for column, table in tables.items():
         frame = pd.read_csv(template / table)

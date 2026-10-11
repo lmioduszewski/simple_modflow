@@ -666,7 +666,7 @@ class PestProject:
         (a head, concentration or DRN-zone target's ``group_column``), made a PEST
         name -- lower-cased, every run of characters other than letters, digits,
         ``_``, ``.``, ``:`` and ``-`` one ``_`` -- and one with no label is in the
-        set's prefix (``hds``, ``stage``, ...), so PEST++ reports phi by your
+        set's prefix (``hds``, ``lak_stage``, ...), so PEST++ reports phi by your
         groups, and by data type out of the box. Every row no target measures is
         in ``<prefix>_unmeasured``, so it never joins a group of yours. A label
         that is not text, holds no letter or digit, starts as PESTPP-IES reads an
@@ -688,7 +688,7 @@ class PestProject:
             every run. Anything else raises ``TypeError``.
         prefix : str or None, optional
             Observation-name prefix. ``None`` (default) uses the target kind's
-            own prefix (``"hds"``, ``"conc"``, ``"stage"``, ``"sfr_stage"``,
+            own prefix (``"hds"``, ``"conc"``, ``"lak_stage"``, ``"sfr_stage"``,
             ``"sfr_flow"``, ``"drn_flow"``). Pass distinct prefixes to register
             more than one set of the same kind. It is also, made a PEST name,
             the observation group of the set's targets with no group label --
@@ -772,7 +772,7 @@ class PestProject:
         Accepts a pre-built observation spec, or any high-level target set
         (head / lake stage / SFR stage / SFR flow / DRN seepage), wrapping it in
         the matching spec. When ``prefix`` is ``None`` the spec's own default
-        prefix is used (``"hds"``, ``"stage"``, ``"sfr_flow"``, ...); pass distinct
+        prefix is used (``"hds"``, ``"lak_stage"``, ``"sfr_flow"``, ...); pass distinct
         prefixes to register more than one set of the same kind.
         """
 
