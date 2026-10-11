@@ -332,8 +332,28 @@ def _mover_column_groups(model) -> tuple[np.ndarray, ...]:
     return tuple(merged)
 
 
+def _grid_neighbors(modelgrid) -> dict:
+    """The grid's cell-neighbour map, through FloPy's fast path where it can build one.
+
+    FloPy's fast structured path sizes an array ``(nrow - 2) * (ncol - 2)`` and
+    raises ``ValueError: negative dimensions`` on a grid one row or one column
+    wide; its slow path gives the same map on every other grid measured (2x2,
+    2x5, 3x3, 3x6), so a one-wide grid takes that (ledger 399).
+    """
+
+    one_wide = getattr(modelgrid, "grid_type", None) == "structured" and 1 in (
+        getattr(modelgrid, "nrow", None),
+        getattr(modelgrid, "ncol", None),
+    )
+    return modelgrid.neighbors(reset=False, fast=not one_wide)
+
+
 def _preserve_lake_partitions(model, mask) -> np.ndarray:
-    """Assign physical lakes and connected MVR features to one partition."""
+    """Assign physical lakes and connected MVR features to one partition.
+
+    The grid's neighbours are computed only when there is a lake or a mover
+    group to keep whole; with none, the mask comes back unchanged.
+    """
 
     preserved = np.asarray(mask, dtype=int).copy()
     flat = preserved.reshape(-1)
@@ -345,7 +365,9 @@ def _preserve_lake_partitions(model, mask) -> np.ndarray:
             f"{model.modelgrid.ncpl}."
         )
     groups = _lake_column_groups(model) + _mover_column_groups(model)
-    neighbors = model.modelgrid.neighbors(reset=False, fast=True)
+    if not groups:
+        return preserved
+    neighbors = _grid_neighbors(model.modelgrid)
     for columns in groups:
         partitions, counts = np.unique(flat[columns], return_counts=True)
         # Keep the feature group in its majority partition. np.unique sorts
@@ -360,7 +382,7 @@ def _partition_components(model, mask, partition: int, *, neighbors=None) -> lis
     """The connected components (via grid neighbors) of the cells assigned to ``partition``."""
 
     if neighbors is None:
-        neighbors = model.modelgrid.neighbors(reset=False, fast=True)
+        neighbors = _grid_neighbors(model.modelgrid)
     remaining = set(int(node) for node in np.flatnonzero(mask == partition))
     components = []
     while remaining:
@@ -385,7 +407,7 @@ def _connect_partition_components(model, mask, partition: int, *, neighbors=None
     """Route the shortest grid corridor between disconnected partition pieces."""
 
     if neighbors is None:
-        neighbors = model.modelgrid.neighbors(reset=False, fast=True)
+        neighbors = _grid_neighbors(model.modelgrid)
     flat = np.asarray(mask).reshape(-1)
     while True:
         components = _partition_components(model, flat, partition, neighbors=neighbors)
@@ -419,7 +441,7 @@ def _repair_partition_contiguity(model, mask) -> np.ndarray:
     """Move disconnected partition islands into their strongest neighbor."""
 
     repaired = np.asarray(mask, dtype=int).copy()
-    neighbors = model.modelgrid.neighbors(reset=False, fast=True)
+    neighbors = _grid_neighbors(model.modelgrid)
     for _ in range(repaired.size):
         changed = False
         for partition in np.unique(repaired):
@@ -1251,7 +1273,8 @@ class ParallelModelWorkflow:
             the MVR package, in one partition: the group moves to the partition
             holding most of its columns (ties to the lower id), and that partition
             is reconnected along the shortest corridor of cells if the move split
-            it. Applies to an explicit ``mask`` as well as a METIS one.
+            it. Applies to an explicit ``mask`` as well as a METIS one. With no lake
+            and no mover the mask is used as given and the grid is not walked.
 
         Returns
         -------

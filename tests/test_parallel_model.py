@@ -8,12 +8,14 @@ import flopy
 import numpy as np
 import pytest
 
+from myflopy.modflow.mf6 import parallel
 from myflopy.modflow.mf6.canonical import canonical_partition_mask
 from myflopy.modflow.mf6.parallel import (
     ParallelCompatibilityError,
     ParallelModelWorkflow,
     ParallelSplitRun,
     _mover_column_groups,
+    _preserve_lake_partitions,
 )
 
 
@@ -474,6 +476,75 @@ def test_the_workflow_stops_before_mpi_when_serial_validation_fails(monkeypatch,
     prepared.run = lambda **kwargs: (False, ["mpi died"])
     with pytest.raises(RuntimeError, match=r"(?s)2-process MPI run.*mpi died"):
         workflow.run(processors=2, workspace=tmp_path / "run", mask=np.array([0, 1]))
+
+
+@pytest.mark.parametrize(
+    ("nrow", "ncol", "mask"),
+    [
+        (1, 10, np.array([[0] * 5 + [1] * 5])),
+        (10, 1, np.array([[0]] * 5 + [[1]] * 5)),
+    ],
+)
+def test_a_one_wide_model_with_no_lake_or_mover_splits_and_runs(tmp_path, nrow, ncol, mask):
+    """FloPy's fast neighbours cannot build a one-wide grid; nothing asks for them here (399).
+
+    The default preserve_lakes=True computed them before looking for a lake or a
+    mover, so this raised ``ValueError: negative dimensions are not allowed``.
+    """
+
+    if shutil.which("mf6") is None:
+        pytest.skip("mf6 executable is required")
+    source = _structured_source(tmp_path / "source", nrow=nrow, ncol=ncol)
+    run = ParallelModelWorkflow(source).run(workspace=tmp_path / "split", mask=mask)
+    assert run.nparts == 2
+    assert run.compare_heads()["max_absolute_error"].iloc[0] < 1.0e-6
+
+
+def test_no_lake_or_mover_group_computes_no_neighbours(monkeypatch, tmp_path):
+    """With nothing to keep whole the mask comes back as given, the grid never walked."""
+
+    source = _structured_source(tmp_path / "source", run=False)
+
+    def refuse(_modelgrid):
+        raise AssertionError("neighbours computed with no lake or mover group")
+
+    monkeypatch.setattr(parallel, "_grid_neighbors", refuse)
+    mask = np.array([[0, 0, 0, 1, 1, 1]] * 3)
+    np.testing.assert_array_equal(_preserve_lake_partitions(source.gwf, mask), mask)
+
+
+def test_a_lake_on_a_one_row_grid_is_kept_in_one_partition(monkeypatch, tmp_path):
+    """A one-row grid's neighbours come from FloPy's slow path, which builds them (399)."""
+
+    source = _structured_source(tmp_path / "source", nrow=1, ncol=10, run=False)
+    monkeypatch.setattr(parallel, "_lake_column_groups", lambda _model: (np.array([3, 4, 5, 6]),))
+    preserved = _preserve_lake_partitions(source.gwf, np.array([[0] * 5 + [1] * 5]))
+    # a 2-2 tie goes to the lower partition id, and both parts stay contiguous
+    np.testing.assert_array_equal(preserved, [[0, 0, 0, 0, 0, 0, 0, 1, 1, 1]])
+
+
+def test_the_one_wide_neighbour_map_is_flopys_slow_map():
+    """On the grids FloPy's fast path can build, the slow path gives the same map."""
+
+    from flopy.discretization import StructuredGrid
+
+    def grid(nrow, ncol):
+        return StructuredGrid(
+            delc=np.ones(nrow),
+            delr=np.ones(ncol),
+            top=np.ones((nrow, ncol)),
+            botm=np.zeros((1, nrow, ncol)),
+        )
+
+    def as_sets(mapping):
+        return {int(node): sorted(int(n) for n in neighbors) for node, neighbors in mapping.items()}
+
+    for nrow, ncol in ((2, 2), (2, 5), (3, 3), (3, 6)):
+        assert as_sets(grid(nrow, ncol).neighbors(reset=True, fast=True)) == as_sets(
+            grid(nrow, ncol).neighbors(reset=True, fast=False)
+        )
+    assert as_sets(parallel._grid_neighbors(grid(1, 4))) == {0: [1], 1: [0, 2], 2: [1, 3], 3: [2]}
+    assert as_sets(parallel._grid_neighbors(grid(3, 1))) == {0: [1], 1: [0, 2], 2: [1]}
 
 
 def test_partition_validation_rejects_disconnected_custom_mask(tmp_path):

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 398 entries (403 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 399 entries (404 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 399 | A model one row or one column wide splits: grid neighbours are computed only for a lake or mover group to k... | 2026-10-11 |
 | 398 | A split simulation runs only from its own workspace, the source simulation's directory is never a split wor... | 2026-10-11 |
 | 397 | A PRT simulation's TDIS names the flow model's time unit, or none when the flow model names none | 2026-10-11 |
 | 396 | Two `Spread`s of one call with different `mode`s are refused at the call, naming both | 2026-10-11 |
@@ -17785,3 +17786,19 @@ same day, which is the useful part of the result.
       `test_the_split_workspace_cannot_be_the_source_directory`,
       `test_a_failed_split_run_raises_from_the_workflow` (each a real MF6 run) and
       `test_the_workflow_stops_before_mpi_when_serial_validation_fails`.
+
+399. **A model one row or one column wide splits: grid neighbours are computed only for a lake or mover group to keep whole, and through FloPy's slow path on a one-wide grid (2026-10-11).**
+      `split_model`'s default `preserve_lakes=True` asked FloPy for the grid's neighbours
+      before looking for a lake or a mover, and FloPy's fast structured path sizes an
+      array `(nrow - 2) * (ncol - 2)`: a 1x10 or 10x1 DIS model raised `ValueError:
+      negative dimensions are not allowed` with nothing to preserve. The neighbours are now
+      computed only when there is a group, and every partition walk in `parallel.py` reads
+      them through one helper, `_grid_neighbors`, which takes FloPy's slow path on a
+      structured grid one row or one column wide -- so a lake on such a grid is kept
+      whole too, not only a model without one.
+      **Why the slow path is a substitute, not a guess:** it gives the same map as the
+      fast one on every grid measured (2x2, 2x5, 3x3, 3x6), a test holds that.
+      Revert check: `test_no_lake_or_mover_group_computes_no_neighbours`,
+      `test_a_lake_on_a_one_row_grid_is_kept_in_one_partition`,
+      `test_the_one_wide_neighbour_map_is_flopys_slow_map` and both cases of
+      `test_a_one_wide_model_with_no_lake_or_mover_splits_and_runs` (real MF6 runs).
