@@ -4776,7 +4776,8 @@ same day, which is the useful part of the result.
        does that and nothing more; it is deliberately NOT presented as a leakance.
      - **Rasters lose the smallest cells, and the loss is measured rather than
        warned about.** Default resolution is a quarter of the median cell width
-       (17.2 ft on Ten Trails); cells below ~295 ft2 are absorbed. Sampling `top.tif`
+       (17.2 ft on Ten Trails), measured in the OUTPUT CRS and applied to every raster,
+       the lakebed included (ledger 369); cells below ~295 ft2 are absorbed. Sampling `top.tif`
        back at the cell centres — the same operation a consumer performs — costs at
        most 5.04 ft and typically 0.240 ft. `cell_values.gpkg` carries every array
        exactly, and the manifest says so with the numbers.
