@@ -270,3 +270,43 @@ def test_a_spec_carrying_idomain_reaches_the_grids_refusal_at_resolve(tmp_path):
     assert options["idomain"] == [0]
     with pytest.raises(TypeError, match="takes no idomain="):
         VoronoiGridPlus(**options)
+
+
+# --- a str path is a path: TriangleGrid and read_shp_gpkg (ledger 416) --------
+
+
+def _gpkg(path, geometry):
+    import geopandas as gpd
+
+    gpd.GeoDataFrame(geometry=[geometry], crs="EPSG:2927").to_file(path)
+    return path
+
+
+def test_read_shp_gpkg_reads_a_str_path_and_refuses_what_is_not_a_path(tmp_path):
+    from shapely.geometry import box
+
+    from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
+
+    path = _gpkg(tmp_path / "a.gpkg", box(0, 0, 2, 3))
+    assert read_shp_gpkg(str(path)).union_all().area == pytest.approx(6.0)
+    assert read_shp_gpkg((str(path), path)).union_all().area == pytest.approx(6.0)
+    with pytest.raises(TypeError, match=r"files\[1\] is 3 \(int\); each must be a path"):
+        read_shp_gpkg([path, 3])
+    with pytest.raises(TypeError, match=r"files must be a path \(str or os.PathLike\)"):
+        read_shp_gpkg(3)
+
+
+@pytest.mark.parametrize("spelling", [str, lambda p: p])
+def test_triangle_grid_reads_a_str_path_wherever_it_reads_a_file(tmp_path, spelling):
+    # It fell through to shapely.Polygon(<str>): "could not convert string to float".
+    from shapely.geometry import LineString, box
+
+    from myflopy.modflow.mf6.grid.triangle import TriangleGrid
+
+    dom = _gpkg(tmp_path / "dom.gpkg", box(0, 0, 1000, 1000))
+    reg = _gpkg(tmp_path / "reg.gpkg", box(200, 200, 400, 400))
+    line = _gpkg(tmp_path / "line.gpkg", LineString([(100, 500), (900, 500)]))
+    tri = TriangleGrid(model_ws=tmp_path / "tri")
+    assert tri.set_domain_file(spelling(dom), max_area=20_000).area == pytest.approx(1e6)
+    assert tri.add_region_file(spelling(reg), max_area=500).area == pytest.approx(40_000)
+    assert tri.add_line_feature(spelling(line), buffer=20, max_area=300).area > 0

@@ -9,6 +9,7 @@ and optionally running a conservative CVT/Lloyd-style smoothing pass.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import subprocess
 from typing import Any
@@ -414,7 +415,9 @@ class TriangleGrid(Triangle):
     def _coerce_geometry(geometry: Any):
         """Coerce a path / GeoDataFrame / shapely geometry / coord list to one shapely geometry."""
 
-        if isinstance(geometry, Path):
+        # A str is a path too (ledger 416): it fell through to shp.Polygon(),
+        # which failed with "could not convert string to float".
+        if isinstance(geometry, (str, os.PathLike)):
             return read_shp_gpkg(geometry).union_all()
         if isinstance(geometry, gpd.GeoDataFrame | gpd.GeoSeries):
             return geometry.union_all()
@@ -826,13 +829,13 @@ class TriangleGrid(Triangle):
 
         Parameters
         ----------
-        polygon : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence
-            The domain. A ``Path`` names a ``.shp`` or ``.gpkg`` file (a
-            GeoPackage's first layer) whose features are unioned; a
-            ``GeoDataFrame``/``GeoSeries`` is unioned; a sequence of ``(x, y)``
-            pairs is read as one polygon's exterior ring. Coordinates are used as
-            they are, with no reprojection. A ``str`` is not read as a path --
-            wrap it in ``pathlib.Path``. A point or line needs ``buffer > 0``.
+        polygon : shapely geometry, str or os.PathLike, GeoDataFrame, GeoSeries or sequence
+            The domain. A path (``str`` or ``os.PathLike``) names a ``.shp`` or
+            ``.gpkg`` file (a GeoPackage's first layer) whose features are
+            unioned; a ``GeoDataFrame``/``GeoSeries`` is unioned; a sequence of
+            ``(x, y)`` pairs is read as one polygon's exterior ring. Coordinates
+            are used as they are, with no reprojection. A point or line needs
+            ``buffer > 0``.
         label : str, optional
             Name of the domain, kept as ``domain_spec.label``. When ``max_area``
             is given it also names the background sizing region
@@ -970,10 +973,10 @@ class TriangleGrid(Triangle):
 
         Parameters
         ----------
-        shp_gpkg : pathlib.Path
+        shp_gpkg : str or os.PathLike
             A ``.shp`` or ``.gpkg`` file (a GeoPackage's first layer) whose
-            features are unioned into the domain. Any other input
-            :meth:`set_domain_polygon` takes works too; a ``str`` path does not.
+            features are unioned into the domain, as a ``str`` or ``os.PathLike``
+            path. Any other input :meth:`set_domain_polygon` takes works too.
         label : str, optional
             Name of the domain; as in :meth:`set_domain_polygon`. Default
             ``"domain"``.
@@ -1032,12 +1035,12 @@ class TriangleGrid(Triangle):
 
         Parameters
         ----------
-        polygon : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence
+        polygon : shapely geometry, str or os.PathLike, GeoDataFrame, GeoSeries or sequence
             The region, in any form :meth:`set_domain_polygon` takes (a ``Path``
             to a ``.shp``/``.gpkg`` whose features are unioned, a shapely
             geometry, a GeoDataFrame/GeoSeries, or a sequence of ``(x, y)`` read
-            as a polygon's exterior ring; not a ``str``). A point or line needs
-            ``buffer > 0``.
+            as a polygon's exterior ring; a ``str`` path is read as a file too).
+            A point or line needs ``buffer > 0``.
         max_area : float
             Maximum triangle area requested inside the region, in model length
             units squared. Required.
@@ -1067,7 +1070,7 @@ class TriangleGrid(Triangle):
             ``set_domain_*(max_area=)`` call adds -- the one region a later
             domain declaration replaces -- and raises ``ValueError`` here.
             Default ``"geometry"``.
-        domain : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence, optional
+        domain : shapely geometry, str or os.PathLike, GeoDataFrame, GeoSeries or sequence, optional
             Geometry to clip the region to instead of the stored domain, in the
             same forms as ``polygon``. Default ``None`` clips to the stored
             domain, or not at all when none is set yet.
@@ -1245,11 +1248,11 @@ class TriangleGrid(Triangle):
 
         Parameters
         ----------
-        shp_gpkg : pathlib.Path
+        shp_gpkg : str or os.PathLike
             A ``.shp`` or ``.gpkg`` file (a GeoPackage's first layer) whose
             features are unioned. Any other input :meth:`add_region_polygon`
-            takes works too (a GeoDataFrame, a shapely geometry, ...); a ``str``
-            path and a list of paths do not.
+            takes works too (a GeoDataFrame, a shapely geometry, a ``str``
+            path, ...); a list of paths does not.
         max_area : float
             Maximum triangle area inside the region(s), in model length units
             squared. Required.
@@ -1341,13 +1344,14 @@ class TriangleGrid(Triangle):
 
         Parameters
         ----------
-        line : shapely geometry, pathlib.Path, GeoDataFrame or GeoSeries
+        line : shapely geometry, str or os.PathLike, GeoDataFrame or GeoSeries
             The feature: a ``LineString``/``MultiLineString`` (any shapely
             geometry is buffered as it is), a ``Path`` to a ``.shp``/``.gpkg``
             whose features are unioned, or a GeoDataFrame/GeoSeries, unioned. A
             bare sequence of ``(x, y)`` pairs is read as a POLYGON ring, not a
             line, so the buffer surrounds the filled shape -- pass
-            ``shapely.LineString(coords)`` instead. Not a ``str`` path.
+            ``shapely.LineString(coords)`` instead. A ``str`` path is read like
+            a ``Path``.
         buffer : float, optional
             Half-width of the refinement band around the line, in model length
             units. Default ``10``.
@@ -1578,9 +1582,10 @@ class TriangleGrid(Triangle):
 
         Parameters
         ----------
-        shp_gpkg : pathlib.Path or list of pathlib.Path
+        shp_gpkg : str or os.PathLike, or list of them
             One ``.shp``/``.gpkg`` file, or a list of them, each becoming its
-            own region (see :meth:`add_region_file`). Not a ``str``.
+            own region (see :meth:`add_region_file`); a path is a ``str`` or
+            ``os.PathLike``.
         points : tuple of float or list of tuple of float, optional
             Region-point hints: one ``(x, y)`` for a single file, or one per file
             for a list. Used only when ``use_representative_point=False``.
@@ -1645,9 +1650,9 @@ class TriangleGrid(Triangle):
 
         Parameters
         ----------
-        polygon : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence
+        polygon : shapely geometry, str or os.PathLike, GeoDataFrame, GeoSeries or sequence
             The geometry, in any form :meth:`set_domain_polygon` takes.
-        domain : shapely geometry, pathlib.Path, GeoDataFrame, GeoSeries or sequence, optional
+        domain : shapely geometry, str or os.PathLike, GeoDataFrame, GeoSeries or sequence, optional
             Geometry to clip the region to. Giving it always adds a refinement
             region, even when no domain is set (this does not set one). Default
             ``None``: the polygon becomes the domain if none is set, otherwise a
@@ -1895,7 +1900,7 @@ class TriangleGrid(Triangle):
 
         Parameters
         ----------
-        line : shapely geometry, pathlib.Path, GeoDataFrame or GeoSeries
+        line : shapely geometry, str or os.PathLike, GeoDataFrame or GeoSeries
             The linear feature; as in :meth:`add_line_feature` (a bare sequence
             of ``(x, y)`` pairs is read as a polygon ring, not a line).
         buffer : float, optional
@@ -1908,7 +1913,7 @@ class TriangleGrid(Triangle):
             Resample the band's exterior to points this far apart; corners
             between the samples and holes are lost. Default ``None``, no
             resampling.
-        domain : shapely.geometry.Polygon or pathlib.Path, optional
+        domain : shapely.geometry.Polygon or str or os.PathLike, optional
             Ignored; kept for backward compatibility. The band is clipped to the
             stored domain when one is set. Default ``None``.
         max_area : float, optional
@@ -1962,8 +1967,8 @@ class TriangleGrid(Triangle):
 
         Parameters
         ----------
-        polygon : shapely.geometry.Polygon or pathlib.Path
-            The core polygon, or a ``.shp``/``.gpkg`` whose features union to a
+        polygon : shapely.geometry.Polygon, or str or os.PathLike
+            The core polygon, or a ``.shp``/``.gpkg`` path whose features union to a
             single ``Polygon``. Required despite the ``None`` default: anything
             that is not a ``Polygon`` (a ``MultiPolygon`` included) fails an
             ``assert``.
@@ -2001,7 +2006,7 @@ class TriangleGrid(Triangle):
         ValueError
             If ``method`` is neither ``"power"`` nor ``"exponential"``.
         """
-        if isinstance(polygon, Path):
+        if isinstance(polygon, (str, os.PathLike)):
             polygon = read_shp_gpkg(polygon).union_all()
         assert isinstance(polygon, shp.Polygon), 'provided argument cannot be converted to a polygon'
 
@@ -2088,9 +2093,9 @@ class TriangleGrid(Triangle):
 
         Parameters
         ----------
-        shp_gpkg : pathlib.Path or list of pathlib.Path
+        shp_gpkg : str or os.PathLike, or list of them
             ``.shp``/``.gpkg`` file(s) whose features are unioned into the core
-            geometry. Not a ``str``.
+            geometry; a path is a ``str`` or ``os.PathLike``.
         buff_num : int, optional
             Number of buffered copies around the core. Default ``5``.
         buff_sep : float, optional

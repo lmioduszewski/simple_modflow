@@ -1428,10 +1428,10 @@ class VoronoiGridPlus(VoronoiGrid):
 
         Parameters
         ----------
-        shp_to_query : pathlib.Path or list of pathlib.Path, optional
+        shp_to_query : str or os.PathLike, or list of them, optional
             Vector files to read (``.shp``, or ``.gpkg`` -- first layer only),
-            concatenated; they must share one CRS. Only ``pathlib.Path`` is
-            accepted: a ``str`` raises ``TypeError``. Wins over ``gdf_to_query``.
+            concatenated; they must share one CRS. A path is a ``str`` or any
+            ``os.PathLike``. Wins over ``gdf_to_query``.
         gdf_to_query : geopandas.GeoDataFrame, optional
             The features, when not read from files. A GeoSeries, or a plain
             ``pandas.DataFrame`` with a ``geometry`` column, also works. One of the

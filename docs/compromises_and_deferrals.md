@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 415 entries (420 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 416 entries (421 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 416 | `read_shp_gpkg` and every `TriangleGrid` entry point that reads a vector file take a `str` path | 2026-10-11 |
 | 415 | `generate_grid_coordinates` steps from the extent's own minimum by any positive spacing; the box lattice re... | 2026-10-11 |
 | 414 | A raster sample reads a `str` or `os.PathLike` path and a numpy number; any other item is refused naming it | 2026-10-11 |
 | 413 | A model's mover takes no `modelnames`: `mvr_spec` refuses `modelnames=True`, and `mf.mvr`/`MVRBuilder` no l... | 2026-10-11 |
@@ -18113,3 +18114,17 @@ same day, which is the useful part of the result.
       Tests: `tests/test_grid_helper_refusals.py` -- the old code fails every
       `test_grid_coordinates_*` refusal/placement test, both box-lattice refusals and
       `test_set_k_vor_refuses_a_cell_id_the_grid_does_not_have_before_writing`.
+
+416. **`read_shp_gpkg` and every `TriangleGrid` entry point that reads a vector file take a `str` path (2026-10-11).**
+      `read_shp_gpkg` accepted only `pathlib.Path` (a `str` raised `TypeError`), and
+      `TriangleGrid._coerce_geometry` -- behind `set_domain_file`/`set_domain_polygon`,
+      `add_region_file`/`add_region_polygon`, `add_line_feature` and the rest -- sent a
+      `str` on to `shapely.Polygon(<str>)`, which failed with "could not convert string to
+      float". **Accepted, not refused**: a `str` cannot mean anything else in those
+      slots (a coordinate sequence is never a string). `read_shp_gpkg` now takes a `str`
+      or `os.PathLike`, alone or in a list or tuple, and refuses any other item naming
+      it (its `assert`s are gone). Not touched: `VoronoiGridPlus(idomain_path=<str>)`
+      still fails an `assert` (reported, outside the batch).
+      Tests: `tests/test_grid_helper_refusals.py` --
+      `test_read_shp_gpkg_reads_a_str_path_and_refuses_what_is_not_a_path`,
+      `test_triangle_grid_reads_a_str_path_wherever_it_reads_a_file`.

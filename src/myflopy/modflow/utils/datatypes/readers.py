@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numbers
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -230,15 +231,15 @@ def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
     return gdf
 
 
-def read_shp_gpkg(files: list | Path) -> gpd.GeoDataFrame:
+def read_shp_gpkg(files: list | tuple | str | Path) -> gpd.GeoDataFrame:
     """Read one or more shapefiles/GeoPackages into a single GeoDataFrame.
 
     Parameters
     ----------
-    files : pathlib.Path or list of pathlib.Path
-        The files to read, concatenated in order. Only ``pathlib.Path`` objects are
-        accepted: a ``str`` or a tuple raises ``TypeError``, and a list holding
-        anything but ``Path`` fails its ``assert`` (``AssertionError``). The suffix
+    files : str or os.PathLike, or list or tuple of them
+        The files to read, concatenated in order. A path is a ``str`` or any
+        ``os.PathLike`` (``pathlib.Path``); anything else, alone or as an item,
+        raises ``TypeError`` naming it. The suffix
         decides the reader, case-sensitively: ``.shp`` goes through
         ``geopandas.read_file``, ``.gpkg`` through :func:`read_gpkg` (so only the
         FIRST layer is read and each ``MultiPolygon`` is split into its parts); any
@@ -255,21 +256,31 @@ def read_shp_gpkg(files: list | Path) -> gpd.GeoDataFrame:
     Raises
     ------
     TypeError
-        ``files`` is neither a ``Path`` nor a list.
+        ``files`` is neither a path nor a list or tuple of paths.
     ValueError
         An unsupported suffix, files in different CRSs, or an empty list (nothing to
         concatenate).
     """
-    if isinstance(files, Path):
+    # Ledger 416: a str path raised TypeError here, and every TriangleGrid
+    # entry point that reads a file failed on one with an unrelated message.
+    if isinstance(files, (str, os.PathLike)):
         files = [files]
-    if isinstance(files, list):
-        assert all(isinstance(path, Path) for path in files), 'all items in list must be Path objects'
-    else:
-        raise TypeError('files must be Path objects')
+    if not isinstance(files, (list, tuple)):
+        raise TypeError(
+            f'files must be a path (str or os.PathLike) or a list of them; got '
+            f'{type(files).__name__}.'
+        )
+    paths = []
+    for i, path in enumerate(files):
+        if not isinstance(path, (str, os.PathLike)):
+            raise TypeError(
+                f'files[{i}] is {path!r} ({type(path).__name__}); each must be a path, '
+                'a str or os.PathLike.'
+            )
+        paths.append(Path(path))
 
     gdfs = []
-    for file in files:
-        assert isinstance(file, Path)
+    for file in paths:
         if file.suffix == '.shp':
             d = gpd.read_file(file)
         elif file.suffix == '.gpkg':
