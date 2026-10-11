@@ -22,6 +22,10 @@ Four runs on it:
 
   OLD    `irch` resolved by the old rule, applied here by hand to the stack's own
          idomain -- so this script still shows the "before" once the library is fixed.
+         Since ledger 321 the BUILD refuses that package, naming the 40 columns and
+         the recharge MF6 would drop; the script prints the refusal, then writes the
+         old `irch` into the LAZY run's files with FloPy and runs MF6 on them, which
+         is the only route left to what MF6 does with it.
   LAZY   `mf.rch.array(recharge=...)` with no context: `irch="top_active"` resolves
          at build against the built discretization (ledger 285).
   EAGER  the same with `context=ModelContext(grid=, domain=)`, resolved at
@@ -47,6 +51,7 @@ from __future__ import annotations
 import contextlib
 import io
 import pathlib
+import shutil
 import tempfile
 import warnings
 
@@ -105,13 +110,36 @@ def _run(root, vor, tag, recharge):
     with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
         warnings.simplefilter("ignore")
         run = mf.Project(root / f"p_{tag}", name=tag).run(tag, simulation)
-    listing = (pathlib.Path(run.workspace) / "m.lst").read_text()
+    return (run.success, *_read(pathlib.Path(run.workspace))), pathlib.Path(run.workspace)
+
+
+def _read(workspace: pathlib.Path):
+    """MF6's RCH budget record, percent discrepancy and heads from one run directory."""
+
+    listing = (workspace / "m.lst").read_text()
     discrepancy = [line for line in listing.splitlines() if "PERCENT DISCREPANCY" in line][-1]
-    budget = flopy.utils.CellBudgetFile(str(pathlib.Path(run.workspace) / "m.cbc"),
-                                        precision="double")
+    budget = flopy.utils.CellBudgetFile(str(workspace / "m.cbc"), precision="double")
     record = budget.get_data(text="RCH")[-1]
-    head = flopy.utils.HeadFile(str(pathlib.Path(run.workspace) / "m.hds")).get_data()
-    return run.success, record, float(discrepancy.split()[-1]), np.asarray(head)
+    head = flopy.utils.HeadFile(str(workspace / "m.hds")).get_data()
+    return record, float(discrepancy.split()[-1]), np.asarray(head)
+
+
+def _old_irch_through_mf6(source: pathlib.Path, root: pathlib.Path, irch):
+    """Copy a built run, write ``irch`` (zero-based) into its RCH with FloPy, and run MF6.
+
+    The myflopy build refuses this package (ledger 321), so the old rule's effect on
+    MF6 is measured on files FloPy writes directly.
+    """
+
+    target = root / "p_OLD_raw"
+    shutil.copytree(source, target)
+    with contextlib.redirect_stdout(io.StringIO()):
+        sim = flopy.mf6.MFSimulation.load(sim_ws=str(target), verbosity_level=0)
+        rch = sim.get_model("m").get_package("rch")
+        rch.irch.set_data({0: np.asarray(irch, dtype=int)})
+        sim.write_simulation(silent=True)
+        success, _ = sim.run_simulation(silent=True)
+    return (success, *_read(target))
 
 
 def main() -> None:
@@ -135,12 +163,22 @@ def main() -> None:
         "FIXED": mf.rch.array(recharge=RATE, fixed_cell=True),
     }
     heads = {}
+    results = {}
+    workspaces = {}
     for tag, spec in cases.items():
-        success, record, discrepancy, heads[tag] = _run(root, vor, tag, spec)
+        try:
+            results[tag], workspaces[tag] = _run(root, vor, tag, spec)
+        except ValueError as refusal:              # ledger 321's build guard
+            said = str(refusal).splitlines()[1]
+            loss = said[said.index("MF6 drops"):].split(". ")[0]
+            print(f"{tag:16s} REFUSED at build, naming 40 columns: {loss}")
+    if "OLD" not in results:
+        results["OLD (FloPy, MF6)"] = _old_irch_through_mf6(workspaces["LAZY"], root, old)
+    for tag, (success, record, discrepancy, heads[tag]) in results.items():
         column = (np.asarray(record["node"]) - 1) % ncpl
         applied = np.asarray(record["q"], dtype=float)
         into = applied[np.isin(column, passthrough)].sum()
-        print(f"{tag:6s} normal termination={success}  applied {applied.sum():8.2f} "
+        print(f"{tag:16s} normal termination={success}  applied {applied.sum():8.2f} "
               f"({100 * applied.sum() / (RATE * area.sum()):5.1f}%)  in the pass-through "
               f"columns {into:7.2f}  percent discrepancy {discrepancy:+.2f}")
 

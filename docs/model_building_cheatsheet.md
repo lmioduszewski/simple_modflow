@@ -4,7 +4,10 @@ Every call below was executed end to end on 2026-08-26, in a shell with **no
 GRASS environment variables set**: DEM raster + digitized contours + a second
 raster → 3-layer stack → DISV → MF6 converged → heads read → maps drawn. The
 runnable version is **`examples/mf6/contours_to_model.py`**; it writes its own
-raster and contour fixtures, so it runs anywhere.
+raster and contour fixtures, so it runs anywhere. `tests/test_examples_run.py`
+executes it wherever GRASS and `mf6` are on the machine (ledger 444): it had
+stopped at `vor.gdf_topbtm["top"]` while every test passed -- `LayerStack`'s
+`attach=True` publishes integer columns, `0` the model top.
 
 Source kinds mix freely — §3 is the case where some contacts are rasters and some
 are contours. §6 covers project workspace layout, reusable libraries, scenarios,

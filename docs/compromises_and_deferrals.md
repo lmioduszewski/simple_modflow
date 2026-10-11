@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 443 entries (448 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 444 entries (449 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 444 | Examples, reproducers and notebooks the library broke are EXECUTED by a test, and the rest were run once an... | 2026-10-11 |
 | 443 | The API snapshot pins the signature of every public callable, the set `test_public_parameters_documented` m... | 2026-10-11 |
 | 442 | A TDIS's time unit has one reader, `hydraulics.declared_time_unit`, and one table of MF6's six words | 2026-10-11 |
 | 441 | Defects the single-model read views' docstring pass found and documented rather than fixed | 2026-10-11 |
@@ -18896,3 +18897,25 @@ same day, which is the useful part of the result.
      the same under Python 3.10 and 3.14 (the 403 reached were not measured) -- and was
      not done here; `test_an_annotation_change_is_not_pinned` holds
      the limit, so pinning them must update this entry.
+
+444. **Examples, reproducers and notebooks the library broke are EXECUTED by a test, and the rest were run once and listed (2026-10-11).**
+      Four had stopped at HEAD while every test passed, because the suite read their
+      source or nothing: `examples/mf6/contours_to_model.py` (the cheatsheet's runnable
+      form) read `vor.gdf_topbtm["top"]` where `LayerStack`'s `attach=True` publishes
+      integer columns; `layer_management_workflow.ipynb` built a `Contours` with no
+      region; `docs/reproducers/top_active_passthrough.py` declared ledger 319's OLD
+      `irch` through myflopy, which ledger 321's build guard refuses; and
+      `obs_route_declared_identity.py` read `model.outputs.lak` on a two-LAK model,
+      which ledger 352 refuses. Each was moved to the current spelling. The top-active
+      reproducer keeps its "before" by writing the old `irch` into the LAZY run's files
+      with FloPy and running MF6 on them (207.98 of 360 ft3/d applied, as ledger 319
+      measured), and prints the build's refusal, which names the same 152.017 lost.
+      `tests/test_examples_run.py` runs all four -- the scripts in a subprocess
+      (marked slow; the cheatsheet example skips without GRASS) -- and each of its
+      four tests fails on revert. NOT done: a test executing EVERY example and notebook. The
+      sweep that found these took ~25 minutes of MF6/PEST++ and several notebooks
+      need data outside the repository; a per-commit run of it would double the suite.
+      The archive notebooks (`examples/mf6/notebooks/archive/`) were NOT ported: they
+      record the retired `build_pst` slice (`mf.DRNFromVector`, `mf.open_pest_run` are
+      gone) or read Cumberland data; their README said they "still run" and now says
+      they do not.

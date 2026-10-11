@@ -382,7 +382,7 @@ def main():
         for name in ("a.csv", "b.csv"):
             print(f"   {name}:", pd.read_csv(pathlib.Path(named.workspace) / name).iloc[:, 1].round(3).tolist())
         print("   m.lak.stg (package 'lak'):",
-              np.round(mf.load_mf6_run(named.workspace, verbosity_level=0).outputs.lak.stage.get()[:, 0], 3).tolist())
+              np.round(mf.load_mf6_run(named.workspace, verbosity_level=0).outputs.lak(package="lak").stage.get()[:, 0], 3).tolist())
         _attempt("L", "{pond: 0}, LAK 'lak' and 'lak_2'", lambda: L(locations={"pond": 0}).simulated_series(named))
         _attempt("L", "{x: 0}, LAK 'lak' and 'lak_2'", lambda: L(locations={"x": 0}).simulated_series(named))
         _attempt("L", "{pond: 0}, package='lak_2'",

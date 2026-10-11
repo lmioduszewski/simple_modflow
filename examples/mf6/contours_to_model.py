@@ -213,7 +213,9 @@ def build(root: Path):
     # ------------------------------------------------------------------ #
     # 7. PACKAGES -- one flat declarative list, library entries by name.
     # ------------------------------------------------------------------ #
-    top = np.asarray(vor.gdf_topbtm["top"], dtype=float)
+    # attach=True publishes INTEGER columns, geometry first: 0 is the model top,
+    # 1..nlay the layer bottoms (LayerSurfaces.attach names them by its labels).
+    top = np.asarray(vor.gdf_topbtm[0], dtype=float)
     cx, _ = vor.centroids
     west = int(min(range(vor.ncpl), key=lambda i: cx[i]))
     east = int(max(range(vor.ncpl), key=lambda i: cx[i]))
