@@ -390,8 +390,10 @@ def _callable_ref(builder: Builder) -> Any:
     shape the list-BC ``*_spec`` factories use (``partial(_build_named,
     ModflowGwfchd)``), so CHD/GHB/DRN/RIV/WEL/RCH/EVT specs round-trip. Each bound
     argument is itself a reference (callables/classes, e.g. the FloPy package
-    class) or a plain JSON value. Raises if any piece is not importable (e.g. a
-    local function or lambda), since such a reference could not be resolved later.
+    class) or a plain JSON value. Raises ``ValueError`` if any piece is not
+    importable -- a lambda (module-level too), a local function, or a name that
+    resolves to a different object -- since such a reference could not be resolved
+    later, and a saved project holding one would fail to load as a whole.
     """
 
     if isinstance(builder, functools.partial):
@@ -402,11 +404,50 @@ def _callable_ref(builder: Builder) -> Any:
         }
     module = getattr(builder, "__module__", None)
     qualname = getattr(builder, "__qualname__", None)
-    if not module or not qualname or "<locals>" in qualname:
+    # `<` marks a name no import can reach: `<lambda>` (a MODULE-LEVEL lambda's
+    # qualname is just that, with no `<locals>`), `<locals>`, `<genexpr>`. Checking
+    # `<locals>` alone let `f = lambda ...` at module level through as
+    # "mod:<lambda>", so `Project.save()` wrote a project `Project.load()` then died
+    # on with an AttributeError.
+    if not module or not qualname or "<" in qualname:
         raise ValueError(
-            f"Builder {builder!r} cannot be serialized. Use an importable builder."
+            f"Builder {builder!r} cannot be serialized: {qualname or 'it'} has no "
+            "importable name (a lambda or a function defined inside another one). "
+            "Define it with `def` at module level."
         )
+    resolved = _resolve_reference(module, qualname)
+    if resolved is not builder:
+        # The name reaches SOMETHING ELSE (rebound, deleted, a bound method whose
+        # instance the reference would drop): the reference would load the wrong
+        # callable, or none, so it is refused rather than written. `==` admits a
+        # classmethod, which is a fresh bound object on every attribute read.
+        if resolved is None or resolved != builder:
+            raise ValueError(
+                f"Builder {builder!r} cannot be serialized: '{module}:{qualname}' "
+                "does not import back to it. Use a module-level function or class."
+            )
     return f"{module}:{qualname}"
+
+
+def _resolve_reference(module_name: str, qualname: str) -> Any:
+    """Return what ``module:qualname`` names now, or None when nothing is there."""
+
+    module = sys.modules.get(module_name)
+    if module is None:
+        try:
+            module = import_module(module_name)
+        except ImportError:
+            logger.debug(
+                "Module %r is not importable; the builder reference is refused.",
+                module_name,
+            )
+            return None
+    value: Any = module
+    for part in qualname.split("."):
+        value = getattr(value, part, None)
+        if value is None:
+            return None
+    return value
 
 
 def _bound_arg_ref(value: Any) -> Any:
@@ -1926,10 +1967,10 @@ class PackageSpec:
         parameter is also passed ``_spec=self``. Usually a FloPy package class
         (``flopy.mf6.ModflowGwfnpf``), a ``functools.partial`` over one, or a
         module-level function. :meth:`to_dict` stores it as an import path, so
-        it must be importable by that path to round-trip: a function (or
-        lambda) defined inside another function builds but raises
-        ``ValueError`` in :meth:`to_dict`, and a module-level lambda is written
-        but cannot be imported back by :meth:`from_dict`.
+        it must be importable by that path to round-trip: a lambda (at module
+        level too) or a function defined inside another function builds but
+        raises ``ValueError`` in :meth:`to_dict`, so ``Project.save`` reports the
+        simulation as skipped instead of writing one it could not load.
     options : dict, optional
         Keyword arguments for the builder. Checked at construction against what
         the builder accepts -- the named parameters of a FloPy class, of the
@@ -3960,10 +4001,9 @@ class PostBuildHook:
         Called as ``callback(model, packages, context)`` after every package is
         built and the build-time grid checks have passed; hooks run in
         declaration order. Its return value is stored under ``name``. Must be an
-        importable module-level function to round-trip: one defined inside
-        another function runs but raises ``ValueError`` in :meth:`to_dict`, and
-        a module-level lambda is written but cannot be imported back by
-        :meth:`from_dict`.
+        importable module-level function to round-trip: a lambda (at module
+        level too) or one defined inside another function runs but raises
+        ``ValueError`` in :meth:`to_dict`.
     """
 
     name: str

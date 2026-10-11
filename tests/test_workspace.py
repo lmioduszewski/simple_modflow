@@ -706,6 +706,59 @@ def test_one_unserializable_simulation_no_longer_costs_the_whole_library(tmp_pat
     assert sorted(loaded.simulations) == ["good"]
 
 
+# A MODULE-LEVEL lambda: its qualname is "<lambda>", with no "<locals>" in it.
+_module_level_lambda_hook = lambda model, packages, context: None  # noqa: E731
+
+
+def _a_module_level_hook(model, packages, context):
+    return None
+
+
+def test_a_module_level_lambda_is_refused_at_save_and_the_project_loads(tmp_path):
+    """A module-level lambda serialized as ``"<module>:<lambda>"``.
+
+    ``_callable_ref`` refused only a qualname holding ``<locals>``, so the hook
+    passed, ``save()`` wrote the simulation, and ``Project.load`` then died as a
+    WHOLE on ``AttributeError: module ... has no attribute '<lambda>'``.
+    """
+
+    from myflopy.specs import PostBuildHook, _callable_ref
+
+    with pytest.raises(ValueError, match="no importable name"):
+        PostBuildHook("h", _module_level_lambda_hook).to_dict()
+    # A name that imports back to a DIFFERENT object is refused too.
+    impostor = type(_a_module_level_hook)(
+        _a_module_level_hook.__code__, globals(), "_a_module_level_hook"
+    )
+    impostor.__module__ = __name__
+    with pytest.raises(ValueError, match="does not import back to it"):
+        _callable_ref(impostor)
+    assert _callable_ref(_a_module_level_hook) == f"{__name__}:_a_module_level_hook"
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_simulation(
+        mf.SimulationSpec(
+            "lambda_hook",
+            models=[
+                mf.gwf(
+                    "flow",
+                    packages=[mf.npf(k=1.0)],
+                    hooks=[PostBuildHook("h", _module_level_lambda_hook)],
+                )
+            ],
+            packages=[mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])],
+        )
+    )
+    project.add_simulation(_tiny_flow_spec())
+
+    report = project.save()
+
+    assert [name for name, _ in report.skipped] == ["lambda_hook"]
+    assert "no importable name" in dict(report.skipped)["lambda_hook"]
+    loaded = mf.Project.load(project.root)
+    assert sorted(loaded.simulations) == [_tiny_flow_spec().name]
+
+
 def test_strict_save_still_refuses_everything(tmp_path):
     """``strict=True`` is the old behaviour, and must raise BEFORE writing."""
 
