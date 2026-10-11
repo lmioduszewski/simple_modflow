@@ -581,8 +581,7 @@ def test_a_spread_refusal_names_the_call_that_reached_it(tmp_path, grid_and_cont
     """Both declaration-time Spread refusals name the route actually taken.
 
     They said `mf.<pkg>.gpkg` whichever call reached them, so a caller of
-    `GeoPackageSource(...).drn(...)` was told about a helper they never called
-   .
+    `GeoPackageSource(...).drn(...)` was told about a helper they never called.
     """
 
     from myflopy.geopackage import GeoPackageSource

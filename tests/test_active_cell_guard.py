@@ -219,6 +219,28 @@ def test_a_list_boundary_on_a_dug_cell_is_refused(tmp_path, grid):
     message = str(raised.value)
     assert "package 'chd' names 1 cell(s) the built DISV has REMOVED" in message
     assert "(0, 5) -- 1 inside excavation 'pond'" in message
+    # Typed by hand, so no earlier context is blamed: the cellid is to move (ledger 428).
+    assert "move each one to an active cell" in message
+    assert "BEFORE the cut" not in message and "Re-declare it against" not in message
+
+
+def test_a_list_boundary_resolved_on_a_stale_context_is_told_to_re_declare(tmp_path, grid):
+    """The library resolved it (it carries a grid pin) against the domain from before the
+    cut, so THAT is the cause named -- not a cellid to move (ledger 428)."""
+
+    s = _setup(grid)
+    source = tmp_path / "chd.gpkg"
+    gpd.GeoDataFrame({"head": [98.0], "layer": [1], "name": ["c"]},
+                     geometry=[grid.gdf_vorPolys.geometry.loc[5].representative_point()],
+                     crs=grid.crs).to_file(source)
+    chd = mf.chd.gpkg(source, head="head", nper=1, context=s.stale)
+    with pytest.raises(ValueError) as raised:
+        _build(tmp_path, _simulation(s.fresh, s.after, chd))
+    message = str(raised.value)
+    assert "package 'chd' names 1 cell(s) the built DISV has REMOVED" in message
+    assert "declared against a context from BEFORE the cut" in message
+    assert "Re-declare it against the context of the layer stack" in message
+    assert "move each one to an active cell" not in message
 
 
 @pytest.mark.parametrize("where", ["package", "model"])
@@ -255,7 +277,12 @@ def test_a_removed_cell_with_no_excavation_record_is_refused_without_one(tmp_pat
     grid.excavations = {}      # the fixture grid is shared; no record reaches this model
     with pytest.raises(ValueError) as raised:
         _build(tmp_path, spec)
-    assert "(0, 3)" in str(raised.value) and "excavation" not in str(raised.value)
+    message = str(raised.value)
+    # "excavat", not "excavation": the family's closing once blamed a layer stack
+    # "excavated or re-pinched" on exactly this model and the old assertion passed it.
+    assert "(0, 3)" in message and "excavat" not in message
+    assert "move each one to an active cell" in message
+    assert "addresses cells the DISV it was built with has removed" in message
 
 
 # -- warned: the documented one-layer opt-out ----------------------------------------

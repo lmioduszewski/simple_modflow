@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 427 entries (432 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 428 entries (433 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 428 | A list boundary on a removed cell is told to move its cellid when it was written as given, and to re-declar... | 2026-10-11 |
 | 427 | A build refusal groups its complaints by what each is about, each group under its own heading and advice | 2026-10-11 |
 | 426 | A feature's stress period is a whole number naming one of the simulation's periods, read by the layer colum... | 2026-10-11 |
 | 425 | A reproducer that runs PEST++ makes `PYTHONPATH` absolute at start, through the one helper... | 2026-10-11 |
@@ -18385,3 +18386,16 @@ same day, which is the useful part of the result.
       `test_a_refusal_of_several_kinds_heads_each_group_in_turn`,
       `test_a_bare_package_spec_is_checked_like_a_named_one` (both grids) and
       `test_a_lake_resolved_on_the_cut_is_refused_against_an_uncut_disv[before-disv]`.
+
+428. **A list boundary on a removed cell is told to move its cellid when it was written as given, and to re-declare when the library resolved it (2026-10-11).**
+      The `removed` closing of ledger 427 said every such package was "resolved against
+      a domain from before the layer stack was excavated or re-pinched", and the per-line
+      advice said "Re-declare it against the context of the layer stack" -- measured, a
+      CHD typed at `(0, 3)` on a DISV whose OWN idomain is 0 there, no stack and no
+      excavation, got both. **Judgment call:** the grid pin decides -- every
+      library-resolved list BC carries one and a hand-written package never does (ledger
+      250), so a pinned package is told to re-declare and an unpinned one to move each
+      cellid to an active cell, without the excavation note's "declared against a context
+      from BEFORE the cut". The family closing names no cause at all; each line names its
+      own. Not done: an EDITED pinned package (`PIN_VOIDED`) is still told to re-declare,
+      though the edit may have typed the cellid.

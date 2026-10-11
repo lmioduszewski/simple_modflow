@@ -1219,8 +1219,10 @@ def _inactive_cellid_complaints(model, packages, idomain, dug, built_packages=No
     ``docs/reproducers/active_cell_guard.py``), and FloPy accepts both at construction
     -- measured, a CHD at a dug cell built clean. So this is the
     earlier, named form of an error MF6 would stop on anyway, and can refuse no model
-    MF6 runs. What it adds is the CAUSE: a package declared against a context from
-    before the stack was excavated (or re-pinched) names cells that no longer exist.
+    MF6 runs. What it adds is the CAUSE: a package the library resolved (it carries a
+    grid pin) against a context from before the stack was excavated (or re-pinched)
+    names cells that no longer exist; one with no pin was written as given, so its
+    cellid is what to move (ledger 428).
     """
 
     import numpy as np
@@ -1245,16 +1247,27 @@ def _inactive_cellid_complaints(model, packages, idomain, dug, built_packages=No
         )
         if removed:
             lazy = _is_lazy(model, package)
-            advice = (
-                f"It was declared without context=, so it {_STALE_MODEL_CONTEXT}" if lazy
-                else "Re-declare it against the context of the layer stack this DISV "
-                "was built from"
-            )
+            typed = not lazy and (getattr(package, "metadata", None) or {}).get(GRID_PIN) is None
+            if lazy:
+                advice = f"It was declared without context=, so it {_STALE_MODEL_CONTEXT}"
+            elif typed:
+                # No pin: the library did not resolve these cellids against any domain
+                # (ledger 250), so no earlier context is to blame -- they were written as
+                # given, onto a cell this DISV's own idomain removes (ledger 428).
+                advice = (
+                    "Its cellids were written as given, not resolved against a domain: "
+                    "move each one to an active cell"
+                )
+            else:
+                advice = (
+                    "Re-declare it against the context of the layer stack this DISV "
+                    "was built from"
+                )
             complaints.append(
                 f"package {package.name!r} names {len(removed)} cell(s) the built DISV "
                 f"has REMOVED (idomain <= 0), which MF6 refuses at read ('Cell is "
                 f"outside active grid domain'): {_listing(removed)}"
-                f"{_dug_note(removed, idomain, dug, lazy=lazy)}. {advice}"
+                f"{_dug_note(removed, idomain, dug, stale=not typed, lazy=lazy)}. {advice}"
             )
 
     for package in getattr(model, "packagelist", ()) or ():
@@ -2579,9 +2592,8 @@ BUILD_COMPLAINT_FAMILIES: dict[str, tuple[str, str]] = {
     ),
     "removed": (
         "addresses cells the DISV it was built with has removed",
-        "A package or observation resolved against a domain from before the layer "
-        "stack was excavated or re-pinched still names the cells that domain had; each "
-        "line above says what MF6 does with it and what to declare again.",
+        "A cell is removed where the DISV's idomain is 0 or less. Each line above says "
+        "what MF6 does with what names one, and what to correct.",
     ),
     "lake": (
         "has lake connections the DISV it was built with contradicts",
