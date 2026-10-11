@@ -407,6 +407,10 @@ def get_vor_idx_from_geometry_idx(
     does.
     """
 
+    # Checked before ``.iloc``: a missing frame reached it as ``None`` and died with
+    # ``AttributeError: 'NoneType' object has no attribute 'iloc'`` instead of the
+    # refusal every other bad query gets.
+    _query_geometries(gdf_to_query)
     answer = get_vor_idx_from_geometry(
         vor, gdf_to_query=gdf_to_query.iloc[[idx]], predicate=predicate,
     )
@@ -439,6 +443,11 @@ def _query_geometries(gdf_query) -> gpd.GeoSeries:
     shared selector names a bad ``overlapping_geometry``.
     """
 
+    if gdf_query is None:
+        raise ValueError(
+            "no query was given: pass the features as gdf_to_query -- a GeoDataFrame, "
+            "a GeoSeries, or a frame with a 'geometry' column of shapely objects."
+        )
     geometries = getattr(gdf_query, "geometry", None)
     if geometries is None:
         raise ValueError(
@@ -497,42 +506,69 @@ def _report_misses(polys, source, keys, missed, source_crs) -> None:
     logger.warning(message, *args)
 
 
-def set_k_vor(vor, k_dict: dict = None, k_default=100) -> list:
+def set_k_vor(vor, k_dict: dict = None, k_default: float = 100.0) -> list[float]:
     """
     Set hydraulic conductivity values on the Voronoi polygon GeoDataFrame.
+
+    Documented on :meth:`VoronoiGridPlus.set_k_vor`. No mapping gives every cell
+    ``k_default``. The column is FLOAT whatever was passed: seeded with the int
+    ``100`` it took a float key only through pandas' incompatible-dtype upcast,
+    which warns today and is deprecated to raise.
     """
-    vor.gdf_vorPolys["Kh"] = k_default
-    for key in k_dict.keys():
-        vor.gdf_vorPolys.loc[vor.gdf_vorPolys.index.isin(k_dict[key]), ["Kh"]] = key
-    return vor.gdf_vorPolys["Kh"].to_list()
+    frame = vor.gdf_vorPolys
+    frame["Kh"] = float(k_default)
+    for key, cells in ({} if k_dict is None else k_dict).items():
+        frame.loc[frame.index.isin(cells), "Kh"] = float(key)
+    return frame["Kh"].to_list()
 
 
-def generate_grid_around_point(center_point: shp.Point, spacing: float, size: int, crs: str) -> gpd.GeoSeries:
+def _lattice_axis(centre: float, spacing: float, size: float) -> np.ndarray:
+    """One axis of the square lattice: ``size * spacing`` wide, centred on ``centre``.
+
+    ``centre - size / 2 * spacing`` plus whole multiples of ``spacing`` up to the
+    other end (within 1e-9 of a step, so a span the step divides keeps its end).
+    Computed as ``centre + spacing * (arange(n) - size / 2)`` rather than
+    ``arange(start, stop, spacing)``, whose float stop decides the count by
+    rounding, and so that an even ``size`` puts a point exactly on the centre. ``range`` refused a
+    float step, and the old ``int()`` of each end truncated toward zero, which
+    moved a non-integer end by up to one unit, toward the origin.
+    """
+
+    spacing = float(spacing)
+    size = float(size)
+    if not np.isfinite(spacing) or spacing <= 0:
+        raise ValueError(f"spacing must be a finite number above zero, got {spacing!r}.")
+    if not np.isfinite(size) or size < 0:
+        raise ValueError(f"size must be a finite number of steps, zero or more, got {size!r}.")
+    count = int(np.floor(size + 1e-9)) + 1
+    return float(centre) + spacing * (np.arange(count) - size / 2)
+
+
+def generate_grid_around_point(
+    center_point: shp.Point, spacing: float, size: float, crs: str
+) -> gpd.GeoSeries:
     """
     Generate a GeoSeries of grid points around a center point.
-    """
-    minx = center_point.x - size / 2 * spacing
-    miny = center_point.y - size / 2 * spacing
-    maxx = center_point.x + size / 2 * spacing
-    maxy = center_point.y + size / 2 * spacing
 
-    x_coords = list(range(int(minx), int(maxx) + 1, spacing))
-    y_coords = list(range(int(miny), int(maxy) + 1, spacing))
-    points = [shp.Point(x, y) for x in x_coords for y in y_coords]
+    Documented on :meth:`VoronoiGridPlus.generate_grid_around_point`.
+    """
+    x_coords = _lattice_axis(center_point.x, spacing, size)
+    y_coords = _lattice_axis(center_point.y, spacing, size)
+    points = [shp.Point(float(x), float(y)) for x in x_coords for y in y_coords]
     return gpd.GeoSeries(points).set_crs(crs)
 
 
-def generate_grid_polygons(center_point, spacing, size, gap):
+def generate_grid_polygons(
+    center_point: shp.Point, spacing: float, size: float, gap: float
+) -> shp.MultiPolygon:
     """
     Generate square polygons in a grid pattern around a center point.
-    """
-    minx = center_point.x - size / 2 * spacing
-    miny = center_point.y - size / 2 * spacing
-    maxx = center_point.x + size / 2 * spacing
-    maxy = center_point.y + size / 2 * spacing
 
-    x_coords = list(range(int(minx), int(maxx) + 1, spacing))
-    y_coords = list(range(int(miny), int(maxy) + 1, spacing))
+    Documented on :meth:`VoronoiGridPlus.generate_grid_polygons`.
+    """
+    x_coords = _lattice_axis(center_point.x, spacing, size)
+    y_coords = _lattice_axis(center_point.y, spacing, size)
+    spacing = float(spacing)
 
     polygons = []
     for x in x_coords[:-1]:

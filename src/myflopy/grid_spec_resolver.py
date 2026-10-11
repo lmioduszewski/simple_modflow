@@ -538,6 +538,9 @@ def _voronoi_options(
     """Merge the spec's Voronoi options with top-level options; default CRS/name, resolve paths."""
 
     voronoi_options = dict(spec.voronoi_options)
+    # "idomain" is still routed, so a spec that carries one (saved before
+    # GridSpec.voronoi refused it) reaches VoronoiGridPlus's refusal rather than
+    # being dropped here instead (ledger 388).
     for key in ("idomain", "idomain_path", "name", "qhull_options", "rasters", "tessellation"):
         if key in options and key not in voronoi_options:
             voronoi_options[key] = options[key]

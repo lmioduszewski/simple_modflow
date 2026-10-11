@@ -2619,8 +2619,9 @@ class GridSpec:
         resolve, so any other key is silently dropped. Default: empty.
     voronoi_options : dict, optional
         ``"voronoi"`` route: keyword arguments for ``VoronoiGridPlus(tri,
-        ...)`` -- ``idomain``, ``idomain_path``, ``rasters``, ``qhull_options``,
-        ``tessellation``. ``crs`` and ``name`` default to the spec's, and
+        ...)`` -- ``idomain_path``, ``rasters``, ``qhull_options``,
+        ``tessellation`` (an ``"idomain"`` key raises ``TypeError`` at resolve:
+        a grid takes no active domain, ledger 388). ``crs`` and ``name`` default to the spec's, and
         ``idomain_path``/``rasters`` are anchored to ``project_root``. Default:
         empty.
     metadata : dict, optional
@@ -3056,18 +3057,23 @@ class GridSpec:
             takes that value. Not validated here, and at resolve any key the
             mesh builder does not know is silently dropped.
         voronoi_options : dict, optional
-            Keyword arguments for ``VoronoiGridPlus(tri, ...)`` -- ``idomain``,
+            Keyword arguments for ``VoronoiGridPlus(tri, ...)`` --
             ``idomain_path``, ``rasters``, ``qhull_options``, ``tessellation``,
             ``name``. A key also given through ``**engine_options`` takes that
-            value.
+            value. An ``"idomain"`` key raises ``TypeError``, as below.
         **engine_options
             Stage options routed by name -- ``min_angle``, ``maximum_area``,
-            ``profile``, ``idomain``, ``optimize`` and friends. **An unknown
+            ``profile``, ``idomain_path``, ``optimize`` and friends. **An unknown
             keyword raises**, with the nearest match suggested; before that,
             a misspelled option was accepted, never read, and silently meshed at
             the default. ``tessellation="flopy"`` keeps FloPy's cells unrepaired
             (the default ``"dual"`` repairs them -- ledgers 316, 317; see
             :class:`~myflopy.modflow.mf6.grid.voronoi.VoronoiGridPlus`).
+            ``idomain=`` -- here, or as a key of ``options`` or
+            ``voronoi_options`` -- raises ``TypeError`` naming
+            ``mf.ModelContext(domain=...)``: it was routed to the grid and dropped
+            there in silence, since a grid holds no active domain (ledger
+            388).
 
         Other Parameters
         ----------------
@@ -3164,6 +3170,21 @@ class GridSpec:
         is exactly what overlap resolution took away.
         """
 
+        for label, given in (
+            ("", engine_options),
+            ("options=", options),
+            ("voronoi_options=", voronoi_options),
+        ):
+            if given and "idomain" in given:
+                where = f"{label}{{'idomain': ...}}" if label else "idomain="
+                raise TypeError(
+                    f"GridSpec.voronoi() takes no {where}: a grid holds no active "
+                    "domain, and the option was routed to VoronoiGridPlus and dropped "
+                    "there in silence (ledger 388). Give the model its active "
+                    "domain with mf.ModelContext(domain=...) on mf.gwf(..., "
+                    "context=...); to exclude cells from the grid's edge, use "
+                    "idomain_path= (a vector file covering the inactive cells)."
+                )
         boundary = _grid_source(boundary, "boundary")
         if refinement is not None:
             refinement = _grid_source(refinement, "refinement")
@@ -3234,7 +3255,7 @@ class GridSpec:
                 "verbose",
             }:
                 merged_mesh_options[key] = value
-            elif key in {"idomain", "idomain_path", "name", "qhull_options", "rasters", "tessellation"}:
+            elif key in {"idomain_path", "name", "qhull_options", "rasters", "tessellation"}:
                 merged_voronoi_options[key] = value
             elif key in _VORONOI_OPTION_KEYS:
                 merged_options[key] = value

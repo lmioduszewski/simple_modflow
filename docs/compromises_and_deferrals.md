@@ -33,10 +33,13 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 387 entries (392 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 390 entries (395 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 390 | The point/box lattice takes a fractional `spacing` and is centred on its point; `set_k_vor`'s K is always f... | 2026-10-11 |
+| 389 | `VoronoiGridPlus(crs=None)` is refused before any cell is built, naming `crs=` | 2026-10-11 |
+| 388 | A grid takes no `idomain=`: `VoronoiGridPlus`, `vor_from_disu`, `from_gsf` and `GridSpec.voronoi` refuse it... | 2026-10-11 |
 | 387 | A builder or hook reference is a NAME: a rebound function is written as what the name holds now | 2026-10-11 |
 | 386 | `with_grid`'s `rule=`/`uncovered=` are checked at the call and refused without `remap=True` | 2026-10-11 |
 | 385 | The prior `run_ies()`/`prior()` hand PESTPP-IES holds every adjustable parameter, each correlated pilot-poi... | 2026-10-11 |
@@ -8061,8 +8064,10 @@ same day, which is the useful part of the result.
         `get_grid_edge` walks every cell and reads the grid's idomain file.
       - **NOT done**: what "edge" MEANS for `.gpkg(edges_only=True)` is unchanged --
         the grid's own edge, not the model's per-layer domain; a file with a layer
-        column is unioned across layers; and `VoronoiGridPlus(idomain=)` /
-        `GridSpec.voronoi(idomain=)` are still accepted and dropped on the floor.
+        column is unioned across layers; and ~~`VoronoiGridPlus(idomain=)` /
+        `GridSpec.voronoi(idomain=)` are still accepted and dropped on the floor~~ --
+        both refused now, naming `ModelContext(domain=...)`, and the grid's `idomain`
+        property is gone (ledger 388).
       - The face-count test assumes shapely returns a LineString for a shared face.
         A hanging node that one cell splits with a collinear vertex its neighbour
         lacks would miscount; none were found on the six meshes checked.
@@ -15337,6 +15342,11 @@ same day, which is the useful part of the result.
       without `remap=True`; `save(bundle_sources=True)` as checking the key clash AFTER
       copying and repointing~~ -- fixed 2026-10-11, entries rewritten (ledger 386
       for the remap refusal).
+      ~~`vor.set_k_vor` and `vor.get_vor_idx_from_geometry_idx` documented as raising
+      `AttributeError` with no mapping or no query; `generate_grid_around_point` /
+      `generate_grid_polygons` as taking an `int` `spacing` only; `idomain=` on
+      `VoronoiGridPlus`, `vor_from_disu` and `from_gsf` as "accepted and IGNORED"~~ --
+      fixed, entries rewritten (ledgers 388 to 390).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17578,3 +17588,51 @@ same day, which is the useful part of the result.
      Refused: a `<lambda>`/`<locals>` qualname, a name that now imports nothing callable,
      and a METHOD whose binding the name drops -- an instance method, or a classmethod read
      through a subclass (both were written as the base function before, silently).
+
+388. **A grid takes no `idomain=`: `VoronoiGridPlus`, `vor_from_disu`, `from_gsf` and `GridSpec.voronoi` refuse it, naming `ModelContext(domain=...)` (2026-10-11).**
+      It was accepted and dropped: `__init__` never read it and set `_idomain = None`, the
+      two classmethods forwarded theirs into the same void, and `GridSpec.voronoi` routed
+      `idomain=` (and an `options`/`voronoi_options` key) to it. **Removed, not honoured**
+      -- judgment call: the active domain already has its route, `ModelContext(domain=...)`,
+      read per LAYER (ledger 246), and the edge helpers already take `idomain_path=` and
+      `get_grid_edge(idomain=[inactive ids])`. A grid-level list would be a third route
+      with a precedence to invent, and nothing read it (no `src/` reader of the `idomain`
+      property; it is gone too). `GridSpec.voronoi` refuses at declaration; the resolver
+      still routes an `"idomain"` key so a spec saved before this reaches the grid's
+      refusal (`TypeError`) instead of a second silent drop. Same pass: the ARRAY form
+      (`verts`/`iverts`/`xcyc`) refuses `qhull_options` and any other keyword -- it
+      dropped them in silence, which is where a removed `idomain=` would otherwise have
+      landed -- and the two array-only classmethods lose `qhull_options`, which could
+      never act there. `idomain_path` stays: `get_grid_edge` reads it.
+      Tests: `tests/test_grid_helper_refusals.py` -- removing the grid's check fails
+      `test_voronoigridplus_refuses_idomain_naming_the_model_context` and
+      `test_a_spec_carrying_idomain_reaches_the_grids_refusal_at_resolve`; the spec's,
+      all three `test_gridspec_voronoi_refuses_idomain_naming_the_model_context`; the
+      array-form check, `test_the_array_form_refuses_options_it_cannot_use`.
+
+389. **`VoronoiGridPlus(crs=None)` is refused before any cell is built, naming `crs=` (2026-10-11).**
+      Ledger 370 already refused `None` through the `crs` setter, which the constructor
+      reaches only after the triangulation's cells are made, with a message naming
+      `grid.crs =`. **Refused, not made constructible** -- judgment call: computing
+      `grid_centroid` lazily would let the constructor through, but the setter refuses
+      `None` (370) because the lat/lon frames are reprojections of the cells, so such a
+      grid would hold a CRS its own setter refuses and fail at its first map instead. Both now
+      go through ONE check, `voronoi._readable_crs`, each message in its caller's
+      spelling; the default `EPSG:2927` is never refused or warned about.
+      Test: removing the up-front check fails
+      `test_crs_none_is_refused_at_construction_naming_crs_before_any_cell_is_built`.
+
+390. **The point/box lattice takes a fractional `spacing` and is centred on its point; `set_k_vor`'s K is always float (2026-10-11).**
+      `generate_grid_around_point`/`generate_grid_polygons` drove `range()` with
+      `spacing` (annotated `float`; `2.5` raised `TypeError`) from `int()` of each end,
+      which truncates toward zero. **The lattice is now `cx + spacing * (i - size / 2)`,
+      `i = 0..floor(size)`** -- judgment call on "anchored as today": an integer lattice on
+      an integer centre with an even `size` is unchanged (pinned), while a non-integer
+      centre (`0.7`: `-3, -1, 1, 3` became `-3.3 .. 4.7`) or an odd `size` (three steps
+      gave three points, now four) moves -- no caller in `src/`, tests, examples or
+      notebooks. Spacing <= 0 or a negative size is refused. `set_k_vor` gives every cell
+      `k_default` when no mapping is given (it raised `AttributeError`) and seeds the
+      `"Kh"` column as float, so a float K never takes pandas' deprecated int-to-float
+      upcast; an all-int call now returns floats (`100.0`, was `100`).
+      Tests: `tests/test_grid_helper_refusals.py` -- the old lattice fails the four
+      lattice tests, the old `set_k_vor` both of its tests.

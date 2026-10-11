@@ -160,6 +160,32 @@ def normalize_crs(crs):
     return crs
 
 
+def _readable_crs(crs, *, spelling: str):
+    """``crs`` through :func:`normalize_crs`, or a ``ValueError`` in ``spelling``.
+
+    The one check behind the constructor's ``crs=`` and the :attr:`VoronoiGridPlus.crs`
+    setter (ledgers 370, 389): ``None`` and anything pyproj cannot read are
+    refused, each message opening with the caller's own spelling -- ``spelling``
+    holds one ``{}`` for the value, e.g. ``"grid.crs = {}"``.
+    """
+
+    crs = normalize_crs(crs)
+    if crs is None:
+        raise ValueError(
+            f"{spelling.format(None)}: a grid needs the CRS its vertices are in -- its lat/lon "
+            "frames and grid_centroid are reprojections of the cells. Give the real "
+            "one, e.g. 'EPSG:2926'; a grid built with no crs= takes the default "
+            "'EPSG:2927'."
+        )
+    import pyproj
+
+    try:
+        pyproj.CRS.from_user_input(crs)
+    except pyproj.exceptions.CRSError as error:
+        raise ValueError(f"{spelling.format(repr(crs))}: pyproj cannot read it as a CRS ({error}).") from error
+    return crs
+
+
 class VoronoiGridPlus(VoronoiGrid):
     """An unstructured Voronoi (DISV) grid with MODFLOW-modeling conveniences.
 
@@ -187,7 +213,6 @@ class VoronoiGridPlus(VoronoiGrid):
         rasters: list | Path = None,
         name: str = 'voronoi_grid',
         qhull_options: str = None,
-        idomain: list = None,
         idomain_path: Path = None,
         verts: np.ndarray = None,
         iverts: list[list] = None,
@@ -218,10 +243,11 @@ class VoronoiGridPlus(VoronoiGrid):
             ``"2927"``) is stored as ``"EPSG:2927"``; anything else is stored as
             given. Default ``"EPSG:2927"`` (the package-wide default, which places a
             location-agnostic model at that CRS's origin on purpose). ``None``, and
-            anything pyproj cannot read, is REFUSED (``ValueError``): the
-            constructor reprojects the cells to lat/lon for ``grid_centroid``, which
-            an unreferenced frame cannot do (ledger 370). Assigning :attr:`crs` later RELABELS the
-            grid and every frame it caches; it never reprojects.
+            anything pyproj cannot read, is REFUSED (``ValueError`` naming
+            ``crs=``) before any cell is built: the constructor reprojects the cells
+            to lat/lon for ``grid_centroid``, which an unreferenced frame cannot do
+            (ledgers 370, 389). Assigning :attr:`crs` later RELABELS the grid
+            and every frame it caches; it never reprojects.
         rasters : list of pathlib.Path or float, optional
             Surfaces to sample onto the cells the first time :attr:`gdf_topbtm` is
             read, in order: the model top, then one bottom per layer (column labels
@@ -237,13 +263,8 @@ class VoronoiGridPlus(VoronoiGrid):
             it. Default ``"voronoi_grid"``.
         qhull_options : str, optional
             Passed as ``qhull_options`` to ``scipy.spatial.Voronoi`` through FloPy's
-            ``tri2vor``. Only the ``tri`` form uses it; ignored for the array form.
-            Default None: SciPy's own.
-        idomain : list of int, optional
-            Accepted and IGNORED: the constructor never stores it, so the
-            :attr:`idomain` property stays ``None``. To exclude cells from the grid
-            edge, pass their ids to :meth:`get_grid_edge`'s ``idomain=`` (which takes
-            the INACTIVE ids).
+            ``tri2vor``. The ``tri`` form only: given with the array form it raises
+            ``TypeError``, since nothing there runs Qhull. Default None: SciPy's own.
         idomain_path : pathlib.Path, optional
             A vector file (``.shp`` or ``.gpkg``) whose features cover the INACTIVE
             cells, by area. Stored as :attr:`idomain_path` and read by
@@ -277,17 +298,45 @@ class VoronoiGridPlus(VoronoiGrid):
             pre-repair ``grid_pin`` (``legacy_pin``).
         **kwargs
             The ``tri`` form only: forwarded to FloPy's ``VoronoiGrid``/``tri2vor``
-            and on to ``scipy.spatial.Voronoi`` as keyword arguments. Ignored,
-            silently, by the array form.
+            and on to ``scipy.spatial.Voronoi`` as keyword arguments. Given with the
+            array form they raise ``TypeError`` naming them (they were dropped in
+            silence). ``idomain=`` raises ``TypeError`` in either form: a grid takes
+            no active domain (ledger 388) -- give the model one with
+            ``ModelContext(domain=...)``, or exclude cells from the grid edge with
+            :meth:`get_grid_edge`'s ``idomain=`` or the ``idomain_path`` above.
 
         Raises
         ------
         ValueError
-            ``tessellation`` is not ``"dual"`` or ``"flopy"``; neither ``tri`` nor
-            all three of ``verts``/``iverts``/``xcyc`` was given; or the ``"dual"``
-            repair found a mesh whose dual is not a tiling
+            ``crs`` is ``None`` or unreadable; ``tessellation`` is not ``"dual"``
+            or ``"flopy"``; neither ``tri`` nor all three of
+            ``verts``/``iverts``/``xcyc`` was given; or the ``"dual"`` repair found
+            a mesh whose dual is not a tiling
             (:class:`~myflopy.modflow.mf6.grid.tessellation.NotConformingDelaunay`).
+        TypeError
+            ``idomain=`` was passed, or the array form was given ``qhull_options``
+            or other keyword arguments it cannot use.
         """
+        if "idomain" in kwargs:
+            raise TypeError(
+                "VoronoiGridPlus takes no idomain=: it was accepted and dropped, and no "
+                "grid ever read it (ledger 388). Give the model its active domain "
+                "with mf.ModelContext(grid=..., domain=...) -- the boundary helpers' "
+                "edges_only= reads it per layer -- or exclude cells from the grid edge "
+                "with grid.get_grid_edge(idomain=[inactive ids]) or idomain_path=."
+            )
+        # Checked FIRST: the setter below refuses the same values (ledger 370), but
+        # only after the triangulation's cells were built, and naming `grid.crs =`
+        # at a caller who typed `crs=` (ledger 389).
+        crs = _readable_crs(crs, spelling="VoronoiGridPlus(crs={})")
+        if not tri and (kwargs or qhull_options is not None):
+            unused = sorted(kwargs) + (["qhull_options"] if qhull_options is not None else [])
+            raise TypeError(
+                f"VoronoiGridPlus got {', '.join(unused)} with the array form "
+                "(verts/iverts/xcyc): they configure the Voronoi diagram of a "
+                "triangulation and have nothing to act on here, so they were dropped "
+                "in silence. Pass tri= to build from a triangulation, or leave them out."
+            )
         logger.info('building the Voronoi grid')
         if tessellation not in ("dual", "flopy"):
             raise ValueError(
@@ -354,7 +403,6 @@ class VoronoiGridPlus(VoronoiGrid):
         self._ia = None
         self._nja = None
         self._idomain_path = None
-        self._idomain = None
         self._gdf_topbtm = None
         self._excavations = {}
         self._area_list = None
@@ -465,19 +513,6 @@ class VoronoiGridPlus(VoronoiGrid):
         if value is not None:
             assert isinstance(value, Path), 'idomain path must be a Path instance'
         self._idomain_path = value
-
-    @property
-    def idomain(self):
-        """List of active Voronoi cell indices, if one has been provided."""
-        return self._idomain
-
-    @idomain.setter
-    def idomain(self, value):
-        """Set the active-cell list used by some edge-detection helpers."""
-        if value is not None:
-            assert isinstance(value, list), 'idomain must be a list'
-            assert all(idx in self.cell_list for idx in value), 'idomain indices must be valid Voronoi grid cells'
-        self._idomain = value
 
     @property
     def nlay(self):
@@ -713,19 +748,7 @@ class VoronoiGridPlus(VoronoiGrid):
 
     @crs.setter
     def crs(self, value):
-        value = normalize_crs(value)
-        if value is None:
-            raise ValueError(
-                "A grid's crs cannot be None: its lat/lon frames and grid_centroid are "
-                "reprojections of the cells. Give the CRS the vertices are in, e.g. "
-                "grid.crs = 'EPSG:2927'."
-            )
-        import pyproj
-
-        try:
-            pyproj.CRS.from_user_input(value)
-        except pyproj.exceptions.CRSError as error:
-            raise ValueError(f"grid.crs = {value!r}: pyproj cannot read it as a CRS ({error}).") from error
+        value = _readable_crs(value, spelling="grid.crs = {}")
         changed = "_crs" in self.__dict__ and self.__dict__["_crs"] != value
         self.__dict__["_crs"] = value
         if not changed:
@@ -939,8 +962,8 @@ class VoronoiGridPlus(VoronoiGrid):
             The INACTIVE cell ids (any iterable of integers). ``[]`` means none is
             inactive. Refused with ``ValueError``: a boolean mask, an ``ncpl``-long
             array of only -1/0/1 (an MF6 idomain -- pass
-            ``np.flatnonzero(domain <= 0)``), and ids outside ``0..ncpl-1``. Not the
-            grid's own :attr:`idomain` property, which is never read here.
+            ``np.flatnonzero(domain <= 0)``), and ids outside ``0..ncpl-1``. A grid
+            holds no idomain of its own to fall back on (ledger 388).
         idomain_path : str or pathlib.Path, optional
             A ``.shp``/``.gpkg`` whose features cover the inactive cells, by area,
             reprojected to the grid's CRS; a file covering no cell raises
@@ -1461,7 +1484,8 @@ class VoronoiGridPlus(VoronoiGrid):
             The features. A GeoSeries, or a plain ``pandas.DataFrame`` with a
             ``geometry`` column, also works. A query carrying its own CRS is
             reprojected to the grid's; one carrying none is read in the grid's.
-            Required in practice: the ``None`` default raises ``AttributeError``.
+            Required: the ``None`` default, and a frame with no geometry, raise
+            ``ValueError``.
         idx : int, optional
             The POSITION of the row to look up (``gdf_to_query.iloc[[idx]]``), not
             its index label. Default ``0``, the first row. Out of range raises
@@ -1485,7 +1509,7 @@ class VoronoiGridPlus(VoronoiGrid):
             predicate=predicate,
         )
 
-    def set_k_vor(self, k_dict: dict = None, k_default=100) -> list:
+    def set_k_vor(self, k_dict: dict = None, k_default: float = 100.0) -> list[float]:
         """Build a per-cell hydraulic-conductivity list from region mappings.
 
         **Side effect:** writes the values into a ``"Kh"`` column of the cached
@@ -1494,21 +1518,23 @@ class VoronoiGridPlus(VoronoiGrid):
 
         Parameters
         ----------
-        k_dict : dict of float to list of int
+        k_dict : dict of float to list of int, optional
             ``{K value: cell ids}``: every cell id in a value's list (row labels of
             :attr:`gdf_vorPolys`) gets that key as its K. Each value must be
             list-like. A cell named under several keys takes the LAST one in the
-            dict's order. Required in practice: the ``None`` default raises
-            ``AttributeError``.
+            dict's order. Each key is read as a ``float``. Default None: no cell is
+            named, so every cell takes ``k_default``.
         k_default : float, optional
-            The K of every cell no list names. Default ``100``. No unit is assumed:
-            use the model's length/time units.
+            The K of every cell no list names, read as a ``float``. Default
+            ``100.0``. No unit is assumed: use the model's length/time units.
 
         Returns
         -------
-        list of float or int
-            One K per cell, in :attr:`gdf_vorPolys` row order (ints when
-            ``k_default`` and every key are ints).
+        list of float
+            One K per cell, in :attr:`gdf_vorPolys` row order. Always floats: the
+            ``"Kh"`` column is float whatever was passed, so a float K never lands
+            in an int column (pandas warns on that upcast today and is deprecated to
+            raise).
         """
         return geometry_set_k_vor(self, k_dict=k_dict, k_default=k_default)
 
@@ -1991,24 +2017,29 @@ class VoronoiGridPlus(VoronoiGrid):
         return surface_get_normal_from_strike_and_dip(strike, dip)
 
     @staticmethod
-    def generate_grid_around_point(center_point: shp.Point, spacing: float, size: int, crs: str) -> gpd.GeoSeries:
+    def generate_grid_around_point(
+        center_point: shp.Point, spacing: float, size: float, crs: str
+    ) -> gpd.GeoSeries:
         """Generate a square lattice of points around a center point.
 
-        The x values start at ``int(cx - size / 2 * spacing)`` and step by
-        ``spacing`` for as long as they do not pass ``int(cx + size / 2 * spacing)``
-        (``int`` truncates toward zero), so that end is reached only when the step
-        divides the span; y likewise. One point per (x, y) pair.
+        The x values are ``cx + spacing * (i - size / 2)`` for ``i = 0, 1, ...`` up
+        to ``cx + size / 2 * spacing`` -- reached when ``size`` is a whole number
+        (to 1e-9 of a step), and otherwise the last whole step short of it; y
+        likewise. One point per (x, y) pair, so a whole ``size`` gives
+        ``(size + 1) ** 2`` points, and an even one puts a point on the centre.
 
         Parameters
         ----------
         center_point : shapely.geometry.Point
             The lattice's centre; only its ``x``/``y`` are read.
-        spacing : int
-            The step between points in x and in y, in the point's length units. Must
-            be an ``int``: it drives ``range``, so a float raises ``TypeError``.
+        spacing : float
+            The step between points in x and in y, in the point's length units. Any
+            finite number above zero (``2.5`` works). Zero, a negative or a
+            non-finite value raises ``ValueError``.
         size : float
-            The lattice's width in steps: before truncation it spans
-            ``size * spacing`` along each axis, half on either side of the centre.
+            The lattice's width in steps: it spans ``size * spacing`` along each
+            axis, half on either side of the centre. Zero gives the centre alone; a
+            negative or non-finite value raises ``ValueError``.
         crs : str, int or pyproj.CRS
             The CRS stamped on the result (``GeoSeries.set_crs``); the coordinates
             are not reprojected. Required.
@@ -2021,7 +2052,9 @@ class VoronoiGridPlus(VoronoiGrid):
         return geometry_generate_grid_around_point(center_point, spacing, size, crs)
 
     @staticmethod
-    def generate_grid_polygons(center_point, spacing, size, gap):
+    def generate_grid_polygons(
+        center_point: shp.Point, spacing: float, size: float, gap: float
+    ) -> shp.MultiPolygon:
         """Generate a square lattice of boxes around a center point.
 
         The lattice is :meth:`generate_grid_around_point`'s; one box is made per
@@ -2032,11 +2065,12 @@ class VoronoiGridPlus(VoronoiGrid):
         ----------
         center_point : shapely.geometry.Point
             The lattice's centre; only its ``x``/``y`` are read.
-        spacing : int
-            The lattice step in x and in y, in the point's length units. Must be an
-            ``int`` (it drives ``range``; a float raises ``TypeError``).
+        spacing : float
+            The lattice step in x and in y, in the point's length units: any finite
+            number above zero, as for :meth:`generate_grid_around_point`.
         size : float
-            The lattice's width in steps, as for :meth:`generate_grid_around_point`.
+            The lattice's width in steps, as for :meth:`generate_grid_around_point`:
+            a whole ``size`` gives ``size ** 2`` boxes.
         gap : float
             The space left between neighbouring boxes, in the same units. ``0``
             makes them touch.
@@ -2249,8 +2283,6 @@ class VoronoiGridPlus(VoronoiGrid):
         crs: str = DEFAULT_CRS,
         rasters: list | Path = None,
         name: str = 'voronoi_grid',
-        qhull_options: str = None,
-        idomain: list = None,
         idomain_path: Path = None,
     ):
         """Reconstruct a Voronoi-style grid view from a DISU input file.
@@ -2277,11 +2309,6 @@ class VoronoiGridPlus(VoronoiGrid):
             As for :class:`VoronoiGridPlus`.
         name : str, optional
             A label stored as ``grid.name``. Default ``"voronoi_grid"``.
-        qhull_options : str, optional
-            Accepted and IGNORED: it acts only on a grid built from a triangulation,
-            and this builds from arrays.
-        idomain : list of int, optional
-            Accepted and IGNORED, as by :class:`VoronoiGridPlus`.
         idomain_path : pathlib.Path, optional
             A vector file whose features cover the INACTIVE cells, stored as
             :attr:`idomain_path` and read by :meth:`get_grid_edge`. Must be a
@@ -2300,9 +2327,7 @@ class VoronoiGridPlus(VoronoiGrid):
             crs=crs,
             name=name,
             rasters=rasters,
-            idomain=idomain,
             idomain_path=idomain_path,
-            qhull_options=qhull_options,
         )
 
     @classmethod
@@ -2313,8 +2338,6 @@ class VoronoiGridPlus(VoronoiGrid):
         crs: str = DEFAULT_CRS,
         rasters: list | Path = None,
         name: str = 'voronoi_grid',
-        qhull_options: str = None,
-        idomain: list = None,
         idomain_path: Path = None,
     ):
         """Build a grid view from a MODFLOW-USG ``.gsf`` grid specification file.
@@ -2354,11 +2377,6 @@ class VoronoiGridPlus(VoronoiGrid):
             As for :class:`VoronoiGridPlus`.
         name : str, optional
             A label stored as ``grid.name``. Default ``"voronoi_grid"``.
-        qhull_options : str, optional
-            Accepted and IGNORED: it acts only on a grid built from a triangulation,
-            and this builds from arrays.
-        idomain : list of int, optional
-            Accepted and IGNORED, as by :class:`VoronoiGridPlus`.
         idomain_path : pathlib.Path, optional
             A vector file whose features cover the INACTIVE cells, stored as
             :attr:`idomain_path` and read by :meth:`get_grid_edge`. Must be a
@@ -2382,7 +2400,5 @@ class VoronoiGridPlus(VoronoiGrid):
             crs=crs,
             name=name,
             rasters=rasters,
-            idomain=idomain,
             idomain_path=idomain_path,
-            qhull_options=qhull_options,
         )

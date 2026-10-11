@@ -462,7 +462,11 @@ release-group boundnames; without them it names the fix and offers
   raises with the nearest match rather than being silently ignored. Sources must be
   file-backed specs — a GeoDataFrame, a bare path, or a list is refused by name.
   The cells are repaired to tile the boundary (ledger 316); `tessellation="flopy"`
-  keeps FloPy's `tri2vor` cells as they were.
+  keeps FloPy's `tri2vor` cells as they were. A grid holds no active domain:
+  `idomain=` -- here, in `options`/`voronoi_options`, or on `mf.VoronoiGridPlus` --
+  raises naming `mf.ModelContext(domain=...)`, the one route for it (it was dropped
+  in silence; ledger 388). `crs=None` is refused at construction (ledger
+  389); leave `crs=` out for the default `"EPSG:2927"`.
   Full table + traps in `docs/model_building_cheatsheet.md`.
 - `GridSpec.resolve(project_root=, workspace=, build=, return_triangle=)` — turns a
   grid *recipe* into a grid *object*. `project_root` anchors relative source paths;

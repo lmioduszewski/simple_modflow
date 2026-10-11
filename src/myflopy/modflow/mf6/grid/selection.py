@@ -231,8 +231,8 @@ def _inactive_cells(vor, idomain, idomain_path) -> set[int]:
             "np.flatnonzero(domain <= 0)."
         )
     if values.size == ncpl and set(np.unique(values)).issubset({-1, 0, 1}):
-        # The trap this parameter sets: MF6's idomain is an ARRAY of flags, the
-        # grid's own `idomain` property is the ACTIVE ids, and this is neither.
+        # The trap this parameter sets: MF6's idomain is an ARRAY of flags, and
+        # this is neither that nor a list of ACTIVE ids.
         raise ValueError(
             f"idomain= is a list of INACTIVE cell ids, but this is {ncpl} values of "
             "-1/0/1, which reads as an MF6 idomain array. Pass "
