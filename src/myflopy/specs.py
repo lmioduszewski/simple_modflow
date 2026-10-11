@@ -2610,8 +2610,10 @@ class GridSpec:
         unchecked. Default: empty.
     triangle_options : dict, optional
         ``"voronoi"`` route: keyword arguments for ``TriangleGrid(...)``
-        (``angle``, ``maximum_area``, ``nodes``, ``exe_name``,
-        ``additional_args``), plus ``region_point_tolerance`` and
+        (``angle``, ``maximum_area`` -- Triangle's global cap on every triangle,
+        not the background size ``options["boundary_max_area"]``/``max_area`` --
+        ``nodes``, ``exe_name``, ``additional_args``), plus
+        ``region_point_tolerance`` and
         ``model_ws``/``workspace`` (Triangle's working directory), which are
         taken out first. An unknown key raises ``TypeError`` (from FloPy's
         ``Triangle``) at resolve. Default: empty.
@@ -3057,7 +3059,8 @@ class GridSpec:
             ``**engine_options``).
         triangle_options : dict, optional
             Keyword arguments for ``TriangleGrid(...)`` -- ``angle``,
-            ``maximum_area``, ``nodes``, ``exe_name``, ``additional_args``, plus
+            ``maximum_area`` (the global cap, not ``max_area``), ``nodes``,
+            ``exe_name``, ``additional_args``, plus
             ``model_ws``/``workspace`` for Triangle's working directory. A key
             also given through ``**engine_options`` takes that value. Not
             validated here; an unknown key raises ``TypeError`` at resolve.
