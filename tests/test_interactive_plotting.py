@@ -857,13 +857,44 @@ def test_particle_tracking_scene_exports_real_standalone_html(tmp_path):
 def test_slider_validation_rejects_empty_frames_and_label_mismatch(tmp_path):
     with pytest.raises(ValueError, match="at least one"):
         export_matplotlib_slider_html(lambda *_: plt.figure(), [], tmp_path / "empty.html")
-    with pytest.raises(ValueError, match="same length"):
+    with pytest.raises(ValueError, match="labels has 1 entries but frame_values has 2 frames"):
         export_matplotlib_slider_html(
             lambda *_: plt.figure(),
             [1, 2],
             tmp_path / "bad_labels.html",
             labels=["one"],
         )
+
+
+@pytest.mark.parametrize("labels", [["a", "b", "c"], ["a"]], ids=["one_too_many", "one_too_few"])
+@pytest.mark.parametrize("exporter", ["head_map", "layer_mosaic", "cross_section"])
+def test_every_head_slider_refuses_a_label_count_that_is_not_the_frame_count(
+    tmp_path, exporter, labels
+):
+    """One label too many was cut short in silence -- every later frame titled by
+    the wrong label -- and one too few died in a bare ``IndexError``. The three
+    head exporters now share ``export_matplotlib_slider_html``'s one check,
+    which names both counts and where the frames came from."""
+
+    workspace = _workspace(f"label_count_{exporter}")
+    try:
+        model = _two_cell_model(f"label_count_{exporter}", workspace, nlay=2)
+        frames = [np.array([[8.0, 9.0], [6.0, 7.0]]), np.array([[8.5, 9.5], [6.5, 7.5]])]
+        output = tmp_path / f"{exporter}.html"
+        common = {"head_frames": frames, "labels": labels}
+        expected = f"labels has {len(labels)} entries but head_frames has 2 frames"
+        with pytest.raises(ValueError, match=expected):
+            if exporter == "head_map":
+                export_head_map_slider_html(model, output, **common)
+            elif exporter == "layer_mosaic":
+                export_head_layer_mosaic_slider_html(model, output, layers=[0, 1], **common)
+            else:
+                export_cross_section_slider_html(
+                    model, LineString([(0.5, -0.5), (0.5, 1.5)]), output, **common
+                )
+        assert not output.exists()  # refused before a frame was drawn
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
 
 
 def test_the_pathline_scene_is_reachable_through_the_grid_verb():

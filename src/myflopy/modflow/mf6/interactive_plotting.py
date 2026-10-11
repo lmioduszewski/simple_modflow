@@ -264,6 +264,25 @@ def _select_sequence(
     return [values[index] for index in indices], [str(labels[index]) for index in indices]
 
 
+def _checked_labels(labels: Sequence[Any], count: int, *, frames: str) -> list[str]:
+    """``labels`` as strings, refused unless there is exactly one per frame.
+
+    The ONE length check every slider exporter shares: a list one too long used
+    to be cut short in silence, so every label after a missing one titled the
+    wrong frame, and one too short died in an ``IndexError`` naming neither
+    count. ``frames`` says where the ``count`` frames came from.
+    """
+
+    resolved = [str(label) for label in labels]
+    if len(resolved) != int(count):
+        raise ValueError(
+            f"labels has {len(resolved)} entries but {frames} has {int(count)} "
+            f"frames; give one label per frame, before frame_indices/"
+            f"frame_stride/max_frames select from them."
+        )
+    return resolved
+
+
 def _slider_html(*, frames: Sequence[str], labels: Sequence[str], title: str, interval_ms: int) -> str:
     """Build a standalone HTML page embedding image ``frames`` with a browser-side play/slider."""
 
@@ -367,7 +386,8 @@ def export_matplotlib_slider_html(
     labels : sequence of str, optional
         One slider label per item of ``frame_values`` (before selection); each is
         passed through ``str()``. Default ``None`` labels a frame ``str(value)``.
-        A length different from ``frame_values`` raises ``ValueError``.
+        A length different from ``frame_values`` raises ``ValueError`` naming
+        both counts.
     title : str, optional
         The page's ``<title>`` and heading (HTML-escaped). Default
         ``"Model results through time"``.
@@ -435,9 +455,11 @@ def export_matplotlib_slider_html(
     values = list(frame_values)
     if not values:
         raise ValueError("frame_values must contain at least one frame.")
-    resolved_labels = [str(value) for value in values] if labels is None else [str(value) for value in labels]
-    if len(resolved_labels) != len(values):
-        raise ValueError("labels must have the same length as frame_values.")
+    resolved_labels = (
+        [str(value) for value in values]
+        if labels is None
+        else _checked_labels(labels, len(values), frames="frame_values")
+    )
     values, resolved_labels = _select_sequence(
         values,
         resolved_labels,
@@ -555,10 +577,17 @@ def _frame_labels(
     kstpkpers: Sequence[tuple[int, int]] | None,
     labels: Sequence[str] | None,
 ) -> list[str]:
-    """Per-frame display labels: explicit ``labels``, else the kstpkper, else ``Frame N``."""
+    """Per-frame display labels: explicit ``labels``, else the kstpkper, else ``Frame N``.
+
+    Explicit ``labels`` must hold one entry per frame (:func:`_checked_labels`).
+    """
 
     if labels is not None:
-        return [str(label) for label in labels]
+        if kstpkpers is None:
+            source = "head_frames"
+        else:
+            source = "the saved head times (kstpkpers)"
+        return _checked_labels(labels, len(values), frames=source)
     if kstpkpers is None:
         return [f"Frame {index + 1}" for index in range(len(values))]
     return [f"kstpkper={tuple(value)}" for value in kstpkpers]
@@ -664,8 +693,8 @@ def export_cross_section_slider_html(
     labels : sequence of str, optional
         One slider label per frame BEFORE selection; each also titles its frame.
         Default ``None`` labels a frame ``"kstpkper=(kstp, kper)"``, or
-        ``"Frame N"`` (one-based) for ``head_frames``. A shorter list raises
-        ``IndexError``; extra labels are dropped.
+        ``"Frame N"`` (one-based) for ``head_frames``. A list whose length
+        differs from the frame count raises ``ValueError`` naming both counts.
     style : ModelCrossSectionStyle, optional
         The section's appearance, forwarded to ``plot_model_cross_section``.
         Default ``None`` uses its default style.
@@ -713,6 +742,13 @@ def export_cross_section_slider_html(
     -------
     StandaloneHtmlSlider
         A handle to the written document and its render statistics.
+
+    Raises
+    ------
+    ValueError
+        When ``labels`` does not hold one entry per resolved frame (the
+        ``head_frames``, or the saved times), naming both counts; and as
+        :func:`export_matplotlib_slider_html` raises for the frame selection.
     """
 
     values, resolved_kstpkpers = _resolve_frames(model, kstpkpers=kstpkpers, head_frames=head_frames)
@@ -973,8 +1009,8 @@ def export_head_map_slider_html(
     labels : sequence of str, optional
         One slider label per frame BEFORE selection; each also titles its frame.
         Default ``None`` labels a frame ``"kstpkper=(kstp, kper)"``, or
-        ``"Frame N"`` (one-based) for ``head_frames``. A shorter list raises
-        ``IndexError``; extra labels are dropped.
+        ``"Frame N"`` (one-based) for ``head_frames``. A list whose length
+        differs from the frame count raises ``ValueError`` naming both counts.
     style : ModelMapStyle, optional
         Map appearance, and the PNG resolution (``style.dpi``) -- this function
         has no ``dpi`` of its own. Default ``None`` is ``ModelMapStyle()``.
@@ -1020,6 +1056,13 @@ def export_head_map_slider_html(
     -------
     StandaloneHtmlSlider
         A handle to the written document and its render statistics.
+
+    Raises
+    ------
+    ValueError
+        When ``labels`` does not hold one entry per resolved frame (the
+        ``head_frames``, or the saved times), naming both counts; and as
+        :func:`export_matplotlib_slider_html` raises for the frame selection.
     """
 
     style = ModelMapStyle() if style is None else style
@@ -1126,8 +1169,8 @@ def export_head_layer_mosaic_slider_html(
         One slider label per frame BEFORE selection; each also becomes that
         frame's figure title. Default ``None`` labels a frame
         ``"kstpkper=(kstp, kper)"``, or ``"Frame N"`` (one-based) for
-        ``head_frames``. A shorter list raises ``IndexError``; extra labels are
-        dropped.
+        ``head_frames``. A list whose length differs from the frame count
+        raises ``ValueError`` naming both counts.
     style : ModelMapStyle, optional
         Each panel's appearance. Its colorbar is drawn once for the whole frame
         (``style.show_colorbar``), never per panel. Default ``None`` is
@@ -1189,6 +1232,13 @@ def export_head_layer_mosaic_slider_html(
     -------
     StandaloneHtmlSlider
         A handle to the written document and its render statistics.
+
+    Raises
+    ------
+    ValueError
+        When ``labels`` does not hold one entry per resolved frame (the
+        ``head_frames``, or the saved times), naming both counts; and as
+        :func:`export_matplotlib_slider_html` raises for the frame selection.
     """
 
     if style is None:

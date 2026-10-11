@@ -1462,7 +1462,10 @@ functions instead pre-render frames to PNG and page through them: their size is
 independent of cell count, and they carry the machinery a long export needs
 (`resume=`, `progress=`, external frame directories, a concurrent-writer lock).
 They render through FloPy's `PlotMapView`, so they are a *different picture*,
-not a second spelling.
+not a second spelling. `labels=` gives one label per frame, before any frame
+selection; a list of any other length raises naming both counts, on all four
+exporters (it was cut short, or died in a bare `IndexError`, on the three head
+exporters).
 
 > Runnable tour: `examples/mf6/notebooks/plotting_vocabulary_tour.ipynb`.
 > Normative rules: `docs/view_layer_conventions.md`.
