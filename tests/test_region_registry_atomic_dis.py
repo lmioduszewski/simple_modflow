@@ -104,3 +104,10 @@ def test_a_vertex_grid_region_refuses_a_three_item_cellid():
     with pytest.raises(ValueError, match=r"\(layer, cell\)"):
         regions.add_from_cells("r", [(0, 3, 7)])
     assert regions.add_from_cells("r", [(1, 3), (1, 5)]).cells == [3, 5]
+
+
+def test_a_region_of_no_cells_is_still_an_empty_region():
+    # Reading the cellids for a tuple must not make ``None`` -- no cells, which
+    # ``normalize_region_inputs`` has always accepted -- a TypeError.
+    regions = RegionRegistry(model=None)
+    assert regions.add_from_cells("empty", None).cells == []

@@ -331,7 +331,8 @@ class RegionRegistry:
         overwrite: bool = False,
     ) -> ModelRegion:
         """Create and register a region from explicit cell IDs."""
-        cellids = list(cellids)
+        # ``None`` is no cells, as ``normalize_region_inputs`` reads it.
+        cellids = [] if cellids is None else list(cellids)
         # The grid is read only when a cellid needs it: a bare cell number means
         # the same on every grid, and reading a loaded run's grid opens its files.
         needs_grid = any(isinstance(cellid, tuple) and len(cellid) >= 2 for cellid in cellids)

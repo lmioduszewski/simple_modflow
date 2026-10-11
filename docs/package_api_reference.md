@@ -489,7 +489,7 @@ workspace path in either opens in the CRS its run recorded in `run.json`, as
 `mf.load_mf6_run(ws)` does; `crs=` given wins (ledger 374; it used to be 2927 for
 every member). A region's tuple cellid is the grid's own: `(layer, cell)` on a vertex
 grid, `(layer, row, col)` on a structured one, and `add_group` registers nothing unless
-every member is accepted (ledgers 375/-d).
+every member is accepted (ledgers 375, 376).
 
 **The project's libraries.** `project.packages` / `.grids` / `.simulations` are
 `dict` **subclasses** — every dict operation works unchanged, and each also
