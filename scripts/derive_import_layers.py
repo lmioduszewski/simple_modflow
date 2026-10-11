@@ -9,7 +9,8 @@ Writes:
   OUTPUT of this derivation, per the plan — never hand-edit it)
 
 Run it after adding a module or hoisting a deferred import, review the diff,
-and commit the three files together. ``tests/test_import_layering.py`` pins
+and commit the three files together; ``--check`` writes nothing and exits 1
+naming any file a regeneration would change. ``tests/test_import_layering.py`` pins
 the results: no module-level runtime import may point at a higher layer, the
 graph must stay acyclic, and deferred-import counts must match the allowlist
 exactly (lower the allowlist when you hoist; never raise it).
@@ -181,23 +182,25 @@ def sccs_and_depths(edges: dict[str, set[str]]):
     return sccs, comp_of, depth
 
 
-def main() -> None:
+def render() -> dict[str, str]:
+    """The three pinned files' text, keyed by repo-relative path, from the live graph.
+
+    One function for the writer (:func:`main`) and the staleness test
+    (``tests/test_import_layering.py``), so the test compares the files against
+    exactly what a regeneration would write -- the layers, the allowlist and the
+    human-readable map alike.
+    """
+
     modules, edges, deferred = build_graph()
     sccs, comp_of, depth = sccs_and_depths(edges)
     cycles = [sorted(c) for c in sccs if len(c) > 1]
     if cycles:
-        for c in cycles:
-            print("CYCLE:", " <-> ".join(c))
-        raise SystemExit("module-level import cycles found — fix before pinning")
+        raise SystemExit(
+            "module-level import cycles found — fix before pinning: "
+            + "; ".join(" <-> ".join(c) for c in cycles)
+        )
 
     layers = {m: depth[comp_of[m]] for m in sorted(modules)}
-    (ROOT / "tests/import_layers.json").write_text(
-        json.dumps(layers, indent=1, sort_keys=True) + "\n"
-    )
-    (ROOT / "tests/deferred_import_allowlist.json").write_text(
-        json.dumps(deferred, indent=1, sort_keys=True) + "\n"
-    )
-
     by_layer: dict[int, list[str]] = {}
     for m, layer in layers.items():
         by_layer.setdefault(layer, []).append(m)
@@ -226,10 +229,46 @@ def main() -> None:
             suffix = f" *(deferred imports: {deferred[m]})*" if m in deferred else ""
             doc.append(f"- `{m}`{suffix}")
         doc.append("")
-    (ROOT / "docs/import_layering.md").write_text("\n".join(doc))
+    return {
+        "tests/import_layers.json": json.dumps(layers, indent=1, sort_keys=True) + "\n",
+        "tests/deferred_import_allowlist.json": (
+            json.dumps(deferred, indent=1, sort_keys=True) + "\n"
+        ),
+        "docs/import_layering.md": "\n".join(doc),
+    }
+
+
+def stale_files() -> list[str]:
+    """The pinned files whose text differs from what :func:`render` writes now."""
+
+    return [
+        rel for rel, text in render().items()
+        if not (ROOT / rel).exists()
+        or (ROOT / rel).read_text(encoding="utf-8") != text
+    ]
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Write the three pinned files, or with ``--check`` exit 1 naming any stale one."""
+
+    argv = sys.argv[1:] if argv is None else argv
+    if "--check" in argv:
+        stale = stale_files()
+        if stale:
+            raise SystemExit(
+                "stale import-layering files (rerun scripts/derive_import_layers.py "
+                f"and review the diff): {stale}"
+            )
+        print("import-layering files are current")
+        return
+    texts = render()
+    for rel, text in texts.items():
+        (ROOT / rel).write_text(text, encoding="utf-8")
+    layers = json.loads(texts["tests/import_layers.json"])
+    deferred = json.loads(texts["tests/deferred_import_allowlist.json"])
     print(
-        f"modules={len(modules)} layers=0..{max(by_layer)} "
-        f"deferred_total={total} — wrote tests/import_layers.json, "
+        f"modules={len(layers)} layers=0..{max(layers.values())} "
+        f"deferred_total={sum(deferred.values())} — wrote tests/import_layers.json, "
         "tests/deferred_import_allowlist.json, docs/import_layering.md"
     )
 

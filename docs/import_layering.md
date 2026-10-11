@@ -37,7 +37,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.grid.mesh_quality` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.grid.seed_optimization`
 - `myflopy.modflow.mf6.grid.surfaces`
-- `myflopy.modflow.mf6.grid.tessellation`
 - `myflopy.modflow.mf6.hydraulics`
 - `myflopy.modflow.mf6.observations.plots` *(deferred imports: 3)*
 - `myflopy.modflow.mf6.package_explorer_utils`
@@ -81,6 +80,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.cross_section_plotting` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.grid.geometry`
 - `myflopy.modflow.mf6.grid.geometry_cleanup`
+- `myflopy.modflow.mf6.grid.tessellation`
 - `myflopy.modflow.mf6.heads_observations`
 - `myflopy.modflow.mf6.lak_implicit`
 - `myflopy.modflow.mf6.mf2Dplots`
@@ -143,7 +143,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.package_results`
 - `myflopy.modflow.mf6.pest.native_parameters`
 - `myflopy.modflow.mf6.recharge`
-- `myflopy.modflow.mf6.sfr` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.simplemodel`
 - `myflopy.modflow.mf6.simulation.regions`
 - `myflopy.modflow.mf6.uzf`
@@ -160,6 +159,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.observations.conc`
 - `myflopy.modflow.mf6.package_surface_water` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.pilot_points`
+- `myflopy.modflow.mf6.sfr` *(deferred imports: 1)*
 - `myflopy.modflow.usg`
 - `myflopy.modflow.utils.datatypes.xsections` *(deferred imports: 2)*
 - `myflopy.modflow.utils.inputs`

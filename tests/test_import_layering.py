@@ -6,7 +6,11 @@ Three pinned invariants over ``src/myflopy`` (``_vendor`` excluded):
 2. **Layered** — every module-level runtime import points at a module whose
    layer (``tests/import_layers.json``) is the same or lower. Upward
    references belong in TYPE_CHECKING blocks or deferred imports.
-3. **Ratchet** — function-level ``myflopy`` imports per module match
+3. **Current** — the three pinned files equal what the derivation writes now,
+   byte for byte. The first two checks pass on a STALE map whenever a module
+   moved to a higher layer without crossing a lower neighbour's -- which is how
+   ``grid.tessellation`` sat at layer 0 while the graph put it at 1.
+4. **Ratchet** — function-level ``myflopy`` imports per module match
    ``tests/deferred_import_allowlist.json`` EXACTLY. Hoisted one? Lower the
    allowlist. Added one? That is a regression — import at module level (the
    graph is a DAG; there is almost always a downward path) or justify a new
@@ -25,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from derive_import_layers import build_graph, sccs_and_depths  # noqa: E402
+from derive_import_layers import build_graph, sccs_and_depths, stale_files  # noqa: E402
 
 LAYERS = json.loads((ROOT / "tests/import_layers.json").read_text())
 ALLOWLIST = json.loads((ROOT / "tests/deferred_import_allowlist.json").read_text())
@@ -72,4 +76,21 @@ def test_deferred_import_ratchet():
         f"allowed): {regressions}. If you hoisted imports, ratchet DOWN by "
         "regenerating with `python scripts/derive_import_layers.py`; if a "
         "count went UP, hoist the import to module level instead."
+    )
+
+
+def test_the_pinned_layer_files_are_what_the_derivation_writes():
+    """A layer map that has fallen behind the code fails here, naming the file.
+
+    ``test_every_module_has_a_layer`` compares the module SET and
+    ``test_runtime_imports_never_point_upward`` only that no edge climbs, so a
+    module whose layer ROSE (``grid.tessellation`` 0 -> 1, ``sfr`` 3 -> 4) left
+    ``tests/import_layers.json`` and ``docs/import_layering.md`` wrong while all
+    of them passed.
+    """
+
+    stale = stale_files()
+    assert not stale, (
+        f"{stale} differ from what `python scripts/derive_import_layers.py` writes; "
+        "rerun it and review the diff"
     )
