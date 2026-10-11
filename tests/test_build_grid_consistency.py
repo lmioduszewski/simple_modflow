@@ -159,6 +159,25 @@ def test_a_negative_cellid_is_refused_on_a_structured_model(tmp_path):
         mf.simulation(model, name="s").build_flopy(workspace=tmp_path / "dis")
 
 
+def test_a_negative_node_is_refused_on_a_disu_model(tmp_path):
+    """DISU's cellid is `(node,)`, one integer -- which the range checks' cellid reader
+    skips, so the lower bound reads it on its own (ledger 382)."""
+
+    disu = mf.disu(
+        nodes=2, nja=4, top=10.0, bot=0.0, area=100.0, iac=[2, 2], ja=[0, 1, 1, 0],
+        ihc=[1, 1, 1, 1], cl12=[0.0, 5.0, 0.0, 5.0], hwva=[0.0, 10.0, 0.0, 10.0],
+    )
+    model = mf.gwf(
+        "m",
+        packages=[
+            disu, mf.npf(k=1.0), mf.ic(strt=5.0),
+            mf.chd(stress_period_data={0: [[(-1,), 9.0]]}),
+        ],
+    )
+    with pytest.raises(ValueError, match=r"negative part: \(-1,\)"):
+        mf.simulation(model, name="s").build_flopy(workspace=tmp_path / "disu")
+
+
 def test_a_stale_layer_is_caught_too(tmp_path):
     """A cellid can be stale in its LAYER without being stale in its cell."""
 

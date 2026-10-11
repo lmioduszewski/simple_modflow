@@ -710,7 +710,9 @@ def _build_hfb(package_class, model, *, _spec, **options):
 _HFB_BUILDER = functools.partial(_build_hfb, flopy.mf6.ModflowGwfhfb)
 
 
-def _lazy_resolution_context(model, spec_name: str, *, needs_grid: bool = True):
+def _lazy_resolution_context(
+    model, spec_name: str, *, needs_grid: bool = True, domain_only: bool = False
+):
     """The three preconditions a lazy boundary condition needs, in order.
 
     Each replaces a failure that names nothing. Returns a ``ModelContext`` local to this
@@ -726,6 +728,12 @@ def _lazy_resolution_context(model, spec_name: str, *, needs_grid: bool = True):
     ``ModelContext(domain=idomain)`` and a model declared with no context at all
     (ledger 284). The ORDERING and ncpl-agreement rules stay here either way, which is
     the reason this is a parameter rather than a second function.
+
+    ``domain_only=True`` is for the builders that read their cells from the DOMAIN alone
+    -- UZF and the array forms -- which have no fallback to the grid's cell count, so with
+    no domain anywhere they get MF6's all-active one even beside a context grid (ledger
+    380). The LIST areal builders keep their own fallback there, which is what the
+    eager form on the same context does.
     """
 
     context = getattr(model, "myflopy_context", None)
@@ -769,17 +777,26 @@ def _lazy_resolution_context(model, spec_name: str, *, needs_grid: bool = True):
         idomain = getattr(discretization, "idomain", None)
         domain = idomain.get_data() if idomain is not None else None
 
-    if domain is None and ncpl is not None and not needs_grid:
+    if (
+        domain is None
+        and ncpl is not None
+        and not needs_grid
+        and (grid is None or domain_only)
+    ):
         # No domain anywhere: neither the context nor the discretization (declared without
         # `idomain=`) gives one. An absent IDOMAIN means every cell ACTIVE in MF6, so saying
         # that outright is not a guess -- it is the same model, written down (ledger 284).
         # Without it the areal builders die five frames down naming neither the package nor
-        # the fix when there is no grid either. It was conditioned on `grid is None`, since
-        # the LIST areal builders fall back to the grid's `ncpl` -- but UZF and the ARRAY
-        # forms have no such fallback, so a lazy `mf.uzf` ("ModelContext.domain is
-        # required") and `mf.rch.array` ("irch='top_active' needs the model's active-cell
-        # array") raised on a model whose context carried a grid, while the same model with
-        # no context built (ledger 380). Every-cell-active is the answer on both routes.
+        # the fix when there is no grid either.
+        # Beside a context GRID only for `domain_only` callers (ledger 380): UZF and
+        # the ARRAY forms have no other route to a cell set, so a lazy `mf.uzf`
+        # ("ModelContext.domain is required") and `mf.rch.array` ("irch='top_active' needs
+        # the model's active-cell array") raised there while the same model with no
+        # context built. The LIST areal builders DO have one -- `grid.ncpl` at `layer=`,
+        # which is what the eager form on this context writes -- and an all-ones domain
+        # would change their records (measured, 2 layers x 28 cells: `all_active` 28 -> 56
+        # records, recharge applied twice per column, and `layer=1` moved to layer 0),
+        # so they keep it, lazy == eager.
         # NOT for a `needs_grid` caller: a `.gpkg` source reads an absent domain as "let
         # the grid's own `idomain_path` decide" (ledgers 209, 246), and an all-ones array
         # here would overrule that file.
@@ -1054,7 +1071,9 @@ def _build_lazy_uzf(model, *, _spec, **kwargs):
 
     recipe = {key: value for key, value in kwargs.items() if key in _UZF_RECIPE_KEYS}
     options = {key: value for key, value in kwargs.items() if key not in _UZF_RECIPE_KEYS}
-    context = _lazy_resolution_context(model, _spec.name, needs_grid=False)
+    context = _lazy_resolution_context(
+        model, _spec.name, needs_grid=False, domain_only=True
+    )
     eager = UZFBuilder(
         context=context, name=_spec.name, options=options, **recipe
     ).build()
@@ -8024,7 +8043,9 @@ def _build_lazy_array(constructor, index_name, model, *, _spec, **kwargs):
     """
 
     verb = f"mf.{'rch' if index_name == 'irch' else 'evt'}.array"
-    context = _lazy_resolution_context(model, _spec.name, needs_grid=False)
+    context = _lazy_resolution_context(
+        model, _spec.name, needs_grid=False, domain_only=True
+    )
     kwargs = dict(kwargs)
     index = kwargs.pop(index_name, None)
     fields = {key: kwargs.pop(key) for key in _ARRAY_FIELDS[index_name] if key in kwargs}

@@ -11293,7 +11293,7 @@ same day, which is the useful part of the result.
       rather than a sibling, so the ordering and ncpl-agreement rules stay in one place.
       It also synthesizes an ALL-ACTIVE domain when there is neither a context nor an
       `idomain=` on the discretization (also beside a context holding only a grid, for
-      the domain-only builders, since ledger 380) -- an absent IDOMAIN means every cell active in
+      UZF and the array forms -- not this list form -- since ledger 380) -- an absent IDOMAIN means every cell active in
       MF6, so saying so is not a guess -- because otherwise both routes to a cell count
       are None and `_ArealBuilder` dies five frames down naming neither the package nor
       the fix.
@@ -17426,12 +17426,20 @@ same day, which is the useful part of the result.
       (`needs_grid=False`: areal, array, UZF) and NOT for a `.gpkg` source, which reads an
       absent domain as "the grid's own `idomain_path` decides" (ledgers 209, 246) -- an
       all-ones array there would overrule that file, and nothing tested it until
-      `test_a_lazy_declaration_leaves_the_grids_idomain_file_deciding`. The list areal
-      builders on a grid-only context now see an all-ones domain where they used
-      `grid.ncpl`; the records are the same.
+      `test_a_lazy_declaration_leaves_the_grids_idomain_file_deciding`. **Nor for the LIST
+      areal builders beside a context grid** (`domain_only=False`): they fall back to
+      `grid.ncpl` at `layer=`, which is what the eager form writes on that context, and an
+      all-ones domain changed their records -- measured on 2 layers x 28 cells,
+      `cells="all_active"` 28 -> 56 records (recharge applied twice per column) and
+      `layer=1` moved to layer 0 (review of M2). They keep lazy == eager; with no context
+      at all they get the all-active domain as before (ledger 284), so `all_active`/
+      `layer=` still read differently on those two contexts -- the recorded deferred quirk
+      of the grid fallback, not changed here.
       Revert check: the old condition fails `test_a_lazy_uzf_needs_no_GRID_only_a_domain
       [grid-only]` and both `test_the_array_form_builds_on_a_context_with_a_grid_and_no_domain`
-      cases; dropping the `needs_grid` guard fails the idomain-file test.
+      cases; dropping the `needs_grid` guard fails the idomain-file test; synthesizing for
+      every `needs_grid=False` caller fails both
+      `test_the_list_form_on_a_context_with_a_grid_and_no_domain_writes_what_eager_does` cases.
 
 381. **An MVR `packages=` list of bare names is refused, naming the record spelling (2026-10-11).**
       `_package_names` took a bare string as its own name (for `requires=`) while the
@@ -17453,7 +17461,9 @@ same day, which is the useful part of the result.
       (-1, 2)])` built, and FloPy wrote `1 0` and `0 3` -- cell 0 and layer 0, one-based,
       so ids MF6 refuses and the caller never typed. **Judgment call:** the build's lower
       bound runs on EVERY discretization, outside the DISV-only `ncpl` range check, since it
-      needs no grid (a DIS `(0, 0, -1)` is refused too); it shares that check's complaint
-      list and so its "does not agree with the grid" preamble.
+      needs no grid (a DIS `(0, 0, -1)` and a DISU `(-1,)` are refused too -- it reads
+      one-integer cellids, which the range checks' reader skips); it shares that check's
+      complaint list and so its "does not agree with the grid" preamble.
       Revert check: the old code fails the nine `test_rch_builder_refuses_a_negative_cell_or_layer`
-      cases and the three `test_a_negative_cellid_is_refused*` cases.
+      cases, the three `test_a_negative_cellid_is_refused*` cases and
+      `test_a_negative_node_is_refused_on_a_disu_model`.

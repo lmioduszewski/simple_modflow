@@ -829,9 +829,9 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   invalidates the index, **`rebuilt` included**: a rebuilt SFR renumbers every reach, so a
   CORRECT move of the provider is what makes a typed index wrong. The marker is
   `INDEXED_PACKAGES`, stamped in `mvr_spec` (the funnel both entry points reach), and
-  deliberately NOT `requires=` -- that means "build this first" and `mf.hfb` carries it as
-  `("disv",)`, so reading it as an index reference would refuse every barrier whenever the
-  disv rebuilt. It is conservative about WHICH provider counts (a lake number is
+  deliberately NOT `requires=` -- that means "build this first", so reading it as an index
+  reference would refuse a package ordered after a discretization whenever the disv
+  rebuilt (`mf.hfb` carried `("disv",)` until ledger 378). It is conservative about WHICH provider counts (a lake number is
   feature-derived and usually survives) because a false refusal costs a re-declaration
   where a false pass routes water to the wrong reach.
   **A gridless `mf.uzf` is marked, not pinned** (ledger 302): it resolves from the IDOMAIN

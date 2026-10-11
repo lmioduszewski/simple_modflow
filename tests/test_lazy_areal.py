@@ -512,6 +512,40 @@ def test_the_array_form_resolves_its_layer_index_at_build_time(
         assert np.array_equal(resolved, np.asarray(eager.options[index]))
 
 
+@pytest.mark.parametrize(
+    "cells, layer", [("all_active", 0), ("top_active", 1)], ids=["all_active", "layer1"]
+)
+def test_the_list_form_on_a_context_with_a_grid_and_no_domain_writes_what_eager_does(
+    tmp_path, triangulated_grid, cells, layer
+):
+    """Lazy == eager on a context holding a grid and no domain, beside a DISV with no
+    `idomain=`. The list builders fall back to `grid.ncpl` at `layer=` there, and an
+    all-ones domain written for UZF and the array forms (ledger 380) changed their
+    records: `all_active` 28 -> 56 (recharge twice per column), `layer=1` -> layer 0."""
+
+    def disv():
+        return mf.disv(
+            nlay=2, top=100.0, botm=[50.0, 0.0], **triangulated_grid.get_disv_gridprops()
+        )
+
+    context = ModelContext(grid=triangulated_grid)
+    built = {
+        label: _build(
+            tmp_path,
+            triangulated_grid,
+            mf.rch(nper=1, recharge=6.0e-4, cells=cells, layer=layer, **extra),
+            tag=label,
+            discretization=disv(),
+            context=context,
+        )
+        for label, extra in (("lazy", {}), ("eager", {"context": context}))
+    }
+    lazy, eager = (_records(built[label].get_package("rch")) for label in ("lazy", "eager"))
+    assert len(eager) == int(triangulated_grid.ncpl)
+    assert {cellid[0] for cellid, _ in eager} == {layer}
+    assert lazy == eager
+
+
 @pytest.mark.parametrize("package", ["rch", "evt"])
 def test_the_array_form_builds_on_a_context_with_a_grid_and_no_domain(
     tmp_path, triangulated_grid, package

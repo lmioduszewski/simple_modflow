@@ -945,8 +945,13 @@ def moved_package_complaints(packages) -> list[str]:
     return complaints
 
 
-def _cellids_in(options: dict[str, Any]):
+def _cellids_in(options: dict[str, Any], *, lengths: tuple[int, ...] = (2, 3)):
     """Every ``(layer, cell)``-shaped cellid in a package's stress-period data.
+
+    ``lengths`` are the tuple lengths read as a cellid: DISV's 2 and DIS's 3 by
+    default, which is what the range and idomain checks compare against. The
+    negative-id check passes ``(1, 2, 3)`` to read DISU's ``(node,)`` too, since a
+    lower bound needs no grid (ledger 382).
 
     A record's LEADING tuples of ints are its cellids: one for a list BC, two for
     an HFB, which sits on the face between a pair. Reading them all is still
@@ -976,7 +981,7 @@ def _cellids_in(options: dict[str, Any]):
     def _cellid(value):
         """``value`` as a cellid tuple, or ``None`` if it is not one."""
 
-        if not isinstance(value, (list, tuple)) or len(value) not in (2, 3):
+        if not isinstance(value, (list, tuple)) or len(value) not in lengths:
             return None
         if any(
             isinstance(part, bool) or not isinstance(part, (int, np.integer))
@@ -2486,7 +2491,9 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
         negative = sorted(
             {
                 cellid
-                for cellid in _cellids_in(getattr(package, "options", None) or {})
+                for cellid in _cellids_in(
+                    getattr(package, "options", None) or {}, lengths=(1, 2, 3)
+                )
                 if min(cellid) < 0
             }
         )
