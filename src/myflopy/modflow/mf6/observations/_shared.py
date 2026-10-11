@@ -1730,17 +1730,25 @@ def _measured_periods(
 #: Target names no set may use, compared stripped and lower-cased: the key column of
 #: every table a set takes and returns (``time`` in its values, ``to_wide()`` and
 #: ``compare()``) and of every simulated table, which PEST reads (``per``). A target
-#: named either collided with that column (ledger 423).
+#: named either collided with that column (ledger 423). Each family refuses its
+#: own value columns beside these (``columns=`` of
+#: :func:`_refuse_reserved_target_names`).
 RESERVED_TARGET_NAMES = ("per", "time")
 
 
-def _refuse_reserved_target_names(names, *, owner: str) -> None:
-    """Refuse a target named like a table's key column (:data:`RESERVED_TARGET_NAMES`).
+def _refuse_reserved_target_names(names, *, owner: str, columns=()) -> None:
+    """Refuse a target named like a column of a table the set builds.
 
+    :data:`RESERVED_TARGET_NAMES` for every family, plus ``columns``, the family's own.
     A target named ``per`` collided with the simulated table's period column:
     ``simulated_series`` raised ``cannot insert per, already exists``, and the PEST
     build refused the base table as written in another order (``PER``: an
     ``IndexError`` from pyEMU). One named ``time`` became a second ``time`` column.
+    One named like the column a wide table is melted into -- ``stage`` on a
+    ``LakeStageTargets``, ``head_target`` on a ``HeadTargets`` -- or the simulated one
+    ``compare()`` melts into (``sim_stage``, ``sim_flow``) raised pandas' ``value_name
+    (stage) cannot match an element in the DataFrame columns`` (review of ledger
+    423).
 
     Parameters
     ----------
@@ -1748,6 +1756,9 @@ def _refuse_reserved_target_names(names, *, owner: str) -> None:
         The set's target names, as given.
     owner : str
         The target set's class name, named in the error.
+    columns : iterable of str, optional
+        The family's own value columns, refused beside :data:`RESERVED_TARGET_NAMES`
+        and compared the same way, stripped and lower-cased. Default: none.
 
     Raises
     ------
@@ -1755,21 +1766,31 @@ def _refuse_reserved_target_names(names, *, owner: str) -> None:
         Naming each reserved name used and the names reserved.
     """
 
+    reserved = tuple(dict.fromkeys([*RESERVED_TARGET_NAMES, *(str(c).lower() for c in columns)]))
     taken = sorted({
         str(name) for name in names
-        if str(name).strip().lower() in RESERVED_TARGET_NAMES
+        if str(name).strip().lower() in reserved
     })
     if taken:
+        own = reserved[len(RESERVED_TARGET_NAMES):]
         raise ValueError(
             f"{owner}: {', '.join(repr(name) for name in taken)} cannot name a target: "
             f"{' and '.join(repr(name) for name in RESERVED_TARGET_NAMES)} (in any case) "
             "are the key columns of the tables a target set reads and writes -- the "
             "period of every simulated table PEST reads, and the `time` of the values, "
-            "`to_wide()` and `compare()`. Rename the target."
+            "`to_wide()` and `compare()`"
+            + (
+                f"; and {', '.join(repr(column) for column in own)} are the value "
+                f"columns of {owner}'s own tables"
+                if own else ""
+            )
+            + ". Rename the target."
         )
 
 
-def _wide_by_period(frame: pd.DataFrame, *, value_column: str, caller: str) -> pd.DataFrame:
+def _wide_by_period(
+    frame: pd.DataFrame, *, value_column: str, caller: str, names=()
+) -> pd.DataFrame:
     """A target set's values with one row per stress period and one column per target.
 
     The one shape every ``to_wide()`` returns (ledger 422). ``time`` holds the
@@ -1790,6 +1811,11 @@ def _wide_by_period(frame: pd.DataFrame, *, value_column: str, caller: str) -> p
         The column holding the target value.
     caller : str
         Named in the error :func:`_numeric_periods` raises.
+    names : iterable of str, optional
+        The set's target names, read only when ``frame`` holds no rows: a set given
+        no values then has ``time`` and one empty column for each, typed and sorted
+        as the full table is (they were ``object`` columns in the order given).
+        Default: none.
 
     Returns
     -------
@@ -1797,6 +1823,11 @@ def _wide_by_period(frame: pd.DataFrame, *, value_column: str, caller: str) -> p
         ``time`` (``int64``, the period) plus one ``float`` column per target.
     """
 
+    if frame.empty:
+        return pd.DataFrame({
+            "time": pd.Series(dtype="int64"),
+            **{name: pd.Series(dtype=float) for name in sorted({str(name) for name in names})},
+        })
     per = _numeric_periods(frame.loc[:, ["time"]], caller=caller)
     wide = frame.assign(time=per.to_numpy()).pivot_table(
         index="time", columns="name", values=value_column, aggfunc="first", dropna=False,

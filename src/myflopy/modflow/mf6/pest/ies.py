@@ -44,7 +44,6 @@ from myflopy.modflow.mf6.package_plotting import (
     _symmetric_color_limit,
 )
 from myflopy.modflow.mf6.pest.forward_run import read_target_table
-from myflopy.modflow.mf6.pest.native_parameters import array_row_length
 from myflopy.modflow.utils.datatypes.choros import mpl_colormap_for
 from myflopy.modflow.utils.datatypes.hover import (
     parameter_field_hover,
@@ -1609,46 +1608,56 @@ class IesResults:
                 "IesResults(..., model=...)."
             )
         ncpl = len(model_cell_polygons(self.model))
-        # A captured array is written as pyEMU reads it: one value per line on
-        # DISV, one grid ROW per line on DIS, where an observation's `i`/`j` are
-        # the row and column -- reading `i` alone as the cell put every value of a
-        # row on cell `row` (ledger 420).
-        flopy_grid = getattr(getattr(self.model, "gwf", None), "modelgrid", None)
-        row_length = array_row_length(flopy_grid) if flopy_grid is not None else 1
 
-        def flat_index(match) -> int:
-            return int(match.group(1)) * row_length + int(match.group(2))
+        def captured(token: str) -> dict[str, tuple[int, int]]:
+            """Each captured observation of ``token``'s file, by its ``(i, j)``."""
+
+            found = {}
+            for name in self.pst.observation_data.index:
+                if token not in name:
+                    continue
+                match = self._ARR_RE.search(name)
+                if match:
+                    found[name] = (int(match.group(1)), int(match.group(2)))
+            return found
+
+        def flat_index(found: dict[str, tuple[int, int]]) -> dict[str, int]:
+            """Each observation's position in its file, read row by row.
+
+            pyEMU names a captured array value ``arr_i:<line>_j:<value on the
+            line>``, so the position is ``i * <values per line> + j``, and the
+            values per line are read from the names themselves: one per line on
+            DISV, and on DIS either a grid ROW (``ncol``, as the build writes an
+            array a ``grid``/``zone``/``constant`` parameter scales) or one (a
+            pilot-point array, which its interpolation writes back one value per
+            line). Reading ``i`` alone put a DIS row's values on cell ``row``; the
+            grid's ``ncol`` put a pilot-point layer's 30 values on cells 0..174
+            (ledger 420).
+            """
+
+            per_line = 1 + max((j for _, j in found.values()), default=0)
+            return {name: i * per_line + j for name, (i, j) in found.items()}
 
         # JSON round-trips the int layer keys to strings.
         layer_prefixes = {int(k): v for k, v in (info.get("layer_prefixes") or {}).items()}
         mapping: dict[str, int] = {}
         if layer_prefixes:
-            # Multi-layer DISV: one capture file per layer, each indexed
-            # 0..ncpl-1, so the array index *is* the cell id.
+            # One capture file per layer, each holding that layer's cells in
+            # order, so the position in the file *is* the cell id.
             prefix = layer_prefixes.get(int(layer))
             if prefix is None:
                 raise ValueError(
                     f"No captured field for layer {layer}. "
                     f"Captured layers: {sorted(layer_prefixes)}."
                 )
-            token = f"oname:{prefix.lower()}_"
-            for name in self.pst.observation_data.index:
-                if token not in name:
-                    continue
-                match = self._ARR_RE.search(name)
-                if match:
-                    mapping[name] = flat_index(match)
+            mapping = flat_index(captured(f"oname:{prefix.lower()}_"))
         else:
             # A single whole-grid array covering every layer at once, which is
             # how MF6 writes griddata with no LAYERED keyword (MST porosity):
             # flat = layer * ncpl + cell.
-            token = f"oname:{info['prefix'].lower()}_"
-            for name in self.pst.observation_data.index:
-                if token not in name:
-                    continue
-                match = self._ARR_RE.search(name)
-                if match and flat_index(match) // ncpl == int(layer):
-                    mapping[name] = flat_index(match) % ncpl
+            for name, flat in flat_index(captured(f"oname:{info['prefix'].lower()}_")).items():
+                if flat // ncpl == int(layer):
+                    mapping[name] = flat % ncpl
         if not mapping:
             raise ValueError(f"No captured field cells found for layer {layer}.")
         return mapping

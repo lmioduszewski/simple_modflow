@@ -240,7 +240,10 @@ class SfrStageTargets:
         """Normalize the ``name -> reach`` locations and observed values into internal tables."""
 
         self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrStageTargets")
-        _refuse_reserved_target_names(self._locations["name"], owner=type(self).__name__)
+        _refuse_reserved_target_names(
+            self._locations["name"], owner=type(self).__name__,
+            columns=("stage_target", "sim_stage"),
+        )
         self._values = _normalize_named_series_values(
             self.values,
             time_column=self.time_column,
@@ -299,7 +302,10 @@ class SfrStageTargets:
         """
 
         if self._values.empty:
-            return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
+            return _wide_by_period(
+                self._values, value_column="stage_target", caller="SfrStageTargets.to_wide()",
+                names=self._locations["name"],
+            )
         _measured_periods(self._values, value_column="stage_target", caller="SfrStageTargets.to_wide()")
         # After the check a (target, time) cell holds at most ONE value, so
         # "first" only prefers it over blank rows.
@@ -766,7 +772,10 @@ class SfrFlowTargets:
         """Normalize the ``name -> reach`` locations and observed flows into internal tables."""
 
         self._locations = _normalize_named_integer_locations(self.locations, id_column="reach", target_name="SfrFlowTargets")
-        _refuse_reserved_target_names(self._locations["name"], owner=type(self).__name__)
+        _refuse_reserved_target_names(
+            self._locations["name"], owner=type(self).__name__,
+            columns=("flow_target", "sim_flow"),
+        )
         self._values = _normalize_named_series_values(
             self.values,
             time_column=self.time_column,
@@ -833,7 +842,10 @@ class SfrFlowTargets:
         """
 
         if self._values.empty:
-            return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
+            return _wide_by_period(
+                self._values, value_column="flow_target", caller="SfrFlowTargets.to_wide()",
+                names=self._locations["name"],
+            )
         _measured_periods(self._values, value_column="flow_target", caller="SfrFlowTargets.to_wide()")
         # After the check a (target, time) cell holds at most ONE value, so
         # "first" only prefers it over blank rows.

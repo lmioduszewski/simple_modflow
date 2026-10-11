@@ -18247,7 +18247,11 @@ same day, which is the useful part of the result.
       **The review reads a DIS capture by row AND column** (found once DIS built): a
       captured array's observations are `arr_i:<row>_j:<col>`, and `IesResults.field`
       read `i` alone as the cell, putting a row's 6 values on cell `row`. It reads cell
-      `row * ncol + col` now (`array_row_length`). **Not done:** the review's MAPS on a
+      `i * <values per line> + j`, the values per line read from the observation NAMES
+      (review): `ncol` for an array the build writes a grid row per line, 1 for a
+      pilot-point array, which its interpolation writes back one value per line -- taking
+      the grid's `ncol` for both put a pilot-point layer's 30 values on cells 0..174
+      (`test_a_captured_dis_field_reviews_on_its_own_cells[pilotpoints]`). **Not done:** the review's MAPS on a
       live `mf.dis` view (`model.vor` is `None`) -- maps of a DIS model draw through a
       reopened run (`load_mf6_run`), which has one.
       Tests: `tests/test_pest_structured_grid.py` (7; the forward run scaling K, K33 by
@@ -18277,7 +18281,10 @@ same day, which is the useful part of the result.
       `_shared._wide_by_period` (`_numeric_periods` on `time`, `pivot_table(dropna=False)`).
       **Changes the output: `time` is `int64`** (it was the labels as given -- `object`,
       or `float` for `1.0`), and a period every target left blank keeps its row. Columns
-      stay sorted by name. Nothing in `src/`, the examples or the notebooks reads it.
+      stay sorted by name. A set given NO values has `time` and one empty column per
+      target, typed and sorted the same way (review: they were `object` columns in the
+      order given, and a head set's had no target columns at all). A target with no ROW
+      at all in a set that has values gets no column, as `compare()` has no row for it. Nothing in `src/`, the examples or the notebooks reads it.
       Test: `tests/test_pest_handed_targets.py::test_to_wide_has_a_row_per_period_and_a_column_per_target`
       (six families; fails with the old pivot restored).
 
@@ -18288,7 +18295,13 @@ same day, which is the useful part of the result.
       values' and `to_wide()`'s own. **Judgment call: refuse, not support** -- supporting
       it means renaming the period column of every simulated table PEST reads, which every
       built template and the IES review read by that name. One rule,
-      `_shared.RESERVED_TARGET_NAMES`, asked by all six families.
+      `_shared.RESERVED_TARGET_NAMES`, asked by all six families. Each family also refuses
+      its own value columns (review): a wide table is melted into `stage` on a lake set,
+      `head_target` on a head or concentration set, `stage_target`/`flow_target` on SFR and
+      DRN sets, and `compare()` melts the simulated one into `sim_stage`/`sim_flow`, so a
+      target of that name raised pandas' `value_name (stage) cannot match an element in the
+      DataFrame columns`
+      (`test_a_target_named_like_its_family_s_value_column_is_refused_naming_it`).
       Test: `tests/test_pest_handed_targets.py::test_a_target_named_like_a_key_column_is_refused_naming_it`
       (18 cases; fails with the refusal removed).
 

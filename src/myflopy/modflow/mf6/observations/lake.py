@@ -282,7 +282,9 @@ class LakeStageTargets:
             source = source_frame.set_index("name")["lake"].to_dict()
         for name, lake_id in dict(source).items():
             normalized[str(name)] = int(lake_id)
-        _refuse_reserved_target_names(normalized, owner=type(self).__name__)
+        _refuse_reserved_target_names(
+            normalized, owner=type(self).__name__, columns=("stage", "sim_stage")
+        )
         self._series = normalized
         self._values = _normalize_lake_stage_values(
             self.values,
@@ -446,7 +448,10 @@ class LakeStageTargets:
         """
 
         if self._values.empty:
-            return pd.DataFrame(columns=["time", *self._series.keys()])
+            return _wide_by_period(
+                self._values, value_column="stage", caller="LakeStageTargets.to_wide()",
+                names=self._series.keys(),
+            )
         _measured_periods(self._values, value_column="stage", caller="LakeStageTargets.to_wide()")
         # After the check a (target, period) cell holds at most ONE value, so
         # "first" only prefers it over blank rows.

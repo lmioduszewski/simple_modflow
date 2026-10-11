@@ -218,7 +218,9 @@ class HeadTargets:
             group_column=self.group_column,
             weight_column=self.weight_column,
         )
-        _refuse_reserved_target_names(self._locations["name"], owner=type(self).__name__)
+        _refuse_reserved_target_names(
+            self._locations["name"], owner=type(self).__name__, columns=("head_target",)
+        )
         self._values = _normalize_values_frame(
             self.values,
             time_column=self.time_column,
@@ -462,7 +464,8 @@ class HeadTargets:
 
         One row per stress period a ``time`` names, and one column per target
         name holding its target value (a head, or a concentration on
-        ``ConcTargets``). ``time`` is the zero-based period as ``int``, read the way
+        ``ConcTargets``); a set given no values gives ``time`` and one empty column
+        per target. ``time`` is the zero-based period as ``int``, read the way
         :meth:`compare` and the PEST build read it, so ``"1"`` and ``1`` are one
         row (they were two, ledger 422). Two rows HOLDING a value for one
         target in one stress period are REFUSED -- names compared stripped and
@@ -498,7 +501,8 @@ class HeadTargets:
         # "first" only prefers it over blank rows (and, for a two-screen well,
         # over the copy ``get()`` makes for its second screen).
         return _wide_by_period(
-            self.get(), value_column="head_target", caller=f"{type(self).__name__}.to_wide()"
+            self.get(), value_column="head_target", caller=f"{type(self).__name__}.to_wide()",
+            names=self._locations["name"],
         )
 
     def summary(self) -> pd.DataFrame:

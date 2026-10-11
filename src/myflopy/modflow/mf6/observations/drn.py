@@ -630,7 +630,10 @@ class DrnFlowTargets:
             group_column=self.group_column,
             weight_column=self.weight_column,
         )
-        _refuse_reserved_target_names(self._locations["name"], owner=type(self).__name__)
+        _refuse_reserved_target_names(
+            self._locations["name"], owner=type(self).__name__,
+            columns=("flow_target", "sim_flow"),
+        )
         self._values = _normalize_named_series_values(
             self.values,
             time_column=self.time_column,
@@ -781,7 +784,10 @@ class DrnFlowTargets:
         """
 
         if self._values.empty:
-            return pd.DataFrame(columns=["time", *self._locations["name"].astype(str).tolist()])
+            return _wide_by_period(
+                self._values, value_column="flow_target", caller="DrnFlowTargets.to_wide()",
+                names=self._locations["name"],
+            )
         _measured_periods(self._values, value_column="flow_target", caller="DrnFlowTargets.to_wide()")
         # After the check a (target, time) cell holds at most ONE value, so
         # "first" only prefers it over blank rows.

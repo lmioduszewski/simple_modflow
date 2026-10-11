@@ -216,14 +216,19 @@ def test_spectral_simulation_draws_on_a_dis_model(built):
 
 
 @pytest.mark.slow
-def test_a_captured_dis_field_reviews_on_its_own_cells(tmp_path):
+@pytest.mark.parametrize("style", ["constant", "pilotpoints"])
+def test_a_captured_dis_field_reviews_on_its_own_cells(tmp_path, style):
     """A captured array on DIS is written a grid row per line, so its observations are
     named ``i:<row>_j:<col>``; the review read ``i`` alone as the cell, putting every
-    value of a row on cell ``row``. Each value is on cell ``row * ncol + col`` now."""
+    value of a row on cell ``row``. A pilot-point array is written back one value per
+    line, so there the line IS the cell, and reading it as a grid row of ``ncol`` put a
+    layer's 30 values on cells 0..174 (review of ledger 420). The layout is read
+    from the observation names, so each value is on its own cell either way."""
 
     model = mf.load_mf6_run(_dis_run(tmp_path / "run"))
     cal = model.pest("cap", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    cal.parameterize("k", style="constant", bounds=(0.5, 2.0), capture=True)
+    extra = {"pp_space": 2} if style == "pilotpoints" else {}
+    cal.parameterize("k", style=style, bounds=(0.5, 2.0), capture=True, **extra)
     cal.observe(_heads())
     _build(cal, "cap")
     results = cal.prior(reals=3)

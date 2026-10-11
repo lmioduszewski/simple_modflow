@@ -368,6 +368,43 @@ def test_a_target_named_like_a_key_column_is_refused_naming_it(family, name):
         _two_target_family(family, [(0, name, -1.0)], names=(name, "v"))
 
 
+_OWN_COLUMNS = {"head": ["head_target"], "conc": ["head_target"],
+                "lake": ["stage", "sim_stage"], "sfr_stage": ["stage_target", "sim_stage"],
+                "sfr_flow": ["flow_target", "sim_flow"], "drn": ["flow_target", "sim_flow"]}
+
+
+@pytest.mark.parametrize("family, name", [
+    (family, name) for family, names in _OWN_COLUMNS.items() for name in names])
+def test_a_target_named_like_its_family_s_value_column_is_refused_naming_it(family, name):
+    """A target named like the column a wide table is melted into (``stage`` on a lake
+    set) or ``compare()`` melts the simulated one into (``sim_stage``) raised pandas'
+    ``value_name (stage) cannot match an element in the DataFrame columns`` (review of
+    ledger 423)."""
+
+    with pytest.raises(ValueError, match=(
+            rf"{re.escape(repr(name.upper()))} cannot name a target: .*; and .*"
+            rf"{re.escape(repr(name))}.* are the value columns")):
+        _two_target_family(family, [(0, name.upper(), -1.0)], names=(name.upper(), "v"))
+
+
+@pytest.mark.parametrize("family", ["head", "conc", "lake", "sfr_stage", "sfr_flow", "drn"])
+def test_to_wide_of_a_set_given_no_values_is_typed_as_a_full_one(family):
+    """A set given no values has ``time`` and one empty column per target, typed and
+    sorted as the full table is (they were ``object`` columns in the order given;
+    review of ledger 422)."""
+
+    frame = pd.DataFrame(columns=["time", "name", _FAMILY_COLUMN[family]])
+    ids = {"head": [22, 23], "conc": [22, 23], "lake": [0, 0], "sfr_stage": [1, 2],
+           "sfr_flow": [3, 4], "drn": [[20], [21]]}[family]
+    cls = {"head": mf.HeadTargets, "conc": mf.ConcTargets, "lake": mf.LakeStageTargets,
+           "sfr_stage": mf.SfrStageTargets, "sfr_flow": mf.SfrFlowTargets,
+           "drn": mf.DrnFlowTargets}[family]
+    wide = cls(locations=dict(zip(("w", "v"), ids, strict=True)), values=frame).to_wide()
+    assert wide.columns.tolist() == ["time", "v", "w"] and wide.empty
+    assert wide["time"].dtype == np.int64
+    assert all(dtype == np.float64 for dtype in wide.loc[:, ["v", "w"]].dtypes)
+
+
 # -- (d): nothing is history-matched that nobody measured -----------------------
 
 

@@ -762,7 +762,11 @@ values for one target in one period are refused in both, naming each row's value
 `compare()` keeps its rows (ledger 422). A blank value is unmeasured; a value that
 is not a finite number (`"12,5"`, `inf`) is refused when the targets are built, naming
 the target and its column, and so is a target NAMED `per` or `time` in any case -- the
-key columns of the tables a set reads and writes (ledger 423).
+key columns of the tables a set reads and writes (ledger 423) -- or like its own
+family's value columns (`stage`/`sim_stage` on a lake set, `head_target` on a head or
+concentration set, `stage_target`/`flow_target`/`sim_flow` on SFR and DRN sets), which
+pandas refused with `value_name (stage) cannot match an element` (review of ledger
+423).
 
 **What PEST is handed is exactly the targets** (ledger 340). `cal.build()` matches each
 target to the simulated row whose index EQUALS its period and to its column by name,
