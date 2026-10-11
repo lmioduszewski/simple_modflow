@@ -985,3 +985,13 @@ def test_mf6_moves_no_drain_water_in_a_switched_off_period(tmp_path):
     }
     assert flows[0] < -1.0, "the drains discharge while they are on"
     assert flows[1] == 0.0, "ITMP=0 switched them off; reusing period 1 drained ~-64 ft3/d"
+
+
+@pytest.mark.parametrize("barriers", [0, 1])
+def test_read_hfb_is_n_by_3_even_with_no_barrier(tmp_path, barriers):
+    """An HFB6 file declaring zero barriers reads as (0, 3), like a model with none."""
+
+    lines = f"  0  0  {barriers}\n" + "".join("  1  2  0.001\n" for _ in range(barriers)) + "  0\n"
+    nam = _write_usg_model(tmp_path, packages={"HFB6": (16, "tiny.hfb", lines)})
+    model = read_usg(nam, gsf=tmp_path / "tiny.gsf", crs="EPSG:2927")
+    assert model.hfb.shape == (barriers, 3)

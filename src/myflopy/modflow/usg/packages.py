@@ -612,6 +612,9 @@ def read_hfb(name_file: NameFile) -> np.ndarray:
     counts = free_ints(cursor.next_line())
     nhfbnp = counts[2] if len(counts) >= 3 else counts[-1]
     rows = [free_floats(cursor.next_line())[:3] for _ in range(nhfbnp)]
+    if not rows:
+        # `np.asarray([])` is shape (0,), not the (0, 3) every other branch returns.
+        return np.empty((0, 3))
     return np.asarray(rows, dtype=float)
 
 
