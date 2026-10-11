@@ -15329,6 +15329,13 @@ same day, which is the useful part of the result.
       structured grid is refused, entry rewritten (ledger 384); and the crash of
       `run_ies()`/`prior()` with a correlated `grid` parameter beside correlated pilot
       points is fixed (ledger 385).
+      ~~`load_run`/`Run.load` documented as taking a manifest's executable over an explicit
+      `executable=`; a module-level lambda builder as "written but cannot be imported
+      back"; `SimulationSpec.with_grid(name=)` as renaming only; `with_grid`'s
+      `rule=`/`uncovered=` as checked only once a package has an array and ignored
+      without `remap=True`; `save(bundle_sources=True)` as checking the key clash AFTER
+      copying and repointing~~ -- fixed 2026-10-11, entries rewritten (ledger 386
+      for the remap refusal).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
