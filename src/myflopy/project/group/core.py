@@ -177,6 +177,12 @@ class ModelGroup:
         ModelDiff
             The single ``diff`` verb over this group.
 
+        Raises
+        ------
+        ValueError
+            The group holds one model: there is nothing to compare it against, and
+            the empty diff it used to return read as "no differences" (ledger 373).
+
         Examples
         --------
         >>> group = mf.ModelGroup({"base": run_a, "variant": run_b}, reference="base")

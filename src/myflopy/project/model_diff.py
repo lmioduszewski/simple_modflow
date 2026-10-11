@@ -898,8 +898,26 @@ class ModelDiff:
     """Reference-star difference across a :class:`ModelGroup` (the ``diff`` verb)."""
 
     def __init__(self, group: ModelGroup):
-        """Wrap a :class:`ModelGroup` as the ``diff`` engine (its reference is the baseline)."""
+        """Wrap a :class:`ModelGroup` as the ``diff`` engine (its reference is the baseline).
 
+        Parameters
+        ----------
+        group : ModelGroup
+            The models to compare: its ``reference`` is the baseline and every
+            other member is diffed against it. A group of ONE model is refused
+            with ``ValueError`` naming the spelling with a second model: it has
+            nothing to compare, and used to return an empty diff that read as "no
+            differences" (ledger 373).
+        """
+
+        if len(group.models) < 2:
+            only = next(iter(group.models), None)
+            raise ValueError(
+                f"A diff compares models against the reference {group.reference!r}, and "
+                f"this group holds only {only!r}: give it a second model -- "
+                f"ModelGroup({{{only!r}: m1, 'other': m2}}).diff(), or "
+                "model.diff(other)."
+            )
         self.group = group
 
     @property

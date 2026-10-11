@@ -237,6 +237,9 @@ def _fake_surface_water_model():
         vor=vor,
         # MF6's user numbering of a one-layer, two-cell grid: what a budget node means.
         node_to_lni={0: (0, 0), 1: (0, 1)},
+        # How its cellids read: a LAK/SFR table splits them by the grid's own rule
+        # (ledger 419).
+        modelgrid=SimpleNamespace(grid_type="vertex", nlay=1, ncpl=2),
         package=_answering_by_type({"lak": lak, "sfr": sfr, "drn": "drn_owner"}),
         fl=SimpleNamespace(lak=lak, sfr=sfr),
         sfr=SimpleNamespace(

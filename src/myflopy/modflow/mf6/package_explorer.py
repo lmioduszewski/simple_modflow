@@ -23,6 +23,8 @@ from myflopy.modflow.mf6.package_budget import (
     build_surface_water_exchange_cell_table,
 )
 from myflopy.modflow.mf6.package_explorer_utils import (
+    CELLID_FORMS,
+    CellNumbering,
     _aggregate_hover_strings,
     _coerce_numeric_like_columns,
     _extract_structured_column,
@@ -33,6 +35,8 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_iterable_filter,
     _normalize_surface_water_include,
     _normalize_term_filter,
+    cell_numbering,
+    has_cell_numbering,
     split_cellid_columns,
 )
 from myflopy.modflow.mf6.package_inputs import (
@@ -143,6 +147,10 @@ __all__ = [
     "_get_package_explorer_cache",
     "_extract_structured_column",
     "_coerce_numeric_like_columns",
+    "CELLID_FORMS",
+    "CellNumbering",
+    "cell_numbering",
+    "has_cell_numbering",
     "split_cellid_columns",
     "_normalize_term_filter",
     "_normalize_connection_type_filter",

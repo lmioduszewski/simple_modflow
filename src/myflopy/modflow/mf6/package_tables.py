@@ -16,6 +16,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _extract_structured_column,
     _get_package_explorer_cache,
     _normalize_iterable_filter,
+    cell_numbering,
     split_cellid_columns,
 )
 from myflopy.modflow.mf6.package_registry import (
@@ -146,11 +147,14 @@ def _one_package_table(model, package, package_name, *, per, layer_values, cell_
         else:
             period_items = package.stress_period_data.get_data().items()
         frames: list[pd.DataFrame] = []
+        # A DIS cellid is (layer, row, col): the model's own numbering reads it
+        # (ledger 419).
+        numbering = cell_numbering(model)
         for period, data in period_items:
             frame = pd.DataFrame(data).copy()
             if frame.empty:
                 continue
-            frame = split_cellid_columns(frame)
+            frame = split_cellid_columns(frame, numbering)
             if layer_values is not None and "layer" in frame.columns:
                 frame = frame[frame["layer"].isin(layer_values)]
             if cell_values is not None and "cell" in frame.columns:
@@ -426,7 +430,7 @@ def build_sfr_reach_table(model: SimulationBase, *, package: str | None = None) 
     """
 
     packagedata = pd.DataFrame(one_package(model, "sfr", package).packagedata.get_data()).copy()
-    packagedata = split_cellid_columns(packagedata)
+    packagedata = split_cellid_columns(packagedata, cell_numbering(model))
     if "ifno" in packagedata.columns:
         packagedata = packagedata.rename(columns={"ifno": "reach"})
     packagedata["reach"] = packagedata["reach"].astype(int)
@@ -495,7 +499,7 @@ def build_lak_connection_table(model: SimulationBase, *, package: str | None = N
             ]
         )
 
-    connectiondata = split_cellid_columns(connectiondata)
+    connectiondata = split_cellid_columns(connectiondata, cell_numbering(model))
     if "ifno" in connectiondata.columns:
         connectiondata = connectiondata.rename(columns={"ifno": "lake"})
     connectiondata["lake"] = pd.to_numeric(
@@ -719,7 +723,7 @@ def build_sfr_input_table(model: SimulationBase, *, package: str | None = None) 
 
     sfr = one_package(model, "sfr", package)
     base = pd.DataFrame(sfr.packagedata.get_data()).copy()
-    base = split_cellid_columns(base)
+    base = split_cellid_columns(base, cell_numbering(model))
     if "ifno" in base.columns:
         base = base.rename(columns={"ifno": "reach"})
     base["reach"] = pd.to_numeric(base["reach"], errors="coerce").astype(int)

@@ -1488,22 +1488,26 @@ class SimulationBase:
             ``ValueError`` whatever ``overwrite`` says.
         cellids : iterable of int or tuple
             The cells. An ``int`` is an in-layer cell number as given, and a
-            one-item tuple ``(cell,)`` the same; an empty tuple is dropped. A
-            longer tuple is the model grid's own cellid: ``(layer, cell)`` on a
-            vertex grid (DISV, DISU), ``(layer, row, col)`` on a structured (DIS)
-            grid, whose cell number is FloPy's row-major ``row * ncol + col``. A
-            tuple of the other grid's length, or a row/column off a structured
-            grid, raises ``ValueError`` naming the expected form (ledger
-            376: a ``(layer, row, col)`` used to register the ROW as the
-            cell). The region stores the sorted unique cell numbers, plus the raw
-            ids as given. :meth:`region_heads` matches them against the heads
-            table's in-layer ``cell`` column, so give in-layer (per-layer) cell
-            indices.
+            one-item tuple ``(cell,)`` the same -- on DISU that is MF6's own
+            cellid ``(node,)``, which this model's heads table and cell polygons
+            number as cell ``node`` of layer 0; an empty tuple is dropped. A
+            longer tuple is the model grid's own cellid, read by the rule every
+            package table uses (ledger 419): ``(layer, cell)`` on DISV,
+            ``(layer, row, col)`` on DIS, whose cell number is FloPy's row-major
+            ``row * ncol + col``; on DISU a longer tuple is refused naming
+            ``(node,)``. A tuple of another length raises ``ValueError`` naming
+            the expected form (ledger 376: a ``(layer, row, col)`` used to
+            register the ROW as the cell), and so does any layer, row, column or
+            cell off the grid -- a bare cell number included (ledger 419).
+            The region stores the sorted unique cell numbers, plus the raw ids as
+            given. :meth:`region_heads` matches them against the heads table's
+            in-layer ``cell`` column, so give in-layer (per-layer) cell indices.
         layer : int or list of int or None, optional
             Zero-based layer (or layers) the region applies to; :meth:`region_heads`
-            filters to it when called without its own ``layer``. Default ``None``
-            takes the layers named by tuple ``cellids`` (one layer as an ``int``,
-            several as a sorted list), else leaves the region layer-free.
+            filters to it when called without its own ``layer``. A layer off the
+            grid raises ``ValueError`` (on DISU the only layer is 0). Default
+            ``None`` takes the layers named by tuple ``cellids`` (one layer as an
+            ``int``, several as a sorted list), else leaves the region layer-free.
         category : str, optional
             Free label stored on the region and shown in :meth:`list_regions`.
             Default ``"selection"``.
@@ -1532,7 +1536,8 @@ class SimulationBase:
         ------
         ValueError
             If ``name`` is a group's name, an existing region's without
-            ``overwrite=True``, or a tuple cellid is not of the grid's form.
+            ``overwrite=True``, a tuple cellid is not of the grid's form, or a
+            layer or cell is off the grid.
         """
 
         return self.regions.add_from_cells(

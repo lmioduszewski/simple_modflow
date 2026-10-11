@@ -7,10 +7,16 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.grid.geometry import selected_cells
 from myflopy.modflow.mf6.grid.selection import get_vor_cells_as_series
+from myflopy.modflow.mf6.package_explorer_utils import (
+    CellNumbering,
+    cell_numbering,
+    has_cell_numbering,
+)
 from myflopy.modflow.mf6.period_end import last_saved_step
 
 
@@ -44,7 +50,7 @@ def normalize_region_inputs(
     cellids: Iterable[Any] | None,
     *,
     layer: int | list[int] | None = None,
-    structured_shape: tuple[int, int] | None = None,
+    numbering: CellNumbering | None = None,
 ) -> tuple[list[Any], list[int], int | list[int] | None]:
     """Normalize region cell inputs into raw IDs, cell numbers, and layers.
 
@@ -52,27 +58,38 @@ def normalize_region_inputs(
     ----------
     cellids : iterable of int or tuple, or None
         The cells. An integer is an in-layer cell number as given, and a one-item
-        tuple ``(cell,)`` the same. A longer tuple is the grid's own cellid: on a
-        vertex or unstructured grid (``structured_shape=None``) ``(layer, cell)``;
-        on a structured grid ``(layer, row, col)``, whose cell number is the
-        row-major ``row * ncol + col`` -- the numbering the model's own grid, its
-        heads table and its cell polygons use. A tuple of the other grid's length,
-        or a row/column off the grid, raises ``ValueError`` naming the expected
-        form (ledger 376: ``(layer, row, col)`` used to read the ROW as the
-        cell, and a ``(layer, cell, x)`` dropped ``x`` in silence). An empty tuple
-        is dropped. ``None`` is no cells.
+        tuple ``(cell,)`` the same -- on a DISU grid that is MF6's own cellid
+        ``(node,)``, which a DISU model's heads table and cell polygons number as
+        cell ``node`` of layer 0 (measured, ledger 419). A longer tuple is the
+        grid's own cellid, read through ``numbering`` (``CellNumbering``, the one
+        rule the package tables use): ``(layer, row, col)`` on DIS, whose cell
+        number is the row-major ``row * ncol + col``, and ``(layer, cell)`` on DISV;
+        on DISU a longer tuple is refused naming ``(node,)``. With no grid known
+        (``numbering=None``) a longer tuple reads as ``(layer, cell)``. A tuple of
+        another length raises ``ValueError`` naming the form (ledger 376:
+        ``(layer, row, col)`` used to read the ROW as the cell). An empty tuple is
+        dropped. ``None`` is no cells.
     layer : int or list of int or None, optional
         The region's layer(s). ``None`` (the default) takes the layers the tuple
         cellids name -- one as an ``int``, several as a sorted list -- else none.
-    structured_shape : tuple of (int, int) or None, optional
-        ``(nrow, ncol)`` of a structured (DIS) grid, which makes a cellid
-        ``(layer, row, col)``; ``None`` (the default) reads ``(layer, cell)``.
+    numbering : CellNumbering or None, optional
+        The model grid's numbering (``package_explorer_utils.cell_numbering``).
+        Given, every layer (a tuple's and ``layer=``'s) is checked against its
+        ``nlay`` and every cell against its ``ncpl`` -- a DIS row and column against
+        ``nrow``/``ncol`` -- and one off the grid raises ``ValueError`` (ledger
+        419: ``(5, 2, 3)`` on a 2-layer grid registered layer 5, and a bare
+        cell past the layer was kept). ``None`` (the default) checks nothing.
 
     Returns
     -------
     tuple
         ``(raw_cellids, cells, layer)``: the cellids as given, the sorted unique
         in-layer cell numbers, and the resolved layer(s).
+
+    Raises
+    ------
+    ValueError
+        A tuple of the wrong length for the grid, or a layer or cell off it.
     """
     if cellids is None:
         raw_cellids: list[Any] = []
@@ -81,9 +98,15 @@ def normalize_region_inputs(
 
     cells: list[int] = []
     derived_layers: list[int] = []
-    expected = 3 if structured_shape is not None else 2
-    form = "(layer, row, col)" if structured_shape is not None else "(layer, cell)"
-    grid = "a structured (DIS)" if structured_shape is not None else "a vertex (DISV/DISU)"
+    if numbering is None:
+        expected, form, grid = 2, "(layer, cell)", "a grid of unknown type"
+    else:
+        expected, form = numbering.length, numbering.form
+        grid = {
+            "structured": "a structured (DIS)",
+            "vertex": "a vertex (DISV)",
+            "unstructured": "an unstructured (DISU)",
+        }[numbering.kind]
 
     for cellid in raw_cellids:
         if isinstance(cellid, tuple):
@@ -93,24 +116,25 @@ def normalize_region_inputs(
                 cells.append(int(cellid[0]))
                 continue
             if len(cellid) != expected:
+                bare = "an in-layer cell number" if expected > 1 else "a bare node number"
                 raise ValueError(
-                    f"Region cellid {cellid!r} has {len(cellid)} items; on {grid} grid a cellid "
-                    f"is {form}, or a bare in-layer cell number."
+                    f"Region cellid {cellid!r} has {len(cellid)} items; on {grid} grid a "
+                    f"cellid is {form}, or {bare}."
                 )
-            derived_layers.append(int(cellid[0]))
-            if structured_shape is None:
+            if numbering is None:
+                derived_layers.append(int(cellid[0]))
                 cells.append(int(cellid[1]))
                 continue
-            nrow, ncol = structured_shape
-            row, col = int(cellid[1]), int(cellid[2])
-            if not (0 <= row < nrow and 0 <= col < ncol):
-                raise ValueError(
-                    f"Region cellid {cellid!r} is off the grid: rows are 0..{nrow - 1} and "
-                    f"columns 0..{ncol - 1} (zero-based (layer, row, col))."
-                )
-            cells.append(row * ncol + col)
+            found_layer, found_cell = numbering.layer_cell(cellid)
+            derived_layers.append(found_layer)
+            cells.append(found_cell)
         else:
             cells.append(int(cellid))
+
+    if numbering is not None:
+        numbering.check(cells=cells)
+        given = [] if layer is None else ([layer] if isinstance(layer, (int, np.integer)) else layer)
+        numbering.check(layers=given)
 
     unique_cells = sorted(set(cells))
 
@@ -122,19 +146,6 @@ def normalize_region_inputs(
             layer = unique_layers
 
     return raw_cellids, unique_cells, layer
-
-
-def _structured_shape(model) -> tuple[int, int] | None:
-    """``(nrow, ncol)`` when ``model``'s grid is structured (DIS), else ``None``.
-
-    Read off FloPy's own model grid, whose cell order is the row-major one the
-    model's cell polygons and heads table use (ledger 376).
-    """
-
-    grid = model.modelgrid
-    if getattr(grid, "grid_type", None) == "structured":
-        return int(grid.nrow), int(grid.ncol)
-    return None
 
 
 class RegionRegistry:
@@ -333,13 +344,15 @@ class RegionRegistry:
         """Create and register a region from explicit cell IDs."""
         # ``None`` is no cells, as ``normalize_region_inputs`` reads it.
         cellids = [] if cellids is None else list(cellids)
-        # The grid is read only when a cellid needs it: a bare cell number means
-        # the same on every grid, and reading a loaded run's grid opens its files.
-        needs_grid = any(isinstance(cellid, tuple) and len(cellid) >= 2 for cellid in cellids)
+        # The model's grid reads the tuples and bounds every layer and cell
+        # (ledger 419). An unbound registry (``model=None``) or a model with
+        # no discretization package knows no grid.
+        needs_grid = bool(cellids) or layer is not None
+        known = needs_grid and has_cell_numbering(self.model)
         raw_cellids, cells, resolved_layer = normalize_region_inputs(
             cellids,
             layer=layer,
-            structured_shape=_structured_shape(self.model) if needs_grid else None,
+            numbering=cell_numbering(self.model) if known else None,
         )
         region = ModelRegion(
             name=name,

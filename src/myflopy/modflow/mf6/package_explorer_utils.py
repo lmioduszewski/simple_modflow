@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -79,41 +80,312 @@ def _coerce_numeric_like_columns(
     return coerced
 
 
-def split_cellid_columns(frame: pd.DataFrame) -> pd.DataFrame:
+#: The cellid each discretization writes, by FloPy's ``grid_type``: the three grid
+#: types :func:`cell_numbering` reads.
+CELLID_FORMS = {
+    "structured": "(layer, row, col)",
+    "vertex": "(layer, cell)",
+    "unstructured": "(node,)",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CellNumbering:
+    """How a model's cellids name the ``(layer, cell)`` its views are keyed by.
+
+    ONE rule for every reader that turns a FloPy cellid into a cell (ledger
+    419): the package input tables, the SFR/LAK tables, the diff's value tier
+    and the region registry. Every view of a model numbers a cell ``(layer, cell)``
+    with ``cell`` the in-layer index the model's own grid, its heads table and its
+    cell polygons use, so a cellid maps as
+
+    * DIS ``(layer, row, col)`` -> ``(layer, row * ncol + col)``, FloPy's row-major
+      order (``split_cellid_columns`` read the ROW as the cell, so two identical
+      DIS runs diffed as changed);
+    * DISV ``(layer, cell)`` -> itself;
+    * DISU ``(node,)`` -> ``(0, node)``: MF6 numbers a DISU model's cells by node
+      alone and writes its heads as one record, so its heads table and its cell
+      polygons are one layer of ``nodes`` cells -- whatever layering FloPy infers
+      from ``IHC``.
+
+    A cellid of another length, or off the grid, raises ``ValueError`` naming the
+    form: off the grid, a DIS column past ``ncol`` would otherwise land on the next
+    row's cell.
+
+    Attributes
+    ----------
+    kind : str
+        FloPy's ``grid_type``: ``"structured"``, ``"vertex"`` or ``"unstructured"``.
+    nlay : int
+        Layers the views number: the grid's layers, and 1 on DISU.
+    ncpl : int
+        Cells per layer the views number: ``nrow * ncol`` on DIS, the DISV's
+        ``ncpl``, and the node count on DISU.
+    ncol : int or None
+        Columns of a DIS grid; ``None`` on DISV and DISU.
+    """
+
+    kind: str
+    nlay: int
+    ncpl: int
+    ncol: int | None = None
+
+    @property
+    def form(self) -> str:
+        """The cellid this discretization writes, e.g. ``"(layer, row, col)"``."""
+
+        return CELLID_FORMS[self.kind]
+
+    @property
+    def length(self) -> int:
+        """How many items that cellid has: 3 on DIS, 2 on DISV, 1 on DISU."""
+
+        return {"structured": 3, "vertex": 2, "unstructured": 1}[self.kind]
+
+    def layer_cells(self, cellids: Iterable) -> tuple[np.ndarray, np.ndarray]:
+        """Each cellid as ``(layer, cell)``, as two integer arrays.
+
+        Parameters
+        ----------
+        cellids : iterable of tuple
+            FloPy cellids, each a tuple of this grid's :attr:`length` integers
+            (a bare integer is read as a one-item tuple, so it is a DISU node and
+            refused elsewhere).
+
+        Returns
+        -------
+        tuple of numpy.ndarray
+            ``(layers, cells)``, one entry per cellid, in order.
+
+        Raises
+        ------
+        ValueError
+            A cellid has another number of items, or names a layer, row, column,
+            cell or node off the grid. The message names the offending cellids and
+            this grid's form.
+        """
+
+        items = [tuple(value) if isinstance(value, (tuple, list, np.ndarray, np.void))
+                 else (value,) for value in cellids]
+        wrong = [item for item in items if len(item) != self.length]
+        if wrong:
+            raise ValueError(
+                f"Cellid {wrong[0]!r} has {len(wrong[0])} item(s), but on this "
+                f"{self.kind} grid a cellid is {self.form}"
+                + (f" ({len(wrong)} such cellids)." if len(wrong) > 1 else ".")
+            )
+        if not items:
+            empty = np.zeros(0, dtype=int)
+            return empty, empty.copy()
+        table = np.asarray(items, dtype=int).reshape(len(items), self.length)
+        if self.kind == "structured":
+            nrow = self.ncpl // self.ncol
+            layers, rows, cols = table[:, 0], table[:, 1], table[:, 2]
+            off = (
+                (layers < 0) | (layers >= self.nlay) | (rows < 0) | (rows >= nrow)
+                | (cols < 0) | (cols >= self.ncol)
+            )
+            bounds = (
+                f"layers 0..{self.nlay - 1}, rows 0..{nrow - 1} and columns "
+                f"0..{self.ncol - 1}"
+            )
+            cells = rows * self.ncol + cols
+        elif self.kind == "vertex":
+            layers, cells = table[:, 0], table[:, 1]
+            off = (layers < 0) | (layers >= self.nlay) | (cells < 0) | (cells >= self.ncpl)
+            bounds = f"layers 0..{self.nlay - 1} and cells 0..{self.ncpl - 1}"
+        else:
+            cells = table[:, 0]
+            layers = np.zeros_like(cells)
+            off = (cells < 0) | (cells >= self.ncpl)
+            bounds = f"nodes 0..{self.ncpl - 1}"
+        if off.any():
+            bad = [items[index] for index in np.flatnonzero(off)[:5]]
+            raise ValueError(
+                f"Cellid(s) {', '.join(repr(item) for item in bad)} are off the grid: "
+                f"a zero-based {self.form} here has {bounds}"
+                + (f" ({int(off.sum())} such cellids)." if off.sum() > 1 else ".")
+            )
+        return layers.astype(int), cells.astype(int)
+
+    def layer_cell(self, cellid) -> tuple[int, int]:
+        """One cellid as ``(layer, cell)``; see :meth:`layer_cells`.
+
+        Parameters
+        ----------
+        cellid : tuple
+            One FloPy cellid of this grid's :attr:`length` integers.
+
+        Returns
+        -------
+        tuple of (int, int)
+            The ``(layer, cell)`` the model's views number it.
+        """
+
+        layers, cells = self.layer_cells([cellid])
+        return int(layers[0]), int(cells[0])
+
+    def check(self, *, layers: Iterable[int] = (), cells: Iterable[int] = ()) -> None:
+        """Refuse a layer or an in-layer cell number off the grid.
+
+        Parameters
+        ----------
+        layers : iterable of int, optional
+            Zero-based layers to check against ``0..nlay - 1``. Default none.
+        cells : iterable of int, optional
+            Zero-based in-layer cell numbers (a node on DISU) to check against
+            ``0..ncpl - 1``. Default none.
+
+        Raises
+        ------
+        ValueError
+            Naming the first values off the grid and the grid's range.
+        """
+
+        bad_layers = sorted({int(v) for v in layers if not 0 <= int(v) < self.nlay})
+        if bad_layers:
+            span = "one layer, 0" if self.nlay == 1 else f"layers 0..{self.nlay - 1}"
+            raise ValueError(
+                f"Layer(s) {bad_layers[:5]} are off the grid: this {self.kind} grid has "
+                f"{span} (zero-based)."
+            )
+        bad_cells = sorted({int(v) for v in cells if not 0 <= int(v) < self.ncpl})
+        if bad_cells:
+            noun = "node" if self.kind == "unstructured" else "in-layer cell"
+            raise ValueError(
+                f"Cell(s) {bad_cells[:5]} are off the grid: this {self.kind} grid has "
+                f"{noun} numbers 0..{self.ncpl - 1} (zero-based)."
+            )
+
+
+def _model_grid(source):
+    """The FloPy grid of ``source``: its ``modelgrid``, or ``source`` itself when it has none.
+
+    Parameters
+    ----------
+    source : object
+        A model (anything with a ``modelgrid``) or a FloPy grid.
+
+    Returns
+    -------
+    object
+        ``source.modelgrid`` when it exists, else ``source``.
+    """
+
+    return getattr(source, "modelgrid", source)
+
+
+def has_cell_numbering(source) -> bool:
+    """Whether :func:`cell_numbering` can read ``source``'s cellids.
+
+    Parameters
+    ----------
+    source : object or None
+        A model, a FloPy grid, or ``None``.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``source``'s grid is of one of the three types in
+        :data:`CELLID_FORMS`; ``False`` for ``None``, a model with no
+        discretization (FloPy's untyped base grid, ``grid_type`` ``None``) or a
+        double without a grid.
+    """
+
+    return source is not None and getattr(_model_grid(source), "grid_type", None) in CELLID_FORMS
+
+
+def cell_numbering(source) -> CellNumbering:
+    """The :class:`CellNumbering` of a model or of a FloPy model grid.
+
+    Parameters
+    ----------
+    source : model or flopy.discretization.Grid
+        Anything with a ``modelgrid`` (a myflopy model, a FloPy model), or a FloPy
+        grid itself. Its ``grid_type`` says how its cellids read.
+
+    Returns
+    -------
+    CellNumbering
+        How that model's cellids map to ``(layer, cell)``.
+
+    Raises
+    ------
+    ValueError
+        The grid's ``grid_type`` is none of ``"structured"``, ``"vertex"`` and
+        ``"unstructured"`` (a model with no discretization package), so no cellid
+        can be read.
+    """
+
+    grid = _model_grid(source)
+    kind = getattr(grid, "grid_type", None)
+    if kind == "structured":
+        return CellNumbering(
+            kind, nlay=int(grid.nlay), ncpl=int(grid.nrow) * int(grid.ncol), ncol=int(grid.ncol)
+        )
+    if kind == "vertex":
+        return CellNumbering(kind, nlay=int(grid.nlay), ncpl=int(grid.ncpl))
+    if kind == "unstructured":
+        return CellNumbering(kind, nlay=1, ncpl=int(np.sum(np.asarray(grid.ncpl, dtype=int))))
+    raise ValueError(
+        f"Cannot read a cellid on a grid of type {kind!r}: a cellid is "
+        "(layer, row, col) on DIS, (layer, cell) on DISV and (node,) on DISU, and this "
+        "model's grid is none of them (does it have a discretization package?)."
+    )
+
+
+def split_cellid_columns(frame: pd.DataFrame, numbering: CellNumbering) -> pd.DataFrame:
     """Expand a FloPy ``cellid`` column into zero-based ``layer`` and ``cell``.
 
     Parameters
     ----------
-    frame
-        Input DataFrame that may contain a FloPy-style ``cellid`` object
-        column. The function accepts structured tuples such as ``(layer, cell)``
-        as well as simpler scalar cell identifiers.
+    frame : pandas.DataFrame
+        Records that may carry a FloPy ``cellid`` column; one without it is
+        returned as a copy, unchanged.
+    numbering : CellNumbering
+        The model's numbering (:func:`cell_numbering`), which reads each cellid:
+        ``(layer, row, col)`` on DIS is ``(layer, row * ncol + col)``, ``(layer,
+        cell)`` on DISV is itself, ``(node,)`` on DISU is ``(0, node)``. A cellid of
+        ``None`` or MF6's ``NONE`` (an SFR reach connected to no cell, which FloPy
+        reads back as the string ``'none'``) gives a missing value in both columns.
 
     Returns
     -------
     pandas.DataFrame
-        A copy of ``frame`` where ``cellid`` has been replaced with zero-based
-        ``layer`` and ``cell`` columns when possible.
+        A copy of ``frame`` with ``cellid`` replaced by ``layer`` and ``cell``.
+
+    Raises
+    ------
+    ValueError
+        A cellid is not this grid's form, or is off the grid
+        (:meth:`CellNumbering.layer_cells`).
     """
 
     if "cellid" not in frame.columns:
         return frame.copy()
 
     expanded = frame.copy()
-    layers: list[int | None] = []
-    cells: list[int | None] = []
-    for cellid in expanded["cellid"].tolist():
-        if isinstance(cellid, tuple) and len(cellid) >= 2:
-            layers.append(int(cellid[0]))
-            cells.append(int(cellid[1]))
-        elif cellid is None:
-            layers.append(None)
-            cells.append(None)
-        else:
-            layers.append(0)
-            cells.append(int(cellid))
-    expanded["layer"] = layers
-    expanded["cell"] = cells
+    raw = expanded["cellid"].tolist()
+    # MF6 writes an SFR reach connected to no cell as NONE, which FloPy reads back as
+    # the string 'none' (a reach built in memory may hold None).
+    present = [
+        index for index, cellid in enumerate(raw)
+        if cellid is not None
+        and not (isinstance(cellid, str) and cellid.strip().lower() == "none")
+    ]
+    layers: list[int | None] = [None] * len(raw)
+    cells: list[int | None] = [None] * len(raw)
+    if present:
+        found_layers, found_cells = numbering.layer_cells([raw[index] for index in present])
+        for index, layer, cell in zip(present, found_layers, found_cells, strict=True):
+            layers[index] = int(layer)
+            cells[index] = int(cell)
+    if len(present) == len(raw):
+        expanded["layer"] = np.asarray(layers, dtype=int)
+        expanded["cell"] = np.asarray(cells, dtype=int)
+    else:
+        expanded["layer"] = layers
+        expanded["cell"] = cells
     return expanded.drop(columns=["cellid"])
 
 
@@ -382,6 +654,10 @@ __all__ = [
     "_get_package_explorer_cache",
     "_extract_structured_column",
     "_coerce_numeric_like_columns",
+    "CELLID_FORMS",
+    "CellNumbering",
+    "cell_numbering",
+    "has_cell_numbering",
     "split_cellid_columns",
     "_normalize_term_filter",
     "_normalize_connection_type_filter",

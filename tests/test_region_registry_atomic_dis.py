@@ -99,7 +99,7 @@ def test_a_dis_region_refuses_a_two_item_cellid_naming_the_form(dis_run):
 def test_a_vertex_grid_region_refuses_a_three_item_cellid():
     with pytest.raises(ValueError, match=r"\(layer, cell\)"):
         normalize_region_inputs([(0, 3, 7)])
-    model = SimpleNamespace(modelgrid=SimpleNamespace(grid_type="vertex"))
+    model = SimpleNamespace(modelgrid=SimpleNamespace(grid_type="vertex", nlay=2, ncpl=9))
     regions = RegionRegistry(model)
     with pytest.raises(ValueError, match=r"\(layer, cell\)"):
         regions.add_from_cells("r", [(0, 3, 7)])

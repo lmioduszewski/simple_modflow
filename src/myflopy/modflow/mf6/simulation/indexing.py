@@ -11,6 +11,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     selected_cells,
     where_they_are,
 )
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 from myflopy.modflow.utils.datatypes.readers import (
     assign_voronoi_cells_to_layers,
     read_shp_gpkg,
@@ -106,13 +107,25 @@ def build_model_times(gwf):
 
 
 def build_ncpl_arr(modelgrid) -> np.ndarray:
-    """The per-layer cell count as an ``(nlay,)`` array (broadcasting a scalar ``ncpl``)."""
+    """The per-layer cell count the model's views number, as an ``(nlay,)`` array.
 
-    return (
-        np.full(modelgrid.nlay, modelgrid.ncpl, dtype=int)
-        if isinstance(modelgrid.ncpl, (int, np.integer))
-        else np.asarray(modelgrid.ncpl, dtype=int)
-    )
+    Read through the one cellid rule, ``CellNumbering`` (ledger 419), so a
+    flat node maps to the same ``(layer, cell)`` a package table, a region and the
+    heads table give it. On DISU that is ONE layer of every node -- MF6 numbers a
+    DISU cell by node alone and its heads table is one layer -- even where FloPy
+    infers layers from ``IHC``: node 12 of a 2 x 12 DISU used to read ``(1, 0)`` in
+    the budget tables beside ``(0, 12)`` in the heads table. A grid of no known
+    type (a test double) keeps FloPy's own ``nlay``/``ncpl``.
+    """
+
+    if not has_cell_numbering(modelgrid):
+        return (
+            np.full(modelgrid.nlay, modelgrid.ncpl, dtype=int)
+            if isinstance(modelgrid.ncpl, (int, np.integer))
+            else np.asarray(modelgrid.ncpl, dtype=int)
+        )
+    numbering = cell_numbering(modelgrid)
+    return np.full(numbering.nlay, numbering.ncpl, dtype=int)
 
 
 def build_offsets(ncpl_arr: np.ndarray) -> np.ndarray:

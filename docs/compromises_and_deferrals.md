@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 418 entries (423 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 419 entries (424 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 419 | A cellid names the cell the model's own grid numbers, by ONE rule -- `CellNumbering` -- in every package ta... | 2026-10-11 |
 | 418 | A rejected optimizer round reports `"fallback_last_accepted_mesh"` when rounds had been accepted,... | 2026-10-11 |
 | 417 | `GridSpec.voronoi`'s `options=` and `mesh_options=` keys are checked, at the call and again at resolve; two... | 2026-10-11 |
 | 416 | `read_shp_gpkg` and every `TriangleGrid` entry point that reads a vector file take a `str` path | 2026-10-11 |
@@ -17400,8 +17401,10 @@ same day, which is the useful part of the result.
      folder that tells the WORKSPACES apart (a project run's workspace is `runs/<run name>`,
      a loaded run's the folder opened, a built model's `<folder>/<model name>`, so one level
      up), else `reference`/`other` for one workspace given twice. All members take one
-     level, so a diff never mixes a model name with a folder name. Not done: a one-model
-     `ModelGroup({...}).diff()` still returns an empty diff rather than refusing.
+     level, so a diff never mixes a model name with a folder name. ~~Not done: a one-model
+     `ModelGroup({...}).diff()` still returns an empty diff rather than refusing.~~ **Done
+     (2026-10-11):** a one-model group's `.diff()` raises `ValueError` naming the spelling
+     with a second model.
 
 374. **A group or diff opens each workspace path in the CRS its run recorded (2026-10-11).**
      `ModelGroup` and `model.diff` defaulted `crs="EPSG:2927"` and always passed it, so
@@ -17421,12 +17424,15 @@ same day, which is the useful part of the result.
      `(0, 2, 3)` registered the ROW (cell 2, where FloPy's row-major grid -- and the cell
      polygons and heads table built from it -- say 11), and extras were dropped. Now the
      cell is `row * ncol + col` on a structured grid, a 2-tuple there or a 3+-tuple on a
-     vertex grid is refused naming the form, and a row/column off the grid is refused. The
-     grid is read only when a tuple needs it (a loaded run's grid opens its files). Scope
+     vertex grid is refused naming the form, and a row/column off the grid is refused.
+     ~~The grid is read only when a tuple needs it (a loaded run's grid opens its files). Scope
      cut: DISU keeps the `(layer, cell)` reading, unmeasured; and `split_cellid_columns`
      (every package INPUT table, so `model.chd.inputs.get()` and the diff's value tier) still
      reads a DIS `(layer, row, col)` as `(layer, row)` -- measured: two identical DIS runs
-     diff as 12 CHD value cells changed. Reported, not fixed here.
+     diff as 12 CHD value cells changed. Reported, not fixed here.~~ **Restated
+     (2026-10-11, ledger 419):** the grid is read for any cell or layer, every one is
+     bounds-checked, a DISU cellid is `(node,)`, and `split_cellid_columns` reads cellids
+     through the same `CellNumbering` rule.
 
 377. **Reconciling layer surfaces never reaches a `LayerStack` unit at or above its own `min_thickness`, reads rows by position, settles every contact under `which="top"`, and uses the caller's separations and frame (2026-10-11).**
       **The rule, chosen:** `LayerStack._reconcile_separations` caps a PINCHING layer's
@@ -18174,3 +18180,27 @@ same day, which is the useful part of the result.
       there is forced through `_quality_regression_reasons`: no default domain measured
       (four rectangles with a refinement disc, two dampings, 10-20 rounds) rejects a
       later round.
+
+419. **A cellid names the cell the model's own grid numbers, by ONE rule -- `CellNumbering` -- in every package table, diff, region and node lookup: DIS `(layer, row, col)` is `(layer, row * ncol + col)`, DISU `(node,)` is `(0, node)`, and a cellid, layer or cell off the grid is refused (2026-10-11).**
+      `split_cellid_columns` read every tuple as `(layer, cell)`, so on DIS every package
+      INPUT table named rows as cells and the diff's `(layer, cell)` join turned two
+      identical 2 x 3 x 4 runs into 12 "value cells changed" (now 0; a one-record change
+      read 13, now 1), and on DISU it raised `TypeError` on the `(node,)` cellid
+      (`docs/reproducers/structured_cellids.py`). `package_explorer_utils.CellNumbering`
+      (layer 0, so the region registry and `simulation/indexing` can import it) is the rule;
+      `split_cellid_columns(frame, numbering)` takes it as a REQUIRED argument, so no
+      caller can split without the grid. **Judgment call, DISU:** measured on a 2 x 12
+      `get_disu_kwargs` run, a DISU `LoadedMf6Run`'s heads table and cell polygons are ONE
+      layer of every node (MF6 numbers DISU by node and writes one head record), while
+      `node_to_lni` followed FloPy's IHC-inferred layering and read node 12 as `(1, 0)` --
+      so the CHD budget table and the heads table disagreed. Chosen: DISU is `(0, node)`
+      everywhere, `node_to_lni` included (`build_ncpl_arr` reads `CellNumbering`); a
+      layered DISU's budget rows move from `(1, c)` to `(0, 12 + c)`. A DISU region
+      refuses a `(layer, cell)` pair naming `(node,)`. **Off the grid RAISES in a table
+      too**, not only in a region: a DIS column past `ncol` would alias onto the next row's
+      cell. Regions now read the grid for any cell or layer (ledger 376 read it only for a
+      tuple, to spare a loaded run opening its files; `region_heads` opens them anyway).
+      `model.outputs.uzf.ifno_to_cellid` raised on every grid but DISV; it reads the rule.
+      Not routed: the BUILD-side builders (`areal`, `uzf`, `sfr`, `lakes`,
+      `surface_water_validation`, `grid_identity`), which write DISV cellids, and
+      `components._grid_ncpl_array`, a grid fingerprint that must not move.

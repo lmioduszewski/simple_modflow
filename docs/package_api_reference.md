@@ -512,9 +512,21 @@ they differ, else the folder that tells the workspaces apart (a project run's is
 name, a built model's the folder above `<model name>`), else `reference`/`other`. A
 workspace path in either opens in the CRS its run recorded in `run.json`, as
 `mf.load_mf6_run(ws)` does; `crs=` given wins (ledger 374; it used to be 2927 for
-every member). A region's tuple cellid is the grid's own: `(layer, cell)` on a vertex
-grid, `(layer, row, col)` on a structured one, and `add_group` registers nothing unless
-every member is accepted (ledgers 375, 376).
+every member). A group of ONE model has nothing to diff and `.diff()` refuses it, naming
+the spelling with a second model (ledger 373). A region's tuple cellid is the grid's own:
+`(layer, cell)` on a vertex grid, `(layer, row, col)` on a structured one, `(node,)` on
+DISU; a layer or cell off the grid is refused, a bare cell number included; and
+`add_group` registers nothing unless every member is accepted (ledgers 375 and 376;
+ledger 419).
+
+**One cellid rule for every table, diff and region** (ledger 419).
+`package_explorer_utils.cell_numbering(model)` reads a FloPy cellid as the `(layer,
+cell)` the model's views key by -- DIS `(layer, row, col)` is `(layer, row * ncol +
+col)`, DISV `(layer, cell)` itself, DISU `(node,)` is `(0, node)`, the numbering its
+heads table and cell polygons use -- and a cellid off the grid raises. The package input
+tables (`model.<pkg>.inputs`), the SFR/LAK tables, the diff's value tier, the UZF
+`ifno_to_cellid`, the cell-budget tables' `node_to_lni` and the region registry all read
+through it; `split_cellid_columns` used to read a DIS cellid's ROW as its cell.
 
 **The project's libraries.** `project.packages` / `.grids` / `.simulations` are
 `dict` **subclasses** — every dict operation works unchanged, and each also

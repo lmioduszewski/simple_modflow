@@ -10,6 +10,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.budget import LakBudget, SFRBudget
 from myflopy.modflow.mf6.headsplus import _is_sentinel
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering
 from myflopy.modflow.mf6.package_registry import checked_package_name, one_package
 from myflopy.modflow.mf6.period_end import saved_steps
 
@@ -361,15 +362,20 @@ class UzfOutputData:
 
     @property
     def ifno_to_cellid(self):
-        """Map each UZF ``ifno`` to its ``(layer, cell)`` (vertex grids only; cached)."""
+        """Map each UZF ``ifno`` to its ``(layer, cell)``, as columns ``layer``/``cellid`` (cached).
+
+        ``cellid`` is the in-layer cell number the model's views use, read through
+        the one cellid rule (``CellNumbering``, ledger 419): ``row * ncol +
+        col`` on DIS, the cell on DISV, the node on DISU (layer 0). It raised on
+        every grid but DISV.
+        """
 
         if self._ifno_to_cellid is None:
-            if self.model.modelgrid.grid_type == 'vertex':
-                uzf = _output_package(self.model, "uzf", self.package)
-                ifno_to_cellid = pd.DataFrame(uzf.packagedata.get_data().cellid.tolist())
-                ifno_to_cellid.index.name = 'ifno'
-                ifno_to_cellid.columns = ['layer', 'cellid']
-                self._ifno_to_cellid = ifno_to_cellid
-            else:
-                raise ValueError("Model grid type is not vertex. You'll have to figure this out manually...")
+            uzf = _output_package(self.model, "uzf", self.package)
+            layers, cells = cell_numbering(self.model).layer_cells(
+                uzf.packagedata.get_data().cellid.tolist()
+            )
+            ifno_to_cellid = pd.DataFrame({"layer": layers, "cellid": cells})
+            ifno_to_cellid.index.name = 'ifno'
+            self._ifno_to_cellid = ifno_to_cellid
         return self._ifno_to_cellid

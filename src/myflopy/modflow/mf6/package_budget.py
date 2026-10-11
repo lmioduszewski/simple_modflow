@@ -25,6 +25,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_connection_type_filter,
     _normalize_surface_water_include,
     _normalize_term_filter,
+    cell_numbering,
     split_cellid_columns,
 )
 from myflopy.modflow.mf6.package_registry import (
@@ -380,7 +381,7 @@ def build_sfr_long_profile_table(
 
     sfr = one_package(model, "sfr", package)
     packagedata = pd.DataFrame(sfr.packagedata.get_data()).copy()
-    packagedata = split_cellid_columns(packagedata)
+    packagedata = split_cellid_columns(packagedata, cell_numbering(model))
     if "ifno" in packagedata.columns:
         packagedata = packagedata.rename(columns={"ifno": "reach"})
     packagedata["reach"] = packagedata["reach"].astype(int)
@@ -647,7 +648,7 @@ def build_lak_stage_result_table(
     stage_long["lake"] = stage_long["lake"].astype(int)
 
     connectiondata = pd.DataFrame(lak.connectiondata.get_data()).copy()
-    connectiondata = split_cellid_columns(connectiondata)
+    connectiondata = split_cellid_columns(connectiondata, cell_numbering(model))
     if "ifno" in connectiondata.columns:
         connectiondata = connectiondata.rename(columns={"ifno": "lake"})
     cell_map = connectiondata.loc[:, ["lake", "layer", "cell"]].drop_duplicates().copy()
@@ -738,7 +739,7 @@ def build_lak_budget_result_table(
         frame = frame.rename(columns={"q": value_name})
 
     connectiondata = pd.DataFrame(lak.connectiondata.get_data()).copy()
-    connectiondata = split_cellid_columns(connectiondata)
+    connectiondata = split_cellid_columns(connectiondata, cell_numbering(model))
     if "ifno" in connectiondata.columns:
         connectiondata = connectiondata.rename(columns={"ifno": "lake"})
     if "iconn" in connectiondata.columns:
