@@ -563,8 +563,6 @@ def _build_refined_vector_test_triangle(workspace: Path):
 
     report = tri.build_mesh(
         profile="balanced",
-        protect_sources=("line",),
-        protected_labels=["stream_main", "stream_branch", "lake_west", "lake_east"],
         target_segment_length=100,
         optimization_iterations=1,
         verbose=False,

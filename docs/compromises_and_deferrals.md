@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 444 entries (449 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 445 entries (450 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 445 | `protect_sources` / `protected_labels` are removed; the vertices near a `"line"` band's ring stay held, as... | 2026-10-11 |
 | 444 | Examples, reproducers and notebooks the library broke are EXECUTED by a test, and the rest were run once an... | 2026-10-11 |
 | 443 | The API snapshot pins the signature of every public callable, the set `test_public_parameters_documented` m... | 2026-10-11 |
 | 442 | A TDIS's time unit has one reader, `hydraulics.declared_time_unit`, and one table of MF6's six words | 2026-10-11 |
@@ -18076,9 +18077,13 @@ same day, which is the useful part of the result.
       FloPy's `.poly` writer gives every segment a nonzero marker, Triangle passes it to
       the vertices along it, and `get_fixed_and_free_vertex_ids` fixes every marked
       vertex -- so the rings of every refinement region, the domain's background sizing
-      region included, are fixed already and protection adds nothing (842 free vertices
+      region included, are fixed already ~~and protection adds nothing~~ (842 free vertices
       and the same 2,346 triangles with `protect_sources=("line",)` and `None`).
-      **Scope cut, left for the user:** fixing only the DOMAIN boundary's vertices was
+      **Amended by ledger 445:** protection held the UNMARKED vertices near a ring
+      too, and on the refined workflow domain those decide the mesh -- so "adds nothing"
+      held on this domain, not in general; the default line hold is kept as a fixed rule.
+      ~~**Scope cut, left for the user:**~~ **The user decided REMOVAL (2026-10-11,
+      ledger 445): both parameters are gone.** Fixing only the DOMAIN boundary's vertices was
       measured (`docs/reproducers/mesh_region_rings_fixed.py`) and frees 184 ring vertices
       on the test domain (47 with the river protected), but the first round is then
       REJECTED under `"balanced"`, `"fast"` and `"smooth"` alike
@@ -18931,3 +18936,35 @@ same day, which is the useful part of the result.
       were NOT ported: they record the retired `build_pst` slice (`mf.DRNFromVector`,
       `mf.open_pest_run` are gone); their README said they "still run" and now says
       they do not. `scratch.ipynb` is a scratchpad and was left as it is.
+
+445. **`protect_sources` / `protected_labels` are removed; the vertices near a `"line"` band's ring stay held, as their default held them (2026-10-11).**
+      The user's call, on ledger 411: both parameters go from `TriangleGrid.build_mesh`,
+      `build_optimized` and `optimize_seeds`, and from `GridSpec.voronoi`'s routing.
+      Passing either raises `TypeError` -- `build_mesh` now refuses ANY unknown override in
+      every mode, where its non-optimizing modes used to ignore one (a typo meshed at the
+      default in silence). A spec carrying either key in `options`/`mesh_options` is
+      refused by `GridSpec.voronoi` and, when saved earlier, at resolve, naming the key
+      -- not filtered like ledger 410's `max_optimization_points`: that one never acted,
+      these did. The report's `protected_label_count`/`protected_labels` are gone.
+      **Judgment call: the ring-proximity hold was NOT removed with them.** Ledger 411's
+      "protection changes no mesh" was measured on one domain. On the refined workflow
+      domain (`tests/test_mf6_refactor_smoke.py`, `refined_end_to_end_preferred_api_workflow
+      .ipynb`, at their `target_segment_length=100`), Triangle packs 66 UNMARKED vertices
+      within 0.05 ft of a stream band's ring where it meets a refinement box; the default
+      `protect_sources=("line",)` held them, and freed they reject the first round and fall
+      back to the unoptimized mesh (9,818 -> 7,614 triangles,
+      `docs/reproducers/mesh_region_rings_fixed.py` Part 2). That is ledger 411's own
+      reason to keep rings fixed, so `optimize_seeds` now always holds the vertices within
+      the automatic tolerance of every `source="line"` region's ring -- exactly what
+      `build_mesh` did by default -- and every default mesh is byte-identical: measured on
+      17 builds (the ledger-411 domain under all five profiles with and without its lake
+      and wellfield, both `build_mesh` test domains, the complex `build_optimized` domain,
+      the refined domain with and without the explicit labels, and two
+      `GridSpec.voronoi` builds) -- same triangle count, vertex and cell arrays and
+      `grid_pin`. **Changed:** a direct `build_optimized()`/`optimize_seeds()` call
+      now holds line bands too (it held nothing by default; the test domain using it is
+      byte-identical). **Not extended** to other regions' rings: that would move default
+      meshes nobody has measured. Revert checks: re-adding a parameter or dropping the
+      override check fails `test_protection_options_are_gone_everywhere`; dropping the
+      resolve refusal fails `test_a_saved_gridspec_carrying_a_removed_mesh_option_is_refused_at_resolve`;
+      dropping the hold fails `test_optimize_seeds_holds_vertices_near_a_line_band_ring`.

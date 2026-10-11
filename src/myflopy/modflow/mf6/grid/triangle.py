@@ -304,7 +304,7 @@ class TriangleGrid(Triangle):
         refinement regions in :meth:`prepare`. The same number sets the gap left
         between a higher-priority region's claimed area and a lower-priority
         region's (a quarter of it), and, in :meth:`optimize_seeds`, how close a
-        mesh vertex must be to a protected region's boundary to be held fixed.
+        mesh vertex must be to a ``"line"`` band's ring to be held fixed.
         Default ``None`` scales it from the geometry: the largest of ``1e-6``,
         ``1e-6`` x the longer side of the domain's bounding box and ``1e-4`` x the
         longer side of the region's (in :meth:`optimize_seeds`, of the domain's),
@@ -1045,10 +1045,8 @@ class TriangleGrid(Triangle):
             Maximum triangle area requested inside the region, in model length
             units squared. Required.
         label : str, optional
-            Region name, shown by :meth:`preview_regions` and matched by
-            ``protected_labels`` in :meth:`optimize_seeds`/:meth:`build_mesh`.
-            Default ``None``: :meth:`prepare` names it ``"region_<i>"``, ``i``
-            being its position in priority order. A region that ends up in
+            Region name, shown by :meth:`preview_regions`. Default ``None``:
+            :meth:`prepare` names it ``"region_<i>"``, ``i`` being its position in priority order. A region that ends up in
             several parts gets ``"_<j>"`` appended per part.
         priority : int, optional
             Higher-priority regions claim overlapping area before lower
@@ -1061,10 +1059,10 @@ class TriangleGrid(Triangle):
             and clear of the other regions' points; otherwise a point is chosen
             automatically, without a warning. Default ``None``.
         source : str, optional
-            Short source label used by cleanup and feature-protection logic:
-            :meth:`clean_geometry`'s ``resample_region_sources`` and
-            :meth:`build_mesh`'s ``protect_sources`` select regions by it, and
-            :meth:`preview_regions` shows it. The helpers set ``"line"``,
+            Short source label: :meth:`clean_geometry`'s
+            ``resample_region_sources`` selects regions by it,
+            :meth:`optimize_seeds` holds the vertices near a ``"line"`` region's
+            ring fixed, and :meth:`preview_regions` shows it. The helpers set ``"line"``,
             ``"rectangle"``, ``"circle"``, ``"file"``, ``"polygon"`` and others.
             ``"domain"`` is reserved for the background sizing region a
             ``set_domain_*(max_area=)`` call adds -- the one region a later
@@ -1339,8 +1337,9 @@ class TriangleGrid(Triangle):
         The line is buffered by ``buffer``, then handed to
         :meth:`add_region_polygon` with source ``"line"``: clipped to the stored
         domain, buffered again by ``negative_buffer_after_clipping``, simplified
-        and densified. Source ``"line"`` is what :meth:`build_mesh` protects and
-        :meth:`clean_geometry` resamples by default.
+        and densified. Source ``"line"`` is what :meth:`clean_geometry` resamples
+        by default, and :meth:`optimize_seeds` holds the vertices near its ring
+        fixed.
 
         Parameters
         ----------
@@ -2902,14 +2901,14 @@ class TriangleGrid(Triangle):
     def _free_vertex_points(
         *,
         node,
-        protected_geometries: list[Polygon] | None = None,
+        held_geometries: list[Polygon] | None = None,
         tolerance: float = 1e-6,
     ) -> list[tuple[float, float]]:
-        """The ``(x, y)`` coordinates of mesh vertices free to move (not on a protected geometry)."""
+        """The ``(x, y)`` coordinates of mesh vertices free to move (unmarked, not near a held ring)."""
 
         _, free_ids = get_fixed_and_free_vertex_ids(
             node=node,
-            protected_geometries=protected_geometries,
+            protected_geometries=held_geometries,
             tolerance=tolerance,
         )
         row_lookup = {int(row["ivert"]): row for row in node}
@@ -2918,33 +2917,17 @@ class TriangleGrid(Triangle):
             for vertex in free_ids
         ]
 
-    def _resolve_protected_labels(
-        self,
-        protected_labels: list[str] | None = None,
-        protect_sources: tuple[str, ...] | None = None,
-    ) -> list[str]:
-        """The set of region labels to protect from optimization: explicit labels plus any from ``protect_sources``."""
-
-        labels = [] if protected_labels is None else list(dict.fromkeys(protected_labels))
-        if protect_sources:
-            self.prepare()
-            for region in self._prepared_regions:
-                if region.source in protect_sources and region.label not in labels:
-                    labels.append(region.label)
-        return labels
-
     def optimize_seeds(
         self,
         *,
         iterations: int = 3,
         damping: float = 0.35,
         min_move: float = 1e-3,
-        protected_labels: list[str] | None = None,
         verbose: bool = False,
     ):
         """Run the experimental constrained CVT/Lloyd optimization loop.
 
-        The optimizer keeps protected feature vertices fixed, rebuilds the mesh
+        The optimizer keeps feature vertices fixed, rebuilds the mesh
         after each move, and rejects candidate meshes that would materially
         degrade quality or fail Voronoi conversion.
 
@@ -2954,7 +2937,13 @@ class TriangleGrid(Triangle):
         on an input segment is always fixed -- the domain boundary, its holes and
         every refinement region's ring, the background ``max_area`` region's
         included -- because FloPy gives each segment a nonzero boundary marker,
-        which Triangle passes on to the vertices along it. A move that would
+        which Triangle passes on to the vertices along it. Every vertex within
+        ``region_point_tolerance`` (or its automatic value) of a ``"line"``
+        region's ring -- the bands :meth:`add_line_feature` adds -- is fixed
+        too: Triangle can pack unmarked vertices a hair off such a ring, and
+        freeing them was measured to reject the first round and fall back to
+        the unoptimized mesh (ledger 445). Which vertices stay fixed is
+        not configurable (ledgers 411, 445). A move that would
         leave the domain's largest part is not made. A rejected round restores
         the last accepted mesh and ends the loop. Distances are in model length
         units.
@@ -2973,14 +2962,6 @@ class TriangleGrid(Triangle):
         min_move : float, optional
             A vertex whose proposed move is shorter than this stays put. Default
             ``1e-3``.
-        protected_labels : list of str, optional
-            Labels of prepared regions (as :meth:`preview_regions` shows them,
-            ``"_<j>"`` suffixes included) to protect: every mesh vertex within
-            ``region_point_tolerance`` (or its automatic value) of such a region's
-            boundary is held fixed. The vertices ON every region's ring are fixed
-            whether or not it is protected (see above), so this adds only those
-            near a ring but not on it. A label matching no region protects
-            nothing, silently. Default ``None``, no region protected.
         verbose : bool, optional
             Print progress for each round, and the Triangle program's output for
             each rebuild. Default ``False``.
@@ -3009,18 +2990,14 @@ class TriangleGrid(Triangle):
         if verbose:
             print("[TriangleGrid] Starting constrained CVT/Lloyd optimization.")
 
-        protected_labels = protected_labels or []
-        protected_geometries = [
-            region.geometry
-            for region in self._prepared_regions
-            if region.label in protected_labels
+        held_geometries = [
+            region.geometry for region in self._prepared_regions if region.source == "line"
         ]
-
         tolerance = self._region_point_spacing(geometry=self.domain_geometry)
         baseline_free_point_count = len(
             self._free_vertex_points(
                 node=self.node,
-                protected_geometries=protected_geometries,
+                held_geometries=held_geometries,
                 tolerance=tolerance,
             )
         )
@@ -3085,7 +3062,7 @@ class TriangleGrid(Triangle):
                 domain=domain_polygon,
                 damping=damping,
                 min_move=min_move,
-                protected_geometries=protected_geometries,
+                protected_geometries=held_geometries,
                 tolerance=tolerance,
             )
 
@@ -3142,7 +3119,7 @@ class TriangleGrid(Triangle):
 
             accepted_points = self._free_vertex_points(
                 node=self.node,
-                protected_geometries=protected_geometries,
+                held_geometries=held_geometries,
                 tolerance=tolerance,
             )
             accepted_quality = quality_after
@@ -3178,8 +3155,6 @@ class TriangleGrid(Triangle):
             "attempts": int(attempts),
             "status": str(accepted_report["status"]),
             "baseline_voronoi_status": str(quality_before.get("voronoi_status", "unknown")),
-            "protected_label_count": int(len(protected_labels)),
-            "protected_labels": ",".join(protected_labels),
             "rejection_reasons": ",".join(regression_reasons),
         }
         if verbose:
@@ -3202,7 +3177,6 @@ class TriangleGrid(Triangle):
         optimization_iterations: int = 3,
         damping: float = 0.35,
         min_move: float = 1e-3,
-        protected_labels: list[str] | None = None,
         verbose: bool = False,
     ):
         """Build the mesh and then run the experimental optimization pass.
@@ -3247,9 +3221,6 @@ class TriangleGrid(Triangle):
         min_move : float, optional
             Shortest vertex move made, in model length units; see
             :meth:`optimize_seeds`. Default ``1e-3``.
-        protected_labels : list of str, optional
-            Prepared-region labels to protect during optimization; see
-            :meth:`optimize_seeds`. Default ``None``.
         verbose : bool, optional
             Print optimization progress and the Triangle program's output.
             Default ``False``.
@@ -3278,7 +3249,6 @@ class TriangleGrid(Triangle):
             iterations=optimization_iterations,
             damping=damping,
             min_move=min_move,
-            protected_labels=protected_labels,
             verbose=verbose,
         )
         quality_report = triangle_quality_report(self, include_voronoi=True, validate_voronoi=True)
@@ -3294,8 +3264,6 @@ class TriangleGrid(Triangle):
         *,
         profile: str | MeshBuildProfile = "balanced",
         optimize: bool | None = None,
-        protected_labels: list[str] | None = None,
-        protect_sources: tuple[str, ...] | None = ("line",),
         verbose: bool = False,
         **overrides,
     ):
@@ -3321,16 +3289,6 @@ class TriangleGrid(Triangle):
             ``None`` optimizes when the profile's (or the override's)
             ``optimization_iterations`` is above zero -- so not for ``"clean"``
             or ``"baseline"``.
-        protected_labels : list of str, optional
-            Prepared-region labels (see :meth:`preview_regions`) to protect
-            during optimization, added to those ``protect_sources`` selects; see
-            :meth:`optimize_seeds` for what protection fixes. Without
-            optimization they are only echoed in the report. Default ``None``.
-        protect_sources : tuple of str, optional
-            Region ``source`` tags (see :meth:`add_region_polygon`) whose
-            regions are protected during optimization, as ``protected_labels``.
-            Default ``("line",)``, the bands :meth:`add_line_feature` adds.
-            ``None`` protects none. Ignored without optimization.
         verbose : bool, optional
             When ``True``, print the Triangle program's output for each build
             and progress for each optimization round. Default ``False``.
@@ -3340,10 +3298,11 @@ class TriangleGrid(Triangle):
             (``snap_tolerance``, ``simplify_tolerance``, ``min_feature_area``,
             ``target_segment_length``, ``resample_domain_boundary``,
             ``resample_region_sources``), ``damping`` and ``min_move``. In the
-            optimized mode they are forwarded to :meth:`build_optimized`, which
-            raises ``TypeError`` on any other name. Without optimization only the
-            cleanup fields and ``cleanup`` act, and every other name -- a typo
-            included -- is ignored without a warning.
+            optimized mode they are forwarded to :meth:`build_optimized`;
+            without optimization only the cleanup fields and ``cleanup`` act,
+            and ``damping``/``min_move`` are accepted and inert. Any other name
+            raises ``TypeError`` in every mode -- a typo, and the removed
+            ``protect_sources``/``protected_labels`` (ledger 445), included.
 
         Returns
         -------
@@ -3360,6 +3319,13 @@ class TriangleGrid(Triangle):
         do_optimize = optimization_iterations > 0 if optimize is None else bool(optimize)
 
         cleanup_kwargs = profile_obj.cleanup_kwargs()
+        unknown = sorted(set(overrides) - set(cleanup_kwargs) - {"damping", "min_move"})
+        if unknown:
+            # Without optimization nothing downstream would read them, so a typo (or a
+            # removed option, ledger 445) used to mesh at the default in silence.
+            raise TypeError(
+                f"TriangleGrid.build_mesh() got an unexpected keyword argument {unknown[0]!r}"
+            )
         build_kwargs = {
             "cleanup": cleanup,
             "optimization_iterations": optimization_iterations,
@@ -3370,16 +3336,8 @@ class TriangleGrid(Triangle):
         build_kwargs.update(cleanup_kwargs)
         build_kwargs.update(overrides)
 
-        resolved_protected_labels = self._resolve_protected_labels(
-            protected_labels=protected_labels,
-            protect_sources=protect_sources if do_optimize else None,
-        )
-
         if do_optimize:
-            result = self.build_optimized(
-                protected_labels=resolved_protected_labels,
-                **build_kwargs,
-            )
+            result = self.build_optimized(**build_kwargs)
             result["profile"] = profile_obj.name
             result["mode"] = "optimized"
             return result
@@ -3399,5 +3357,4 @@ class TriangleGrid(Triangle):
             "quality": quality_report,
             "profile": profile_obj.name,
             "mode": "cleanup_only" if cleanup else "baseline",
-            "protected_labels": resolved_protected_labels,
         }

@@ -86,7 +86,6 @@ def _build_complex_triangle_grid(workspace: Path) -> tuple[TriangleGrid, dict[st
         target_segment_length=75,
         optimization_iterations=2,
         damping=0.3,
-        protected_labels=["stream_refine", "lake_refine"],
         verbose=False,
     )
     return tri, report
@@ -192,7 +191,7 @@ def test_build_mesh_profile_api_runs_cleanup_only_mode():
         shutil.rmtree(workspace, ignore_errors=True)
 
 
-def test_build_mesh_profile_api_auto_protects_feature_sources():
+def test_build_mesh_profile_api_runs_optimized_mode():
     workspace = _project_temp_dir("mesh_profile_balanced")
     try:
         tri = TriangleGrid(model_ws=str(workspace / "triangle"))
@@ -218,8 +217,6 @@ def test_build_mesh_profile_api_auto_protects_feature_sources():
         assert report["profile"] == "fast"
         assert report["mode"] == "optimized"
         assert report["optimization"]["method"] == "constrained_cvt_lloyd"
-        assert "stream_refine" in report["optimization"]["protected_labels"]
-        assert "lake_refine" not in report["optimization"]["protected_labels"]
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -379,6 +376,98 @@ def test_max_optimization_points_is_gone_everywhere(tmp_path):
     assert "max_optimization_points" not in report["optimization"]
     with pytest.raises(TypeError, match="max_optimization_points"):
         tri.build_mesh(profile="fast", max_optimization_points=10)
+
+
+def test_protection_options_are_gone_everywhere(tmp_path):
+    # Ledger 445 (the user's call, on ledger 411): `protect_sources` /
+    # `protected_labels` are removed. Every name raises at the call, the
+    # non-optimizing build_mesh modes included -- they used to ignore any override.
+    import inspect
+
+    import pytest
+
+    import myflopy as mf
+
+    for method in (TriangleGrid.optimize_seeds, TriangleGrid.build_optimized, TriangleGrid.build_mesh):
+        parameters = inspect.signature(method).parameters
+        assert "protect_sources" not in parameters
+        assert "protected_labels" not in parameters
+
+    tri = TriangleGrid(model_ws=str(tmp_path / "ws"), angle=30)
+    tri.set_domain_rectangle(x_dist=300, y_dist=200, max_area=2000)
+    for profile in ("fast", "clean", "baseline"):
+        with pytest.raises(TypeError, match="protect_sources"):
+            tri.build_mesh(profile=profile, protect_sources=("line",))
+        with pytest.raises(TypeError, match="protected_labels"):
+            tri.build_mesh(profile=profile, protected_labels=["river"])
+    with pytest.raises(TypeError, match="target_segment_lenght"):
+        tri.build_mesh(profile="clean", target_segment_lenght=50)
+    with pytest.raises(TypeError, match="protected_labels"):
+        tri.build_optimized(protected_labels=["river"])
+    with pytest.raises(TypeError, match="protected_labels"):
+        tri.optimize_seeds(protected_labels=["river"])
+
+    report = tri.build_mesh(profile="fast")
+    assert not any("protect" in key for key in report["optimization"])
+    assert not any("protect" in key for key in tri.build_mesh(profile="clean"))
+
+    boundary = mf.ShapeSource(tmp_path / "domain.gpkg")
+    with pytest.raises(TypeError, match="protect_sources"):
+        mf.GridSpec.voronoi(boundary=boundary, protect_sources=("line",))
+    for where in ("options", "mesh_options"):
+        for key in ("protect_sources", "protected_labels"):
+            with pytest.raises(TypeError, match=rf"{where}=\{{'{key}': \.\.\.\}}, which was removed"):
+                mf.GridSpec.voronoi(boundary=boundary, **{where: {key: ("line",)}})
+
+
+@pytest.mark.parametrize("where", ["options", "mesh_options"])
+@pytest.mark.parametrize("key", ["protect_sources", "protected_labels"])
+def test_a_saved_gridspec_carrying_a_removed_mesh_option_is_refused_at_resolve(tmp_path, where, key):
+    # Ledger 445: a spec saved while the options were routed still carries them.
+    # Filtering them at resolve, as any other stray key, would drop what the caller
+    # wrote in silence, so resolve refuses naming the key -- before reading any file.
+    import myflopy as mf
+
+    payload = mf.GridSpec.voronoi(
+        name="saved", boundary=mf.ShapeSource(tmp_path / "missing.gpkg"), boundary_max_area=100.0
+    ).to_dict()
+    payload[where] = {**payload.get(where, {}), key: ["river"]}
+    restored = mf.GridSpec.from_dict(payload)
+    with pytest.raises(TypeError, match=rf"GridSpec 'saved' carries {where}=\{{'{key}'"):
+        restored.resolve(workspace=tmp_path / "ws")
+
+
+def test_optimize_seeds_holds_vertices_near_a_line_band_ring(tmp_path):
+    # Ledger 445: what the removed `protect_sources=("line",)` default did is the
+    # fixed rule. Marked vertices -- every ring's -- are fixed anyway; this holds the
+    # UNMARKED ones within the tolerance of a line band's ring, which Triangle can pack
+    # there and which, freed, fell the refined workflow domain back to its unoptimized
+    # mesh (docs/reproducers/mesh_region_rings_fixed.py, Part 2).
+    from shapely.geometry import Point
+
+    from myflopy.modflow.mf6.grid.seed_optimization import get_fixed_and_free_vertex_ids
+
+    tri = TriangleGrid(model_ws=str(tmp_path / "ws"), angle=30)
+    tri.set_domain_rectangle(400, 300, max_area=2000)
+    tri.add_line_feature(LineString([(50, 50), (350, 250)]), buffer=20, max_area=300, label="river")
+    tri.prepare()
+    ring = next(r for r in tri._prepared_regions if r.source == "line").geometry.exterior
+    on_ring = ring.interpolate(0.37, normalized=True)
+    near = (on_ring.x + 0.007, on_ring.y + 0.007)
+    tolerance = tri._region_point_spacing(geometry=tri.domain_geometry)
+    assert 0 < ring.distance(Point(near)) < tolerance
+    tri.add_points([near])
+
+    report = tri.optimize_seeds(iterations=0)
+
+    _, unmarked = get_fixed_and_free_vertex_ids(node=tri.node)
+    rows = {int(row["ivert"]): Point(float(row["x"]), float(row["y"])) for row in tri.node}
+    held = {vertex for vertex in unmarked if ring.distance(rows[vertex]) <= tolerance}
+    near_ids = [vertex for vertex, point in rows.items() if (point.x, point.y) == near]
+    # Triangle packs a cluster of unmarked vertices into the hair-wide gap, as on the
+    # refined workflow domain; the point itself is one of them.
+    assert len(near_ids) == 1 and near_ids[0] in held and len(held) > 1
+    assert report["free_vertex_count"] == len(unmarked) - len(held)
 
 
 def _optimizer_statuses_assigned():

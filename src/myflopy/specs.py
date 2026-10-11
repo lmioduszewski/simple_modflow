@@ -2559,6 +2559,25 @@ def _validate_concrete_packages(packages: Iterable[PackageSpec]) -> None:
                 )
 
 
+# Mesh options that were REMOVED, not merely unknown: a spec saved while they were
+# routed still carries them, and filtering them at resolve as any other stray key
+# would drop a setting the caller wrote, in silence (ledger 445).
+_REMOVED_MESH_OPTIONS = ("protect_sources", "protected_labels")
+
+
+def _refuse_removed_mesh_options(owner: str, carriers) -> None:
+    """Raise ``TypeError`` when any ``(where, mapping)`` in ``carriers`` holds a removed mesh option."""
+
+    for where, carried in carriers:
+        for key in _REMOVED_MESH_OPTIONS:
+            if carried and key in carried:
+                raise TypeError(
+                    f"{owner} carries {where}{{{key!r}: ...}}, which was removed (ledger "
+                    f"445): every refinement-ring vertex is already fixed under mesh "
+                    f"optimization, so it changed no mesh. Delete the key."
+                )
+
+
 @dataclass(frozen=True, slots=True)
 class GridSpec:
     """A deferred recipe for the grid a model is built on.
@@ -2647,7 +2666,8 @@ class GridSpec:
         :meth:`voronoi` and again at :meth:`resolve`, so a spec set directly or
         loaded from a saved project is checked too (ledger 417). The
         ``"python"`` route stores it for the builder to read as ``spec.options``,
-        unchecked. Default: empty.
+        unchecked. The removed ``protect_sources``/``protected_labels`` raise
+        ``TypeError`` naming the key (ledger 445). Default: empty.
     triangle_options : dict, optional
         ``"voronoi"`` route: keyword arguments for ``TriangleGrid(...)``
         (``angle``, ``maximum_area`` -- Triangle's global cap on every triangle,
@@ -2663,7 +2683,8 @@ class GridSpec:
         other keys :meth:`voronoi` routes here. Any other key raises
         ``TypeError`` naming it and the accepted keys, at :meth:`voronoi` and at
         :meth:`resolve`; a key since removed (``max_optimization_points``, ledger
-        410) says so. Default: empty.
+        410; ``protect_sources``/``protected_labels``, ledger 445) says so.
+        Default: empty.
     voronoi_options : dict, optional
         ``"voronoi"`` route: keyword arguments for ``VoronoiGridPlus(tri,
         ...)`` -- ``idomain_path``, ``rasters``, ``qhull_options``,
@@ -3098,7 +3119,8 @@ class GridSpec:
             ``boundary_max_area``, a ``default_*_area`` beside its
             ``*_max_area``, ``line_buffer`` beside ``breakline_buffer``,
             ``angle`` beside ``min_angle``, ``workspace`` beside ``model_ws``.
-            ``"idomain"`` raises ``TypeError`` (see ``**engine_options``).
+            ``"idomain"`` raises ``TypeError`` (see ``**engine_options``), and so do
+            the removed ``"protect_sources"``/``"protected_labels"`` (ledger 445).
         triangle_options : dict, optional
             Keyword arguments for ``TriangleGrid(...)`` -- ``angle``,
             ``maximum_area`` (the global cap, not ``max_area``), ``nodes``,
@@ -3110,7 +3132,8 @@ class GridSpec:
             Options for the mesh-build step (``profile``, ``optimize``,
             ``verbose``, ...). A key also given through ``**engine_options``
             takes that value. Any other key raises ``TypeError`` naming it and
-            the accepted keys, here and at :meth:`resolve` (ledger 417).
+            the accepted keys, here and at :meth:`resolve` (ledger 417); the removed
+            ``protect_sources``/``protected_labels`` say so (ledger 445).
         voronoi_options : dict, optional
             Keyword arguments for ``VoronoiGridPlus(tri, ...)`` --
             ``idomain_path``, ``rasters``, ``qhull_options``, ``tessellation``,
@@ -3252,6 +3275,9 @@ class GridSpec:
                     "context=...); to exclude cells from the grid's edge, use "
                     "idomain_path= (a vector file covering the inactive cells)."
                 )
+        _refuse_removed_mesh_options(
+            "GridSpec.voronoi()", (("options=", options), ("mesh_options=", mesh_options))
+        )
         boundary = _grid_source(boundary, "boundary")
         if refinement is not None:
             refinement = _grid_source(refinement, "refinement")
@@ -3636,7 +3662,7 @@ _GRID_TRIANGLE_OPTION_KEYS: frozenset[str] = frozenset({
 })
 _GRID_MESH_OPTION_KEYS: frozenset[str] = frozenset({
     "cleanup", "damping", "min_feature_area", "min_move", "optimization_iterations",
-    "optimize", "profile", "protect_sources", "protected_labels",
+    "optimize", "profile",
     "resample_domain_boundary", "resample_region_sources", "simplify_tolerance",
     "snap_tolerance", "target_segment_length", "verbose",
 })
