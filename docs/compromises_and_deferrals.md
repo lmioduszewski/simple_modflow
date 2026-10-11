@@ -8722,9 +8722,12 @@ same day, which is the useful part of the result.
         218's line saying `from_points` "TAKES world points, in the grid's CRS" is
         now half of the story -- a frame in another CRS is converted to it first.
       - **A third copy of the ledger-211 raise/warn wrapper, deliberately.**
-        `_refuse_or_report_missed` is the third after
+        ~~`_refuse_or_report_missed` is the third after
         `observations/_shared.py::_report_missed_features` and
-        `geopackage.py::_refuse_or_report_misses`, and the judgment is: reusing
+        `geopackage.py::_refuse_or_report_misses`~~ -- the `geopackage.py` copy is
+        gone (ledger 394): `k_array` reports through the boundary builders'
+        `GeoPackageSource._report`, so `_refuse_or_report_missed` is the second, after
+        `observations/_shared.py::_report_missed_features`. The judgment is: reusing
         `_shared`'s would cost the layer. Its wording is fixed at "lands on an
         active cell" with no layer, and the layer is exactly what makes a release
         point's miss actionable (a mutant that drops it fails two tests); its
@@ -8732,7 +8735,7 @@ same day, which is the useful part of the result.
         dedupe exists for observation views that resolve the same features per
         call, which a release set does not. Promoting a layer-aware version into
         `grid/geometry.py` beside `miss_reason`/`where_they_are` is the real fix and
-        wants its own pass, with all three callers in it. Same for `_in_grid_crs`,
+        wants its own pass, with every caller in it. Same for `_in_grid_crs`,
         now a third spelling after `_shared._in_grid_crs` and
         `heads._locations_in_grid_crs`: `_shared`'s returns anything that is not a
         GeoDataFrame unchanged, so a GeoSeries of release points would have been

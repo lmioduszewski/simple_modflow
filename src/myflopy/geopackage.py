@@ -615,7 +615,7 @@ def _required_value_fields(value: RowValue) -> set[str]:
 
     A :class:`Spread` names a column too: left out, a typo in one was missed by the
     up-front check and surfaced mid-build as a bare ``KeyError('typo')`` naming neither
-    the file nor the feature (ledger 392).
+    the file nor the feature.
     """
 
     if isinstance(value, CellSurfaceOffset):
