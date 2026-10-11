@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 369 entries (374 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 370 entries (375 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 370 | A USG period short of its `ITMP` is refused, and so is a grid CRS of `None` | 2026-10-11 |
 | 369 | A USG export's `resolution` is in the OUTPUT CRS's units, and every raster uses it | 2026-10-11 |
 | 368 | Setting a grid's CRS RELABELS the grid and every frame it caches; it never reprojects | 2026-10-11 |
 | 367 | A USG list-BC period that defined no groundwater record is an EMPTY MODFLOW 6 period, not a missing one | 2026-10-11 |
@@ -17177,3 +17178,19 @@ same day, which is the useful part of the result.
      writer; the manifest note states sizes and areas in the output CRS's named unit. A value that is not a finite number above zero is refused
      before anything is written (0 divided by zero before). Reproducer:
      `docs/reproducers/usg_switch_off_crs_pixels.py` part 3.
+
+370. **A USG period short of its `ITMP` is refused, and so is a grid CRS of `None` (2026-10-11).**
+     Review of 367/-b. Once an empty period means "switched off", a period the
+     reader failed to RECOGNISE becomes a silent switch-off: `_looks_like_record`
+     needs a real value after the node, so `1 7 100` read as the next period's header
+     and the period came back empty (measured on the synthetic model: period 2's
+     drains written as `[]`; before 367 the same file reused period 1's). The
+     reader still does not trust `ITMP` for the record COUNT -- it reads by shape --
+     but now REFUSES a period that recognised fewer records than `ITMP` declares,
+     naming the file and period; `OPEN/CLOSE` record files and parameter instances,
+     never supported, land in the same refusal instead of reading empty. Not done:
+     reading integer-formatted records (it would mean trusting `ITMP` for the count,
+     which the reader avoids on purpose). `grid.crs = None` (or a CRS pyproj cannot
+     read) is refused BEFORE anything changes -- it raised from geopandas halfway
+     through the relabel, leaving the grid and its frames on `None` -- and a numpy
+     integer is an EPSG code like an `int` (`normalize_crs`).

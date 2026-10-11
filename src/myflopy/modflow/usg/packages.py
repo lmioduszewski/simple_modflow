@@ -18,7 +18,10 @@ trailing numbers, so counting fields cannot tell them apart. What does tell them
 apart is that every record here is an integer node followed by *floating point*
 values, while a header is integers (and words) only. That is the discriminator
 :func:`_looks_like_record` applies, and it is why the readers do not trust
-``ITMP`` for the record count -- only for the reuse decision.
+``ITMP`` for the record count -- only for the reuse decision, and to REFUSE a
+period that read fewer records than its ``ITMP`` declares: such a period would
+otherwise read as empty, which converts as the package switched off (ledger
+370).
 """
 
 from __future__ import annotations
@@ -533,6 +536,12 @@ def read_list_bc(
     Returns
     -------
     PeriodRecords
+
+    Raises
+    ------
+    ValueError
+        When ``ftype`` is not in the name file, or when a period's ``ITMP``
+        declares more records than were recognised (ledger 370).
     """
 
     entry = name_file.package(ftype)
@@ -561,6 +570,19 @@ def read_list_bc(
         while not cursor.at_end() and _looks_like_record(cursor.peek()):
             rows.append(free_floats(cursor.next_line())[:n_values])
             cursor.pos += 0  # records consumed by peek/next_line above
+
+        if itmp and itmp[0] > len(rows):
+            # An EMPTY block means "switched off" downstream (ledger 367), so a
+            # period whose records were not RECOGNISED must not become one. A record
+            # written without a decimal point ("1 7 100") fails `_looks_like_record`,
+            # is read as the next period's header, and every period after it shifts
+            # (ledger 370).
+            raise ValueError(
+                f"{entry.path.name}: stress period {period + 1} declares ITMP = {itmp[0]} "
+                f"record(s) but {len(rows)} were read. A record is recognised by a real "
+                "value after its node -- write '1 7.0 100.0', not '1 7 100'. Records "
+                "read from OPEN/CLOSE files and parameter instances are not supported."
+            )
 
         if not rows:
             periods[period] = np.empty((0, n_values))

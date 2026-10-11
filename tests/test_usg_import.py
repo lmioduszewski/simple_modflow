@@ -1046,3 +1046,70 @@ def test_a_grid_pickled_while_crs_was_an_attribute_still_reads_its_crs(usg):
     old.__setstate__(state)
     assert old.crs == usg.grid.crs == "EPSG:2927"
     assert "crs" not in old.__dict__
+
+
+# --- review of U1 (ledger 370) ----------------------------------------
+
+
+def test_a_period_whose_records_were_not_recognised_is_refused(tmp_path):
+    """ITMP = 2 with records written as integers: not read as records at all.
+
+    The reader recognises a record by a REAL value after its node, so ``1 7 100``
+    was taken for the next period's header and the period read EMPTY -- which,
+    since ledger 367, converts as the drains switched off, in silence.
+    """
+
+    packages = {"DRN": (13, "tiny.drn", (
+        "# drn\n"
+        "  2  0\n"
+        "  2  0  Stress Period 1\n"
+        "  1  7.5  100.0\n"
+        "  2  7.5  120.0\n"
+        "  2  0  Stress Period 2\n"
+        "  1  7  100\n"
+        "  2  7  120\n"
+    ))}
+    nam = _write_usg_model(tmp_path, packages=packages)
+    with pytest.raises(ValueError, match=r"stress period 2 declares ITMP = 2 record\(s\) but 0"):
+        read_usg(nam, gsf=tmp_path / "tiny.gsf", crs="EPSG:2927")
+
+
+def test_a_period_short_of_its_itmp_is_refused(tmp_path):
+    """One real record and one integer one: one read of the two declared."""
+
+    packages = {"DRN": (13, "tiny.drn", (
+        "# drn\n"
+        "  2  0\n"
+        "  2  0  Stress Period 1\n"
+        "  1  7.5  100.0\n"
+        "  2  7  120\n"
+        "  -1  0  Stress Period 2\n"
+    ))}
+    nam = _write_usg_model(tmp_path, packages=packages)
+    with pytest.raises(ValueError, match=r"stress period 1 declares ITMP = 2 record\(s\) but 1"):
+        read_usg(nam, gsf=tmp_path / "tiny.gsf", crs="EPSG:2927")
+
+
+def test_a_grid_crs_of_none_is_refused_and_changes_nothing(usg_workspace):
+    """``grid.crs = None`` raised from geopandas HALFWAY through the relabel."""
+
+    model = read_usg(usg_workspace, gsf=usg_workspace.parent / "tiny.gsf", crs="EPSG:2927")
+    grid = model.grid
+    grid.gdf_topbtm
+    centroid = grid.grid_centroid
+    for bad in (None, "EPSG:not-a-code"):
+        with pytest.raises(ValueError, match="grid.crs|cannot be None"):
+            grid.crs = bad
+        assert grid.crs == "EPSG:2927"
+        assert grid.gdf_vorPolys.crs == "EPSG:2927"
+        assert grid.gdf_topbtm.crs == "EPSG:2927"
+        assert grid.grid_centroid.equals(centroid)
+
+
+def test_a_numpy_integer_crs_is_an_epsg_code(usg_workspace):
+    """``numpy.int64`` is not an ``int``: it was stored as itself, not ``EPSG:N``."""
+
+    model = read_usg(usg_workspace, gsf=usg_workspace.parent / "tiny.gsf", crs="EPSG:2927")
+    model.grid.crs = np.int64(2926)
+    assert type(model.grid.crs) is str and model.grid.crs == "EPSG:2926"
+    assert model.grid.gdf_vorPolys.crs == "EPSG:2926"

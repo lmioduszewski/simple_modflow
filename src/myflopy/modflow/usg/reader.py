@@ -100,7 +100,12 @@ def read_usg(
     FileNotFoundError
         When ``nam`` is not an existing file.
     ValueError
-        When the DISU is not layered and ``require_layered`` is ``True``.
+        When the DISU is not layered and ``require_layered`` is ``True``; or,
+        with ``read_boundaries``, when a list boundary's period declares more
+        records (``ITMP``) than were read -- a record with no real value after
+        its node (``1 7 100``), an ``OPEN/CLOSE`` record file or a parameter
+        instance -- since that period would otherwise convert as switched off
+        (ledger 370).
 
     Examples
     --------

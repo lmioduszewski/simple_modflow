@@ -8,6 +8,7 @@ surface helpers, and selection utilities used throughout ``myflopy``.
 from __future__ import annotations
 
 import dataclasses
+import numbers
 import types
 import warnings
 from pathlib import Path
@@ -135,8 +136,9 @@ logger = get_logger(__name__)
 def normalize_crs(crs):
     """Accept a bare EPSG code as well as a full CRS identifier.
 
-    ``2927`` and ``"2927"`` become ``"EPSG:2927"``; anything else passes through
-    untouched for pyproj/rasterio to interpret.
+    ``2927``, any numpy integer of that value and ``"2927"`` become
+    ``"EPSG:2927"``; anything else passes through untouched for pyproj/rasterio
+    to interpret.
 
     Worth doing because the failure was silent until it was baffling. pyproj --
     and therefore geopandas ``to_crs`` -- accepts a bare ``"2927"``, so a grid
@@ -149,8 +151,10 @@ def normalize_crs(crs):
     code cannot be wrong.
     """
 
-    if isinstance(crs, int):
-        return f"EPSG:{crs}"
+    # `numbers.Integral`, not `int`: `numpy.int64` subclasses neither `int` nor
+    # anything rasterio reads, and slipped through as itself (ledger 370).
+    if isinstance(crs, numbers.Integral) and not isinstance(crs, (bool, np.bool_)):
+        return f"EPSG:{int(crs)}"
     if isinstance(crs, str) and crs.strip().isdigit():
         return f"EPSG:{crs.strip()}"
     return crs
@@ -210,13 +214,13 @@ class VoronoiGridPlus(VoronoiGrid):
             The CRS the grid's coordinates are in, stamped on ``gdf_vorPolys`` and
             every frame derived from it. Vector features in another CRS are
             reprojected to it; a raster in another CRS is sampled by reprojecting the
-            cells to the raster's. A bare EPSG code (``2927`` or ``"2927"``) is stored as
-            ``"EPSG:2927"``; anything else is stored as given. Default
-            ``"EPSG:2927"`` (the package-wide default, which places a
-            location-agnostic model at that CRS's origin on purpose). ``None`` is
-            not usable: the constructor reprojects the cells to lat/lon for
-            ``grid_centroid``, and geopandas refuses an unreferenced frame
-            (``ValueError``, measured). Assigning :attr:`crs` later RELABELS the
+            cells to the raster's. A bare EPSG code (``2927``, a numpy integer, or
+            ``"2927"``) is stored as ``"EPSG:2927"``; anything else is stored as
+            given. Default ``"EPSG:2927"`` (the package-wide default, which places a
+            location-agnostic model at that CRS's origin on purpose). ``None``, and
+            anything pyproj cannot read, is REFUSED (``ValueError``): the
+            constructor reprojects the cells to lat/lon for ``grid_centroid``, which
+            an unreferenced frame cannot do (ledger 370). Assigning :attr:`crs` later RELABELS the
             grid and every frame it caches; it never reprojects.
         rasters : list of pathlib.Path or float, optional
             Surfaces to sample onto the cells the first time :attr:`gdf_topbtm` is
@@ -698,14 +702,30 @@ class VoronoiGridPlus(VoronoiGrid):
         To move the coordinates instead, reproject a frame:
         ``grid.gdf_vorPolys.to_crs(...)``.
 
-        A bare EPSG code (``2927`` or ``"2927"``) is stored as ``"EPSG:2927"``
-        (:func:`normalize_crs`); anything else as given.
+        A bare EPSG code (``2927``, ``numpy.int64(2927)`` or ``"2927"``) is stored as
+        ``"EPSG:2927"`` (:func:`normalize_crs`); anything else as given. ``None`` and
+        a value pyproj cannot read are REFUSED (``ValueError``) before anything
+        changes: a grid with no CRS cannot build its lat/lon frames, and the
+        refusal used to come from geopandas halfway through the relabel, leaving
+        the grid and its frames on ``None`` (ledger 370).
         """
         return self.__dict__.get("_crs")
 
     @crs.setter
     def crs(self, value):
         value = normalize_crs(value)
+        if value is None:
+            raise ValueError(
+                "A grid's crs cannot be None: its lat/lon frames and grid_centroid are "
+                "reprojections of the cells. Give the CRS the vertices are in, e.g. "
+                "grid.crs = 'EPSG:2927'."
+            )
+        import pyproj
+
+        try:
+            pyproj.CRS.from_user_input(value)
+        except pyproj.exceptions.CRSError as error:
+            raise ValueError(f"grid.crs = {value!r}: pyproj cannot read it as a CRS ({error}).") from error
         changed = "_crs" in self.__dict__ and self.__dict__["_crs"] != value
         self.__dict__["_crs"] = value
         if not changed:
