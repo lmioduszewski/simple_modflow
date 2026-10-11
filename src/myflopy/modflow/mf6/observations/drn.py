@@ -13,7 +13,12 @@ from shapely.geometry.base import BaseGeometry
 
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.domain import model_domain
-from myflopy.modflow.mf6.grid.geometry import cell_shares, domain_active, miss_reason
+from myflopy.modflow.mf6.grid.geometry import (
+    cell_shares,
+    domain_active,
+    miss_reason,
+    model_cell_polygons,
+)
 from myflopy.modflow.mf6.observations._shared import (
     _aggregate_named_series,
     _compare_without_values,
@@ -255,7 +260,7 @@ def _resolve_drn_zone_cells(locations: pd.DataFrame, model, *, owner=None) -> pd
             "resolved against a model's grid; pass the model (it is None here), or give "
             "their 'cells'."
         )
-    polys = model.vor.gdf_vorPolys
+    polys = model_cell_polygons(model)
     domain = model_domain(model, len(polys))
     located = _in_grid_crs(frame, model)
     covered: dict[tuple[str, int], list[int]] = {}

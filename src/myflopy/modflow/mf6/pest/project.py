@@ -31,6 +31,8 @@ from myflopy.modflow.mf6.pest.geostats import build_geostruct
 from myflopy.modflow.mf6.pest.native_parameters import (
     NativeParameterSpec,
     add_native_parameter,
+    flopy_model_for,
+    list_columns,
     relayer_array_target,
     staged_model,
 )
@@ -170,7 +172,8 @@ def _simulation_input_files(sim_ws: str | Path) -> list[Path]:
     the directory it runs in. A ``FILEIN`` file is scanned in turn; an ``OPEN/CLOSE``
     file holds data and is not. Outputs -- the listing files, every ``FILEOUT``, and
     any file nothing names -- are not inputs, and neither is a name that is absolute
-    (read in place from anywhere), outside ``sim_ws``, or not a file there.
+    (read in place from anywhere), outside ``sim_ws`` (see
+    :func:`_inputs_outside_the_run`), or not a file there.
 
     This is what a PEST build's staging copy holds (ledger 383): the template
     needs the simulation's inputs and nothing else of the run.
@@ -186,16 +189,51 @@ def _simulation_input_files(sim_ws: str | Path) -> list[Path]:
         The input files, relative to ``sim_ws``, ``mfsim.nam`` first, each once.
     """
 
+    return _scan_simulation_inputs(sim_ws)[0]
+
+
+def _inputs_outside_the_run(sim_ws: str | Path) -> list[tuple[str, str]]:
+    """Each RELATIVE input name that leads outside ``sim_ws``, with what names it.
+
+    ``../gwf/gwf.hds`` from a GWT model's FMI, an ``OPEN/CLOSE ../arrays/k.txt``, a
+    model name file one directory up: MF6 resolves such a name against the
+    directory it runs in, and every PEST realization runs in its own copy of the
+    template, so there it names a file beside the template -- a missing one, or
+    someone else's (ledger 421). An ABSOLUTE name is not one of these: it is
+    read in place from every copy.
+
+    Parameters
+    ----------
+    sim_ws : str or pathlib.Path
+        The simulation directory, holding ``mfsim.nam``.
+
+    Returns
+    -------
+    list of tuple of (str, str)
+        ``(name as written, what names it)`` -- the name file or package file, and
+        the package it belongs to -- in the order MF6 meets them.
+    """
+
+    return _scan_simulation_inputs(sim_ws)[1]
+
+
+def _scan_simulation_inputs(sim_ws: str | Path) -> tuple[list[Path], list[tuple[str, str]]]:
+    """The walk behind :func:`_simulation_input_files` and :func:`_inputs_outside_the_run`."""
+
     root = Path(sim_ws)
     found: dict[Path, None] = {}
-    # (relative name, how the file is read): "simulation" / "model" name files
-    # are read for their blocks, "input" files scanned for FILEIN/OPEN/CLOSE,
-    # "data" files (OPEN/CLOSE) copied unread.
-    pending: list[tuple[str, str]] = [("mfsim.nam", "simulation")]
+    outside: list[tuple[str, str]] = []
+    # (relative name, how the file is read, what it is): "simulation" / "model"
+    # name files are read for their blocks, "input" files scanned for
+    # FILEIN/OPEN/CLOSE, "data" files (OPEN/CLOSE) copied unread.
+    pending: list[tuple[str, str, str]] = [("mfsim.nam", "simulation", "mfsim.nam")]
     while pending:
-        name, kind = pending.pop(0)
+        name, kind, owner = pending.pop(0)
         relative = Path(os.path.normpath(name))
-        if relative.is_absolute() or relative.parts[:1] == ("..",) or relative in found:
+        if relative.is_absolute() or relative in found:
+            continue
+        if relative.parts[:1] == ("..",):
+            outside.append((name, owner))
             continue
         path = root / relative
         if not path.is_file():
@@ -222,10 +260,20 @@ def _simulation_input_files(sim_ws: str | Path) -> list[Path]:
                     and len(fields) > 1
                     and _MF6_FILE_TYPE.match(fields[0])
                 ):
-                    pending.append((fields[1], "model" if block == "models" else "input"))
+                    entry = fields[0].upper() + (f" {fields[2]!r}" if len(fields) > 2 else "")
+                    pending.append((
+                        fields[1],
+                        "model" if block == "models" else "input",
+                        f"the {entry} entry of {relative}",
+                    ))
         for keyword, token in _MF6_INPUT_REFERENCE.findall(text):
-            pending.append((_mf6_field(token), "input" if keyword.upper() == "FILEIN" else "data"))
-    return list(found)
+            pending.append((
+                _mf6_field(token),
+                "input" if keyword.upper() == "FILEIN" else "data",
+                f"{keyword.upper()} in {relative}"
+                + ("" if kind in ("simulation", "model") else f", named by {owner}"),
+            ))
+    return list(found), outside
 
 
 def build_forward_run_command(template_workspace: Path, interpreter: str) -> str:
@@ -1190,6 +1238,36 @@ class PestProject:
             )
         return template.with_name(f"{template.name}{STAGING_SUFFIX}")
 
+    def _refuse_inputs_outside_the_run(self) -> None:
+        """Refuse an input named by a relative path out of the run directory (ledger 421).
+
+        The staging copy holds what the run directory holds; a name like
+        ``../gwf/gwf.hds`` is not in it, and in every realization -- each its own
+        copy of the template -- MF6 resolves it against that copy's directory, so
+        it reads a file beside the template (a missing one, or a stale or foreign
+        one) where the run read the one beside the run. It was skipped in silence
+        until then (ledger 383's "not copied"). An absolute name is the same file
+        from every copy, and is not refused.
+        """
+
+        outside = _inputs_outside_the_run(self.original_workspace)
+        if not outside:
+            return
+        run = Path(self.original_workspace).resolve()
+        listing = "; ".join(
+            f"{name!r} ({owner}), which the run read as "
+            f"{Path(os.path.normpath(run / name))}"
+            for name, owner in outside
+        )
+        raise ValueError(
+            f"The simulation in {run} reads input from outside its run directory by a "
+            f"relative name: {listing}. Every PEST realization runs the model in its own "
+            "copy of the template, where that name reads a file beside the copy rather "
+            "than this one. Name it by its ABSOLUTE path (read in place by every "
+            "realization), or move the file into the run directory and name it "
+            "relative to it, then write and run the simulation again."
+        )
+
     def _stage_model(self) -> Path:
         """Copy the run's INPUT files to a staging directory and make PEST's model of them there.
 
@@ -1207,8 +1285,11 @@ class PestProject:
         realization's model writes its own -- no myflopy run metadata (``run.json``,
         ``.myflopy/``, a pickled model), and no PEST workspace a run directory holds.
         It copied the whole directory until then, so all of those went into every
-        template and every IES worker. The inputs are the run's FILES, which is what
-        its output files -- the base observations PEST reads -- were computed from.
+        template and every IES worker. An input named by a relative path out of the
+        run directory is not in the copy, and the build has refused it before this
+        (``_refuse_inputs_outside_the_run``, ledger 421). The inputs are the
+        run's FILES, which is what its output files -- the base observations PEST
+        reads -- were computed from.
         FloPy's loader drops LAK ``IMPLICIT`` without a word (ledger 326), so the
         loaded simulation goes through ``keep_implicit``, as myflopy's own loaders
         do.
@@ -1668,8 +1749,13 @@ class PestProject:
                     layer_prefixes[int(match.group(1)) - 1] = prefix
                 self.pf.add_observations(filename, prefix=prefix)
             else:
+                # The value column on THIS grid: one further right on DIS, whose
+                # cellid is three columns (ledger 420).
+                index_cols, use_col = list_columns(
+                    recipe, flopy_model_for(self, recipe).modelgrid.grid_type
+                )
                 self.pf.add_observations(
-                    filename, prefix=base, index_cols=[0, 1], use_cols=[recipe.use_col]
+                    filename, prefix=base, index_cols=index_cols, use_cols=[use_col]
                 )
         self._capture_field_specs[spec.name] = {
             "prefix": base,
@@ -1760,7 +1846,13 @@ class PestProject:
             group label, or a set's prefix, cannot be its PEST observation group
             (ledger 358; see :meth:`observe`). Also, before anything is deleted,
             when ``workspace=`` or the staging directory beside it is, contains or
-            sits inside the model's run directory, whatever it holds (ledger 360).
+            sits inside the model's run directory, whatever it holds (ledger 360);
+            and, before anything is deleted, when an input the simulation reads is
+            named by a RELATIVE path leading out of the run directory -- a GWT
+            model's FMI reading ``../gwf/gwf.hds`` -- naming each and what names it
+            (ledger 421). Every realization runs in its own copy of the
+            template, where such a name reads a file beside the template; an
+            absolute name is read in place and is not refused.
         FileNotFoundError
             When the model's workspace holds no ``mfsim.nam``: the template is
             made from the run's files, and a model never written has none.
@@ -1774,6 +1866,7 @@ class PestProject:
 
         target_name = Path(filename).name if filename else f"{self.name}.pst"
         self._refuse_shared_prefixes()
+        self._refuse_inputs_outside_the_run()
         self._release_pyemu_log()
         self._clear_stale_template()
         staging = self._staging_workspace()

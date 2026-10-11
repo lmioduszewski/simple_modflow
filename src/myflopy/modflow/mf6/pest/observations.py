@@ -43,6 +43,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 
+from myflopy.modflow.mf6.grid.geometry import model_cell_polygons
 from myflopy.modflow.mf6.observations._shared import (
     _is_blank,
     _measured_periods,
@@ -183,7 +184,7 @@ def _point_locations_snapshot(project, targets) -> gpd.GeoDataFrame:
     snapshot = targets.match_to_model(project.model).loc[
         :, ["name", "layer", "group", "weight", "x", "y"]
     ].copy()
-    crs = getattr(project.model.vor, "crs", None)
+    crs = model_cell_polygons(project.model).crs
     return gpd.GeoDataFrame(
         snapshot.drop(columns=["x", "y"]),
         geometry=gpd.points_from_xy(snapshot["x"], snapshot["y"], crs=crs),

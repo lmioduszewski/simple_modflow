@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from myflopy.modflow.mf6.grid.geometry import model_cell_polygons
 from myflopy.modflow.mf6.pest.native_parameters import (
     _flatten_array_file,
     _resolve_files,
@@ -56,7 +57,8 @@ def place_pilot_points(model, gwf, *, pp_space=None, pp_points=None) -> pd.DataF
     Parameters
     ----------
     model : SimulationBase
-        The calibrated model; only ``model.vor.gdf_vorPolys`` is read, for the
+        The calibrated model; only its cell polygons are read
+        (:func:`~myflopy.modflow.mf6.grid.geometry.model_cell_polygons`), for the
         median cell width, and only when ``pp_points`` is ``None``.
     gwf : flopy.mf6.ModflowGwf
         The FloPy flow model whose ``modelgrid`` cell centres the net is snapped
@@ -84,7 +86,7 @@ def place_pilot_points(model, gwf, *, pp_space=None, pp_points=None) -> pd.DataF
         frame = pd.DataFrame({"x": pts[:, 0], "y": pts[:, 1]})
     else:
         space = int(pp_space) if pp_space else 5
-        areas = np.asarray([g.area for g in model.vor.gdf_vorPolys.geometry], dtype=float)
+        areas = np.asarray([g.area for g in model_cell_polygons(model).geometry], dtype=float)
         step = float(np.sqrt(np.median(areas))) * space
         bx = np.floor((xc - xc.min()) / step).astype(int)
         by = np.floor((yc - yc.min()) / step).astype(int)
@@ -140,7 +142,10 @@ def _base_array_for(project, spec) -> np.ndarray:
         )
     values = np.asarray(array.get_data(), dtype=float)
     nlay = int(model.modelgrid.nlay)
-    return values.reshape(nlay, -1) if values.ndim < 2 else values
+    # One row per layer, a cell per column, whatever shape FloPy hands back: a DIS
+    # array is ``(nlay, nrow, ncol)``, which wrote no pilot-point table at all
+    # (ledger 420).
+    return values.reshape(nlay, -1)
 
 
 def add_pilot_point_parameter(project, spec) -> pd.DataFrame:

@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 419 entries (424 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 421 entries (426 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 421 | A PEST build refuses an input named by a RELATIVE path out of the run directory, naming it and the package... | 2026-10-11 |
+| 420 | A structured (DIS) model calibrates: array files are written one grid row per line, a list target's columns... | 2026-10-11 |
 | 419 | A cellid names the cell the model's own grid numbers, by ONE rule -- `CellNumbering` -- in every package ta... | 2026-10-11 |
 | 418 | A rejected optimizer round reports `"fallback_last_accepted_mesh"` when rounds had been accepted,... | 2026-10-11 |
 | 417 | `GridSpec.voronoi`'s `options=` and `mesh_options=` keys are checked, at the call and again at resolve; two... | 2026-10-11 |
@@ -17597,8 +17599,9 @@ same day, which is the useful part of the result.
       A file the scan missed fails LOUDLY: FloPy's load of the staging copy names it. No
       directory is copied, so no PEST workspace can be.
       **Not copied, as before:** a name that is absolute (read in place by every worker) or
-      outside the run directory (`../flow/flow.hds`) -- the latter then resolves against
-      the template's parent, which the build does not refuse (found, not fixed).
+      outside the run directory (`../flow/flow.hds`) -- ~~the latter then resolves against
+      the template's parent, which the build does not refuse (found, not fixed).~~ the
+      latter is refused at build since ledger 421.
       Revert check: copying the whole directory again fails
       `test_the_template_holds_no_output_metadata_or_pest_workspace_of_the_run`.
 
@@ -17614,9 +17617,10 @@ same day, which is the useful part of the result.
       could act on. `True` on any grid but a regular structured one is a `ValueError`
       naming `use_specsim=False` -- an irregular structured grid, which pyEMU refuses
       itself, included, so both refusals read alike.
-      **Reachable today only on DISV:** an array parameter on a DIS model does not build at
+      ~~**Reachable today only on DISV:** an array parameter on a DIS model does not build at
       all (found, not fixed), so the regular-grid branch is tested on stubs over FloPy's own
-      `StructuredGrid`.
+      `StructuredGrid`.~~ A DIS model builds since ledger 420, and
+      `test_spectral_simulation_draws_on_a_dis_model` draws on one.
       Revert check: the old default fails
       `test_draw_prior_draws_by_default_on_a_disv_model_and_refuses_specsim_there` and
       `test_specsim_is_passed_to_pyemu_only_on_a_regular_structured_grid`.
@@ -18213,3 +18217,43 @@ same day, which is the useful part of the result.
       `(layer, cell)` cellid, and `_shared._declared_features` compares a declared cellid
       to the zone's pair as raw tuples, so a DIS or DISU declaration is refused as
       "declared for" another cell rather than read (from the code; not run on DIS).
+
+420. **A structured (DIS) model calibrates: array files are written one grid row per line, a list target's columns follow the cellid's width, zones take the grid's shape, and a model with no grid view is located on FloPy's own cells (2026-10-11).**
+      Every array parameter on a DIS model -- `style="constant"` on `k` included -- died
+      in pyEMU's `write_array_tpl` (`IndexError: index 5 is out of bounds for axis 0 with
+      size 5`); a list parameter BUILT and scaled the wrong column (`usecol:2` of `1 1 1
+      1.0E+02` is the column number); a head target on a model built from `mf.dis(...)`
+      died on `model.vor` being `None`, and so did a pilot-point base array of shape
+      `(nlay, nrow, ncol)`. A real PESTPP-IES prior of a 2x5x6 DIS run opened with
+      `mf.load_mf6_run` now reproduces the build's base heads in its base realization.
+      **Judgment call: support DIS, not refuse it** -- the gap was three shapes and one
+      column offset, each stated by MF6's or pyEMU's file format.
+      **The rule is ONE function per question**: `native_parameters.list_columns` (the
+      cellid's width by FloPy's `grid_type`, used by the parameter and the capture-field
+      observations), `array_row_length` (`ncol` on DIS, else 1), and
+      `grid.geometry.model_cell_polygons` (`model.vor.gdf_vorPolys`, else FloPy's
+      `modelgrid` polygons), which every target, DRN zone, PEST zone and pilot-point net
+      now reads. **Deliberately NOT done: giving `ModelView.vor` a value on DIS** -- a
+      reopened run (`load_mf6_run`) has one, a live view of the same model does not, and
+      making them agree would put every map and section in front of DIS, which the
+      package helpers leave DISV-only.
+      **DISU's columns are by format, not by run**: `list_columns` gives a one-column
+      cellid there, but no PEST build of a DISU model was run.
+      Tests: `tests/test_pest_structured_grid.py` (6; the forward run scaling K, K33 by
+      zone and every CHD head with cellids intact, a PESTPP-IES prior, the `mf.dis` route
+      with pilot points and list zones, spectral simulation). Each piece reverted alone
+      fails a named test there.
+
+421. **A PEST build refuses an input named by a RELATIVE path out of the run directory, naming it and the package that names it; an absolute name is read in place (2026-10-11).**
+      Ledger 383's "not copied": `../gwf/gwf.hds` from a GWT FMI, or `OPEN/CLOSE
+      ../shared/k.txt`, was skipped by the staging copy, and every realization -- each in
+      its own copy of the template -- resolved it against that copy's directory: a missing
+      file, or a different one. **Judgment call: refuse, not copy it in.** Copying would
+      freeze a file another simulation writes (the flow model's heads a transport model
+      reads), so a realization would read the copy while the user's run reads the
+      original; the refusal says to use an absolute path or move the file into the run.
+      Checked before anything is deleted. **Not done:** a relative `FILEOUT` out of the
+      run directory is not refused -- every parallel worker would write the same file.
+      Test: `tests/test_pest_template_holds_inputs_only.py::test_a_build_refuses_an_input_named_relative_to_outside_the_run`
+      (a real MF6 run reading `../shared/k.txt`; refused, and built once the name is
+      absolute) and the scanner test, which now asserts the reported name and owner.

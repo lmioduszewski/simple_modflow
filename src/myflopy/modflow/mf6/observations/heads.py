@@ -14,7 +14,12 @@ from shapely.geometry import Point
 from myflopy._logging import get_logger
 from myflopy.grid_identity import excavation_cells
 from myflopy.modflow.mf6.grid.domain import model_domain
-from myflopy.modflow.mf6.grid.geometry import cell_shares, domain_active, miss_reason
+from myflopy.modflow.mf6.grid.geometry import (
+    cell_shares,
+    domain_active,
+    miss_reason,
+    model_cell_polygons,
+)
 from myflopy.modflow.mf6.observations._shared import (
     _build_values_from_cells,
     _coerce_label_list,
@@ -544,7 +549,8 @@ class HeadTargets:
         model : SimulationBase
             The model to match against -- a run (``run.model()``,
             ``mf.load_mf6_run(ws)``) or any model-like object exposing
-            ``vor.gdf_vorPolys``, the grid's cell polygons. Which cells are
+            ``vor.gdf_vorPolys``, the grid's cell polygons, or a FloPy ``modelgrid``
+            (a DIS model, ledger 420). Which cells are
             active comes from its discretization's ``idomain``, else its
             ``myflopy_context.domain``; with neither, every cell is active.
 
@@ -574,7 +580,7 @@ class HeadTargets:
         if "cell" in self._locations.columns:
             matches = self._validated_cells(model)
             if matches["x"].isna().any() or matches["y"].isna().any():
-                vor = model.vor.gdf_vorPolys.reset_index().rename(columns={"index": "cell"})
+                vor = model_cell_polygons(model).reset_index().rename(columns={"index": "cell"})
                 centroids = pd.DataFrame(
                     {
                         "cell": vor["cell"].astype(int),
@@ -599,7 +605,7 @@ class HeadTargets:
         """
 
         matches = self._locations.copy()
-        ncpl = len(model.vor.gdf_vorPolys)
+        ncpl = len(model_cell_polygons(model))
         domain = model_domain(model, ncpl)
         cells = matches["cell"].astype(int)
         layers = matches["layer"].astype(int)
@@ -633,7 +639,7 @@ class HeadTargets:
     def _matched_from_geometry(self, model) -> pd.DataFrame:
         """Resolve each target's point to the one cell it sits in."""
 
-        polys = model.vor.gdf_vorPolys
+        polys = model_cell_polygons(model)
         locations = self._locations_in_grid_crs(model)
         domain = model_domain(model, len(polys))
         columns = ["name", "name_key", "layer", "group", "weight", "cell", "x", "y"]

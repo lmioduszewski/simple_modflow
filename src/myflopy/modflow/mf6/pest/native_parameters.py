@@ -32,10 +32,12 @@ from myflopy.modflow.mf6.pest.zones import resolve_zone_array
 # --- recipe registry -------------------------------------------------------
 #
 # Each recipe knows how to find the external MODFLOW input file(s) a target maps
-# to and how pyEMU should read them. Voronoi/DISV list files index on
-# ``[layer, cell]`` (index_cols=[0, 1]); structured grids would use
-# ``[layer, row, col]``. ``use_col`` is the zero-based column holding the value
-# pyEMU multiplies/offsets.
+# to and how pyEMU should read them. Recipes are written for DISV list files,
+# which index on ``[layer, cell]`` (index_cols=[0, 1]); ``use_col`` is the
+# zero-based column holding the value pyEMU multiplies/offsets, on DISV. A DIS
+# cellid is three columns, ``layer row col``, so on a structured grid every
+# column after it moves one to the right -- :func:`list_columns` is the ONE rule
+# that says where they are on the model's own grid (ledger 420).
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,47 @@ class _Recipe:
 # DISV list files are usually written as ``layer cell <values...>``; see
 # `_Recipe.index_cols` for the exceptions.
 _LIST_INDEX_COLS = (0, 1)
+
+#: How many columns an MF6 cellid takes in a list file, by FloPy's grid type:
+#: ``layer row col`` (DIS), ``layer cell`` (DISV), ``node`` (DISU).
+_CELLID_WIDTH = {"structured": 3, "vertex": 2, "unstructured": 1}
+
+
+def list_columns(recipe: _Recipe, grid_type: str) -> tuple[list[int], int]:
+    """Where a list recipe's cell identity and value sit on a grid of ``grid_type``.
+
+    A recipe is written for a DISV file, whose cellid is two columns (``layer
+    cell``). On DIS the cellid is three (``layer row col``), so the cell identity
+    spans one more column and the value is one further right. Before this the DISV
+    columns were used on every grid, and on a DIS model a CHD multiplier was
+    written onto the COLUMN NUMBER of each record (``usecol:2`` of ``1 1 1 1.0E+02``)
+    -- the build succeeded (ledger 420).
+
+    Parameters
+    ----------
+    recipe : _Recipe
+        A list-family recipe; its ``index_cols`` (two adjacent columns, the DISV
+        cellid) and ``use_col`` are read.
+    grid_type : str
+        FloPy's ``modelgrid.grid_type``: ``"structured"`` (DIS), ``"vertex"``
+        (DISV) or ``"unstructured"`` (DISU). Any other value raises ``KeyError``.
+
+    Returns
+    -------
+    tuple of (list of int, int)
+        The zero-based ``index_cols`` -- the cellid's columns, pyEMU reading its
+        LAST two as the cell's ``(i, j)`` -- and ``use_col``, both on that grid.
+    """
+
+    first, last = recipe.index_cols[0], recipe.index_cols[-1]
+    if last - first != len(_LIST_INDEX_COLS) - 1:
+        raise ValueError(
+            f"Recipe {recipe.canonical!r} names index columns {recipe.index_cols}, "
+            "which are not one DISV cellid (two adjacent columns)."
+        )
+    shift = _CELLID_WIDTH[grid_type] - len(_LIST_INDEX_COLS)
+    width = _CELLID_WIDTH[grid_type]
+    return list(range(first, first + width)), int(recipe.use_col) + shift
 
 _RECIPES: dict[str, _Recipe] = {
     "k": _Recipe("k", "array", "{model}.npf_k.txt", package="npf", variable="k"),
@@ -257,18 +300,45 @@ class NativeParameterSpec:
         return "none" if self.additive else self.transform
 
 
-def _flatten_array_file(path: Path) -> None:
-    """Rewrite an MF6 external array file as one value per line.
+def _flatten_array_file(path: Path, row_length: int = 1) -> None:
+    """Rewrite an MF6 external array file as ``row_length`` values per line.
 
     MF6 wraps large arrays at a fixed number of values per line, leaving a
     short final line. pyEMU reads array files with ``numpy.loadtxt``, which
     rejects that ragged layout (and which also emits a ``%F`` format warning).
-    Rewriting the values in a single column (free format, scientific notation)
-    is read identically by MF6 and cleanly by pyEMU, regardless of cell count.
+    Rewriting the values in rows of one length (free format, scientific
+    notation) is read identically by MF6 and cleanly by pyEMU, whatever the cell
+    count.
+
+    The length is the grid's: one value per line on DISV, where pyEMU reads row
+    ``i`` as cell ``i``, and one ROW of the grid per line on DIS (``ncol``), where
+    pyEMU reads the file as ``(nrow, ncol)`` and looks each value's centre up at
+    ``[i, j]`` -- a one-column file there made every array parameter on a DIS
+    model fail in ``write_array_tpl`` with ``IndexError: index 5 is out of bounds
+    for axis 0 with size 5`` (ledger 420). See :func:`array_row_length`.
     """
 
     values = np.array(Path(path).read_text().split(), dtype=float)
-    np.savetxt(path, values.reshape(-1, 1), fmt="%.10E")
+    np.savetxt(path, values.reshape(-1, int(row_length)), fmt="%.10E")
+
+
+def array_row_length(modelgrid) -> int:
+    """How many values one line of an array file pyEMU reads holds, on ``modelgrid``.
+
+    ``ncol`` on a structured (DIS) grid -- pyEMU indexes its spatial reference at
+    ``[row, col]`` -- else ``1``: on DISV and DISU it indexes a cell by its line.
+
+    Parameters
+    ----------
+    modelgrid : flopy.discretization.Grid
+        The staged model's FloPy grid; ``grid_type`` and, on DIS, ``ncol`` are read.
+
+    Returns
+    -------
+    int
+    """
+
+    return int(modelgrid.ncol) if modelgrid.grid_type == "structured" else 1
 
 
 def model_name_for(project, recipe: _Recipe) -> str:
@@ -497,10 +567,14 @@ def add_native_parameter(project, spec: NativeParameterSpec):
         files = _select_layer_files(files, spec.layers, recipe)
     spec.resolved_files = list(files)
 
+    grid = flopy_model_for(project, recipe).modelgrid
     if recipe.family == "array":
-        # Normalize MF6's wrapped array layout so pyEMU can read any cell count.
+        # Normalize MF6's wrapped array layout so pyEMU can read any cell count,
+        # in the shape it reads on this grid (one grid row per line on DIS).
         for filename in files:
-            _flatten_array_file(Path(project.template_workspace) / filename)
+            _flatten_array_file(
+                Path(project.template_workspace) / filename, array_row_length(grid)
+            )
 
     if recipe.family == "array" and spec.style == "pilotpoints":
         raise NotImplementedError(
@@ -531,8 +605,9 @@ def add_native_parameter(project, spec: NativeParameterSpec):
             spec.zones, family=recipe.family, model=project.model
         )
     if recipe.family == "list":
-        kwargs["index_cols"] = list(recipe.index_cols)
-        kwargs["use_cols"] = [recipe.use_col]
+        index_cols, use_col = list_columns(recipe, grid.grid_type)
+        kwargs["index_cols"] = index_cols
+        kwargs["use_cols"] = [use_col]
     if spec.correlation is not None and spec.style in _SPATIAL_STYLES:
         kwargs["geostruct"] = project._geostruct_for(spec)
     kwargs.update(spec.extra)

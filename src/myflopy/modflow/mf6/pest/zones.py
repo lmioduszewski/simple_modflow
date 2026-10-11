@@ -27,6 +27,12 @@ assumes a ``(1, n)`` array on a vertex grid is an idomain array and reshapes it
 to ``(n, 1)``. :func:`resolve_zone_array` pads to ``(2, ncpl)`` to sidestep that;
 the padding row addresses no real cell, so nothing indexes it.
 
+That table is a vertex (DISV) grid's. On a structured (DIS) grid pyEMU reads an
+array file as ``(nrow, ncol)`` and a list record's zone at its ``(layer, row, col)``,
+so :func:`resolve_zone_array` returns ``(nrow, ncol)`` and ``(nlay, nrow, ncol)``
+there, with no padding: the ``checker2`` reshape is a vertex-grid branch (ledger
+420).
+
 Zone ids are integers. ``0`` and negatives mean "not parameterized" for array
 targets (pyEMU skips them); for list targets pyEMU makes a real parameter for
 zone 0, so :func:`resolve_zone_array` warns rather than letting the two families
@@ -42,7 +48,7 @@ from typing import Any
 
 import numpy as np
 
-from myflopy.modflow.mf6.grid.geometry import centroid_zones, where_they_are
+from myflopy.modflow.mf6.grid.geometry import centroid_zones, model_cell_polygons, where_they_are
 
 __all__ = ["ZoneSpec", "resolve_zone_array"]
 
@@ -217,7 +223,7 @@ class ZoneSpec:
             labels = np.arange(1, len(frame) + 1)
             unlabelled = np.zeros(len(frame), dtype=bool)
 
-        cells = model.vor.gdf_vorPolys
+        cells = model_cell_polygons(model)
         source_crs = frame.crs
         if frame.crs is not None and cells.crs is not None and frame.crs != cells.crs:
             # Reprojection preserves row order, so `labels` still lines up.
@@ -265,7 +271,7 @@ def _majority_sample(raster_path: Path, model, *, nodata_zone: int) -> np.ndarra
     from rasterio.features import rasterize
     from rasterio.windows import Window, from_bounds
 
-    cells = model.vor.gdf_vorPolys
+    cells = model_cell_polygons(model)
     ncpl = len(cells)
     values = np.full(ncpl, int(nodata_zone), dtype=int)
     covered = np.zeros(ncpl, dtype=bool)
@@ -350,29 +356,58 @@ def _centroid_labels(src, points, *, nodata_zone: int) -> np.ndarray:
 def resolve_zone_array(zones: Any, *, family: str, model) -> np.ndarray:
     """Normalize a zone definition into the shape pyEMU wants for ``family``.
 
-    ``zones`` may be a :class:`ZoneSpec` or any array-like. The result is
-    per-cell ``(ncpl,)`` for array targets and ``(nlay, ncpl)`` for list
-    targets. See the module docstring for why the two differ and why a
-    single-layer list target is padded.
+    The result is per-cell ``(ncpl,)`` for array targets and ``(nlay, ncpl)`` for
+    list targets on a vertex grid. See the module docstring for why the two differ
+    and why a single-layer list target is padded. On a structured (DIS) grid pyEMU
+    reads an array file as ``(nrow, ncol)`` and a list record's zone at its
+    ``(layer, row, col)``, so the result is ``(nrow, ncol)`` and
+    ``(nlay, nrow, ncol)`` there (ledger 420).
+
+    Parameters
+    ----------
+    zones : ZoneSpec or array_like
+        The zone labels: a :class:`ZoneSpec`, or any integer array-like
+        (:meth:`ZoneSpec.from_array`) of one label per cell of a layer -- flat,
+        ``(nrow, ncol)`` on DIS, or one copy per layer, which must agree.
+    family : str
+        The target's family: ``"array"`` or ``"list"``; anything else is read as
+        ``"list"``.
+    model : SimulationBase
+        The calibrated model; its grid view's ``vor.ncpl`` (else the FloPy grid's
+        ``ncpl``) and its FloPy ``gwf.modelgrid`` (``nlay``, ``grid_type``, and
+        ``nrow``/``ncol`` on DIS) are read.
+
+    Returns
+    -------
+    numpy.ndarray
+        Integer labels in the shape above.
+
+    Raises
+    ------
+    ValueError
+        When the labels are not one per cell, or their per-layer copies differ.
     """
 
     spec = zones if isinstance(zones, ZoneSpec) else ZoneSpec.from_array(zones)
     values = spec.values
-    ncpl = int(model.vor.ncpl)
-    nlay = int(model.gwf.modelgrid.nlay)
+    modelgrid = model.gwf.modelgrid
+    vor = getattr(model, "vor", None)
+    ncpl = int(vor.ncpl) if vor is not None else int(modelgrid.ncpl)
+    nlay = int(modelgrid.nlay)
 
     flat = values.reshape(-1)
-    if values.ndim >= 2 and values.shape[-1] == ncpl and values.shape[0] not in (1, ncpl):
+    if values.ndim >= 2 and flat.size != ncpl and flat.size % ncpl == 0:
         # Per-layer input: zones are a property of the map, so require the
         # layers to agree rather than silently taking the first.
-        if not np.all(values == values[0]):
+        layers = flat.reshape(-1, ncpl)
+        if not np.all(layers == layers[0]):
             raise ValueError(
                 f"Zone definition from {spec.source} differs between layers. "
                 "Zones are per-cell labels applied to every layer the target "
                 "covers; use `layers=` to restrict which layers are "
                 "parameterized instead."
             )
-        flat = values[0]
+        flat = layers[0]
     elif flat.size != ncpl:
         raise ValueError(
             f"Zone definition from {spec.source} has {flat.size} values, but the "
@@ -380,15 +415,21 @@ def resolve_zone_array(zones: Any, *, family: str, model) -> np.ndarray:
         )
 
     per_cell = np.asarray(flat, dtype=int).reshape(ncpl)
+    structured = getattr(modelgrid, "grid_type", None) == "structured"
     if family == "array":
-        return per_cell
+        return per_cell.reshape(int(modelgrid.nrow), int(modelgrid.ncol)) if structured else per_cell
 
     # List targets are indexed (layer, cell), so the array must be 2-D -- and at
     # least 2 rows deep even on a one-layer model, because pyEMU reshapes any
     # (1, n) array on a vertex grid assuming it is an idomain array
     # (pst_from.py checker2). The padding row addresses no real cell, so nothing
     # ever indexes it.
-    stacked = np.repeat(per_cell[None, :], max(nlay, 2), axis=0)
+    if structured:
+        stacked = np.repeat(
+            per_cell.reshape(1, int(modelgrid.nrow), int(modelgrid.ncol)), nlay, axis=0
+        )
+    else:
+        stacked = np.repeat(per_cell[None, :], max(nlay, 2), axis=0)
     if 0 in set(per_cell.tolist()):
         warnings.warn(
             f"Zone id 0 in the definition from {spec.source} becomes a real, "

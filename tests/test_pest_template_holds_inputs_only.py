@@ -17,6 +17,7 @@ the run, in every family the toy carries.
 
 from __future__ import annotations
 
+import subprocess
 import warnings
 from pathlib import Path
 
@@ -25,7 +26,11 @@ import pandas as pd
 import pytest
 
 import myflopy as mf
-from myflopy.modflow.mf6.pest.project import BUILD_MARKER, _simulation_input_files
+from myflopy.modflow.mf6.pest.project import (
+    BUILD_MARKER,
+    _inputs_outside_the_run,
+    _simulation_input_files,
+)
 from tests.test_pest_handed_targets import DRN_CELLS, run_toy
 
 pyemu = pytest.importorskip("pyemu")
@@ -92,6 +97,11 @@ END packages
         "mfsim.nam", "s.tdis", "sub dir/m.nam", "m.ims", "sim.hpc", "s.ats", "m.npf",
         "m.chd", "m.obs", "arrays/k 1.txt", "m.ts", "m.chd.obs", "m.chd_1.txt",
     ]
+    # The one relative name out of the directory is reported, with what names it
+    # (ledger 421); the absolute one is read in place and is not.
+    assert _inputs_outside_the_run(tmp_path) == [
+        ("../outside.txt", "OPEN/CLOSE in m.chd, named by the CHD6 'chd' entry of sub dir/m.nam"),
+    ]
 
 
 def test_a_binary_input_is_copied_and_not_scanned(tmp_path):
@@ -107,6 +117,49 @@ def test_a_binary_input_is_copied_and_not_scanned(tmp_path):
     assert [str(path) for path in _simulation_input_files(tmp_path)] == [
         "mfsim.nam", "t.nam", "t.fmi", "flow.hds",
     ]
+
+
+def test_a_build_refuses_an_input_named_relative_to_outside_the_run(tmp_path):
+    """A GWT model's FMI reading ``../gwf/gwf.hds`` is the usual case; here NPF's K is
+    ``OPEN/CLOSE ../shared/k.txt``. MF6 runs it, and the build refuses it before
+    anything is written, naming the file, the package and where the run read it --
+    every realization would read a ``shared/k.txt`` beside the template. The same
+    file by its ABSOLUTE path builds (ledger 421)."""
+
+    from tests.test_pest_structured_grid import _dis_run
+
+    shared = tmp_path / "shared" / "k.txt"
+    shared.parent.mkdir()
+    run = _dis_run(tmp_path / "run")
+    np.savetxt(shared, np.full((10, 6), 3.0))
+    original = (run / "m.npf").read_text()
+
+    def rerun(k_name: str):
+        start, end = original.index("  k  LAYERED\n"), original.index("  k33")
+        (run / "m.npf").write_text(
+            original[:start] + f"  k\n    OPEN/CLOSE '{k_name}'\n" + original[end:])
+        ran = subprocess.run(["mf6"], cwd=run, capture_output=True, text=True)
+        assert "Normal termination" in ran.stdout
+
+    rerun("../shared/k.txt")
+    model = mf.load_mf6_run(run)
+    cal = model.pest("outside", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    with pytest.raises(ValueError) as refused:
+        cal.build("outside.pst")
+    message = str(refused.value)
+    assert "'../shared/k.txt' (OPEN/CLOSE in m.npf, named by the NPF6 'npf' entry of m.nam)" in message
+    assert str(shared) in message and "ABSOLUTE path" in message
+    assert not (tmp_path / "pest").exists()
+
+    rerun(str(shared))
+    model = mf.load_mf6_run(run)
+    cal = model.pest("outside", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("outside.pst")
+    assert not (cal.template_workspace / "shared").exists()
 
 
 # -- end to end: the toy, built and run through PESTPP-IES -------------------------------

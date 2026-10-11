@@ -230,6 +230,64 @@ def get_gdf_vor_polys(vor, crs=None) -> gpd.GeoDataFrame:
     return gdf
 
 
+def model_cell_polygons(model) -> gpd.GeoDataFrame:
+    """A model's cell polygons, one row per cell of a layer, numbered from 0.
+
+    ``model.vor.gdf_vorPolys`` when the model carries a grid view -- every DISV
+    model myflopy builds, and every run :func:`myflopy.load_mf6_run` opens, DIS
+    included -- else the polygons of FloPy's own ``modelgrid``, in its ``iverts``
+    order. That is the second case a model built from ``mf.dis(...)`` is in: its
+    context holds no grid, so ``model.vor`` is ``None``, and every target
+    located on it -- a head target, a DRN zone, a PEST zone or pilot-point net --
+    died with ``AttributeError: 'NoneType' object has no attribute
+    'gdf_vorPolys'`` (ledger 420). On a structured grid row ``r``, column
+    ``c`` is cell ``r * ncol + c``, the number MF6's DIS arrays and a head file's
+    layer are read in.
+
+    Parameters
+    ----------
+    model : SimulationBase or LoadedMf6Run
+        The model whose cells are wanted. Read: its ``vor`` (may be ``None``),
+        else the FloPy ``modelgrid`` of its ``gwf``, else its own ``modelgrid``.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        One polygon per cell of a layer, in the grid view's CRS, or FloPy's
+        ``modelgrid.crs`` (``None`` when it declares none) when built from it.
+        Built once per FloPy grid object and kept on the model.
+
+    Raises
+    ------
+    ValueError
+        When the model has neither a grid view nor a FloPy ``modelgrid``.
+    """
+
+    vor = getattr(model, "vor", None)
+    if vor is not None:
+        return vor.gdf_vorPolys
+    gwf = getattr(model, "gwf", None)
+    grid = getattr(gwf, "modelgrid", None) if gwf is not None else None
+    if grid is None:
+        grid = getattr(model, "modelgrid", None)
+    if grid is None:
+        raise ValueError(
+            f"Model {getattr(model, 'name', model)!r} has no grid to locate cells on: "
+            "neither a grid view (`model.vor`) nor a FloPy `modelgrid`."
+        )
+    cached = getattr(model, "_cell_polygons_from_modelgrid", None)
+    if cached is not None and cached[0] is grid:
+        return cached[1]
+    verts = np.asarray(grid.verts, dtype=float)
+    polygons = [shp.Polygon(verts[[int(vertex) for vertex in cell]]) for cell in grid.iverts]
+    gdf = gpd.GeoDataFrame(geometry=polygons, crs=getattr(grid, "crs", None))
+    try:
+        model._cell_polygons_from_modelgrid = (grid, gdf)
+    except AttributeError:
+        logger.debug("Cell polygons of %r not cached: the model takes no attribute", model)
+    return gdf
+
+
 def get_gdf_latlon(vor):
     """
     Return the Voronoi polygons in latitude/longitude coordinates.

@@ -805,7 +805,17 @@ simulation from it -- keeping LAK `IMPLICIT` -- and re-stores arrays per layer a
 external files there, never in the run or on the model object. The template is the
 run's FILES (the inputs its output, which the observations read, came from), so a model
 never written is refused and an in-memory edit after the run does not reach it; pyEMU's
-`PstFrom.log` goes into the template. **A build deletes the template and its staging
+`PstFrom.log` goes into the template. **An input named by a RELATIVE path out of the run
+directory is refused** (ledger 421) -- a GWT model's FMI reading `../gwf/gwf.hds`,
+an `OPEN/CLOSE ../k.txt` -- naming it and what names it: every realization runs in its
+own copy of the template, where such a name reads a file beside the copy. Name it by its
+absolute path (read in place), or move it into the run directory. **A structured (DIS)
+model calibrates like a DISV one** (ledger 420): array files are written one grid
+row per line, the shape pyEMU reads against the `StructuredGrid`; a list target's value
+is read one column further right, past the three-column `layer row col` cellid; zones
+are `(nrow, ncol)`; and targets, zones and pilot points on a model built from
+`mf.dis(...)` (whose `model.vor` is `None`) are located on FloPy's own cells, numbered
+`row * ncol + col`. **A build deletes the template and its staging
 directory only when each is absent, empty, or one a build wrote** (ledger 360: marked by
 a visible `myflopy_pest_build.json` naming it, ledger 361); any other `workspace=` folder
 is refused with `FileExistsError`, and one that is, contains or sits inside the run

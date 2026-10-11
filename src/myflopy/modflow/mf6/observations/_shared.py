@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy._logging import get_logger
-from myflopy.modflow.mf6.grid.geometry import where_they_are
+from myflopy.modflow.mf6.grid.geometry import model_cell_polygons, where_they_are
 from myflopy.modflow.mf6.package_registry import (
     agg_for_kind,
     model_packages_of_type,
@@ -2035,7 +2035,13 @@ def _in_grid_crs(features, model):
     without comparing CRSs itself.
     """
 
-    grid_crs = getattr(getattr(model, "vor", None), "crs", None)
+    vor = getattr(model, "vor", None)
+    try:
+        grid_crs = getattr(vor, "crs", None) if vor is not None else model_cell_polygons(model).crs
+    except ValueError:
+        # No grid at all: nothing to convert to, which is what a missing CRS means.
+        logger.debug("No grid on %r; features kept in their own CRS", model)
+        grid_crs = None
     if (
         not isinstance(features, gpd.GeoDataFrame)
         or grid_crs is None
@@ -2058,10 +2064,10 @@ def _placement_note(features, model, *, label: str = "targets") -> str:
 
     return where_they_are(
         features,
-        model.vor.gdf_vorPolys,
+        model_cell_polygons(model),
         noun=label,
         source_crs=features.crs if isinstance(features, gpd.GeoDataFrame) else None,
-        grid_crs=getattr(model.vor, "crs", None),
+        grid_crs=model_cell_polygons(model).crs,
     )
 
 
