@@ -17895,7 +17895,9 @@ same day, which is the useful part of the result.
       `mf.dis`/`mf.disv`/`mf.disu` is REFUSED, not mapped**, naming the word to write --
       judgment call: it is FloPy's keyword written as given, and mapping `"ft"` while
       `"feet"` stays `"feet"` would give one model two spellings and two digests. MF6's
-      `unknown` is accepted there and nowhere in the stack (it converts nothing). The only
+      `unknown` is accepted there and nowhere in the stack (it converts nothing; the
+      stack's refusal of it names `length_units=None`, which writes no `LENGTH_UNITS` --
+      read by MF6 as undefined, the same as `UNKNOWN`). The only
       digests that move are DISVs built from a stack declared in an abbreviation (they
       held `FT`/`M`/`CM`); a lazy `mf.disv(stack)` holds the stack, not the word, and
       every raw value MF6 read correctly is accepted unchanged.

@@ -137,10 +137,22 @@ def _mf6_length_units(units: str) -> str:
     ValueError
         ``units`` is not one of those spellings (a non-``str`` included), naming them.
         It used to be written upper-cased, and MF6 reads any word it does not know as
-        length unit 0 without a message.
+        length unit 0 without a message. MF6's own ``"unknown"`` is refused too, by a
+        message naming ``length_units=None`` -- the stack's spelling of "no unit",
+        which writes no ``LENGTH_UNITS`` and which MF6 reads as undefined just the same.
     """
 
     token = _MF6_LENGTH_UNITS.get(units.lower()) if isinstance(units, str) else None
+    if token is None and isinstance(units, str) and units.strip().upper() == "UNKNOWN":
+        # MF6 KNOWS this word, so the generic message below would be false for it.
+        # A stack has no factor for it; "no unit" is spelled `None`, which writes no
+        # LENGTH_UNITS -- what MF6 reads as UNKNOWN (ledger 404).
+        raise ValueError(
+            f"length_units={units!r} is not a unit a stack can convert into. To declare "
+            "no length unit, pass length_units=None: nothing is converted and no "
+            "LENGTH_UNITS is written, which MF6 reads as undefined (unit 0) exactly as "
+            f"it reads UNKNOWN. Known units: {sorted(_MF6_LENGTH_UNITS)}."
+        )
     if token is None:
         raise ValueError(
             f"Unknown length unit {units!r}; known: {sorted(_MF6_LENGTH_UNITS)}. MF6 "

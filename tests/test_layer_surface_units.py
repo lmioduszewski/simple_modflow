@@ -280,3 +280,18 @@ def test_a_repeated_label_is_refused_naming_it(vor):
         LayerSurfaces(flats, labels=[0, 1, 0])
     sampled = LayerSurfaces(flats, labels=["t", "a", "b"]).sample(vor, reconcile=False)
     assert sampled.iloc[0][["t", "a", "b"]].tolist() == [100.0, 90.0, 80.0]
+
+
+def test_mf6s_unknown_is_refused_in_a_stack_naming_none():
+    """MF6 KNOWS `UNKNOWN`, so the generic "a word MF6 does not know" message was false.
+
+    The stack's spelling of "no unit" is `None` (no LENGTH_UNITS: MF6 reads it as
+    undefined, as it reads UNKNOWN), and the refusal names it (ledger 404).
+    """
+
+    for spelling in ("unknown", "UNKNOWN"):
+        with pytest.raises(ValueError, match=r"length_units=None") as raised:
+            mf.LayerStack(top=100.0, length_units=spelling)
+        assert "does not know" not in str(raised.value)
+        with pytest.raises(ValueError, match=r"length_units=None"):
+            _mf6_length_units(spelling)

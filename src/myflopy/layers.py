@@ -3343,7 +3343,9 @@ class LayerStack:
         ``feet``/``ft``/``foot``/``us-ft``/``usft``, ``meters``/``meter``/
         ``metres``/``m``, ``centimeters``/``cm``; any other raises ``ValueError``
         HERE, naming them (ledger 404). ``None`` declares none: nothing is
-        converted and :meth:`to_disv` writes no ``LENGTH_UNITS``. At :meth:`build`
+        converted and :meth:`to_disv` writes no ``LENGTH_UNITS``, which MF6 reads as
+        undefined -- so MF6's own ``"unknown"`` is refused with a message naming
+        ``None``, the stack's spelling of it. At :meth:`build`
         every surface declaring its own ``units=`` is converted into it, an operand
         inside an algebra surface included (``Raster(dem, units="meters")
         .capped_at(...)`` is the DEM in feet, capped). :meth:`to_disv` writes it as
