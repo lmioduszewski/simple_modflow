@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 441 entries (446 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 442 entries (447 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 442 | A TDIS's time unit has one reader, `hydraulics.declared_time_unit`, and one table of MF6's six words | 2026-10-11 |
 | 441 | Defects the single-model read views' docstring pass found and documented rather than fixed | 2026-10-11 |
 | 440 | Defects the LAK/SFR/surface-water, budget-term and HFB views' docstring pass found and documented rather th... | 2026-10-11 |
 | 439 | Defects the group read views' docstring pass found and documented rather than fixed | 2026-10-11 |
@@ -16546,8 +16547,10 @@ same day, which is the useful part of the result.
       but a named package with nothing declared is still refused ("cannot be chosen by
       package", 344). A one-package table's `package` column is the type, with no `pname`
       (the call names its package). `model.bud(pkg)`, the legacy wrapper, still matches by
-      substring (it reads every package's records). `_declared_length_unit`'s
-      `getattr(gwf, "dis")` still prefix-matches a DISV (a single-instance read of units).
+      substring (it reads every package's records). ~~`_declared_length_unit`'s
+      `getattr(gwf, "dis")` still prefix-matches a DISV (a single-instance read of units).~~
+      Gone: a budget label reads its units through `hydraulics.unit_labels`, which asks
+      for `disv` first (ledger 442).
       **Test doubles:** `test_mf6_pest`'s fake surface-water model and its LAK attach test
       answered FloPy's `gwf.<type>`; they answer `package(type)` now (`_answering_by_type`),
       the contract 344 documented for a double.
@@ -18827,3 +18830,31 @@ same day, which is the useful part of the result.
       said it returned a Series (it is a DataFrame), and "measured byte-identical" did not
       hold for `hover_layers` where a picture keeps a heads or transmissivity hover: it
       reshapes the tooltip of `model.inputs.uzf.map` and `npf.transmissivity.map`.
+
+442. **A TDIS's time unit has one reader, `hydraulics.declared_time_unit`, and one table of MF6's six words (2026-10-11).**
+      Three readers -- `prt._tdis_time_units` (the PRT TDIS, the pathline hover),
+      `package_budget._declared_time_unit` (budget labels) and `hydraulics.unit_labels`
+      (map hovers) -- each with its own abbreviation table, plus a fourth table in
+      `prt_maps`. They agreed on every case measured, so this changes no label. One
+      function now, and `MF6_TIME_UNITS`, which IS MF6's rule: it reads `unknown`,
+      `seconds`, `minutes`, `hours`, `days`, `years` in any case and STOPS on any other
+      word -- `d`, `day`, `undefined`, `none` -- where it reads an unknown LENGTH_UNITS as
+      undefined (ledger 404); FloPy writes any word given (`docs/reproducers/tdis_time_units.py`).
+      `budget_value_units` reads its length half through `unit_labels` too.
+      **Judgment call: a word MF6 refuses reads as no unit, logged as a warning, not
+      raised** -- the readers are labels (a hover must draw) and a PRT TDIS mirror; MF6
+      stops on that TDIS itself, loudly, before any output exists to label.
+      **`unknown` now reads as None**, so a PRT TDIS mirroring a flow TDIS saying
+      `unknown` declares no unit where it wrote `unknown` -- the same to MF6 ("SIMULATION
+      TIME UNIT IS UNDEFINED" either way).
+      **Measured and left: the deprecated `mp3du.legacy_prt.PRT`** copies FloPy's
+      `modeltime.time_units`, which answers `"unknown"` for a TDIS naming no unit, so it
+      writes `TIME_UNITS unknown`, which MF6 reads; it is the one reader the guard exempts.
+      **Not done:** `mf.tdis(time_units=)` still accepts a word MF6 refuses (the run then
+      stops naming the option), and `ModelContext.time_units` -- the context's unit for
+      SFR/LAK conversions and `grid_identity._flux_units`, a different source -- keeps
+      its own spellings table.
+      Tests: `tests/test_tdis_time_units.py` -- every case through every label;
+      `test_only_the_one_reader_reads_a_tdis_time_unit` (an AST sweep) fails naming
+      `prt.py` and `package_budget.py` with their readers restored, and
+      `test_a_prt_tdis_declares_no_unit_for_a_flow_tdis_saying_unknown` with prt's.

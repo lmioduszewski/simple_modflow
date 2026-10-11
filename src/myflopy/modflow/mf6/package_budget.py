@@ -10,6 +10,7 @@ import pandas as pd
 from flopy.mf6.mfbase import FlopyException, MFDataException
 
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.hydraulics import unit_labels
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -40,27 +41,13 @@ from myflopy.modflow.mf6.package_tables import (
 )
 from myflopy.modflow.mf6.period_end import at_last_saved_step, at_last_saved_steps
 
-#: MF6 spells declared units out in full; hover labels want the abbreviation.
-_LENGTH_UNIT_ABBREVIATIONS = {
-    "feet": "ft",
-    "meters": "m",
-    "centimeters": "cm",
-}
-_TIME_UNIT_ABBREVIATIONS = {
-    "seconds": "s",
-    "minutes": "min",
-    "hours": "h",
-    "days": "d",
-    "years": "yr",
-}
-
 logger = get_logger(__name__)
 
 #: What "ask a model for its declared units" can raise.
 #:
-#: The expensive part is not the attribute walk below -- it is that on a
-#: file-backed model (``LoadedMf6Run``) both ``model.gwf`` and ``model.sim`` are
-#: LAZY properties, so the first of these helpers to run pays for the whole
+#: The expensive part is not the attribute walk in ``hydraulics.unit_labels`` --
+#: it is that on a file-backed model (``LoadedMf6Run``) both ``model.gwf`` and
+#: ``model.sim`` are LAZY properties, so reading the units pays for the whole
 #: ``MFSimulation.load``. Measured failure modes of that load: flopy's own
 #: ``MFDataException``/``FlopyException`` (neither subclasses a builtin), a
 #: ``UnicodeDecodeError`` (a ``ValueError``) on a binary/truncated ``mfsim.nam``,
@@ -73,49 +60,6 @@ _UNITS_UNAVAILABLE = (
 )
 
 
-def _declared_length_unit(model: SimulationBase) -> str | None:
-    """Return the model's declared length unit, or ``None`` if it declares none."""
-
-    try:
-        handle = getattr(model, "gwf", None)
-        for name in ("dis", "disv", "disu"):
-            package = getattr(handle, name, None)
-            if package is None:
-                continue
-            data = getattr(getattr(package, "length_units", None), "data", None)
-            if data:
-                return str(data).strip().lower()
-    except _UNITS_UNAVAILABLE:
-        # A hover label must never break a map, so the fallback stays -- but it
-        # is no longer silent: an entire failed simulation load used to show up
-        # only as a hover reading "ft3/T".
-        logger.debug("could not read the declared length unit", exc_info=True)
-        return None
-    return None
-
-
-def _declared_time_unit(model: SimulationBase) -> str | None:
-    """Return the simulation's declared time unit, or ``None`` if it declares none."""
-
-    try:
-        for attribute in ("sim", "simulation"):
-            sim = getattr(model, attribute, None)
-            if sim is None:
-                continue
-            tdis = getattr(sim, "tdis", None)
-            data = getattr(getattr(tdis, "time_units", None), "data", None)
-            if data:
-                return str(data).strip().lower()
-    except _UNITS_UNAVAILABLE:
-        # This is the helper that runs FIRST (``budget_value_units`` reads the
-        # time half before the length half), so on a file-backed model it is the
-        # one that pays for the lazy load -- and therefore the one whose debug
-        # line explains why both units came back blank.
-        logger.debug("could not read the declared time unit", exc_info=True)
-        return None
-    return None
-
-
 def budget_value_units(model: SimulationBase) -> str:
     """Return the unit label for a model-budget flow value, by model kind.
 
@@ -125,19 +69,29 @@ def budget_value_units(model: SimulationBase) -> str:
     and the wrong *units* on any GWF model not declared in feet and days.
 
     Both halves are read from where MF6 records them (``dis.length_units`` and
-    ``tdis.time_units``) and fall back to the dimensional placeholders ``L``
-    and ``T`` when a model declares neither -- which transport models built by
+    ``tdis.time_units``), through :func:`~myflopy.modflow.mf6.hydraulics.unit_labels`
+    -- the reader the map hovers use, so a budget and a hover cannot disagree
+    about a unit (ledger 442) -- and fall back to the dimensional
+    placeholders ``L`` and ``T`` when a model declares neither (a TDIS saying
+    ``unknown`` declares none) -- which transport models built by
     ``mf.gwt``/``mf.gwe`` typically do not. The canonical model declares feet
     and days, so it still reads ``ft3/d``.
     """
 
-    time_label = _TIME_UNIT_ABBREVIATIONS.get(_declared_time_unit(model) or "", "T")
+    try:
+        length_label, time_label = unit_labels(model)
+    except _UNITS_UNAVAILABLE:
+        # A budget label must never break a table or a map, so the placeholders
+        # stay -- but not silently: an entire failed simulation load used to show
+        # up only as a label reading "L³/T".
+        logger.debug("could not read the declared units", exc_info=True)
+        length_label = time_label = None
+    time_label = time_label or "T"
     kind = str(getattr(model, "model_type", "") or "").lower()
     if kind.startswith("gwt"):
         return f"M/{time_label}"
     if kind.startswith("gwe"):
         return f"E/{time_label}"
-    length_label = _LENGTH_UNIT_ABBREVIATIONS.get(_declared_length_unit(model) or "")
     volume_label = f"{length_label}³" if length_label else "L³"
     return f"{volume_label}/{time_label}"
 

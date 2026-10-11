@@ -29,13 +29,19 @@ from typing import NamedTuple
 
 import numpy as np
 
+from myflopy._logging import get_logger
+
 __all__ = [
+    "MF6_TIME_UNITS",
     "Transmissivity",
+    "declared_time_unit",
     "flow_model",
     "transmissivity",
     "model_transmissivity",
     "unit_labels",
 ]
+
+logger = get_logger(__name__)
 
 class Transmissivity(NamedTuple):
     """Per-layer transmissivity and the two numbers it is the product of.
@@ -199,9 +205,86 @@ def model_transmissivity(model, *, heads=None) -> Transmissivity:
 
 
 _LENGTH_ABBREVIATIONS = {"feet": "ft", "meters": "m", "centimeters": "cm"}
-_TIME_ABBREVIATIONS = {
-    "seconds": "s", "minutes": "min", "hours": "h", "days": "d", "years": "yr",
+
+#: MF6's TDIS ``TIME_UNITS`` words, each with its abbreviation. MF6 reads these six in
+#: any case and STOPS on any other word ("Unrecognized input value for TIME_UNITS
+#: option") -- unlike ``LENGTH_UNITS``, which it reads as undefined (ledger 404).
+#: ``unknown`` is MF6's own "undefined" and has no abbreviation
+#: (``docs/reproducers/tdis_time_units.py``, ledger 442).
+MF6_TIME_UNITS = {
+    "unknown": None,
+    "seconds": "s",
+    "minutes": "min",
+    "hours": "h",
+    "days": "d",
+    "years": "yr",
 }
+
+
+def _simulation_tdis(model):
+    """The TDIS of the simulation ``model`` belongs to, or None.
+
+    A myflopy model names its simulation ``sim`` (``simulation`` on some
+    wrappers); a FloPy model reaches it through ``gwf.simulation``.
+    """
+
+    for simulation in (
+        getattr(model, "sim", None),
+        getattr(model, "simulation", None),
+        getattr(getattr(model, "gwf", None), "simulation", None),
+    ):
+        tdis = getattr(simulation, "tdis", None) if simulation is not None else None
+        if tdis is not None:
+            return tdis
+    return None
+
+
+def declared_time_unit(model) -> str | None:
+    """The simulation's TDIS ``TIME_UNITS`` as MF6's lower-case word, or None.
+
+    The one reader of a declared time unit: the PRT simulation's TDIS mirrors it
+    and every label -- a budget's ``ft³/d``, the transmissivity hover's ``ft²/d``,
+    a pathline's travel time -- abbreviates it through :data:`MF6_TIME_UNITS`
+    (ledger 442).
+
+    ``None`` means the simulation declares no unit MF6 would use: no TDIS, a TDIS
+    with no ``TIME_UNITS`` (what a plain ``mf.tdis(...)`` writes -- FloPy answers
+    the unset option with ``None``), a blank one, or ``unknown``, which MF6 reads
+    as undefined. A word outside :data:`MF6_TIME_UNITS` -- FloPy writes any
+    word it is given, ``"d"`` and ``"day"`` included -- is also ``None``, logged
+    as a warning: MF6 stops on such a TDIS, so it names no unit to label with,
+    and a PRT TDIS that mirrored it would stop too.
+
+    Parameters
+    ----------
+    model : object
+        A myflopy model (its ``sim`` or ``simulation``) or anything whose ``gwf``
+        is a FloPy model (its ``gwf.simulation``); the first of those three that
+        has a ``tdis`` is read. On a file-backed model reading ``sim`` performs
+        the simulation load, and whatever that raises propagates -- a caller that
+        must never fail (a hover) catches it.
+
+    Returns
+    -------
+    str or None
+        ``"seconds"``, ``"minutes"``, ``"hours"``, ``"days"`` or ``"years"``;
+        ``None`` as above.
+    """
+
+    tdis = _simulation_tdis(model)
+    if tdis is None:
+        return None
+    value = _option(tdis, "time_units")
+    word = "" if value is None else str(value).strip().lower()
+    if not word:
+        return None
+    if word not in MF6_TIME_UNITS:
+        logger.warning(
+            "TDIS TIME_UNITS %r is not a word MF6 reads (%s), and MF6 stops on it; "
+            "read as no time unit.", word, ", ".join(MF6_TIME_UNITS),
+        )
+        return None
+    return None if word == "unknown" else word
 
 
 def unit_labels(model) -> tuple[str | None, str | None]:
@@ -220,7 +303,6 @@ def unit_labels(model) -> tuple[str | None, str | None]:
         if package is not None:
             length = _LENGTH_ABBREVIATIONS.get(str(_option(package, "length_units")).lower())
             break
-    tdis = getattr(getattr(gwf, "simulation", None), "tdis", None)
-    if tdis is not None:
-        time = _TIME_ABBREVIATIONS.get(str(_option(tdis, "time_units")).lower())
+    unit = declared_time_unit(model)
+    time = MF6_TIME_UNITS[unit] if unit is not None else None
     return length, time

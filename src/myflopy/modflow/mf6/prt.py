@@ -30,6 +30,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     miss_reason,
     where_they_are,
 )
+from myflopy.modflow.mf6.hydraulics import declared_time_unit
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -90,24 +91,6 @@ def _tdis_perioddata(model: SimulationBase) -> list[tuple[float, int, float]]:
         (float(row["perlen"]), int(row["nstp"]), float(row["tsmult"]))
         for row in data
     ]
-
-
-def _tdis_time_units(model: SimulationBase) -> str | None:
-    """The flow model's TDIS ``TIME_UNITS``, or ``None`` when it declares none.
-
-    ``None`` -- no TDIS, or a TDIS naming no unit (what a plain ``mf.tdis(...)``
-    writes) -- means the PRT TDIS mirrors it and writes no ``TIME_UNITS`` either.
-    FloPy's scalar answers ``get_data() -> None`` for an unset option, and
-    ``str()`` of that wrote ``TIME_UNITS none``, which MF6 refuses (ledger
-    397).
-    """
-
-    tdis = getattr(model.sim, "tdis", None)
-    value = _mfdata_value(getattr(tdis, "time_units", None))
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
 
 
 def _copy_grid_to_prt(flow_model: SimulationBase, prt_model):
@@ -856,9 +839,12 @@ class PRTProject:
         model's saved flows, so these should match the flow run's periods.
     time_units : str, optional
         TDIS time units for the PRT simulation (e.g. ``"DAYS"``). ``None`` (the
-        default) copies the flow simulation's TDIS ``TIME_UNITS``; when the flow
-        simulation declares none (a plain ``mf.tdis(...)``, or no TDIS at all) the
-        PRT TDIS declares none either, which MF6 reads as unknown units. Travel
+        default) copies the flow simulation's TDIS ``TIME_UNITS``, read through
+        :func:`~myflopy.modflow.mf6.hydraulics.declared_time_unit`; when the flow
+        simulation declares none (a plain ``mf.tdis(...)``, ``unknown``, or no TDIS
+        at all) the PRT TDIS declares none either, which MF6 reads as unknown
+        units -- FloPy answers an unset option with ``None``, and writing that
+        through ``str()`` gave ``TIME_UNITS none``, which MF6 refuses (ledger 397). Travel
         times are in the flow model's time unit whatever this says -- it only
         labels the PRT listing.
     release_perioddata : dict, optional
@@ -953,7 +939,7 @@ class PRTProject:
         )
         self.tdis = flopy.mf6.ModflowTdis(
             self.sim,
-            time_units=time_units or _tdis_time_units(model),
+            time_units=time_units or declared_time_unit(model),
             nper=len(perioddata or _tdis_perioddata(model)),
             perioddata=list(perioddata or _tdis_perioddata(model)),
         )

@@ -33,6 +33,7 @@ from flopy.mf6.mfbase import MFDataException
 
 from myflopy import viz
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.hydraulics import MF6_TIME_UNITS, declared_time_unit
 from myflopy.modflow.mf6.package_plotting import (
     NOUN_MAP_PARAMS,
     SpatialView,
@@ -71,27 +72,18 @@ _BLANK_BASE_KWARGS = frozenset(
     {"type", "custom_zs", "custom_hover", "hover_heads", "hover_ks", "showscale"}
 )
 
-#: Short unit labels for MF6's TDIS time units, for the travel-time hover.
-_TIME_UNIT_LABELS = {
-    "SECONDS": "s",
-    "MINUTES": "min",
-    "HOURS": "h",
-    "DAYS": "d",
-    "YEARS": "yr",
-}
-
-
 def _time_unit(model) -> str:
     """The flow model's TDIS time unit as a short label (``""`` when unknown).
 
     Travel times are in whatever unit the flow model's TDIS declares, so the
-    hover reads it off the model rather than assuming days.
+    hover reads it off the model rather than assuming days -- through
+    :func:`~myflopy.modflow.mf6.hydraulics.declared_time_unit` and its
+    :data:`~myflopy.modflow.mf6.hydraulics.MF6_TIME_UNITS`, the rule every other
+    label uses (ledger 442).
     """
 
-    from myflopy.modflow.mf6.prt import _tdis_time_units
-
     try:
-        declared = str(_tdis_time_units(model)).upper()
+        unit = declared_time_unit(model)
     except (AttributeError, MFDataException, OSError, ValueError):
         # A bare/partial model has no TDIS to read (AttributeError). The rest
         # come from `model.sim` being a LAZY property on a file-backed model:
@@ -101,7 +93,7 @@ def _time_unit(model) -> str:
         # travel time is better than a map that will not draw.
         logger.debug("no TDIS time unit for the PRT hover", exc_info=True)
         return ""
-    return _TIME_UNIT_LABELS.get(declared, "")
+    return (MF6_TIME_UNITS[unit] or "") if unit is not None else ""
 
 
 def pathline_cell_table(pathlines: pd.DataFrame, *, ncpl: int) -> pd.DataFrame:
