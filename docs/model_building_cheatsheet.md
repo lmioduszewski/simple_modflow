@@ -1393,7 +1393,7 @@ drawdown = base.model("valley").hds.array(layer=0) - dry.model("valley").hds.arr
 | `run.execute()` | write MF6 input, run it, return `(success, report)` |
 | `project.run(name, sim)` | both at once |
 | `project.discover_runs()` | every run with a lifecycle manifest |
-| `project.reopen_run(name)` | reopen one by name |
+| `project.reopen_run(name)` | reopen one by name (`executable=` runs another MF6 build than the recorded one) |
 | `mf.load_run(path)` | reopen a run from a bare path, no project needed |
 
 **`prepare_run` before `execute` is the useful habit** — the model is fully built

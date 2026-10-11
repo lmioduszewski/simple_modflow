@@ -473,6 +473,12 @@ build context so a revived spec resolves its library references -- from the
 run's own copies first. `mf.load_run` has no library in scope, so there package
 references resolve from those copies and nothing else.
 
+Every reopen path keeps the MF6 executable the run's manifest recorded, which may
+be a path on another machine. Pass `executable=` to choose another build:
+`project.reopen_run(name, executable=...)`, `project.refresh_runs(executable=...)`,
+`project.discover_runs(...)`, `project.discover_native_runs(...)` and
+`mf.load_run(path, executable=...)` all take it, and an explicit one always wins.
+
 ## Persistence is opt-in
 
 In memory, everything works immediately — including raw arrays and coupled

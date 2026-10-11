@@ -216,6 +216,20 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _chosen_executable(explicit: str | None, recorded: str | None = None) -> str:
+    """The MF6 executable a reopened run will run: ONE rule for every reopen path.
+
+    An explicit argument wins -- it is the caller choosing the MF6 build to run
+    now, and the recorded one may not exist on this machine. ``None`` keeps what
+    the run's manifest recorded, or ``"mf6"`` when there is no manifest or it
+    records none.
+    """
+
+    if explicit is not None:
+        return explicit
+    return recorded or "mf6"
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     """Write a readable JSON manifest, creating its parent directory."""
 
@@ -940,7 +954,11 @@ class RunLibrary(SpecLibrary["Run"]):
 
     @classmethod
     def discover(
-        cls, project: Project, *, load: bool = False
+        cls,
+        project: Project,
+        *,
+        executable: str | None = None,
+        load: bool = False,
     ) -> RunLibrary:
         """Scan a project for runs. Never raises on a bad manifest.
 
@@ -957,6 +975,14 @@ class RunLibrary(SpecLibrary["Run"]):
             workspaces inside a PEST calibration tree, which are counted in
             :attr:`calibrations` instead. The library is bound to the project's
             package library and root, which :meth:`drift` compares against.
+        executable : str or None, optional
+            MF6 executable name/path for a later ``run.execute()`` on every run
+            listed, also set on each simulation ``load=True`` opens. A string WINS
+            over the executable a ``run.json`` manifest recorded -- the way to
+            re-run with another MF6 build, or on a machine where the recorded path
+            does not exist. ``None`` (the default) keeps each manifest's executable,
+            or ``"mf6"`` for a discovered workspace, an unreadable manifest, or a
+            manifest that records none.
         load : bool, optional
             ``False`` (the default) reads manifests only. ``True`` also loads each
             run's FloPy simulation from its MF6 files (``Run.reopen(load=True)``
@@ -980,7 +1006,7 @@ class RunLibrary(SpecLibrary["Run"]):
             seen.add(workspace)
             key = _relative_key(workspace, project.runs_dir)
             try:
-                run = Run.reopen(workspace, load=load)
+                run = Run.reopen(workspace, executable=executable, load=load)
             except (OSError, ValueError, KeyError) as error:
                 # An unreadable manifest is a ROW, not an exception: one truncated
                 # file must not hide every other run. `_write_json` is a
@@ -991,7 +1017,12 @@ class RunLibrary(SpecLibrary["Run"]):
                     key,
                     error,
                 )
-                run = Run(name=workspace.name, workspace=workspace, status="unreadable")
+                run = Run(
+                    name=workspace.name,
+                    workspace=workspace,
+                    executable=_chosen_executable(executable),
+                    status="unreadable",
+                )
             library[key] = run
 
         calibrations: dict[str, int] = {}
@@ -1024,6 +1055,7 @@ class RunLibrary(SpecLibrary["Run"]):
             run = Run(
                 name=workspace.name,
                 workspace=workspace,
+                executable=_chosen_executable(executable),
                 status="discovered",
                 created_at=stamp,
                 updated_at=stamp,
@@ -2512,13 +2544,7 @@ class Run:
         run = cls(
             name=run_data["name"],
             workspace=workspace,
-            # An explicit argument wins: it is the caller choosing the MF6 build
-            # to run now, and the recorded one may not exist on this machine.
-            executable=(
-                executable
-                if executable is not None
-                else run_data.get("executable") or "mf6"
-            ),
+            executable=_chosen_executable(executable, run_data.get("executable")),
             status=run_data.get("status", "created"),
             created_at=run_data.get("created_at") or _utc_now(),
             updated_at=run_data.get("updated_at") or _utc_now(),
@@ -2581,7 +2607,7 @@ class Run:
         run = cls(
             name=workspace.name,
             workspace=workspace,
-            executable=executable if executable is not None else "mf6",
+            executable=_chosen_executable(executable),
             status="loaded",
         )
         if load:
@@ -2915,16 +2941,33 @@ class Project:
         Reopening a single run by name stays :meth:`reopen_run`, which also
         attaches the build context so a revived spec can resolve its library
         references. This is the browse surface, not a second way to open one.
+        Each run keeps the MF6 executable its manifest recorded;
+        :meth:`refresh_runs` with ``executable=`` re-scans choosing another.
         """
 
         if self._runs is None:
             self._runs = RunLibrary.discover(self)
         return self._runs
 
-    def refresh_runs(self) -> RunLibrary:
-        """Re-scan the project for runs and return the refreshed library."""
+    def refresh_runs(self, *, executable: str | None = None) -> RunLibrary:
+        """Re-scan the project for runs and return the refreshed library.
 
-        self._runs = RunLibrary.discover(self)
+        The result replaces the cache, so :attr:`runs` returns it afterwards.
+
+        Parameters
+        ----------
+        executable : str or None, optional
+            MF6 executable name/path for a later ``run.execute()`` on every run
+            listed, also set on each simulation ``load=True`` opens. A string WINS
+            over the executable a ``run.json`` manifest recorded -- the way to
+            re-run with another MF6 build, or on a machine where the recorded path
+            does not exist. ``None`` (the default) keeps each manifest's executable,
+            or ``"mf6"`` for a workspace with no manifest, or a manifest that
+            records none. The chosen executable stays on the cached runs until the
+            next refresh. :attr:`runs`' own first scan uses ``None``.
+        """
+
+        self._runs = RunLibrary.discover(self, executable=executable)
         return self._runs
 
     def package(self, key: str) -> PackageSpec:
@@ -3184,7 +3227,13 @@ class Project:
         run.execute(silent=silent)
         return run
 
-    def reopen_run(self, name: str, *, load: bool = True) -> Run:
+    def reopen_run(
+        self,
+        name: str,
+        *,
+        executable: str | None = None,
+        load: bool = True,
+    ) -> Run:
         """Reopen one project-owned run by name.
 
         The run is given this project's build context, so a spec revived from the
@@ -3202,12 +3251,19 @@ class Project:
         name : str
             The run's directory name under ``<project>/runs``; a run without a
             ``run.json`` there raises ``FileNotFoundError``.
+        executable : str or None, optional
+            MF6 executable name/path for a later :meth:`Run.execute`, also set on
+            the simulation ``load=True`` opens. A string WINS over the executable
+            the manifest recorded -- the way to re-run with another MF6 build, or
+            on a machine where the recorded path does not exist. ``None`` (the
+            default) keeps the recorded one, or ``"mf6"`` when the manifest
+            records none.
         load : bool, optional
             ``True`` (the default) also loads the FloPy simulation from the MF6
             files; ``False`` reads the manifest only.
         """
 
-        run = Run.reopen(self.runs_dir / name, load=load)
+        run = Run.reopen(self.runs_dir / name, executable=executable, load=load)
         # Unconditionally: a run whose manifest holds no recipe rebuilds from its
         # frozen snapshot instead, and that spec needs the same context to resolve
         # `mf.grid_ref` and any reference it holds no copy of. Guarding this on
@@ -3220,7 +3276,9 @@ class Project:
             )
         return run
 
-    def discover_runs(self, *, load: bool = False) -> list[Run]:
+    def discover_runs(
+        self, *, executable: str | None = None, load: bool = False
+    ) -> list[Run]:
         """Discover project-owned runs that have lifecycle manifests.
 
         Only ``<project>/runs/*/run.json`` (one level deep), in path order, each
@@ -3228,13 +3286,20 @@ class Project:
 
         Parameters
         ----------
+        executable : str or None, optional
+            MF6 executable name/path for a later ``run.execute()`` on every run
+            returned, also set on each simulation ``load=True`` opens. A string WINS
+            over the executable a ``run.json`` manifest recorded -- the way to
+            re-run with another MF6 build, or on a machine where the recorded path
+            does not exist. ``None`` (the default) keeps each manifest's executable,
+            or ``"mf6"`` for a manifest that records none.
         load : bool, optional
             ``True`` also loads each run's FloPy simulation from its MF6 files;
             ``False`` (the default) reads manifests only.
         """
 
         return [
-            Run.reopen(path.parent, load=load)
+            Run.reopen(path.parent, executable=executable, load=load)
             for path in sorted(self.runs_dir.glob(f"*/{RUN_MANIFEST_NAME}"))
         ]
 
@@ -3242,6 +3307,7 @@ class Project:
         self,
         search_root: Path | str | None = None,
         *,
+        executable: str | None = None,
         load: bool = False,
     ) -> list[Run]:
         """Discover native MF6 workspaces, including runs without manifests.
@@ -3256,6 +3322,14 @@ class Project:
         ----------
         search_root : str, pathlib.Path or None, optional
             Directory to search. ``None`` (the default) searches the project root.
+        executable : str or None, optional
+            MF6 executable name/path for a later ``run.execute()`` on every run
+            returned, also set on each simulation ``load=True`` opens. A string WINS
+            over the executable a ``run.json`` manifest recorded -- the way to
+            re-run with another MF6 build, or on a machine where the recorded path
+            does not exist. ``None`` (the default) keeps each manifest's executable,
+            or ``"mf6"`` for a workspace with no manifest, or a manifest that
+            records none.
         load : bool, optional
             ``True`` also loads each workspace's FloPy simulation; ``False`` (the
             default) does not.
@@ -3267,11 +3341,12 @@ class Project:
             workspace = name_file.parent
             manifest_path = workspace / RUN_MANIFEST_NAME
             if manifest_path.exists():
-                run = Run.reopen(workspace, load=load)
+                run = Run.reopen(workspace, executable=executable, load=load)
             else:
                 run = Run(
                     name=workspace.name,
                     workspace=workspace,
+                    executable=_chosen_executable(executable),
                     status="discovered",
                 )
                 if load:

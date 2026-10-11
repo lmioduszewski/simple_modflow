@@ -521,6 +521,12 @@ release-group boundnames; without them it names the fix and offers
 `mf.Project(root, name=)` → `prepare_run`/`run` → `mf.Run`; `mf.load_run` /
 `mf.load_mf6_run`; `mf.ModelGroup`; `mf.ParallelModelWorkflow`.
 
+**Reopening a run keeps the MF6 executable its manifest recorded; `executable=` picks
+another**, on every reopen path -- `mf.load_run`, `mf.Run.load`/`reopen`,
+`project.reopen_run`, `refresh_runs`, `discover_runs`, `discover_native_runs` and
+`mf.RunLibrary.discover`. An explicit one wins; `None` keeps the recorded one, or
+`"mf6"` with no manifest.
+
 **Groups and diffs of runs.** `mf.ModelGroup({"base": a, "wet": b})` keys its members
 by the mapping; a LIST keys them by model name, so two runs of one model (both named,
 say, `flow`) are REFUSED, naming the mapping spelling -- the last used to replace the

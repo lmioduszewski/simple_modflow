@@ -663,6 +663,75 @@ def test_an_explicit_executable_wins_over_the_one_a_run_recorded(tmp_path):
     assert mf.Run.load(run.workspace, executable=real, load=False).executable == real
 
 
+def test_every_project_reopen_path_takes_an_explicit_executable(tmp_path):
+    """The project's reopen paths took no ``executable=`` at all.
+
+    ``load_run``, ``Run.load`` and ``Run.reopen`` let the caller choose the MF6
+    build; ``Project.reopen_run``, ``discover_runs``, ``discover_native_runs``,
+    ``refresh_runs`` and ``RunLibrary.discover`` called ``Run.reopen`` without
+    it, so a run reopened through the project kept the manifest's executable --
+    a path that may not exist on this machine. Same rule everywhere: a string
+    wins, ``None`` keeps the recorded one, or ``"mf6"`` with no manifest.
+    """
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    run = project.prepare_run(
+        "baseline", _tiny_flow_spec(), executable="mf6-recorded-elsewhere"
+    )
+    run.write()
+    # A bare MF6 workspace beside it: no manifest, so nothing is recorded.
+    bare = project.root / "scratch" / "bare"
+    shutil.copytree(run.workspace, bare)
+    (bare / "run.json").unlink()
+    chosen = "mf6-chosen-now"
+
+    kept = project.reopen_run("baseline", load=False)
+    assert kept.executable == "mf6-recorded-elsewhere"
+    reopened = project.reopen_run("baseline", executable=chosen)
+    assert reopened.executable == chosen
+    assert reopened.simulation.exe_name == chosen
+
+    assert [r.executable for r in project.discover_runs()] == ["mf6-recorded-elsewhere"]
+    assert [r.executable for r in project.discover_runs(executable=chosen)] == [chosen]
+
+    native = {r.name: r.executable for r in project.discover_native_runs()}
+    assert native == {"baseline": "mf6-recorded-elsewhere", "bare": "mf6"}
+    native = {
+        r.name: r.executable
+        for r in project.discover_native_runs(executable=chosen, load=True)
+    }
+    assert native == {"baseline": chosen, "bare": chosen}
+
+    assert project.runs["baseline"].executable == "mf6-recorded-elsewhere"
+    assert project.runs["scratch/bare"].executable == "mf6"
+    refreshed = project.refresh_runs(executable=chosen)
+    assert refreshed["baseline"].executable == chosen
+    assert refreshed["scratch/bare"].executable == chosen
+    assert project.runs is refreshed
+
+    library = mf.RunLibrary.discover(project, executable=chosen, load=True)
+    assert library["baseline"].simulation.exe_name == chosen
+    assert library["scratch/bare"].simulation.exe_name == chosen
+
+
+@pytest.mark.skipif(shutil.which("mf6") is None, reason="needs the mf6 executable")
+def test_a_run_reopened_through_the_project_runs_the_chosen_build(tmp_path):
+    """A run recorded with an executable this machine lacks re-runs through
+    ``project.reopen_run(name, executable=...)`` and records the chosen one."""
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    run = project.prepare_run(
+        "baseline", _tiny_flow_spec(), executable="mf6-not-on-this-machine"
+    )
+    run.write()
+    real = shutil.which("mf6")
+
+    ok, _ = project.reopen_run("baseline", executable=real).execute()
+    assert ok
+    recorded = json.loads(run.manifest_path.read_text())["run"]["executable"]
+    assert recorded == real
+
+
 def test_one_unserializable_simulation_no_longer_costs_the_whole_library(tmp_path):
     """``save()`` used to refuse everything when any simulation embedded an array.
 
