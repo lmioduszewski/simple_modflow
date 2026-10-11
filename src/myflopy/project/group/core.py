@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-from myflopy._defaults import DEFAULT_CRS
 from myflopy._deprecation import deprecated_instance_getattr
-from myflopy.project.group._shared import _coerce_models, _grid_signature_for_model
+from myflopy.project.group._shared import (
+    _coerce_models,
+    _diff_member_keys,
+    _grid_signature_for_model,
+    _load_group_model,
+)
 from myflopy.project.group.budget import GroupBudget
 from myflopy.project.group.conc import GroupConc
 from myflopy.project.group.inputs import GroupPackageInputs
@@ -29,21 +33,28 @@ class ModelGroup:
         built or loaded model). A mapping's keys become the group keys through
         ``str()``, in the mapping's order. For a sequence, each loaded model's
         ``name`` attribute is the group key, so two models of the same ``name``
-        keep only the LAST. A bare ``str``/``bytes`` or any other type raises
-        ``TypeError``; an empty mapping or sequence raises ``ValueError``.
+        -- two runs of one model, typically -- raise ``ValueError`` naming the
+        repeated names; give them keys with a mapping instead,
+        ``ModelGroup({"base": m1, "wet": m2})`` (ledger 373; the last one
+        used to replace the others in silence). A bare ``str``/``bytes`` or any
+        other type raises ``TypeError``; an empty mapping or sequence raises
+        ``ValueError``.
     reference : str or None, optional
         Group key of the reference model: the baseline for the ``compare()``
         methods and for :meth:`diff`, the ``is_reference`` column of
         :meth:`summary`, and the anchor for ``shared_grid``. ``None`` (the
         default) takes the first model. A key not in the group raises
         ``KeyError``.
-    crs : str, optional
+    crs : str or None, optional
         CRS (any string pyproj accepts, e.g. ``"EPSG:2927"``) given to
         :func:`load_mf6_run` for the workspace-path entries; model objects are
-        not touched. Default :data:`~myflopy._defaults.DEFAULT_CRS`
-        (``"EPSG:2927"``). It is always passed explicitly, so the CRS a myflopy
-        run recorded in its ``run.json`` is NOT read here, unlike
-        ``load_mf6_run(ws)`` with its own ``crs=None`` default.
+        not touched. Default ``None`` takes, for each workspace path, the CRS
+        its myflopy run recorded in ``run.json``, else
+        :data:`~myflopy._defaults.DEFAULT_CRS` (``"EPSG:2927"``) -- the rule of
+        ``load_mf6_run(ws)`` itself, so a group opens a run in the frame it ran
+        in. A string given here wins over every recorded CRS. It defaulted to
+        ``"EPSG:2927"`` until ledger 374, which put every run of a group
+        back in 2927 whatever it had recorded.
     verbosity_level : int, optional
         Given to :func:`load_mf6_run` for the workspace-path entries. ``0`` (the
         default) is silent; above 0 prints the loader's progress messages and is
@@ -64,7 +75,7 @@ class ModelGroup:
         models,
         *,
         reference: str | None = None,
-        crs: str = DEFAULT_CRS,
+        crs: str | None = None,
         verbosity_level: int = 0,
         shared_grid: bool = False,
     ):
@@ -206,3 +217,26 @@ class ModelGroup:
             if model_name == anchor_name:
                 continue
             model._shared_vor_source = anchor_model
+
+
+def _group_for_diff(reference, others, *, crs, shared_grid: bool, verbosity_level: int) -> ModelGroup:
+    """The group ``model.diff(*others)`` compares: ``reference`` first, keyed by
+    :func:`~myflopy.project.group._shared._diff_member_keys` (ledger 373).
+
+    Workspace paths in ``others`` are opened first (with ``crs``, ``None`` reading
+    each run's recorded CRS -- ledger 374), because the keys depend on the
+    loaded models' names and workspaces.
+    """
+
+    members = [
+        reference,
+        *(_load_group_model(item, crs=crs, verbosity_level=verbosity_level) for item in others),
+    ]
+    keys = _diff_member_keys(members)
+    return ModelGroup(
+        dict(zip(keys, members, strict=True)),
+        reference=keys[0],
+        crs=crs,
+        shared_grid=shared_grid,
+        verbosity_level=verbosity_level,
+    )

@@ -23,6 +23,8 @@ new = mf.load_mf6_run(r"C:\Users\lukem\mf6\F9_maxflow")   # compared
 
 # Two doors — both return the same ModelDiff:
 diff = ref.diff(new)                                       # quick; ref is the reference
+#   two runs of ONE model share its name, so the diff keys them by their folders:
+#   diff.reference == "Lkpt_F9b", diff.model_names == ["F9_maxflow"] (ledger 373)
 # diff = ref.diff([new, other])                            # N-way (reference-star)
 # diff = ref.diff(r"C:\Users\lukem\mf6\F9_maxflow")        # accepts a path directly
 diff = mf.ModelGroup(                                       # named; best for >2 models
@@ -56,7 +58,7 @@ Cell-based BC packages: `ghb`, `chd`, `drn`, `wel`, `rch`.
 diff.packages.ghb.inputs.cells()      # STRUCTURAL: only_in_reference / only_in_model / shared
 diff.packages.ghb.inputs.values()     # VALUE: bhead/cond + *_diff on shared cells
 diff.packages.ghb.inputs.summary()    # per-package counts
-diff.packages.ghb.inputs.map("F9b", value_column="cond")  # diverging Δ choropleth
+diff.packages.ghb.inputs.map("F9_maxflow", value_column="cond")  # diverging Δ choropleth
 # a choropleth is per-model: pass the model name (positional or model_name=) when the
 # group has >1 non-reference model; it's inferred when there's exactly one.
 ```
@@ -102,7 +104,7 @@ biggest difference is.
 # (diff.conc / diff.temp are the transport twins, same verbs)
 diff.hds.summary()                # max/mean|Δ|, RMSE, argmax cell/layer/kstpkper, within_tolerance
 diff.hds.get(per=8, layer=1)      # aligned elev / reference_elev / diff per cell
-diff.hds.map("F9b", per=8, layer=1)   # Δhead choropleth (model - reference)
+diff.hds.map("F9_maxflow", per=8, layer=1)   # Δhead choropleth (model - reference)
 diff.hds.plot(layer=0)            # mean Δhead by stress period, line per model
 diff.hds.section(line=line)            # reference vs model head profiles along a section line
 
@@ -128,10 +130,10 @@ diff.packages.mvr.results.summary()        # FROM-MVR/TO-MVR per package (empty 
 # all diff maps use the diverging red/white/blue scale (negative = red,
 # positive = blue) and a purple-accented sectioned hover showing the model
 # value, the reference value, and Δ (hover_* sugar works here too).
-diff.packages.sfr.results.q.map("F9b")     # Δ stream leakage (interactive Choro)
-diff.packages.lak.results.q.map("F9b")     # Δ lake exchange
-diff.packages.ghb.results.map("F9b")       # Δ GHB leakage (also drn/chd/wel/rch)
-diff.packages.uzf.results.gwrch.map("F9b") # Δ UZF recharge
+diff.packages.sfr.results.q.map("F9_maxflow")     # Δ stream leakage (interactive Choro)
+diff.packages.lak.results.q.map("F9_maxflow")     # Δ lake exchange
+diff.packages.ghb.results.map("F9_maxflow")       # Δ GHB leakage (also drn/chd/wel/rch)
+diff.packages.uzf.results.gwrch.map("F9_maxflow") # Δ UZF recharge
 
 # UNIFIED GRAMMAR -- every leaf (single-model / group / diff, inputs & results)
 # has the same verbs: get/summary + map/plot/section + mosaic/animate, all with backend=:

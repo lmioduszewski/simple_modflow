@@ -44,8 +44,36 @@ def normalize_region_inputs(
     cellids: Iterable[Any] | None,
     *,
     layer: int | list[int] | None = None,
+    structured_shape: tuple[int, int] | None = None,
 ) -> tuple[list[Any], list[int], int | list[int] | None]:
-    """Normalize region cell inputs into raw IDs, cell numbers, and layers."""
+    """Normalize region cell inputs into raw IDs, cell numbers, and layers.
+
+    Parameters
+    ----------
+    cellids : iterable of int or tuple, or None
+        The cells. An integer is an in-layer cell number as given, and a one-item
+        tuple ``(cell,)`` the same. A longer tuple is the grid's own cellid: on a
+        vertex or unstructured grid (``structured_shape=None``) ``(layer, cell)``;
+        on a structured grid ``(layer, row, col)``, whose cell number is the
+        row-major ``row * ncol + col`` -- the numbering the model's own grid, its
+        heads table and its cell polygons use. A tuple of the other grid's length,
+        or a row/column off the grid, raises ``ValueError`` naming the expected
+        form (ledger 376: ``(layer, row, col)`` used to read the ROW as the
+        cell, and a ``(layer, cell, x)`` dropped ``x`` in silence). An empty tuple
+        is dropped. ``None`` is no cells.
+    layer : int or list of int or None, optional
+        The region's layer(s). ``None`` (the default) takes the layers the tuple
+        cellids name -- one as an ``int``, several as a sorted list -- else none.
+    structured_shape : tuple of (int, int) or None, optional
+        ``(nrow, ncol)`` of a structured (DIS) grid, which makes a cellid
+        ``(layer, row, col)``; ``None`` (the default) reads ``(layer, cell)``.
+
+    Returns
+    -------
+    tuple
+        ``(raw_cellids, cells, layer)``: the cellids as given, the sorted unique
+        in-layer cell numbers, and the resolved layer(s).
+    """
     if cellids is None:
         raw_cellids: list[Any] = []
     else:
@@ -53,14 +81,34 @@ def normalize_region_inputs(
 
     cells: list[int] = []
     derived_layers: list[int] = []
+    expected = 3 if structured_shape is not None else 2
+    form = "(layer, row, col)" if structured_shape is not None else "(layer, cell)"
+    grid = "a structured (DIS)" if structured_shape is not None else "a vertex (DISV/DISU)"
 
     for cellid in raw_cellids:
         if isinstance(cellid, tuple):
-            if len(cellid) >= 2:
-                derived_layers.append(int(cellid[0]))
-                cells.append(int(cellid[1]))
-            elif len(cellid) == 1:
+            if len(cellid) == 0:
+                continue
+            if len(cellid) == 1:
                 cells.append(int(cellid[0]))
+                continue
+            if len(cellid) != expected:
+                raise ValueError(
+                    f"Region cellid {cellid!r} has {len(cellid)} items; on {grid} grid a cellid "
+                    f"is {form}, or a bare in-layer cell number."
+                )
+            derived_layers.append(int(cellid[0]))
+            if structured_shape is None:
+                cells.append(int(cellid[1]))
+                continue
+            nrow, ncol = structured_shape
+            row, col = int(cellid[1]), int(cellid[2])
+            if not (0 <= row < nrow and 0 <= col < ncol):
+                raise ValueError(
+                    f"Region cellid {cellid!r} is off the grid: rows are 0..{nrow - 1} and "
+                    f"columns 0..{ncol - 1} (zero-based (layer, row, col))."
+                )
+            cells.append(row * ncol + col)
         else:
             cells.append(int(cellid))
 
@@ -74,6 +122,19 @@ def normalize_region_inputs(
             layer = unique_layers
 
     return raw_cellids, unique_cells, layer
+
+
+def _structured_shape(model) -> tuple[int, int] | None:
+    """``(nrow, ncol)`` when ``model``'s grid is structured (DIS), else ``None``.
+
+    Read off FloPy's own model grid, whose cell order is the row-major one the
+    model's cell polygons and heads table use (ledger 376).
+    """
+
+    grid = model.modelgrid
+    if getattr(grid, "grid_type", None) == "structured":
+        return int(grid.nrow), int(grid.ncol)
+    return None
 
 
 class RegionRegistry:
@@ -122,15 +183,28 @@ class RegionRegistry:
 
         group = RegionGroup(
             name=name,
-            members=[] if members is None else [],
+            members=[],
             tags=[] if tags is None else list(tags),
             metadata={} if metadata is None else dict(metadata),
         )
+        # Every member is checked against the registry WITH the new group in it
+        # (a cycle runs through it), and a refused one puts the registry back as
+        # it was: the group used to stay registered half-filled, and under
+        # overwrite=True the group it replaced was already gone (ledger 375).
+        member_names = [] if members is None else list(members)
+        previous = self._groups.get(name)
         self._groups[name] = group
-
-        if members is not None:
-            for member_name in members:
+        filled = False
+        try:
+            for member_name in member_names:
                 self.add_to_group(name, member_name)
+            filled = True
+        finally:
+            if not filled:
+                if previous is None:
+                    del self._groups[name]
+                else:
+                    self._groups[name] = previous
 
         return group
 
@@ -257,7 +331,15 @@ class RegionRegistry:
         overwrite: bool = False,
     ) -> ModelRegion:
         """Create and register a region from explicit cell IDs."""
-        raw_cellids, cells, resolved_layer = normalize_region_inputs(cellids, layer=layer)
+        cellids = list(cellids)
+        # The grid is read only when a cellid needs it: a bare cell number means
+        # the same on every grid, and reading a loaded run's grid opens its files.
+        needs_grid = any(isinstance(cellid, tuple) and len(cellid) >= 2 for cellid in cellids)
+        raw_cellids, cells, resolved_layer = normalize_region_inputs(
+            cellids,
+            layer=layer,
+            structured_shape=_structured_shape(self.model) if needs_grid else None,
+        )
         region = ModelRegion(
             name=name,
             cells=cells,

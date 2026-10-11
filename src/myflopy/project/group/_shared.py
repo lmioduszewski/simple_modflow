@@ -168,7 +168,7 @@ def _ensure_group_map_compatible(group: ModelGroup, model_name: str):
         )
 
 
-def _load_group_model(model_or_path, *, crs: str, verbosity_level: int):
+def _load_group_model(model_or_path, *, crs: str | None, verbosity_level: int):
     """Normalize one model/group entry into a model-like object.
 
     Parameters
@@ -177,7 +177,8 @@ def _load_group_model(model_or_path, *, crs: str, verbosity_level: int):
         Either an existing model object or a path to an MF6 workspace.
     crs, verbosity_level
         Passed to :func:`myflopy.project.load_mf6_run` when a workspace
-        path is provided.
+        path is provided. ``crs=None`` lets it read the CRS the run recorded in
+        its ``run.json`` (ledger 374).
     """
 
     if isinstance(model_or_path, (str, Path)):
@@ -212,8 +213,14 @@ def _grid_signature_for_model(model) -> str | None:
     return None
 
 
-def _coerce_models(models, *, crs: str, verbosity_level: int) -> dict[str, object]:
-    """Normalize models or workspace paths into an ordered name->model mapping."""
+def _coerce_models(models, *, crs: str | None, verbosity_level: int) -> dict[str, object]:
+    """Normalize models or workspace paths into an ordered name->model mapping.
+
+    A SEQUENCE keys each model by its ``name``, so two models of one name are
+    REFUSED, naming them and the mapping spelling (ledger 373): keyed by
+    name, all but the last were dropped in silence, and two runs of one model --
+    the usual pair to compare -- became a one-model group.
+    """
 
     if isinstance(models, Mapping):
         coerced = {}
@@ -222,14 +229,58 @@ def _coerce_models(models, *, crs: str, verbosity_level: int) -> dict[str, objec
         return coerced
 
     if isinstance(models, Sequence) and not isinstance(models, (str, bytes)):
-        coerced = {}
-        for model in models:
-            loaded = _load_group_model(model, crs=crs, verbosity_level=verbosity_level)
-            coerced[str(loaded.name)] = loaded
-        return coerced
+        loaded = [
+            _load_group_model(model, crs=crs, verbosity_level=verbosity_level) for model in models
+        ]
+        names = [str(model.name) for model in loaded]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(
+                f"ModelGroup was given several models named {', '.join(map(repr, repeated))}: "
+                "a sequence keys each model by its name, so only one of them could be kept. "
+                "Name the members yourself with a mapping, e.g. "
+                "ModelGroup({'base': m1, 'wet': m2}, reference='base')."
+            )
+        return dict(zip(names, loaded, strict=True))
 
     raise TypeError(
         "models must be a mapping of names to models/workspaces or a sequence of model objects/workspaces."
     )
 
 
+def _diff_member_keys(models: Sequence[object]) -> list[str]:
+    """Group keys for ``model.diff(...)``'s members, the reference first.
+
+    ``model.diff(other)`` is most often two RUNS of one model, which share a
+    model ``name`` (ledger 373). The keys are, in order of preference:
+
+    1. each model's ``name``, when every name differs (unchanged from before);
+    2. else the folder that tells their WORKSPACES apart: the workspace's own
+       folder name when those differ (a project run's workspace is
+       ``<project>/runs/<run name>``, a loaded run's the folder it was opened
+       from), else its parent's, and so on up -- a built model's workspace is
+       ``<folder>/<model name>``, so two of them differ one level up;
+    3. else -- one workspace twice -- ``"reference"`` and ``"other"``
+       (``"other_1"``, ``"other_2"``, ... when there are several).
+
+    Every member takes its key from the same step and level, so one diff never
+    mixes a model name with a folder name.
+    """
+
+    names = [str(model.name) for model in models]
+    if len(set(names)) == len(names):
+        return names
+
+    parts = []
+    for model in models:
+        workspace = getattr(model, "workspace", None)
+        parts.append(Path(workspace).absolute().parts if workspace is not None else ())
+    for level in range(1, min(len(part) for part in parts)):
+        folders = [part[-level] for part in parts]
+        if len(set(folders)) == len(folders):
+            return folders
+
+    others = len(models) - 1
+    if others == 1:
+        return ["reference", "other"]
+    return ["reference", *(f"other_{index}" for index in range(1, others + 1))]

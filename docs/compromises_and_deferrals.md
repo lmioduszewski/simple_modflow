@@ -33,10 +33,14 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 372 entries (377 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 376 entries (381 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 376 | A region's tuple cellid is the grid's own: `(layer, row, col)` on DIS | 2026-10-11 |
+| 375 | `add_group` registers nothing unless every member is accepted | 2026-10-11 |
+| 374 | A group or diff opens each workspace path in the CRS its run recorded | 2026-10-11 |
+| 373 | Two runs of one model stay two: a group LIST refuses a repeated name, and `model.diff` keys same-named runs... | 2026-10-11 |
 | 372 | A lake set's default PEST prefix is `lak_stage`, and no default prefix is inside another family's groups, s... | 2026-10-11 |
 | 371 | A target set's `to_wide()` refuses two values for one target in one period, through the check `compare()` a... | 2026-10-11 |
 | 370 | A USG period short of its `ITMP` is refused, and so is a grid CRS of `None` | 2026-10-11 |
@@ -15290,6 +15294,10 @@ same day, which is the useful part of the result.
       ~~`vor.get_raster_from_strike_dip` documented as "not the geological strike/dip
       plane", its normal as not that plane's, its pixels as upper-left corners and its
       default file as frozen at import~~ -- fixed, entries rewritten (ledger 362).
+      ~~`ModelGroup`/`model.diff` documented as keeping only the LAST of two same-named
+      models and as never reading a run's recorded CRS; `add_group` as leaving a refused
+      group half-registered; `add_region` as reading a tuple's SECOND item as the cell~~
+      -- fixed, entries rewritten (ledgers 373 to 376).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17262,3 +17270,41 @@ same day, which is the useful part of the result.
       **Not changed:** a FORECAST set's generated prefix `fore1` is inside `fore10`; a
       forecast is at weight 0, which needs no phi-factor tag (ledger 358), so it cannot
       collide there.
+
+373. **Two runs of one model stay two: a group LIST refuses a repeated name, and `model.diff` keys same-named runs by their folders (2026-10-11).**
+     A group keyed a sequence by model `name`, the last winning, so `base.diff(wet)` on two
+     runs of one model (the usual pair) made a one-model group and returned an EMPTY diff --
+     "no differences". `ModelGroup([...])` now refuses a repeated name, naming the mapping
+     spelling: an explicit constructor has no good name to invent. `model.diff(...)` is the
+     convenience door, so it names the members itself -- judgment call on the rule: model
+     names when they all differ (every existing diff keeps its keys), else the nearest
+     folder that tells the WORKSPACES apart (a project run's workspace is `runs/<run name>`,
+     a loaded run's the folder opened, a built model's `<folder>/<model name>`, so one level
+     up), else `reference`/`other` for one workspace given twice. All members take one
+     level, so a diff never mixes a model name with a folder name. Not done: a one-model
+     `ModelGroup({...}).diff()` still returns an empty diff rather than refusing.
+
+374. **A group or diff opens each workspace path in the CRS its run recorded (2026-10-11).**
+     `ModelGroup` and `model.diff` defaulted `crs="EPSG:2927"` and always passed it, so
+     `load_mf6_run`'s `crs=None` branch -- read `run.json`, else 2927 -- was never reached and
+     a run recorded in EPSG:32610 drew 2927 in a group. Both default `crs=None` now; an
+     explicit `crs=` still wins for every path member, and model objects are untouched.
+     Default output changes only for a run whose `run.json` records a non-2927 CRS.
+
+375. **`add_group` registers nothing unless every member is accepted (2026-10-11).**
+     The group was registered before its members were checked, so a typo left it
+     half-filled and `overwrite=True` had already discarded the group it replaced. The
+     members are still checked against the registry WITH the new group in it (a cycle
+     through the replaced group is refused), and any failure restores what was there.
+
+376. **A region's tuple cellid is the grid's own: `(layer, row, col)` on DIS (2026-10-11).**
+     `normalize_region_inputs` read any tuple as `(layer, cell, ...)`, so a structured
+     `(0, 2, 3)` registered the ROW (cell 2, where FloPy's row-major grid -- and the cell
+     polygons and heads table built from it -- say 11), and extras were dropped. Now the
+     cell is `row * ncol + col` on a structured grid, a 2-tuple there or a 3+-tuple on a
+     vertex grid is refused naming the form, and a row/column off the grid is refused. The
+     grid is read only when a tuple needs it (a loaded run's grid opens its files). Scope
+     cut: DISU keeps the `(layer, cell)` reading, unmeasured; and `split_cellid_columns`
+     (every package INPUT table, so `model.chd.inputs.get()` and the diff's value tier) still
+     reads a DIS `(layer, row, col)` as `(layer, row)` -- measured: two identical DIS runs
+     diff as 12 CHD value cells changed. Reported, not fixed here.

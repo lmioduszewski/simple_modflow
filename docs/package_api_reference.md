@@ -479,6 +479,18 @@ release-group boundnames; without them it names the fix and offers
 `mf.Project(root, name=)` → `prepare_run`/`run` → `mf.Run`; `mf.load_run` /
 `mf.load_mf6_run`; `mf.ModelGroup`; `mf.ParallelModelWorkflow`.
 
+**Groups and diffs of runs.** `mf.ModelGroup({"base": a, "wet": b})` keys its members
+by the mapping; a LIST keys them by model name, so two runs of one model (both named,
+say, `flow`) are REFUSED, naming the mapping spelling -- the last used to replace the
+others in silence (ledger 373). `a.diff(b)` builds that mapping itself: names when
+they differ, else the folder that tells the workspaces apart (a project run's is its run
+name, a built model's the folder above `<model name>`), else `reference`/`other`. A
+workspace path in either opens in the CRS its run recorded in `run.json`, as
+`mf.load_mf6_run(ws)` does; `crs=` given wins (ledger 374; it used to be 2927 for
+every member). A region's tuple cellid is the grid's own: `(layer, cell)` on a vertex
+grid, `(layer, row, col)` on a structured one, and `add_group` registers nothing unless
+every member is accepted (ledgers 375/-d).
+
 **The project's libraries.** `project.packages` / `.grids` / `.simulations` are
 `dict` **subclasses** — every dict operation works unchanged, and each also
 answers the same questions. Full walkthrough in

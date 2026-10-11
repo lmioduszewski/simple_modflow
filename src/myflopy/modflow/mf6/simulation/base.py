@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 from flopy.mf6.mfbase import MFDataException
 
-from myflopy._defaults import DEFAULT_CRS
 from myflopy._logging import get_logger
 from myflopy.areas import Area, live_areas, saved_areas
 from myflopy.library import AoiLibrary
@@ -1488,13 +1487,18 @@ class SimulationBase:
             Region name. A name already used by a region GROUP raises
             ``ValueError`` whatever ``overwrite`` says.
         cellids : iterable of int or tuple
-            The cells. An ``int`` is taken as the cell number as given; a tuple
-            of two or more items is read as ``(layer, cell, ...)`` -- its first
-            item a layer, its SECOND the cell number, anything after ignored; a
-            one-item tuple is ``(cell,)``; an empty tuple is dropped. The region
-            stores the sorted unique cell numbers, plus the raw ids as given.
-            :meth:`region_heads` matches them against the heads table's in-layer
-            ``cell`` column, so give in-layer (per-layer) cell indices.
+            The cells. An ``int`` is an in-layer cell number as given, and a
+            one-item tuple ``(cell,)`` the same; an empty tuple is dropped. A
+            longer tuple is the model grid's own cellid: ``(layer, cell)`` on a
+            vertex grid (DISV, DISU), ``(layer, row, col)`` on a structured (DIS)
+            grid, whose cell number is FloPy's row-major ``row * ncol + col``. A
+            tuple of the other grid's length, or a row/column off a structured
+            grid, raises ``ValueError`` naming the expected form (ledger
+            376: a ``(layer, row, col)`` used to register the ROW as the
+            cell). The region stores the sorted unique cell numbers, plus the raw
+            ids as given. :meth:`region_heads` matches them against the heads
+            table's in-layer ``cell`` column, so give in-layer (per-layer) cell
+            indices.
         layer : int or list of int or None, optional
             Zero-based layer (or layers) the region applies to; :meth:`region_heads`
             filters to it when called without its own ``layer``. Default ``None``
@@ -1527,8 +1531,8 @@ class SimulationBase:
         Raises
         ------
         ValueError
-            If ``name`` is a group's name, or an existing region's without
-            ``overwrite=True``.
+            If ``name`` is a group's name, an existing region's without
+            ``overwrite=True``, or a tuple cellid is not of the grid's form.
         """
 
         return self.regions.add_from_cells(
@@ -1682,9 +1686,11 @@ class SimulationBase:
         members : iterable of str or None, optional
             Region or group names to add, in order, each through
             :meth:`add_to_group`: an unknown name raises ``KeyError`` and one
-            that would make a cycle raises ``ValueError``. The group is
-            registered BEFORE its members are added, so a refused member leaves
-            the group registered with the members before it. Default ``None``
+            that would make a cycle raises ``ValueError``. A refused member
+            leaves the registry exactly as it was before the call -- no group
+            ``name`` if there was none, the previous group under
+            ``overwrite=True`` (ledger 375; it used to keep the group
+            half-filled, the replaced one already gone). Default ``None``
             creates an empty group.
         tags : list of str or None, optional
             Labels stored (copied into a list) on the group. Default ``None``
@@ -1694,7 +1700,8 @@ class SimulationBase:
             ``None`` stores an empty dict.
         overwrite : bool, optional
             Default ``False`` raises ``ValueError`` when a group called ``name``
-            exists; ``True`` replaces it with the new, empty-then-filled group.
+            exists; ``True`` replaces it with the new group, once every member
+            has been accepted.
 
         Returns
         -------
@@ -2047,7 +2054,7 @@ class SimulationBase:
         self,
         other,
         *others,
-        crs: str = DEFAULT_CRS,
+        crs: str | None = None,
         shared_grid: bool = False,
         verbosity_level: int = 0,
     ):
@@ -2073,14 +2080,23 @@ class SimulationBase:
             More models, in the same forms as ``other`` and flattened the same way;
             together with ``other`` they become the non-reference members of the
             :class:`~myflopy.project.model_group.ModelGroup` built for the diff.
-            Every model is keyed in that group by its ``name``, and one sharing a
-            key keeps only the LAST: a model named like this one replaces it, so
-            give the group names explicitly with ``ModelGroup({...})`` when two
-            runs share a model name.
-        crs : str, optional
+            Each model's key in that group -- what ``diff.model_names``, the
+            ``model`` column of every diff table and the map titles show -- is its
+            ``name`` when every name differs. When two share one (two runs of one
+            model, the usual case) every member is keyed by the folder that
+            tells the workspaces apart: the workspace's own folder name when
+            those differ (a project run's is its run name, a loaded run's the
+            folder it was opened from), else its parent's (a built model's
+            workspace is ``<folder>/<model name>``), and so on up; one workspace
+            given twice is keyed ``"reference"`` and ``"other"`` (``"other_1"``,
+            ``"other_2"``, ... for several). Ledger 373: a model named like
+            this one used to REPLACE it, and the diff compared nothing.
+        crs : str or None, optional
             CRS (any string pyproj accepts) given to :func:`load_mf6_run` for the
             workspace-path entries; model objects are not touched. Default
-            :data:`~myflopy._defaults.DEFAULT_CRS` (``"EPSG:2927"``).
+            ``None`` takes each run's CRS recorded in its ``run.json``, else
+            :data:`~myflopy._defaults.DEFAULT_CRS` (``"EPSG:2927"``), as
+            ``load_mf6_run(ws)`` does; a string given here wins (ledger 374).
         shared_grid : bool, optional
             Default ``False``. ``True`` requires every model to carry the same
             discretization (compared by grid signature, ``ValueError`` otherwise)
@@ -2093,10 +2109,11 @@ class SimulationBase:
         -------
         ModelDiff
             A :class:`~myflopy.project.model_diff.ModelDiff` whose reference is
-            this model's ``name``.
+            this model, under the key ``other``/``others`` describes (its
+            ``name`` unless a name repeats).
         """
 
-        from myflopy.project.model_group import ModelGroup
+        from myflopy.project.group.core import _group_for_diff
 
         extra: list = []
         for item in (other, *others):
@@ -2104,12 +2121,8 @@ class SimulationBase:
                 extra.extend(item)
             else:
                 extra.append(item)
-        group = ModelGroup(
-            [self, *extra],
-            reference=self.name,
-            crs=crs,
-            shared_grid=shared_grid,
-            verbosity_level=verbosity_level,
+        group = _group_for_diff(
+            self, extra, crs=crs, shared_grid=shared_grid, verbosity_level=verbosity_level
         )
         return group.diff()
 

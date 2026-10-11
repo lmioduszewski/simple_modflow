@@ -300,10 +300,12 @@ def test_model_diff_end_to_end_on_canonical(tmp_path):
     )
 
     config = CanonicalModelConfig.validation()
+    # Two builds of ONE model, so both carry the canonical model's name: the diff
+    # keys them by the folders that tell their workspaces apart (ledger 373;
+    # the second used to replace the first, and the diff compared nothing).
     reference = build_canonical_model(tmp_path / "reference", config=config)
-    reference.name = "reference"
     variant = build_canonical_model(tmp_path / "variant", config=config)
-    variant.name = "variant"
+    assert reference.name == variant.name
 
     # Perturb the variant's GHB in period 0: drop one cell (structural) and bump
     # the conductance on another (value).
@@ -321,6 +323,7 @@ def test_model_diff_end_to_end_on_canonical(tmp_path):
 
     # Door 1: model.diff(other) -- this model is the reference.
     diff = reference.diff(variant)
+    assert (diff.reference, diff.model_names) == ("reference", ["variant"])
     summary = diff.summary()
     ghb_row = summary[
         (summary["package"] == "ghb") & (summary["model"] == "variant")
