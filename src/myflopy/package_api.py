@@ -6054,15 +6054,21 @@ class _SFRPackage:
 
         * a number, for every reach;
         * a string naming a column of the stream table, read per stream; any other
-          string is written unchanged to every reach, and for every value but
-          ``reach_top`` the checks then raise ``TypeError``;
+          string is written unchanged to every reach as an MF6 time-series name,
+          which MF6's SFR takes for ``streambed_k`` (``RHK``) and ``roughness``
+          (``MAN``) only -- for the other four it raises ``ValueError`` naming the
+          argument, the reach and its stream (ledger 365);
         * a mapping keyed by reach number, stream id or ``(layer, cell)`` cellid,
-          looked up in that order per reach. A reach none of them matches is left
-          ``None``: for every value but ``reach_top`` the checks then raise
-          ``TypeError``, and a ``None`` ``reach_top`` is handed to FloPy;
+          looked up in that order per reach. A reach none of them matches has no
+          value, and that raises ``ValueError`` naming the argument, the reach and
+          its stream;
         * a sequence of one value per reach, in reach order, or one per stream in
           the stream order above -- NOT the file's order. Any other length raises
           ``ValueError``.
+
+        Every per-reach value must end as a finite number (or a time-series name
+        where MF6 takes one): a ``NaN`` in a stream-table column raises
+        ``ValueError`` the same way.
 
         **Per-period values** (``inflow``, ``rainfall``, ``evaporation``,
         ``runoff``, ``status``) take ``None`` (no setting); a mapping whose keys are
@@ -6071,10 +6077,14 @@ class _SFRPackage:
         value, used for every period. So ``{3: 100.0}`` is period 3, not reach 3:
         key a reach inside a period, ``{0: {3: 100.0}}``. One period's value is a
         number or a string (a time-series name), placed as each entry says; a
-        mapping ``{stream_id or reach number: value}``, where a stream id means that
-        stream's FIRST reach; or an iterable of explicit rows ``(reach, value,
-        ...)`` written as given. A flat list of numbers is therefore read as rows
-        and raises ``TypeError``: unlike ``mf.lak``, it is not one value per period.
+        mapping ``{stream_id or reach number: value}``, where a stream id means
+        EVERY reach of that stream for ``rainfall``, ``evaporation`` and
+        ``status``, its FIRST reach for ``inflow`` and a share by reach length for
+        ``runoff`` (a stream not in the table raises ``KeyError`` naming the
+        streams); or an iterable of explicit rows ``(reach, value, ...)`` written
+        as given. A flat list of numbers is therefore read as rows and raises
+        ``TypeError``: unlike ``mf.lak``, it is not one value per period. Period
+        and reach keys may be Python or numpy integers.
 
         Parameters
         ----------
@@ -6136,10 +6146,11 @@ class _SFRPackage:
         diversions : sequence of StreamDiversion, optional
             Partial splits (:class:`StreamDiversion`), each written as an MF6
             ``DIVERSIONS`` record on its source reach plus a ``DIVERSION`` setting
-            in each period its ``amount`` covers; the receiving reach gets
-            ``USTRF`` 0.0. No reach connection is added between the two reaches,
-            and MF6 refuses a diversion without one -- see
-            :class:`StreamDiversion`. An unknown stream id or ``priority`` raises
+            in each period its ``amount`` covers, plus the reach connection from
+            the source reach to the receiving reach that MF6 diverts along --
+            written once when a ``StreamConnection`` names the same pair -- so the
+            two streams need no other link (ledger 364); the receiving reach
+            gets ``USTRF`` 0.0. An unknown stream id or ``priority`` raises
             ``ValueError``. Default ``()``.
         connection_tolerance : float or None, optional
             Largest distance, in model length units, from a stream's last vertex to
@@ -6152,8 +6163,8 @@ class _SFRPackage:
             iterated character by character, so give even one id as a tuple,
             ``("main",)``. Default ``()``.
         reach_layer : int, str or Mapping[str, int], optional
-            Zero-based layer each reach sits in. An ``int`` is every reach's layer
-            (a numpy integer is not one and is read as a column name); a mapping is
+            Zero-based layer each reach sits in. An integer -- a Python or a numpy
+            one -- is every reach's layer; a mapping is
             ``{stream_id: layer}``, where a stream missing from it raises
             ``KeyError``; any other string names a stream-table column holding each
             stream's layer (``ValueError`` when missing). Default
@@ -6170,18 +6181,20 @@ class _SFRPackage:
             above. Default 0.001. A negative gradient raises ``ValueError``.
         reach_top : float, str, Mapping, sequence, or None, optional
             Streambed-top elevation, MF6 ``RTP``, in model length units; any
-            per-reach form above, not checked here. Default ``None``: the top of
+            per-reach form above, ending as a finite number (MF6 takes no time
+            series here). Default ``None``: the top of
             each reach's layer in its cell -- from ``context.surfaces``, else
             ``grid.gdf_topbtm`` (``ValueError`` when neither is available) --
             lowered where needed so no reach is higher than the reach above it in
             the same stream.
         roughness : float, str, Mapping, or sequence, optional
-            Manning's roughness coefficient, MF6 ``MAN``; any per-reach form above.
-            Default 0.03. A value that is not positive raises ``ValueError``.
+            Manning's roughness coefficient, MF6 ``MAN``; any per-reach form above,
+            or a time-series name. Default 0.03. A value that is not positive
+            raises ``ValueError``.
         streambed_k : float, str, Mapping, or sequence, optional
             Streambed hydraulic conductivity, MF6 ``RHK``, in model length per
-            model time; any per-reach form above. Default 1.0. A negative value
-            raises ``ValueError``.
+            model time; any per-reach form above, or a time-series name. Default
+            1.0. A negative value raises ``ValueError``.
         streambed_thickness : float, str, Mapping, or sequence, optional
             Streambed thickness, MF6 ``RBTH``, in model length units; any per-reach
             form above. Default 1.0. A value that is not positive raises
@@ -6203,14 +6216,16 @@ class _SFRPackage:
             ``None``, no inflow.
         rainfall : float, str, Mapping, sequence, or None, optional
             Rainfall rate on the reach surface, MF6 ``RAINFALL``, in model length
-            per model time; any per-period form above. In one period a number or a
-            time-series name applies to EVERY reach, while ``{stream_id: rate}`` is
-            written to that stream's FIRST reach only, not along it. Default
-            ``None``.
+            per model time -- a rate per unit of streambed area, so each reach
+            takes it unchanged; any per-period form above. In one period a number
+            or a time-series name applies to EVERY reach, and ``{stream_id:
+            rate}`` to every reach of that stream (ledger 363); a
+            reach-number key names one reach and beats its stream's key whichever
+            comes first. Default ``None``.
         evaporation : float, str, Mapping, sequence, or None, optional
             Evaporation rate from the reach surface, MF6 ``EVAPORATION``, in model
             length per model time; placed exactly as ``rainfall`` is -- a number on
-            every reach, ``{stream_id: rate}`` on that stream's first reach only.
+            every reach, ``{stream_id: rate}`` on every reach of that stream.
             Default ``None``.
         runoff : float, Mapping, sequence, or None, optional
             Overland runoff, MF6 ``RUNOFF``, in model length cubed per model time.
@@ -6225,9 +6240,9 @@ class _SFRPackage:
         status : str, Mapping, sequence, or None, optional
             MF6 reach ``STATUS`` -- ``"ACTIVE"``, ``"INACTIVE"`` or ``"SIMPLE"`` --
             written as given, not checked here; any per-period form above. In one
-            period a string applies to every reach, ``{stream_id: status}`` to that
-            stream's first reach only. Default ``None``, no setting (MF6 keeps a
-            reach active).
+            period a string applies to every reach, ``{stream_id: status}`` to every
+            reach of that stream, placed as ``rainfall`` is. Default ``None``, no
+            setting (MF6 keeps a reach active).
         name : str, optional
             Package name, default ``"sfr"``: FloPy's ``pname``, the input file
             ``<model>.<name>``, the output files ``<model>_<name>_stage.sfr`` and

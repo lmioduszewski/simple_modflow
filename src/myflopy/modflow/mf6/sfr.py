@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from numbers import Real
+from numbers import Integral, Real
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +29,38 @@ from myflopy.specs import (
 )
 
 StreamLocation = str | Point
+
+
+def _is_integer(value: Any) -> bool:
+    """Whether ``value`` is an integer -- a Python ``int`` or a numpy one.
+
+    ``isinstance(value, int)`` is False for ``numpy.int64`` (it subclasses nothing),
+    so a layer or a key read out of an array or a DataFrame was taken for a column
+    name or a stream id (the numpy-at-the-boundary class, ledger 265). A ``bool`` is
+    not a layer, a reach or a period.
+    """
+
+    return isinstance(value, Integral) and not isinstance(value, bool)
+
+
+#: The per-reach ``packagedata`` values :meth:`SFRBuilder.validate` checks: its
+#: position in the row, the argument that sets it, MF6's name for it, whether MF6
+#: takes a time-series name there (``gwf-sfr.dfn``: only ``rhk`` and ``man`` carry
+#: ``time_series true``), and the bound -- ``"positive"``, ``"nonnegative"`` or
+#: ``None`` (any finite number).
+_REACH_VALUES = (
+    (3, "width", "RWID", False, "positive"),
+    (4, "gradient", "RGRD", False, "nonnegative"),
+    (5, "reach_top", "RTP", False, None),
+    (6, "streambed_thickness", "RBTH", False, "positive"),
+    (7, "streambed_k", "RHK", True, "nonnegative"),
+    (8, "roughness", "MAN", True, "positive"),
+)
+
+#: Period settings that are a rate per unit of streambed area (``RAINFALL``,
+#: ``EVAPORATION``, length per time) or a reach's state (``STATUS``): a stream's
+#: value holds on EVERY one of its reaches, as a scalar's holds on every reach.
+_PER_REACH_SETTINGS = frozenset({"RAINFALL", "EVAPORATION", "STATUS"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,10 +130,12 @@ class StreamDiversion:
     flow a reach takes). Both stream ids must exist in the builder's stream
     table, or :attr:`SFRBuilder.network` raises ``ValueError``.
 
-    The builder does NOT add a reach connection from the source reach to the
-    receiving reach, and MF6 requires one: with the two streams otherwise
-    unconnected, MF6 refuses the package ("Reach 3 is not a upstream reach for
-    reach 5 ... diversion 1 from reach 3 to reach 5 is not possible").
+    MF6 diverts only along a reach connection, so the diversion is also written
+    as one, from the source reach to the receiving reach (ledger 364) --
+    once, when a :class:`StreamConnection` names the same two reaches too. The
+    streams need no other link. The water the diversion does not take goes on
+    to the source reach's other downstream reaches by their ``USTRF``, or leaves
+    the network when it has none.
 
     Parameters
     ----------
@@ -240,9 +274,10 @@ class SFRBuilder:
         for its ``source`` in every mode; for two with the same source the
         later wins. Default ``()``.
     diversions : sequence of StreamDiversion, optional
-        Explicit partial splits, written as MF6 ``DIVERSIONS`` records and
-        ``DIVERSION`` period settings. Default ``()``. See
-        :class:`StreamDiversion` for a limitation MF6 refuses.
+        Explicit partial splits, written as MF6 ``DIVERSIONS`` records,
+        ``DIVERSION`` period settings and a reach connection from the source
+        reach to the receiving reach (see :class:`StreamDiversion`). Default
+        ``()``.
     connection_tolerance : float or None, optional
         Largest distance, in model length units, between a stream's downstream
         end and another stream for ``connection_mode="automatic"`` to connect
@@ -252,10 +287,11 @@ class SFRBuilder:
         Stream ids whose line is reversed when the stream table is built, for
         lines digitized mouth-first. Ids are compared as strings. Default ``()``.
     reach_layer : int, str or Mapping[str, int], optional
-        Zero-based layer each reach sits in. An ``int`` is every reach's layer;
-        a mapping is ``{stream_id: layer}`` (a stream missing from it raises
-        ``KeyError``); a string other than ``"top_active"`` names a stream-table
-        column holding each stream's layer. Default ``"top_active"``: the top
+        Zero-based layer each reach sits in. An integer -- a Python or a numpy
+        one -- is every reach's layer; a mapping is ``{stream_id: layer}`` (a
+        stream missing from it raises ``KeyError``); a string other than
+        ``"top_active"`` names a stream-table column holding each stream's
+        layer. Default ``"top_active"``: the top
         layer with ``idomain > 0`` in the reach's column of ``context.domain``
         -- a column with none raises ``ValueError`` -- or layer 0 when the
         context has no domain or a one-dimensional one.
@@ -272,15 +308,15 @@ class SFRBuilder:
         in its cell -- read from ``context.surfaces``, else
         ``grid.gdf_topbtm`` (``ValueError`` when neither is available) -- then
         lowered where needed so no reach is higher than the reach above it in
-        the same stream.
+        the same stream. Any finite number; MF6 takes no time series here.
     roughness : float, str, Mapping, or sequence, optional
         Manning's roughness coefficient, MF6 ``MAN``; default 0.03. Per-reach
-        shapes as in the Notes. :meth:`validate` refuses a value that is not
-        positive.
+        shapes as in the Notes, or a time-series name. :meth:`validate` refuses
+        a value that is not positive.
     streambed_k : float, str, Mapping, or sequence, optional
         Streambed hydraulic conductivity, MF6 ``RHK``, in model length per model
-        time; default 1.0. Per-reach shapes as in the Notes. :meth:`validate`
-        refuses a negative value.
+        time; default 1.0. Per-reach shapes as in the Notes, or a time-series
+        name. :meth:`validate` refuses a negative value.
     streambed_thickness : float, str, Mapping, or sequence, optional
         Streambed thickness, MF6 ``RBTH``, in model length units; default 1.0.
         Per-reach shapes as in the Notes. :meth:`validate` refuses a value that
@@ -294,14 +330,15 @@ class SFRBuilder:
         ``None``, no inflow.
     rainfall : float, str, Mapping, sequence, or None, optional
         Rainfall rate on the reach surface, MF6 ``RAINFALL`` (model length per
-        model time). Per period, a number or time-series name applies to EVERY
-        reach; ``{stream_id: rate}`` is written to that stream's FIRST reach
-        only, not along it. Other period shapes as in the Notes. Default
-        ``None``.
+        model time -- a rate per unit of streambed area, so every reach takes
+        it unchanged). Per period, a number or time-series name applies to
+        EVERY reach, and ``{stream_id: rate}`` to every reach of that stream; a
+        reach-number key names one reach and beats its stream's key. Other
+        period shapes as in the Notes. Default ``None``.
     evaporation : float, str, Mapping, sequence, or None, optional
         Evaporation rate from the reach surface, MF6 ``EVAPORATION`` (model
         length per model time). Placed exactly like ``rainfall``: a scalar on
-        every reach, ``{stream_id: rate}`` on that stream's first reach only.
+        every reach, ``{stream_id: rate}`` on every reach of that stream.
         Default ``None``.
     runoff : float, Mapping, sequence, or None, optional
         Overland runoff, MF6 ``RUNOFF`` (model length cubed per model time). Per
@@ -313,9 +350,9 @@ class SFRBuilder:
         and raises ``ValueError`` unless given as rows. Default ``None``.
     status : str, Mapping, sequence, or None, optional
         MF6 reach ``STATUS``: ``"ACTIVE"``, ``"INACTIVE"`` or ``"SIMPLE"``. Per
-        period, a string applies to every reach; ``{stream_id: status}`` to that
-        stream's first reach only. Other period shapes as in the Notes. Default
-        ``None``, no status setting (MF6's default, active).
+        period, a string applies to every reach; ``{stream_id: status}`` to every
+        reach of that stream, placed like ``rainfall``. Other period shapes as in
+        the Notes. Default ``None``, no status setting (MF6's default, active).
     name : str, optional
         Package name, default ``"sfr"``: FloPy's ``pname``, the input file
         ``<model>.<name>``, the output files ``<model>_<name>_*``, and the
@@ -367,14 +404,14 @@ class SFRBuilder:
     ``streambed_k``, ``streambed_thickness``) take:
 
     - a number, applied to every reach;
-    - a string naming a stream-table column, read per stream (any other string
-      is passed through unchanged to every reach, where :meth:`validate` then
-      raises ``TypeError`` for every input but ``reach_top``, which it does not
-      check);
+    - a string naming a stream-table column, read per stream. Any other string
+      is written unchanged to every reach as an MF6 time-series name, which
+      MF6's SFR takes for ``streambed_k`` (``RHK``) and ``roughness`` (``MAN``)
+      only: for the other four :meth:`validate` raises ``ValueError`` naming the
+      argument, the reach and its stream;
     - a mapping keyed by reach number, stream id or ``(layer, cell)`` cellid,
-      looked up in that order for each reach -- a reach none of them matches is
-      left ``None``, which :meth:`validate` rejects with ``TypeError`` for every
-      input but ``reach_top``;
+      looked up in that order for each reach -- a reach none of them matches
+      has no value, and :meth:`validate` raises ``ValueError`` naming it;
     - a sequence of one value per reach (in reach order), or one per stream in
       :attr:`stream_ids` order, which puts source streams before the streams
       they flow into and can differ from the file's order. Any other length
@@ -387,8 +424,16 @@ class SFRBuilder:
     ``{3: 100.0}`` means period 3, not reach 3: key a reach inside a period,
     ``{0: {3: 100.0}}``. Each period's value is a number or a string (placed as
     each parameter says), a mapping ``{stream_id or reach number: value}`` (a
-    stream id means that stream's first reach), or an iterable of explicit rows
-    ``(reach, value, ...)`` written as given.
+    stream id means every reach of the stream for ``rainfall``, ``evaporation``
+    and ``status``, its first reach for ``inflow``, and a share by reach length
+    for ``runoff``; a stream not in the table raises ``KeyError`` naming the
+    streams), or an iterable of explicit rows ``(reach, value, ...)`` written as
+    given. Keys may be Python or numpy integers.
+
+    Every per-reach value must end as a finite number, or a string where MF6
+    takes a time series; anything else -- a ``NaN`` in a stream-table column
+    included -- makes :meth:`validate` (and so :meth:`build`) raise
+    ``ValueError`` naming the argument, the reach and its stream.
     """
 
     context: ModelContext
@@ -675,8 +720,8 @@ class SFRBuilder:
     def _layer_for_cell(self, stream_id: str, cell: int) -> int:
         """The model layer a reach sits in: a constant, a per-stream map, a field, or ``top_active``."""
 
-        if isinstance(self.reach_layer, int):
-            return self.reach_layer
+        if _is_integer(self.reach_layer):
+            return int(self.reach_layer)
         if isinstance(self.reach_layer, Mapping):
             return int(self.reach_layer[stream_id])
         if self.reach_layer != "top_active":
@@ -946,9 +991,25 @@ class SFRBuilder:
         for source, receiver in self.resolved_connections:
             downstream[source].append(receiver)
             upstream[receiver].append(source)
+        # MF6 diverts only along a reach connection ("Reach 3 is not a upstream reach
+        # for reach 5 ... diversion 1 from reach 3 to reach 5 is not possible"), so a
+        # diversion is one too (ledger 364). The sets below write it once when a
+        # StreamConnection already names the same pair.
+        for _, source, receiver, _ in self.resolved_diversions:
+            downstream[source].append(receiver)
+            upstream[receiver].append(source)
 
+        # A downstream reach is written NEGATIVE, and reach 0 has no negative int:
+        # FloPy reads the float -0.0 as "downstream to reach 0" (its
+        # support_negative_index rule) and a plain 0 as "upstream from reach 0".
+        # Nothing else connects INTO reach 0 -- streams are numbered sources first --
+        # but a diversion's receiver can be reach 0 (ledger 364).
         return [
-            [int(rno), *sorted(set(upstream[rno])), *[-value for value in sorted(set(downstream[rno]))]]
+            [
+                int(rno),
+                *sorted(set(upstream[rno])),
+                *[-0.0 if value == 0 else -int(value) for value in sorted(set(downstream[rno]))],
+            ]
             for rno in self.reaches.index
         ]
 
@@ -1056,11 +1117,13 @@ class SFRBuilder:
         (matching :class:`LAKBuilder`'s per-lake broadcast), while ``INFLOW`` is
         a volumetric point source and enters at the single headwater (first)
         reach. ``RUNOFF`` is volumetric too, but spread: see :meth:`_runoff_rows`.
+        A ``{stream_id: value}`` mapping follows the same rule per stream: see
+        :meth:`_per_reach_rows`.
         """
 
         if value is None:
             return {period: [] for period in range(self.nper)}
-        period_values = value if isinstance(value, Mapping) and all(isinstance(key, int) for key in value) else {period: value for period in range(self.nper)}
+        period_values = value if isinstance(value, Mapping) and all(_is_integer(key) for key in value) else {period: value for period in range(self.nper)}
         result = {period: [] for period in range(self.nper)}
         for period in range(self.nper):
             current = period_values.get(period)
@@ -1069,9 +1132,15 @@ class SFRBuilder:
             if keyword == "RUNOFF" and (isinstance(current, (Mapping, Real, str))):
                 result[period].extend(self._runoff_rows(current))
                 continue
-            if isinstance(current, Mapping):
+            if isinstance(current, Mapping) and keyword in _PER_REACH_SETTINGS:
+                result[period].extend(self._per_reach_rows(current, keyword))
+            elif isinstance(current, Mapping):
                 for location, amount in current.items():
-                    rno = int(location) if isinstance(location, int) else self._reach_at(str(location), "upstream")
+                    if _is_integer(location):
+                        rno = int(location)
+                    else:
+                        self._reaches_of(str(location), keyword)
+                        rno = self._reach_at(str(location), "upstream")
                     result[period].append([rno, keyword, amount])
             elif isinstance(current, Real) or isinstance(current, str):
                 if keyword == "INFLOW":
@@ -1091,6 +1160,39 @@ class SFRBuilder:
                 for row in current:
                     result[period].append([int(row[0]), keyword, *row[1:]])
         return result
+
+    def _reaches_of(self, stream: str, keyword: str) -> list[int]:
+        """``stream``'s reach numbers, in order; ``KeyError`` naming the streams when unknown."""
+
+        if stream not in self.stream_reaches:
+            raise KeyError(
+                f"{keyword.lower()} names stream {stream!r}; the streams are "
+                f"{sorted(self.stream_reaches)}."
+            )
+        return self.stream_reaches[stream]
+
+    def _per_reach_rows(self, current: Mapping, keyword: str) -> list[list[Any]]:
+        """One period's ``{stream_id or reach: value}`` for a per-reach setting.
+
+        ``RAINFALL`` and ``EVAPORATION`` are rates per unit of streambed area (L/T)
+        and ``STATUS`` a reach's state, so a stream's value is written to EVERY one
+        of its reaches, unchanged -- not divided, which is RUNOFF's rule for a
+        volume. It went to the stream's FIRST reach only (ledger 363), so
+        ``rainfall={0: {"main": 0.001}}`` wetted one reach where ``rainfall=0.001``
+        wets them all. A reach-number key names that reach and beats its stream's
+        key whichever comes first in the mapping: the more specific value wins, as
+        in the per-reach inputs' lookup. One row per reach, in reach order.
+        """
+
+        by_reach: dict[int, Any] = {}
+        for location, amount in current.items():
+            if not _is_integer(location):
+                for rno in self._reaches_of(str(location), keyword):
+                    by_reach[int(rno)] = amount
+        for location, amount in current.items():
+            if _is_integer(location):
+                by_reach[int(location)] = amount
+        return [[rno, keyword, by_reach[rno]] for rno in sorted(by_reach)]
 
     def _runoff_rows(self, current: Any) -> list[list[Any]]:
         """One period's RUNOFF rows: a TOTAL per stream, spread along it by reach length.
@@ -1115,7 +1217,7 @@ class SFRBuilder:
         totals: dict[str, Any] = {}
         if isinstance(current, Mapping):
             for location, amount in current.items():
-                if isinstance(location, int):
+                if _is_integer(location):
                     rows.append([int(location), "RUNOFF", amount])
                 else:
                     totals[str(location)] = amount
@@ -1127,12 +1229,7 @@ class SFRBuilder:
         for stream, total in totals.items():
             if isinstance(total, str):
                 refuse()
-            if stream not in self.stream_reaches:
-                raise KeyError(
-                    f"runoff names stream {stream!r}; the streams are "
-                    f"{sorted(self.stream_reaches)}."
-                )
-            reaches = self.stream_reaches[stream]
+            reaches = self._reaches_of(stream, "RUNOFF")
             lengths = self.reaches.loc[reaches, "rlen"].astype(float)
             for rno, length in zip(reaches, lengths, strict=True):
                 rows.append([int(rno), "RUNOFF", float(total) * float(length) / float(lengths.sum())])
@@ -1172,28 +1269,79 @@ class SFRBuilder:
         return rows or None
 
     def validate(self) -> None:
-        """Raise clear errors for invalid reach, routing, and package data."""
+        """Raise clear errors for invalid reach, routing, and package data.
+
+        Every per-reach value must be a finite number (``ValueError`` naming the
+        argument, the reach and its stream otherwise) -- ``streambed_k`` and
+        ``roughness`` may instead be a string, read by MF6 as a time-series name,
+        since those are the only two its SFR ``packagedata`` takes one for (ledger
+        365). Then the bounds: positive length, width, streambed thickness and
+        roughness; non-negative gradient and streambed conductivity; ``reach_top``
+        any finite number. Every period setting must name a reach that exists.
+        """
 
         if self.total_nreaches == 0:
             raise ValueError("SFRBuilder generated no reaches.")
+        stream_of = self.reaches["stream_id"].to_dict()
         for row in self.packagedata:
+            rno = int(row[0])
+            where = f"reach {rno} (stream {stream_of[rno]!r})"
             if row[2] <= 0:
-                raise ValueError(f"SFR reach {row[0]} has nonpositive length.")
-            if row[3] <= 0:
-                raise ValueError(f"SFR reach {row[0]} has nonpositive width.")
-            if row[4] < 0:
-                raise ValueError(f"SFR reach {row[0]} has negative gradient.")
-            if row[6] <= 0:
-                raise ValueError(f"SFR reach {row[0]} has nonpositive streambed thickness.")
-            if row[7] < 0:
-                raise ValueError(f"SFR reach {row[0]} has negative streambed conductivity.")
-            if row[8] <= 0:
-                raise ValueError(f"SFR reach {row[0]} has nonpositive roughness.")
+                raise ValueError(f"SFR {where} has nonpositive length.")
+            for position, name, mf6_name, takes_series, bound in _REACH_VALUES:
+                value = row[position]
+                if takes_series and isinstance(value, str):
+                    continue
+                self._check_reach_number(value, name, mf6_name, takes_series, where)
+                if bound == "positive" and value <= 0:
+                    raise ValueError(f"SFR {where} has nonpositive {name} ({mf6_name}): {value!r}.")
+                if bound == "nonnegative" and value < 0:
+                    raise ValueError(f"SFR {where} has negative {name} ({mf6_name}): {value!r}.")
         valid_reaches = set(self.reaches.index)
         for period, settings in self.perioddata.items():
             for setting in settings:
                 if setting[0] not in valid_reaches:
                     raise ValueError(f"SFR period {period} references unknown reach {setting[0]}.")
+
+    def _check_reach_number(
+        self, value: Any, name: str, mf6_name: str, takes_series: bool, where: str
+    ) -> None:
+        """Refuse a per-reach value that is not a finite number, saying where it came from.
+
+        A string that names no stream-table column was written unchanged to every
+        reach and a mapping that matched none of a reach's keys left it ``None``:
+        both reached ``<= 0`` as a bare ``TypeError``, and ``reach_top`` -- which
+        nothing compared -- went to FloPy as written (ledger 365).
+        """
+
+        if isinstance(value, Real) and not isinstance(value, bool) and np.isfinite(value):
+            return
+        given = getattr(self, name)
+        series = (
+            ""
+            if takes_series
+            else (
+                f"; MF6 reads {mf6_name} as a number -- of the per-reach values only "
+                "streambed_k (RHK) and roughness (MAN) take a time-series name"
+            )
+        )
+        if isinstance(given, str) and given in self.stream_table.columns:
+            why = f"column {given!r} of the stream table holds {value!r} there{series}"
+        elif given is None and name == "reach_top":
+            why = f"the top of its layer in its cell, the default, is {value!r}"
+        elif value is None and isinstance(given, Mapping):
+            why = (
+                f"the {name}= mapping names none of its reach number, its stream id "
+                "or its (layer, cell) cellid"
+            )
+        elif isinstance(value, str):
+            columns = [str(column) for column in self.stream_table.columns if column != "geometry"]
+            why = f"{value!r} names no column of the stream table (its columns are {columns}){series}"
+        elif value is None or isinstance(value, Real):
+            why = f"{value!r} is not a finite number"
+        else:
+            why = f"{value!r} is a {type(value).__name__}, not a number"
+        raise ValueError(f"SFR {name} ({mf6_name}) for {where}: {why}.")
 
     def resolved_length_conversion(self) -> float:
         """SFR ``LENGTH_CONVERSION`` -- explicit value, else from context units.

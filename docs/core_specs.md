@@ -277,6 +277,10 @@ diversion = StreamDiversion(
 )
 ```
 
+A diversion is also written as the reach connection MF6 diverts along, so the
+two streams need no `StreamConnection` between them; one naming the same two
+reaches is not written twice (ledger 364).
+
 Inspect `sfr.network` before grid mapping and `sfr.reaches` afterward.
 Multiple reaches may occupy the same groundwater cell without losing their
 individual routing identities.

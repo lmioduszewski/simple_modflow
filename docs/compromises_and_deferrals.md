@@ -33,10 +33,13 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 362 entries (367 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 365 entries (370 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 365 | A per-reach SFR value must be a finite number, or a time-series name where MF6 takes one | 2026-10-11 |
+| 364 | A `StreamDiversion` is a reach connection too, so it runs with no `StreamConnection` between its streams | 2026-10-11 |
+| 363 | A stream-keyed `rainfall`/`evaporation`/`status` reaches EVERY reach of the stream, and a reach key beats i... | 2026-10-11 |
 | 362 | A strike/dip surface is the geological plane, evaluated at pixel centres; a dip outside [0, 90) is refused | 2026-10-11 |
 | 361 | The review of ledger 360: the build's marker is a VISIBLE `myflopy_pest_build.json`; a template built befor... | 2026-10-02 |
 | 360 | A PEST build deletes its `workspace=` only when a build wrote it there: the template and its staging direct... | 2026-10-02 |
@@ -15270,8 +15273,12 @@ same day, which is the useful part of the result.
       docstrings changed; a docstring-stripped AST of every touched module is identical to
       its parent). The ones that reach PEST are fixed in the entries after this one; the
       rest were listed for the user. Fixing one means correcting its entry too (e.g.
-      `mf.sfr`'s per-stream `rainfall` mapping, documented as landing on the stream's
-      first reach).
+      ~~`mf.sfr`'s per-stream `rainfall` mapping, documented as landing on the stream's
+      first reach~~ -- fixed with three more of `mf.sfr`'s on 2026-10-11, its entries
+      corrected: the stream-keyed rates (ledger 363), a diversion MF6 refused
+      (ledger 364), per-reach values that died as a bare `TypeError` or reached
+      FloPy unchecked (ledger 365), and a numpy-integer `reach_layer` read as a
+      column name).
       ~~`vor.get_raster_from_strike_dip` documented as "not the geological strike/dip
       plane", its normal as not that plane's, its pixels as upper-left corners and its
       default file as frozen at import~~ -- fixed, entries rewritten (ledger 362).
@@ -17036,3 +17043,63 @@ same day, which is the useful part of the result.
       `test_a_cell_sample_carries_no_half_pixel_offset`; the import-time default fails both
       `test_the_default_output_file_is_in_the_working_directory_at_the_call` cases; dropping
       the `Path()` coercion fails `test_a_str_output_filename_is_written_and_sampled`.
+
+363. **A stream-keyed `rainfall`/`evaporation`/`status` reaches EVERY reach of the stream, and a reach key beats its stream's key (2026-10-11).**
+      RAINFALL and EVAPORATION are MF6 rates per unit of streambed area (measured: MF6
+      rains rate x RWID x RLEN on each reach, `docs/reproducers/sfr_stream_inputs.py` C)
+      and STATUS is a reach's state, so `{stream_id: v}` writes `v` UNCHANGED on every
+      reach of the stream -- the scalar's rule. It went to the stream's first reach: on
+      the reproducer's two streams, 2 of 6 reaches rained. Not divided by length -- that
+      is RUNOFF's rule for a volume, untouched; INFLOW keyed by stream still enters at
+      the stream's first reach (a point source). **Judgment call:** in one period's
+      mapping a reach-number key beats the stream key covering that reach whichever
+      comes first -- the per-reach inputs' lookup order; before, both rows were written
+      and MF6 kept the later. CHANGES WRITTEN OUTPUT for a stream-keyed rate on a stream
+      of more than one reach. A stream not in the table raises `KeyError` naming the
+      streams for every period setting (RUNOFF's message, one helper).
+      Revert check: the first-reach rule back -> the three
+      `test_a_stream_keyed_setting_reaches_every_reach_of_the_stream` cases and
+      `test_mf6_reads_the_same_rainfall_per_reach_from_a_stream_keyed_rate` fail;
+      order-dependent precedence -> `test_a_reach_key_beats_its_streams_key_in_either_order[True]`.
+
+364. **A `StreamDiversion` is a reach connection too, so it runs with no `StreamConnection` between its streams (2026-10-11).**
+      MF6 diverts only along a reach connection ("diversion 1 from reach 3 to reach 5 is
+      not possible") and the builder wrote none, so a diversion between otherwise
+      unconnected streams built clean and MF6 stopped reading the package. Each
+      diversion now adds source -> receiver to `connectiondata`, written ONCE beside a
+      `StreamConnection` naming the same pair. Measured (reproducer A): a FRACTION 0.25
+      delivers 24.999 of 99.997 ft3/d to the canal and leaves 74.998 in the source,
+      identical with and without the StreamConnection. **A diversion INTO reach 0** needs
+      FloPy's `-0.0`: reach 0 has no negative integer, a plain `0` is an UPSTREAM
+      connection from it, and MF6 refused it the same way; nothing else connects into
+      reach 0, because streams are numbered sources first. **Not done, deliberately:**
+      the diversion is not an edge of the stream ORDERING, so its receiver may be
+      numbered before its source -- MF6 runs that (A3) -- because a bypass (diverted
+      from a stream and rejoining it) is a cycle between streams and not between
+      reaches, and the edge would refuse it. A diversion whose source and receiver are
+      one reach is not checked. A model that used the StreamConnection workaround
+      writes the same file.
+      Revert check: no connection -> `test_a_diversion_is_a_reach_connection_written_once`
+      and `test_mf6_runs_a_diversion_and_the_water_arrives[diversion alone]` /
+      `[into reach 0]` fail; `-0` for `-0.0` -> `test_a_diversion_into_reach_0_is_written_downstream`
+      and `[into reach 0]`.
+
+365. **A per-reach SFR value must be a finite number, or a time-series name where MF6 takes one (2026-10-11).**
+      `SFRBuilder.validate` -- so `build()` and `mf.sfr` -- refuses with `ValueError`
+      naming the argument, MF6's name, the reach and its stream: a string naming no
+      stream-table column, a mapping matching none of a reach's keys, a NaN or None in
+      a column, anything not a number. They died as a bare `TypeError` at `<= 0`, and
+      `reach_top`, which nothing compared, reached FloPy as `None` or `'ts1'`. **The rule
+      is MF6's, measured** (reproducer B): of the six only RHK (`streambed_k`) and MAN
+      (`roughness`) take a time-series name -- `gwf-sfr.dfn` marks those two
+      `time_series true`, and MF6 stops on 'Error converting "kts" to a real number' for
+      RWID, RGRD, RTP and RBTH -- so a string there is kept and its bound not checked.
+      **Judgment call:** that string is not checked against a declared `timeseries=`,
+      since a time series can be attached to the FloPy package after the build.
+      **Not fixed:** `validate_sfr_configuration` (`surface_water_validation.py`) still
+      reports a time-series RHK or MAN as an error.
+      Revert check: the check removed -> the `test_a_string_naming_no_column_...`,
+      `test_a_mapping_matching_no_reach_...` and `test_an_empty_column_...` cases fail
+      (16); the time-series exemption removed -> both
+      `test_a_time_series_name_is_kept_where_mf6_takes_one` cases and
+      `test_mf6_runs_streambed_k_and_roughness_given_as_time_series`.
