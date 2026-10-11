@@ -33,10 +33,14 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 403 entries (408 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 407 entries (412 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 407 | `LayerSurfaces.to_disv(attach=True)` writes the grid only once the spec is built | 2026-10-11 |
+| 406 | `LayerSurfaces` refuses a repeated label, naming it and its positions | 2026-10-11 |
+| 405 | A surface's `units=` is converted wherever it sits in an algebra tree, before anything combines | 2026-10-11 |
+| 404 | A stack's length unit is written as MF6's own word; a raw `length_units=` must already be one | 2026-10-11 |
 | 403 | A map's head hover writes each head in the model's own length unit, and with no unit when the model declare... | 2026-10-11 |
 | 402 | A head/conc/temp noun applies `hover_layers` and `hover_surfaces=True` on top of a caller's `hover=`, as... | 2026-10-11 |
 | 401 | A hover footer writes a cell's area in the model's own length unit squared, and with no unit when the model... | 2026-10-11 |
@@ -15382,6 +15386,11 @@ same day, which is the useful part of the result.
       `'none'` drawing `'active'`; the hover footer's area as always `ft²`~~ -- fixed
       2026-10-11, entries rewritten: one label-count check names both counts on all four
       exporters, and ledgers 400 and 401.
+      ~~`LayerSurfaces.to_disv`/`LayerStack(length_units=)` documented as writing `"ft"`
+      upper-cased (`FT`, read by MF6 as undefined); a surface's `units=` as ignored on
+      an operand of algebra; `to_disv(attach=True)` as writing the grid before its
+      refusals; `LayerSurfaces` labels as not checked for repeats~~ -- fixed, entries
+      rewritten (ledgers 404 to 407).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17872,3 +17881,55 @@ same day, which is the useful part of the result.
      concentration/temperature units, which no MF6 input declares. Revert check:
      `test_the_head_is_written_in_the_models_length_unit` (a real run in METERS, the
      canonical run in feet, the sentinel run in none).
+
+404. **A stack's length unit is written as MF6's own word; a raw `length_units=` must already be one (2026-10-11).**
+      MF6 reads any `LENGTH_UNITS` word but `FEET`/`METERS`/`CENTIMETERS`/`UNKNOWN`
+      (any case) as unit 0, undefined, under Normal termination
+      (`docs/reproducers/mf6_length_units.py`: `FT`, `ft`, `M`, `FOO` all 0). The stack
+      converted `ft`/`m`/`cm` and wrote them upper-cased. ONE helper,
+      `surfaces._mf6_length_units`, maps every spelling `_LENGTH_TO_FEET` takes to MF6's
+      word for `LayerSurfaces.to_disv` and `LayerBuildResult.to_disv`, and refuses any
+      other naming them; a test holds the two tables equal. **`LayerStack(length_units=)`
+      refuses at construction** -- judgment call: at `to_disv` a lazy `mf.disv(stack)`
+      would carry a bad unit to the model's build. **The raw `length_units=` option of
+      `mf.dis`/`mf.disv`/`mf.disu` is REFUSED, not mapped**, naming the word to write --
+      judgment call: it is FloPy's keyword written as given, and mapping `"ft"` while
+      `"feet"` stays `"feet"` would give one model two spellings and two digests. MF6's
+      `unknown` is accepted there and nowhere in the stack (it converts nothing). The only
+      digests that move are DISVs built from a stack declared in an abbreviation (they
+      held `FT`/`M`/`CM`); a lazy `mf.disv(stack)` holds the stack, not the word, and
+      every raw value MF6 read correctly is accepted unchanged.
+      Tests: `tests/test_layer_surface_units.py` -- the old mapping fails
+      `test_every_to_disv_writes_mf6s_word` and the MF6 run
+      `test_mf6_reads_the_unit_a_stack_declared_by_its_abbreviation` (`ft` -> 0, not 1).
+
+405. **A surface's `units=` is converted wherever it sits in an algebra tree, before anything combines (2026-10-11).**
+      Only the surface a sampler was handed converted its `units=`, AFTER sampling: a
+      metre DEM inside `capped_at`/`shift`/`where`/`isopach`/`toward`/... was read as
+      feet (`Raster(dem_m, units="meters").capped_at(1000)` built a top of 100 for
+      328.08), and a `fill="propagate"` raster in metres multiplied the surface it
+      inherited, already in feet, by 3.28. `Surface.values(length_units=)` now converts
+      each LEAF (`flat`/`raster`/`contours`/`points`/`array`) before combining and
+      before filling; `LayerSurfaces.sample` and `sample_bed` (so `mf.lak`'s bed and
+      `excavate`) call it, and nothing else samples a `Surface`. **`units=` on an
+      algebra node itself is REFUSED** -- judgment call: no constructor sets it, and
+      whether it overrides or defaults its operands has no obvious reading; on a
+      relative surface it raises as before. With no model unit nothing converts, as
+      before. **What moves:** only values of stacks with a non-model-unit operand or a
+      converted propagate-filled raster; `Surface.to_dict` and every digest are
+      unchanged (the payload is the declaration). Tests:
+      `tests/test_layer_surface_units.py` -- not passing `length_units` to operands
+      fails 13 cases of `test_units_on_every_operand_are_converted_before_they_combine`.
+
+406. **`LayerSurfaces` refuses a repeated label, naming it and its positions (2026-10-11).**
+      A repeat kept the last surface's values under every position naming it (labels
+      `t, a, a` over 100/90/80 sampled 100/80/80). Refused rather than renamed: the
+      label is the `gdf_topbtm` column a reader asks for. `LayerStack` already refused
+      repeated layer names. Test: `test_a_repeated_label_is_refused_naming_it`.
+
+407. **`LayerSurfaces.to_disv(attach=True)` writes the grid only once the spec is built (2026-10-11).**
+      It wrote `vor.gdf_topbtm` straight after sampling, so a call refused by a pinch
+      check or the `idomain` conflict had replaced the table, and the setter had cleared
+      `vor.excavations`. The cheap refusals now run before sampling and the write is
+      last. Test: `test_a_refused_to_disv_has_not_attached_anything` (all four cases
+      fail on the old order).

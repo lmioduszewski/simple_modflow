@@ -101,6 +101,7 @@ from myflopy.specs import (
     _layer_elevations,
     stamp_source_hashes,
 )
+from myflopy.surfaces import _check_mf6_length_token
 
 PathLike = Path | str
 
@@ -2656,7 +2657,12 @@ def disv(
     **options
         Any other ``ModflowGwfdisv`` keyword (``length_units``, ``xorigin``,
         ``yorigin``, ``angrot``, ...), applied on every form; one it does not have
-        raises here, at the call, lazy form included.
+        raises here, at the call, lazy form included. ``length_units`` is written as
+        given, so it must be a word MF6 reads -- ``"feet"``, ``"meters"``,
+        ``"centimeters"`` or ``"unknown"``, any case -- and another (``"ft"``, which
+        MF6 reads as undefined without a message) raises ``ValueError`` naming the
+        word to write. A stack's own ``length_units`` (any spelling it takes) is
+        written as MF6's word; this one replaces it.
 
     Returns
     -------
@@ -2708,6 +2714,9 @@ def disv(
     1
     """
 
+    # A raw FloPy keyword is written as given, and MF6 reads a word it does not know
+    # -- `ft` -- as length unit 0 without a message (ledger 404).
+    _check_mf6_length_token(options.get("length_units"), helper="mf.disv")
     if layers is not None:
         # Delegate rather than re-derive: the result's own `to_disv` is what
         # guarantees the DISV matches the arrays you inspected with `qc()`.
@@ -2863,13 +2872,17 @@ def dis(
     **options
         Extra ``flopy.mf6.Modflow<Kind>dis`` options (e.g. ``length_units``,
         ``xorigin``/``yorigin``/``angrot``), passed at build time; one the DIS
-        class does not accept raises ``TypeError`` at the call.
+        class does not accept raises ``TypeError`` at the call. ``length_units``
+        must be a word MF6 reads -- ``"feet"``, ``"meters"``, ``"centimeters"`` or
+        ``"unknown"``, any case -- or ``ValueError`` names the one to write (MF6
+        reads ``"ft"`` as undefined, without a message).
 
     Returns
     -------
     PackageSpec
     """
 
+    _check_mf6_length_token(options.get("length_units"), helper="mf.dis")
     values = {
         "nlay": nlay,
         "nrow": nrow,
@@ -2939,13 +2952,16 @@ def disu(
         connection length, width or area), and they go here; this helper does not
         check for them. Also ``nvert``/``vertices``/``cell2d``, ``length_units``,
         ``xorigin``/``angrot``, .... One the DISU class does not accept raises
-        ``TypeError`` at the call.
+        ``TypeError`` at the call. ``length_units`` must be a word MF6 reads --
+        ``"feet"``, ``"meters"``, ``"centimeters"`` or ``"unknown"``, any case --
+        or ``ValueError`` names the one to write.
 
     Returns
     -------
     PackageSpec
     """
 
+    _check_mf6_length_token(options.get("length_units"), helper="mf.disu")
     values = {
         "nodes": nodes,
         "nja": nja,

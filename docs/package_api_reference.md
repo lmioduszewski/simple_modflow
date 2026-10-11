@@ -420,6 +420,15 @@ release-group boundnames; without them it names the fix and offers
   its base; the result carries
   `units` (unit → layer indices) and `per_layer({unit: value})` for the positional
   per-layer lists `mf.npf`/`sto`/`ic` take.
+  `length_units=` (default `"feet"`) takes `feet`/`ft`/`foot`/`us-ft`/`usft`,
+  `meters`/`meter`/`metres`/`m` or `centimeters`/`cm` and refuses any other spelling
+  at the call; `to_disv` writes it as MF6's own word, `FEET`/`METERS`/`CENTIMETERS`
+  (MF6 reads any other word -- `FT` was written for `"ft"` -- as undefined, without a
+  message; ledger 404). A surface's `units=` is converted to it WHEREVER the
+  surface sits: `mf.Raster(dem, units="meters").capped_at(ground)` caps the DEM in
+  feet, each operand converted before they combine (ledger 405). The raw
+  `length_units=` option of `mf.dis`/`mf.disv`/`mf.disu` is written as given, so it
+  must already be MF6's word (`"ft"` raises naming `"feet"`).
 - `stack.excavate(bottom, within, *, name=, layer=, min_remnant=0.1)` — a void cut
   into the stack: a pond, basin, pit or trench (ledger 320). Inside `within` — the
   SAME polygons you pass to `mf.lak(lakes=)`, read by the same reader and covering

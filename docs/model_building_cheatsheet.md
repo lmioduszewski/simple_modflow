@@ -330,7 +330,14 @@ GRASS yet; `mf.Raster` has not opened a file. The grid arrives later, in §5.
 
 `labels` name the columns that land on `vor.gdf_topbtm`, so pick the names you
 want to see in section plots and hover rows. There is one more label than there
-are layers — the first is the top.
+are layers — the first is the top — and each must be distinct: a repeated label
+raises naming it (it kept only its last surface, replacing a layer bottom with
+another; ledger 406).
+
+A surface in another length unit says so with `units=`, on the surface itself or
+on any operand of one: `mf.Raster("dem_m.tif", units="meters").below(20)` is the DEM
+in model units, 20 ft lower. Each operand is converted before the operands combine
+(ledger 405).
 
 ### `LayerStack` defers its grid too — and keeps per-layer control
 
@@ -1268,7 +1275,8 @@ lake_bottom=mf.Surface.offset_below(6)              # 6 ft below the model top
 A `str` that names a column of `lakes` is still read as the column. A Surface or
 raster is sampled onto the grid **once** — it used to be once per cell read, the
 whole grid each time: 5 samples for a 2-cell pond. `units="meters"` on a Surface
-converts to the model's units, and a relative Surface measures from the model top.
+-- or on any operand of algebra on one -- converts to the model's units, and a
+relative Surface measures from the model top.
 
 **A lake covers its cells by AREA** (ledger 241) -- a polygon drawn along cell
 faces reaches only the cells inside it, and a sliver of a cell, which a CRS round

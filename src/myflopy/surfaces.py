@@ -47,6 +47,12 @@ _RELATIVE_KINDS = ("offset_below", "constant_thickness")
 # handles them before the `is_relative` branch.
 _PREVIOUS_KINDS = ("isopach", "toward")
 
+# Kinds whose numbers are the surface's OWN elevations, and so the only ones a
+# `units=` can describe: every other kind is relative (a distance from the surface
+# above, in model units) or algebra over operands that each declare their own
+# (ledger 405).
+_UNIT_KINDS = ("flat", "raster", "contours", "points", "array")
+
 
 def _depends_on_previous(surface) -> bool:
     """True if sampling ``surface`` consults the surface above it, at any depth.
@@ -91,8 +97,98 @@ _LENGTH_TO_FEET = {
     "metres": 3.280839895013123, "m": 3.280839895013123,
     "centimeters": 0.03280839895013123, "cm": 0.03280839895013123,
 }
-# Model length unit -> MF6 LENGTH_UNITS token.
-_MF6_LENGTH_UNITS = {"feet": "FEET", "meters": "METERS", "centimeters": "CENTIMETERS"}
+# Model length unit -> MF6 LENGTH_UNITS token, for EVERY spelling `_LENGTH_TO_FEET`
+# converts (ledger 404). It held only the three long names, and anything else was
+# written upper-cased -- `"ft"` as `FT` -- which MF6 reads as length unit 0, undefined,
+# under Normal termination (docs/reproducers/mf6_length_units.py). The two tables are
+# held together by a test: a spelling the conversion accepts must have a token.
+_MF6_LENGTH_UNITS = {
+    "feet": "FEET", "ft": "FEET", "foot": "FEET", "us-ft": "FEET", "usft": "FEET",
+    "meters": "METERS", "meter": "METERS", "metres": "METERS", "m": "METERS",
+    "centimeters": "CENTIMETERS", "cm": "CENTIMETERS",
+}
+#: The words MF6's DIS/DISV/DISU ``LENGTH_UNITS`` reads (any case); every other word,
+#: ``FT`` included, it reads as 0 -- undefined -- and says nothing.
+_MF6_LENGTH_TOKENS = frozenset({"FEET", "METERS", "CENTIMETERS", "UNKNOWN"})
+
+
+def _mf6_length_units(units: str) -> str:
+    """The MF6 ``LENGTH_UNITS`` word for a model length unit, in any spelling the stack takes.
+
+    The ONE mapping behind ``LayerSurfaces.to_disv`` and ``LayerBuildResult.to_disv``
+    (so ``LayerStack.to_disv`` and ``mf.disv(stack)`` too): every spelling
+    :data:`_LENGTH_TO_FEET` converts maps to ``FEET``/``METERS``/``CENTIMETERS``.
+
+    Parameters
+    ----------
+    units : str
+        A length unit as a ``LayerStack(length_units=)`` or ``to_disv(length_units=)``
+        takes it -- ``"feet"``, ``"ft"``, ``"foot"``, ``"us-ft"``, ``"usft"``,
+        ``"meters"``, ``"meter"``, ``"metres"``, ``"m"``, ``"centimeters"``, ``"cm"`` --
+        in any case.
+
+    Returns
+    -------
+    str
+        ``"FEET"``, ``"METERS"`` or ``"CENTIMETERS"``.
+
+    Raises
+    ------
+    ValueError
+        ``units`` is not one of those spellings (a non-``str`` included), naming them.
+        It used to be written upper-cased, and MF6 reads any word it does not know as
+        length unit 0 without a message.
+    """
+
+    token = _MF6_LENGTH_UNITS.get(units.lower()) if isinstance(units, str) else None
+    if token is None:
+        raise ValueError(
+            f"Unknown length unit {units!r}; known: {sorted(_MF6_LENGTH_UNITS)}. MF6 "
+            "reads a LENGTH_UNITS word it does not know as 0 (undefined) and says "
+            "nothing, so it is refused here rather than written."
+        )
+    return token
+
+
+def _check_mf6_length_token(value: Any, *, helper: str) -> Any:
+    """Refuse a raw DIS/DISV/DISU ``length_units`` option MF6 would read as undefined.
+
+    The ``**options`` of ``mf.dis``/``mf.disv``/``mf.disu`` are FloPy's own keywords,
+    written as given, so the word must be MF6's: ``feet``, ``meters``, ``centimeters``
+    or ``unknown`` in any case (FloPy and MF6 both upper-case it). Anything else is
+    written and read as 0 -- ``ft`` included -- so it is refused naming the word to
+    write (ledger 404). Mapping it instead would leave two spellings of one
+    package, and its digest, for the same model.
+
+    Parameters
+    ----------
+    value : str or None
+        The ``length_units`` option as passed. ``None`` writes nothing and is
+        returned as is.
+    helper : str
+        The helper's name for the message, e.g. ``"mf.disv"``.
+
+    Returns
+    -------
+    str or None
+        ``value`` unchanged.
+
+    Raises
+    ------
+    ValueError
+        ``value`` is not one of MF6's four words.
+    """
+
+    if value is None or (isinstance(value, str) and value.upper() in _MF6_LENGTH_TOKENS):
+        return value
+    hint = ""
+    if isinstance(value, str) and value.lower() in _MF6_LENGTH_UNITS:
+        hint = f" Write length_units={_MF6_LENGTH_UNITS[value.lower()].lower()!r}."
+    raise ValueError(
+        f"{helper}(length_units={value!r}) is not a word MF6 reads: it takes "
+        f"{sorted(token.lower() for token in _MF6_LENGTH_TOKENS)} (any case), and reads "
+        f"every other word as length unit 0, undefined, without a message.{hint}"
+    )
 
 
 def _length_factor(from_units: str, to_units: str) -> float:
@@ -190,11 +286,13 @@ class Surface:
         The length unit the surface's elevations are in (``"meters"``, ``"feet"``,
         ``"ft"``, ``"m"``, ``"cm"``...). Converted by a single factor when sampled
         through something that declares the model's length unit (a ``LayerStack``
-        with ``length_units=``, :meth:`LayerSurfaces.sample`, :func:`sample_bed`);
-        ignored otherwise. Only the surface being sampled is read: the ``units`` of an
-        operand inside an algebra surface (``minimum``, ``shift``, ...) is ignored.
-        On a relative surface it raises ``ValueError`` there, and an unknown name
-        raises ``ValueError`` listing the known ones.
+        with ``length_units=``, :meth:`LayerSurfaces.sample`, :func:`sample_bed`,
+        ``mf.lak``'s bed); ignored otherwise. Read wherever the surface sits: an
+        operand inside an algebra surface (``minimum``, ``shift``, ``where``, ...) is
+        converted before the operands combine (ledger 405). Only a ``flat``,
+        ``raster``, ``contours``, ``points`` or ``array`` surface takes it -- on a
+        relative or an algebra surface it raises ``ValueError`` there -- and an
+        unknown name raises ``ValueError`` listing the known ones.
     contours : pathlib.Path, optional
         The contour-line vector file of a ``"contours"`` surface. This and the next
         nine fields are set by :meth:`from_contours`, which documents them.
@@ -1246,6 +1344,7 @@ class Surface:
         *,
         method: str = "area",
         refresh: bool = False,
+        length_units: str | None = None,
     ) -> np.ndarray:
         """Return per-cell elevation values sampled on ``vor``.
 
@@ -1254,6 +1353,8 @@ class Surface:
         and raster ``fill="propagate"`` require it. ``method`` controls raster
         sampling: ``"area"`` (area-weighted, default) or ``"centroid"``.
         ``refresh`` rebuilds a derived (contour) surface's cached raster.
+        ``length_units`` converts every surface in the tree that declares ``units=``
+        -- an algebra surface's operands included -- before anything combines.
 
         Parameters
         ----------
@@ -1274,28 +1375,69 @@ class Surface:
         refresh : bool, default False
             Rebuild a contour surface's cached raster before sampling (see
             :meth:`resolve_source`). Passed down to every operand.
+        length_units : str, optional
+            The model's length unit (any spelling :class:`LayerStack` takes:
+            ``"feet"``, ``"ft"``, ``"meters"``, ``"m"``, ...). Each surface of the
+            tree that declares ``units=`` -- a ``flat``, ``raster``, ``contours``,
+            ``points`` or ``array`` one, at any depth of an algebra surface -- is
+            converted to it by one factor BEFORE it is combined, compared or used to
+            fill: ``Surface.maximum(Surface.flat(30, units="meters"), 0.0)`` is
+            ``98.43`` in feet, and a ``fill="propagate"`` raster in metres takes the
+            surface above as it is (already in model units). A relative surface
+            (``offset_below``/``constant_thickness``) or an algebra surface carrying
+            ``units`` itself raises ``ValueError`` -- the first is a distance in model
+            units, and on the second write ``units=`` on the operands. ``None`` (the
+            default) converts nothing, whatever ``units`` the surfaces declare.
+            Passed down to every operand.
 
         Returns
         -------
         numpy.ndarray of float, shape (ncpl,)
-            One elevation per cell, in the surface's own units (NOT converted --
-            ``units`` is applied by the caller). ``NaN`` where a raster has no data
-            and nothing filled it, and where a ``"points"`` interpolation has none.
+            One elevation per cell, in ``length_units`` when given, else as each
+            surface declares it. ``NaN`` where a raster has no data and nothing
+            filled it, and where a ``"points"`` interpolation has none.
 
         Raises
         ------
         ValueError
             A relative kind with no ``previous``; a ``from_array`` surface of the
-            wrong size; an unknown ``fill``; an unknown ``method`` on a raster.
+            wrong size; an unknown ``fill``; an unknown ``method`` on a raster; with
+            ``length_units`` given, ``units=`` on a relative or algebra surface, or
+            an unknown length unit on either side.
         TypeError
             An unknown ``kind``.
         """
+
+        # The conversion is per LEAF, before anything combines (ledger 405). The
+        # callers converted only the surface they were handed, so a metre DEM inside
+        # `capped_at`/`shift`/`where`/... reached the stack as feet -- 3.28x off,
+        # silently -- and a `fill="propagate"` raster in metres multiplied the
+        # surface it inherited, already in feet, by the same factor.
+        factor = 1.0
+        if self.units is not None and length_units is not None:
+            if self.kind in _RELATIVE_KINDS:
+                raise ValueError(
+                    "units= is only supported on absolute surfaces, not relative "
+                    "(offset_below / constant_thickness): their value is a distance "
+                    "in model length units."
+                )
+            if self.kind not in _UNIT_KINDS:
+                raise ValueError(
+                    f"units={self.units!r} on a {self.kind!r} surface: an algebra "
+                    "surface takes its units from its operands. Declare units= on "
+                    "each operand that is not in model units -- each is converted "
+                    "before they combine."
+                )
+            factor = _length_factor(self.units, length_units)
 
         def _op(operand):
             """Sample one operand surface on ``vor`` as a float array (same args as the parent)."""
 
             return np.asarray(
-                operand.values(vor, previous, method=method, refresh=refresh),
+                operand.values(
+                    vor, previous, method=method, refresh=refresh,
+                    length_units=length_units,
+                ),
                 dtype=float,
             )
 
@@ -1345,7 +1487,7 @@ class Surface:
             return previous - float(self.value)
 
         if self.kind == "flat":
-            return np.full(len(np.asarray(vor.centroids[0])), float(self.value))
+            return np.full(len(np.asarray(vor.centroids[0])), float(self.value) * factor)
 
         if self.kind == "array":
             vals = np.asarray(self.array, dtype=float).ravel()
@@ -1355,7 +1497,7 @@ class Surface:
                     f"from_array surface has {vals.size} values but the grid has {n} "
                     "cells; use Surface.from_points to interpolate onto another grid."
                 )
-            return vals
+            return vals * factor
 
         if self.kind == "points":
             from scipy.interpolate import griddata
@@ -1363,7 +1505,7 @@ class Surface:
             cx = np.asarray(vor.centroids[0])
             cy = np.asarray(vor.centroids[1])
             xs, ys, zs = self.points
-            return griddata((xs, ys), zs, (cx, cy), method=self.method)
+            return griddata((xs, ys), zs, (cx, cy), method=self.method) * factor
 
         gdf = get_raster_vals_at_centroids(
             vor, [self.resolve_source(refresh=refresh)], [0], method=method,
@@ -1373,7 +1515,8 @@ class Surface:
             # what is left into idomain. Warning per cell would be noise.
             gaps="ignore",
         )
-        vals = gdf[0].to_numpy(dtype=float)
+        # Converted BEFORE the fill: `previous` is in model units already.
+        vals = gdf[0].to_numpy(dtype=float) * factor
         if self.fill == "propagate":
             mask = np.isnan(vals)
             if mask.any():
@@ -1416,8 +1559,10 @@ def sample_bed(
         above it (``offset_below``, ``fill="propagate"``) is resolved against it; an
         absolute one ignores it.
     length_units : str, optional
-        The model's length unit. A surface declaring ``units=`` is converted to it
-        (``"meters"`` -> ``"feet"`` multiplies by 3.2808...). ``None`` leaves the
+        The model's length unit. Every surface declaring ``units=`` is converted to
+        it (``"meters"`` -> ``"feet"`` multiplies by 3.2808...), an operand of an
+        algebra surface included -- ``mf.Raster(dem_m, units="meters").below(3)`` is
+        the DEM in feet less 3 ft (see :meth:`Surface.values`). ``None`` leaves the
         values as sampled.
     refresh : bool, default False
         Rebuild a derived (contour) surface's cached raster before sampling, as
@@ -1432,9 +1577,10 @@ def sample_bed(
     Raises
     ------
     ValueError
-        ``units=`` on a relative surface (``offset_below`` / ``constant_thickness``),
-        which a unit factor cannot convert; an unknown length unit; any refusal
-        :meth:`Surface.values` makes (a ``from_array`` of the wrong length, ...).
+        ``units=`` on a relative surface (``offset_below`` / ``constant_thickness``)
+        or on an algebra surface itself, which a unit factor cannot convert; an
+        unknown length unit; any refusal :meth:`Surface.values` makes (a
+        ``from_array`` of the wrong length, ...).
 
     Examples
     --------
@@ -1445,6 +1591,9 @@ def sample_bed(
     >>> sample_bed(Surface.flat(30.0, units="meters"), vor, np.full(vor.ncpl, 200.0),
     ...            length_units="feet").round(2).tolist()
     [98.43, 98.43, 98.43, 98.43]
+    >>> sample_bed(Surface.flat(30.0, units="meters").floored_at(0.0), vor,
+    ...            np.full(vor.ncpl, 200.0), length_units="feet").round(2).tolist()
+    [98.43, 98.43, 98.43, 98.43]
     >>> sample_bed(Surface.offset_below(5.0), vor, np.full(vor.ncpl, 200.0)).tolist()
     [195.0, 195.0, 195.0, 195.0]
     """
@@ -1452,15 +1601,10 @@ def sample_bed(
     if isinstance(surface, (str, Path)):
         surface = Surface.raster(surface)
     previous = np.asarray(ground, dtype=float)
-    values = np.asarray(surface.values(grid, previous=previous, refresh=refresh), dtype=float)
-    if surface.units and length_units:
-        if surface.is_relative:
-            raise ValueError(
-                "units= is only supported on absolute surfaces, not relative "
-                "(offset_below / constant_thickness)."
-            )
-        values = values * _length_factor(surface.units, length_units)
-    return values
+    return np.asarray(
+        surface.values(grid, previous=previous, refresh=refresh, length_units=length_units),
+        dtype=float,
+    )
 
 
 @dataclass(frozen=True, eq=False)
@@ -1891,14 +2035,16 @@ class LayerSurfaces:
         labels : sequence of hashable, optional
             One column name per surface, in the same order, for the frame
             :meth:`sample` returns. ``None`` (the default) uses the integer positions
-            ``0 .. n-1``, the integer columns ``gdf_topbtm`` has always carried. Not
-            checked for repeats: a label given twice keeps only the LAST of its
-            surfaces' values, under every position that names it.
+            ``0 .. n-1``, the integer columns ``gdf_topbtm`` has always carried. Each
+            label must be distinct: a repeated one raises ``ValueError`` naming it
+            (it kept only the LAST of its surfaces' values under every position
+            naming it -- one layer bottom silently replaced by another).
 
         Raises
         ------
         ValueError
-            ``labels`` has a different length from ``surfaces``.
+            ``labels`` has a different length from ``surfaces``, or names one column
+            twice.
         """
 
         self.surfaces = list(surfaces)
@@ -1907,6 +2053,23 @@ class LayerSurfaces:
         )
         if len(self.labels) != len(self.surfaces):
             raise ValueError("labels length must match surfaces length")
+        # One column per surface (ledger 406). `sample` builds a dict keyed by
+        # label, so a repeat kept the LAST surface's values under every position
+        # naming it: labels t, a, a over 100, 90, 80 sampled 100, 80, 80.
+        positions: dict = {}
+        for index, label in enumerate(self.labels):
+            positions.setdefault(label, []).append(index)
+        repeated = {label: at for label, at in positions.items() if len(at) > 1}
+        if repeated:
+            named = "; ".join(
+                f"{label!r} at positions {at}" for label, at in repeated.items()
+            )
+            raise ValueError(
+                f"LayerSurfaces labels must be distinct, one column per surface: "
+                f"{named}. A repeated label keeps only its last surface's values, "
+                "replacing a layer bottom with another. Give each surface its own "
+                "label (LayerStack names them 'top' plus each layer's name)."
+            )
 
     def sample(
         self,
@@ -1959,8 +2122,11 @@ class LayerSurfaces:
             Raster sampling: area-weighted over the cell, or a single centroid
             lookup.
         length_units : str, optional
-            The model length unit. A surface declaring different ``units`` is
-            converted to it; relative surfaces cannot be, and raise.
+            The model length unit. Every surface declaring different ``units`` is
+            converted to it, an operand inside an algebra surface included, before
+            it combines with anything (:meth:`Surface.values`); ``units=`` on a
+            relative or an algebra surface itself raises ``ValueError``, as does an
+            unknown unit name. ``None`` (the default) converts nothing.
         refresh : bool, default False
             Rebuild any derived (contour) caches before sampling.
 
@@ -1974,16 +2140,12 @@ class LayerSurfaces:
         previous: np.ndarray | None = None
         for label, surface in zip(self.labels, self.surfaces, strict=False):
             vals = np.asarray(
-                surface.values(vor, previous=previous, method=method, refresh=refresh),
+                surface.values(
+                    vor, previous=previous, method=method, refresh=refresh,
+                    length_units=length_units,
+                ),
                 dtype=float,
             )
-            if length_units is not None and surface.units:
-                if surface.is_relative:
-                    raise ValueError(
-                        "units= is only supported on absolute surfaces, not "
-                        "relative (offset_below / constant_thickness)."
-                    )
-                vals = vals * _length_factor(surface.units, length_units)
             columns[label] = vals
             previous = vals
 
@@ -2302,24 +2464,26 @@ class LayerSurfaces:
         length_units : str, optional
             The model length unit, which does two things. It is passed to
             :meth:`sample`, converting every surface of the stack that declares its
-            own ``units`` (not an operand inside an algebra surface; once a surface
-            declares ``units``, an unknown name raises ``ValueError`` there, as does a
-            relative surface declaring them). And it is written as DISV
-            ``LENGTH_UNITS``: ``'feet'``, ``'meters'`` or ``'centimeters'`` (any
-            case) become ``FEET``/``METERS``/``CENTIMETERS``, and any other name is
-            passed on upper-cased as given -- so the abbreviations the conversion
-            accepts (``'ft'``, ``'m'``, ``'cm'``) write ``FT``/``M``/``CM``, which
-            MF6 does not recognise (measured: ``FT`` is read as length unit 0,
-            undefined, with no error). Use the full names. ``None`` (the default)
-            converts nothing and writes no ``LENGTH_UNITS``.
+            own ``units``, an operand inside an algebra surface included (a relative
+            or algebra surface declaring them raises ``ValueError`` there). And it is
+            written as DISV ``LENGTH_UNITS`` in MF6's own word: every spelling the
+            conversion takes -- ``'feet'``/``'ft'``/``'foot'``/``'us-ft'``/
+            ``'usft'``, ``'meters'``/``'meter'``/``'metres'``/``'m'``,
+            ``'centimeters'``/``'cm'``, any case -- becomes ``FEET``, ``METERS`` or
+            ``CENTIMETERS``. Any other name raises ``ValueError`` naming those,
+            before anything is sampled or attached: MF6 reads a word it does not
+            know (``FT`` was written for ``'ft'``) as length unit 0, undefined,
+            without a message. ``None`` (the default) converts nothing and writes no
+            ``LENGTH_UNITS``.
         name : str, default "disv"
             Forwarded to ``mf.disv(name=)``: the returned spec's name, the key
             ``with_packages(slot=)`` and ``without_packages`` use.
         attach : bool, default True
             Also write the sampled frame to ``vor.gdf_topbtm`` (which clears
-            ``vor.excavations``). It is written straight after sampling, BEFORE the
-            ``pinch_out`` checks, so a call those checks refuse has already replaced
-            it. ``False`` leaves ``vor`` untouched.
+            ``vor.excavations``). Written LAST, once the spec is built: a call that
+            raises -- an unknown ``length_units``, ``pinch_out`` beside an
+            ``idomain``, a pinch check, a refusal of ``mf.disv`` -- leaves ``vor``
+            as it was. ``False`` leaves ``vor`` untouched.
         **sample_kwargs
             Forwarded to :meth:`sample` -- ``reconcile``, ``min_sep``,
             ``trigger_sep``, ``which``, ``method``, ``refresh`` (``length_units`` is
@@ -2337,22 +2501,27 @@ class LayerSurfaces:
         Raises
         ------
         ValueError
-            ``pinch_out=True`` together with an ``idomain``; with ``pinch_out=True``,
-            a ``minimum_thickness``/``pinch`` of the wrong length, an unknown
-            ``pinch``, or ``min_sep`` not below a pinching layer's threshold.
+            An unknown ``length_units``; ``pinch_out=True`` together with an
+            ``idomain``; with ``pinch_out=True``, a ``minimum_thickness``/``pinch``
+            of the wrong length, an unknown ``pinch``, or ``min_sep`` not below a
+            pinching layer's threshold. None of them has written ``vor``.
         """
 
         from myflopy.package_api import disv  # lazy: avoid an import cycle
 
+        # Every refusal runs before `attach` writes the grid (ledger 407): the
+        # write came straight after sampling, so a call refused below had already
+        # replaced `vor.gdf_topbtm` -- and its setter cleared `vor.excavations`.
+        if pinch_out and idomain is not None:
+            raise ValueError(
+                "Pass either pinch_out=True or an explicit idomain, not both."
+            )
+        disv_options = {}
+        if length_units is not None:
+            disv_options["length_units"] = _mf6_length_units(length_units)
         gdf = self.sample(vor, length_units=length_units, **sample_kwargs)
-        if attach:
-            vor.gdf_topbtm = gdf
         top, botm = self._split_top_botm(gdf)
         if pinch_out:
-            if idomain is not None:
-                raise ValueError(
-                    "Pass either pinch_out=True or an explicit idomain, not both."
-                )
             thickness = self._thickness(gdf)
             self._validate_pinch_invariant(
                 minimum_thickness, pinch, thickness.shape[0], sample_kwargs
@@ -2361,12 +2530,7 @@ class LayerSurfaces:
                 thickness, minimum_thickness, pinch
             )
         props = vor.get_disv_gridprops()
-        disv_options = {}
-        if length_units is not None:
-            disv_options["length_units"] = _MF6_LENGTH_UNITS.get(
-                length_units.lower(), length_units.upper()
-            )
-        return disv(
+        spec = disv(
             nlay=len(self.surfaces) - 1 if nlay is None else nlay,
             ncpl=props["ncpl"],
             nvert=len(props["vertices"]),
@@ -2378,6 +2542,9 @@ class LayerSurfaces:
             name=name,
             **disv_options,
         )
+        if attach:
+            vor.gdf_topbtm = gdf
+        return spec
 
 
 __all__ = ["ExcavationRecord", "Surface", "LayerSurfaces", "sample_bed"]

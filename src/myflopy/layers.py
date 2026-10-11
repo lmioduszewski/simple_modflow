@@ -43,13 +43,13 @@ from myflopy.modflow.utils.datatypes.extent import resolve_extent
 from myflopy.modflow.utils.datatypes.readers import _vector_layer_name, read_shp_gpkg
 from myflopy.package_api import disv as disv_spec
 from myflopy.surfaces import (
-    _MF6_LENGTH_UNITS,
     ExcavationRecord,
     LayerSurfaces,
     Surface,
     _content_keyed,
     _depends_on_previous,
     _excavate_layers,
+    _mf6_length_units,
     _read_excavation_file,
     _refuse_overlapping_excavations,
     _resolve_excavation,
@@ -1244,7 +1244,8 @@ class LayerBuildResult:
         PackageSpec
             An EAGER DISV spec: ``options`` hold ``nlay``, ``ncpl``, ``nvert``,
             ``vertices``, ``cell2d``, ``top``, ``botm``, ``idomain`` and, when the
-            result declares them, ``length_units`` (``"feet"`` -> ``"FEET"``). The
+            result declares them, ``length_units`` in MF6's word (``"feet"`` and
+            ``"ft"`` -> ``"FEET"``, ``"m"`` -> ``"METERS"``). The
             ``top``/``botm``/``idomain`` arrays are COPIES of this result's: an
             in-place edit of the result after the call -- ``result.idomain[0, :5] =
             0`` -- does not reach a package already declared, a library copy of it,
@@ -1255,7 +1256,9 @@ class LayerBuildResult:
         ------
         ValueError
             No grid: ``vor`` omitted and the result carries none (``result.vor`` is
-            ``None``). Or ``vor``'s cell count differs from the result's.
+            ``None``). Or ``vor``'s cell count differs from the result's. Or the
+            result's ``length_units`` is not a spelling the stack knows (see
+            ``LayerStack(length_units=)``), which MF6 would read as undefined.
 
         Examples
         --------
@@ -1288,9 +1291,9 @@ class LayerBuildResult:
             )
         options = {}
         if self.length_units is not None:
-            options["length_units"] = _MF6_LENGTH_UNITS.get(
-                self.length_units.lower(), self.length_units.upper()
-            )
+            # MF6's own word for every spelling the stack converts; it wrote `FT` for
+            # "ft", which MF6 reads as length unit 0 (ledger 404).
+            options["length_units"] = _mf6_length_units(self.length_units)
         # COPIES (`np.array` copies; `np.asarray` did not). The spec is a declaration,
         # and it held this result's own arrays, so an in-place edit of the result --
         # the shape an excavation of a built result takes -- reached a package already
@@ -3336,14 +3339,16 @@ class LayerStack:
         :class:`Flat` elevation. Anything else -- a bare ``numpy`` array included
         -- raises ``TypeError``; wrap per-cell values in :class:`Array`.
     length_units : str, optional
-        The model length unit. Default ``"feet"``. At :meth:`build` every surface
-        declaring its own ``units=`` is converted into it (known spellings:
+        The model length unit. Default ``"feet"``. Known spellings, any case:
         ``feet``/``ft``/``foot``/``us-ft``/``usft``, ``meters``/``meter``/
         ``metres``/``m``, ``centimeters``/``cm``; any other raises ``ValueError``
-        there). :meth:`to_disv` writes it as DISV ``LENGTH_UNITS``: ``"feet"``,
-        ``"meters"`` and ``"centimeters"`` become ``FEET``/``METERS``/
-        ``CENTIMETERS``, and any other spelling is written upper-cased as given.
-        Also labels the plot axes.
+        HERE, naming them (ledger 404). ``None`` declares none: nothing is
+        converted and :meth:`to_disv` writes no ``LENGTH_UNITS``. At :meth:`build`
+        every surface declaring its own ``units=`` is converted into it, an operand
+        inside an algebra surface included (``Raster(dem, units="meters")
+        .capped_at(...)`` is the DEM in feet, capped). :meth:`to_disv` writes it as
+        DISV ``LENGTH_UNITS`` in MF6's word -- ``FEET``, ``METERS`` or
+        ``CENTIMETERS``, whichever spelling was given. Also labels the plot axes.
     time_units : str, optional
         The model time unit. Default ``"days"``. Carried onto the built
         :class:`LayerBuildResult` (its report prints it) and saved by
@@ -3415,6 +3420,8 @@ class LayerStack:
             passed as ``vor`` -- ``LayerStack(ground)`` reads as "the deferred
             form" but binds ``ground`` to the grid, which would fail much later
             and somewhere else.
+        ValueError
+            If ``length_units`` is not a known spelling (see the class docstring).
         """
 
         if top is None:
@@ -3438,6 +3445,10 @@ class LayerStack:
         self._excavations: list[_Excavation] = []
         #: Cached draft grid for `.plot` on a gridless stack; see `draft_grid`.
         self._draft = None
+        if length_units is not None:
+            # Refused at the declaration, not at `to_disv` -- a lazy `mf.disv(stack)`
+            # would otherwise carry it to the model's build (ledger 404).
+            _mf6_length_units(length_units)
         self.length_units = length_units
         self.time_units = time_units
 
