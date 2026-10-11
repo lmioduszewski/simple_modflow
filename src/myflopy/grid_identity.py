@@ -2478,6 +2478,22 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
                     "against this grid"
                 )
 
+    # Below the range, on ANY discretization: a negative id is Python's from-the-end
+    # indexing to everything upstream of MF6, so `(0, -1)` passed every range test and
+    # FloPy wrote it as cell 0 -- one-based, so a cell that does not exist, and not the
+    # one the caller typed either (ledger 382).
+    for package in packages:
+        negative = sorted(
+            {cellid for cellid in _cellids_in(package.options) if min(cellid) < 0}
+        )
+        if negative:
+            listing = ", ".join(str(cellid) for cellid in negative[:5])
+            if len(negative) > 5:
+                listing += f", and {len(negative) - 5} more"
+            complaints.append(
+                f"package {package.name!r} holds {len(negative)} cellid(s) with a negative "
+                f"part: {listing}. Cellids are zero-based and count up from 0"
+            )
     if ncpl is not None:
         for package in packages:
             stale = sorted(

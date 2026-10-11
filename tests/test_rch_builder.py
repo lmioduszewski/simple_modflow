@@ -86,6 +86,21 @@ def test_rch_builder_validates_recharge_inputs():
         RCHBuilder(context=_context(), nper=1, cells=[(0, 1)], recharge=1.0e-4).build()
 
 
+@pytest.mark.parametrize(
+    "domain", [np.ones((2, 4), dtype=int), np.ones(4, dtype=int), None],
+    ids=["layered", "flat", "none"],
+)
+@pytest.mark.parametrize("cells", [[(0, -1)], [(-1, 2)], [-1]], ids=["cell", "layer", "bare"])
+def test_rch_builder_refuses_a_negative_cell_or_layer(domain, cells):
+    """`domain[-1]` is a real cell, so a negative id passed the domain test and FloPy wrote
+    `(0, -1)` as cell 0 and `(-1, 2)` as layer 0 (ledger 382)."""
+
+    with pytest.raises(ValueError, match="negative layer or cell"):
+        RCHBuilder(
+            context=ModelContext(domain=domain), nper=1, cells=cells, recharge=1.0e-3
+        ).build()
+
+
 def test_rch_builder_writes_real_flopy_310_package(tmp_path):
     builder = RCHBuilder(
         context=ModelContext(domain=np.array([[1, 1]])),

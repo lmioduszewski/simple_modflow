@@ -4838,7 +4838,8 @@ class _RCHPackage:
         cells : str or sequence, default "top_active"
             Which cells receive recharge: ``"top_active"`` (top active cell per
             column), ``"all_active"``, ``"surface_only"``, or an explicit list of
-            ``int`` / ``(layer, cell)`` ids.
+            zero-based ``int`` / ``(layer, cell)`` ids; a negative id raises
+            ``ValueError`` (there is no counting from the end).
         layer : int, default 0
             Layer used when ``cells`` are given as bare cell ints.
         name_by_cell : mapping, optional
@@ -5329,7 +5330,8 @@ class _EVTPackage:
             or a numeric ``CellSurfaceOffset``.
         cells : str or sequence, default "top_active"
             Builder form: which cells receive ET (``"top_active"``,
-            ``"all_active"``, or explicit ``int`` / ``(layer, cell)`` ids).
+            ``"all_active"``, or explicit zero-based ``int`` / ``(layer, cell)``
+            ids; a negative id raises ``ValueError``).
         layer : int, default 0
             Builder form: layer used when ``cells`` are bare cell ints.
         name_by_cell : mapping, optional

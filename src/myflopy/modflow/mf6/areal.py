@@ -224,11 +224,22 @@ class _ArealBuilder:
         return data
 
     def validate(self) -> None:
-        """Raise clear errors for empty selection or inactive/out-of-domain cells."""
+        """Raise clear errors for empty selection, negative ids, or inactive/out-of-domain cells."""
 
         cells = self.selected_cells
         if not cells:
             raise ValueError(f"{type(self).__name__} selected no active cells.")
+        # Zero-based ids count UP from 0. A negative one is Python's from-the-end indexing:
+        # the domain test below read `domain[-1]`, a real cell, and passed it, and FloPy
+        # then wrote `(0, -1)` as cell 0 and `(-1, 2)` as layer 0 -- numbers MF6 refuses
+        # and the caller never typed (ledger 382).
+        negative = [cellid for cellid in cells if cellid[0] < 0 or cellid[1] < 0]
+        if negative:
+            raise ValueError(
+                f"{type(self).__name__}: cells {negative[:5]} have a negative layer or "
+                "cell. Cell and layer ids are zero-based and count up from 0; there is no "
+                "counting from the end."
+            )
         domain = self.domain
         if domain is not None and domain.ndim == 1:
             for _layer, cell in cells:

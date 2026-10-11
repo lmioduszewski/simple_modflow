@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 381 entries (386 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 382 entries (387 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 382 | A negative cell or layer is refused, by the areal builders at the call and by the build on any discretization | 2026-10-11 |
 | 381 | An MVR `packages=` list of bare names is refused, naming the record spelling | 2026-10-11 |
 | 380 | A lazy UZF or array-form RCH/EVT builds on a context holding a grid and no domain, every cell active as in MF6 | 2026-10-11 |
 | 379 | A lazy recipe refuses a per-cell value of ANY array-like kind, and reads a numpy integer key as a period | 2026-10-11 |
@@ -15316,8 +15317,9 @@ same day, which is the useful part of the result.
       `mf.evt`/`mf.uzf` refusing a per-cell list but accepting the same values as an
       ndarray; a lazy `mf.uzf` documented as raising on a context holding a grid but no
       domain; `mvr_spec` stamping a bare package name's first letter as the package it
-      indexes~~ -- fixed, entries rewritten (ledgers 378, 379, 380,
-      381).
+      indexes; a negative cell or layer passing `_ArealBuilder.validate` and the build's
+      range check~~ -- fixed, entries rewritten (ledgers 378, 379, 380,
+      381, 382).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17443,3 +17445,15 @@ same day, which is the useful part of the result.
       the names `_package_names` returned, so the two cannot disagree again.
       Revert check: the old code fails all four
       `test_mvr_bare_package_names_are_refused_naming_the_record_spelling` cases.
+
+382. **A negative cell or layer is refused, by the areal builders at the call and by the build on any discretization (2026-10-11).**
+      Both checks tested only the upper bound, and a negative id is Python's from-the-end
+      indexing: `_ArealBuilder.validate` read `domain[-1]` (a real cell) and passed it, and
+      `_discretization_complaints` tested `>= ncpl`. Measured: `RCHBuilder(cells=[(0, -1),
+      (-1, 2)])` built, and FloPy wrote `1 0` and `0 3` -- cell 0 and layer 0, one-based,
+      so ids MF6 refuses and the caller never typed. **Judgment call:** the build's lower
+      bound runs on EVERY discretization, outside the DISV-only `ncpl` range check, since it
+      needs no grid (a DIS `(0, 0, -1)` is refused too); it shares that check's complaint
+      list and so its "does not agree with the grid" preamble.
+      Revert check: the old code fails the nine `test_rch_builder_refuses_a_negative_cell_or_layer`
+      cases and the three `test_a_negative_cellid_is_refused*` cases.

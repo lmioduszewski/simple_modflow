@@ -133,6 +133,32 @@ def test_the_first_layer_past_the_end_is_stale(tmp_path):
                extra=(mf.chd(stress_period_data={0: [[(1, 4), 9.0]]}),))
 
 
+@pytest.mark.parametrize("cellid", [(0, -1), (-1, 4)])
+def test_a_negative_cellid_is_refused(tmp_path, cellid):
+    """The LOWER bound: `(0, -1)` passed `>= ncpl`, and FloPy wrote it as cell 0 --
+    one-based, so a cell that does not exist and not the one typed (ledger 382)."""
+
+    bad = mf.chd(stress_period_data={0: [[cellid, 9.0]]})
+    with pytest.raises(ValueError, match=r"package 'chd' holds 1 cellid\(s\) with a negative part"):
+        _build(tmp_path, "neg", _grid(10, 10), _grid(10, 10), extra=(bad,))
+
+
+def test_a_negative_cellid_is_refused_on_a_structured_model(tmp_path):
+    """No DISV, so no `ncpl` range check -- the lower bound holds on any discretization."""
+
+    model = mf.gwf(
+        "m",
+        packages=[
+            mf.dis(nlay=1, nrow=1, ncol=3, delr=10.0, delc=10.0, top=10.0, botm=[0.0]),
+            mf.npf(k=1.0),
+            mf.ic(strt=5.0),
+            mf.chd(stress_period_data={0: [[(0, 0, -1), 9.0]]}),
+        ],
+    )
+    with pytest.raises(ValueError, match=r"negative part: \(0, 0, -1\)"):
+        mf.simulation(model, name="s").build_flopy(workspace=tmp_path / "dis")
+
+
 def test_a_stale_layer_is_caught_too(tmp_path):
     """A cellid can be stale in its LAYER without being stale in its cell."""
 
@@ -290,7 +316,8 @@ def test_a_grid_that_cannot_describe_itself_weakens_the_guard_rather_than_replac
 
 
 def test_a_model_without_a_disv_is_left_alone():
-    """DIS and DISU carry no ncpl, so there is nothing here to check."""
+    """DIS and DISU carry no ncpl, so there is no range here to check (only the lower
+    bound, which needs none -- `test_a_negative_cellid_is_refused_on_a_structured_model`)."""
 
     model = SimpleNamespace(get_package=lambda name: None)
     context = SimpleNamespace(grid=_grid(3, 3), domain=np.ones((1, 9), dtype=int), surfaces=None)
