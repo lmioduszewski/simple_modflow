@@ -2601,10 +2601,13 @@ class GridSpec:
         ``"voronoi"`` route: the named meshing options read by key -- the
         ``boundary_*``/``refinement_*``/``breakline_*`` settings of
         :meth:`voronoi`, ``crs``, ``model_ws``/``workspace`` -- and a fallback
-        for the stage keys below when the stage dict does not set them. Not
-        validated when set directly: a misspelled key is never read. The
-        ``"python"`` route stores it for the builder to read as
-        ``spec.options``. Default: empty.
+        for the stage keys below when the stage dict does not set them. On this
+        route a key it never reads, or two spellings of one option (``max_area``
+        beside ``boundary_max_area``), raises ``TypeError`` naming it -- at
+        :meth:`voronoi` and again at :meth:`resolve`, so a spec set directly or
+        loaded from a saved project is checked too (ledger 417). The
+        ``"python"`` route stores it for the builder to read as ``spec.options``,
+        unchecked. Default: empty.
     triangle_options : dict, optional
         ``"voronoi"`` route: keyword arguments for ``TriangleGrid(...)``
         (``angle``, ``maximum_area``, ``nodes``, ``exe_name``,
@@ -2615,8 +2618,10 @@ class GridSpec:
     mesh_options : dict, optional
         ``"voronoi"`` route: options for ``TriangleGrid.build_mesh`` --
         ``profile`` (default ``"balanced"``), ``optimize``, ``verbose`` and the
-        other keys :meth:`voronoi` routes here. Filtered to those keys at
-        resolve, so any other key is silently dropped. Default: empty.
+        other keys :meth:`voronoi` routes here. Any other key raises
+        ``TypeError`` naming it and the accepted keys, at :meth:`voronoi` and at
+        :meth:`resolve`; a key since removed (``max_optimization_points``, ledger
+        410) says so. Default: empty.
     voronoi_options : dict, optional
         ``"voronoi"`` route: keyword arguments for ``VoronoiGridPlus(tri,
         ...)`` -- ``idomain_path``, ``rasters``, ``qhull_options``,
@@ -3042,10 +3047,14 @@ class GridSpec:
         options : dict, optional
             Named meshing options as a dict -- the same keys as the named
             arguments under Other Parameters (and ``crs``,
-            ``model_ws``/``workspace``). The named arguments are merged over it.
-            Unlike ``**engine_options``, its keys are NOT validated: a
-            misspelled key is stored and never read. The one exception is
-            ``"idomain"``, which raises ``TypeError`` (see ``**engine_options``).
+            ``model_ws``/``workspace``), plus any stage key below, read when the
+            stage dict does not set it. The named arguments are merged over it.
+            A key nothing reads raises ``TypeError`` naming it, the nearest
+            match and every accepted key -- here and again at :meth:`resolve`,
+            where a saved spec arrives (ledger 417) -- and so do two
+            spellings of one option, e.g. ``max_area`` beside
+            ``boundary_max_area``. ``"idomain"`` raises ``TypeError`` (see
+            ``**engine_options``).
         triangle_options : dict, optional
             Keyword arguments for ``TriangleGrid(...)`` -- ``angle``,
             ``maximum_area``, ``nodes``, ``exe_name``, ``additional_args``, plus
@@ -3055,19 +3064,21 @@ class GridSpec:
         mesh_options : dict, optional
             Options for the mesh-build step (``profile``, ``optimize``,
             ``verbose``, ...). A key also given through ``**engine_options``
-            takes that value. Not validated here, and at resolve any key the
-            mesh builder does not know is silently dropped.
+            takes that value. Any other key raises ``TypeError`` naming it and
+            the accepted keys, here and at :meth:`resolve` (ledger 417).
         voronoi_options : dict, optional
             Keyword arguments for ``VoronoiGridPlus(tri, ...)`` --
             ``idomain_path``, ``rasters``, ``qhull_options``, ``tessellation``,
             ``name``. A key also given through ``**engine_options`` takes that
             value. An ``"idomain"`` key raises ``TypeError``, as below.
         **engine_options
-            Stage options routed by name -- ``min_angle``, ``maximum_area``
-            (a global cap on every triangle's area, applied ON TOP of the
-            boundary's and each refinement's own size, so the smaller limit
-            wins; the background size is ``boundary_max_area``, ledger
-            408), ``profile``, ``idomain_path``, ``optimize`` and friends. **An unknown
+            Stage options routed by name -- ``min_angle``, ``maximum_area``,
+            ``profile``, ``idomain_path``, ``optimize`` and friends.
+            **``maximum_area`` is not ``max_area``**: ``maximum_area`` is
+            Triangle's GLOBAL cap on every triangle's area, applied ON TOP of
+            the boundary's and each refinement's own size, so the smaller limit
+            wins (ledger 408); ``max_area`` is an alias of ``boundary_max_area``,
+            the BACKGROUND cell size where no refinement applies. **An unknown
             keyword raises**, with the nearest match suggested; before that,
             a misspelled option was accepted, never read, and silently meshed at
             the default. ``tessellation="flopy"`` keeps FloPy's cells unrepaired
@@ -3084,7 +3095,10 @@ class GridSpec:
         boundary_max_area : float, optional
             Target cell area for the background region, i.e. everywhere no
             refinement applies. In CRS units squared. Aliases
-            ``default_cell_area`` / ``max_area`` reach the same option. One
+            ``default_cell_area`` / ``max_area`` reach the same option, and
+            giving two of the three raises ``TypeError`` (only the first was
+            read). Not ``maximum_area``, Triangle's global cap on every triangle,
+            refinements included (see ``**engine_options``). One
             larger than the domain can hold -- no point of it more than
             ``0.5 * sqrt(max_area)`` from the boundary, e.g. ``>= H**2`` for a
             rectangle H wide -- gives a handful of cells and warns.
@@ -3096,7 +3110,7 @@ class GridSpec:
             Target cell area for every ``refinement`` feature that does not
             carry its own via ``fields={"area": ...}``. One of the two is
             required, or resolution raises naming both. Alias
-            ``default_refinement_area``.
+            ``default_refinement_area``; giving both raises ``TypeError``.
         refinement_priority : int, default 0
             Who claims the overlap where refinement regions cross others.
             Higher wins; a per-feature ``"priority"`` field beats this.
@@ -3106,7 +3120,7 @@ class GridSpec:
             line grows too; send lines through ``breaklines`` instead.
         breakline_max_area : float, optional
             Target cell area inside every breakline corridor. Alias
-            ``default_breakline_area``.
+            ``default_breakline_area``; giving both raises ``TypeError``.
         breakline_priority : int, default 1
             Note this differs from ``refinement_priority`` (0), so a corridor
             takes the overlap from a refinement polygon by default.
@@ -3114,7 +3128,8 @@ class GridSpec:
             Half-width of the corridor a line is buffered into, in CRS units --
             so the default corridor is 20 wide. ``0`` leaves a polygon source
             unbuffered, which is how ``breaklines`` doubles as the multi-source
-            polygon channel. Alias ``line_buffer``.
+            polygon channel. Alias ``line_buffer``; giving both raises
+            ``TypeError``.
         breakline_negative_buffer_after_clipping : float, default 0
             Post-clip shrink; must be <= 0.
         boundary_simplify_tolerance, refinement_simplify_tolerance, breakline_simplify_tolerance : float, optional
@@ -3232,34 +3247,11 @@ class GridSpec:
         for key, value in engine_options.items():
             if key == "min_angle":
                 merged_triangle_options["angle"] = value
-            elif key in {
-                "angle",
-                "exe_name",
-                "maximum_area",
-                "nodes",
-                "additional_args",
-                "region_point_tolerance",
-            }:
+            elif key in _GRID_TRIANGLE_OPTION_KEYS:
                 merged_triangle_options[key] = value
-            elif key in {
-                "cleanup",
-                "damping",
-                "min_feature_area",
-                "min_move",
-                "optimization_iterations",
-                "optimize",
-                "profile",
-                "protect_sources",
-                "protected_labels",
-                "resample_domain_boundary",
-                "resample_region_sources",
-                "simplify_tolerance",
-                "snap_tolerance",
-                "target_segment_length",
-                "verbose",
-            }:
+            elif key in _GRID_MESH_OPTION_KEYS:
                 merged_mesh_options[key] = value
-            elif key in {"idomain_path", "name", "qhull_options", "rasters", "tessellation"}:
+            elif key in _GRID_VORONOI_ROUTED_KEYS:
                 merged_voronoi_options[key] = value
             elif key in _VORONOI_OPTION_KEYS:
                 merged_options[key] = value
@@ -3273,6 +3265,9 @@ class GridSpec:
                     f"unrecognised option used to be accepted and never read, so a "
                     f"typo silently meshed at the default."
                 )
+        _check_grid_option_keys(
+            merged_options, merged_mesh_options, where="GridSpec.voronoi()"
+        )
         return cls(
             name=name,
             grid_type="disv",
@@ -3574,6 +3569,96 @@ _VORONOI_OPTION_KEYS: frozenset[str] = frozenset({
     "breakline_simplify_tolerance", "breakline_densify_dist",
     "region_point_tolerance", "model_ws", "workspace", "crs", "profile",
 })
+
+
+#: The ``TriangleGrid(...)`` keys the resolver also takes out of ``GridSpec.options``
+#: (``min_angle`` arrives as ``angle``), and the ``build_mesh`` keys a ``GridSpec``
+#: carries in ``mesh_options`` -- or in ``options`` as a fallback. ONE copy each:
+#: ``GridSpec.voronoi`` routes ``**engine_options`` by them and the resolver merges
+#: by them (ledger 417).
+_GRID_TRIANGLE_OPTION_KEYS: frozenset[str] = frozenset({
+    "additional_args", "angle", "exe_name", "maximum_area", "nodes",
+    "region_point_tolerance",
+})
+_GRID_MESH_OPTION_KEYS: frozenset[str] = frozenset({
+    "cleanup", "damping", "min_feature_area", "min_move", "optimization_iterations",
+    "optimize", "profile", "protect_sources", "protected_labels",
+    "resample_domain_boundary", "resample_region_sources", "simplify_tolerance",
+    "snap_tolerance", "target_segment_length", "verbose",
+})
+#: The ``VoronoiGridPlus(...)`` keys the resolver takes out of ``GridSpec.options``.
+#: ``idomain`` is routed so a saved spec carrying it reaches the grid's own refusal
+#: (ledger 388); ``GridSpec.voronoi`` refuses it at the call.
+_GRID_VORONOI_ROUTED_KEYS: frozenset[str] = frozenset({
+    "idomain", "idomain_path", "name", "qhull_options", "rasters", "tessellation",
+})
+#: Every key the voronoi route reads out of ``GridSpec.options``.
+_GRID_OPTIONS_KEYS: frozenset[str] = (
+    _VORONOI_OPTION_KEYS
+    | {"min_angle"}
+    | _GRID_TRIANGLE_OPTION_KEYS
+    | _GRID_MESH_OPTION_KEYS
+    | _GRID_VORONOI_ROUTED_KEYS
+)
+#: Option keys that USED to exist, each with why it is gone. A saved spec carrying
+#: one is refused naming it rather than dropped (ledger 417).
+_GRID_REMOVED_OPTION_KEYS: dict[str, str] = {
+    "max_optimization_points": (
+        "was removed (ledger 410): it was only echoed into the optimizer's report and "
+        "never applied, so deleting it changes no mesh"
+    ),
+}
+#: Spellings of ONE option: the resolver takes the first present and ignored the
+#: rest, so giving two is refused (ledger 417). ``max_area`` is the BACKGROUND
+#: cell size, not ``maximum_area`` -- Triangle's global cap.
+_GRID_OPTION_ALIASES: tuple[tuple[str, ...], ...] = (
+    ("boundary_max_area", "default_cell_area", "max_area"),
+    ("refinement_max_area", "default_refinement_area"),
+    ("breakline_max_area", "default_breakline_area"),
+    ("breakline_buffer", "line_buffer"),
+)
+
+
+def _check_grid_option_keys(
+    options: dict[str, Any], mesh_options: dict[str, Any], *, where: str
+) -> None:
+    """Refuse a key the voronoi route would never read, or two spellings of one option.
+
+    ``where`` names the caller in the message: ``GridSpec.voronoi()`` at the call, or
+    the spec's name at resolve -- where a SAVED spec arrives, so a key removed since,
+    or one stored before keys were checked, is refused naming it rather than dropped
+    in silence as it was (ledger 417).
+    """
+
+    for label, given, accepted in (
+        ("options", options, _GRID_OPTIONS_KEYS),
+        ("mesh_options", mesh_options, _GRID_MESH_OPTION_KEYS),
+    ):
+        unknown = sorted(str(key) for key in given if key not in accepted)
+        if not unknown:
+            continue
+        key = unknown[0]
+        if key in _GRID_REMOVED_OPTION_KEYS:
+            reason = (
+                f" {key!r} {_GRID_REMOVED_OPTION_KEYS[key]}; delete it from the "
+                f"spec's {label}."
+            )
+        else:
+            near = difflib.get_close_matches(key, sorted(accepted), n=1, cutoff=0.6)
+            reason = f" Did you mean {near[0]!r}?" if near else ""
+        raise TypeError(
+            f"{where}: {label} holds {', '.join(map(repr, unknown))}, which the voronoi "
+            f"route never reads, so it would be dropped in silence.{reason} "
+            f"Accepted {label} keys: {', '.join(sorted(accepted))}."
+        )
+    for group in _GRID_OPTION_ALIASES:
+        given = [name for name in group if name in options]
+        if len(given) > 1:
+            raise TypeError(
+                f"{where}: options give {' and '.join(map(repr, given))}, which are "
+                f"spellings of ONE option ({group[0]!r}); only the first was ever read. "
+                "Give one."
+            )
 
 
 def _grid_source(value: Any, argument: str) -> DataSourceSpec:

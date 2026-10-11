@@ -23,36 +23,15 @@ from myflopy.sources import (
     ShapeSource,
     TableSource,
 )
-from myflopy.specs import GridSpec
+from myflopy.specs import (
+    _GRID_MESH_OPTION_KEYS,
+    _GRID_TRIANGLE_OPTION_KEYS,
+    _GRID_VORONOI_ROUTED_KEYS,
+    GridSpec,
+    _check_grid_option_keys,
+)
 
 logger = get_logger(__name__)
-
-_BUILD_OPTION_KEYS = {
-    "cleanup",
-    "damping",
-    "min_feature_area",
-    "min_move",
-    "optimization_iterations",
-    "optimize",
-    "profile",
-    "protect_sources",
-    "protected_labels",
-    "resample_domain_boundary",
-    "resample_region_sources",
-    "simplify_tolerance",
-    "snap_tolerance",
-    "target_segment_length",
-    "verbose",
-}
-
-_TRIANGLE_OPTION_KEYS = {
-    "additional_args",
-    "angle",
-    "exe_name",
-    "maximum_area",
-    "nodes",
-    "region_point_tolerance",
-}
 
 
 def _source_path(
@@ -497,7 +476,7 @@ def _build_options(options: dict[str, Any]) -> dict[str, Any]:
     """
 
     build_options = {
-        key: value for key, value in options.items() if key in _BUILD_OPTION_KEYS
+        key: value for key, value in options.items() if key in _GRID_MESH_OPTION_KEYS
     }
     if "profile" not in build_options:
         build_options["profile"] = "balanced"
@@ -512,7 +491,7 @@ def _triangle_options(spec: GridSpec, options: dict[str, Any]) -> dict[str, Any]
     triangle_options = dict(spec.triangle_options)
     if "min_angle" in options and "angle" not in triangle_options:
         triangle_options["angle"] = options["min_angle"]
-    for key in _TRIANGLE_OPTION_KEYS:
+    for key in _GRID_TRIANGLE_OPTION_KEYS:
         if key in options and key not in triangle_options:
             triangle_options[key] = options[key]
     return triangle_options
@@ -522,7 +501,7 @@ def _mesh_options(spec: GridSpec, options: dict[str, Any]) -> dict[str, Any]:
     """Merge the spec's mesh options with matching top-level options, then build-filter them."""
 
     mesh_options = dict(spec.mesh_options)
-    for key in _BUILD_OPTION_KEYS:
+    for key in _GRID_MESH_OPTION_KEYS:
         if key in options and key not in mesh_options:
             mesh_options[key] = options[key]
     return _build_options(mesh_options)
@@ -540,7 +519,7 @@ def _voronoi_options(
     # "idomain" is still routed, so a spec that carries one (saved before
     # GridSpec.voronoi refused it) reaches VoronoiGridPlus's refusal rather than
     # being dropped here instead (ledger 388).
-    for key in ("idomain", "idomain_path", "name", "qhull_options", "rasters", "tessellation"):
+    for key in _GRID_VORONOI_ROUTED_KEYS:
         if key in options and key not in voronoi_options:
             voronoi_options[key] = options[key]
     voronoi_options.setdefault("crs", spec.crs or options.get("crs", DEFAULT_CRS))
@@ -569,6 +548,9 @@ def _resolve_voronoi(
     """
 
     options = dict(spec.options)
+    _check_grid_option_keys(
+        options, dict(spec.mesh_options), where=f"GridSpec {spec.name!r}"
+    )
     triangle_options = _triangle_options(spec, options)
     model_ws = workspace or _option(
         triangle_options,

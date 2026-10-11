@@ -477,7 +477,10 @@ release-group boundnames; without them it names the fix and offers
   `points=` takes a LIST of point sources pinned as vertices. Mixing polygons and
   lines in one `refinement=` layer raises. Every sizing option is a **named
   parameter** (`boundary_*`/`refinement_*`/`breakline_*`), and an unknown keyword
-  raises with the nearest match rather than being silently ignored. Sources must be
+  -- or an unknown key in `options=`/`mesh_options=`, checked again when a saved
+  spec resolves, or two spellings of one option -- raises with the nearest match
+  rather than being silently ignored. `max_area` (background size, an alias of
+  `boundary_max_area`) is not `maximum_area` (Triangle's global cap). Sources must be
   file-backed specs — a GeoDataFrame, a bare path, or a list is refused by name.
   The cells are repaired to tile the boundary (ledger 316); `tessellation="flopy"`
   keeps FloPy's `tri2vor` cells as they were. A grid holds no active domain:

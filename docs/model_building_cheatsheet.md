@@ -526,7 +526,12 @@ Did you mean 'breakline_buffer'?
 
 That used to be accepted and never read, so the typo silently meshed at the default
 — measured, `breakline_bufer=40` gave corridors a quarter of the intended width
-under a clean run. The wrong *shape* of source is refused the same way: a list in
+under a clean run. The same key inside `options={...}` or `mesh_options={...}` is
+refused too, at the call and again when a saved spec resolves, and so are two
+spellings of one option (`max_area` beside `boundary_max_area`). Mind the near
+twins: `max_area` is the BACKGROUND cell size (an alias of `boundary_max_area`),
+while `maximum_area` is Triangle's global cap on every triangle, refinements
+included. The wrong *shape* of source is refused the same way: a list in
 `refinement=`, a single source in `breaklines=`, or a live GeoDataFrame anywhere all
 name the fix instead of failing later as `'X' object has no attribute 'path'`.
 

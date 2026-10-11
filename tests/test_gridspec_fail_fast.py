@@ -175,3 +175,105 @@ def test_an_in_memory_geodataframe_is_refused_with_the_way_out(tmp_path):
     message = str(excinfo.value)
     assert "GeoDataFrame" in message
     assert "to_file" in message and "GeoPackageSourceSpec" in message
+
+
+# --- the options= and mesh_options= dicts are checked too (ledger 417) -------
+#
+# `**engine_options` raised on a typo, but the same key put in `options=` or
+# `mesh_options=` was stored and dropped at resolve -- and so was a key ledger 410
+# removed, in a spec saved before it.
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"options": {"breakline_bufer": 40}}, r"options holds 'breakline_bufer'.*Did you mean 'breakline_buffer'"),
+        ({"mesh_options": {"optimise": False}}, r"mesh_options holds 'optimise'.*Did you mean 'optimize'"),
+        (
+            {"mesh_options": {"max_optimization_points": 10}},
+            r"'max_optimization_points' was removed \(ledger 410\).*delete it",
+        ),
+        ({"options": {"domain_clip_tolerance": 1.0}}, r"options holds 'domain_clip_tolerance'"),
+    ],
+)
+def test_an_unknown_key_in_an_options_dict_is_refused_at_declaration(tmp_path, kwargs, match):
+    with pytest.raises(TypeError, match=match):
+        _voronoi(tmp_path, **kwargs)
+
+
+def test_every_key_the_options_dicts_route_is_accepted(tmp_path):
+    from myflopy.specs import _GRID_MESH_OPTION_KEYS
+
+    spec = _voronoi(
+        tmp_path,
+        options={"min_angle": 30, "maximum_area": 5e4, "profile": "fast", "rasters": None},
+        mesh_options={key: None for key in ("optimize", "verbose")},
+    )
+    assert spec.options["min_angle"] == 30
+    assert set(spec.mesh_options) <= _GRID_MESH_OPTION_KEYS
+
+
+@pytest.mark.parametrize(
+    "spellings",
+    [
+        {"boundary_max_area": 1000.0, "max_area": 500.0},
+        {"default_cell_area": 1000.0, "max_area": 500.0},
+        {"refinement_max_area": 1.0, "default_refinement_area": 2.0},
+        {"breakline_max_area": 1.0, "default_breakline_area": 2.0},
+        {"breakline_buffer": 5, "line_buffer": 6},
+    ],
+)
+def test_two_spellings_of_one_option_are_refused(tmp_path, spellings):
+    # `_option` took the first present and ignored the rest in silence.
+    with pytest.raises(TypeError, match=r"spellings of ONE option"):
+        GridSpec.voronoi(boundary=_boundary(tmp_path), crs="EPSG:2927", options=spellings)
+    named = {k: v for k, v in spellings.items() if k in ("boundary_max_area", "breakline_buffer")}
+    if named:
+        rest = {k: v for k, v in spellings.items() if k not in named}
+        with pytest.raises(TypeError, match=r"spellings of ONE option"):
+            GridSpec.voronoi(boundary=_boundary(tmp_path), crs="EPSG:2927", **named, **rest)
+
+
+def test_max_area_alone_is_the_background_size_not_the_global_cap(tmp_path):
+    spec = GridSpec.voronoi(boundary=_boundary(tmp_path), crs="EPSG:2927", max_area=500.0)
+    assert spec.options == {"max_area": 500.0}
+    assert "maximum_area" not in spec.triangle_options
+
+
+@pytest.mark.parametrize(
+    "field, payload, match",
+    [
+        ("mesh_options", {"max_optimization_points": 250}, r"GridSpec 'g': mesh_options holds 'max_optimization_points'.*ledger 410"),
+        ("options", {"boundary_max_area": 1000.0, "refinment_max_area": 5.0}, r"GridSpec 'g': options holds 'refinment_max_area'"),
+        ("options", {"boundary_max_area": 1000.0, "max_area": 9.0}, r"GridSpec 'g': options give 'boundary_max_area' and 'max_area'"),
+    ],
+)
+def test_a_saved_spec_carrying_an_unread_key_is_refused_at_resolve(tmp_path, field, payload, match):
+    good = GridSpec.voronoi(name="g", boundary=_boundary(tmp_path), crs="EPSG:2927", boundary_max_area=1000.0)
+    saved = good.to_dict()
+    saved[field] = {**saved.get(field, {}), **payload}
+    spec = GridSpec.from_dict(saved)
+    with pytest.raises(TypeError, match=match):
+        spec.resolve(workspace=tmp_path / "ws", build=False)
+
+
+def test_a_saved_project_carrying_a_removed_key_opens_and_refuses_at_resolve(tmp_path):
+    # The decision (ledger 417): loading never refuses -- the project must open
+    # so the key can be deleted -- and the grid's resolve names the key and why.
+    import json
+
+    import myflopy as mf
+
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_grid("g", _voronoi(tmp_path, name="g"))
+    project.save()
+    saved = tmp_path / "proj" / "specs" / "grids" / "g.json"
+    payload = json.loads(saved.read_text())
+    payload["mesh_options"] = {"max_optimization_points": 250}
+    saved.write_text(json.dumps(payload))
+    del project
+
+    loaded = mf.Project.load(tmp_path / "proj")
+    assert loaded.grid("g").mesh_options == {"max_optimization_points": 250}
+    with pytest.raises(TypeError, match=r"was removed \(ledger 410\).*delete it from the spec's mesh_options"):
+        loaded.grid("g").resolve(workspace=tmp_path / "ws", build=False)

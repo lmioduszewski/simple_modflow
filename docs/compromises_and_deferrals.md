@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 416 entries (421 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 417 entries (422 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 417 | `GridSpec.voronoi`'s `options=` and `mesh_options=` keys are checked, at the call and again at resolve; two... | 2026-10-11 |
 | 416 | `read_shp_gpkg` and every `TriangleGrid` entry point that reads a vector file take a `str` path | 2026-10-11 |
 | 415 | `generate_grid_coordinates` steps from the extent's own minimum by any positive spacing; the box lattice re... | 2026-10-11 |
 | 414 | A raster sample reads a `str` or `os.PathLike` path and a numpy number; any other item is refused naming it | 2026-10-11 |
@@ -18009,8 +18010,9 @@ same day, which is the useful part of the result.
       is byte-identical by construction (measured on all five profiles: same triangle
       count, same vertices). `GridSpec.voronoi(max_optimization_points=)` now raises the
       unknown-option `TypeError`, as does `build_mesh(..., max_optimization_points=)`;
-      a `mesh_options` dict carrying the key is filtered at resolve, as any unknown key
-      there already was. `"converged_small_move"` was assigned behind `max_move <
+      ~~a `mesh_options` dict carrying the key is filtered at resolve, as any unknown key
+      there already was.~~ **A `mesh_options` dict carrying the key is refused, at the
+      call and at resolve, naming this entry (ledger 417).** `"converged_small_move"` was assigned behind `max_move <
       min_move`, which no run reaches -- a move under `min_move` is never made, so
       `max_move >= min_move` whenever the test ran. The report's `status` is the reason
       the loop stopped, and the four it can be are documented on `optimize_seeds`.
@@ -18128,3 +18130,26 @@ same day, which is the useful part of the result.
       Tests: `tests/test_grid_helper_refusals.py` --
       `test_read_shp_gpkg_reads_a_str_path_and_refuses_what_is_not_a_path`,
       `test_triangle_grid_reads_a_str_path_wherever_it_reads_a_file`.
+
+417. **`GridSpec.voronoi`'s `options=` and `mesh_options=` keys are checked, at the call and again at resolve; two spellings of one option are refused (2026-10-11).**
+      `**engine_options` refused a typo, but the same key in `options=` or
+      `mesh_options=` was stored and never read -- and so was `max_optimization_points`
+      (ledger 410) in a spec saved before its removal. `specs._check_grid_option_keys`
+      refuses a key the voronoi route never reads, naming the dict, the nearest match and
+      every accepted key, from `GridSpec.voronoi` and from `_resolve_voronoi` -- which is
+      where a spec built directly or loaded from a saved project arrives. **A saved project
+      carrying a removed key still LOADS** -- judgment call: refusing at `Project.load`
+      would lock the user out of the file that has to be edited; the refusal comes when
+      the grid resolves, naming the key, why it went (`_GRID_REMOVED_OPTION_KEYS`) and
+      that deleting it changes no mesh. Spellings of one option (`boundary_max_area` /
+      `default_cell_area` / `max_area`, the two `default_*_area` aliases, `line_buffer`)
+      given together are refused: `_option` read the first and ignored the rest.
+      `triangle_options`/`voronoi_options` are not checked here: their constructors
+      already raise `TypeError` on an unknown keyword at resolve. The key sets live once,
+      in `specs.py` (`_GRID_TRIANGLE_OPTION_KEYS`, `_GRID_MESH_OPTION_KEYS`,
+      `_GRID_VORONOI_ROUTED_KEYS`), where the resolver and `GridSpec.voronoi` each held
+      their own copy. No JSON file under `/home/lukem/models` or `examples/` holds a
+      saved `GridSpec` at all (grep), so no stored project is refused today.
+      Tests: `tests/test_gridspec_fail_fast.py` -- removing the check fails the
+      declaration, alias and resolve tests; removing only the resolve-time call fails
+      the three `test_a_saved_spec_carrying_an_unread_key_is_refused_at_resolve` cases.
