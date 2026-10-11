@@ -2288,8 +2288,14 @@ def _mesh_residual(built, wanted) -> float:
         np.max(np.abs((built - built.mean(axis=0)) - (wanted - wanted.mean(axis=0))))
     )
 
-def _discretization_complaints(model, context, packages, built_packages=None) -> list[str]:
+def _discretization_complaint_families(
+    model, context, packages, built_packages=None
+) -> dict[str, list[str]]:
     """Every way a built model's discretization disagrees with what it was declared against.
+
+    Grouped by :data:`BUILD_COMPLAINT_FAMILIES` -- ``{family: [complaint, ...]}``, every
+    family present, in that table's order -- so the refusal can say what each group is
+    about (:func:`_build_refusal`).
 
     The failure this exists to stop is silent. ``replace_grid`` swaps a grid and
     leaves every package's baked cellids, connection data and dimension counts on
@@ -2307,7 +2313,7 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
 
     import numpy as np
 
-    complaints: list[str] = []
+    complaints: dict[str, list[str]] = {family: [] for family in BUILD_COMPLAINT_FAMILIES}
     grid = getattr(context, "grid", None)
     disv = model.get_package("disv") if hasattr(model, "get_package") else None
     ncpl = nlay = None
@@ -2316,7 +2322,7 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
         nlay = _as_int(disv.nlay.get_data())
         grid_ncpl = _as_int(getattr(grid, "ncpl", None)) if grid is not None else None
         if ncpl is not None and grid_ncpl is not None and grid_ncpl != ncpl:
-            complaints.append(
+            complaints["mesh"].append(
                 f"the DISV package has ncpl={ncpl} but the model's context grid has "
                 f"{grid_ncpl} cells -- the discretization and the grid are not the "
                 "same mesh"
@@ -2335,7 +2341,7 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
             built_nvert = _as_int(disv.nvert.get_data())
             grid_nvert = _as_int((props or {}).get("nvert"))
             if built_nvert is not None and grid_nvert is not None and built_nvert != grid_nvert:
-                complaints.append(
+                complaints["mesh"].append(
                     f"the DISV package has nvert={built_nvert} but the context grid has "
                     f"{grid_nvert} vertices -- two meshes can share every cell centre and "
                     "still have different cell boundaries"
@@ -2354,7 +2360,7 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
                     residual = _mesh_residual(built, wanted)
                     tolerance = 1e-3 * _mesh_scale(wanted)
                     if residual > tolerance:
-                        complaints.append(
+                        complaints["mesh"].append(
                             "the DISV package and the context grid have the same cell "
                             f"count but different geometry -- once both frames are "
                             f"aligned their cell centres still differ by up to "
@@ -2367,12 +2373,12 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
     if domain is not None and ncpl is not None:
         shape = np.asarray(domain).shape
         if shape and shape[-1] != ncpl:
-            complaints.append(
+            complaints["domain"].append(
                 f"the model's context domain is shaped {shape}, which is {shape[-1]} "
                 f"cells, against the built DISV's ncpl={ncpl}"
             )
         elif len(shape) > 1 and nlay is not None and shape[0] != nlay:
-            complaints.append(
+            complaints["domain"].append(
                 f"the model's context domain is shaped {shape}, which is {shape[0]} "
                 f"layers, against the built DISV's nlay={nlay}. A two-dimensional "
                 "domain answers per layer, so this one cannot answer for the layers it "
@@ -2394,7 +2400,7 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
         model_pin = (getattr(context, "metadata", None) or {}).get(GRID_PIN)
         built_pin = disv_pin(disv)
         if model_pin is not None and built_pin is not None and built_pin != model_pin:
-            complaints.append(
+            complaints["mesh"].append(
                 "the DISV package is not the mesh this model was declared against: it "
                 f"fingerprints as {built_pin} and the model recorded {model_pin}. The "
                 "grid object itself is not carried across a save, so the cell NUMBERING "
@@ -2419,7 +2425,7 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
                     # The same cells, the same numbers: from bb56668 the repair split a
                     # corner into two vertices the file could not tell apart, which wrote
                     # a zero-length face and NaN heads. Joining them moved the pin only.
-                    complaints.append(
+                    complaints["mesh"].append(
                         f"package {package.name!r} was resolved on this model's grid as "
                         f"ledger 316's repair built it from myflopy bb56668 (grid {pin}), "
                         f"which split {report.unsplit} cell corner(s) into two vertices "
@@ -2435,7 +2441,7 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
                     # anyway. The records CAN differ -- a feature the old hole dropped now
                     # reaches its cell (measured: a CHD strip resolved to 8 records, then
                     # 9) -- so this is still a refusal; what changes is that it says why.
-                    complaints.append(
+                    complaints["mesh"].append(
                         f"package {package.name!r} was resolved on this model's grid "
                         f"BEFORE ledger 316's repair (grid {pin}): the same cells, "
                         f"{len(report.rewritten)} of them re-outlined because FloPy drew "
@@ -2462,7 +2468,7 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
                         "outlined some cells differently, so the pin moved though every cell "
                         "kept its number. Re-declare the package against this grid either way"
                     )
-                complaints.append(message)
+                complaints["mesh"].append(message)
                 continue
             voided = metadata.get(PIN_VOIDED)
             if voided and voided.get("was") not in (None, model_pin):
@@ -2473,7 +2479,7 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
                 # that no longer existed. Naming the edit is what makes the refusal
                 # actionable, and the edit route can never re-pin (ledger 250: you
                 # cannot pin cell numbers the caller typed).
-                complaints.append(
+                complaints["mesh"].append(
                     f"package {package.name!r} holds records that were EDITED after the "
                     f"library resolved them on mesh {voided['was']}, replacing "
                     f"{', '.join(voided['options'])} -- and this model's grid is "
@@ -2501,9 +2507,9 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
             listing = ", ".join(str(cellid) for cellid in negative[:5])
             if len(negative) > 5:
                 listing += f", and {len(negative) - 5} more"
-            complaints.append(
+            complaints["cellid"].append(
                 f"package {package.name!r} holds {len(negative)} cellid(s) with a negative "
-                f"part: {listing}. Cellids are zero-based and count up from 0"
+                f"part: {listing}"
             )
     if ncpl is not None:
         for package in packages:
@@ -2518,19 +2524,88 @@ def _discretization_complaints(model, context, packages, built_packages=None) ->
                 listing = ", ".join(str(cellid) for cellid in stale[:5])
                 if len(stale) > 5:
                     listing += f", and {len(stale) - 5} more"
-                complaints.append(
+                complaints["cellid"].append(
                     f"package {package.name!r} holds {len(stale)} cellid(s) this model's "
                     f"grid does not have (nlay={nlay}, ncpl={ncpl}): {listing}"
                 )
     # In range is not enough: a cell can exist on this mesh and still have been REMOVED
     # by the DISV's idomain -- what a context declared before an excavation leaves.
-    complaints += _active_cell_complaints(model, context, packages, built_packages)
+    complaints["removed"] += _active_cell_complaints(model, context, packages, built_packages)
     # A lake's connections, which the two checks above cannot read (`_cellids_in` skips
     # `connectiondata` on purpose): active cells, faces inside their cells, and for an
     # excavated lake the vertical cell at the bed (ledger 325). The LAK builder runs the
     # same check before FloPy when the DISV already exists; this covers the other order.
-    complaints += _lak_complaints(model, packages)
+    complaints["lake"] += _lak_complaints(model, packages)
     return complaints
+
+
+def _discretization_complaints(model, context, packages, built_packages=None) -> list[str]:
+    """:func:`_discretization_complaint_families`, as one flat list in family order."""
+
+    return [
+        complaint
+        for found in _discretization_complaint_families(
+            model, context, packages, built_packages
+        ).values()
+        for complaint in found
+    ]
+
+
+#: What a build refusal's complaints are about, in the order they are reported: each
+#: family's ``(heading, closing)`` -- the heading follows "Model 'name'", the closing
+#: says why it is refused and what to do. They shared ONE preamble, about cell numbers
+#: resolved on another mesh, which told the caller of a negative cellid on a DIS model
+#: -- no mesh, no move -- to re-declare against "this grid" (ledger 427).
+BUILD_COMPLAINT_FAMILIES: dict[str, tuple[str, str]] = {
+    "mesh": (
+        "does not agree with the grid it was built against",
+        "This is refused rather than run: cell numbers resolved on another mesh are "
+        "still valid numbers, and MF6 applies them to this geometry and reports normal "
+        "termination. Re-declare what is named above against this grid.",
+    ),
+    "domain": (
+        "has a context domain that does not fit the DISV it was built with",
+        "Every package resolved from the context reads its active cells from that "
+        "domain, so a domain of another shape answers for cells this DISV does not "
+        "have. Correct the context's `domain=`.",
+    ),
+    "cellid": (
+        "names cells its grid does not have",
+        "A cellid is zero-based: each part counts up from 0 to one below the grid's "
+        "count. A negative part is Python's from-the-end index to everything upstream "
+        "of MF6, and FloPy writes it as an id the record never named; a part past the "
+        "grid was typed wrong or resolved on a larger mesh. Correct the records, or "
+        "re-declare the package against this grid.",
+    ),
+    "removed": (
+        "addresses cells the DISV it was built with has removed",
+        "A package or observation resolved against a domain from before the layer "
+        "stack was excavated or re-pinched still names the cells that domain had; each "
+        "line above says what MF6 does with it and what to declare again.",
+    ),
+    "lake": (
+        "has lake connections the DISV it was built with contradicts",
+        "MF6 refuses a connection to a removed cell or a face outside its cell, and "
+        "runs an excavated lake whose vertical connections are misplaced, exchanging "
+        "through the wrong cell without a word.",
+    ),
+}
+
+
+def _build_refusal(model_name: str, families: dict[str, list[str]]) -> str | None:
+    """The message refusing a build, one paragraph per family that has complaints.
+
+    ``None`` when no family has any. Each paragraph is the family's heading, its
+    complaints as bullets and its closing (:data:`BUILD_COMPLAINT_FAMILIES`), so a
+    refusal carrying several families says what each group is about.
+    """
+
+    paragraphs = [
+        f"Model {model_name!r} {heading}:\n  - " + "\n  - ".join(found) + f"\n{closing}"
+        for family, (heading, closing) in BUILD_COMPLAINT_FAMILIES.items()
+        if (found := families.get(family))
+    ]
+    return "\n".join(paragraphs) or None
 
 def dropped_context_fields(context) -> tuple[str, ...]:
     """Which of a context's unserializable fields are set, and so will be lost."""
@@ -2572,7 +2647,10 @@ __all__ = [
     "_canonical_ring",
     "_cellids_in",
     "_context_metadata",
+    "_build_refusal",
+    "_discretization_complaint_families",
     "_discretization_complaints",
+    "BUILD_COMPLAINT_FAMILIES",
     "_mesh_residual",
     "_mesh_scale",
     "disv_pin",

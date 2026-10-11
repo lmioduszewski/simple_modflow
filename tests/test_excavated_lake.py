@@ -495,7 +495,7 @@ def test_a_lake_resolved_on_the_cut_is_refused_against_an_uncut_disv(flat, lak_f
                tmp_path / "uncut")
     text = str(error.value)
     assert "excavated lake 'pond' was resolved with its VERTICAL connections at the excavated bed" in text
-    site = "does not agree with the grid it was built" if lak_first else "does not fit the DISV it is being built with"
+    site = "has lake connections the DISV it was built with contradicts" if lak_first else "does not fit the DISV it is being built with"
     assert site in text, "the check ran at the call site this order reaches"
     # ...and on the DISV it was resolved against, it builds.
     _build(_model(context, result, lake, lak_first=lak_first), tmp_path / "cut")

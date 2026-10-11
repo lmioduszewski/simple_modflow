@@ -49,9 +49,11 @@ from myflopy.grid_identity import (
     REMAPPED_FROM,
     SOURCE_SHA,  # noqa: F401
     _as_int,  # noqa: F401
+    _build_refusal,
     _canonical_ring,  # noqa: F401
     _cellids_in,  # noqa: F401
     _context_metadata,  # noqa: F401
+    _discretization_complaint_families,
     _discretization_complaints,  # noqa: F401
     _mesh_residual,  # noqa: F401
     _mesh_scale,  # noqa: F401
@@ -4974,9 +4976,13 @@ class ModelSpec:
         ------
         ValueError
             When a package or the context disagrees with the grid it was built
-            against (cellids, domain shape, a grid pin, a move stamp), all
-            listed at once; and for a package ref with no ``build_context`` on a
-            model without a deferred ``grid``.
+            against, all listed at once and grouped by what each is about -- the
+            mesh (DISV against the context grid, a grid pin, a move stamp), the
+            context's domain shape, a cellid no cell answers to (negative, or past
+            the grid), a cell the DISV has removed, a lake connection the DISV
+            contradicts -- each group under its own heading and advice; and for a
+            package ref with no ``build_context`` on a model without a deferred
+            ``grid``.
         KeyError
             For a ref whose key is not in the build context's library -- which
             includes every ref when ``build_context`` is ``None`` and the model
@@ -5033,20 +5039,15 @@ class ModelSpec:
         live = [p for p in packages if p.name in built_packages]
         # `built_packages=`: pair each spec with the FloPy object it BUILT, not by name -- a bare
         # PackageSpec with no pname is named `chd_0` by FloPy and went unchecked.
-        complaints = _discretization_complaints(
+        complaints = _discretization_complaint_families(
             model, context, live, built_packages=built_packages
         )
-        complaints += moved_package_complaints(live)
-        if complaints:
-            raise ValueError(
-                f"Model {self.name!r} does not agree with the grid it was built "
-                "against:\n  - " + "\n  - ".join(complaints) + "\nThis is refused "
-                "rather than run: cell numbers resolved on another mesh, or against "
-                "another domain, are still valid numbers -- MF6 applies them to the new "
-                "geometry and reports normal termination, or drops what a removed cell "
-                "carries without a word. Re-declare the packages against this grid, or "
-                "correct the context value named above."
-            )
+        complaints["mesh"] += moved_package_complaints(live)
+        # One paragraph per kind of complaint, each saying what it is about: a negative
+        # cellid or a removed cell is not "resolved on another mesh" (ledger 427).
+        refusal = _build_refusal(self.name, complaints)
+        if refusal is not None:
+            raise ValueError(refusal)
         # A face MF6 cannot compute once the file is written: zero length, or both cell
         # centres on it -- NaN heads under normal termination, or a division by zero (ledger
         # 316). Its own refusal, since no package is at fault.

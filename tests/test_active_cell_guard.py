@@ -167,8 +167,11 @@ def test_a_bare_package_spec_is_checked_like_a_named_one(tmp_path, grid):
     s = _setup(grid)
     chd = mf.PackageSpec("chd", flopy.mf6.ModflowGwfchd,
                          {"stress_period_data": {0: [[(0, 5), 98.0]]}})
-    with pytest.raises(ValueError, match=r"package 'chd' names 1 cell\(s\) the built DISV has REMOVED"):
+    with pytest.raises(ValueError, match=r"package 'chd' names 1 cell\(s\) the built DISV has REMOVED") as raised:
         _build(tmp_path, _simulation(s.fresh, s.after, chd), "chd")
+    # Headed by what it is about, not by "another mesh" (ledger 427).
+    assert " addresses cells the DISV it was built with has removed:\n  - " in str(raised.value)
+    assert "another mesh" not in str(raised.value)
     rcha = mf.PackageSpec("rch", flopy.mf6.ModflowGwfrcha,
                           {"recharge": RATE, "irch": np.zeros(grid.ncpl, dtype=int)})
     with pytest.raises(ValueError, match=r"'rcha_0' \(recharge as arrays\) addresses its recharge"):

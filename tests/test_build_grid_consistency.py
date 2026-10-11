@@ -546,3 +546,66 @@ def test_many_stale_cellids_are_capped_and_counted(tmp_path):
     with pytest.raises(ValueError, match=r"holds 8 cellid\(s\).*and 3 more"):
         _build(tmp_path, "many", _grid(10, 10), _grid(10, 10),
                extra=(mf.chd(stress_period_data={0: records}),))
+
+
+# ------------------------------------------- what each refusal says it is about
+
+
+def _dis_with_a_negative_cellid():
+    return mf.gwf(
+        "m",
+        packages=[
+            mf.dis(nlay=1, nrow=1, ncol=3, delr=10.0, delc=10.0, top=10.0, botm=[0.0]),
+            mf.npf(k=1.0),
+            mf.ic(strt=5.0),
+            mf.chd(stress_period_data={0: [[(0, 0, -1), 9.0]]}),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "heading"),
+    [
+        ("mesh", "does not agree with the grid it was built against"),
+        ("domain", "has a context domain that does not fit the DISV it was built with"),
+        ("past-the-grid", "names cells its grid does not have"),
+        ("negative-on-dis", "names cells its grid does not have"),
+    ],
+)
+def test_each_kind_of_build_refusal_says_what_it_is_about(tmp_path, case, heading):
+    """One preamble, about cell numbers resolved on another mesh, used to head every
+    refusal -- a negative cellid on a DIS model, with no mesh and no move, was told to
+    re-declare its packages "against this grid" (ledger 427)."""
+
+    with pytest.raises(ValueError) as raised:
+        if case == "mesh":
+            # A domain shaped for the DISV, so the mesh is the only complaint.
+            _build(tmp_path, "a", _grid(10, 10), _grid(20, 15), domain=np.ones((1, 100), dtype=int))
+        elif case == "domain":
+            _build(tmp_path, "d", _grid(10, 10), _grid(10, 10), domain=np.ones((1, 37), dtype=int))
+        elif case == "past-the-grid":
+            _build(tmp_path, "p", _grid(10, 10), _grid(10, 10),
+                   extra=(mf.chd(stress_period_data={0: [[(0, 100), 9.0]]}),))
+        else:
+            mf.simulation(_dis_with_a_negative_cellid(), name="s").build_flopy(
+                workspace=tmp_path / "dis"
+            )
+    text = str(raised.value)
+    assert text.startswith(f"Model 'm' {heading}:\n  - "), text
+    assert text.count("Model 'm'") == 1
+    assert ("resolved on another mesh" in text) == (case == "mesh"), text
+
+
+def test_a_refusal_of_several_kinds_heads_each_group_in_turn(tmp_path):
+    """Two kinds of complaint, two paragraphs, each with its own heading and closing."""
+
+    with pytest.raises(ValueError) as raised:
+        _build(tmp_path, "two", _grid(10, 10), _grid(10, 10),
+               domain=np.ones((1, 37), dtype=int),
+               extra=(mf.chd(stress_period_data={0: [[(0, -1), 9.0]]}),))
+    text = str(raised.value)
+    domain = text.index("Model 'm' has a context domain that does not fit")
+    cellid = text.index("Model 'm' names cells its grid does not have:\n  - package 'chd' holds 1")
+    assert domain == 0 and cellid > domain
+    assert "Correct the context's `domain=`." in text[:cellid]
+    assert text.rstrip().endswith("re-declare the package against this grid.")

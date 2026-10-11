@@ -86,7 +86,7 @@ ALLOWED_BROAD = {
     # reading its gridprops reaches flopy, numpy and any property it computes lazily.
     # This one only ever WEAKENS a guard: a comparison that cannot run must not become
     # the error the user sees in place of the real complaint (ledger 249).
-    "grid_identity.py:_discretization_complaints",
+    "grid_identity.py:_discretization_complaint_families",
     # Same reason one line up, and the same rule: a pin that cannot be taken means
     # "unpinned", never an error at the caller. Reading a grid's connectivity reaches
     # flopy, numpy and any property it computes lazily (ledger 250).

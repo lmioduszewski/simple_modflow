@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 426 entries (431 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 427 entries (432 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 427 | A build refusal groups its complaints by what each is about, each group under its own heading and advice | 2026-10-11 |
 | 426 | A feature's stress period is a whole number naming one of the simulation's periods, read by the layer colum... | 2026-10-11 |
 | 425 | A reproducer that runs PEST++ makes `PYTHONPATH` absolute at start, through the one helper... | 2026-10-11 |
 | 424 | A correlated pilot-point prior is pyEMU's geostatistical draw, its variance set by the bounds as a `grid` p... | 2026-10-11 |
@@ -17572,8 +17573,10 @@ same day, which is the useful part of the result.
       so ids MF6 refuses and the caller never typed. **Judgment call:** the build's lower
       bound runs on EVERY discretization, outside the DISV-only `ncpl` range check, since it
       needs no grid (a DIS `(0, 0, -1)` and a DISU `(-1,)` are refused too -- it reads
-      one-integer cellids, which the range checks' reader skips); it shares that check's
-      complaint list and so its "does not agree with the grid" preamble.
+      one-integer cellids, which the range checks' reader skips); ~~it shares that check's
+      complaint list and so its "does not agree with the grid" preamble.~~ **SUPERSEDED by
+      ledger 427**: it shares the range check's family, headed "names cells its grid
+      does not have".
       Revert check: the old code fails the nine `test_rch_builder_refuses_a_negative_cell_or_layer`
       cases, the three `test_a_negative_cellid_is_refused*` cases and
       `test_a_negative_node_is_refused_on_a_disu_model`.
@@ -18360,3 +18363,25 @@ same day, which is the useful part of the result.
       period is read, as before.
       Revert check: the old `_periods` fails the four
       `test_a_feature_naming_no_stress_period_is_refused_by_name` cases.
+
+427. **A build refusal groups its complaints by what each is about, each group under its own heading and advice (2026-10-11).**
+      Every `ModelSpec.build` complaint shared one preamble -- "does not agree with the
+      grid ... cell numbers resolved on another mesh ... Re-declare the packages against
+      this grid" -- so a negative cellid on a DIS model, with no mesh and no move, was
+      told about another mesh. `_discretization_complaint_families` now returns them in
+      five families (`grid_identity.BUILD_COMPLAINT_FAMILIES`) and `_build_refusal` writes
+      one paragraph per family present: `mesh` (the DISV against the context grid, every
+      pin, a voided pin, `with_grid`'s move stamp), `domain` (the context domain's shape),
+      `cellid` (a negative part, or one past `nlay`/`ncpl`), `removed` (a cell the DISV's
+      idomain removed, list BCs, observations and array-form RCH/EVT) and `lake` (LAK
+      connections). **Judgment call:** a cellid PAST the grid goes with the negative one
+      under `cellid`, not under `mesh` -- it is the same question (no cell answers to it)
+      and has two causes, a typo or a larger mesh, which its closing names; the flat
+      `_discretization_complaints` list is kept for the callers that read it, in family
+      order. The headings changed, so an `except ValueError` matching the old preamble
+      text would no longer match; nothing in `src/`, `examples/` or the notebooks does.
+      Revert check: the old preamble fails the three non-`mesh`
+      `test_each_kind_of_build_refusal_says_what_it_is_about` cases,
+      `test_a_refusal_of_several_kinds_heads_each_group_in_turn`,
+      `test_a_bare_package_spec_is_checked_like_a_named_one` (both grids) and
+      `test_a_lake_resolved_on_the_cut_is_refused_against_an_uncut_disv[before-disv]`.
