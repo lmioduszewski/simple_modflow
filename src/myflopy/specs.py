@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from html import escape
 from importlib import import_module
+from numbers import Integral
 from pathlib import Path, PurePath
 from types import ModuleType
 from typing import Any, TypeAlias, TypeVar, cast
@@ -1675,12 +1676,16 @@ def _shape_label(value: Any) -> str | None:
 
 
 def _summarize_mapping(value: dict[Any, Any]) -> str:
-    """Return a compact summary for mappings, including stress-period data."""
+    """Return a compact summary for mappings, including stress-period data.
+
+    A period key is any integer -- a ``numpy.int64`` read out of an array too, which
+    ``isinstance(key, int)`` does not see (ledger 265's class) -- and never a ``bool``.
+    """
 
     keys = list(value.keys())
     if not keys:
         return "dict(len=0)"
-    if all(isinstance(key, int) for key in keys):
+    if all(isinstance(key, Integral) and not isinstance(key, bool) for key in keys):
         record_counts = [
             len(records)
             for records in value.values()

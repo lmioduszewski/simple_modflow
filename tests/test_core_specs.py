@@ -223,3 +223,17 @@ def test_exchange_rejects_unknown_model_names():
 
     with pytest.raises(KeyError, match="unknown models: transport"):
         simulation.build_flopy()
+
+
+def test_a_period_mapping_summarizes_as_period_data_whatever_integer_keys_it():
+    """`numpy.int64` period keys are periods too; a `bool` key is not one."""
+
+    import numpy as np
+
+    from myflopy.specs import _summarize_mapping
+
+    records = [[(0, 0), 1.0], [(0, 1), 2.0]]
+    expected = "period_data(periods=2, records=4, max_per_period=2)"
+    assert _summarize_mapping({0: records, 1: records}) == expected
+    assert _summarize_mapping({np.int64(0): records, np.int32(1): records}) == expected
+    assert _summarize_mapping({True: records}).startswith("dict(len=1")
