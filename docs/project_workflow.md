@@ -51,7 +51,7 @@ refined_hk = (
     project.simulation("baseline")
     .derive("refined_hk")
     .with_packages(mf.ref("npf/high_k"), slot="npf", on="flow")  # swap a package
-    .replace_grid("flow", mf.grid_ref("refined"))                # swap the grid
+    .with_grid(mf.grid_ref("refined"), on="flow")                # swap the grid
 )
 project.add_simulation(refined_hk)
 project.run("refined_hk", "refined_hk")
@@ -112,7 +112,8 @@ project.add_grid("refined", vor)                                # register when 
 ```
 
 To **refine an area**, build a second grid with the refinement, look at it, and
-register it under a new key — then swap to it with `replace_grid`.
+register it under a new key — then swap to it with
+`sim.with_grid(mf.grid_ref(key), on=model)`, and read `sim.move_report()` first.
 
 ### Grid definition tiers
 
