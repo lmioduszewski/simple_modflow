@@ -86,7 +86,6 @@ def _build_complex_triangle_grid(workspace: Path) -> tuple[TriangleGrid, dict[st
         optimization_iterations=2,
         damping=0.3,
         protected_labels=["stream_refine", "lake_refine"],
-        max_optimization_points=50,
         verbose=False,
     )
     return tri, report
@@ -353,3 +352,79 @@ def test_region_touching_domain_boundary_builds(tmp_path):
     )
     tri.build(verbose=False)
     assert VoronoiGridPlus(tri, crs="EPSG:2927").ncpl > 0
+
+
+def test_max_optimization_points_is_gone_everywhere(tmp_path):
+    # Ledger 410: it was recorded in the report and limited nothing -- the helper
+    # that would have applied it was never called -- so it is removed, not wired.
+    import inspect
+
+    import pytest
+
+    import myflopy as mf
+
+    for method in (TriangleGrid.optimize_seeds, TriangleGrid.build_optimized):
+        assert "max_optimization_points" not in inspect.signature(method).parameters
+    with pytest.raises(TypeError, match="max_optimization_points"):
+        mf.GridSpec.voronoi(
+            boundary=mf.ShapeSource(tmp_path / "domain.gpkg"), max_optimization_points=10
+        )
+
+    tri = TriangleGrid(model_ws=str(tmp_path / "ws"), angle=30)
+    tri.set_domain_rectangle(x_dist=300, y_dist=200, max_area=2000)
+    report = tri.build_mesh(profile="fast")
+    assert "max_optimization_points" not in report["optimization"]
+    with pytest.raises(TypeError, match="max_optimization_points"):
+        tri.build_mesh(profile="fast", max_optimization_points=10)
+
+
+def _optimizer_statuses_assigned():
+    """Every ``status`` string literal ``optimize_seeds`` can put in its report."""
+
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(TriangleGrid.optimize_seeds)))
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.slice, ast.Constant)
+                    and target.slice.value == "status"
+                ):
+                    found.add(node.value.value)
+        if isinstance(node, ast.Dict):
+            for key, value in zip(node.keys, node.values, strict=True):
+                if isinstance(key, ast.Constant) and key.value == "status" and isinstance(value, ast.Constant):
+                    found.add(value.value)
+    return found
+
+
+def test_every_status_the_optimizer_can_report_is_one_it_documents():
+    # Ledger 410: "converged_small_move" was assigned behind a test no run could
+    # pass (a move under min_move is never made, so max_move >= min_move whenever it
+    # ran). The report's status is the reason the loop stopped; these four are all.
+    documented = {"applied", "converged_no_move", "fallback_original_mesh", "not_attempted"}
+    assert _optimizer_statuses_assigned() == documented
+    doc = TriangleGrid.optimize_seeds.__doc__
+    assert all(f'``"{status}"``' in doc for status in documented)
+
+
+def test_the_optimizer_reports_why_it_stopped(tmp_path):
+    def grid(name):
+        tri = TriangleGrid(model_ws=str(tmp_path / name), angle=30)
+        tri.set_domain_rectangle(x_dist=300, y_dist=200, max_area=2000)
+        tri.build()
+        return tri
+
+    report = grid("still").optimize_seeds(iterations=3, min_move=1.0e6)
+    assert (report["status"], report["iterations_run"]) == ("converged_no_move", 0)
+
+    report = grid("ran").optimize_seeds(iterations=1)
+    assert (report["status"], report["iterations_run"]) == ("applied", 1)
+
+    report = grid("none").optimize_seeds(iterations=0)
+    assert (report["status"], report["iterations_run"]) == ("not_attempted", 0)

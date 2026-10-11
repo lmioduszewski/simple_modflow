@@ -2521,20 +2521,6 @@ class TriangleGrid(Triangle):
                 all_points.append(point)
         return accepted
 
-    @staticmethod
-    def _limit_points(
-        points: list[tuple[float, float]],
-        *,
-        max_points: int,
-    ) -> list[tuple[float, float]]:
-        """Downsample to at most ``max_points`` points by even index selection (no-op if under)."""
-
-        if max_points <= 0 or len(points) <= max_points:
-            return points
-
-        indices = np.linspace(0, len(points) - 1, max_points, dtype=int)
-        return [points[int(index)] for index in indices]
-
     def preview_regions(self) -> gpd.GeoDataFrame:
         """Return a GeoDataFrame preview of prepared region polygons."""
         prepared = self.prepare()
@@ -2935,7 +2921,6 @@ class TriangleGrid(Triangle):
         damping: float = 0.35,
         min_move: float = 1e-3,
         protected_labels: list[str] | None = None,
-        max_optimization_points: int = 0,
         verbose: bool = False,
     ):
         """Run the experimental constrained CVT/Lloyd optimization loop.
@@ -2977,9 +2962,6 @@ class TriangleGrid(Triangle):
             whether or not it is protected (see above), so this adds only those
             near a ring but not on it. A label matching no region protects
             nothing, silently. Default ``None``, no region protected.
-        max_optimization_points : int, optional
-            Recorded in the returned report only; it does not limit the number of
-            relaxed points. Default ``0``.
         verbose : bool, optional
             Print progress for each round, and the Triangle program's output for
             each rebuild. Default ``False``.
@@ -2987,10 +2969,18 @@ class TriangleGrid(Triangle):
         Returns
         -------
         dict
-            The optimization report: ``status`` (for example ``"applied"``,
-            ``"converged_no_move"``, ``"fallback_original_mesh"`` or
-            ``"not_attempted"``), ``iterations_run``, ``max_move``,
-            ``moved_vertex_count``, ``rejection_reasons`` and the settings used.
+            The optimization report: ``status``, ``iterations_run`` (rounds
+            accepted), ``max_move``, ``moved_vertex_count``,
+            ``rejection_reasons`` and the settings used. ``status`` says why
+            the loop stopped, and is one of four: ``"applied"`` -- every
+            requested round ran and was accepted; ``"converged_no_move"`` --
+            it stopped early because no free vertex would move by
+            ``min_move`` or more (the rounds before it, if any, are kept);
+            ``"fallback_original_mesh"`` -- a round was rejected, or Triangle
+            or the Voronoi build failed (``rejection_reasons`` says which), and
+            the last ACCEPTED mesh was restored, which is the original only
+            when no round had been accepted; ``"not_attempted"`` --
+            ``iterations=0``.
         """
         if not hasattr(self, "node") or not hasattr(self, "ele"):
             self._build_triangle_mesh(verbose=verbose)
@@ -3045,7 +3035,6 @@ class TriangleGrid(Triangle):
                 "max_move": 0.0,
                 "candidate_point_count": 0,
                 "optimization_point_count": 0,
-                "max_optimization_points": int(max_optimization_points),
                 "attempts": 0,
                 "status": "fallback_original_mesh",
                 "baseline_voronoi_status": "error",
@@ -3154,10 +3143,6 @@ class TriangleGrid(Triangle):
                     f"tiny={quality_after['tiny_triangle_count']}"
                 )
 
-            if result.max_move < min_move:
-                accepted_report["status"] = "converged_small_move"
-                break
-
         self._last_optimization_report = {
             "method": "constrained_cvt_lloyd",
             "iterations_requested": int(iterations),
@@ -3169,7 +3154,6 @@ class TriangleGrid(Triangle):
             "max_move": float(accepted_report["max_move"]),
             "candidate_point_count": int(0 if self._nodes is None else self._nodes.shape[0]),
             "optimization_point_count": int(len(self._optimization_points)),
-            "max_optimization_points": int(max_optimization_points),
             "attempts": int(attempts),
             "status": str(accepted_report["status"]),
             "baseline_voronoi_status": str(quality_before.get("voronoi_status", "unknown")),
@@ -3198,7 +3182,6 @@ class TriangleGrid(Triangle):
         damping: float = 0.35,
         min_move: float = 1e-3,
         protected_labels: list[str] | None = None,
-        max_optimization_points: int = 250,
         verbose: bool = False,
     ):
         """Build the mesh and then run the experimental optimization pass.
@@ -3246,9 +3229,6 @@ class TriangleGrid(Triangle):
         protected_labels : list of str, optional
             Prepared-region labels to protect during optimization; see
             :meth:`optimize_seeds`. Default ``None``.
-        max_optimization_points : int, optional
-            Recorded in the optimization report only; it limits nothing (see
-            :meth:`optimize_seeds`). Default ``250``.
         verbose : bool, optional
             Print optimization progress and the Triangle program's output.
             Default ``False``.
@@ -3278,7 +3258,6 @@ class TriangleGrid(Triangle):
             damping=damping,
             min_move=min_move,
             protected_labels=protected_labels,
-            max_optimization_points=max_optimization_points,
             verbose=verbose,
         )
         quality_report = triangle_quality_report(self, include_voronoi=True, validate_voronoi=True)
@@ -3339,8 +3318,7 @@ class TriangleGrid(Triangle):
             ``cleanup``, ``optimization_iterations``, the cleanup fields
             (``snap_tolerance``, ``simplify_tolerance``, ``min_feature_area``,
             ``target_segment_length``, ``resample_domain_boundary``,
-            ``resample_region_sources``), ``damping``, ``min_move``, and
-            :meth:`build_optimized`'s ``max_optimization_points``. In the
+            ``resample_region_sources``), ``damping`` and ``min_move``. In the
             optimized mode they are forwarded to :meth:`build_optimized`, which
             raises ``TypeError`` on any other name. Without optimization only the
             cleanup fields and ``cleanup`` act, and every other name -- a typo

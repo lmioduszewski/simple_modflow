@@ -3244,7 +3244,6 @@ class GridSpec:
             elif key in {
                 "cleanup",
                 "damping",
-                "max_optimization_points",
                 "min_feature_area",
                 "min_move",
                 "optimization_iterations",

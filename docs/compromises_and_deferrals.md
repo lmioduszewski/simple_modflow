@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 409 entries (414 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 410 entries (415 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 410 | `max_optimization_points` is removed from the mesh optimizer and `GridSpec.voronoi`, and the optimizer's de... | 2026-10-11 |
 | 409 | Declaring the domain again on one `TriangleGrid` replaces the previous domain's background sizing region;... | 2026-10-11 |
 | 408 | A global `maximum_area` on `TriangleGrid` is a cap ON TOP of every refinement region's and the domain's own... | 2026-10-11 |
 | 407 | `LayerSurfaces.to_disv(attach=True)` writes the grid only once the spec is built | 2026-10-11 |
@@ -17975,3 +17976,24 @@ same day, which is the useful part of the result.
       Revert check: keeping the old region fails
       `test_re_declaring_the_domain_replaces_its_background_sizing_region` and
       `test_re_declaring_the_domain_without_max_area_drops_the_old_background`.
+
+410. **`max_optimization_points` is removed from the mesh optimizer and `GridSpec.voronoi`, and the optimizer's dead `"converged_small_move"` status with it (2026-10-11).**
+      The parameter (`optimize_seeds`, default 0; `build_optimized`, default 250; routed
+      by `GridSpec.voronoi` and `build_mesh(**overrides)`) was only echoed into the
+      report: `_limit_points`, which would have applied it, was never called.
+      **Judgment call: removed, not wired.** Wiring it at its documented default would
+      have thinned every `build_mesh` mesh with more than 250 free vertices (842 on a
+      1000 x 1000 test domain under `"balanced"`) by even-index selection over vertex ids
+      -- a spatially arbitrary cut nobody had measured -- so it would have moved every
+      default optimized mesh for a knob with no case for it. Removed, every default mesh
+      is byte-identical by construction (measured on all five profiles: same triangle
+      count, same vertices). `GridSpec.voronoi(max_optimization_points=)` now raises the
+      unknown-option `TypeError`, as does `build_mesh(..., max_optimization_points=)`;
+      a `mesh_options` dict carrying the key is filtered at resolve, as any unknown key
+      there already was. `"converged_small_move"` was assigned behind `max_move <
+      min_move`, which no run reaches -- a move under `min_move` is never made, so
+      `max_move >= min_move` whenever the test ran. The report's `status` is the reason
+      the loop stopped, and the four it can be are documented on `optimize_seeds`.
+      Revert check: restoring the parameter fails
+      `test_max_optimization_points_is_gone_everywhere`; restoring the branch fails
+      `test_every_status_the_optimizer_can_report_is_one_it_documents`.
