@@ -454,6 +454,44 @@ def _repair_partition_contiguity(model, mask) -> np.ndarray:
     raise ParallelCompatibilityError("Partition contiguity repair did not converge.")
 
 
+def _same_directory(a, b) -> bool:
+    """Whether two paths name one directory (resolved; ``False`` for ``None``)."""
+
+    if a is None or b is None:
+        return False
+    return Path(a).resolve() == Path(b).resolve()
+
+
+def _refuse_the_source_directory(source, workspace: Path) -> None:
+    """Refuse a split workspace that is the source simulation's own directory.
+
+    Writing the split simulation there puts its ``mfsim.nam`` over the source's
+    (ledger 398). A source with no ``.sim`` (a test double) is not checked.
+    """
+
+    simulation = getattr(source, "sim", None)
+    source_path = getattr(simulation, "sim_path", None)
+    if _same_directory(source_path, workspace):
+        raise ValueError(
+            f"The split workspace {workspace} is the source simulation's own directory; "
+            "writing the split simulation there would replace the source's mfsim.nam. "
+            "Give the split its own workspace."
+        )
+
+
+def _raise_on_failure(run: ParallelSplitRun, label: str, outcome) -> None:
+    """Raise ``RuntimeError`` naming the workspace when MF6's ``(success, report)`` says it failed."""
+
+    success, report = outcome
+    if success:
+        return
+    tail = "\n".join(str(line) for line in list(report or [])[-30:])
+    raise RuntimeError(
+        f"The {label} run of the split simulation in {run.workspace} did not terminate "
+        f"normally.\n{tail}"
+    )
+
+
 class ParallelCompatibilityError(ValueError):
     """Raised when a simulation's topology can't be split for parallel solving.
 
@@ -655,7 +693,10 @@ class ParallelSplitRun:
         reconstruction mapping in, pointing the split simulation at it. Until
         :meth:`write` has run, the simulation keeps its own path -- for one made
         by :meth:`ParallelModelWorkflow.split_model`, the SOURCE simulation's
-        directory, where FloPy's splitter leaves it.
+        directory, where FloPy's splitter leaves it -- so :meth:`run_serial` and
+        :meth:`run` refuse ``write=False`` until then. The source simulation's own
+        directory is refused (``ValueError``): writing there would put the split
+        ``mfsim.nam`` over the source's.
     """
 
     def __init__(self, source, splitter, simulation, mask, workspace: str | Path):
@@ -666,7 +707,28 @@ class ParallelSplitRun:
         self.simulation = simulation
         self.mask = np.asarray(mask, dtype=int)
         self.workspace = Path(workspace)
+        _refuse_the_source_directory(source, self.workspace)
         self.results = ParallelSplitResults(self)
+
+    def _require_written(self, verb: str) -> None:
+        """Refuse to run the split simulation from anywhere but :attr:`workspace`.
+
+        FloPy's splitter builds the split simulation with the SOURCE simulation's
+        path, and only :meth:`write` moves it; run before that, FloPy runs MF6 on
+        whatever ``mfsim.nam`` sits in the source directory -- the source model,
+        whose outputs it rewrites (ledger 398).
+        """
+
+        current = getattr(self.simulation, "sim_path", None)
+        if current is not None and _same_directory(current, self.workspace):
+            return
+        raise RuntimeError(
+            f"{verb}(write=False) runs the split simulation from where it was written, "
+            f"and it has not been written to {self.workspace}: its path is still "
+            f"{current}, where FloPy's splitter left it (the source simulation's "
+            "directory), so MF6 would run the SOURCE model there and overwrite its "
+            f"outputs. Pass write=True, or call .write() first."
+        )
 
     @property
     def partition_ids(self) -> tuple[int, ...]:
@@ -875,9 +937,8 @@ class ParallelSplitRun:
         ----------
         write : bool, default True
             Call :meth:`write` (with its default ``save_mapping=True``) first.
-            ``False`` runs MF6 on whatever is already in the simulation's current
-            path: :attr:`workspace` once :meth:`write` has run, the source
-            simulation's directory before that (see ``workspace``).
+            ``False`` runs the files already in :attr:`workspace`, and is refused
+            (``RuntimeError``) until :meth:`write` has put them there.
         **run_kwargs
             Forwarded to FloPy's ``MFSimulation.run_simulation`` (``silent``,
             ``report``, ``pause``, ``cargs``, ...), with ``silent=False`` and
@@ -888,10 +949,19 @@ class ParallelSplitRun:
         tuple of (bool, list of str)
             FloPy's ``(success, report lines)``; a failed run is returned, not
             raised.
+
+        Raises
+        ------
+        RuntimeError
+            With ``write=False`` before :meth:`write` has run, when the split
+            simulation's path is still the source simulation's directory and MF6
+            would run the source model there.
         """
 
         if write:
             self.write()
+        else:
+            self._require_written("run_serial")
         run_kwargs.setdefault("silent", False)
         run_kwargs.setdefault("report", True)
         return self.simulation.run_simulation(**run_kwargs)
@@ -909,8 +979,9 @@ class ParallelSplitRun:
             is raised before anything is written.
         write : bool, default True
             Call :meth:`write` (with its default ``save_mapping=True``) first.
-            ``False`` runs whatever is already in the simulation's current path, as
-            in :meth:`run_serial`.
+            ``False`` runs the files already in :attr:`workspace`, and is refused
+            (``RuntimeError``) until :meth:`write` has put them there, as in
+            :meth:`run_serial`.
         **run_kwargs
             Forwarded to FloPy's ``MFSimulation.run_simulation`` (``silent``,
             ``report``, ...), with ``silent=False`` and ``report=True`` unless
@@ -921,6 +992,12 @@ class ParallelSplitRun:
         tuple of (bool, list of str)
             FloPy's ``(success, report lines)``; a failed run is returned, not
             raised.
+
+        Raises
+        ------
+        RuntimeError
+            When ``processors > 1`` and ``mf6`` or ``mpiexec`` is missing; or with
+            ``write=False`` before :meth:`write` has run (see :meth:`run_serial`).
         """
 
         if processors is None or int(processors) <= 1:
@@ -932,6 +1009,8 @@ class ParallelSplitRun:
             )
         if write:
             self.write()
+        else:
+            self._require_written("run")
         run_kwargs.setdefault("silent", False)
         run_kwargs.setdefault("report", True)
         with _parallel_execution_environment(self.simulation):
@@ -1122,7 +1201,9 @@ class ParallelModelWorkflow:
         ----------
         workspace : str or pathlib.Path
             Directory of the returned :class:`ParallelSplitRun`: where the split
-            simulation is written (now, when ``write=True``) and run from.
+            simulation is written (now, when ``write=True``) and run from. The
+            source simulation's own directory is refused (``ValueError``) before
+            anything is split.
         nparts : int, optional
             Number of subdomains for automatic partitioning with METIS (needs
             ``pymetis``). Required, and at least 2, when ``mask`` is ``None``;
@@ -1150,7 +1231,9 @@ class ParallelModelWorkflow:
         write : bool, default True
             Write the split simulation to ``workspace`` before returning
             (:meth:`ParallelSplitRun.write`). ``False`` leaves it in memory, its
-            path still the source simulation's directory until it is written.
+            path still the source simulation's directory until it is written, and
+            the returned run's ``run``/``run_serial`` refuse ``write=False`` until
+            then.
         save_mapping : bool, default True
             With ``write=True``, also save FloPy's node mapping
             (``node_mapping.hdf5``, needs ``h5py``) so results can be reconstructed
@@ -1178,7 +1261,8 @@ class ParallelModelWorkflow:
         Raises
         ------
         ValueError
-            When neither ``mask`` nor an ``nparts`` of at least 2 is given.
+            When neither ``mask`` nor an ``nparts`` of at least 2 is given, or
+            ``workspace`` is the source simulation's directory.
         ImportError
             When automatic partitioning is asked for and ``pymetis`` is missing.
         ParallelCompatibilityError
@@ -1191,6 +1275,7 @@ class ParallelModelWorkflow:
         from flopy.mf6.utils import Mf6Splitter
 
         topology = self.topology()
+        _refuse_the_source_directory(self.model, Path(workspace))
         if mask is None:
             if nparts is None or int(nparts) < 2:
                 raise ValueError("Provide a partition mask or nparts greater than one.")
@@ -1287,14 +1372,12 @@ class ParallelModelWorkflow:
         When multiple processors are requested, ``validate_serial=True`` first
         runs the split simulation without MPI before launching the parallel run.
 
-        The runs are made with ``write=False``: they use the files
-        :meth:`split_model` wrote (its default ``write=True``). Passing
-        ``write=False`` here writes nothing, and the runs then execute in the source
-        simulation's directory, where FloPy's splitter leaves the split
-        simulation's path. MF6's
-        ``(success, report)`` from each run is neither returned nor checked, so a
-        failed run returns normally; to get the verdict, call :meth:`split_model`
-        and then :meth:`ParallelSplitRun.run`, which return it.
+        The split simulation is written to ``workspace`` (:meth:`split_model`'s
+        default ``write=True``) and run from there; ``write=False`` is refused,
+        since it would leave nothing there to run. A run MF6 does not finish
+        normally raises ``RuntimeError`` with the tail of its report; to receive a
+        failure as a value instead, call :meth:`split_model` and then
+        :meth:`ParallelSplitRun.run`, which return ``(success, report)``.
 
         Parameters
         ----------
@@ -1310,21 +1393,42 @@ class ParallelModelWorkflow:
         **split_kwargs
             Forwarded unchanged to :meth:`split_model`: ``workspace`` (required),
             ``nparts``, ``mask``, ``active_only``, ``seed``, ``contiguous``,
-            ``verbose``, ``write``, ``save_mapping``,
-            ``preserve_source_observations`` and ``preserve_lakes``. Any other
-            keyword raises ``TypeError``.
+            ``verbose``, ``save_mapping``, ``preserve_source_observations`` and
+            ``preserve_lakes``. ``write=True`` is accepted and changes nothing;
+            ``write=False`` raises ``ValueError``. Any other keyword raises
+            ``TypeError``.
 
         Returns
         -------
         ParallelSplitRun
-            The split run, after it was run.
+            The split run, after it ran to normal termination.
+
+        Raises
+        ------
+        ValueError
+            On ``write=False``, before anything is split.
+        RuntimeError
+            When the serial or the MPI run does not terminate normally (the serial
+            validation run's failure stops the MPI run from starting), or as
+            :meth:`ParallelSplitRun.run` raises.
         """
 
+        if not split_kwargs.get("write", True):
+            raise ValueError(
+                "ParallelModelWorkflow.run() runs the split simulation from `workspace`, "
+                "so it writes it there; write=False would leave nothing there to run. "
+                "Drop write=False, or call split_model(write=False) and run the result "
+                "with .run(write=True)."
+            )
         prepared = self.split_model(**split_kwargs)
         if processors is None or int(processors) <= 1:
-            prepared.run_serial(write=False)
+            _raise_on_failure(prepared, "serial", prepared.run_serial(write=False))
             return prepared
         if validate_serial:
-            prepared.run_serial(write=False)
-        prepared.run(processors=int(processors), write=False)
+            _raise_on_failure(prepared, "serial validation", prepared.run_serial(write=False))
+        _raise_on_failure(
+            prepared,
+            f"{int(processors)}-process MPI",
+            prepared.run(processors=int(processors), write=False),
+        )
         return prepared

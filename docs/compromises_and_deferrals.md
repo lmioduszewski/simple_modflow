@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 397 entries (402 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 398 entries (403 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 398 | A split simulation runs only from its own workspace, the source simulation's directory is never a split wor... | 2026-10-11 |
 | 397 | A PRT simulation's TDIS names the flow model's time unit, or none when the flow model names none | 2026-10-11 |
 | 396 | Two `Spread`s of one call with different `mode`s are refused at the call, naming both | 2026-10-11 |
 | 395 | An explicit `min_above_bottom=` on a model with no layer elevations RAISES, and a RIV stage below its... | 2026-10-11 |
@@ -15367,7 +15368,9 @@ same day, which is the useful part of the result.
       check, a plain fix, has none).
       ~~`PRTProject` documented as writing `TIME_UNITS none`, which MF6 refuses, off a flow
       TDIS naming no unit~~ -- the PRT TDIS names none either, entry rewritten (ledger
-      397).
+      397). ~~`ParallelModelWorkflow.run` documented as running the SOURCE model in
+      its own directory on `write=False` and as returning normally from a failed run~~ --
+      refused and raised, entries rewritten (ledger 398).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17758,3 +17761,27 @@ same day, which is the useful part of the result.
       travel times wrong. The pathline hover already shows no unit for one it cannot read.
       Revert check: `test_prt_runs_off_a_flow_model_whose_tdis_names_no_time_unit`, a real
       GWF then PRT run.
+
+398. **A split simulation runs only from its own workspace, the source simulation's directory is never a split workspace, and `ParallelModelWorkflow.run` raises on a run MF6 did not finish (2026-10-11).**
+      FloPy's splitter builds the split simulation with the SOURCE simulation's path and
+      only `ParallelSplitRun.write` moves it, so `run(write=False)` -- and a split run's
+      `run_serial`/`run(write=False)` before `write()` -- ran MF6 on the source's
+      `mfsim.nam` in the source's directory: the source model, its `.hds`/`.cbc`/`.lst`/
+      `mfsim.lst` rewritten, no part of the split run, and the workflow returned normally
+      (`docs/reproducers/split_run_before_write.py`).
+      **Judgment call: refuse, not "run it from where it is"** -- where it is IS the source
+      directory. `ParallelModelWorkflow.run(write=False)` is a `ValueError` before
+      anything is split (the one call writes and runs, so there is nothing else for it to
+      mean); a split run's `write=False` is a `RuntimeError` until its path is its
+      `workspace`. A `workspace` that IS the source directory is refused too, at
+      `split_model` and `ParallelSplitRun()`: writing there replaced the source's
+      `mfsim.nam`.
+      **Judgment call: the workflow RAISES on failure, the split run still RETURNS it** --
+      `ParallelModelWorkflow.run` returns the `ParallelSplitRun`, so a verdict has nowhere
+      to go but an exception (`RuntimeError` naming the workspace and the report's last 30
+      lines, as `PRTProject.run` does); a failed serial validation stops the MPI run from
+      starting. `ParallelSplitRun.run`/`run_serial` keep returning `(success, report)`.
+      Revert check: `test_a_split_run_never_runs_the_source_model_in_its_own_directory`,
+      `test_the_split_workspace_cannot_be_the_source_directory`,
+      `test_a_failed_split_run_raises_from_the_workflow` (each a real MF6 run) and
+      `test_the_workflow_stops_before_mpi_when_serial_validation_fails`.

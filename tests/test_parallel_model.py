@@ -35,6 +35,10 @@ class _FakeSimulation:
     def set_sim_path(self, path):
         self.path = Path(path)
 
+    @property
+    def sim_path(self):
+        return self.path
+
 
 class _FakeSplitter:
     calls = []
@@ -163,6 +167,12 @@ def test_parallel_run_requires_mpi_only_for_parallel_execution(monkeypatch, tmp_
         tmp_path / "split",
     )
 
+    # Nothing written yet: the split simulation's path is not the workspace, so
+    # write=False is refused rather than running whatever sits there (398).
+    with pytest.raises(RuntimeError, match=r"has not been written.*write=True"):
+        run.run_serial(write=False)
+    assert calls == []
+    run.write(save_mapping=False)
     assert run.run_serial(write=False)[0] is True
     assert calls[-1][1].get("processors") is None
     monkeypatch.setattr(
@@ -322,6 +332,148 @@ def test_unified_split_builds_real_coupled_gwf_gwt_partitions(tmp_path):
     assert exchange_types.count("GWF6-GWF6") == 1
     assert exchange_types.count("GWT6-GWT6") == 1
     assert exchange_types.count("GWF6-GWT6") == 2
+
+
+def _structured_source(workspace: Path, *, nrow=3, ncol=6, converges=True, run=True):
+    """A one-layer DIS GWF between two CHDs, written and (optionally) run in ``workspace``."""
+
+    sim = flopy.mf6.MFSimulation(sim_name="src", sim_ws=workspace, exe_name="mf6")
+    flopy.mf6.ModflowTdis(sim, nper=1, perioddata=[(1.0, 1, 1.0)])
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="gwf", save_flows=True)
+    if converges:
+        ims = flopy.mf6.ModflowIms(sim, complexity="SIMPLE")
+    else:
+        # one outer and one inner iteration to an unreachable closure: MF6 stops on
+        # "Simulation convergence failure" and reports premature termination
+        ims = flopy.mf6.ModflowIms(
+            sim,
+            outer_maximum=1,
+            inner_maximum=1,
+            outer_dvclose=1.0e-12,
+            inner_dvclose=1.0e-12,
+            linear_acceleration="BICGSTAB",
+        )
+    sim.register_ims_package(ims, [gwf.name])
+    flopy.mf6.ModflowGwfdis(gwf, nlay=1, nrow=nrow, ncol=ncol, delr=1.0, delc=1.0, top=10.0, botm=0.0)
+    flopy.mf6.ModflowGwfic(gwf, strt=5.0)
+    flopy.mf6.ModflowGwfnpf(gwf, k=1.0)
+    flopy.mf6.ModflowGwfchd(
+        gwf,
+        stress_period_data=[((0, 0, 0), 6.0), ((0, nrow - 1, ncol - 1), 4.0)],
+    )
+    flopy.mf6.ModflowGwfoc(
+        gwf,
+        head_filerecord="gwf.hds",
+        budget_filerecord="gwf.cbc",
+        saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")],
+    )
+    if run:
+        sim.write_simulation(silent=True)
+        success, report = sim.run_simulation(silent=True, report=True)
+        assert success, "\n".join(report[-20:])
+    return SimpleNamespace(sim=sim, gwf=gwf)
+
+
+def _directory_state(directory: Path) -> dict[str, bytes]:
+    """Every file's bytes plus its modification time, so a rewrite with equal bytes shows."""
+
+    return {
+        path.name: (path.stat().st_mtime_ns, path.read_bytes())
+        for path in sorted(directory.iterdir())
+        if path.is_file()
+    }
+
+
+def test_a_split_run_never_runs_the_source_model_in_its_own_directory(tmp_path):
+    """write=False before anything is written is refused, and the source is untouched (398).
+
+    FloPy's splitter builds the split simulation with the SOURCE simulation's path;
+    run there, MF6 ran the source model's mfsim.nam and rewrote its .hds, .cbc,
+    .lst and mfsim.lst, and ParallelModelWorkflow.run returned as if the split ran.
+    """
+
+    if shutil.which("mf6") is None:
+        pytest.skip("mf6 executable is required")
+    source = _structured_source(tmp_path / "source")
+    before = _directory_state(tmp_path / "source")
+    mask = np.array([[0, 0, 0, 1, 1, 1]] * 3)
+    workflow = ParallelModelWorkflow(source)
+
+    with pytest.raises(ValueError, match=r"write=False would leave nothing"):
+        workflow.run(workspace=tmp_path / "never", mask=mask, write=False)
+    assert not (tmp_path / "never").exists()
+
+    prepared = workflow.split_model(workspace=tmp_path / "split", mask=mask, write=False)
+    with pytest.raises(RuntimeError, match=r"run_serial\(write=False\).*SOURCE model"):
+        prepared.run_serial(write=False, silent=True)
+    with pytest.raises(RuntimeError, match=r"write=False\).*has not been written"):
+        prepared.run(processors=1, write=False, silent=True)
+    assert _directory_state(tmp_path / "source") == before
+
+    # written, the same object runs from its own workspace
+    success, _ = prepared.run_serial(silent=True)
+    assert success
+    assert (tmp_path / "split" / "mfsim.lst").exists()
+    assert _directory_state(tmp_path / "source") == before
+
+    # and the one-call workflow runs the SPLIT model, from its workspace
+    ran = workflow.run(workspace=tmp_path / "split_run", mask=mask)
+    assert (tmp_path / "split_run" / "mfsim.lst").exists()
+    assert ran.compare_heads()["max_absolute_error"].iloc[0] < 1.0e-5
+    assert _directory_state(tmp_path / "source") == before
+
+
+def test_the_split_workspace_cannot_be_the_source_directory(tmp_path):
+    """Writing the split there would replace the source's mfsim.nam (398)."""
+
+    source = _structured_source(tmp_path / "source", run=False)
+    source.sim.write_simulation(silent=True)
+    before = _directory_state(tmp_path / "source")
+    with pytest.raises(ValueError, match="source simulation's own directory"):
+        ParallelModelWorkflow(source).split_model(
+            workspace=tmp_path / "source" / ".." / "source",
+            mask=np.array([[0, 0, 0, 1, 1, 1]] * 3),
+        )
+    with pytest.raises(ValueError, match="source simulation's own directory"):
+        ParallelSplitRun(source, SimpleNamespace(_fdigits=1), _FakeSimulation([]), np.zeros(18), tmp_path / "source")
+    assert _directory_state(tmp_path / "source") == before
+
+
+def test_a_failed_split_run_raises_from_the_workflow(tmp_path):
+    """MF6's verdict is no longer discarded: premature termination raises, naming the workspace."""
+
+    if shutil.which("mf6") is None:
+        pytest.skip("mf6 executable is required")
+    source = _structured_source(tmp_path / "source", converges=False, run=False)
+    mask = np.array([[0, 0, 0, 1, 1, 1]] * 3)
+    with pytest.raises(RuntimeError, match=r"serial run of the split simulation in .*split.* did not terminate normally"):
+        ParallelModelWorkflow(source).run(workspace=tmp_path / "split", mask=mask)
+    # the run itself still hands the verdict back as a value
+    prepared = ParallelModelWorkflow(source).split_model(workspace=tmp_path / "split2", mask=mask)
+    success, report = prepared.run_serial(silent=True)
+    assert not success
+    assert any("convergence failure" in line.lower() for line in report)
+
+
+def test_the_workflow_stops_before_mpi_when_serial_validation_fails(monkeypatch, tmp_path):
+    """validate_serial's failure stops the MPI run from starting."""
+
+    workflow = ParallelModelWorkflow(_source([_FakeModel("gwf", "gwf6")]))
+    calls = []
+    prepared = SimpleNamespace(
+        workspace=tmp_path / "run",
+        run_serial=lambda **kwargs: calls.append("serial") or (False, ["boom"]),
+        run=lambda **kwargs: calls.append("mpi") or (True, []),
+    )
+    monkeypatch.setattr(workflow, "split_model", lambda **_kwargs: prepared)
+    with pytest.raises(RuntimeError, match=r"(?s)serial validation run.*boom"):
+        workflow.run(processors=2, workspace=tmp_path / "run", mask=np.array([0, 1]))
+    assert calls == ["serial"]
+
+    prepared.run_serial = lambda **kwargs: (True, [])
+    prepared.run = lambda **kwargs: (False, ["mpi died"])
+    with pytest.raises(RuntimeError, match=r"(?s)2-process MPI run.*mpi died"):
+        workflow.run(processors=2, workspace=tmp_path / "run", mask=np.array([0, 1]))
 
 
 def test_partition_validation_rejects_disconnected_custom_mask(tmp_path):
