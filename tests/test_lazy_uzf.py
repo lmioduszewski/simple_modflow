@@ -269,3 +269,19 @@ def test_a_lazy_uzf_needs_no_GRID_only_a_domain(meshes, tmp_path, context):
         built = sim.build(tmp_path / f"nogrid_{context}")
     rows = built.simulation.get_model("m").get_package("uzf").packagedata.get_data()
     assert len(rows) == small.ncpl * 3
+
+
+@pytest.mark.parametrize("lazy", [True, False], ids=["lazy", "eager"])
+def test_a_numpy_period_key_is_a_period(meshes, tmp_path, lazy):
+    """A numpy period key was read as a surface-cell mapping (ledgers 265, 379)."""
+
+    small, _ = meshes
+    finf = {np.int64(0): 1.0e-3, np.int64(1): 2.0e-3}
+    kwargs = {} if lazy else {
+        "context": ModelContext(grid=small, domain=np.ones((3, small.ncpl), dtype=int))
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        built = _model(small, mf.uzf(**{**ARGS, "finf": finf}, **kwargs)).build(tmp_path / "w")
+    period = built.simulation.get_model("m").get_package("uzf").perioddata.get_data()[1]
+    assert {float(row[1]) for row in period} == {2.0e-3}

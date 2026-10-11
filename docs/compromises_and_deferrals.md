@@ -17404,10 +17404,15 @@ same day, which is the useful part of the result.
       per-cell is now "not a string, and a `Sequence` or `np.ndim(value) > 0`" -- so a 0-d
       array stays a scalar (it digests and round-trips as one) and a DataFrame is refused.
       A `{np.int64(0): ...}` period mapping was refused as cell-keyed (`np.int64` is not
-      an `int`, ledger 265); it is a period now, and digests equal to `{0: ...}`.
+      an `int`, ledger 265); it is a period now, and digests equal to `{0: ...}`. The
+      BUILDERS read it the same way (`_ArealBuilder._period_keys`, `UZFBuilder.
+      _period_values`): eagerly it died "recharge is missing cell (0, 2)" at build, and
+      accepting it at the lazy call alone would have moved that failure to build.
       Revert check: the old predicate fails both `test_a_per_cell_ARRAY_is_refused_like_a_list`
       cases, four `test_cell_identity_the_caller_chose_is_refused_in_a_lazy_recipe` cases
-      and the `np.int64`-key case of `test_the_movable_shapes_are_accepted`.
+      and the `np.int64`-key case of `test_the_movable_shapes_are_accepted`; the builders'
+      old key test fails both cases of `test_a_numpy_period_key_is_a_period_at_build` and
+      of `test_lazy_uzf.py::test_a_numpy_period_key_is_a_period`.
 
 380. **A lazy UZF or array-form RCH/EVT builds on a context holding a grid and no domain, every cell active as in MF6 (2026-10-11).**
       `_lazy_resolution_context` wrote the all-active domain (no context domain, no

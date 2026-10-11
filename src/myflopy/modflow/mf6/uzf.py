@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from numbers import Real
+from numbers import Integral, Real
 from typing import Any
 
 import numpy as np
@@ -354,7 +354,10 @@ class UZFBuilder:
     def _period_values(self, value: Any, *, name: str, default: Any = 0.0) -> dict[int, list[Any]]:
         """Normalize transient input to every stress period and surface cell."""
 
-        if isinstance(value, Mapping) and all(isinstance(key, int) for key in value):
+        # `Integral`, so a numpy period key is a period too (ledger 379).
+        if isinstance(value, Mapping) and all(
+            isinstance(key, Integral) and not isinstance(key, bool) for key in value
+        ):
             bad_periods = sorted(set(value) - set(range(self.nper)))
             if bad_periods:
                 raise ValueError(f"{name} contains periods outside the simulation: {bad_periods}")

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from numbers import Real
+from numbers import Integral, Real
 from typing import Any
 
 import numpy as np
@@ -148,7 +148,13 @@ class _ArealBuilder:
     def _period_keys(value: Mapping[Any, Any], nper: int) -> bool:
         """Whether a mapping is keyed by stress-period indices (all int keys in ``range(nper)``)."""
 
-        return bool(value) and all(isinstance(key, int) and key in range(nper) for key in value)
+        # `Integral`, not `int`: a numpy key (`np.int64`, read off an array or a frame)
+        # subclasses nothing, so it was read as a CELL and the build died "is missing
+        # cell" (ledger 265's class; ledger 379 accepts it at the lazy call).
+        return bool(value) and all(
+            isinstance(key, Integral) and not isinstance(key, bool) and int(key) in range(nper)
+            for key in value
+        )
 
     def _value_for_cell(
         self, value: Any, cellid: CellId, selected_cells: tuple[CellId, ...], *, label: str

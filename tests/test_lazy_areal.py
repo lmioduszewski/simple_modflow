@@ -678,3 +678,18 @@ def test_a_run_reports_what_an_array_package_resolved(tmp_path, triangulated_gri
     row = next(r for r in run.resolution if r.get("package") == "rch")
     assert row["how"] == "rebuilt"
     assert row["resolved_cells"] == int(triangulated_grid.ncpl)
+
+
+@pytest.mark.parametrize("lazy", [True, False], ids=["lazy", "eager"])
+def test_a_numpy_period_key_is_a_period_at_build(tmp_path, triangulated_grid, lazy):
+    """`{np.int64(1): ...}` -- a key read off an array -- was a CELL to the builder, so
+    the build died "recharge is missing cell" (ledgers 265, 379)."""
+
+    recharge = {np.int64(0): 1.0e-3, np.int64(1): 2.0e-3}
+    context = None if lazy else _eager_context(triangulated_grid)
+    spec = mf.rch(nper=2, recharge=recharge, context=context)
+    model = _model(triangulated_grid, spec)
+    sim = mf.simulation(model, name="s", packages=[mf.tdis(nper=2)])
+    built = sim.build_flopy(tmp_path / "w").simulation.get_model("m")
+    rows = built.get_package("rch").stress_period_data.get_data()[1]
+    assert {float(row[1]) for row in rows} == {2.0e-3}
