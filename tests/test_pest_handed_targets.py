@@ -566,6 +566,53 @@ def test_a_name_pandas_would_read_as_a_number_or_a_blank_reaches_pest_verbatim(
     assert lake_again.read_text().splitlines()[0] == "time,007"
 
 
+def test_the_ies_review_reads_a_name_pandas_would_read_as_a_number_or_a_blank_as_text(
+    toy, tmp_path
+):
+    """The forward-run writers read the build's snapshots as TEXT since ledger 341, and
+    the IES review read the same files with a plain ``read_csv``: a well named ``007``
+    joined to no cell on the residual map (its map row said ``7``), ``NA`` neither (it
+    said ``nan``), a DRN zone named ``007`` was dropped from the map outright, and the
+    review panel titled ``NA`` as ``nan``. All of them read through
+    ``forward_run.read_target_table`` now. The review is driven over the REAL
+    template, with one realization standing in for PESTPP-IES's posterior."""
+
+    import json
+    from types import SimpleNamespace
+
+    from myflopy.modflow.mf6.pest.ies import IesResults
+
+    wells = _head_targets(
+        [("007", 22), ("0012", 23), ("NA", 24)],
+        pd.DataFrame({"time": [0], "007": [50.0], "0012": [51.0], "NA": [52.0]}))
+    zone = mf.DrnFlowTargets(locations={"007": DRN_CELLS},
+                             values=pd.DataFrame({"time": [0], "007": [-5.0]}))
+    cal, pst = _build(toy, tmp_path / "pest", observe=(wells, zone))
+    template = cal.template_workspace
+    posterior = pd.DataFrame([pst.observation_data["obsval"] + 1.0], index=["base"])
+
+    class _Review(IesResults):
+        def __init__(self):
+            self.workspace = template
+            self.model = toy
+            self.pst = pst
+            self.__dict__["_metadata"] = json.loads(
+                (template / "myflopy_pest_metadata.json").read_text())
+
+        @property
+        def posterior(self):
+            return SimpleNamespace(_df=posterior)
+
+    review = _Review()
+    residuals = review.obs_residuals().set_index(["prefix", "location"])
+    assert residuals.loc[("hds", "007"), "cell"] == 22
+    assert residuals.loc[("hds", "0012"), "cell"] == 23
+    assert residuals.loc[("hds", "na"), "cell"] == 24
+    assert residuals.loc[("drn_flow", "007"), "cells"] == DRN_CELLS
+    titles = [panel["title"] for panel in review._location_panels(None, 20)]
+    assert "hds: NA [hds]" in titles and "hds: 007 [hds]" in titles
+
+
 def test_an_infinite_value_is_refused_naming_it(toy, tmp_path):
     """``inf`` is a float, so it passed the "is it a number" test and reached the
     control file as an ``obsval``; pyEMU refused the file as holding a NaN and wrote

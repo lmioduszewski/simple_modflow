@@ -15449,8 +15449,19 @@ same day, which is the useful part of the result.
       340's own header check with a message naming columns the user never wrote. For a
       lake/reach/zone the header only drifted (`time,7` under the base's `time,007`), which
       PEST's positional read survives; it is fixed for the same reason, one writer means one
-      spelling. **Not fixed:** `IesResults`' residual map reads the same mapping with a
-      plain `read_csv`, so a `007` well can lose its cell on the map; a target named `per`
+      spelling. ~~**Not fixed:** `IesResults`' residual map reads the same mapping with a
+      plain `read_csv`, so a `007` well can lose its cell on the map;~~ **FIXED 2026-10-11:**
+      every snapshot read -- the writers' and `IesResults`' four (the target map, a zone
+      locations CSV, both values-snapshot reads) -- goes through ONE helper,
+      `forward_run.read_target_table` (converters on `name`/`obsname`/`column`; `dtype=str`,
+      which one of the review's reads used, still read `NA` as missing). Measured on the
+      toy: wells `007`/`0012`/`NA` joined no cell on the residual map, a DRN zone `007` was
+      dropped from it, and the review panel titled `NA` as `nan`; all read now. The writers
+      import the helper inside their bodies (pyEMU copies only their source), so the
+      deferred-import ratchet for `forward_run` rises 3 -> 6. Test:
+      `test_pest_handed_targets.py::test_the_ies_review_reads_a_name_pandas_would_read_as_a_number_or_a_blank_as_text`
+      (fails with the review's plain reads restored; it and the writers' test fail with
+      the helper's converters removed). **Still not fixed:** a target named `per`
       collides with the index column and is refused by the header check with an unhelpful
       message.
       **An infinite value is REFUSED** with the non-numbers (`_coerce_target_values`): it is

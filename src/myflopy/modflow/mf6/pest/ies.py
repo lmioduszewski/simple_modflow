@@ -42,6 +42,7 @@ from myflopy.modflow.mf6.package_plotting import (
     _red_white_blue_diverging_colorscale,
     _symmetric_color_limit,
 )
+from myflopy.modflow.mf6.pest.forward_run import read_target_table
 from myflopy.modflow.utils.datatypes.choros import mpl_colormap_for
 from myflopy.modflow.utils.datatypes.hover import (
     parameter_field_hover,
@@ -675,7 +676,7 @@ class IesResults:
             path = self.workspace / str(values_file) if values_file else None
             if path is None or not path.exists():
                 continue
-            table = pd.read_csv(path, dtype={"name": str, "column": str})
+            table = read_target_table(path)
             if "obsnme" not in table.columns:
                 continue
             frames.append(pd.DataFrame({
@@ -2000,7 +2001,7 @@ class IesResults:
                 continue
             table = (
                 gpd.read_file(path) if path.suffix.lower() == ".gpkg"
-                else pd.read_csv(path)
+                else read_target_table(path)
             )
             if table.empty:
                 continue
@@ -2028,7 +2029,7 @@ class IesResults:
                     entry.get("mapping_file") or f"{prefix}_head_target_map.csv"
                 )
                 if mapping_path.exists():
-                    mapping = pd.read_csv(mapping_path)
+                    mapping = read_target_table(mapping_path)
                     # The label when the mapping carries one (ledger 234): pyEMU's
                     # observation names come from that, not from the bare name.
                     label = "obsname" if "obsname" in mapping.columns else "name"
@@ -2099,7 +2100,7 @@ class IesResults:
             path = self.workspace / str(values_file)
             if not path.exists():
                 continue
-            table = pd.read_csv(path)
+            table = read_target_table(path)
             if "obsnme" in table.columns:
                 found = True
                 names.update(table["obsnme"].dropna().astype(str).str.strip().str.lower())

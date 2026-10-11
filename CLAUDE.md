@@ -1828,8 +1828,9 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `time:10` against `time:10.0`. A target nothing holds (a head/conc target on no
   active cell too, ledger 341 -- `compare()` only warns), two values for one (target,
   period), a value that is not a finite number and two sets under one prefix are
-  REFUSED by name; a blank is unmeasured. The forward-run writers read target names as
-  TEXT: pandas read a well named `007` as `7` and `NA` as missing (ledger 341). Every row no target measures carries weight 0 (a forecast set's
+  REFUSED by name; a blank is unmeasured. The forward-run writers and the IES review read target
+  names as TEXT, through `forward_run.read_target_table`: pandas read a well named `007`
+  as `7` and `NA` as missing (ledger 341). Every row no target measures carries weight 0 (a forecast set's
   other periods too); pyEMU's default is weight 1 and the BASE value, which anchored the
   calibration to the starting model. Heads/conc base and forward CSVs come from ONE
   writer (the pivot SORTED its columns: PEST read W1's head as W10's in every

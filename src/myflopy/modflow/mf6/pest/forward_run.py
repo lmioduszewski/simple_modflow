@@ -5,6 +5,47 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+#: The columns of a build's snapshot files that hold a target's NAME, or a label or
+#: column derived from it: the target map's ``name``/``obsname``, a locations or
+#: values snapshot's ``name``, the values snapshot's ``column`` (ledger 358).
+TARGET_NAME_COLUMNS = ("name", "obsname", "column")
+
+
+def read_target_table(path):
+    """Read one of a PEST build's snapshot CSVs with every target name as its TEXT.
+
+    The ONE rule for reading a target name back from a file the build wrote (ledger
+    341): a converter hands each field of :data:`TARGET_NAME_COLUMNS` over as the
+    text written, before pandas reads it. A plain ``pandas.read_csv`` reads a well
+    named ``007`` as the integer 7 and one named ``NA`` as a missing value, so the
+    forward-run writers wrote columns ``7`` and ``nan`` (fixed in 341 with this
+    converter, inline), and the IES review's residual map -- which read the same
+    files plainly -- lost the cell of every such target and dropped such a DRN zone
+    entirely, which 341 recorded as not fixed. ``dtype=str`` is not this rule: it keeps ``007`` but
+    still reads ``NA`` as missing. A blank name reads as ``""``.
+
+    The forward-run writers call this through an import inside their own bodies,
+    because pyEMU copies only a writer's source into the generated forward run.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        A CSV the build wrote beside the control file: a target map
+        (``<prefix>_head_target_map.csv``), a locations snapshot
+        (``<prefix>_target_locations.csv``) or a values snapshot
+        (``<prefix>_target_values.csv``).
+
+    Returns
+    -------
+    pandas.DataFrame
+        The table, each of its :data:`TARGET_NAME_COLUMNS` as ``str``; every other
+        column as ``pandas.read_csv`` reads it.
+    """
+
+    header = pd.read_csv(path, nrows=0).columns
+    converters = {column: str for column in TARGET_NAME_COLUMNS if column in header}
+    return pd.read_csv(path, converters=converters)
+
 
 def apply_pilotpoints_to_array(parameter_csv, points_meta_csv, cells_meta_csv, array_file,
                                lower_limit=-1.0e30, upper_limit=1.0e30):
@@ -117,12 +158,13 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     import flopy
 
     from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
+    from myflopy.modflow.mf6.pest.forward_run import read_target_table
 
     # Labels read VERBATIM: pandas reads a well named 007 as the integer 7 and one
     # named NA as a missing value, so the columns written would be 7 and nan while
     # the target map, the targets and the base table's header say 007 and NA
-    # (ledger 341). A converter sees the raw text before either reading.
-    mapping = pd.read_csv(mapping_csv, converters={"obsname": str, "name": str})
+    # (ledger 341). ``read_target_table`` is the one rule for that read.
+    mapping = read_target_table(mapping_csv)
     hds = flopy.utils.HeadFile(str(Path(sim_ws) / f"{model_name}.hds"))
     try:
         ends = period_end_steps(
@@ -193,12 +235,13 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     import flopy
 
     from myflopy.modflow.mf6.period_end import period_end_steps, saved_steps
+    from myflopy.modflow.mf6.pest.forward_run import read_target_table
 
     # Labels read VERBATIM: pandas reads a well named 007 as the integer 7 and one
     # named NA as a missing value, so the columns written would be 7 and nan while
     # the target map, the targets and the base table's header say 007 and NA
-    # (ledger 341). A converter sees the raw text before either reading.
-    mapping = pd.read_csv(mapping_csv, converters={"obsname": str, "name": str})
+    # (ledger 341). ``read_target_table`` is the one rule for that read.
+    mapping = read_target_table(mapping_csv)
     ucn = flopy.utils.HeadFile(
         str(Path(sim_ws) / f"{model_name}.ucn"), text="concentration"
     )
@@ -312,6 +355,7 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
     from pathlib import Path  # noqa: F811
 
     import myflopy as mf
+    from myflopy.modflow.mf6.pest.forward_run import read_target_table
 
     locations_path = Path(locations_file)
     if locations_path.suffix.lower() == ".gpkg":
@@ -321,7 +365,7 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
     else:
         # Names read VERBATIM, as the base run's table has them (ledger 341): a
         # zone named 007 read as the integer 7, one named NA as a missing value.
-        locations = pd.read_csv(locations_path, converters={"name": str})
+        locations = read_target_table(locations_path)
         if "cells" in locations.columns:
             locations["cells"] = locations["cells"].fillna("").apply(
                 lambda text: [int(v) for v in str(text).split(",") if str(v).strip() != ""]
