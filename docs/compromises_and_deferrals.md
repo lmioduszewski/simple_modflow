@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 417 entries (422 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 418 entries (423 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 418 | A rejected optimizer round reports `"fallback_last_accepted_mesh"` when rounds had been accepted,... | 2026-10-11 |
 | 417 | `GridSpec.voronoi`'s `options=` and `mesh_options=` keys are checked, at the call and again at resolve; two... | 2026-10-11 |
 | 416 | `read_shp_gpkg` and every `TriangleGrid` entry point that reads a vector file take a `str` path | 2026-10-11 |
 | 415 | `generate_grid_coordinates` steps from the extent's own minimum by any positive spacing; the box lattice re... | 2026-10-11 |
@@ -18153,3 +18154,19 @@ same day, which is the useful part of the result.
       Tests: `tests/test_gridspec_fail_fast.py` -- removing the check fails the
       declaration, alias and resolve tests; removing only the resolve-time call fails
       the three `test_a_saved_spec_carrying_an_unread_key_is_refused_at_resolve` cases.
+
+418. **A rejected optimizer round reports `"fallback_last_accepted_mesh"` when rounds had been accepted, `"fallback_original_mesh"` only when none had (2026-10-11).**
+      One status covered both, while the loop restores the last ACCEPTED mesh (measured:
+      a rejection forced at round 2 left the 88 vertices of a one-round run, not the 79
+      of the unoptimized mesh; Triangle numbers them differently). **Split, not renamed**
+      -- judgment call: `"fallback_original_mesh"` is true when no round was accepted
+      (and when the baseline Voronoi build fails), so readers testing it keep their
+      meaning; only a run that kept some rounds changes status. One helper,
+      `TriangleGrid._mark_fallback`, sets both. Readers migrated: the three cells of
+      `cumberland_cvt_diagnostics_workflow.ipynb` and the MF6 run test's accepted set.
+      Tests: `tests/test_mesh_optimization.py` -- the old single status fails
+      `test_a_rejected_round_names_the_mesh_it_restores[2-...]` and
+      `test_every_status_the_optimizer_can_report_is_one_it_documents`. The rejection
+      there is forced through `_quality_regression_reasons`: no default domain measured
+      (four rectangles with a refinement disc, two dampings, 10-20 rounds) rejects a
+      later round.

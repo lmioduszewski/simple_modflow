@@ -9,6 +9,7 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 
 import geopandas as gpd
 import numpy as np
+import pytest
 from shapely.geometry import LineString, Polygon
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -230,7 +231,9 @@ def test_optimized_triangle_grid_builds_voronoi_safe_mesh_and_runs_mf6():
         quality = report["quality"]
         optimization = report["optimization"]
 
-        assert optimization["status"] in {"applied", "fallback_original_mesh"}
+        assert optimization["status"] in {
+            "applied", "fallback_original_mesh", "fallback_last_accepted_mesh",
+        }
         assert optimization["method"] == "constrained_cvt_lloyd"
         assert optimization["iterations_run"] <= optimization["iterations_requested"]
         if optimization["status"] == "applied":
@@ -385,9 +388,13 @@ def _optimizer_statuses_assigned():
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(TriangleGrid.optimize_seeds)))
     found = set()
-    for node in ast.walk(tree):
+    nodes = [
+        node
+        for method in (TriangleGrid.optimize_seeds, TriangleGrid._mark_fallback)
+        for node in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(method))))
+    ]
+    for node in nodes:
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
             for target in node.targets:
                 if (
@@ -406,8 +413,12 @@ def _optimizer_statuses_assigned():
 def test_every_status_the_optimizer_can_report_is_one_it_documents():
     # Ledger 410: "converged_small_move" was assigned behind a test no run could
     # pass (a move under min_move is never made, so max_move >= min_move whenever it
-    # ran). The report's status is the reason the loop stopped; these four are all.
-    documented = {"applied", "converged_no_move", "fallback_original_mesh", "not_attempted"}
+    # ran). The report's status is the reason the loop stopped; these five are all
+    # (ledger 418 split the fallback in two).
+    documented = {
+        "applied", "converged_no_move", "fallback_original_mesh",
+        "fallback_last_accepted_mesh", "not_attempted",
+    }
     assert _optimizer_statuses_assigned() == documented
     doc = TriangleGrid.optimize_seeds.__doc__
     assert all(f'``"{status}"``' in doc for status in documented)
@@ -428,3 +439,37 @@ def test_the_optimizer_reports_why_it_stopped(tmp_path):
 
     report = grid("none").optimize_seeds(iterations=0)
     assert (report["status"], report["iterations_run"]) == ("not_attempted", 0)
+
+
+@pytest.mark.parametrize(
+    "reject_round, status, accepted", [(1, "fallback_original_mesh", 0), (2, "fallback_last_accepted_mesh", 1)]
+)
+def test_a_rejected_round_names_the_mesh_it_restores(tmp_path, monkeypatch, reject_round, status, accepted):
+    # Ledger 418: one status, "fallback_original_mesh", covered both cases, while
+    # a rejection after an accepted round restores THAT round's mesh. The rejection
+    # is forced here (no default domain measured rejects a later round) -- what is
+    # under test is the loop's bookkeeping, not the quality rules.
+    def grid(name):
+        tri = TriangleGrid(model_ws=str(tmp_path / name), angle=30)
+        tri.set_domain_rectangle(x_dist=300, y_dist=200, max_area=2000)
+        tri.build()
+        return tri
+
+    def vertices(tri):
+        return np.unique(np.round(np.column_stack([tri.node["x"], tri.node["y"]]), 6), axis=0)
+
+    expected = grid("expected")
+    if accepted:
+        expected.optimize_seeds(iterations=accepted)
+    calls = {"n": 0}
+
+    def forced(before, after):
+        calls["n"] += 1
+        return ["forced"] if calls["n"] == reject_round else []
+
+    monkeypatch.setattr(TriangleGrid, "_quality_regression_reasons", staticmethod(forced))
+    tri = grid("rejected")
+    report = tri.optimize_seeds(iterations=3)
+    assert (report["status"], report["iterations_run"]) == (status, accepted)
+    assert report["rejection_reasons"] == "forced"
+    np.testing.assert_array_equal(vertices(tri), vertices(expected))

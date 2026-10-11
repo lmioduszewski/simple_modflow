@@ -2841,6 +2841,19 @@ class TriangleGrid(Triangle):
         )
 
     @staticmethod
+    def _mark_fallback(report: dict) -> None:
+        """Name the mesh a rejected round left in place (ledger 418).
+
+        A rejection restores the last ACCEPTED mesh, which is the original only
+        when no round had been accepted; one status covered both cases before.
+        """
+
+        if report["iterations_run"]:
+            report["status"] = "fallback_last_accepted_mesh"
+        else:
+            report["status"] = "fallback_original_mesh"
+
+    @staticmethod
     def _quality_regression_reasons(
         baseline: dict[str, float | int | str],
         candidate: dict[str, float | int | str],
@@ -2978,15 +2991,17 @@ class TriangleGrid(Triangle):
             The optimization report: ``status``, ``iterations_run`` (rounds
             accepted), ``max_move``, ``moved_vertex_count``,
             ``rejection_reasons`` and the settings used. ``status`` says why
-            the loop stopped, and is one of four: ``"applied"`` -- every
+            the loop stopped, and is one of five: ``"applied"`` -- every
             requested round ran and was accepted; ``"converged_no_move"`` --
             it stopped early because no free vertex would move by
             ``min_move`` or more (the rounds before it, if any, are kept);
             ``"fallback_original_mesh"`` -- a round was rejected, or Triangle
-            or the Voronoi build failed (``rejection_reasons`` says which), and
-            the last ACCEPTED mesh was restored, which is the original only
-            when no round had been accepted; ``"not_attempted"`` --
-            ``iterations=0``.
+            or the Voronoi build failed (``rejection_reasons`` says which),
+            before any round was accepted, so the unoptimized mesh is restored;
+            ``"fallback_last_accepted_mesh"`` -- the same, after
+            ``iterations_run`` rounds had been accepted, so the mesh after the
+            last of them is restored (the same vertices; Triangle may number
+            them differently); ``"not_attempted"`` -- ``iterations=0``.
         """
         if not hasattr(self, "node") or not hasattr(self, "ele"):
             self._build_triangle_mesh(verbose=verbose)
@@ -3092,7 +3107,7 @@ class TriangleGrid(Triangle):
                 regression_reasons = ["triangle_build_failed"]
                 self._optimization_points = accepted_points
                 self._build_triangle_mesh(verbose=verbose)
-                accepted_report["status"] = "fallback_original_mesh"
+                self._mark_fallback(accepted_report)
                 break
 
             try:
@@ -3107,7 +3122,7 @@ class TriangleGrid(Triangle):
                 regression_reasons = [f"voronoi_build_failed:{exc}"]
                 self._optimization_points = accepted_points
                 self._build_triangle_mesh(verbose=verbose)
-                accepted_report["status"] = "fallback_original_mesh"
+                self._mark_fallback(accepted_report)
                 break
 
             quality_after = triangle_quality_report(self, validate_voronoi=False)
@@ -3122,7 +3137,7 @@ class TriangleGrid(Triangle):
                     )
                 self._optimization_points = accepted_points
                 self._build_triangle_mesh(verbose=verbose)
-                accepted_report["status"] = "fallback_original_mesh"
+                self._mark_fallback(accepted_report)
                 break
 
             accepted_points = self._free_vertex_points(
