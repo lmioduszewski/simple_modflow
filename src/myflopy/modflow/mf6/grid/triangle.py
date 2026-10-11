@@ -330,12 +330,15 @@ class TriangleGrid(Triangle):
           :meth:`build_mesh` and :meth:`optimize_seeds` create it.
         - ``exe_name`` (str, default ``"triangle"``): the Triangle executable,
           resolved at construction -- ``FileNotFoundError`` if it cannot be found.
-        - ``maximum_area`` (float): a global maximum triangle area. FloPy then
-          passes ``-a<value>`` and never a bare ``-a``, so every per-region
-          ``max_area`` (including the domain's background ``max_area``) is NOT
-          applied -- measured, a 200 x 200 region at ``max_area=100`` inside a
-          1000 x 1000 domain meshed to 1100 triangles without it and to 174
-          with ``maximum_area=1e4``.
+        - ``maximum_area`` (float): a global maximum triangle area, in model
+          length units squared, applied ON TOP of every per-region ``max_area``
+          (the domain's background ``max_area`` included): a triangle is split
+          while it exceeds either, so the smaller limit wins everywhere. Default
+          ``None``, no global cap. (FloPy's own ``Triangle`` passes this INSTEAD
+          of the regional limits, which switched every refinement region off --
+          a 200 x 200 region at ``max_area=100`` in a 1000 x 1000 domain meshed
+          to 174 triangles with ``maximum_area=1e4`` against 1100 without; it
+          meshes to 1134 now. Ledger 408.)
         - ``nodes`` (array of shape ``(n, 2)``): accepted but discarded --
           :meth:`prepare` rebuilds the node list from :meth:`add_points`, so use
           that instead.
@@ -2567,7 +2570,13 @@ class TriangleGrid(Triangle):
         self.clean()
         self._write_nodefile(os.path.join(self.model_ws, f"{self.file_prefix}.0.node"))
         self._write_polyfile(os.path.join(self.model_ws, f"{self.file_prefix}.0.poly"))
-        cmds = [self.exe_name, f"-a{self.maximum_area}" if self.maximum_area is not None else "-a"]
+        # The bare ``-a`` reads each region's area from the .poly file; ``-a<value>`` is a
+        # global cap. FloPy passes one OR the other, so a global cap switched off every
+        # refinement region and the domain's background size (ledger 408). Both
+        # together apply both: a triangle is split while it exceeds either.
+        cmds = [self.exe_name, "-a"]
+        if self.maximum_area is not None:
+            cmds.append(f"-a{self.maximum_area}")
         if self.angle is not None:
             cmds.append(f"-q{self.angle}")
         if self.additional_args is not None:

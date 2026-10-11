@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 407 entries (412 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 408 entries (413 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 408 | A global `maximum_area` on `TriangleGrid` is a cap ON TOP of every refinement region's and the domain's own... | 2026-10-11 |
 | 407 | `LayerSurfaces.to_disv(attach=True)` writes the grid only once the spec is built | 2026-10-11 |
 | 406 | `LayerSurfaces` refuses a repeated label, naming it and its positions | 2026-10-11 |
 | 405 | A surface's `units=` is converted wherever it sits in an algebra tree, before anything combines | 2026-10-11 |
@@ -17935,3 +17936,25 @@ same day, which is the useful part of the result.
       `vor.excavations`. The cheap refusals now run before sampling and the write is
       last. Test: `test_a_refused_to_disv_has_not_attached_anything` (all four cases
       fail on the old order).
+
+408. **A global `maximum_area` on `TriangleGrid` is a cap ON TOP of every refinement region's and the domain's own size, not a replacement for them (2026-10-11).**
+      FloPy's `Triangle.build` passes `-a<value>` INSTEAD of the bare `-a` that reads the
+      `.poly` file's regional areas, and `_bounded_build` copied it, so a global cap
+      switched off every refinement region and the domain's background `max_area` in
+      silence: a 200 x 200 region at `max_area=100` in a 1000 x 1000 domain meshed to 174
+      triangles with `maximum_area=1e4` against 1100 without. Both switches are passed now
+      (1134 triangles; a triangle is split while it exceeds either limit, so the smaller
+      wins everywhere). `GridSpec.voronoi`'s docstring example taught exactly the broken
+      combination -- and also omitted `refinement_max_area`, which its resolver requires;
+      it now uses `boundary_max_area` + `refinement_max_area`. **What moved:** nothing
+      the repository builds -- no test, example or notebook builds a `TriangleGrid` or
+      `GridSpec.voronoi` with `maximum_area=` (the four `maximum_area=` uses in
+      `tests/test_voronoi_tiling.py` and `docs/reproducers/voronoi_tiling_*.py` are FloPy's
+      own `Triangle`, untouched), and a mesh with no `maximum_area`, or one with it and no
+      regional limit, is byte-identical (the command adds only a bare `-a`; measured on a
+      1000 x 1000 domain capped at 5000: 339 triangles, same vertices). A user's grid that
+      combined the two changes, and its pin with it -- that is the correction.
+      Revert check: passing `-a<value>` alone again fails
+      `test_a_global_maximum_area_keeps_every_refinement_region`,
+      `test_a_global_maximum_area_keeps_the_domain_background_size` and
+      `test_the_smaller_of_the_cap_and_the_region_limit_wins[5000.0]`.

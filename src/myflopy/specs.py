@@ -3063,8 +3063,11 @@ class GridSpec:
             ``name``. A key also given through ``**engine_options`` takes that
             value. An ``"idomain"`` key raises ``TypeError``, as below.
         **engine_options
-            Stage options routed by name -- ``min_angle``, ``maximum_area``,
-            ``profile``, ``idomain_path``, ``optimize`` and friends. **An unknown
+            Stage options routed by name -- ``min_angle``, ``maximum_area``
+            (a global cap on every triangle's area, applied ON TOP of the
+            boundary's and each refinement's own size, so the smaller limit
+            wins; the background size is ``boundary_max_area``, ledger
+            408), ``profile``, ``idomain_path``, ``optimize`` and friends. **An unknown
             keyword raises**, with the nearest match suggested; before that,
             a misspelled option was accepted, never read, and silently meshed at
             the default. ``tessellation="flopy"`` keeps FloPy's cells unrepaired
@@ -3133,7 +3136,8 @@ class GridSpec:
         --------
         >>> spec = mf.GridSpec.voronoi(boundary=mf.ShapeSource("domain.shp"),
         ...                            refinement=mf.ShapeSource("wellfield.shp"),
-        ...                            maximum_area=1.0e5, min_angle=30)
+        ...                            boundary_max_area=1.0e5,
+        ...                            refinement_max_area=2.5e3, min_angle=30)
         >>> vor = spec.resolve(workspace="runs/_grid")
 
         Polygons and lines from one GeoPackage, each channel to its own layer,

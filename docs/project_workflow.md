@@ -100,11 +100,12 @@ visual, so the primary path is to build the grid yourself and register the
 finished object.
 
 ```python
-tg = mf.TriangleGrid(...)
-tg.set_domain_file("inputs/domain.gpkg")
-tg.add_region_file("inputs/wellfield.gpkg", maximum_area=400)   # refine an area
-vor = tg.build_mesh(profile="balanced")
-vor.show()                                                      # look at it
+tg = mf.TriangleGrid(model_ws="grids/refined", angle=30)
+tg.set_domain_file(Path("inputs/domain.gpkg"), max_area=20_000)  # background cell size
+tg.add_region_file(Path("inputs/wellfield.gpkg"), max_area=400)   # refine an area
+tg.build_mesh(profile="balanced")                               # returns a quality report
+vor = mf.VoronoiGridPlus(tg)
+vor.plot.map().show()                                           # look at it
 project.add_grid("refined", vor)                                # register when happy
 ```
 
