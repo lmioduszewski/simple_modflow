@@ -1727,6 +1727,85 @@ def _measured_periods(
     return per
 
 
+#: Target names no set may use, compared stripped and lower-cased: the key column of
+#: every table a set takes and returns (``time`` in its values, ``to_wide()`` and
+#: ``compare()``) and of every simulated table, which PEST reads (``per``). A target
+#: named either collided with that column (ledger 423).
+RESERVED_TARGET_NAMES = ("per", "time")
+
+
+def _refuse_reserved_target_names(names, *, owner: str) -> None:
+    """Refuse a target named like a table's key column (:data:`RESERVED_TARGET_NAMES`).
+
+    A target named ``per`` collided with the simulated table's period column:
+    ``simulated_series`` raised ``cannot insert per, already exists``, and the PEST
+    build refused the base table as written in another order (``PER``: an
+    ``IndexError`` from pyEMU). One named ``time`` became a second ``time`` column.
+
+    Parameters
+    ----------
+    names : iterable
+        The set's target names, as given.
+    owner : str
+        The target set's class name, named in the error.
+
+    Raises
+    ------
+    ValueError
+        Naming each reserved name used and the names reserved.
+    """
+
+    taken = sorted({
+        str(name) for name in names
+        if str(name).strip().lower() in RESERVED_TARGET_NAMES
+    })
+    if taken:
+        raise ValueError(
+            f"{owner}: {', '.join(repr(name) for name in taken)} cannot name a target: "
+            f"{' and '.join(repr(name) for name in RESERVED_TARGET_NAMES)} (in any case) "
+            "are the key columns of the tables a target set reads and writes -- the "
+            "period of every simulated table PEST reads, and the `time` of the values, "
+            "`to_wide()` and `compare()`. Rename the target."
+        )
+
+
+def _wide_by_period(frame: pd.DataFrame, *, value_column: str, caller: str) -> pd.DataFrame:
+    """A target set's values with one row per stress period and one column per target.
+
+    The one shape every ``to_wide()`` returns (ledger 422). ``time`` holds the
+    zero-based stress period as ``int`` -- read from each row's ``time`` by
+    :func:`_numeric_periods`, the reading ``compare()`` and the PEST build use -- so
+    ``"1"``, ``1`` and ``1.0`` are ONE row; pivoting on the label as given made them
+    two rows of one period, each blank where the other held the value. Every target
+    named in ``frame`` has a column and every period a row, including a target whose
+    every row is blank, which ``compare()`` keeps and the pivot dropped. Columns are
+    the names, sorted.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        The set's long table: ``time``, ``name`` and ``value_column``, at most one
+        value per (target, period) -- the caller has run :func:`_measured_periods`.
+    value_column : str
+        The column holding the target value.
+    caller : str
+        Named in the error :func:`_numeric_periods` raises.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``time`` (``int64``, the period) plus one ``float`` column per target.
+    """
+
+    per = _numeric_periods(frame.loc[:, ["time"]], caller=caller)
+    wide = frame.assign(time=per.to_numpy()).pivot_table(
+        index="time", columns="name", values=value_column, aggfunc="first", dropna=False,
+    )
+    wide = wide.astype(float).reset_index()
+    wide.columns.name = None
+    return wide
+
+
 def _aggregate_named_series(
     frame: pd.DataFrame,
     *,

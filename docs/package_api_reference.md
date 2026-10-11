@@ -757,8 +757,12 @@ and its statistics, and `residuals_by_period` out of the period's mean (ledger 3
 period 1, and a key with a fraction (`1.5`, which was truncated to 1) is refused. Two
 values for one target in one period are refused in both, naming each row's value and
 `time` -- the build kept the last -- and by `to_wide()` too, which kept the FIRST
-(ledger 371). A blank value is unmeasured; a value that is not a finite number (`"12,5"`,
-`inf`) is refused when the targets are built, naming the target and its column.
+(ledger 371). `to_wide()` is keyed by that period: its `time` is the period as `int`, so
+`"1"` and `1` are one row, and a target whose every value is blank keeps its column, as
+`compare()` keeps its rows (ledger 422). A blank value is unmeasured; a value that
+is not a finite number (`"12,5"`, `inf`) is refused when the targets are built, naming
+the target and its column, and so is a target NAMED `per` or `time` in any case -- the
+key columns of the tables a set reads and writes (ledger 423).
 
 **What PEST is handed is exactly the targets** (ledger 340). `cal.build()` matches each
 target to the simulated row whose index EQUALS its period and to its column by name,

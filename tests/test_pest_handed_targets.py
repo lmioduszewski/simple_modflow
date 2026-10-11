@@ -319,6 +319,55 @@ def test_to_wide_keeps_one_column_for_a_two_screen_well():
     assert wide["w"].tolist() == [10.0, 11.0]
 
 
+_FAMILY_COLUMN = {"head": "head", "conc": "conc", "lake": "stage", "sfr_stage": "stage",
+                  "sfr_flow": "flow", "drn": "flow"}
+
+
+def _two_target_family(family, values, names=("w", "v")):
+    """Targets ``names`` of ``family``, given the long ``time``/``name``/``value`` rows."""
+
+    frame = pd.DataFrame(values, columns=["time", "name", _FAMILY_COLUMN[family]])
+    ids = {"head": [22, 23], "conc": [22, 23], "lake": [0, 0], "sfr_stage": [1, 2],
+           "sfr_flow": [3, 4], "drn": [[20], [21]]}[family]
+    locations = dict(zip(names, ids, strict=False))
+    return {
+        "head": mf.HeadTargets, "conc": mf.ConcTargets, "lake": mf.LakeStageTargets,
+        "sfr_stage": mf.SfrStageTargets, "sfr_flow": mf.SfrFlowTargets,
+        "drn": mf.DrnFlowTargets,
+    }[family](locations=locations, values=frame)
+
+
+@pytest.mark.parametrize("family", ["head", "conc", "lake", "sfr_stage", "sfr_flow", "drn"])
+def test_to_wide_has_a_row_per_period_and_a_column_per_target(family):
+    """``to_wide()`` pivoted on the ``time`` label as given, so ``"1"`` and ``1`` were
+    two rows of period 1, each blank where the other held the value; and pandas'
+    pivot dropped a target whose every row is blank, which ``compare()`` keeps. It
+    is keyed by the period now, ``int``, and keeps every target (ledger 422)."""
+
+    sign = -1.0 if family in ("sfr_flow", "drn") else 1.0
+    targets = _two_target_family(family, [
+        (0, "w", 10.0 * sign), ("1", "w", None), (1, "w", 11.0 * sign),
+        (1.0, "v", None), (2, "v", None)])
+    wide = targets.to_wide()
+    assert wide.columns.tolist() == ["time", "v", "w"]
+    assert wide["time"].dtype == np.int64 and wide["time"].tolist() == [0, 1, 2]
+    assert wide["v"].isna().all()
+    assert wide["w"].tolist()[:2] == [10.0 * sign, 11.0 * sign] and np.isnan(wide["w"].iloc[2])
+
+
+@pytest.mark.parametrize("family", ["head", "conc", "lake", "sfr_stage", "sfr_flow", "drn"])
+@pytest.mark.parametrize("name", ["per", " PER ", "time"])
+def test_a_target_named_like_a_key_column_is_refused_naming_it(family, name):
+    """A target named ``per`` collided with the period column of the simulated table
+    PEST reads (``cannot insert per, already exists``; the build blamed the columns'
+    order), and one named ``time`` with the values' own (ledger 423)."""
+
+    with pytest.raises(ValueError, match=(
+            rf"{re.escape(repr(name))} cannot name a target: 'per' and 'time' \(in any "
+            r"case\) are the key columns")):
+        _two_target_family(family, [(0, name, -1.0)], names=(name, "v"))
+
+
 # -- (d): nothing is history-matched that nobody measured -----------------------
 
 

@@ -25,8 +25,10 @@ from myflopy.modflow.mf6.observations._shared import (
     _read_declared_observations,
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
+    _refuse_reserved_target_names,
     _refuse_shared_labels,
     _stage_at_period_end,
+    _wide_by_period,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
 from myflopy.modflow.mf6.package_budget import build_lak_stage_result_table
@@ -280,6 +282,7 @@ class LakeStageTargets:
             source = source_frame.set_index("name")["lake"].to_dict()
         for name, lake_id in dict(source).items():
             normalized[str(name)] = int(lake_id)
+        _refuse_reserved_target_names(normalized, owner=type(self).__name__)
         self._series = normalized
         self._values = _normalize_lake_stage_values(
             self.values,
@@ -414,7 +417,9 @@ class LakeStageTargets:
     def to_wide(self) -> pd.DataFrame:
         """Return the target table in wide format with one column per lake series.
 
-        One row per distinct ``time`` label, as given, and one column per target
+        One row per stress period a ``time`` names -- ``time`` is the zero-based
+        period as ``int``, read as :meth:`compare` and the PEST build read it, so ``"1"``
+        and ``1`` are one row (they were two, ledger 422) -- and one column per target
         name holding its observed stage, in model length units; a set given no
         values gives ``time`` and one empty column per target. Two rows HOLDING
         a value for one target in one stress period are REFUSED, by the check
@@ -422,12 +427,14 @@ class LakeStageTargets:
         the first in silence (``pivot_table(aggfunc="first")``), so the wide
         table and the build disagreed about the same set (ledger 371). A
         blank row is unmeasured and never collides; a target whose every row is
-        blank has no column, as before.
+        blank keeps its column, all blank, as :meth:`compare` keeps its rows
+        (ledger 422).
 
         Returns
         -------
         pandas.DataFrame
-            ``time`` plus one float column per target name.
+            ``time`` (``int64``, the period) plus one float column per target
+            name, sorted.
 
         Raises
         ------
@@ -441,16 +448,9 @@ class LakeStageTargets:
         if self._values.empty:
             return pd.DataFrame(columns=["time", *self._series.keys()])
         _measured_periods(self._values, value_column="stage", caller="LakeStageTargets.to_wide()")
-        # After the check a (target, time) cell holds at most ONE value, so
+        # After the check a (target, period) cell holds at most ONE value, so
         # "first" only prefers it over blank rows.
-        frame = self.get().pivot_table(
-            index="time",
-            columns="name",
-            values="stage",
-            aggfunc="first",
-        ).reset_index()
-        frame.columns.name = None
-        return frame
+        return _wide_by_period(self.get(), value_column="stage", caller="LakeStageTargets.to_wide()")
 
     def summary(self) -> pd.DataFrame:
         """Return a compact summary of the lake-stage target set."""

@@ -34,8 +34,10 @@ from myflopy.modflow.mf6.observations._shared import (
     _normalize_values_frame,
     _numeric_periods,
     _placement_note,
+    _refuse_reserved_target_names,
     _report_missed_features,
     _simulated_field_by_period,
+    _wide_by_period,
 )
 from myflopy.viz import mpl_axes
 
@@ -216,6 +218,7 @@ class HeadTargets:
             group_column=self.group_column,
             weight_column=self.weight_column,
         )
+        _refuse_reserved_target_names(self._locations["name"], owner=type(self).__name__)
         self._values = _normalize_values_frame(
             self.values,
             time_column=self.time_column,
@@ -457,20 +460,24 @@ class HeadTargets:
     def to_wide(self) -> pd.DataFrame:
         """Return the target table in wide format with one column per location.
 
-        One row per distinct ``time`` label, as given, and one column per target
+        One row per stress period a ``time`` names, and one column per target
         name holding its target value (a head, or a concentration on
-        ``ConcTargets``). Two rows HOLDING a value for one target in one stress
-        period are REFUSED -- names compared stripped and lower-cased -- by the check
-        :meth:`compare` and the PEST build read (ledger 340): this used to keep
-        the first in silence (``pivot_table(aggfunc="first")``), so the wide
-        table and the build disagreed about the same set (ledger 371). A
-        blank row is unmeasured and never collides; a target whose every row is
-        blank has no column, as before.
+        ``ConcTargets``). ``time`` is the zero-based period as ``int``, read the way
+        :meth:`compare` and the PEST build read it, so ``"1"`` and ``1`` are one
+        row (they were two, ledger 422). Two rows HOLDING a value for one
+        target in one stress period are REFUSED -- names compared stripped and
+        lower-cased -- by the check :meth:`compare` and the PEST build read
+        (ledger 340): this used to keep the first in silence
+        (``pivot_table(aggfunc="first")``), so the wide table and the build
+        disagreed about the same set (ledger 371). A blank row is unmeasured and
+        never collides; a target whose every row is blank keeps its column, all
+        blank, as :meth:`compare` keeps its rows (ledger 422).
 
         Returns
         -------
         pandas.DataFrame
-            ``time`` plus one float column per target name.
+            ``time`` (``int64``, the period) plus one float column per target
+            name, sorted.
 
         Raises
         ------
@@ -487,17 +494,12 @@ class HeadTargets:
             name_column="name_key",
             caller=f"{type(self).__name__}.to_wide()",
         )
-        # After the check a (target, time) cell holds at most ONE value, so
+        # After the check a (target, period) cell holds at most ONE value, so
         # "first" only prefers it over blank rows (and, for a two-screen well,
         # over the copy ``get()`` makes for its second screen).
-        frame = self.get().pivot_table(
-            index="time",
-            columns="name",
-            values="head_target",
-            aggfunc="first",
-        ).reset_index()
-        frame.columns.name = None
-        return frame
+        return _wide_by_period(
+            self.get(), value_column="head_target", caller=f"{type(self).__name__}.to_wide()"
+        )
 
     def summary(self) -> pd.DataFrame:
         """Return a compact summary of the target dataset."""

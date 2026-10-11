@@ -39,7 +39,9 @@ from myflopy.modflow.mf6.observations._shared import (
     _refuse_flows_leaving_the_frame,
     _refuse_keys_off_the_periods,
     _refuse_observation_kind,
+    _refuse_reserved_target_names,
     _report_missed_features,
+    _wide_by_period,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
 from myflopy.modflow.mf6.period_end import period_ends
@@ -628,6 +630,7 @@ class DrnFlowTargets:
             group_column=self.group_column,
             weight_column=self.weight_column,
         )
+        _refuse_reserved_target_names(self._locations["name"], owner=type(self).__name__)
         self._values = _normalize_named_series_values(
             self.values,
             time_column=self.time_column,
@@ -749,7 +752,9 @@ class DrnFlowTargets:
     def to_wide(self) -> pd.DataFrame:
         """Return the observed discharge in wide format with one column per zone.
 
-        One row per distinct ``time`` label, as given, and one column per target
+        One row per stress period a ``time`` names -- ``time`` is the zero-based
+        period as ``int``, read as :meth:`compare` and the PEST build read it, so ``"1"``
+        and ``1`` are one row (they were two, ledger 422) -- and one column per target
         name holding its observed flow, in model flow units and MF6's sign (ledger 350); a set given no values gives ``time`` and one
         empty column per target. Two rows HOLDING a value for one target in one
         stress period are REFUSED -- names compared stripped and lower-cased --
@@ -757,12 +762,14 @@ class DrnFlowTargets:
         used to keep the first in silence (``pivot_table(aggfunc="first")``), so
         the wide table and the build disagreed about the same set (ledger
         371). A blank row is unmeasured and never collides; a target whose
-        every row is blank has no column, as before.
+        every row is blank keeps its column, all blank, as :meth:`compare` keeps
+        its rows (ledger 422).
 
         Returns
         -------
         pandas.DataFrame
-            ``time`` plus one float column per target name.
+            ``time`` (``int64``, the period) plus one float column per target
+            name, sorted.
 
         Raises
         ------
@@ -778,9 +785,7 @@ class DrnFlowTargets:
         _measured_periods(self._values, value_column="flow_target", caller="DrnFlowTargets.to_wide()")
         # After the check a (target, time) cell holds at most ONE value, so
         # "first" only prefers it over blank rows.
-        frame = self._values.pivot_table(index="time", columns="name", values="flow_target", aggfunc="first").reset_index()
-        frame.columns.name = None
-        return frame
+        return _wide_by_period(self._values, value_column="flow_target", caller="DrnFlowTargets.to_wide()")
 
     def summary(self, model=None) -> pd.DataFrame:
         """Return a compact summary (zone count, resolved cell count, row count).

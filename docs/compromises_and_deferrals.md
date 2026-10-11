@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 421 entries (426 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 423 entries (428 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 423 | A target named `per` or `time`, in any case, is refused when the set is built | 2026-10-11 |
+| 422 | `to_wide()` has one row per stress period, `time` the period as `int`, and a column for every target, an al... | 2026-10-11 |
 | 421 | A PEST build refuses an input named by a RELATIVE path out of the run directory, naming it and the package... | 2026-10-11 |
 | 420 | A structured (DIS) model calibrates: array files are written one grid row per line, a list target's columns... | 2026-10-11 |
 | 419 | A cellid names the cell the model's own grid numbers, by ONE rule -- `CellNumbering` -- in every package ta... | 2026-10-11 |
@@ -15583,9 +15585,9 @@ same day, which is the useful part of the result.
       deferred-import ratchet for `forward_run` rises 3 -> 6. Test:
       `test_pest_handed_targets.py::test_the_ies_review_reads_a_name_pandas_would_read_as_a_number_or_a_blank_as_text`
       (fails with the review's plain reads restored; it and the writers' test fail with
-      the helper's converters removed). **Still not fixed:** a target named `per`
+      the helper's converters removed). ~~**Still not fixed:** a target named `per`
       collides with the index column and is refused by the header check with an unhelpful
-      message.
+      message.~~ Refused when the targets are built, naming it, since ledger 423.
       **An infinite value is REFUSED** with the non-numbers (`_coerce_target_values`): it is
       a float, so it passed as a number, and pyEMU then refused the control file as holding
       a NaN, writing `pst.obs_data.nans.csv` into the caller's working directory -- the
@@ -17361,8 +17363,8 @@ same day, which is the useful part of the result.
       (`0.5`, a date string), since the duplicates are defined per period. It reshaped such
       a set before; nothing downstream could use it, as `compare()` and the build refuse
       it, and no caller in `src/`, the tests, examples or notebooks passes one.
-      **Not changed:** a target whose every row is blank still has no column (pivot_table
-      drops it); `compare()` keeps those rows.
+      ~~**Not changed:** a target whose every row is blank still has no column (pivot_table
+      drops it); `compare()` keeps those rows.~~ It keeps its column since ledger 422.
       Test: `tests/test_pest_handed_targets.py::test_to_wide_refuses_two_measurements_of_one_target_in_one_period_naming_both`
       (all six families fail with the calls removed);
       `test_to_wide_keeps_one_column_for_a_two_screen_well` guards the false refusal.
@@ -18257,3 +18259,26 @@ same day, which is the useful part of the result.
       Test: `tests/test_pest_template_holds_inputs_only.py::test_a_build_refuses_an_input_named_relative_to_outside_the_run`
       (a real MF6 run reading `../shared/k.txt`; refused, and built once the name is
       absolute) and the scanner test, which now asserts the reported name and owner.
+
+422. **`to_wide()` has one row per stress period, `time` the period as `int`, and a column for every target, an all-blank one included (2026-10-11).**
+      Ledger 371's leftovers: it pivoted on the `time` label as given, so `"1"` and `1` were
+      two rows of period 1, each blank where the other held the value, while `compare()` and
+      the build read one; and pandas' pivot dropped a target whose every row is blank,
+      which `compare()` keeps. All five implementations go through ONE helper,
+      `_shared._wide_by_period` (`_numeric_periods` on `time`, `pivot_table(dropna=False)`).
+      **Changes the output: `time` is `int64`** (it was the labels as given -- `object`,
+      or `float` for `1.0`), and a period every target left blank keeps its row. Columns
+      stay sorted by name. Nothing in `src/`, the examples or the notebooks reads it.
+      Test: `tests/test_pest_handed_targets.py::test_to_wide_has_a_row_per_period_and_a_column_per_target`
+      (six families; fails with the old pivot restored).
+
+423. **A target named `per` or `time`, in any case, is refused when the set is built (2026-10-11).**
+      Ledger 341's leftover. `per` collided with the period column of every simulated table
+      (`simulated_series` raised `cannot insert per, already exists`; the PEST build blamed
+      the columns' order; `PER` reached pyEMU as an `IndexError`), and `time` with the
+      values' and `to_wide()`'s own. **Judgment call: refuse, not support** -- supporting
+      it means renaming the period column of every simulated table PEST reads, which every
+      built template and the IES review read by that name. One rule,
+      `_shared.RESERVED_TARGET_NAMES`, asked by all six families.
+      Test: `tests/test_pest_handed_targets.py::test_a_target_named_like_a_key_column_is_refused_naming_it`
+      (18 cases; fails with the refusal removed).
