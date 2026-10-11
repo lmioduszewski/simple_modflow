@@ -392,8 +392,9 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
             ``backend``, ...) and its Plotly trace tail. ``zmin``/``zmax`` default
             to plus/minus the largest absolute value drawn (a filled cell's
             included), ``zmid`` to 0 and ``hover_spec`` to the comparison hover
-            (``value_unit`` from the class, ``ft`` for heads whatever the model's
-            units are); passing them overrides those. The names this method fills
+            (``value_unit`` from the class, else the reference model's own length
+            unit for heads -- ledger 434 -- and none when it declares none);
+            passing them overrides those. The names this method fills
             itself beyond its own parameters (``type``, ``custom_zs``,
             ``custom_hover``, ``hover_heads``, ``hover_ks``) raise ``TypeError``;
             ``values=`` REPLACES the drawn differences while the hover keeps them.

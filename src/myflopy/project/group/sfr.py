@@ -300,7 +300,8 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             ``backend``, ...) and its Plotly trace tail. ``zmin``/``zmax`` default
             to plus/minus the largest absolute value drawn (a filled cell's
             included), ``zmid`` to 0 and ``hover_spec`` to the comparison hover,
-            whose units read ``ft²/d`` whatever the model's units are; passing
+            whose units are length²/time in the reference model's own units
+            (ledger 434; a bare number when the model declares none); passing
             them overrides those. The names this method fills itself beyond its
             own parameters (``type``, ``custom_zs``, ``custom_hover``,
             ``hover_heads``, ``hover_ks``) raise ``TypeError``; ``values=``

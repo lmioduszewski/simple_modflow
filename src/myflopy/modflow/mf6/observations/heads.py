@@ -1145,8 +1145,8 @@ class BoundHeadTargets:
         ----------
         model : SimulationBase or None, optional
             The model to match against. Default ``None`` uses the bound model;
-            any other model-like object exposing ``vor.gdf_vorPolys`` is used
-            instead. Matching is :meth:`HeadTargets.match_to_model`'s: one cell
+            any other model-like object exposing ``vor.gdf_vorPolys``, or a FloPy
+            ``modelgrid`` (a DIS model, ledger 420), is used instead. Matching is :meth:`HeadTargets.match_to_model`'s: one cell
             per point, active in the target's own layer, a miss warned about by
             name and none landing raising ``ValueError``. A target given as a
             cell id (the canonical model's are) is checked instead: an id the

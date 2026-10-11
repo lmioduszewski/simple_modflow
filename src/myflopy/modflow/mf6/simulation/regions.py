@@ -528,18 +528,23 @@ class RegionRegistry:
             ``overwrite`` says.
         cellids : iterable of int or tuple, or None
             The cells. An ``int`` (a numpy integer too) is an in-layer cell number,
-            taken as given, and a one-item tuple ``(cell,)`` the same; an empty
-            tuple is dropped and ``None`` is no cells. A longer tuple is the model
-            grid's own cellid: ``(layer, cell)`` on a vertex grid (DISV, DISU),
-            ``(layer, row, col)`` on a structured (DIS) grid, whose cell number is
-            FloPy's row-major ``row * ncol + col``. A tuple of the other grid's
-            length, or a row/column off a structured grid, raises ``ValueError``
-            naming the expected form (ledger 376). Anything that is not a tuple
+            and a one-item tuple ``(cell,)`` the same -- on DISU that is MF6's own
+            cellid ``(node,)``, cell ``node`` of layer 0; an empty tuple is dropped
+            and ``None`` is no cells. A longer tuple is the model grid's own
+            cellid, read by the rule every package table uses (ledger 419):
+            ``(layer, cell)`` on DISV, ``(layer, row, col)`` on DIS, whose cell
+            number is FloPy's row-major ``row * ncol + col``; on DISU a longer
+            tuple is refused naming ``(node,)``. A tuple of another length raises
+            ``ValueError`` naming the expected form (ledger 376), and so does any
+            layer, row, column or cell off the grid -- a bare cell number
+            included (ledger 419). The model's grid is read whenever a cellid or
+            ``layer`` is given; a registry bound to no model, or a model with no
+            discretization package, knows no grid, reads a longer tuple as
+            ``(layer, cell)`` and checks nothing. Anything that is not a tuple
             goes through ``int()``: a float is TRUNCATED in silence (``5.7`` is
             cell 5) and a numeric string read (``"5"``), while a list ``[0, 5]``
-            or an array row raises ``TypeError`` -- a cellid must be a TUPLE. The
-            model's grid is read only when a cellid of two or more items needs
-            it. The region stores the sorted unique in-layer cell
+            or an array row raises ``TypeError`` -- a cellid must be a TUPLE.
+            The region stores the sorted unique in-layer cell
             numbers, which is what :meth:`resolve_cells` returns and
             ``model.region_heads`` matches against the heads table's ``cell``
             column, and ``cellids`` as given.
@@ -547,7 +552,9 @@ class RegionRegistry:
             Zero-based layer (or layers) stored on the region; ``model.region_heads``
             keeps only those layers when called without its own ``layer``. Nothing
             else reads it -- ``map(select=name)`` draws the region's cells on
-            whatever layer the map shows. Default ``None`` takes the layers the
+            whatever layer the map shows. A layer off the model's grid raises
+            ``ValueError`` (on DISU the only layer is 0; ledger 419). Default
+            ``None`` takes the layers the
             tuple ``cellids`` name (one as an ``int``, several as a sorted list),
             else leaves the region layer-free. A value given here WINS over those
             layers without a word: ``[(0, 5), (1, 6)]`` with ``layer=2`` stores
@@ -584,7 +591,8 @@ class RegionRegistry:
         ------
         ValueError
             If ``name`` is a group's, or an existing region's without
-            ``overwrite=True``, or a tuple cellid is not of the grid's form.
+            ``overwrite=True``, or a tuple cellid is not of the grid's form, or a
+            layer, row, column or cell is off the model's grid.
         TypeError
             If a cellid is a list or an array row (neither a tuple nor a number).
         """

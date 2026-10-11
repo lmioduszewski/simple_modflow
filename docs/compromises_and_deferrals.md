@@ -18721,8 +18721,9 @@ same day, which is the useful part of the result.
       `lak.connections.map`'s tail, which its own docstring calls worse than inert;
       `per` beside `kstpkper` on `group.hds.get`/`compare`. An unknown `model_name`,
       `connection_type` or `lak_connection_type` returns no rows rather than refusing.
-      **Also:** the LAK/SFR `compare_map` hovers read `ft/d`/`ft²/d` and the heads one
-      `ft` whatever the model's units; `group.hds.get` raises an opaque `TypeError` on a
+      **Also:** ~~the LAK/SFR `compare_map` hovers read `ft/d`/`ft²/d` and the heads one
+      `ft` whatever the model's units~~ (fixed by ledger 434, which landed beside this
+      pass: each reads the reference model's own units); `group.hds.get` raises an opaque `TypeError` on a
       tuple `layer` or a bare-int `cells`, which its siblings accept; `compare_map`
       refuses a member whose discretization file differs in `botm` alone ("require the
       same grid"); and an input table holds the period BLOCKS written, so a CHD declared
