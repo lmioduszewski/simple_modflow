@@ -221,3 +221,23 @@ def test_advanced_specs_build_and_write_with_flopy_310(tmp_path):
     ]
     for suffix in ("wel", "ghb", "riv", "evt", "uzf", "lak", "sfr", "mvr"):
         assert (tmp_path / f"advanced.{suffix}").exists()
+
+
+@pytest.mark.parametrize("packages", [["sfr", "lak"], ["sfr"], "sfr", [["sfr"], "lak"]])
+def test_mvr_bare_package_names_are_refused_naming_the_record_spelling(packages):
+    """A bare name was its own name for `requires=` and its first LETTER for the index
+    marker (`["l", "s"]`), so a grid move missed the mover's reach numbers (ledger 303);
+    FloPy reads the flat list as ONE record and refuses it at build (ledger 381)."""
+
+    perioddata = {0: [["sfr", 0, "sfr", 1, "FACTOR", 1.0]]}
+    with pytest.raises(ValueError, match=r"single-item list or tuple per package.*\[\['sfr'\]"):
+        mvr_spec(packages, perioddata)
+
+
+def test_mvr_index_marker_holds_whole_package_names():
+    from myflopy.grid_identity import INDEXED_PACKAGES
+
+    for packages in ([["sfr"], ["lak"]], [("sfr",), ("lak",)]):
+        spec = mvr_spec(packages, {0: [["sfr", 0, "lak", 0, "FACTOR", 1.0]]})
+        assert spec.metadata[INDEXED_PACKAGES] == ["lak", "sfr"]
+        assert spec.requires == ("sfr", "lak")

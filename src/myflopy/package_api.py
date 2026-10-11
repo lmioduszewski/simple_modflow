@@ -8317,8 +8317,11 @@ class _MVRPackage:
 
         Parameters
         ----------
-        packages : list
-            FloPy MVR ``packages`` (the provider/receiver package names).
+        packages : list of list or tuple
+            FloPy MVR ``packages``: one single-item list or tuple per provider or
+            receiver package, ``[["sfr"], ["lak"]]``. A bare name (``["sfr",
+            "lak"]``) raises ``ValueError`` naming that spelling -- FloPy reads a
+            flat list as ONE record.
         perioddata : dict
             FloPy MVR ``perioddata`` keyed by stress period.
         name : str, default "mvr"

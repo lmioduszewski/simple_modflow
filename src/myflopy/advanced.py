@@ -798,13 +798,29 @@ def sfr_spec(
 
 
 def _package_names(packages: Iterable[Any]) -> tuple[str, ...]:
-    """Return normalized package names from MVR package records."""
+    """Return the package names from MVR package records, refusing a bare string.
 
-    names = []
-    for record in packages:
-        value = record[0] if isinstance(record, (list, tuple)) else record
-        names.append(str(value))
-    return tuple(names)
+    A record is a list or tuple whose first item is the package name. A bare string was
+    taken as its own name here while ``str(record[0])`` elsewhere took its first LETTER --
+    ``["sfr", "lak"]`` required ``("sfr", "lak")`` and stamped ``["l", "s"]`` as the
+    packages the mover addresses by index, so a grid move missed them (ledger 303) -- and
+    FloPy reads the same flat list as ONE two-field record and refuses it at build. One
+    spelling, named in the refusal (ledger 381).
+    """
+
+    if isinstance(packages, (str, bytes)) or any(
+        not isinstance(record, (list, tuple)) for record in packages
+    ):
+        flat = [packages] if isinstance(packages, (str, bytes)) else list(packages)
+        spelling = [
+            list(record) if isinstance(record, (list, tuple)) else [str(record)]
+            for record in flat
+        ]
+        raise ValueError(
+            "MVR packages are one single-item list or tuple per package, not bare names: "
+            f"packages={spelling!r}. FloPy reads a flat list of names as ONE record."
+        )
+    return tuple(str(record[0]) for record in packages)
 
 
 def mvr_spec(
@@ -834,7 +850,9 @@ def mvr_spec(
         provides or receives water: ``[["sfr"], ["lak"]]``. The item is the
         package name, and it is what the returned spec ``requires=`` -- so it must
         match a ``PackageSpec`` name declared earlier in the same model -- and what
-        it records as the packages it addresses by index. Names must be unique.
+        it records as the packages it addresses by index. Names must be unique. A
+        bare name (``["sfr", "lak"]``) raises ``ValueError`` naming the record
+        spelling: FloPy reads a flat list as ONE record.
     perioddata : dict
         Mover records per period, ``{period: [(pname1, id1, pname2, id2, mvrtype,
         value), ...]}`` with zero-based period keys (a list is not accepted).
@@ -868,8 +886,9 @@ def mvr_spec(
     Raises
     ------
     ValueError
-        On duplicate package names, references to undeclared packages, or
-        ``maxmvr``/``maxpackages`` smaller than required.
+        On a bare package name rather than a record, duplicate package names,
+        references to undeclared packages, or ``maxmvr``/``maxpackages`` smaller
+        than required.
     """
 
     required = _package_names(packages)
@@ -912,10 +931,10 @@ def mvr_spec(
         # Which siblings this package addresses by INDEX. Stamped HERE rather than in
         # `MVRBuilder.build` because `mf.mvr.flopy(...)` reaches this function directly
         # and would otherwise carry no marker at all. Not `requires=`, which already
-        # means "build this first" and is carried by `mf.hfb` as ("disv",) -- reading
-        # that as an index reference would refuse every barrier whenever the
-        # discretization rebuilt (ledger 303).
-        metadata={INDEXED_PACKAGES: sorted({str(record[0]) for record in packages})},
+        # means "build this first" -- reading that as an index reference would refuse a
+        # package ordered after a discretization whenever it rebuilt (ledger 303). From
+        # `required`, the names `_package_names` read, so the two can never disagree.
+        metadata={INDEXED_PACKAGES: sorted(set(required))},
     )
 
 

@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 380 entries (385 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 381 entries (386 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 381 | An MVR `packages=` list of bare names is refused, naming the record spelling | 2026-10-11 |
 | 380 | A lazy UZF or array-form RCH/EVT builds on a context holding a grid and no domain, every cell active as in MF6 | 2026-10-11 |
 | 379 | A lazy recipe refuses a per-cell value of ANY array-like kind, and reads a numpy integer key as a period | 2026-10-11 |
 | 378 | A flow barrier builds on any discretization -- DIS, DISV or DISU, under any name or through `mf.ref` -- and... | 2026-10-11 |
@@ -12560,11 +12561,12 @@ same day, which is the useful part of the result.
       own docstring exists to prevent. A mutation reverting just ``with_grid`` fails two
       tests by name.
       **A new metadata key, NOT ``requires=``.** That tuple already means "build this
-      first" and ``mf.hfb`` carries it as ``("disv",)``; reading it as an index reference
+      first" and ``mf.hfb`` carried it as ``("disv",)`` (until ledger 378); reading it as an index reference
       would refuse every barrier whenever the discretization rebuilt, which is both wrong
       and constant -- a lazy DISV is always ``rebuilt``. ``INDEXED_PACKAGES`` is stamped
       in ``mvr_spec``, which is the funnel BOTH entry points reach, so
-      ``mf.mvr.flopy(...)`` carries it too. **A mutation reading ``requires=`` instead
+      ``mf.mvr.flopy(...)`` carries it too (from whole names since ledger 381: a
+      bare-string ``packages=["sfr"]`` stamped ``["s"]``). **A mutation reading ``requires=`` instead
       passed all sixteen tests** on the first attempt, because a real ``mf.hfb`` is
       PINNED and so reads ``stale``, which the second pass skips -- the distinction only
       shows on a package that reads ``unchanged`` AND carries ``requires``, and the test
@@ -15313,7 +15315,9 @@ same day, which is the useful part of the result.
       ~~`mf.hfb` refused on any discretization but a spec named `disv`; a lazy `mf.rch`/
       `mf.evt`/`mf.uzf` refusing a per-cell list but accepting the same values as an
       ndarray; a lazy `mf.uzf` documented as raising on a context holding a grid but no
-      domain~~ -- fixed, entries rewritten (ledgers 378, 379, 380).
+      domain; `mvr_spec` stamping a bare package name's first letter as the package it
+      indexes~~ -- fixed, entries rewritten (ledgers 378, 379, 380,
+      381).
       **NOT covered** -- scope cut: the read-grammar views reached as
       `model.packages.<pkg>.<inputs|results>.<noun>` are not exported, so nothing discovers
       them from `__all__`; their plot verbs are checked by `test_noun_signatures`, their
@@ -17421,3 +17425,16 @@ same day, which is the useful part of the result.
       Revert check: the old condition fails `test_a_lazy_uzf_needs_no_GRID_only_a_domain
       [grid-only]` and both `test_the_array_form_builds_on_a_context_with_a_grid_and_no_domain`
       cases; dropping the `needs_grid` guard fails the idomain-file test.
+
+381. **An MVR `packages=` list of bare names is refused, naming the record spelling (2026-10-11).**
+      `_package_names` took a bare string as its own name (for `requires=`) while the
+      ledger-303 index marker took `str(record[0])`, its first LETTER: `["sfr", "lak"]`
+      required `("sfr", "lak")` and stamped `["l", "s"]`, so a grid move could not see
+      that the mover indexes SFR and LAK. **Judgment call: REFUSED, not normalized** --
+      the house rule of one spelling, raised with a pointer. FloPy reads a flat list as
+      ONE record, so a two-package bare list never built anyway (MFDataException at
+      build); the one spelling this changes is a ONE-package bare list `["sfr"]`, which
+      FloPy built and which now raises at the call naming `[["sfr"]]`. The marker reads
+      the names `_package_names` returned, so the two cannot disagree again.
+      Revert check: the old code fails all four
+      `test_mvr_bare_package_names_are_refused_naming_the_record_spelling` cases.
