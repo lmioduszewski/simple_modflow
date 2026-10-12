@@ -12846,7 +12846,8 @@ same day, which is the useful part of the result.
         head-clock LIST by a stress-period number, which is only correct at one save per
         period;~~ **RESOLVED by ledger 337.** STILL OPEN: `budget_tables.sfr_stage_df`
         reshapes by `model.nper` and raises;
-        `budget_obs_df` swallows the mismatch with `except KeyError: continue`.
+        ~~`budget_obs_df` swallows the mismatch with `except KeyError: continue`.~~
+        **RESOLVED by ledger 476**: its rows are the budget file's own `kstpkper`.
         Scoped OUT by the user to keep this pass to the reported defect. They are a
         genuinely larger surface -- the group tier and the PEST observation path -- and
         each needs its own measured fixture. `SFRStageOutput.get`
@@ -19470,7 +19471,9 @@ same day, which is the useful part of the result.
       two differ, naming "leave crs= out" and `grid.crs = ...` -- rather than reproject to
       the grid's and ignore the argument, which would leave a parameter that cannot act.
       A `VoronoiGridPlus` always declares a CRS, so `crs=` acts only with no grid.
-      `budget_obs_df` passes none. `GeoPackageSource.gdf` keeps the layer as READ and
+      `budget_obs_df` passes none -- and since ledger 476 builds no `Boundaries` at all: it
+      reads its areas through `read_footprints`, reprojected to the grid's CRS.
+      `GeoPackageSource.gdf` keeps the layer as READ and
       reprojects it to the grid's CRS as it is at each access, from the file's own frame
       (not a round trip of the previous label); a frame set from outside is taken to be
       in the grid's CRS when first read, as `Boundaries` takes one.
