@@ -1968,10 +1968,10 @@ class LakConnectionsExplorer:
             them would invent a wider connection than any that exists.
         multiplier : float, default 1.0
             Scale every value before drawing -- unit conversion, most often.
-            Applied AFTER ``agg`` (so under ``-1.0``, ``agg="max"`` draws
-            minus the largest record) and to every cell, ``fill_value`` included:
-            ``fill_value=1.0, multiplier=2.0`` draws 2.0 where there is no record
-            -- but 1.0 when the selection holds no record at all.
+            Applied to each record BEFORE ``agg`` (so under ``-1.0``,
+            ``agg="max"`` draws the largest negated record) and never to
+            ``fill_value`` (it acted after ``agg`` and scaled the fill until
+            ledger 473).
         fill_value : float, default 0.0
             Value given to cells with no lake connection. Pass ``float("nan")``
             to leave them uncoloured, which is usually clearer here: a lake
@@ -3998,10 +3998,10 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
             lake spanning several layers this is how you choose.
         multiplier : float, default 1.0
             Scale every value before drawing -- unit conversion, most often.
-            Applied AFTER ``agg`` (so under ``-1.0``, ``agg="max"`` draws
-            minus the largest record) and to every cell, ``fill_value`` included:
-            ``fill_value=1.0, multiplier=2.0`` draws 2.0 where there is no record
-            -- but 1.0 when the selection holds no record at all.
+            Applied to each record BEFORE ``agg`` (so under ``-1.0``,
+            ``agg="max"`` draws the largest negated record) and never to
+            ``fill_value`` (it acted after ``agg`` and scaled the fill until
+            ledger 473).
         fill_value : float, default 0.0
             Value given to cells this package has no record for. Pass
             ``float("nan")`` to leave them uncoloured, which is usually clearer

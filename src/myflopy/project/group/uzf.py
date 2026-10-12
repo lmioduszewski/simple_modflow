@@ -17,6 +17,7 @@ from myflopy.modflow.mf6.package_explorer import (
     get_default_package_colorscale,
     get_package_input_field_spec,
 )
+from myflopy.modflow.mf6.package_registry import input_field_agg
 from myflopy.modflow.utils.datatypes.hover import cell_input_hover, compare_hover
 from myflopy.project.group._shared import (
     _ensure_group_map_compatible,
@@ -38,6 +39,11 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
 
         self.group = group
         self.field_name = str(field_name)
+
+    def _series_default_agg(self) -> str:
+        """How ``plot()`` combines a period's records: by the field's kind (ledger 472)."""
+
+        return input_field_agg("uzf", self.field_name)
 
     def get(
         self,
@@ -193,11 +199,11 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
         model=None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
-        agg: str = "sum",
+        agg: str | None = None,
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Render one model's UZF field as a raw-value ``Choro``."""
+        """Render one model's UZF field as a raw-value ``Choro`` (``agg=None``: by the field's kind)."""
 
         target_name = self._group_target(model)
         target_model = self.group.models[target_name]
@@ -210,7 +216,7 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
             layer=layer,
             multiplier=multiplier,
             fill_value=fill_value,
-            agg=agg,
+            agg=input_field_agg("uzf", self.field_name, agg),
         )
         kwargs.setdefault("hover_spec", cell_input_hover(self.field_name))
         return target_model.plot.map(
@@ -233,7 +239,7 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
         layer: int = 0,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
-        agg: str = "sum",
+        agg: str | None = None,
         colorscale: str | None = None,
         **kwargs,
     ):
@@ -259,17 +265,19 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
         layer : int, default 0
             The zero-based layer whose UZF objects are drawn.
         multiplier : float, default 1.0
-            Scales every drawn difference AFTER ``agg`` -- a unit conversion or a
-            sign flip -- and the filled cells with them, except when the
-            selection is empty (every cell is then ``fill_value`` as given).
+            Scales every difference BEFORE ``agg`` -- a unit conversion or a
+            sign flip -- and never the ``fill_value`` cells (it acted after
+            ``agg`` and scaled them too until ledger 473).
         fill_value : float, default 0.0
             The value of a cell with no comparison row. ``float("nan")`` leaves
             it blank. A cell whose rows hold no difference at all is ``NaN``, not
             this (ledger 329).
-        agg : str, default "sum"
+        agg : str or None, optional
             How several rows on one cell combine, as any pandas aggregation name.
-            A UZF package holds one object per layer and cell, so with one layer
-            drawn there is normally one row and it does not act.
+            Default ``None``: by the field's kind -- ``sum`` for ``finf``/``pet``,
+            ``mean`` for the rest (ledger 472; it was ``"sum"``). A UZF
+            package holds one object per layer and cell, so with one layer drawn
+            there is normally one row and it does not act.
         colorscale : str or list or None, optional
             Any Plotly colorscale name or explicit stops. Default ``None``: the
             group diff scale -- red at the negative end, white at zero, blue at
@@ -307,7 +315,7 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
             layer=layer,
             multiplier=multiplier,
             fill_value=fill_value,
-            agg=agg,
+            agg=input_field_agg("uzf", self.field_name, agg),
         )
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)

@@ -292,9 +292,9 @@ class GroupCellPackageResults(_GroupSpatialView):
         layer : int, default 0
             The zero-based layer whose rows are drawn.
         multiplier : float, default 1.0
-            Scales every drawn difference AFTER ``agg`` -- a unit conversion or a
-            sign flip -- and the filled cells with them, except when the
-            selection is empty (every cell is then ``fill_value`` as given).
+            Scales every difference BEFORE ``agg`` -- a unit conversion or a
+            sign flip -- and never the ``fill_value`` cells (it acted after
+            ``agg`` and scaled them too until ledger 473).
         fill_value : float, default 0.0
             The value of a cell with no comparison row. ``float("nan")`` leaves
             it blank. A cell whose rows hold no difference at all is ``NaN``, not

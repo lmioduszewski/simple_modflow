@@ -346,8 +346,8 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             Default ``None``: every connection.
         multiplier : float, default 1.0
             Scales every drawn difference -- a unit conversion or a sign flip --
-            and the filled cells with them, except when no cell is a lake cell of
-            both members (every cell is then ``fill_value`` as given).
+            and never the ``fill_value`` cells (it scaled them too until ledger
+            473).
         fill_value : float, default 0.0
             The value of a cell that is not a lake cell of both members -- one
             alone connects a lake to it, or neither does. ``float("nan")`` leaves
@@ -817,12 +817,10 @@ class GroupLakConnections:
             number.
         multiplier : float, default 1.0
             Scale every drawn value -- unit conversion (``0.3048`` for feet to
-            metres on an elevation column), or a sign flip. Applied AFTER
-            ``agg``, to each cell's reduced value, so ``agg="max"`` with
-            ``multiplier=-1`` draws minus the largest value, not the largest
-            negated one. The filled cells are scaled too (``fill_value=-1`` with
-            ``multiplier=2`` draws -2), except when no connection is selected,
-            where every cell is ``fill_value`` as given.
+            metres on an elevation column), or a sign flip. Applied to each
+            record BEFORE ``agg``, so ``agg="max"`` with ``multiplier=-1`` draws
+            the largest negated value, and never to the ``fill_value`` cells (it
+            acted after ``agg`` and scaled the fill until ledger 473).
         fill_value : float, default 0.0
             Value given to cells with no LAK connection in this layer. The
             default colours them zero, which reads as "no lake here" on an

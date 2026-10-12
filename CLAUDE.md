@@ -120,7 +120,9 @@ TOTAL, which an unwrapped conductance does not.
 ask it too** (ledger 331): `_aggregate_named_series` takes a REQUIRED `kind=`. A stage
 table repeats a lake's one stage on every connected cell, and the targets ADDED the
 copies -- the user's pond, 763 cells, read **401,339.97 ft for 526.00**, in the CSVs PEST
-read. Copies that disagree are REFUSED, not averaged.
+read. Copies that disagree are REFUSED, not averaged. Every INPUT view -- map, series,
+group, diff -- defaults through `package_registry.input_field_agg` (ledger 472; the
+series and group tier had summed elevations), and records pair across models one to one.
 **A period's value is its END-of-period value, for a flow too** (ledger 336, the user's
 rule): every family -- heads, conc, SFR stage, SFR flow, DRN flow, PEST's forward run,
 `model.hds.get()` -- picks the record through ONE function, `period_end.period_end_steps`,

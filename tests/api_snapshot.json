@@ -1236,7 +1236,7 @@
       "value_column:KEYWORD_ONLY=None",
       "multiplier:KEYWORD_ONLY=1.0",
       "fill_value:KEYWORD_ONLY=0.0",
-      "agg:KEYWORD_ONLY='sum'",
+      "agg:KEYWORD_ONLY=None",
       "colorscale:KEYWORD_ONLY=None",
       "kwargs:VAR_KEYWORD=<required>"
     ],
@@ -1302,7 +1302,7 @@
       "layer:KEYWORD_ONLY=0",
       "multiplier:KEYWORD_ONLY=1.0",
       "fill_value:KEYWORD_ONLY=0.0",
-      "agg:KEYWORD_ONLY='sum'",
+      "agg:KEYWORD_ONLY=None",
       "colorscale:KEYWORD_ONLY=None",
       "kwargs:VAR_KEYWORD=<required>"
     ],
@@ -4802,7 +4802,7 @@
       "layer:KEYWORD_ONLY=0",
       "multiplier:KEYWORD_ONLY=1.0",
       "fill_value:KEYWORD_ONLY=0.0",
-      "agg:KEYWORD_ONLY='sum'",
+      "agg:KEYWORD_ONLY=None",
       "zmin:KEYWORD_ONLY=None",
       "zmax:KEYWORD_ONLY=None",
       "colorscale:KEYWORD_ONLY=None",

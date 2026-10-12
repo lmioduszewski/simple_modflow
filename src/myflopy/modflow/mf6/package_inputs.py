@@ -31,6 +31,7 @@ from myflopy.modflow.mf6.package_registry import (
     get_package_explorer_spec,
     get_package_input_field_names,
     get_package_input_field_spec,
+    input_field_agg,
 )
 from myflopy.modflow.mf6.package_tables import (
     build_cell_package_input_table,
@@ -202,6 +203,11 @@ class CellPackageInputFieldExplorer(SpatialView):
         """Return the underlying package name."""
 
         return self.inputs.package_name
+
+    def _series_default_agg(self) -> str:
+        """How :meth:`plot` combines a period's records: by the field's kind (ledger 472)."""
+
+        return self.field_spec.agg
 
     def get(
         self,
@@ -601,6 +607,11 @@ class UzfFieldInputsExplorer(SpatialView):
     #: explorer the same question, so it answers it the same way.
     package_name = "uzf"
 
+    def _series_default_agg(self) -> str:
+        """How :meth:`plot` combines a period's records: by the field's kind (ledger 472)."""
+
+        return input_field_agg("uzf", self.field_name)
+
     def get(
         self,
         *,
@@ -696,7 +707,7 @@ class UzfFieldInputsExplorer(SpatialView):
         # -- table to cells --------------------------------------------------
         multiplier: float = 1.0,
         fill_value: float = 0.0,
-        agg: str = "sum",
+        agg: str | None = None,
         # -- colour ----------------------------------------------------------
         zmin: float | None = None,
         zmax: float | None = None,
@@ -744,8 +755,8 @@ class UzfFieldInputsExplorer(SpatialView):
         Worth knowing about UZF specifically: a vertical column of UZF objects
         stacked under one cell all share that cell, so ``agg`` is doing real work
         on a multi-layer unsaturated column even when ``layer`` is pinned --
-        ``sum`` is right for a flux such as ``finf``, ``mean`` for a property
-        such as ``extdp``.
+        ``sum`` for a flux such as ``finf``, ``mean`` for a property such as
+        ``extdp``, which is what each field's kind gives by default.
 
         Every parameter is named rather than swept into ``**kwargs``: PyCharm and
         Pylance read the ``def`` line and never run the module, so a parameter
@@ -784,12 +795,13 @@ class UzfFieldInputsExplorer(SpatialView):
             non-UZF part of the grid uncoloured instead, which is the honest
             choice for a property such as ``extdp`` where zero is a real and
             different statement.
-        agg : {'sum', 'mean', 'min', 'max', 'first', 'last'}, default 'sum'
+        agg : {'sum', 'mean', 'min', 'max', 'first', 'last'}, optional
             How several UZF records landing in ONE grid cell are reduced to one
-            number. ``sum`` is right for an extensive quantity (a rate applied
-            over the cell); switch to ``mean`` for an intensive one such as
-            ``extdp``, ``extwc`` or ``rootact``, where summing a stacked column
-            produces a number with no physical meaning.
+            number. Default ``None``: by the field's kind
+            (``package_registry.input_field_agg``) -- ``sum`` for ``finf`` and
+            ``pet`` (rates), ``mean`` for ``extdp``, ``extwc``, ``ha``,
+            ``hroot`` and ``rootact``, where a sum has no physical meaning. It was
+            ``'sum'`` for every field until ledger 472.
         **trace_kwargs
             The open tail, forwarded to ``model.plot.map``. ``values=``,
             ``type=`` and the legacy ``custom_hover``/``hover_heads``/``hover_ks``
@@ -958,7 +970,7 @@ class UzfFieldInputsExplorer(SpatialView):
         >>> model.uzf.inputs.finf.map()
         >>> model.uzf.inputs.finf.map(per=5, multiplier=365.25)
         >>> model.uzf.inputs.pet.map(per=3, agg="mean")
-        >>> model.uzf.inputs.extdp.map(agg="mean", fill_value=float("nan"))
+        >>> model.uzf.inputs.extdp.map(fill_value=float("nan"))
         >>> model.uzf.inputs.finf.map(logscale=True, colorscale="Blues")
         >>> model.uzf.inputs.pet.map(backend="mpl").savefig("pet.png")
         """
@@ -978,7 +990,7 @@ class UzfFieldInputsExplorer(SpatialView):
             layer=layer,
             multiplier=multiplier,
             fill_value=fill_value,
-            agg=agg,
+            agg=input_field_agg("uzf", self.field_name, agg),
         )
         choro = self.model.plot.map(
             per=per,

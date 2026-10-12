@@ -377,8 +377,8 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
             The zero-based layer drawn.
         multiplier : float, default 1.0
             Scales every drawn difference -- a unit conversion or a sign flip --
-            and the filled cells with them, except when the selection is empty
-            (every cell is then ``fill_value`` as given).
+            and never the ``fill_value`` cells (it scaled them too until ledger
+            473).
         fill_value : float, default 0.0
             The value of a cell with no comparison row; every cell has one in a
             member's value table, so it acts only when a selection is empty.

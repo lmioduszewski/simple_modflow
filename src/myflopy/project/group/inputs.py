@@ -19,6 +19,7 @@ from myflopy.modflow.mf6.package_explorer import (
     get_package_input_field_names,
 )
 from myflopy.modflow.mf6.package_explorer_utils import period_number
+from myflopy.modflow.mf6.package_registry import input_field_agg
 from myflopy.modflow.mf6.package_tables import PACKAGE_TABLE_UNAVAILABLE
 from myflopy.modflow.utils.datatypes.hover import cell_input_hover, compare_hover
 from myflopy.project.group._shared import (
@@ -103,6 +104,11 @@ class GroupPackageInputField(_GroupSpatialView):
         """The column ``plot()`` draws -- this pinned field name."""
 
         return self.field_name
+
+    def _series_default_agg(self) -> str:
+        """How ``plot()`` combines a period's records: by the field's kind (ledger 472)."""
+
+        return input_field_agg(self.package_name, self.field_name)
 
 
 class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
@@ -273,9 +279,11 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
         ``layer``, ``cell`` and any text column such as ``boundname`` -- by an
         inner join, so a row with no identical partner is dropped (a member whose
         package carries another name pairs nothing). A cell holding SEVERAL
-        records of the package pairs every one of the member's with every one of
-        the reference's: two each give four rows, so a per-cell difference there
-        is not one record's change (ledger 439).
+        records with the same keys pairs them in file order, the member's first
+        with the reference's first and so on -- one row per record, a record with
+        no counterpart dropped. It paired every one with every one until ledger
+        472: two records each gave four rows, and a change of 1.0 in each
+        drew 4.0 on the map.
 
         Parameters
         ----------
@@ -313,10 +321,17 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             and pd.api.types.is_numeric_dtype(data[column])
         ]
         key_columns = [column for column in data.columns if column not in {"model", *value_columns}]
+        # Records PAIR, in file order within their keys: an inner join on the keys
+        # alone gave a cell of k records k*k rows (ledger 472).
+        data = data.assign(
+            _record=data.groupby(["model", *key_columns], dropna=False).cumcount()
+        )
         ref = data[data["model"] == reference].drop(columns=["model"]).copy()
         rename_map = {column: f"reference_{column}" for column in value_columns}
         ref = ref.rename(columns=rename_map)
-        comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
+        comp = data[data["model"] != reference].merge(
+            ref, on=[*key_columns, "_record"], how="inner"
+        ).drop(columns=["_record"])
         comp["reference_model"] = reference
         for column in value_columns:
             comp[f"{column}_diff"] = comp[column].astype(float) - comp[f"reference_{column}"].astype(float)
@@ -341,11 +356,15 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
         value_column: str | None = None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
-        agg: str = "sum",
+        agg: str | None = None,
         colorscale: str | None = None,
         **kwargs,
     ):
-        """Render one model's package-input field as a raw-value ``Choro``."""
+        """Render one model's package-input field as a raw-value ``Choro``.
+
+        ``agg=None`` combines a cell's records by the drawn field's kind (ledger
+        472): it was ``"sum"``, so two ``bhead`` records of 5 and 7 drew 12.
+        """
 
         target_name = self._group_target(model)
         target_model = self.group.models[target_name]
@@ -373,7 +392,7 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             layer=layer,
             multiplier=multiplier,
             fill_value=fill_value,
-            agg=agg,
+            agg=input_field_agg(self.package_name, chosen_value_column, agg),
         )
         kwargs.setdefault("hover_spec", cell_input_hover(chosen_value_column))
         return target_model.plot.map(
@@ -397,7 +416,7 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
         value_column: str | None = None,
         multiplier: float = 1.0,
         fill_value: float = 0.0,
-        agg: str = "sum",
+        agg: str | None = None,
         colorscale: str | None = None,
         **kwargs,
     ):
@@ -429,19 +448,22 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             there is none, and ``KeyError`` when the field has no ``_diff``
             column.
         multiplier : float, default 1.0
-            Scales every drawn difference AFTER ``agg`` -- a unit conversion or a
-            sign flip -- and the filled cells with them, except when the
-            selection is empty (every cell is then ``fill_value`` as given).
+            Scales every difference BEFORE ``agg`` -- a unit conversion or a
+            sign flip -- and never the ``fill_value`` cells (it acted after
+            ``agg`` and scaled them too until ledger 473).
         fill_value : float, default 0.0
             The value of a cell with no comparison row. ``float("nan")`` leaves
             it blank. A cell whose rows hold no difference at all is ``NaN``, not
             this (ledger 329).
-        agg : str, default "sum"
-            How several rows on one cell combine -- any pandas aggregation name.
-            It is NOT derived from the field's kind (ledger 297): the default ADDS
-            an elevation's records as it adds a conductance's, and on a cell with
-            several records it combines the cross-paired rows :meth:`compare`
-            makes (ledger 439).
+        agg : str or None, optional
+            How a cell's paired differences combine -- any pandas aggregation
+            name. Default ``None``: by the field's kind
+            (``package_registry.input_field_agg``, ledger 297) -- the SUM of a
+            conductance's or a rate's differences (the change in the cell's
+            total), the MEAN of an elevation's. A field the registry does not
+            declare raises ``ValueError`` asking for ``agg``. It was ``"sum"``
+            for every field, over cross-paired rows, until ledger 472: a
+            cell of two ``bhead`` records each moved 1.0 drew 4.0.
         colorscale : str or list or None, optional
             Any Plotly colorscale name or explicit stops. Default ``None``: the
             group diff scale -- red at the negative end, white at zero, blue at
@@ -498,7 +520,7 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             layer=layer,
             multiplier=multiplier,
             fill_value=fill_value,
-            agg=agg,
+            agg=input_field_agg(self.package_name, chosen_value_column, agg),
         )
         kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
         kwargs.setdefault("zmax", absmax if absmax > 0 else None)

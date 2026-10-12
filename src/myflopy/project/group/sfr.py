@@ -279,8 +279,8 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             The zero-based layer whose reaches are drawn.
         multiplier : float, default 1.0
             Scales every drawn difference -- a unit conversion or a sign flip --
-            and the filled cells with them, except when no cell has a reach in
-            both members (every cell is then ``fill_value`` as given).
+            and never the ``fill_value`` cells (it scaled them too until ledger
+            473).
         fill_value : float, default 0.0
             The value of a cell that lacks a reach in either member -- in one
             alone or in neither. ``float("nan")`` leaves it blank. A cell whose

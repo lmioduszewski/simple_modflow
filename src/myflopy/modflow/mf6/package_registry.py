@@ -655,6 +655,53 @@ def get_package_input_field_spec(package_name: str, field_name: str) -> FieldSpe
     return spec.inputs.get(str(field_name).lower())
 
 
+def input_field_agg(package_name: str, field_name: str, agg: str | None = None) -> str:
+    """How several records of one package input field combine, from what it IS.
+
+    The default ``agg`` of every view that reduces an input field's records -- a
+    map's cell, a series' period point, a group or diff comparison -- through
+    :attr:`FieldSpec.agg` and so :func:`agg_for_kind` (ledger 297): ``"sum"`` for
+    an extensive field (a conductance, a rate), ``"mean"`` for an elevation or an
+    intensive one. The series panels and the group tier used to take ``"sum"``
+    for every field, so ``model.drn.inputs.elev.plot()`` drew the SUM of the
+    drains' elevations (ledger 472).
+
+    Parameters
+    ----------
+    package_name : str
+        The package type, any case (``"drn"``, ``"uzf"``).
+    field_name : str
+        The input field, any case, as the registry names it (``"elev"``,
+        ``"cond"``, ``"finf"``).
+    agg : str or None, optional
+        The caller's own choice, any pandas aggregation name; returned unchanged
+        when given. Default ``None``: the field's kind decides.
+
+    Returns
+    -------
+    str
+        ``agg`` when given, else ``"sum"`` or ``"mean"`` by the field's kind.
+
+    Raises
+    ------
+    ValueError
+        When ``agg`` is ``None`` and the registry declares no such field (an
+        auxiliary column, say): what its records ARE is unknown, so the caller
+        must say how they combine rather than have one guessed.
+    """
+
+    if agg is not None:
+        return str(agg)
+    spec = get_package_input_field_spec(package_name, field_name)
+    if spec is None:
+        raise ValueError(
+            f"{package_name}.{field_name} is not a declared input field, so how its "
+            f"records on one cell combine is not known; pass agg='sum' (a flux or a "
+            f"conductance) or agg='mean' (an elevation or a property)."
+        )
+    return spec.agg
+
+
 def get_package_input_field_names(package_name: str) -> list[str]:
     """Return the known input field names for one package (empty if unknown)."""
 

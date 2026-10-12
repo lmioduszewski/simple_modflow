@@ -38,7 +38,7 @@ from myflopy.modflow.mf6.package_explorer import (
     get_package_input_field_names,
 )
 from myflopy.modflow.mf6.package_explorer_utils import period_number
-from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, input_field_agg
 from myflopy.modflow.mf6.package_tables import (
     PACKAGE_TABLE_UNAVAILABLE,
     build_cell_package_input_table,
@@ -237,6 +237,16 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
             )
         return column
 
+    def _series_default_agg(self) -> str:
+        """How ``plot()`` combines a period's differences: by the field's kind (ledger 472).
+
+        The SUM of a conductance's differences is the change in the total; an
+        elevation's are averaged. Every field was summed before.
+        """
+
+        field = self.field_name or get_default_package_value_column(self.package_name)
+        return input_field_agg(self.package_name, field)
+
     def _targets(self, model_name=None) -> list[str]:
         """Return the non-reference model names to diff (or just ``model_name``)."""
 
@@ -260,9 +270,10 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
         ``layer``, ``cell`` and every non-numeric column (``package``, ``pname``,
         a boundname), so a cell in only one model is absent here (:meth:`cells`
         shows it) and so is a row whose package NAME differs. A cell holding
-        several records of one package pairs each of the model's with each of the
-        reference's: two records on each side give four rows. ``x_diff`` is model
-        minus reference, in the field's own units.
+        several records of one package pairs them in file order, one row per
+        record (it paired each with each until ledger 472: two records on
+        each side gave four rows). ``x_diff`` is model minus reference, in the
+        field's own units.
 
         Parameters
         ----------
@@ -377,11 +388,12 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
             One row per compared model: ``package``, ``model``,
             ``present_in_reference``, ``present_in_model``,
             ``cells_only_in_reference``, ``cells_only_in_model``, ``cells_shared``,
-            ``value_cells_changed`` (ROWS of :meth:`values`, not cells: a cell
-            counts once per package and period it differs in, and more where it
-            holds several records of one package -- one cell with two records a
-            side, its conductances changed, counts 4) and ``identical`` (presence,
-            cells and values all agree).
+            ``value_cells_changed`` (the shared ``(per, layer, cell)`` keys, as
+            ``cells_shared`` counts them, with any record whose value differs --
+            pooled over the type's packages and its records, so one cell counts
+            once per period; it counted ROWS of :meth:`values` until ledger
+            472, so a cell of two records a side, both changed, read 4) and
+            ``identical`` (presence, cells and values all agree).
         """
 
         reference = self.group.reference
@@ -436,7 +448,11 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
         if not diff_columns:
             return 0
         nonzero = (comparison[diff_columns].fillna(0.0) != 0.0).any(axis=1)
-        return int(nonzero.sum())
+        # CELLS, as `cells_shared` counts them -- a (per, layer, cell) key -- not
+        # rows: a cell of two changed records counted 2, and 4 when records
+        # cross-paired (ledger 472).
+        keys = [column for column in ("per", "layer", "cell") if column in comparison.columns]
+        return int(len(comparison.loc[nonzero, keys].drop_duplicates()))
 
 
 class ConnectionDiff:

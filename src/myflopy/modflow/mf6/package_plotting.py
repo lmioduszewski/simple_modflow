@@ -433,8 +433,8 @@ def build_sfr_q_map_payload(
     rlen_sum = grouped["rlen"].sum(min_count=1).reindex(full_index, fill_value=np.nan)
     values = pd.Series(float(fill_value), index=full_index, dtype=float)
     valid = rlen_sum > 0.0
-    values.loc[valid] = (q_sum.loc[valid] / rlen_sum.loc[valid]).astype(float)
-    values = values * float(multiplier)
+    # Scale the values, never the fill (ledger 473).
+    values.loc[valid] = (q_sum.loc[valid] / rlen_sum.loc[valid]).astype(float) * float(multiplier)
 
     hover: dict[str, list] = {
         "Package": grouped["package"]
@@ -514,8 +514,8 @@ def build_lak_q_map_payload(
     )
     values = pd.Series(float(fill_value), index=full_index, dtype=float)
     valid = area_sum > 0.0
-    values.loc[valid] = (q_sum.loc[valid] / area_sum.loc[valid]).astype(float)
-    values = values * float(multiplier)
+    # Scale the values, never the fill (ledger 473).
+    values.loc[valid] = (q_sum.loc[valid] / area_sum.loc[valid]).astype(float) * float(multiplier)
 
     hover: dict[str, list] = {
         "Package": grouped["package"]
@@ -592,7 +592,8 @@ def build_surface_water_q_map_payload(
         .sum(min_count=1)
         .reindex(full_index, fill_value=np.nan)
     )
-    values = values.fillna(float(fill_value)).astype(float) * float(multiplier)
+    # Scale the values, never the fill (ledger 473).
+    values = (values.astype(float) * float(multiplier)).fillna(float(fill_value))
 
     sfr_component = selected.loc[selected["source"] == "sfr"].groupby(
         "cell", dropna=False
@@ -1027,10 +1028,15 @@ def build_cell_input_map_payload(
         )
 
     selected = _rows_drawn_for_period(frame, per).copy()
+    # The multiplier scales each RECORD before ``agg`` combines them, and never the
+    # fill: it acted after ``agg`` and on the ``fill_value`` cells, so a fill of 1.0
+    # drew 2.0 at ``multiplier=2`` -- and 1.0 when the selection held no record at
+    # all (ledger 473).
+    scaled = pd.to_numeric(selected[value_column], errors="coerce") * float(multiplier)
+    values = _aggregate_leaving_gaps(
+        scaled.groupby(selected["cell"], dropna=False), agg
+    ).reindex(full_index, fill_value=fill_value).astype(float)
     grouped = selected.groupby("cell", dropna=False)
-    values = _aggregate_leaving_gaps(grouped[value_column], agg).reindex(
-        full_index, fill_value=fill_value
-    ).astype(float) * float(multiplier)
 
     hover: dict[str, list] = {
         "Package": grouped["package"]
@@ -1145,9 +1151,11 @@ def build_group_input_compare_map_payload(
             )
 
     grouped = frame.groupby("cell", dropna=False)
-    diff_values = _aggregate_leaving_gaps(grouped[diff_column], agg).reindex(
-        full_index, fill_value=fill_value
-    ).astype(float) * float(multiplier)
+    # Each difference scaled BEFORE ``agg``, and the fill never (ledger 473).
+    scaled = pd.to_numeric(frame[diff_column], errors="coerce") * float(multiplier)
+    diff_values = _aggregate_leaving_gaps(
+        scaled.groupby(frame["cell"], dropna=False), agg
+    ).reindex(full_index, fill_value=fill_value).astype(float)
     current_values = (
         grouped[value_column].agg("first").reindex(full_index, fill_value=np.nan)
     )
@@ -1620,7 +1628,8 @@ class SpatialView:
             ``results.stage``) to the member's stage noun's ``map`` (its ``agg``
             defaults to ``'first'``). Every other group view first takes its own
             -- ``multiplier`` (default 1.0), ``fill_value`` (0.0) and
-            ``colorscale``; ``agg`` (``'sum'``), which the LAK and SFR exchange
+            ``colorscale``; ``agg`` (``'sum'``; on an inputs view the field's
+            kind decides, ledger 472), which the LAK and SFR exchange
             accept and do not use and the surface-water exchange does not take;
             ``value_column`` on an inputs view; ``connection_type`` on the LAK
             exchange; ``include``/``lak_connection_type`` on the surface-water
@@ -1827,13 +1836,14 @@ class SpatialView:
             nor is an unknown name: both raise ``AttributeError``. ``None`` (the
             default) is the surface's own: ``'mean'`` for heads, concentration and
             temperature (one model or a group), their difference, and a single
-            model's LAK/SFR stage; ``'sum'`` everywhere else -- a flux and a
-            difference of fluxes, a group's stage view (one row per lake or reach
-            and period, so the sum is the stage), and every package INPUT field,
-            an elevation included: ``model.drn.inputs.elev.plot()`` draws the SUM
-            of the drain cells' elevations, where its ``map`` combines a cell's
-            records by the field's kind. A point whose rows hold no value at all
-            stays a gap rather than summing to 0.
+            model's LAK/SFR stage; a package INPUT field's own kind on one model,
+            a group and a diff (``package_registry.input_field_agg``: ``'sum'``
+            for a conductance or a rate, ``'mean'`` for an elevation or a
+            property -- ``model.drn.inputs.elev.plot()`` drew the SUM of the
+            drains' elevations until ledger 472); ``'sum'`` everywhere else
+            -- a flux and a difference of fluxes, and a group's stage view (one
+            row per lake or reach and period, so the sum is the stage). A point
+            whose rows hold no value at all stays a gap rather than summing to 0.
         backend : {'plotly', 'mpl'}, default 'plotly'
             ``'plotly'`` (or ``'interactive'``) returns a :class:`~myflopy.viz.Fig`;
             ``'mpl'`` (or ``'matplotlib'``, ``'static'``) an 8 x 4 inch Matplotlib

@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 471 entries (476 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 473 entries (478 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 473 | A record map's `multiplier` scales each record before `agg`, and never the fill | 2026-10-11 |
+| 472 | An input field's records combine by the field's kind at every tier, and pair across models one to one | 2026-10-11 |
 | 471 | A budget record whose value is an AUXILIARY reads one value column | 2026-10-11 |
 | 470 | An SFR exchange record joins the reach it names, so a cell of several reaches counts each flow once | 2026-10-11 |
 | 469 | The build-side cellid checks read a DIS `(layer, row, col)` and a DISU `(node,)` through `CellNumbering`, a... | 2026-10-11 |
@@ -18631,10 +18633,11 @@ same day, which is the useful part of the result.
       441 (single-model inputs, heads, budgets); the rest are below.
       **Defects documenting found, LISTED AND NOT FIXED** (each docstring states what the
       code does; R = reproduced in the pass, C = read from the code):
-      *Plot views* (`docs/reproducers/view_plot_docstring_claims.py` items 10-15, R): an
+      *Plot views* (`docs/reproducers/view_plot_docstring_claims.py` items 10-15, R): ~~an
       input field's `plot()` -- single-model, group and diff -- takes `agg="sum"`, so
       `model.drn.inputs.elev.plot()` draws 1598.13 per period for drains averaging
-      133.18 (ledger 297 not applied to series); ~~`mosaic(kind="section", <typo>=)`'s
+      133.18 (ledger 297 not applied to series)~~ (fixed by ledger 472: the field's
+      kind decides at every tier); ~~`mosaic(kind="section", <typo>=)`'s
       `TypeError` offers `cells`, which the composer captures~~ (fixed by ledger
       461: `cells` reaches the section); ~~`stack.plot.section(
       legend="bottom")` draws at the upper right (`legend` is read for truth only)~~
@@ -18772,11 +18775,12 @@ same day, which is the useful part of the result.
       ends as the rest of the group tier does (ledger 337): at nstp 1 against 2 they diff
       the reference's period end against the other member's FIRST step (up to 209 ft3/d
       on a canonical connection), and LAK drops 2 of 432 rows whose wetted area differs.
-      **Elevations added, records cross-paired:** the group inputs `map()`/`compare_map()`
+      ~~**Elevations added, records cross-paired:** the group inputs `map()`/`compare_map()`
       take `agg="sum"` whatever the field's kind -- two GHB records of `bhead` 5 and 7
       draw 12.0 where `model.ghb.inputs.bhead.map()` draws 6.0 (ledger 297, at the group
       tier) -- and `GroupPackageInputs.compare()` joins a cell's records pairwise, so a
-      change of 1.0 in each draws 4.0, through `group.diff()` too. **Sentinels:**
+      change of 1.0 in each draws 4.0, through `group.diff()` too~~ (fixed by ledger
+      472: the field's kind decides, and records pair in file order). **Sentinels:**
       `group.hds/conc/temp.compare()` difference MF6's 1e30 (a cell dry in one member
       only reads a diff of 1e30) and `compare_map`'s default colour range becomes
       plus/minus 1e30 (ledger 315's rule is not applied at this tier). **One absent
@@ -18802,7 +18806,8 @@ same day, which is the useful part of the result.
       (0.0) renamed `sat` beside the saturation, so `compare()`/`compare_map()` raise
       `ValueError` and `map()` `AttributeError`~~ (fixed by ledger 471: the record's
       `sat` auxiliary is the value and its placeholder flow is dropped). One docstring was simply wrong and is
-      corrected: `lak.connections.map`'s `multiplier` acts AFTER `agg`, not before.
+      corrected: ~~`lak.connections.map`'s `multiplier` acts AFTER `agg`, not before~~
+      (ledger 473 made it act before `agg`, as that docstring had said).
 
 440. **Defects the LAK/SFR/surface-water, budget-term and HFB views' docstring pass found and documented rather than fixed (2026-10-11).**
       Writing the missing entries in `modflow/mf6/{package_surface_water,package_results,
@@ -18829,9 +18834,10 @@ same day, which is the useful part of the result.
       force), and `per=None` draws every block. **Lies the prose
       told, corrected:** the HFB maps paint their backdrop by CELL NUMBER (not "plain"),
       and the results map does not colour a barrier by its flow (Plotly's trace cycle; all
-      black on mpl); a record map's `multiplier` acts AFTER `agg` and scales the
+      black on mpl); ~~a record map's `multiplier` acts AFTER `agg` and scales the
       `fill_value` cells -- except when the selection holds no record, which draws the
-      fill unscaled (1.0 against 2.0); `exchange_intensity` is length²/time on an SFR cell
+      fill unscaled (1.0 against 2.0)~~ (fixed by ledger 473: each record is scaled
+      before `agg` and the fill never is); `exchange_intensity` is length²/time on an SFR cell
       and length/time on a LAK cell, not one comparable unit; an inputs table carries every
       record in every period, not "all under period 0". **Refusals missing or wrong:**
       `model.sfr.budget.<term>.wide()`'s default `index=("per", "lake")` raises
@@ -19530,3 +19536,30 @@ same day, which is the useful part of the result.
       comparison raised (ledger 439). The rule: when the record carries an auxiliary
       named as the value, that column IS the value and `q` is dropped; otherwise `q` is
       renamed, as before.
+
+472. **An input field's records combine by the field's kind at every tier, and pair across models one to one (2026-10-11).**
+      Ledger 297's rule reached only the single-model input MAP. The series panels
+      (single model, group, diff), the group `map`/`compare_map` and the group UZF views
+      took `agg="sum"` for every field: `drn.inputs.elev.plot()` drew the sum of the
+      drains' elevations, and a group map of two `bhead` records 5 and 7 drew 12. They
+      all ask ONE function now, `package_registry.input_field_agg(package, field, agg)`
+      (`FieldSpec.agg`), which REFUSES a column the registry does not declare (an
+      auxiliary) rather than guess -- pass `agg=`. `GroupPackageInputs.compare` joined a
+      cell's records on their keys, each with each (two a side gave four rows, a change
+      of 1.0 in each drew 4.0); it pairs them in FILE ORDER within their keys now, the
+      only order two builds of one declaration share, and a record with no counterpart
+      is dropped as an unmatched key always was. **Behaviour changes, chosen:** the UZF
+      field map's default `agg` is the kind too (`extdp`/`extwc`/`ha`/`hroot`/`rootact`
+      average; it was `"sum"` with prose advising `"mean"`), and the diff summary's
+      `value_cells_changed` counts `(per, layer, cell)` keys, as `cells_shared` does, not
+      rows of `values()` (a cell of two changed records read 2, and 4 cross-paired).
+
+473. **A record map's `multiplier` scales each record before `agg`, and never the fill (2026-10-11).**
+      All five map payload builders (`build_cell_input_map_payload`, the group
+      comparison's, the SFR/LAK exchange and the surface-water one) multiplied AFTER
+      `agg` and over the `fill_value` cells, so `fill_value=1, multiplier=2` drew 2.0
+      where there is no record -- and 1.0 when the selection held none -- and
+      `multiplier=-1, agg="max"` drew minus the largest record. The order is the one
+      the single-model docstrings already promised ("applied before `agg`"); for a sum
+      or a mean it changes nothing, for `max`/`min`/`first` under a negative
+      multiplier it does, and a `count` no longer scales.

@@ -159,6 +159,14 @@ rather than writing `.sum()`: only an extensive value adds. The observation targ
 rather than averaging them. It had summed: a pond with 763 connected cells read
 401,339.97 ft for 526.00.
 
+**An input field's records combine by its kind at EVERY view** (ledger 472): a
+map's cell, a series' period point, a group map and a group or diff comparison take
+their default `agg` from `package_registry.input_field_agg(package, field)` -- one
+function over `FieldSpec.agg` -- which refuses a column the registry does not declare
+rather than guessing. Two records of one cell are PAIRED across models in file order,
+never joined each with each. A record map's `multiplier` scales each record BEFORE
+`agg` and never the `fill_value` cells (ledger 473).
+
 **Time steps never add, whatever the kind: a period's value is its END-of-period value**
 (ledger 336). Every target family -- heads, concentration, SFR stage, SFR flow, DRN
 flow, and PEST's forward run -- picks the period's record through ONE function,
