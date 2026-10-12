@@ -47,24 +47,25 @@ def read_target_table(path):
     return pd.read_csv(path, converters=converters)
 
 
-def apply_pilotpoints_to_array(array_file, manifest="pilot_point_sets.json"):
-    """Multiply every pilot-point set on one array file into it (a forward-run pre-command).
+def apply_pilotpoints_to_array(array_files, manifest="pilot_point_sets.json"):
+    """Multiply every pilot-point set on some array files into them (a forward-run pre-command).
 
-    The build adds ONE call per array file, after pyEMU's
-    ``apply_list_and_array_pars``. It reads the file's entry in ``manifest`` and
-    starts from the file as pyEMU has just rewritten it from its ``org/`` copy when
-    pyEMU parameterizes that file too (``base_from_file``), else from the base the
-    build captured (``base_file``) -- so a worker directory reused across
-    realizations writes the same file every run. Each cell is then multiplied by the
-    PRODUCT, over every set covering it, of that set's interpolated factor: the
-    set's template-populated pilot values, combined through the weights the build
-    stored (``factors``: per covered cell, its nearest points and their
-    inverse-distance-squared weights) -- ``10 ** sum(weight * log10(value))`` for a
-    log-transformed parameter, ``sum(weight * value)`` otherwise. A covered cell is
-    then clamped to the tightest of its sets' ``physical=`` limits and the file
-    entry's (the pyEMU multipliers' on it, ledger 528); a cell no set
-    covers keeps the value it started from. The file is rewritten in the layout it
-    was read in (ledger 525).
+    The build adds ONE call per group of array files covered by the same sets --
+    one per K layer file, one for every period file of an array RCH (ledger
+    547) -- after pyEMU's ``apply_list_and_array_pars``. Each set's
+    factor is interpolated ONCE per call: the set's template-populated pilot values,
+    combined through the weights the build stored (``factors``: per covered cell, its
+    nearest points and their inverse-distance-squared weights) --
+    ``10 ** sum(weight * log10(value))`` for a log-transformed parameter,
+    ``sum(weight * value)`` otherwise. Each file then starts from itself as pyEMU has
+    just rewritten it from its ``org/`` copy when pyEMU parameterizes that file too
+    (``base_from_file``), else from the base the build captured for it
+    (``base_file``) -- so a worker directory reused across realizations writes the
+    same file every run -- and each cell is multiplied by the PRODUCT of the factors
+    of every set covering it. A covered cell is then clamped to the tightest of its
+    sets' ``physical=`` limits and the file entry's (the pyEMU multipliers' on it,
+    ledger 528); a cell no set covers keeps the value it started from. Each file is
+    rewritten in the layout it was read in (ledger 525).
 
     Until 525 this rebuilt the whole layer from the build-time base after
     pyEMU's apply, which erased every constant/zone/grid multiplier on the file and
@@ -78,22 +79,25 @@ def apply_pilotpoints_to_array(array_file, manifest="pilot_point_sets.json"):
 
     Parameters
     ----------
-    array_file : str
-        The external array file MF6 reads (``<model>.npf_k_layer1.txt``), relative
-        to the working directory, which is the template or a copy of it.
+    array_files : str or list of str
+        The external array files MF6 reads (``<model>.npf_k_layer1.txt``, or every
+        ``<model>.rch_recharge_<n>.txt`` of one period group), relative to the
+        working directory, which is the template or a copy of it; one name is one
+        file. Every file must be covered by the same sets.
     manifest : str, optional
         The build's pilot-point manifest, ``pilot_point_sets.json`` (the default),
-        naming each set's ``parameter_csv``, ``points_csv``, ``factors``,
-        ``interpolation`` and limits and, per file, ``base_from_file``,
-        ``base_file`` and the pyEMU multipliers' ``lower_limit``/``upper_limit``
-        (``None`` for none).
+        naming each set's ``array_files``, ``parameter_csv``, ``points_csv``,
+        ``factors``, ``interpolation`` and limits and, per file,
+        ``base_from_file``, ``base_file`` and the pyEMU multipliers'
+        ``lower_limit``/``upper_limit`` (``None`` for none).
 
     Raises
     ------
     ValueError
-        When the manifest has no entry for ``array_file``; when a set's value file
-        lacks one of its points' values, or holds one that is not a finite number;
-        or when a log-interpolated value is not above zero.
+        When the manifest has no entry for a file, or the files are not covered by
+        the same sets; when a set's value file lacks one of its points' values, or
+        holds one that is not a finite number; or when a log-interpolated value is
+        not above zero.
     """
 
     import json
@@ -101,21 +105,40 @@ def apply_pilotpoints_to_array(array_file, manifest="pilot_point_sets.json"):
     import numpy as np
     import pandas as pd
 
+    if isinstance(array_files, str):
+        array_files = [array_files]
     with open(manifest, encoding="utf-8") as handle:
         info = json.load(handle)
-    entries = [entry for entry in info["files"] if entry["array_file"] == array_file]
-    if len(entries) != 1:
-        raise ValueError(f"{manifest} names no pilot-point sets for {array_file!r}.")
-    entry = entries[0]
-    source = array_file if entry["base_from_file"] else entry["base_file"]
-    start = np.loadtxt(source, ndmin=2)
-    values = start.reshape(-1).astype(float)
-    factor = np.ones(values.size)
-    lower = np.full(values.size, -np.inf)
-    upper = np.full(values.size, np.inf)
-    covered = np.zeros(values.size, dtype=bool)
+    entries = {}
+    for array_file in array_files:
+        found = [entry for entry in info["files"] if entry["array_file"] == array_file]
+        if len(found) != 1:
+            raise ValueError(f"{manifest} names no pilot-point sets for {array_file!r}.")
+        entries[array_file] = found[0]
+    names = {tuple(entry["sets"]) for entry in entries.values()}
+    if len(names) != 1:
+        raise ValueError(
+            f"{manifest}: the files {list(array_files)} are not covered by the same "
+            "pilot-point sets, so they cannot share one interpolation."
+        )
+    wanted = set(next(iter(names)))
+    starts = {}
+    for array_file, entry in entries.items():
+        source = array_file if entry["base_from_file"] else entry["base_file"]
+        starts[array_file] = np.loadtxt(source, ndmin=2)
+    sizes = {start.size for start in starts.values()}
+    if len(sizes) != 1:
+        raise ValueError(
+            f"{list(array_files)} do not hold one value per cell each ({sorted(sizes)} values), "
+            "so one interpolation cannot serve them."
+        )
+    size = sizes.pop()
+    factor = np.ones(size)
+    lower = np.full(size, -np.inf)
+    upper = np.full(size, np.inf)
+    covered = np.zeros(size, dtype=bool)
     for record in info["sets"]:
-        if record["array_file"] != array_file:
+        if record["name"] not in wanted:
             continue
         frame = pd.read_csv(record["parameter_csv"])
         given = pd.Series(
@@ -146,15 +169,18 @@ def apply_pilotpoints_to_array(array_file, manifest="pilot_point_sets.json"):
             lower[cells] = np.maximum(lower[cells], record["lower_limit"])
         if record["upper_limit"] is not None:
             upper[cells] = np.minimum(upper[cells], record["upper_limit"])
-    # The pyEMU multipliers' physical= on this file: pyEMU clamped its own product,
-    # and a pilot factor must not carry a cell back past it (ledger 528).
-    if entry.get("lower_limit") is not None:
-        lower = np.maximum(lower, entry["lower_limit"])
-    if entry.get("upper_limit") is not None:
-        upper = np.minimum(upper, entry["upper_limit"])
-    result = values * factor
-    result[covered] = np.clip(result[covered], lower[covered], upper[covered])
-    np.savetxt(array_file, result.reshape(start.shape), fmt="%.10E")
+    for array_file, entry in entries.items():
+        start = starts[array_file]
+        # The pyEMU multipliers' physical= on this file: pyEMU clamped its own
+        # product, and a pilot factor must not carry a cell back past it (ledger 528).
+        file_lower, file_upper = lower, upper
+        if entry.get("lower_limit") is not None:
+            file_lower = np.maximum(lower, entry["lower_limit"])
+        if entry.get("upper_limit") is not None:
+            file_upper = np.minimum(upper, entry["upper_limit"])
+        result = start.reshape(-1).astype(float) * factor
+        result[covered] = np.clip(result[covered], file_lower[covered], file_upper[covered])
+        np.savetxt(array_file, result.reshape(start.shape), fmt="%.10E")
 
 
 def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim_ws=".", head_file=None):

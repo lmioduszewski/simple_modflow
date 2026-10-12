@@ -339,7 +339,7 @@ worked example is `examples/mf6/notebooks/canonical_07_transport_and_prt.ipynb`.
 Zones for `style="zone"` come from `mf.ZoneSpec` (`from_raster` — majority vote, not mean — `from_polygons` — by cell **centroid**, and a centroid on a zone's edge belongs to the first zone covering it — `from_array`); the shape each target family needs is resolved for you.
 
 **`cal.parameterize(target, ...)` scales the packages of the target's TYPE** -- `k`,
-`k33`, `recharge`, `chd`, `ghb.cond`/`ghb.bhead`, `drn.cond`/`drn.elev`,
+`k33`, `sto.ss`/`sto.sy`, `recharge`, `chd`, `ghb.cond`/`ghb.bhead`, `drn.cond`/`drn.elev`,
 `riv.cond`/`riv.stage`, `wel`, `uzf.vks`, `porosity` -- through the files FloPy's own
 records of the run's packages name (ledger 517). Several packages of the type
 (`riv` beside `crisp`) need `package=`: a name picks one, a sequence shares one
@@ -349,9 +349,24 @@ offset in model units, `bounds=(-2, 2)` by default, a multiplier refused; any bo
 excluding the starting value (0 for an offset, 1 for a multiplier or pilot point) are
 refused; `riv.stage` moves each record's `rbot` with its stage (ledgers
 518, 519). An argument that cannot act -- `layers=` on a list
-target, `correlation=` on constant/zone, a style but the four, `"pilotpoints"` on a
-list target -- raises (ledger
+target or on recharge, `correlation=` on constant/zone, a style but the four,
+`"pilotpoints"` on a list target, an `**extra` key pyEMU's `add_parameters` does not
+take -- raises (ledger
 520).
+
+**`recharge` follows the package's form** (ledger 547): on an ARRAY RCH
+(`mf.rch.array`, READASARRAYS) it scales the per-period `recharge` arrays -- one file
+per period block, its period read from FloPy's records because the files are numbered
+by block ordinal -- never `irch`; the period files share one parameter set, and pilot
+points on it interpolate one field per run into every period file. **`sto.ss` /
+`sto.sy`** (aliases `ss`, `sy`, `specific_storage`, `specific_yield`) are array targets
+as K is, refused on an all-steady run and, for SY, on a parameter set whose cells are all
+`ICONVERT` 0 (ledger 548). **`periods=`** groups a target's per-period files
+into parameter sets (ledger 549): `"month"` is one per calendar month of the
+TRANSIENT periods, `m01`..`m12` by each period's midpoint (`model.calendar`), the steady
+period in none; `{label: [zero-based periods]}` gives explicit groups; each is
+`<name>_<label>`, and a file serving two groups' periods (MF6 repeating a block) is
+refused. It replaced `temporal=`.
 
 Transport properties are `parameterize` targets too: `cal.parameterize("porosity")`
 (aliases `mst.porosity`, `n`) resolves the GWT sibling automatically. Calibrate it
@@ -1008,17 +1023,19 @@ becomes the same name as a different label (`"North"`, `"north"`); a DRN or RIV 
 rows carry one label. pyEMU used to give every simulated column a group of its own, so a
 group was one well. The PEST guide shows the groups with PEST++'s phi-factor file.
 
-**Pilot points** (`cal.parameterize("k"|"k33"|"porosity", style="pilotpoints", ...)`):
+**Pilot points** (`cal.parameterize("k"|"k33"|"sto.ss"|"sto.sy"|"porosity"|"recharge", style="pilotpoints", ...)`, recharge on an array RCH):
 `pp_spacing=` lays a net in MODEL LENGTH UNITS (it replaced `pp_space`, median cell
 widths; ledger 527) or `pp_points=` gives the locations -- exactly one;
 `zones=` makes one set per label `> 0` per layer, its net, interpolation and prior
 covariance confined to its own cells, and cells labelled `<= 0` untouched; each cell is
 interpolated from the `pp_nearest=8` nearest points of its set by inverse distance
 squared, in log10 space for a log parameter, through weights stored at build
-(`<set>_pp.factors.npz`; ledger 526). One forward-run command per array file
-multiplies every set on it into the file pyEMU's multipliers wrote, so pilot points
+(`<set>_pp.factors.npz`; ledger 526). One forward-run command per group of array
+files covered by the same sets (a K layer file; every period file of an array RCH)
+multiplies every set on them into the files pyEMU's multipliers wrote, so pilot points
 stack with a constant/zone/grid multiplier and with each other (ledger 525).
-Sets are named `<name>l<layer>[z<zone>]`, lower-cased; `spec.pilot_point_sets` and
+Sets are named `<name>[_<period group>][l<layer>][z<zone>]`, lower-cased (period files
+carry no layer); `spec.pilot_point_sets` and
 `cal.settings()` give each set's point count after `build()`, and the template's
 `pilot_point_sets.json` lists every set for a write-back.
 

@@ -1826,7 +1826,10 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 
 ### What's already built (`src/myflopy/modflow/mf6/pest/`)
 - **One unified parameterization API**: `cal.parameterize(target, style=...)` compiling
-  to native `pyemu.utils.PstFrom`. Targets: `k`, `k33`, `recharge`, `chd`, `ghb.cond`/
+  to native `pyemu.utils.PstFrom`. Targets: `k`, `k33`, `sto.ss`/`sto.sy` (refused where
+  they cannot act: an all-steady run, SY on confined cells only), `recharge` (a list RCH's
+  records, or an ARRAY RCH's per-period `recharge` files, whose periods come from FloPy's
+  records -- files are numbered by block ORDINAL -- and never `irch`), `chd`, `ghb.cond`/
   `ghb.bhead`, `drn.cond`/`drn.elev`, `riv.cond`/`riv.stage`, `wel`, `uzf.vks` (`vks`),
   and transport `porosity` (`mst.porosity`/
   `n`), whose GWT sibling is resolved via `pest/model_lookup.py` — calibrate it with
@@ -1840,15 +1843,24 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   default bounds (-2, 2), a multiplier on it refused; bounds that exclude the starting
   value (0 for an offset, 1 for a multiplier and every pilot point) are refused
   (ledger 518); `riv.stage` moves RBOT with STAGE (ledger 519).
-  An argument that cannot act is refused (`layers=` on a list target, `temporal=`,
+  An argument that cannot act is refused (`layers=` on a list target or recharge,
   `correlation=` on constant/zone, `pp_spacing`/`pp_points`/`pp_nearest` on any style
-  but array pilot points, a style other than the four; ledger 520), and so is a
-  `name=` another call holds (523). Styles: `constant`, `zone`, `grid` (one
+  but array pilot points, a style other than the four, an `**extra` key pyEMU's
+  `add_parameters` does not take; ledger 520), and so is a
+  `name=` another call holds (523). **`periods=` groups a target's per-period files**
+  (ledger 549; it replaced `temporal=`, which nothing read): `'month'` is one
+  parameter set per calendar month of the TRANSIENT periods, `m01`..`m12` by each
+  period's MIDPOINT on the run's calendar (`period_calendar`, ledger 529), shared by
+  every cycle; a STEADY period is in no seasonal group (the user's rule, Q3 -- stack a
+  plain call for it); `{label: [periods]}` gives explicit groups. A period repeating
+  another group's block (MF6's rule for a period with no block) is REFUSED, naming the
+  fix: a block per period (`mf.AverageYear(...).by_month(...)`). Styles: `constant`, `zone`, `grid` (one
   geostat-correlated multiplier per Voronoi cell + correlated prior), and `pilotpoints`
   (a `pp_spacing=` net in MODEL LENGTH UNITS or explicit `pp_points` — `pilot_points.py`;
   pyEMU's own pilot points are unusable on unstructured grids). **Pilot points MULTIPLY
   onto what pyEMU wrote** (ledger 525): ONE forward-run command per array
-  file, after `apply_list_and_array_pars`, so they stack with constant/zone/grid and
+  file -- per group of files covered by the same sets, so every period file of an
+  array RCH shares one interpolation (ledger 547) -- after `apply_list_and_array_pars`, so they stack with constant/zone/grid and
   with each other -- they used to rebuild the layer from the build-time base and erase
   every other multiplier on it. Each cell reads the `pp_nearest` (8) nearest points of
   its SET -- one call, one layer, one `zones=` label -- by IDW in log10 space, through

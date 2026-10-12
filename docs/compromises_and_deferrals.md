@@ -33,10 +33,13 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 546 entries (551 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 549 entries (554 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 549 | `periods=` groups a target's per-period files into parameter sets; `"month"` by each transient period's mid... | 2026-10-12 |
+| 548 | `sto.ss` and `sto.sy` are array targets, refused where they cannot act | 2026-10-12 |
+| 547 | `recharge` on an ARRAY RCH scales its per-period `recharge` files; their periods are FloPy's records, they... | 2026-10-12 |
 | 546 | How two calendars differ is ONE rule, `PeriodCalendar.clock_difference`, and a run's average-year cycle is... | 2026-10-12 |
 | 545 | A text date column that admits two day orders is REFUSED; one that admits one is read in it | 2026-10-12 |
 | 544 | The PEST build records each set's period-end dates, what its observations are, and how it was binned; the r... | 2026-10-12 |
@@ -20447,8 +20450,9 @@ same day, which is the useful part of the result.
       `FieldSpec.kind`; a recipe cannot be written without a package type and dataset,
       so two `test_parameterize_payoff.py` AUTOMATIC sites were replaced by stronger
       ones (the pilot-point guard became structural; the per-layer-first glob became
-      the records). `recharge` on an ARRAY RCH is refused naming the form (item 1 adds
-      the recipe). **Not done:** pyEMU's `use_rows` (records within one file) is not
+      the records). ~~`recharge` on an ARRAY RCH is refused naming the form (item 1 adds
+      the recipe).~~ `recharge` on an ARRAY RCH scales its per-period arrays (ledger
+      547). **Not done:** pyEMU's `use_rows` (records within one file) is not
       used -- a file belongs to one package, so it is not needed here; note for its
       first user that pyEMU falls back to ALL rows when none match.
 
@@ -20491,8 +20495,9 @@ same day, which is the useful part of the result.
       which went to pyEMU's own pilot points and died inside `get_tpl_or_ins_df`
       ("unrecognized 'typ'") on DIS and DISV alike after the whole staging (measured
       in the review), naming `"grid"`; `layers=` on a list target;
-      `additive=True` and `**extra` on array-target pilot points; `temporal=` (nothing
-      reads it; round 2 replaces it); `correlation=` on constant/zone;
+      `additive=True` and `**extra` on array-target pilot points; ~~`temporal=` (nothing
+      reads it; round 2 replaces it);~~ `temporal=`, since removed for `periods=`
+      (ledger 549), where an `**extra` key pyEMU does not take is refused; `correlation=` on constant/zone;
       `anisotropy`/`bearing`/`nugget` without `correlation=`, and `bearing` with
       `anisotropy=1.0`. `zones=` on array pilot points was left to the pilot lane,
       which makes it act, and the pilot-point arguments too: `pp_spacing`/`pp_points`/
@@ -20991,3 +20996,62 @@ same day, which is the useful part of the result.
       and `myflopy.cycles` re-exports it. **Not done:** the two messages share no text,
       and the `"start"` difference of a target set is printed as the TDIS writes it
       (`2017-09-30`) where it read `2017-09-30T00:00:00`.
+
+547. **`recharge` on an ARRAY RCH scales its per-period `recharge` files; their periods are FloPy's records, they share one set, and pilot points interpolate once per run (2026-10-12).**
+      Item 1; findings params-9, build-7. The `recharge` recipe carries both forms and
+      takes the STAGED package's (`recipe_for_packages`): an RCHA's `recharge` dataset,
+      one file per period BLOCK, never `irch`; a list RCH keeps its records. Measured:
+      FloPy numbers array files by block ORDINAL (blocks at periods 0, 2, 3 write `_1`,
+      `_2`, `_3`), so a file's period is `TargetFile.period`, never its name. **Period
+      files share ONE parameter set** -- only LAYER files split a `grid` style -- which
+      is pyEMU's own rule for the files of one call. **Pilot points on recharge**
+      (settled with the design): one set per (period group, zone), no `l<layer>` in the
+      name; files covered by the same sets share ONE forward-run command
+      (`apply_pilotpoints_to_array(array_files=[...])`), which interpolates each set once
+      and multiplies every file against its own base. The manifest's set records carry
+      `array_files` (a list) for `array_file`, plus `period_group` and `periods`.
+      Measured at 73 periods x 18,107 cells, four stacked recharge parameters: pyEMU
+      apply 2.45 s, pilot points 1.31 s, MF6 3.05 s per run, template 76 MB
+      (`docs/reproducers/array_recharge_period_apply.py`; the design's 6.55 s included a
+      process pool per run, gone with ledger 511). Pilot points on a LIST RCH are refused
+      at `parameterize()` when the model lists its packages, else at build; `layers=` on
+      recharge is refused in either form. **Not done:** `capture=True` on a target of
+      several period files (refused, `NotImplementedError`: one prefix would collide).
+
+548. **`sto.ss` and `sto.sy` are array targets, refused where they cannot act (2026-10-12).**
+      Item 2. Recipes on STO griddata (aliases `ss`, `sy`, `specific_storage`,
+      `specific_yield`); a scalar `ss` is relayered per layer with its FACTOR. Refused at
+      build (settled: refuse, not warn -- a parameter that cannot act is pure prior noise
+      to IES): either target on a run whose every period is steady state (the STO flags
+      read by `period_calendar.steady_periods`, through a staged-model adapter); `sto.sy`
+      where every cell of a PARAMETER SET has `ICONVERT` 0 -- the whole selection for
+      `constant`, each label for `zone`, each layer file for `grid`/`pilotpoints` (each
+      its own set), `zones=` labels `<= 0` left out. A constant over a convertible and a
+      confined layer is accepted: it acts through the convertible one.
+
+549. **`periods=` groups a target's per-period files into parameter sets; `"month"` by each transient period's midpoint, the steady period in none; `temporal=` is gone (2026-10-12).**
+      Item 7, finding build-8; the user's answers Q3 and Q10. `periods="month"` labels
+      each TRANSIENT period `m01`..`m12` by its MIDPOINT's month on the staged run's
+      calendar (ledger 529's `PeriodCalendar`, read through the calendar's own readers);
+      a STEADY period is in no group, so only a parameter declared without `periods`
+      reaches it (Q3; tying it to the mean of the monthly multipliers is DEFERRED -- it
+      needs a custom forward-run step). `{label: [periods]}` gives explicit groups, labels
+      letters/digits/`_` (refused, not slugged: a label ends a PEST name). One
+      `add_parameters` call per group named `<name>_<label>` -- **with its OWN PEST group,
+      not the design's `pargp=name`**: pyEMU draws a correlated prior per (geostruct,
+      group), and twelve monthly `grid` sets at the same cell centres in one group would
+      be correlated 1 with each other, a singular covariance. **Block inheritance is
+      refused**: MF6 repeats a block until the next, so a file serving periods of two
+      groups -- or of a group and none, a steady block repeated into a month included --
+      cannot carry either group's multiplier alone; the refusal names both periods and a
+      block per period (`AverageYear.by_month`). Also refused at build: a period the run
+      lacks, a group no file serves, `"month"` on a transient period over 31 days, a TDIS
+      with no `TIME_UNITS`, and a TDIS `START_DATE_TIME` that differs from the
+      calibration's `start_datetime` (a month would depend on which is read; with no TDIS
+      start the calibration's is used). The build metadata's parameter record gains
+      `periods` and `period_groups` (label, `pargp`, periods served, files) for the
+      write-back. `temporal=` is removed with no alias (Q10); because `parameterize`
+      passes unknown keywords to pyEMU, an `**extra` key that is no parameter of pyEMU's
+      `PstFrom.add_parameters` is now refused at the call (`TypeError`) -- `temporal=`
+      used to die only at build, after staging. **Not done:** a temporal correlation of
+      the monthly multipliers in the prior (they are drawn independently).

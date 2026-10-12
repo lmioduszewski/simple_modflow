@@ -33,7 +33,6 @@ project each need their own ``name=``, ledger 523)::
 from __future__ import annotations
 
 import json
-import re
 import shutil
 from pathlib import Path
 
@@ -300,13 +299,6 @@ def _write_template(frame: pd.DataFrame, csv_path: Path) -> Path:
     return tpl_path
 
 
-def _layer_of(filename: str) -> int:
-    """The zero-based layer a per-layer array file holds (``0`` for a whole-grid file)."""
-
-    match = re.search(r"_layer(\d+)\.txt$", filename)
-    return int(match.group(1)) - 1 if match else 0
-
-
 def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
     """Compile a ``style='pilotpoints'`` array spec onto the native PEST workspace.
 
@@ -374,81 +366,98 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
     pp = place_pilot_points(project.model, gwf, pp_spacing=spec.pp_spacing,
                             pp_points=spec.pp_points, zones=labels)
     xc, yc = _cell_centers(gwf)
-    lower, upper = spec.physical if spec.physical is not None else (None, None)
-    interpolation = "log" if spec.resolved_transform == "log" else "linear"
-    taken = {item["record"]["name"] for item in project._pilot_point_sets}
-    frames, summaries = [], []
-    for filename in files:
-        n_values = len((template / filename).read_text().split())
+    for name in files:
+        n_values = len((template / name).read_text().split())
         if n_values != xc.size:
             raise ValueError(
                 f"Pilot points on {spec.recipe.canonical!r} interpolate to the grid's "
-                f"{xc.size} cell centres, and {filename} holds {n_values} values, not one "
+                f"{xc.size} cell centres, and {name} holds {n_values} values, not one "
                 "per cell; such a file cannot take pilot points."
             )
-        layer = _layer_of(filename)
-        for zone, points in pp.groupby("zone", sort=True):
-            zone = int(zone)
-            base = (f"{spec.name}l{layer}" if labels is None
-                    else f"{spec.name}l{layer}z{zone}").lower()
-            if base in taken:
-                raise ValueError(
-                    f"Two pilot-point sets are named {base!r}: two style='pilotpoints' "
-                    f"calls on {filename} under name {spec.name!r}. PEST would see one "
-                    "set's parameters and the forward run apply both; give each call its "
-                    "own name= (each set is named <name>l<layer>[z<zone>])."
+    lower, upper = spec.physical if spec.physical is not None else (None, None)
+    interpolation = "log" if spec.resolved_transform == "log" else "linear"
+    periodic = spec.recipe.periodic
+    taken = {item["record"]["name"] for item in project._pilot_point_sets}
+    frames, summaries = [], []
+    # A set per (period group, layer, zone). A LAYER file is a set of its own; the
+    # PERIOD files of one group share their sets -- one field interpolated once per
+    # run and multiplied into each file (ledger 547). The layer is
+    # FloPy's record of the file, never parsed from its name (ledger 517).
+    for group in spec.period_groups:
+        by_layer: dict[int | None, list[str]] = {}
+        for target in group.targets:
+            by_layer.setdefault(target.layer, []).append(target.filename)
+        for file_layer, array_files in by_layer.items():
+            # A whole-grid griddata file is layer 0, as it always was; period files
+            # have no layer and carry none in their name.
+            layer = file_layer if file_layer is not None else (None if periodic else 0)
+            token = "" if layer is None else f"l{layer}"
+            for zone, points in pp.groupby("zone", sort=True):
+                zone = int(zone)
+                base = (f"{spec.name}{group.name_suffix}{token}"
+                        + ("" if labels is None else f"z{zone}")).lower()
+                if base in taken:
+                    raise ValueError(
+                        f"Two pilot-point sets are named {base!r}: two style='pilotpoints' "
+                        f"calls on {array_files[0]} under name {spec.name!r}. PEST would see "
+                        "one set's parameters and the forward run apply both; give each call "
+                        "its own name= (each set is named <name>[_<period group>]"
+                        "[l<layer>][z<zone>])."
+                    )
+                taken.add(base)
+                cells = np.arange(xc.size) if labels is None else np.flatnonzero(labels == zone)
+                frame = pd.DataFrame({
+                    "parnme": [f"{base}pp{i:04d}" for i in range(len(points))],
+                    "pargp": base,
+                    "partrans": spec.resolved_transform,
+                    "parval1": 1.0,
+                    "value": 1.0,
+                    "parlbnd": float(spec.bounds[0]),
+                    "parubnd": float(spec.bounds[1]),
+                    "x": points["x"].to_numpy(dtype=float),
+                    "y": points["y"].to_numpy(dtype=float),
+                    "layer": -1 if layer is None else layer,
+                    "zone": zone if labels is not None else 0,
+                })
+                pp_csv = template / f"{base}_pp.csv"
+                tpl_path = _write_template(frame, pp_csv)
+                points_csv = template / f"{base}_pp.points.csv"
+                frame.loc[:, ["parnme", "x", "y", "layer", "zone"]].to_csv(points_csv, index=False)
+                index, weight = idw_factors(xc[cells], yc[cells], frame["x"], frame["y"],
+                                            spec.pp_nearest)
+                factors = template / f"{base}_pp.factors.npz"
+                np.savez(factors, cells=cells.astype(np.int64), x=xc[cells], y=yc[cells],
+                         index=index, weight=weight)
+                record = {
+                    "name": base,
+                    "spec": spec.name,
+                    "target": spec.recipe.canonical,
+                    "array_files": list(array_files),
+                    "layer": layer,
+                    "zone": zone if labels is not None else None,
+                    "period_group": group.label,
+                    "periods": [int(period) for period in group.periods] if periodic else None,
+                    "parameter_csv": pp_csv.name,
+                    "template": tpl_path.name,
+                    "points_csv": points_csv.name,
+                    "factors": factors.name,
+                    "interpolation": interpolation,
+                    "nearest": int(index.shape[1]),
+                    "lower_limit": None if lower is None else float(lower),
+                    "upper_limit": None if upper is None else float(upper),
+                    "points": len(frame),
+                    "cells": int(cells.size),
+                }
+                project._pilot_point_sets.append(
+                    {"record": record, "frame": frame, "tpl": tpl_path, "spec": spec}
                 )
-            taken.add(base)
-            cells = np.arange(n_values) if labels is None else np.flatnonzero(labels == zone)
-            frame = pd.DataFrame({
-                "parnme": [f"{base}pp{i:04d}" for i in range(len(points))],
-                "pargp": base,
-                "partrans": spec.resolved_transform,
-                "parval1": 1.0,
-                "value": 1.0,
-                "parlbnd": float(spec.bounds[0]),
-                "parubnd": float(spec.bounds[1]),
-                "x": points["x"].to_numpy(dtype=float),
-                "y": points["y"].to_numpy(dtype=float),
-                "layer": layer,
-                "zone": zone if labels is not None else 0,
-            })
-            pp_csv = template / f"{base}_pp.csv"
-            tpl_path = _write_template(frame, pp_csv)
-            points_csv = template / f"{base}_pp.points.csv"
-            frame.loc[:, ["parnme", "x", "y", "layer", "zone"]].to_csv(points_csv, index=False)
-            index, weight = idw_factors(xc[cells], yc[cells], frame["x"], frame["y"],
-                                        spec.pp_nearest)
-            factors = template / f"{base}_pp.factors.npz"
-            np.savez(factors, cells=cells.astype(np.int64), x=xc[cells], y=yc[cells],
-                     index=index, weight=weight)
-            record = {
-                "name": base,
-                "spec": spec.name,
-                "target": spec.recipe.canonical,
-                "array_file": filename,
-                "layer": layer,
-                "zone": zone if labels is not None else None,
-                "parameter_csv": pp_csv.name,
-                "template": tpl_path.name,
-                "points_csv": points_csv.name,
-                "factors": factors.name,
-                "interpolation": interpolation,
-                "nearest": int(index.shape[1]),
-                "lower_limit": None if lower is None else float(lower),
-                "upper_limit": None if upper is None else float(upper),
-                "points": len(frame),
-                "cells": int(cells.size),
-            }
-            project._pilot_point_sets.append(
-                {"record": record, "frame": frame, "tpl": tpl_path, "spec": spec}
-            )
-            summaries.append({key: record[key] for key in ("name", "layer", "zone", "points", "cells")})
-            frames.append(frame)
-            logger.info(
-                "Pilot-point set %s: %d points over %d cells of %s", base, len(frame),
-                cells.size, filename,
-            )
+                summaries.append({key: record[key] for key in
+                                  ("name", "layer", "zone", "period_group", "points", "cells")})
+                frames.append(frame)
+                logger.info(
+                    "Pilot-point set %s: %d points over %d cells of %d file(s) (%s ...)", base,
+                    len(frame), cells.size, len(array_files), array_files[0],
+                )
     spec.pilot_point_sets = summaries
     return pd.concat(frames, ignore_index=True)
 
@@ -550,9 +559,15 @@ def emit_pilot_point_commands(project) -> None:
     managed = _pyemu_model_files(project.pf)
     by_file: dict[str, list[dict]] = {}
     for record in sets:
-        by_file.setdefault(record["array_file"], []).append(record)
+        for array_file in record["array_files"]:
+            by_file.setdefault(array_file, []).append(record)
     helper = str(Path(__file__).with_name("forward_run.py"))
     files = []
+    # Files covered by the SAME sets share one command, so each set is interpolated
+    # once per run however many files it multiplies -- every period file of an array
+    # RCH (ledger 547); a K layer file has sets of its own and a command
+    # of its own, as before.
+    commands: dict[tuple[str, ...], list[str]] = {}
     for array_file, records in by_file.items():
         from_file = array_file in managed
         limits = _pyemu_limits(project, array_file) if from_file else (None, None)
@@ -565,9 +580,11 @@ def emit_pilot_point_commands(project) -> None:
                       "base_file": base_file, "lower_limit": limits[0],
                       "upper_limit": limits[1],
                       "sets": [record["name"] for record in records]})
+        commands.setdefault(tuple(record["name"] for record in records), []).append(array_file)
+    for array_files in commands.values():
         project.pf.add_py_function(
             helper,
-            f"apply_pilotpoints_to_array(array_file={array_file!r}, "
+            f"apply_pilotpoints_to_array(array_files={array_files!r}, "
             f"manifest={PILOT_POINT_MANIFEST!r})",
             is_pre_cmd=True,
         )

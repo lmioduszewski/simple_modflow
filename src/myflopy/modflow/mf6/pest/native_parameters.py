@@ -18,13 +18,17 @@ external array/list files produced by ``sim.set_all_data_external()``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import inspect
+import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from myflopy.modflow.mf6.hydraulics import declared_time_unit
 from myflopy.modflow.mf6.package_registry import (
     SeveralPackagesError,
     get_package_explorer_spec,
@@ -34,6 +38,13 @@ from myflopy.modflow.mf6.package_registry import (
     package_named,
     packages_of_type,
 )
+from myflopy.modflow.mf6.period_calendar import (
+    PeriodCalendar,
+    parse_start,
+    steady_periods,
+    tdis_start_date_time,
+)
+from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.model_lookup import resolve_transport_model_name
 from myflopy.modflow.mf6.pest.zones import resolve_zone_array
 
@@ -83,6 +94,14 @@ class _Recipe:
     # silent: every parameter lands on one cell's coordinates and only the
     # geostatistics are wrong (see the `uzf.vks` entry below).
     index_cols: tuple[int, ...] = (0, 1)
+    # The dataset the package's ARRAY form (READASARRAYS) holds the same quantity in,
+    # for a target whose package comes in both forms: ``recharge`` is a list RCH's
+    # record field and an array RCH's per-period array. ``None``: one form only. The
+    # form is the staged package's (:func:`recipe_for_packages`), never guessed.
+    array_dataset: str | None = None
+    # Array family only: the dataset is per STRESS PERIOD (an array RCH's
+    # ``recharge``), one file per period block, rather than griddata.
+    periodic: bool = False
 
     def __post_init__(self):
         """Derive a ``stress_period_data`` recipe's value column from the registry."""
@@ -91,6 +110,17 @@ class _Recipe:
             object.__setattr__(
                 self, "use_col", self.index_cols[-1] + 1 + _record_offset(self.package, self.field)
             )
+
+    @property
+    def has_periods(self) -> bool:
+        """Whether the target's files are per STRESS PERIOD, so ``periods=`` can group them.
+
+        A list package's ``stress_period_data`` and an array RCH's ``recharge`` are;
+        griddata (``k``, ``sto.sy``) and ``packagedata`` (``uzf.vks``) are not.
+        """
+
+        return self.variable == "stress_period_data" or self.periodic \
+            or self.array_dataset is not None
 
     @property
     def elevation(self) -> bool:
@@ -174,7 +204,13 @@ def list_columns(recipe: _Recipe, grid_type: str, field: str | None = None) -> t
 _RECIPES: dict[str, _Recipe] = {
     "k": _Recipe("k", "array", "npf", "k"),
     "k33": _Recipe("k33", "array", "npf", "k33"),
-    "recharge": _Recipe("recharge", "list", "rch", "stress_period_data", "recharge"),
+    # Both forms of RCH (ledger 547): a list RCH's ``recharge`` record
+    # field, or an array RCH's (READASARRAYS) per-period ``recharge`` array -- one
+    # file per period BLOCK, which FloPy numbers by the block's ORDINAL, never by its
+    # period, so a file's period is read from FloPy's records. ``irch`` is never
+    # touched. Which form is the staged package's (:func:`recipe_for_packages`).
+    "recharge": _Recipe("recharge", "list", "rch", "stress_period_data", "recharge",
+                        array_dataset="recharge"),
     "chd": _Recipe("chd", "list", "chd", "stress_period_data", "head"),
     "ghb.cond": _Recipe("ghb.cond", "list", "ghb", "stress_period_data", "cond"),
     "ghb.bhead": _Recipe("ghb.bhead", "list", "ghb", "stress_period_data", "bhead"),
@@ -207,6 +243,14 @@ _RECIPES: dict[str, _Recipe] = {
     "uzf.vks": _Recipe(
         "uzf.vks", "list", "uzf", "packagedata", "vks", use_col=6, index_cols=(1, 2),
     ),
+    # Storage (ledger 548). Griddata, as K is: LAYERED writes one file per
+    # layer, a scalar one whole-grid file `relayer_array_target` splits. MF6 reads
+    # neither in a steady-state period, and SY only in a convertible cell
+    # (ICONVERT != 0), so `refuse_storage_that_cannot_act` refuses a target that
+    # could not move a head. Under STO's STORAGECOEFFICIENT option `ss` holds a
+    # storage coefficient; the multiplier scales whichever it is.
+    "sto.ss": _Recipe("sto.ss", "array", "sto", "ss"),
+    "sto.sy": _Recipe("sto.sy", "array", "sto", "sy"),
     # Transport. MST writes porosity as ONE whole-grid array (no LAYERED
     # keyword), so unlike npf_k there is no per-layer file to select from --
     # see `relayer_array_target` and `select_layers`.
@@ -239,6 +283,10 @@ _ALIASES: dict[str, str] = {
     "uzf": "uzf.vks",
     "vks": "uzf.vks",
     "uzf_vks": "uzf.vks",
+    "ss": "sto.ss",
+    "specific_storage": "sto.ss",
+    "sy": "sto.sy",
+    "specific_yield": "sto.sy",
 }
 
 #: The four spatial styles :meth:`PestProject.parameterize` builds. Anything else is
@@ -285,6 +333,91 @@ def resolve_target(target: str) -> _Recipe:
         known = ", ".join(sorted(set(_RECIPES) | set(_ALIASES)))
         raise KeyError(f"Unknown calibration target {target!r}. Known targets: {known}.")
     return _RECIPES[key]
+
+
+#: FloPy's package types for the ARRAY form (READASARRAYS) of a package type that has
+#: two forms; each is its list type's (``package_registry.packages_of_type``).
+_ARRAY_FORM_TYPES = frozenset({"rcha", "evta"})
+
+
+def array_form(recipe: _Recipe) -> _Recipe:
+    """The recipe of a two-form target's ARRAY form: its ``array_dataset``, per period.
+
+    Parameters
+    ----------
+    recipe : _Recipe
+        A recipe whose package comes in both forms (``array_dataset`` set).
+
+    Returns
+    -------
+    _Recipe
+        The same target as an ``"array"`` recipe on ``array_dataset``, ``periodic``.
+
+    Raises
+    ------
+    ValueError
+        When the recipe's package has one form only.
+    """
+
+    if recipe.array_dataset is None:
+        raise ValueError(f"Target {recipe.canonical!r} has no array form.")
+    return replace(recipe, family="array", variable=recipe.array_dataset, field=None,
+                   use_col=None, array_dataset=None, periodic=True)
+
+
+def is_array_form(package) -> bool:
+    """Whether a FloPy package is the ARRAY form (READASARRAYS) of its type: RCHA or EVTA.
+
+    Parameters
+    ----------
+    package : flopy.mf6.MFPackage
+        A FloPy package; its ``package_type`` is read.
+
+    Returns
+    -------
+    bool
+    """
+
+    return str(getattr(package, "package_type", "")).lower() in _ARRAY_FORM_TYPES
+
+
+def recipe_for_packages(recipe: _Recipe, packages) -> _Recipe:
+    """The recipe in the FORM the packages it scales are written in (ledger 547).
+
+    ``recharge`` scales a list RCH's ``recharge`` records and an array RCH's
+    per-period ``recharge`` arrays; which one is the package's, as the staged model
+    holds it -- never guessed. A recipe of one form is returned unchanged.
+
+    Parameters
+    ----------
+    recipe : _Recipe
+        The DECLARED recipe (:func:`resolve_target`).
+    packages : list
+        The FloPy packages it scales (:func:`select_packages`).
+
+    Returns
+    -------
+    _Recipe
+        ``recipe`` for a list package, :func:`array_form` of it for an array one.
+
+    Raises
+    ------
+    ValueError
+        When the packages named to share one parameter set mix the two forms.
+    """
+
+    if recipe.array_dataset is None:
+        return recipe
+    forms = {is_array_form(package) for package in packages}
+    if len(forms) > 1:
+        names = [f"{package_name_of(package)} ({'array' if is_array_form(package) else 'list'})"
+                 for package in packages]
+        raise ValueError(
+            f"Target {recipe.canonical!r} on packages {names}: one parameter set cannot scale "
+            "a list package's records and an array package's arrays together. Parameterize "
+            "each with its own call: package=<name>."
+        )
+    return array_form(recipe) if forms == {True} else recipe
 
 
 def _package_slug(package) -> str | None:
@@ -384,6 +517,315 @@ def checked_layers(layers) -> tuple[int, ...]:
     return tuple(checked)
 
 
+#: The one word ``periods=`` takes: a group per calendar month (ledger 549).
+PERIODS_BY_MONTH = "month"
+
+#: A ``periods=`` group label: it ends a PEST parameter name (``<name>_<label>``), so
+#: letters, digits and ``_`` only, lower-cased.
+_PERIOD_LABEL = re.compile(r"[a-z0-9_]+")
+
+
+def _checked_period_numbers(label: str, members) -> tuple[int, ...]:
+    """One ``periods=`` group's periods as sorted zero-based ``int``, refusing anything else."""
+
+    values = [members] if np.ndim(members) == 0 else list(np.asarray(members, dtype=object).ravel())
+    checked = []
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = float("nan")
+        if isinstance(value, (bool, np.bool_, str, bytes)) or not np.isfinite(number) \
+                or number < 0 or number != int(number):
+            raise ValueError(
+                f"periods= group {label!r}: each period is a zero-based whole number, and "
+                f"{value!r} is not."
+            )
+        checked.append(int(number))
+    if not checked:
+        raise ValueError(f"periods= group {label!r} names no period; drop it.")
+    if len(set(checked)) != len(checked):
+        twice = sorted({value for value in checked if checked.count(value) > 1})[0]
+        raise ValueError(f"periods= group {label!r} names period {twice} twice.")
+    return tuple(sorted(checked))
+
+
+def checked_periods(periods, recipe: _Recipe):
+    """``periods=`` as :class:`NativeParameterSpec` holds it (ledger 549).
+
+    Parameters
+    ----------
+    periods : str or mapping of str to sequence of int or None
+        ``None``; ``"month"`` (any case); or ``{label: [zero-based periods]}``.
+    recipe : _Recipe
+        The target's DECLARED recipe; ``periods`` is refused unless its files are per
+        stress period (:attr:`_Recipe.has_periods`).
+
+    Returns
+    -------
+    str or dict of str to tuple of int or None
+        ``None``, :data:`PERIODS_BY_MONTH`, or ``{label: periods}`` with each label
+        stripped and lower-cased and its periods sorted, in the order given.
+
+    Raises
+    ------
+    ValueError
+        When the target's files are not per period; a string is not ``"month"``; a
+        label is not letters, digits and ``_`` (or two labels are one once
+        lower-cased); a period is not a whole number at or above 0; a group is
+        empty or names a period twice; two groups share a period; or the mapping
+        is empty.
+    TypeError
+        When it is neither a string, a mapping nor ``None``.
+    """
+
+    if periods is None:
+        return None
+    if not recipe.has_periods:
+        raise ValueError(
+            f"periods= on target {recipe.canonical!r}: its {recipe.variable} is not per "
+            "stress period -- one value per cell for the whole run -- so there is nothing "
+            "to group, and it cannot act. Drop periods=; it groups the per-period files of "
+            "recharge and the list targets (chd, ghb, drn, riv, wel)."
+        )
+    if isinstance(periods, str):
+        if periods.strip().lower() == PERIODS_BY_MONTH:
+            return PERIODS_BY_MONTH
+        raise ValueError(
+            f"periods={periods!r}: the one word periods= takes is 'month' (a parameter per "
+            "calendar month of the transient periods, m01..m12); otherwise give the groups, "
+            "periods={'wet': [1, 2, 3], 'dry': [4, 5, 6]} (zero-based stress periods)."
+        )
+    if not isinstance(periods, Mapping):
+        raise TypeError(
+            f"periods= takes 'month' or {{label: [zero-based periods]}}, not "
+            f"{type(periods).__name__}."
+        )
+    groups: dict[str, tuple[int, ...]] = {}
+    owner: dict[int, str] = {}
+    for label, members in periods.items():
+        key = label.strip().lower() if isinstance(label, str) else None
+        if key is None or not _PERIOD_LABEL.fullmatch(key):
+            raise ValueError(
+                f"periods= label {label!r}: a label ends the group's PEST parameter names "
+                "(<name>_<label>), so it is text of letters, digits and _ only (e.g. "
+                "'wet', 'q1')."
+            )
+        if key in groups:
+            raise ValueError(f"periods= labels {label!r} and another are both {key!r}; rename one.")
+        numbers = _checked_period_numbers(label, members)
+        for number in numbers:
+            if number in owner:
+                raise ValueError(
+                    f"periods= names period {number} in groups {owner[number]!r} and {key!r}; "
+                    "a period's value is scaled by one group's parameter."
+                )
+            owner[number] = key
+        groups[key] = numbers
+    if not groups:
+        raise ValueError("periods={} names no group; pass None for one parameter set over every period.")
+    return groups
+
+
+@dataclass(frozen=True)
+class PeriodGroup:
+    """One parameter set of a target's per-period files, as ``periods=`` groups them.
+
+    Attributes
+    ----------
+    label : str or None
+        The group's label (``"m03"``, ``"wet"``); ``None`` when ``periods`` is not
+        given -- one set over every file.
+    periods : tuple of int
+        The zero-based stress periods whose values the group's files hold: each
+        file's own period and every later period that repeats its block.
+    targets : tuple of TargetFile
+        The files the group's parameters scale.
+    """
+
+    label: str | None
+    periods: tuple[int, ...]
+    targets: tuple[TargetFile, ...]
+
+    @property
+    def name_suffix(self) -> str:
+        """``"_<label>"``, appended to the parameter name; ``""`` with no label."""
+
+        return "" if self.label is None else f"_{self.label}"
+
+
+def month_labels(calendar: PeriodCalendar) -> list[str | None]:
+    """Each stress period's ``periods="month"`` group: ``m01``..``m12``, ``None`` when steady.
+
+    A TRANSIENT period is labelled by the calendar month of its MIDPOINT
+    (:attr:`PeriodCalendar.months`, ledger 529): Ten Trails starts 2017-09-30, so
+    each period's START date names the month before. A steady-state period is in no
+    group: it is the long-term average, and only a parameter declared without
+    ``periods`` reaches it (the user's rule, Q3).
+
+    Parameters
+    ----------
+    calendar : PeriodCalendar
+        The staged run's calendar (:func:`staged_calendar`); a calendar with no
+        steady flags reads every period as transient.
+
+    Returns
+    -------
+    list of str or None
+        One entry per period, zero-based.
+
+    Raises
+    ------
+    ValueError
+        When a transient period is longer than 31 days: it spans more than one
+        calendar month, so its month is no month's.
+    """
+
+    steady = calendar.steady or (False,) * calendar.nper
+    lengths = (calendar.ends - calendar.starts) / pd.Timedelta(days=1)
+    labels: list[str | None] = []
+    for per in range(calendar.nper):
+        if steady[per]:
+            labels.append(None)
+            continue
+        if lengths[per] > 31.0 + 1e-9:
+            raise ValueError(
+                f"periods='month': transient period {per} runs {lengths[per]:g} days "
+                f"({calendar.starts[per].date()} to {calendar.ends[per].date()}), more than "
+                "one calendar month, so it is no month's. Give the groups yourself, "
+                "periods={'wet': [...], 'dry': [...]}, or split the run into monthly periods "
+                "(mf.AverageYear)."
+            )
+        labels.append(f"m{int(calendar.months[per]):02d}")
+    return labels
+
+
+def file_spans(targets: list[TargetFile], nper: int) -> dict[TargetFile, range]:
+    """The stress periods each per-period file holds the values of, by MF6's block rule.
+
+    A file serves its own block's period and every later period of its package up
+    to the package's next block (or the last period): MF6 repeats a block until the
+    next one. Files are numbered by block ORDINAL (an array RCH's
+    ``m.rcha_recharge_2.txt`` is the period-3 block's when only periods 1, 3 and 4
+    have blocks), so this reads each file's ``period`` from FloPy's records
+    (:attr:`TargetFile.period`), never from its name.
+
+    Parameters
+    ----------
+    targets : list of TargetFile
+        Per-period files, each with its zero-based ``period``.
+    nper : int
+        The number of stress periods.
+
+    Returns
+    -------
+    dict of TargetFile to range
+        Each file's periods, in the order ``targets`` gives them.
+    """
+
+    starts: dict[str, list[int]] = {}
+    for target in targets:
+        starts.setdefault(target.package, []).append(int(target.period))
+    for periods in starts.values():
+        periods.sort()
+    spans = {}
+    for target in targets:
+        periods = starts[target.package]
+        later = [period for period in periods if period > target.period]
+        spans[target] = range(int(target.period), later[0] if later else int(nper))
+    return spans
+
+
+def _describe_group(label: str | None, by_month: bool) -> str:
+    if label is not None:
+        return f"group {label!r}"
+    return "a steady-state period, in no seasonal group" if by_month else "in no group"
+
+
+def group_period_files(spec, targets: list[TargetFile], labels: list[str | None]) -> list[PeriodGroup]:
+    """Split a target's period files into ``periods=`` groups (ledger 549).
+
+    MF6 repeats a period's block until the next one, so a file serves its own
+    period and every later period of its package without a block of its own. A
+    file is in the group of every period it serves -- and when those are not one
+    group (a later period in another group, or in none, a steady-state period
+    under ``"month"`` included), one multiplier could not be one group's without
+    being the other's, so it is REFUSED, naming the fix. Files serving periods in
+    no group are left out: a ``"month"`` group never scales the steady period.
+
+    Parameters
+    ----------
+    spec : NativeParameterSpec
+        The parameter (named by the refusals); its ``periods`` decides the mode.
+    targets : list of TargetFile
+        Every file of the target, each with its ``period`` (:func:`target_files`).
+    labels : list of str or None
+        Each stress period's group, zero-based, ``len == nper``
+        (:func:`month_labels`, or a ``periods=`` mapping spread over the periods).
+
+    Returns
+    -------
+    list of PeriodGroup
+        One per label, in month order for ``"month"`` and the mapping's order
+        otherwise; only groups holding a file.
+
+    Raises
+    ------
+    ValueError
+        When a file serves periods of two groups (or of a group and none); when a
+        group's periods lie before every block of the target's packages, so nothing
+        scales them; or when no group holds a file.
+    """
+
+    by_month = spec.periods == PERIODS_BY_MONTH
+    by_package = sorted({target.package for target in targets})
+    grouped: dict[str, list[TargetFile]] = {}
+    served: dict[str, set[int]] = {}
+    for target, span in file_spans(targets, len(labels)).items():
+        package = target.package
+        own = labels[target.period]
+        for period in span:
+            if labels[period] != own:
+                raise ValueError(
+                    f"periods= on {spec.recipe.canonical!r} (name {spec.name!r}): package "
+                    f"{package!r} declares no block for period {period} "
+                    f"({_describe_group(labels[period], by_month)}), so MF6 repeats period "
+                    f"{target.period}'s ({_describe_group(own, by_month)}) -- one file, "
+                    f"{target.filename}, serves both, and its multiplier cannot be one's "
+                    "without being the other's. Declare a block for every period -- a value "
+                    "per period, mf.rch.array(recharge={period: ...}) or "
+                    "mf.chd(stress_period_data={period: ...}); mf.AverageYear(...).by_month(...) "
+                    "gives each period its own."
+                )
+        if own is None:
+            continue
+        grouped.setdefault(own, []).append(target)
+        served.setdefault(own, set()).update(span)
+    order = sorted(set(label for label in labels if label is not None)) if by_month \
+        else list(spec.periods)
+    if not by_month:
+        empty = [label for label in order if label not in grouped]
+        if empty:
+            label = empty[0]
+            raise ValueError(
+                f"periods= group {label!r} of {spec.recipe.canonical!r} (name {spec.name!r}) "
+                f"holds periods {list(spec.periods[label])}, which come before every block of "
+                f"package(s) {sorted(by_package)}: MF6 holds no value of them to scale, so its "
+                "parameter cannot act. Drop the group, or declare blocks for its periods."
+            )
+    groups = [
+        PeriodGroup(label, tuple(sorted(served[label])), tuple(grouped[label]))
+        for label in order if label in grouped
+    ]
+    if not groups:
+        raise ValueError(
+            f"periods={spec.periods!r} on {spec.recipe.canonical!r} (name {spec.name!r}) "
+            "groups none of its files -- every period it reaches is in no group -- so it "
+            "cannot act."
+        )
+    return groups
+
+
 @dataclass
 class NativeParameterSpec:
     """A declarative, pyEMU-bound parameter request.
@@ -405,7 +847,8 @@ class NativeParameterSpec:
         naming the four -- pyEMU's own pilot-point spellings (``"pp"``,
         ``"pilot_points"``, ...) name ``"pilotpoints"`` -- and so does
         ``"pilotpoints"`` on a LIST target, which no engine here builds (ledger
-        520).
+        520); on ``recharge``, whose form is its package's, that refusal comes from
+        :meth:`resolve_form` once the package is known.
     bounds : tuple of (float, float) or None, optional
         ``(lower, upper)`` of the adjustable multiplier (factors) or additive offset
         (model units). ``None`` (default) is :data:`MULTIPLIER_BOUNDS`
@@ -438,7 +881,9 @@ class NativeParameterSpec:
     layers : int or iterable of int or None, optional
         Zero-based layers an ARRAY target is restricted to, held as a tuple of
         ``int`` (:func:`checked_layers`, which refuses anything else). Default
-        ``None``: every layer. Given for a LIST target it raises ``ValueError``, naming ``zones=``.
+        ``None``: every layer. Given for a LIST target, or for ``recharge`` in either
+        form (MF6 applies it to one cell per column), it raises ``ValueError``, naming
+        ``zones=``.
     package : str or tuple of str or None, optional
         Which package(s) of the target's TYPE are scaled, by NAME
         (:func:`checked_package_argument`). ``None`` (default): the model's only
@@ -477,9 +922,16 @@ class NativeParameterSpec:
         correlation by ``1 + n`` and leaves the bound-derived variance alone (ledger
         489). Default ``0.0``. Not ``0.0`` without ``correlation`` raises
         ``ValueError``.
-    temporal : float or None, optional
-        Reserved; nothing reads it. Default ``None``; any other value raises
-        ``ValueError``.
+    periods : str or mapping of str to sequence of int or None, optional
+        Groups the target's per-period files, one parameter set per group (ledger
+        549); see :meth:`PestProject.parameterize`. ``None`` (default):
+        one set over every period. ``"month"``: one group per calendar month of the
+        TRANSIENT periods, by each period's midpoint, labelled ``m01``..``m12``.
+        A mapping ``{label: [zero-based periods]}``: explicit groups, each label
+        letters, digits and ``_``. Held as ``"month"``, ``None`` or a dict of
+        lower-cased labels to sorted tuples of ``int`` (:func:`checked_periods`,
+        which refuses anything else, and refuses it on a target whose files are not
+        per period).
     name : str or None, optional
         Parameter group / name base. Default ``None``: the canonical target with
         dots removed, plus ``_<package>`` when ``package`` is given
@@ -511,6 +963,14 @@ class NativeParameterSpec:
         Filled by :meth:`PestProject.build` when ``zones`` is given: the distinct
         labels of the zone array it resolved (pyEMU's ``zone_array``; for array
         pilot points, the array whose labels ``> 0`` became sets).
+    declared_recipe : _Recipe
+        The recipe the target names, before its package's FORM is known: for
+        ``recharge`` the list form, whose array form :attr:`recipe` becomes when
+        the staged RCH is READASARRAYS (:func:`recipe_for_packages`).
+    period_groups : list of PeriodGroup
+        Filled by :meth:`PestProject.build`: the parameter sets ``periods`` made,
+        each with its label, the periods its files serve and the files
+        (:func:`group_period_files`); one unlabelled group without ``periods``.
     """
 
     target: str
@@ -529,7 +989,7 @@ class NativeParameterSpec:
     anisotropy: float = 1.0
     bearing: float = 0.0
     nugget: float = 0.0
-    temporal: float | None = None
+    periods: str | Mapping[str, Sequence[int]] | None = None
     name: str | None = None
     capture: bool = False
     extra: dict = field(default_factory=dict)
@@ -539,11 +999,20 @@ class NativeParameterSpec:
     def __post_init__(self):
         """Resolve the recipe, fill the defaults, and refuse an argument that cannot act."""
 
-        self.recipe = resolve_target(self.target)
+        self.declared_recipe = resolve_target(self.target)
         self.resolved_targets: list[TargetFile] = []
         self.resolved_zone_labels: list[int] | None = None
+        self.period_groups: list[PeriodGroup] = []
+        declared = self.declared_recipe
+        self.style = _checked_style(self.style if self.style is not None else declared.default_style)
+        # A target of two forms (`recharge`) is held in the form its style can only
+        # have -- pilot points exist on arrays alone -- until the package's form is
+        # known (`resolve_form`), which refuses pilot points on a list package.
+        self.recipe = (
+            array_form(declared)
+            if declared.array_dataset is not None and self.style == "pilotpoints" else declared
+        )
         recipe = self.recipe
-        self.style = _checked_style(self.style if self.style is not None else recipe.default_style)
         self.package = checked_package_argument(self.package)
         if self.layers is not None:
             self.layers = checked_layers(self.layers)
@@ -582,6 +1051,13 @@ class NativeParameterSpec:
                 "PstFrom.add_parameters, which myflopy's pilot points never call, so they "
                 "cannot act. Drop them."
             )
+        if self.layers is not None and declared.array_dataset is not None:
+            raise ValueError(
+                f"layers= on target {declared.canonical!r}: MF6 applies it to ONE cell of "
+                "each column (IRCH, or the top active cell), in either form, so it has no "
+                "layers to restrict. Restrict it with zones= -- one label per cell of a "
+                "layer, labels <= 0 left alone."
+            )
         if self.layers is not None and recipe.family == "list":
             raise ValueError(
                 f"layers= on list target {recipe.canonical!r}: it scales every record of "
@@ -589,11 +1065,8 @@ class NativeParameterSpec:
                 "Restrict it with zones= -- a (nlay, ncpl) label array whose labels <= 0 "
                 "mark records left alone -- or pick the package with package=."
             )
-        if self.temporal is not None:
-            raise ValueError(
-                f"temporal={self.temporal!r}: nothing reads a temporal correlation yet, so "
-                "it cannot act. Drop it."
-            )
+        self.periods = checked_periods(self.periods, declared)
+        _refuse_extra_keywords_pyemu_does_not_take(self.extra)
         self._check_pilot_point_arguments()
         self._refuse_an_idle_variogram()
         self.bounds = self._checked_bounds()
@@ -693,7 +1166,8 @@ class NativeParameterSpec:
                 raise ValueError(
                     f"{', '.join(given)} place and interpolate pilot points, and "
                     f"{self.recipe.canonical!r} with style={self.style!r} has none; they act "
-                    "only with style='pilotpoints' on an array target (k, k33, porosity)."
+                    "only with style='pilotpoints' on an array target (k, k33, sto.ss, "
+                    "sto.sy, porosity, recharge on an array RCH)."
                 )
             return
         if (self.pp_spacing is None) == (self.pp_points is None):
@@ -719,11 +1193,75 @@ class NativeParameterSpec:
             )
         self.pp_nearest = int(self.pp_nearest)
 
+    def resolve_form(self, packages) -> _Recipe:
+        """Set :attr:`recipe` to the FORM of the packages it scales, and return it.
+
+        :func:`recipe_for_packages` on :attr:`declared_recipe`; called by
+        :meth:`PestProject.parameterize` when the model can list its packages and by
+        :meth:`PestProject.build` on the staged model.
+
+        Parameters
+        ----------
+        packages : list
+            The FloPy packages the spec scales (:func:`select_packages`).
+
+        Returns
+        -------
+        _Recipe
+            The recipe now held.
+
+        Raises
+        ------
+        ValueError
+            When the packages mix the two forms, or ``style="pilotpoints"`` was given
+            for a target whose package is the LIST form (pilot points interpolate onto
+            an array, ledger 520).
+        """
+
+        recipe = recipe_for_packages(self.declared_recipe, packages)
+        if self.style == "pilotpoints" and recipe.family == "list":
+            raise ValueError(
+                f"style='pilotpoints' on {recipe.canonical!r}: package(s) "
+                f"{[package_name_of(package) for package in packages]} hold it as LIST "
+                "records, and myflopy's pilot points interpolate onto an ARRAY. Write the "
+                "package in its array form (mf.rch.array, READASARRAYS) to put pilot points "
+                "on it, or use style='grid' (one parameter per record; correlation= "
+                "correlates them), 'zone' or 'constant' (ledger 520)."
+            )
+        self.recipe = recipe
+        return recipe
+
     @property
     def resolved_transform(self) -> str:
         """Transform actually used (additive parameters cannot be log)."""
 
         return "none" if self.additive else self.transform
+
+
+def _refuse_extra_keywords_pyemu_does_not_take(extra: dict) -> None:
+    """Refuse an ``**extra`` key that is no parameter of pyEMU's ``PstFrom.add_parameters``.
+
+    ``**extra`` is passed there at :meth:`PestProject.build`, so a misspelt key -- or
+    ``temporal=``, which ``periods=`` replaced (ledger 549) -- reached it
+    only after the run was staged and died with pyEMU's ``unexpected keyword
+    argument``. Asked at the call, of pyEMU's own signature; without pyEMU nothing is
+    asked (the build needs it anyway).
+    """
+
+    if not extra:
+        return
+    try:
+        import pyemu
+    except ImportError:
+        return
+    accepted = set(inspect.signature(pyemu.utils.PstFrom.add_parameters).parameters)
+    unknown = sorted(set(extra) - (accepted - {"self", "filenames"}))
+    if unknown:
+        raise TypeError(
+            f"parameterize() got {', '.join(f'{key}=' for key in unknown)}, a keyword neither "
+            "it nor pyEMU's PstFrom.add_parameters (where extra keywords go) takes. Seasonal "
+            "or other period groups are periods= ('month' or {label: [periods]})."
+        )
 
 
 def _checked_style(style) -> str:
@@ -1153,6 +1691,267 @@ def select_layers(targets: list[TargetFile], layers, recipe: _Recipe) -> list[Ta
     )
 
 
+class _StagedFlowModel:
+    """A staged FloPy model as the calendar's readers read a myflopy model.
+
+    :func:`~myflopy.modflow.mf6.period_calendar.steady_periods`,
+    :func:`~myflopy.modflow.mf6.period_end.period_lengths` and
+    :func:`~myflopy.modflow.mf6.hydraulics.declared_time_unit` read ``model.sim``
+    and ``model._packages_of_type``; a FloPy model has ``simulation`` and finds a
+    package by TYPE through :func:`packages_of_type`. The ONE reading of a period's
+    dates and steady flag stays theirs (ledger 529).
+    """
+
+    def __init__(self, gwf):
+        self.gwf = gwf
+        self.sim = gwf.simulation
+        self.name = gwf.name
+        self.model_type = str(getattr(gwf, "model_type", "gwf6") or "gwf6")
+
+    def _packages_of_type(self, package_type: str) -> list:
+        return packages_of_type(self.gwf, package_type)
+
+
+def staged_nper(model) -> int:
+    """The number of stress periods of the staged FloPy ``model``'s simulation.
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        A model of the build's staged simulation.
+
+    Returns
+    -------
+    int
+
+    Raises
+    ------
+    ValueError
+        When its simulation's TDIS has no period block.
+    """
+
+    lengths = period_lengths(_StagedFlowModel(model))
+    if not lengths:
+        raise ValueError(f"The run's TDIS (model {model.name!r}) holds no period block.")
+    return len(lengths)
+
+
+def staged_calendar(project, model) -> PeriodCalendar:
+    """The :class:`PeriodCalendar` of the staged run, for ``periods="month"``.
+
+    The TDIS lengths, ``TIME_UNITS`` and the flow model's STO steady flags of the
+    run's FILES (ledger 356), read by the calendar's own readers
+    (:class:`_StagedFlowModel`); the start is the TDIS ``START_DATE_TIME``, or,
+    when the TDIS declares none, the calibration's ``start_datetime``.
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built; its ``start_datetime`` is read.
+    model : flopy.mf6.MFModel
+        The staged FLOW model.
+
+    Returns
+    -------
+    PeriodCalendar
+
+    Raises
+    ------
+    ValueError
+        When the TDIS's ``START_DATE_TIME`` and the calibration's ``start_datetime``
+        are both declared and differ (a month would depend on which is read); when
+        neither is; or when the TDIS declares no ``TIME_UNITS`` MF6 reads.
+    """
+
+    flow = _StagedFlowModel(model)
+    declared = getattr(project, "start_datetime", None)
+    declared = None if declared is None else parse_start(
+        declared, what="PestProject(start_datetime=)")
+    held = tdis_start_date_time(flow)
+    start = None if held is None else parse_start(held, what="The TDIS START_DATE_TIME")
+    if start is not None and declared is not None and start != declared:
+        raise ValueError(
+            f"periods='month' dates the periods, and the run's TDIS starts them on {held!r} "
+            f"while the calibration's start_datetime is {project.start_datetime!r}: a "
+            "period's month would depend on which is read. Make them one -- model.pest() "
+            "takes start_datetime from the TDIS when it is not given."
+        )
+    start = start if start is not None else declared
+    if start is None:
+        raise ValueError(
+            "periods='month' dates the periods, and neither the run's TDIS "
+            "(START_DATE_TIME) nor the calibration (start_datetime=) gives a start."
+        )
+    units = declared_time_unit(flow)
+    if units is None:
+        raise ValueError(
+            "periods='month' dates the periods, and the run's TDIS declares no TIME_UNITS "
+            "MF6 reads, so its lengths cannot become dates; declare one, "
+            "mf.tdis(time_units='days', ...), or give the groups, periods={label: [...]}."
+        )
+    perlen = period_lengths(flow)
+    return PeriodCalendar(start, perlen, units, steady_periods(flow, len(perlen)))
+
+
+def period_labels(project, spec: NativeParameterSpec, model) -> list[str | None]:
+    """Each stress period's ``periods=`` group, zero-based (``None``: in no group).
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built.
+    spec : NativeParameterSpec
+        A spec whose ``periods`` is ``"month"`` or a mapping.
+    model : flopy.mf6.MFModel
+        The staged model the target's packages belong to.
+
+    Returns
+    -------
+    list of str or None
+
+    Raises
+    ------
+    ValueError
+        When a mapping names a period the run does not have; or what
+        :func:`staged_calendar` and :func:`month_labels` refuse.
+    """
+
+    if spec.periods == PERIODS_BY_MONTH:
+        return month_labels(staged_calendar(project, model))
+    nper = staged_nper(model)
+    labels: list[str | None] = [None] * nper
+    for label, periods in spec.periods.items():
+        for period in periods:
+            if period >= nper:
+                raise ValueError(
+                    f"periods= group {label!r} names period {period}, and the run has "
+                    f"{nper} (0..{nper - 1})."
+                )
+            labels[period] = label
+    return labels
+
+
+def period_groups_for(project, spec: NativeParameterSpec, model,
+                      targets: list[TargetFile]) -> list[PeriodGroup]:
+    """The parameter sets ``spec`` scales its files in: ``periods=`` groups, else one.
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built.
+    spec : NativeParameterSpec
+        The parameter.
+    model : flopy.mf6.MFModel
+        The staged model the files belong to.
+    targets : list of TargetFile
+        The target's files (:func:`package_target_files`).
+
+    Returns
+    -------
+    list of PeriodGroup
+        Without ``periods``: one unlabelled group of every file, its ``periods`` the
+        periods they serve (none for data that is not per period).
+    """
+
+    if spec.periods is None:
+        served: set[int] = set()
+        if all(target.period is not None for target in targets):
+            for span in file_spans(targets, staged_nper(model)).values():
+                served.update(span)
+        return [PeriodGroup(None, tuple(sorted(served)), tuple(targets))]
+    return group_period_files(spec, targets, period_labels(project, spec, model))
+
+
+def refuse_storage_that_cannot_act(project, spec: NativeParameterSpec, model, packages,
+                                   targets: list[TargetFile]) -> None:
+    """Refuse an STO target that could move no head (ledger 548).
+
+    MF6 reads storage only in a TRANSIENT period, and SY only in a convertible cell
+    (``ICONVERT != 0``): a parameter on storage of an all-steady run, or on SY of
+    cells that are all confined, is pure prior noise to PESTPP-IES. Refused per
+    PARAMETER SET -- the whole selection for ``"constant"``, each zone label for
+    ``"zone"``, each layer file for ``"grid"``/``"pilotpoints"`` (each a set of its
+    own) -- with ``zones=`` labels ``<= 0`` left out of the selection.
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built; its model resolves ``zones=``.
+    spec : NativeParameterSpec
+        An ``sto.ss``/``sto.sy`` parameter.
+    model : flopy.mf6.MFModel
+        The staged flow model.
+    packages : list
+        Its STO package (:func:`select_packages`).
+    targets : list of TargetFile
+        The files selected (after ``layers=``).
+
+    Raises
+    ------
+    ValueError
+        As above, naming the layer or zone and the spelling that leaves it out.
+    """
+
+    canonical = spec.recipe.canonical
+    nper = staged_nper(model)
+    steady = steady_periods(_StagedFlowModel(model), nper)
+    if steady is not None and all(steady):
+        raise ValueError(
+            f"Target {canonical!r} scales the STO's {spec.recipe.variable}, and every one of "
+            f"the run's {nper} stress period(s) is steady state, where MF6 reads no storage, "
+            "so it cannot act. Declare a transient period (mf.sto(transient={1: True}, ...)) "
+            "and run the model again, or drop the target."
+        )
+    if spec.recipe.variable != "sy":
+        return
+    nlay = int(model.modelgrid.nlay)
+    iconvert = None
+    for package in packages:
+        held = getattr(package, "iconvert", None)
+        iconvert = None if held is None else held.array
+    iconvert = np.zeros(1, dtype=int) if iconvert is None else np.asarray(iconvert)
+    per_layer = np.broadcast_to(iconvert.reshape(-1), (int(model.modelgrid.nnodes),)) \
+        if iconvert.size == 1 else iconvert.reshape(-1)
+    per_layer = np.asarray(per_layer).reshape(nlay, -1) if per_layer.size % nlay == 0 \
+        else per_layer.reshape(1, -1)
+    labels = None
+    if spec.zones is not None:
+        labels = np.asarray(
+            resolve_zone_array(spec.zones, family="array", model=project.model)).reshape(-1)
+    covered = []
+    for target in targets:
+        cells = per_layer.reshape(-1) if target.layer is None else per_layer[target.layer]
+        selected = np.ones(cells.size, dtype=bool)
+        zone = None
+        if labels is not None and labels.size == cells.size:
+            selected = labels > 0
+            zone = labels
+        covered.append((target, cells != 0, selected, zone))
+
+    def refuse(where: str, advice: str) -> None:
+        raise ValueError(
+            f"Target 'sto.sy' (name {spec.name!r}): every cell of {where} has ICONVERT 0 "
+            "(confined), and MF6 reads SY only in a convertible cell, so its parameter "
+            f"cannot act. {advice}"
+        )
+
+    if spec.style in ("grid", "pilotpoints"):
+        for target, convertible, selected, _zone in covered:
+            if not (convertible & selected).any():
+                refuse(f"layer {target.layer if target.layer is not None else 0} "
+                       f"({target.filename}) selected",
+                       "Leave it out with layers=, or make the layer convertible.")
+    elif spec.style == "zone" and labels is not None:
+        for label in sorted({int(value) for value in labels if value > 0}):
+            if not any((convertible & (zone == label)).any()
+                       for _target, convertible, _selected, zone in covered if zone is not None):
+                refuse(f"zone {label} on the layers selected",
+                       "Give it label 0 to leave it alone, or select a convertible layer.")
+    elif not any((convertible & selected).any() for _t, convertible, selected, _z in covered):
+        refuse("the layers and zones selected",
+               "Select a convertible layer with layers=, or parameterize sto.ss instead.")
+
+
 def target_files(project, spec: NativeParameterSpec) -> list[TargetFile]:
     """The files ``spec`` scales in the build's staged model, recorded on the spec.
 
@@ -1175,13 +1974,26 @@ def target_files(project, spec: NativeParameterSpec) -> list[TargetFile]:
         The files, as ``spec.resolved_targets`` holds them.
     """
 
-    recipe = spec.recipe
-    model = flopy_model_for(project, recipe)
-    packages = select_packages(model, recipe, spec.package)
+    model = flopy_model_for(project, spec.declared_recipe)
+    packages = select_packages(model, spec.declared_recipe, spec.package)
+    # The package's FORM decides the dataset: an array RCH's per-period `recharge`
+    # arrays, a list RCH's records (ledger 547).
+    recipe = spec.resolve_form(packages)
     workspace = Path(model.simulation_data.mfpath.get_sim_path())
     targets = package_target_files(model, recipe, packages, workspace)
     if spec.layers is not None:
         targets = select_layers(targets, spec.layers, recipe)
+    if recipe.package == "sto":
+        refuse_storage_that_cannot_act(project, spec, model, packages, targets)
+    spec.period_groups = period_groups_for(project, spec, model, targets)
+    targets = [target for group in spec.period_groups for target in group.targets]
+    if spec.capture and sum(target.period is not None for target in targets) > 1:
+        raise NotImplementedError(
+            f"capture=True on {recipe.canonical!r} (name {spec.name!r}): it scales "
+            f"{len(targets)} per-period files, and a capture records ONE field under one "
+            "prefix, so their observation names would collide. Capturing per-period files "
+            "is deferred (ledger 547); drop capture=."
+        )
     spec.resolved_targets = list(targets)
     spec.resolved_files = [target.filename for target in targets]
     return targets
@@ -1210,7 +2022,9 @@ def refuse_an_undeclared_array(project, recipe: _Recipe, package=None) -> None:
     project : PestProject
         The calibration being built; its staged simulation is read.
     recipe : _Recipe
-        The target's recipe. Anything but an ``"array"`` recipe is let through unread.
+        The target's recipe. Anything but an ``"array"`` recipe is let through unread,
+        and so is a per-period one (an array RCH's ``recharge``), whose files
+        :func:`package_target_files` finds or refuses.
     package : str or tuple of str or None, optional
         The spec's ``package=`` (:func:`select_packages`). Default ``None``: the
         model's only package of the type.
@@ -1224,7 +2038,7 @@ def refuse_an_undeclared_array(project, recipe: _Recipe, package=None) -> None:
         When the model holds several packages of the type and ``package`` is ``None``.
     """
 
-    if recipe.family != "array":
+    if recipe.family != "array" or recipe.periodic:
         return
     model = flopy_model_for(project, recipe)
     # By TYPE, never FloPy's name-first `get_package` (ledger 352); with no package
@@ -1281,7 +2095,9 @@ def relayer_array_target(project, recipe: _Recipe, package=None) -> bool:
     project : PestProject
         The calibration being built; its staged simulation is changed.
     recipe : _Recipe
-        The target's recipe; anything but an ``"array"`` recipe is left alone.
+        The target's recipe; anything but an ``"array"`` griddata recipe is left
+        alone -- a per-period array (an array RCH's ``recharge``) is one value per
+        cell of a layer already.
     package : str or tuple of str or None, optional
         The spec's ``package=`` (:func:`select_packages`). Default ``None``.
 
@@ -1291,7 +2107,7 @@ def relayer_array_target(project, recipe: _Recipe, package=None) -> bool:
         Whether any package's array was re-stored.
     """
 
-    if recipe.family != "array":
+    if recipe.family != "array" or recipe.periodic:
         return False
     model = flopy_model_for(project, recipe)
     applied = False
@@ -1466,8 +2282,8 @@ def add_native_parameter(project, spec: NativeParameterSpec):
     metadata.
     """
 
-    recipe = spec.recipe
     targets = target_files(project, spec)
+    recipe = spec.recipe
     files = [target.filename for target in targets]
 
     grid = flopy_model_for(project, recipe).modelgrid
@@ -1515,23 +2331,34 @@ def add_native_parameter(project, spec: NativeParameterSpec):
         kwargs["geostruct"] = project._geostruct_for(spec)
     kwargs.update(spec.extra)
 
-    # List/constant: pass the file list so one parameter scales every file
-    # together (recharge across stress periods, or one constant K multiplier
-    # across all layers). Grid array parameters instead get an independent
-    # parameter set *per layer file*, so each layer's K field varies on its own,
-    # named by its ZERO-BASED layer as pilot points are (ledger 521).
-    if recipe.family == "array" and spec.style == "grid" and len(files) > 1:
-        frames = []
-        for target in targets:
-            suffix = target.layer if target.layer is not None else files.index(target.filename)
-            layer_kwargs = dict(kwargs)
-            layer_kwargs["par_name_base"] = f"{spec.name}l{suffix}"
-            layer_kwargs["pargp"] = f"{spec.name}l{suffix}"
-            frames.append(project.pf.add_parameters(target.filename, **layer_kwargs))
-        frame = pd.concat(frames, ignore_index=True)
-    else:
-        filenames = files if len(files) > 1 else files[0]
-        frame = project.pf.add_parameters(filenames, **kwargs)
+    # One `add_parameters` call per `periods=` group, with that group's files, named
+    # `<name>_<label>` and its own PEST group (ledger 549); one call
+    # over every file without `periods`. Within a call the file list shares one
+    # parameter set (recharge across its period files, a constant K multiplier
+    # across all layers) -- except grid ARRAY parameters on LAYER files, which get an
+    # independent set *per layer file*, so each layer's K field varies on its own,
+    # named by its ZERO-BASED layer as pilot points are (ledger 521). Period files
+    # carry no layer and share one set: pyEMU's own rule, one per-cell set across the
+    # files of a call (ledger 547).
+    frames = []
+    for group in spec.period_groups:
+        name = f"{spec.name}{group.name_suffix}"
+        group_files = [target.filename for target in group.targets]
+        layers = sorted({target.layer for target in group.targets if target.layer is not None})
+        if recipe.family == "array" and spec.style == "grid" and len(layers) > 1:
+            for target in group.targets:
+                layer_kwargs = dict(kwargs)
+                layer_kwargs["par_name_base"] = f"{name}l{target.layer}"
+                layer_kwargs["pargp"] = f"{name}l{target.layer}"
+                frames.append(project.pf.add_parameters(target.filename, **layer_kwargs))
+            continue
+        group_kwargs = dict(kwargs)
+        group_kwargs["par_name_base"] = name
+        group_kwargs["pargp"] = name
+        group_kwargs.update(spec.extra)
+        frames.append(project.pf.add_parameters(
+            group_files if len(group_files) > 1 else group_files[0], **group_kwargs))
+    frame = pd.concat(frames, ignore_index=True)
     _refuse_a_large_correlated_grid(spec, frame)
     if recipe.canonical == "riv.stage":
         _carry_river_bottom(project, spec, grid.grid_type)

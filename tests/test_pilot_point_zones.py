@@ -336,7 +336,7 @@ def _manifest(tmp_path, values, *, interpolation, base_from_file=False, limits=(
         "version": 1,
         "files": [{"array_file": "a.txt", "base_from_file": base_from_file,
                    "base_file": None if base_from_file else "a.txt.pp_base", "sets": ["s"]}],
-        "sets": [{"name": "s", "array_file": "a.txt", "parameter_csv": "s_pp.csv",
+        "sets": [{"name": "s", "array_files": ["a.txt"], "parameter_csv": "s_pp.csv",
                   "points_csv": "s_pp.points.csv", "factors": "s_pp.factors.npz",
                   "interpolation": interpolation, "lower_limit": limits[0],
                   "upper_limit": limits[1]}],
@@ -352,7 +352,7 @@ def test_the_forward_run_interpolates_a_log_parameter_in_log_space(tmp_path, mon
 
     _manifest(tmp_path, [10.0, 0.1], interpolation=interpolation)
     monkeypatch.chdir(tmp_path)
-    forward_run.apply_pilotpoints_to_array("a.txt")
+    forward_run.apply_pilotpoints_to_array(["a.txt"])
     assert np.loadtxt("a.txt") == pytest.approx([20.0, midway, 0.2])
 
 
@@ -577,7 +577,7 @@ def test_the_manifest_names_each_set_for_a_write_back(demo, tmp_path):
     assert record["lower_limit"] == 1e-3 and record["upper_limit"] == 300.0
     for key in ("parameter_csv", "points_csv", "factors", "template"):
         assert Path(cal.template_workspace / record[key]).is_file(), key
-    assert record["array_file"] == f"{demo.model.name}.npf_k_layer1.txt"
+    assert record["array_files"] == [f"{demo.model.name}.npf_k_layer1.txt"]
 
 
 def test_the_build_metadata_names_the_same_sets_as_the_manifest(demo, tmp_path):
@@ -598,11 +598,11 @@ def test_the_build_metadata_names_the_same_sets_as_the_manifest(demo, tmp_path):
     assert [item["name"] for item in record["pilot_points"]] == list(sets)
     for item in record["pilot_points"]:
         assert item["pargp"] == item["name"]
-        for key in ("template", "array_file", "layer", "zone"):
+        for key in ("template", "array_files", "layer", "zone"):
             assert item[key] == sets[item["name"]][key], key
     assert sorted(record["pargps"]) == sorted(sets)
     assert sorted(record["pargps"]) == sorted(set(cal.pst.parameter_data["pargp"]))
     assert record["zones"] == [2, 3] and record["layers"] == [0, 1]
     assert [item["filename"] for item in record["files"]] == sorted(
-        {item["array_file"] for item in manifest["sets"]})
+        {name for item in manifest["sets"] for name in item["array_files"]})
     assert [item["layer"] for item in record["files"]] == [0, 1]

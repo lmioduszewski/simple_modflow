@@ -103,7 +103,7 @@ refused at build.
 **An argument that cannot act is refused, not ignored** (ledger 520):
 `layers=` on a list target (use `zones=`), `correlation=` on `constant`/`zone`, a
 variogram shape (`anisotropy`/`bearing`/`nugget`) without `correlation=`,
-`temporal=`, and any style but `constant`/`zone`/`grid`/`pilotpoints` -- pyEMU's own
+an `**extra` keyword pyEMU's `add_parameters` does not take, and any style but `constant`/`zone`/`grid`/`pilotpoints` -- pyEMU's own
 `"pp"` names `"pilotpoints"` -- and `"pilotpoints"` on a list target (pilot points
 interpolate onto an array; use `"grid"` with `correlation=`). A parameter name used twice is refused too: give each
 stacked call its own `name=`.
@@ -122,7 +122,8 @@ two zones takes the first row, a polygon whose label is NULL is not a zone at al
 and a layer that reaches no cell says so. A plain array still works.
 
 You never have to think about SHAPE. pyEMU wants a per-cell array for array targets
-(`k`, `k33`, `porosity`) and a `(layer, cell)` array for list targets (`recharge`,
+(`k`, `k33`, `sto.ss`, `sto.sy`, `porosity`, and `recharge` on an array RCH) and a
+`(layer, cell)` array for list targets (`recharge` on a list RCH,
 `chd`, `ghb.*`, `drn.*`, `wel`, `uzf.vks`), and rejects the wrong one with an error
 naming neither the target nor the shape. One `ZoneSpec` serves both.
 
@@ -158,7 +159,8 @@ documented here as flow-only, because the pilot-point interpolation read a hardc
 `gwf.npf.k` as its base array — which was not a transport limitation at all but a bug
 that also made `parameterize("k33", style="pilotpoints")` overwrite K33 with horizontal
 K, 30x wrong and silent. Pilot points now multiply the array their own target names, so
-every array target (`k`, `k33`, `porosity`) supports them. See ledger 115.
+every array target (`k`, `k33`, `sto.ss`, `sto.sy`, `porosity`, and `recharge` on an
+array RCH) supports them. See ledger 115.
 
 ### Pilot points (array targets)
 
@@ -258,6 +260,52 @@ own rule -- pilot points included since ledger 424: their correlated draw took t
 variogram's sill as a log10 variance of 1 whatever the bounds, so with bounds `(0.5, 2)`
 77% of it lay outside them and PESTPP-IES ran those at a bound
 (`docs/reproducers/pilot_point_prior_bounds.py`). Widen the bounds to widen the prior.
+
+### Recharge in array form, storage, and one multiplier per month
+
+```python
+year = mf.AverageYear.from_model(model)          # 1 steady period + N x 12 months
+cal.parameterize("recharge", name="rch", bounds=(0.5, 2.0))        # every period
+cal.parameterize("recharge", name="rchm", periods="month",         # x one per month
+                 bounds=(0.5, 2.0))
+cal.parameterize("recharge", style="pilotpoints", name="rchpp",    # x one field
+                 pp_spacing=1500.0, bounds=(0.5, 2.0))
+cal.parameterize("sto.sy", layers=[0], bounds=(0.5, 2.0), physical=(0.02, 0.35))
+cal.parameterize("sto.ss", bounds=(0.2, 5.0))
+```
+
+- **`recharge` follows the package's form.** On an ARRAY RCH (READASARRAYS -- what
+  `mf.rch.array` and Ten Trails write) it scales the per-period `recharge` arrays, one
+  file per period BLOCK, and never `irch`; on a list RCH its records. FloPy numbers the
+  array files by the block's ORDINAL, not its period (blocks at periods 0 and 2 write
+  `_1` and `_2`), so each file's period is read from FloPy's records. The period files
+  share ONE parameter set -- a `grid` style is one per cell, not one per cell per period
+  -- and pilot points interpolate one field per run, multiplied into every period file
+  against that file's own base (ledger 547). Measured at Ten Trails scale,
+  73 periods x 18,107 cells with four stacked recharge parameters: pyEMU's multiplier
+  step 2.45 s, the pilot-point step 1.31 s, MF6 3.05 s per forward run
+  (`docs/reproducers/array_recharge_period_apply.py`). `layers=` is refused on
+  recharge in either form (MF6 applies it to one cell per column; use `zones=`), and
+  `capture=True` on several period files is refused (not built).
+- **`periods=` groups the per-period files** of recharge and the list targets (ledger
+  549). `"month"` makes one parameter set per calendar month of the
+  TRANSIENT periods, `m01`..`m12`, shared by every cycle: a period's month is its
+  MIDPOINT's on the run's calendar (a TDIS starting 2017-09-30 ends each period on the
+  last day of its month, so its START date names the month before; ledger 529). The
+  STEADY period is in no seasonal group -- it is the long-term average, and only a
+  parameter declared without `periods=` reaches it, so stack a plain call for it as
+  above. `{"wet": [1, 2, 3], "dry": [7, 8]}` gives explicit groups of zero-based
+  periods. Each group is its own PEST group, `<name>_<label>` (`rchm_m03`). MF6 repeats
+  a period's block until the next, so a file serving periods of two groups -- or a
+  steady period's block repeated into a month -- is refused at build, naming the fix:
+  a block for every period, which `AverageYear.by_month` gives. The monthly
+  multipliers are independent in the prior; a temporal correlation between them is
+  not built.
+- **Storage informs only transient data.** `sto.ss` and `sto.sy` are refused on a run
+  whose every period is steady state, and `sto.sy` where every cell of a parameter set
+  has `ICONVERT` 0 -- the whole selection, a zone, or a layer of a `grid` or pilot-point
+  set -- since MF6 reads SY only in a convertible cell (ledger 548). Under
+  STO's `STORAGECOEFFICIENT` option `ss` holds a storage coefficient.
 
 **On Tikhonov regularization: myflopy does not offer it, deliberately.** It is a
 PESTPP-GLM concept, and the runner here is PESTPP-IES, which prints

@@ -11,7 +11,7 @@ import shutil
 import sys
 import time
 import warnings
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import flopy
@@ -744,7 +744,7 @@ class PestProject:
         anisotropy: float = 1.0,
         bearing: float = 0.0,
         nugget: float = 0.0,
-        temporal: float | None = None,
+        periods: str | Mapping[str, Sequence[int]] | None = None,
         name: str | None = None,
         capture: bool = False,
         **extra,
@@ -769,17 +769,38 @@ class PestProject:
             Friendly name of the model property to calibrate (case and
             surrounding spaces ignored). Supported targets
             (with aliases): ``"k"`` (``"npf.k"``/``"hk"``/``"kh"``),
-            ``"k33"`` (``"kv"``), ``"recharge"`` (``"rch"``),
-            ``"chd"``, ``"ghb.cond"``/``"ghb.bhead"`` (``"ghb"``),
+            ``"k33"`` (``"kv"``), ``"sto.ss"`` (``"ss"``/``"specific_storage"``),
+            ``"sto.sy"`` (``"sy"``/``"specific_yield"``), ``"recharge"``
+            (``"rch"``), ``"chd"``, ``"ghb.cond"``/``"ghb.bhead"`` (``"ghb"``),
             ``"drn.cond"``/``"drn.elev"`` (``"drn"``),
             ``"riv.cond"`` (``"riv"``)/``"riv.stage"``, ``"wel"`` (``"pumping"``),
             ``"uzf.vks"`` (``"vks"``) — UZF saturated vertical K, the one UZF
             quantity heads respond to — and ``"porosity"``
             (``"mst.porosity"``/``"n"``), which lives on the GWT sibling of a
             coupled transport simulation and is resolved there automatically.
-            ``k``, ``k33`` and ``porosity`` are ARRAY targets; the rest scale a
-            column of a LIST package's files. An unknown name raises
-            ``KeyError`` here, listing the known ones.
+            ``k``, ``k33``, ``sto.ss``, ``sto.sy`` and ``porosity`` are ARRAY
+            targets; ``recharge`` is an ARRAY target on an array RCH (READASARRAYS,
+            what ``mf.rch.array`` writes) and a LIST target on a list RCH, its form
+            read from the run's package; the rest scale a column of a LIST
+            package's files. An unknown name raises ``KeyError`` here, listing the
+            known ones.
+
+            ``recharge`` on an array RCH scales the per-period ``recharge`` arrays
+            -- one file per period BLOCK, which FloPy numbers by the block's
+            ordinal, not its period, so each file's period is read from FloPy's
+            records -- and never ``irch``; its period files share one parameter set
+            (one per ``periods=`` group), and every style applies, pilot points
+            included: one field, interpolated once per run, multiplies each period
+            file (ledger 547). ``capture=True`` on a target of several
+            period files raises ``NotImplementedError`` at :meth:`build`.
+
+            ``sto.ss`` and ``sto.sy`` scale the STO griddata (under STO's
+            ``STORAGECOEFFICIENT`` option ``ss`` holds a storage coefficient). Only
+            transient data informs them: :meth:`build` refuses either on a run
+            whose every stress period is steady state, and ``sto.sy`` where every
+            cell of a parameter set -- the whole selection, a ``zones=`` label, or a
+            layer for ``"grid"``/``"pilotpoints"`` -- has ``ICONVERT`` 0, since MF6
+            reads SY only in a convertible cell (ledger 548).
 
             A target scales the package(s) of its TYPE -- ``riv.cond`` every RIV
             record, whatever the package is named -- found on the model the build
@@ -814,7 +835,7 @@ class PestProject:
             - ``"zone"`` -- one multiplier per ``zones`` value (pass ``zones=``);
             - ``"grid"`` -- one multiplier per list entry / cell;
             - ``"pilotpoints"`` -- pilot points interpolated to the cells (ARRAY
-              targets only).
+              targets only, ``recharge`` on an array RCH included).
 
             ``None`` uses the recipe default (``"constant"`` for every target).
             The value is lower-cased; anything but these four raises
@@ -825,7 +846,9 @@ class PestProject:
             ``"pilotpoints"`` on an array target, which myflopy builds itself;
             ``"pilotpoints"`` on a LIST target raises ``ValueError`` here (pyEMU's
             own pilot points reject a list file on every grid) -- use ``"grid"``,
-            whose ``correlation=`` correlates the records.
+            whose ``correlation=`` correlates the records; on ``recharge`` it raises
+            when the RCH is the list form -- here when the model can list its
+            packages, else at :meth:`build`.
             ``"grid"`` on
             *array* targets (K, K33) builds one multiplier per Voronoi/DISV
             cell, and an independent set per layer file, located through the
@@ -911,7 +934,8 @@ class PestProject:
             covers all layers. A value that is not a whole number at or above 0,
             or an empty list, raises ``ValueError`` here. Given for a LIST target it raises ``ValueError``
             here, naming ``zones=``: a list target scales every record of its
-            package's files. :meth:`build` raises ``ValueError`` when no requested
+            package's files -- and so does ``recharge`` in either form, which MF6
+            applies to one cell per column. :meth:`build` raises ``ValueError`` when no requested
             layer has its own file, or the target is written as one whole-grid
             file.
         package : str or sequence of str or None, optional
@@ -994,9 +1018,44 @@ class PestProject:
             A negative or non-finite value raises ``ValueError`` here. Acts only
             when ``correlation`` is given; anything but ``0.0`` without it raises
             ``ValueError`` here.
-        temporal : float or None, optional
-            Reserved for a temporal correlation range; nothing reads it, so any
-            value but ``None`` (the default) raises ``ValueError`` here.
+        periods : str or mapping of str to sequence of int or None, optional
+            Groups the target's PER-PERIOD files -- ``recharge`` in either form and
+            the list targets -- into parameter sets, one ``add_parameters`` call per
+            group, named ``<name>_<label>`` (its own PEST group), with the style's
+            parameters within each (ledger 549):
+
+            - ``None`` (default): one set over every period, the steady-state period
+              included.
+            - ``"month"``: one group per calendar month of the TRANSIENT periods,
+              ``m01``..``m12`` (January = ``m01``), a period's month being its
+              MIDPOINT's (ledger 529) on the run's calendar -- TDIS lengths and
+              ``TIME_UNITS``, ``START_DATE_TIME`` (else this calibration's
+              ``start_datetime``) -- so one month in every cycle shares one
+              parameter. A STEADY-STATE period (the flow model's STO; a model with
+              no STO is steady throughout) is in no group: only a parameter
+              declared without ``periods`` reaches it -- stack a plain
+              ``parameterize("recharge", name=...)`` for that (the user's rule, Q3).
+            - ``{label: [zero-based periods]}``: explicit groups; each label is
+              letters, digits and ``_`` (lower-cased); a period in no group is left
+              alone.
+
+            MF6 repeats a period's block until the next, so a file serves every
+            period up to its package's next block; a file serving periods of two
+            groups -- or of a group and none, a steady-state period under
+            ``"month"`` included -- is refused at :meth:`build`, naming both
+            periods and the fix (a block for every period, as
+            ``mf.AverageYear(...).by_month(...)`` gives). Raises ``ValueError``
+            here on a target whose files are not per period (``k``, ``sto.sy``,
+            ``uzf.vks``, ``porosity``), for a string but ``"month"``, a label that
+            is not letters/digits/``_`` or repeats, an empty group, a period that
+            is not a whole number ``>= 0`` or is named twice; and at :meth:`build`
+            for a period the run does not have, a group no file serves, ``"month"``
+            on a transient period longer than 31 days, a TDIS with no
+            ``TIME_UNITS``, or a TDIS ``START_DATE_TIME`` that differs from
+            ``start_datetime``. A ``TypeError`` for anything but a string, a
+            mapping or ``None``. The monthly multipliers are drawn independently in
+            the prior; a temporal correlation between them is deferred. It
+            replaced ``temporal=``, which nothing read.
         name : str or None, optional
             Parameter group / name base (pyEMU's ``par_name_base`` and
             ``pargp``). Default ``None`` uses the canonical target with dots
@@ -1011,7 +1070,10 @@ class PestProject:
             another ``parameterize`` call of this project already holds (any case)
             raises ``ValueError`` here (ledger 523): stacking calls on one target,
             or pilot points declared layer by layer, needs a distinct name for
-            each.
+            each. With ``periods=`` each group's parameters and PEST group are
+            ``<name>_<label>`` (``rch_m03``), and a pilot-point set
+            ``<name>_<label>[l<layer>][z<zone>]``; a pilot-point set on period files
+            carries no ``l<layer>``.
         capture : bool, optional
             Also record the *resolved* model-input field (after multipliers are
             applied) as zero-weight observations named from ``<name>field``
@@ -1062,6 +1124,10 @@ class PestProject:
         >>> cal.parameterize("riv.stage", package=("riv", "crisp"))  # one shared offset
         >>> cal.parameterize("k", style="pilotpoints", name="kpp", pp_spacing=1500.0,
         ...                  zones=units, physical=(1e-3, 300))  # stacks on the constant
+        >>> cal.parameterize("recharge", name="rch", bounds=(0.5, 2.0))  # every period
+        >>> cal.parameterize("recharge", name="rchm", periods="month",   # x one per month
+        ...                  bounds=(0.5, 2.0))
+        >>> cal.parameterize("sto.sy", layers=[0], bounds=(0.5, 2.0), physical=(0.01, 0.35))
         """
 
         nugget = checked_nugget(nugget)
@@ -1082,7 +1148,7 @@ class PestProject:
             anisotropy=anisotropy,
             bearing=bearing,
             nugget=nugget,
-            temporal=temporal,
+            periods=periods,
             name=name,
             capture=capture,
             extra=extra,
@@ -1133,7 +1199,8 @@ class PestProject:
             logger.debug("Package check of %r left to build(): %s", spec.name, error)
             return
         if held:
-            select_packages(self.model, spec.recipe, spec.package)
+            # The package's FORM too: pilot points on a LIST RCH are refused here.
+            spec.resolve_form(select_packages(self.model, spec.declared_recipe, spec.package))
 
     def observe(self, targets, *, prefix: str | None = None):
         """Register history-matching observations from a ``myflopy`` target set.
@@ -1734,6 +1801,10 @@ class PestProject:
         # writes one whole-grid file that pyEMU cannot index against a DISV
         # spatial reference. See `relayer_array_target`.
         for spec in self._native_parameter_specs:
+            # The FORM of the staged package decides the recipe (an array RCH's
+            # per-period arrays, ledger 547) before anything reads it.
+            spec.resolve_form(select_packages(
+                flopy_model_for(self, spec.declared_recipe), spec.declared_recipe, spec.package))
             refuse_an_undeclared_array(self, spec.recipe, spec.package)
             relayer_array_target(self, spec.recipe, spec.package)
         simulation.set_all_data_external()
@@ -1856,9 +1927,10 @@ class PestProject:
                 "name": record["name"],
                 "pargp": record["name"],
                 "template": record["template"],
-                "array_file": record["array_file"],
+                "array_files": list(record["array_files"]),
                 "layer": record["layer"],
                 "zone": record["zone"],
+                "period_group": record["period_group"],
             })
             if record["name"] not in groups:
                 groups.append(record["name"])
@@ -1884,6 +1956,22 @@ class PestProject:
                 {"filename": target.filename, "package": target.package,
                  "layer": target.layer, "period": target.period}
                 for target in spec.resolved_targets
+            ],
+            "periods": (
+                {label: list(values) for label, values in spec.periods.items()}
+                if isinstance(spec.periods, dict) else spec.periods
+            ),
+            # One per parameter set `periods=` made (ledger 549): its label
+            # (None without `periods`), the PEST group and name base of its parameters,
+            # the periods its files hold the values of, and the files.
+            "period_groups": [
+                {
+                    "label": group.label,
+                    "pargp": f"{spec.name}{group.name_suffix}",
+                    "periods": [int(period) for period in group.periods],
+                    "files": [target.filename for target in group.targets],
+                }
+                for group in spec.period_groups
             ],
             "pargps": groups,
             "pilot_points": pilot_points,
@@ -2414,7 +2502,7 @@ class PestProject:
 
         The facade hides pyEMU boilerplate but never hides *state*: this lets
         you review exactly what was declared (every parameter with its style,
-        bounds, physical limits, and transform; every observation and forecast)
+        bounds, physical limits, transform and ``periods=`` grouping; every observation and forecast)
         and -- once :meth:`build` has run -- the resulting control-file counts
         (number of parameters and groups, observations, nonzero-weight
         observations, forecasts, and ``NOPTMAX``).
@@ -2443,6 +2531,8 @@ class PestProject:
                 "transform": spec.resolved_transform,
                 "additive": bool(spec.additive),
                 "name": spec.name,
+                # `periods=` as declared: None, "month" or {label: periods}.
+                "periods": spec.periods,
                 # After a build, array-target pilot points: one row per set with its
                 # point count (ledger 527).
                 "pilot_point_sets": [dict(item) for item in spec.pilot_point_sets],

@@ -92,6 +92,8 @@ MANUAL_SITES = frozenset(
 DOC_TOKENS = {
     "k": "k",
     "k33": "k33",
+    "sto.ss": "sto.ss",
+    "sto.sy": "sto.sy",
     "recharge": "recharge",
     "chd": "chd",
     "ghb.cond": "ghb",

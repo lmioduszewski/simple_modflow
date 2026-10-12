@@ -58,16 +58,24 @@ class PestSettings:
                 phys_txt = f" physical={tuple(phys)}" if phys else ""
                 package = par.get("package")
                 package_txt = f" package={package!r}" if package is not None else ""
+                periods = par.get("periods")
+                periods_txt = (
+                    "" if periods is None
+                    else f" periods={periods!r}" if isinstance(periods, str)
+                    else f" periods={sorted(periods)}"
+                )
                 lines.append(
                     f"    - {par['target']:<10}{package_txt} style={par['style']:<11} "
                     f"bounds={tuple(par['bounds'])}{phys_txt} "
-                    f"transform={par['transform']}"
+                    f"transform={par['transform']}{periods_txt}"
                 )
                 for item in par.get("pilot_point_sets") or ():
+                    where = ("period files" if item.get("layer") is None
+                             else f"layer {item['layer']}")
                     zone = "" if item.get("zone") is None else f" zone {item['zone']}"
                     lines.append(
                         f"        {item['name']}: {item['points']} pilot points over "
-                        f"{item['cells']} cells (layer {item['layer']}{zone})"
+                        f"{item['cells']} cells ({where}{zone})"
                     )
         else:
             lines.append("    (none)")

@@ -227,14 +227,18 @@ def test_a_lone_package_not_named_after_its_type_is_found(runs, tmp_path):
     assert np.allclose(edge.iloc[:, 2:4].to_numpy(), [[95.5, 6.0]])
 
 
-def test_array_recharge_is_refused_naming_its_form(runs, tmp_path):
-    """``recharge`` scales a list RCH's records; on an array RCH the build used to die
-    blaming ``set_all_data_external``."""
+def test_recharge_on_an_array_rch_scales_its_period_arrays(runs, tmp_path):
+    """``recharge`` follows the package's FORM: on this array RCH its ``recharge``
+    array file, never ``irch`` (ledger 547; it was refused naming the form,
+    and before that the build died blaming ``set_all_data_external``). The form's own
+    tests are ``test_pest_array_recharge.py``."""
 
     cal = _cal(runs, tmp_path)
-    cal.parameterize("recharge")
-    with pytest.raises(ValueError, match=r"(?s)package 'rcha_0'.*ARRAY form \(READASARRAYS\)"):
-        _build(cal)
+    spec = cal.parameterize("recharge")
+    _build(cal)
+    assert spec.recipe.family == "array"
+    assert [(t.package, t.filename, t.period) for t in spec.resolved_targets] == [
+        ("rcha_0", "m.rcha_recharge_1.txt", 0)]
 
 
 # -- riv.stage moves the pair ------------------------------------------------------
@@ -323,7 +327,7 @@ def test_bounds_that_exclude_the_starting_value_are_refused(kwargs, start):
     ({"target": "k", "style": "pilotpoints", "pp_spacing": 100.0,
       "extra": {"initial_value": 2.0}},
      r"\['initial_value'\].*never call"),
-    ({"target": "k", "temporal": 30.0}, r"temporal=30.0: nothing reads"),
+    ({"target": "k", "periods": "month"}, r"periods= on target 'k'.*not per stress period"),
     ({"target": "k", "style": "constant", "correlation": 500.0}, r"constant parameter has nothing"),
     ({"target": "k", "style": "zone", "correlation": 500.0}, r"zone parameter has nothing"),
     ({"target": "k", "style": "grid", "anisotropy": 3.0}, r"anisotropy=3.0 without correlation="),
@@ -335,7 +339,9 @@ def test_bounds_that_exclude_the_starting_value_are_refused(kwargs, start):
     ({"target": "k", "style": "kl"}, r"style='kl' is not one of"),
     # Review of R1-params: pyEMU's own pilot points reject a list file on every grid.
     ({"target": "ghb.cond", "style": "pilotpoints"}, r"pilotpoints' on list target.*'grid'"),
-    ({"target": "recharge", "style": "PilotPoints"}, r"pilotpoints' on list target"),
+    # recharge's form is its package's: pilot points on a LIST RCH are refused once the
+    # package is known (test_pest_array_recharge.py); layers= in either form here.
+    ({"target": "recharge", "layers": 0}, r"layers= on target 'recharge'.*no layers"),
 ])
 def test_an_argument_that_cannot_act_is_refused(kwargs, message):
     """params-10 and params-12: each of these was accepted and did nothing (or reached
