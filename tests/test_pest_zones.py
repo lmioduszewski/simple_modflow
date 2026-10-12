@@ -9,6 +9,7 @@ about the normalization, not about the raster reader the plan item advertised.
 
 from __future__ import annotations
 
+import tracemalloc
 import warnings
 
 import geopandas as gpd
@@ -301,3 +302,53 @@ def test_the_majority_still_decides_a_cell_that_holds_pixel_centres(zone_model, 
 
     assert spec.values[target] == 1
     assert 9 not in spec.ids
+
+
+# --- zone rasters: memory by labels, NaN pixels never vote ------------------------------- #
+
+
+def _zone_raster(path, band, cells, *, nodata, dtype):
+    import rasterio
+    from rasterio.transform import from_origin
+
+    minx, miny, maxx, maxy = cells.total_bounds
+    height, width = band.shape
+    with rasterio.open(
+        path, "w", driver="GTiff", height=height, width=width, count=1, dtype=dtype,
+        crs=cells.crs, nodata=nodata,
+        transform=from_origin(minx, maxy, (maxx - minx) / width, (maxy - miny) / height),
+    ) as dst:
+        dst.write(band.astype(dtype), 1)
+    return path
+
+
+def test_a_sparse_label_raster_costs_memory_by_its_labels_not_their_span(zone_model, tmp_path):
+    """Labels {1, 2, 65535} (an undeclared uint16 nodata): the per-cell count table was
+    ncells x 65,535 int64 -- 463 MB peak at 441 cells."""
+
+    cells = zone_model.vor.gdf_vorPolys
+    band = np.ones((60, 60), dtype=int)
+    band[:, 30:] = 2
+    band[:5, :5] = 65535
+    path = _zone_raster(tmp_path / "sparse.tif", band, cells, nodata=None, dtype="uint16")
+    tracemalloc.start()
+    spec = ZoneSpec.from_raster(path, zone_model)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert peak < 50e6, f"{peak / 1e6:.0f} MB"
+    assert set(spec.ids) <= {1, 2, 65535} and {1, 2} <= set(spec.ids)
+
+
+def test_a_float_zone_raster_with_nan_nodata_is_read(zone_model, tmp_path):
+    """NaN never equals itself, so NaN pixels voted and became int64-min: OverflowError."""
+
+    cells = zone_model.vor.gdf_vorPolys
+    band = np.full((60, 60), 4.0)
+    band[:, 30:] = np.nan
+    path = _zone_raster(tmp_path / "nan.tif", band, cells, nodata=float("nan"), dtype="float32")
+    spec = ZoneSpec.from_raster(path, zone_model, nodata_zone=0)
+    assert set(spec.ids) == {0, 4}
+    xc = cells.geometry.centroid.x.to_numpy()
+    minx, _, maxx, _ = cells.total_bounds
+    assert set(spec.values[xc < (minx + maxx) / 2 - 200.0].tolist()) == {4}
+    assert set(spec.values[xc > (minx + maxx) / 2 + 200.0].tolist()) == {0}

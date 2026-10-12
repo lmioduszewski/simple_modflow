@@ -142,7 +142,9 @@ class ZoneSpec:
         path : str or pathlib.Path
             Categorical raster opened with ``rasterio``; band 1 is read and its
             values cast to integers. Pixels equal to the file's declared nodata
-            value never vote.
+            value never vote, and neither does a NaN or infinite pixel, whatever
+            the file declares (a float raster's nodata is often NaN); a centroid
+            on one counts as on nodata.
         model : SimulationBase
             The myflopy model the calibration is built on (``cal.model``). Its
             ``model.vor.gdf_vorPolys`` cell polygons are what is sampled,
@@ -308,21 +310,12 @@ def _majority_sample(raster_path: Path, model, *, nodata_zone: int) -> np.ndarra
             )
             flat_cells = labels.ravel()
             flat_band = band.ravel()
-            valid = flat_cells > 0
-            if src.nodata is not None:
-                valid &= flat_band != src.nodata
+            valid = (flat_cells > 0) & _has_a_label(flat_band, src.nodata)
             if valid.any():
-                cell_ids = flat_cells[valid] - 1
-                zone_ids = flat_band[valid].astype(np.int64)
-                # Mode per cell in one pass: count every (cell, zone) pair, then take
-                # each cell's most frequent zone. Offsetting by the minimum keeps
-                # negative category ids usable as bincount indices.
-                offset = zone_ids.min()
-                span = int(zone_ids.max() - offset) + 1
-                counts = np.bincount(cell_ids * span + (zone_ids - offset),
-                                     minlength=ncpl * span).reshape(ncpl, span)
-                covered = counts.sum(axis=1) > 0
-                values[covered] = counts[covered].argmax(axis=1) + offset
+                winners, modes = _cell_modes(flat_cells[valid] - 1,
+                                             flat_band[valid].astype(np.int64))
+                covered[winners] = True
+                values[winners] = modes
         missing = np.flatnonzero(~covered)
         if missing.size:
             centroids = cells.geometry.iloc[missing].centroid
@@ -330,6 +323,57 @@ def _majority_sample(raster_path: Path, model, *, nodata_zone: int) -> np.ndarra
                 centroids = centroids.to_crs(src.crs)
             values[missing] = _centroid_labels(src, centroids, nodata_zone=nodata_zone)
     return values
+
+
+def _has_a_label(band: np.ndarray, nodata) -> np.ndarray:
+    """Which pixels hold a label: a finite value that is not the file's nodata.
+
+    A NaN never equals itself, so ``band != nodata`` kept every pixel of a float
+    raster whose nodata is NaN, and the cast to integer made each such pixel the label
+    ``-9223372036854775808``: ``from_raster`` died with ``OverflowError`` where the
+    pixels outvoted a cell, and a cell whose centroid sat on one took that label in
+    silence. A non-finite value is no label whatever the file declares.
+    """
+
+    band = np.asarray(band)
+    keep = np.isfinite(band) if np.issubdtype(band.dtype, np.floating) else np.ones(band.shape, bool)
+    if nodata is not None and not (isinstance(nodata, float) and np.isnan(nodata)):
+        keep &= band != nodata
+    return keep
+
+
+def _cell_modes(cell_ids: np.ndarray, zone_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Each cell's most frequent zone label (the lowest label on a tie).
+
+    Counts the distinct ``(cell, label)`` PAIRS, so memory follows the pixels read.
+    It counted into a ``ncells x (label span)`` table, which an undeclared nodata of
+    65,535 beside labels 1 and 2 made 463 MB at 441 cells and would make ~9.5 GB at
+    18,107.
+
+    Parameters
+    ----------
+    cell_ids : numpy.ndarray of int
+        The zero-based cell each pixel lies in.
+    zone_ids : numpy.ndarray of int
+        The pixel's label, the same length.
+
+    Returns
+    -------
+    tuple of (numpy.ndarray, numpy.ndarray)
+        The cells holding any pixel, and each one's label.
+    """
+
+    labels, label_index = np.unique(zone_ids, return_inverse=True)
+    pairs, counts = np.unique(
+        cell_ids.astype(np.int64) * len(labels) + label_index.reshape(-1), return_counts=True
+    )
+    cells, label_of = pairs // len(labels), pairs % len(labels)
+    # Per cell, the highest count first and, among equal counts, the lowest label.
+    order = np.lexsort((label_of, -counts, cells))
+    first = np.ones(order.size, dtype=bool)
+    first[1:] = cells[order][1:] != cells[order][:-1]
+    chosen = order[first]
+    return cells[chosen], labels[label_of[chosen]]
 
 
 def _centroid_labels(src, points, *, nodata_zone: int) -> np.ndarray:
@@ -348,7 +392,7 @@ def _centroid_labels(src, points, *, nodata_zone: int) -> np.ndarray:
         sampled = np.array(
             [value[0] for value in src.sample(zip(xs[inside], ys[inside], strict=True))]
         )
-        keep = np.ones(len(sampled), dtype=bool) if src.nodata is None else sampled != src.nodata
+        keep = _has_a_label(sampled, src.nodata)
         labels[inside[keep]] = sampled[keep].astype(int)
     return labels
 
