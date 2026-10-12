@@ -852,8 +852,10 @@ class PRTProject:
         (ledger 456). ``None`` (the
         default) copies the flow simulation's TDIS ``TIME_UNITS``, read through
         :func:`~myflopy.modflow.mf6.hydraulics.declared_time_unit`; when the flow
-        simulation declares none (a plain ``mf.tdis(...)``, ``unknown``, or no TDIS
-        at all) the PRT TDIS declares none either, which MF6 reads as unknown
+        simulation declares none (a plain ``mf.tdis(...)``, ``unknown``, no TDIS
+        at all, or -- logged as a warning -- a word MF6 stops on, which only a
+        TDIS written around ``mf.tdis`` can hold) the PRT TDIS declares none
+        either, which MF6 reads as unknown
         units -- FloPy answers an unset option with ``None``, and writing that
         through ``str()`` gave ``TIME_UNITS none``, which MF6 refuses (ledger 397). Travel
         times are in the flow model's time unit whatever this says -- it only
