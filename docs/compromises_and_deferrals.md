@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 473 entries (478 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 474 entries (479 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 474 | A LAK connection's `connection_area` is what MF6 reads it as, and `flow_area` is documented as MF6's wetted... | 2026-10-11 |
 | 473 | A record map's `multiplier` scales each record before `agg` and never the fill, and a LAK/SFR budget term i... | 2026-10-11 |
 | 472 | An input field's records combine by the field's kind at every tier, and pair across models one to one | 2026-10-11 |
 | 471 | A budget record whose value is an AUXILIARY reads one value column | 2026-10-11 |
@@ -18650,8 +18651,9 @@ same day, which is the useful part of the result.
       *LAK/SFR/HFB* (R unless marked): `model.surface_water.results.q.get(include=[])`
       returns an empty table rather than refusing; ~~`vor.plot.map(bgs=True)` and
       `show_mounding=True` on a bare grid raise `AttributeError` at `.fig`, as do both
-      HFB maps given either~~ (fixed by ledger 465: `TypeError` at the call); C: `build_lak_connection_table` computes
-      `connection_area` for EMBEDDEDH/V connections, whose `connwidth` MF6 never reads.
+      HFB maps given either~~ (fixed by ledger 465: `TypeError` at the call); C: ~~`build_lak_connection_table` computes
+      `connection_area` for EMBEDDEDH/V connections, whose `connwidth` MF6 never reads~~
+      (`NaN` there since ledger 474).
       *Single-model inputs*: `hover_fields` through a record or array noun's tail changes
       the tooltip, while ~~`NOUN_INERT_PARAMS`' comment says the noun's `hover_spec`
       supersedes it~~ (the comment says so now, ledger 465; naming or refusing it
@@ -18823,8 +18825,9 @@ same day, which is the useful part of the result.
       columns are tripled there (-1480.68 for -493.56)~~ (fixed by ledger 470: each
       record joins the reach it names, checked against MF6's own SFR budget). A LAK results row's `flow_area`
       is MF6's own wetted `FLOW-AREA` -- a vertical connection's whole cell area or 0.0 --
-      not the `connection_area` formula `build_lak_budget_result_table`'s docstring
-      (`package_budget.py`, not this pass's file) still states. ~~`model.hfb.results.q.get()` lists
+      not the `connection_area` formula ~~`build_lak_budget_result_table`'s docstring
+      (`package_budget.py`, not this pass's file) still states~~ (that docstring says so
+      since ledger 474). ~~`model.hfb.results.q.get()` lists
       every period block's barriers at every step whichever block is in force (MF6
       REPLACES a period's barriers with a later block's: after a period-3 block of 3 faces
       the 55 period-0 rows carry 21,809 ft3/d of open-face flow), and `hfb.inputs.map()` /
@@ -19575,3 +19578,18 @@ same day, which is the useful part of the result.
       helper relies on. It does not accept the attribute spelling: one spelling.
       `<term>.wide()` defaults its `index` to the parent's own (`lake` or `reach`), and
       `lak.connections.map(per=)` raises `TypeError` naming `results.q.map(per=)`.
+
+474. **A LAK connection's `connection_area` is what MF6 reads it as, and `flow_area` is documented as MF6's wetted area (2026-10-11).**
+      `build_lak_connection_table` gave every non-vertical connection
+      `connwidth * (telev - belev)`. **Judgment call:** an EMBEDDEDH/V connection's
+      `connection_area` is `NaN`, not a number -- MF6 reads neither its `connwidth`
+      nor its elevations (the exchange area comes from the lake TABLE, which no
+      connection table holds), and any formula would describe what the user typed
+      as a placeholder. A HORIZONTAL connection declared with `belev == telev` is the
+      cell's full thickness, MF6's reset (the rule `lake_bottoms` reads, ledger 351);
+      it read 0 area. Both change `connection_area`, its map and
+      `connections.summary()`'s `total_connection_area` (which skips the `NaN`s); the
+      canonical lake, all VERTICAL and HORIZONTAL with `belev < telev`, does not move.
+      `build_lak_budget_result_table`'s docstring called `flow_area` that geometry;
+      the column always held MF6's wetted `FLOW-AREA` (13 of the testing canonical
+      lake's 33 vertical connections read 0.0 in period 0) and now says so.

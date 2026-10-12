@@ -524,13 +524,20 @@ def build_lak_connection_table(model: SimulationBase, *, package: str | None = N
     -----
     The returned table keeps one row per LAK connection record and computes a
     ``connection_area`` field that can be mapped directly as a cell
-    choropleth:
+    choropleth -- the interface a connection CAN exchange through, read as MF6
+    reads the connection (``gwf-lak.f90``, ``lak_read_lake_connections``):
 
-    - vertical connections use the plan-view Voronoi cell area
-    - horizontal/embedded horizontal connections use ``connwidth * (telev - belev)``
+    - VERTICAL: the cell's plan-view area;
+    - HORIZONTAL: ``connwidth * (telev - belev)``, a negative thickness clipped to
+      zero -- and where ``belev == telev`` exactly, MF6 resets the two to the
+      cell's bottom and top, so the cell's full thickness;
+    - EMBEDDEDH / EMBEDDEDV: ``NaN``. MF6 reads neither ``connwidth`` nor
+      ``belev``/``telev`` for an embedded connection -- its exchange area comes
+      from the lake TABLE -- so a number computed from them would describe
+      nothing (it was ``connwidth * (telev - belev)`` until ledger 474).
 
-    The values therefore represent the physical interface area available for
-    exchange between the lake and groundwater.
+    What a connection exchanged through at a step is MF6's WETTED ``FLOW-AREA``,
+    ``flow_area`` in :func:`~myflopy.modflow.mf6.package_budget.build_lak_budget_result_table`.
     """
 
     connectiondata = pd.DataFrame(one_package(model, "lak", package).connectiondata.get_data()).copy()
@@ -552,6 +559,7 @@ def build_lak_connection_table(model: SimulationBase, *, package: str | None = N
             ]
         )
 
+    cellids = [tuple(cellid) for cellid in connectiondata["cellid"]]
     connectiondata = split_cellid_columns(connectiondata, cell_numbering(model))
     if "ifno" in connectiondata.columns:
         connectiondata = connectiondata.rename(columns={"ifno": "lake"})
@@ -586,12 +594,22 @@ def build_lak_connection_table(model: SimulationBase, *, package: str | None = N
     top = pd.to_numeric(connectiondata.get("telev"), errors="coerce")
     bottom = pd.to_numeric(connectiondata.get("belev"), errors="coerce")
     width = pd.to_numeric(connectiondata.get("connwidth"), errors="coerce")
-    vertical_mask = connectiondata["claktype"].astype(str).str.upper().eq("VERTICAL")
+    claktype = connectiondata["claktype"].astype(str).str.strip().str.upper()
+    horizontal = claktype.eq("HORIZONTAL")
+    # MF6 resets a HORIZONTAL connection whose BELEV equals its TELEV to the cell's
+    # bottom and top -- the rule `lake_bottoms` reads for the bottom.
+    whole_face = horizontal & top.eq(bottom)
+    if whole_face.any():
+        elevations = _cell_top_and_bottom(model)
+        for row in np.flatnonzero(whole_face.to_numpy()):
+            cell_top, cell_bottom = elevations(cellids[row])
+            top.iloc[row], bottom.iloc[row] = cell_top, cell_bottom
     thickness = (top - bottom).clip(lower=0.0)
-    horizontal_area = width * thickness
     vertical_area = connectiondata["cell"].map(cell_area_lookup).astype(float)
-    connectiondata["connection_area"] = np.where(
-        vertical_mask, vertical_area, horizontal_area
+    connectiondata["connection_area"] = np.select(
+        [claktype.eq("VERTICAL"), horizontal],
+        [vertical_area, width * thickness],
+        default=np.nan,  # EMBEDDEDH/V: MF6 reads no connwidth/belev/telev for them
     )
 
     ordered = [

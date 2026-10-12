@@ -661,15 +661,20 @@ def build_lak_budget_result_table(
     simulated flow ``q``, and the auxiliary ``FLOW-AREA`` value. The helper
     therefore reconstructs connection-specific metadata by matching repeated
     LAK budget rows back to ``lak.connectiondata`` in the written within-cell
-    connection order for each stress period. When ``value_name == "q"``, the
-    helper also computes:
+    connection order for each stress period. Where the record carries
+    ``FLOW-AREA`` the table also has:
 
-    - ``flow_area``: the physical lake-groundwater exchange area
-    - ``q_per_area``: ``q / flow_area`` with units of length per time
-
-    For vertical lake connections, ``flow_area`` is the plan-view Voronoi cell
-    area. For horizontal lake connections, it is ``connwidth * (telev - belev)``
-    after clipping negative thicknesses to zero.
+    - ``flow_area``: MF6's own ``FLOW-AREA`` for the connection at that step --
+      the WETTED area it computed the exchange through, not a geometric constant:
+      a vertical connection reads its cell's whole area while the lake is wet over
+      it and 0.0 while it is not (13 of the testing canonical lake's 33 vertical
+      connections read 0.0 in period 0), and a horizontal one the wetted part of
+      its face. The static interface area is
+      :func:`~myflopy.modflow.mf6.package_tables.build_lak_connection_table`'s
+      ``connection_area``. This said ``flow_area`` was that geometry until ledger
+      474; the column itself always held MF6's number.
+    - ``q_per_area``: ``q / flow_area`` (length per time), ``NaN`` where
+      ``flow_area`` is 0.
     """
 
     del budget_text

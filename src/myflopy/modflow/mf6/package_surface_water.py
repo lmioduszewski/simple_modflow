@@ -1836,10 +1836,11 @@ class LakConnectionsExplorer:
             ``model``, ``package``, ``lake``, ``iconn``, ``layer``, ``cell``,
             ``claktype``, ``belev``, ``telev``, ``connlen``, ``connwidth``,
             ``connection_area`` (length²: the cell's plan area for a vertical
-            connection, ``connwidth * (telev - belev)`` -- the INPUT elevations,
-            a negative thickness read as zero -- for every other type, embedded
-            ones included, although MODFLOW 6 reads ``connwidth`` on a HORIZONTAL
-            connection only and accepts any value on an embedded one) and
+            connection; ``connwidth * (telev - belev)`` for a horizontal one, a
+            negative thickness read as zero and the cell's full thickness where
+            ``belev == telev``, as MF6 resets it; ``NaN`` for an embedded one,
+            whose ``connwidth``/``belev``/``telev`` MF6 never reads -- it read
+            ``connwidth * (telev - belev)`` there until ledger 474) and
             ``bedleak``.
         """
 

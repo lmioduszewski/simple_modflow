@@ -687,7 +687,8 @@ class GroupLakConnections:
             length) as declared, ``bedleak`` and ``connection_area`` (length^2:
             the cell's plan area for a vertical connection, ``connwidth * (telev -
             belev)`` for a horizontal one -- the full face, not MF6's wetted
-            ``FLOW-AREA``).
+            ``FLOW-AREA`` -- and ``NaN`` for an embedded one; see
+            ``model.lak.connections.get``).
         """
 
         frames = []
