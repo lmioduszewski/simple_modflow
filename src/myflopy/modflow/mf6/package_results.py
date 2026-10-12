@@ -443,7 +443,8 @@ class CellBudgetResultsExplorer(SpatialView):
             raise ``TypeError`` (this noun supplies its own field and hover), and
             ``hover_spec`` is read as the old spelling of ``hover``, which wins when
             both are given. A free-verb parameter this noun does not name --
-            ``zoom``, ``hover_fields``, ... -- reaches the verb by that name,
+            ``zoom`` (``hover_fields`` raises ``TypeError``, ledger 498), ... --
+            reaches the verb by that name,
             while a per-layer field's ``bgs``, ``kstpkper``, ``per_timestep``,
             ``hover_layers`` and ``show_mounding`` raise ``TypeError`` (ledger
             465), and ``custom_zs``,
@@ -884,7 +885,8 @@ class StageResultsExplorer(SpatialView):
             raise ``TypeError`` (this noun supplies its own field and hover), and
             ``hover_spec`` is read as the old spelling of ``hover``, which wins when
             both are given. A free-verb parameter this noun does not name --
-            ``zoom``, ``hover_fields``, ... -- reaches the verb by that name,
+            ``zoom`` (``hover_fields`` raises ``TypeError``, ledger 498), ... --
+            reaches the verb by that name,
             while a per-layer field's ``bgs``, ``kstpkper``, ``per_timestep``,
             ``hover_layers`` and ``show_mounding`` raise ``TypeError`` (ledger
             465), and ``custom_zs``,

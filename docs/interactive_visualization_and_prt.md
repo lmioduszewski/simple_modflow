@@ -35,7 +35,9 @@ viz.mosaic([...panels...], ncols=2)                 # free-form composer (any mi
   (`"none"` drops the per-layer value line altogether; any other spelling raises
   at the call, naming the four; a noun with one value per cell -- a package's
   record or array field -- has no per-layer readout and refuses it, ledger
-  465), `hover_surfaces=True`, `hover_fields=["stage"]`,
+  465), `hover_surfaces=True`, `hover_fields=["stage"]` (the VERB's --
+  `model.plot.map(..., hover_fields=[...])`; a noun, and a group or diff surface,
+  builds its own hover and refuses it, ledger 498),
   or a full `hover=HoverSpec(...)`. LAK/SFR exchange maps automatically include
   the feature's stage. A head, and a footer's cell area, are written in the model's
   own length unit (`ft`/`ft²`, `m`/`m²`, `cm`/`cm²`, read from its DIS), and with no

@@ -301,7 +301,8 @@ class UzfInput:
             raise ``TypeError``, and ``hover_spec=`` is read as a legacy spelling
             of ``hover`` (``hover`` wins when both are given). A key naming a
             :func:`myflopy.plot.map` parameter this noun does not name reaches it
-            as that parameter, unrefused -- ``zoom``, ``hover_fields``,
+            as that parameter, unrefused -- ``zoom`` (``hover_fields`` raises
+            ``TypeError``, ledger 498),
             ``animation_kstpkpers``, ``rch_scale`` (which acts on a recharge map
             only), ``layer`` (which moves the head tooltip and no colour:
             infiltration has no layer axis here), and ``hover_layers``, which

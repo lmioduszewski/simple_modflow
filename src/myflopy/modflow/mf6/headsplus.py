@@ -765,7 +765,8 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
             raise ``TypeError`` (see Raises), and ``hover_spec=`` is read as a
             legacy spelling of ``hover`` (``hover`` wins when both are given). A
             key naming a :func:`myflopy.plot.map` parameter this method does not
-            name -- ``zoom``, ``hover_fields``, ``animation_kstpkpers``, or
+            name -- ``zoom`` (``hover_fields`` raises ``TypeError``,
+            ledger 498), ``animation_kstpkpers``, or
             ``rch_scale``, which acts on a recharge map only -- reaches it as that
             parameter. Anything else rides to the ``go.Choroplethmap`` trace
             (``zmid``, ``colorbar``, ``reversescale``), where Plotly refuses an

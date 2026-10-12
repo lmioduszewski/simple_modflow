@@ -875,7 +875,8 @@ class GroupLakConnections:
             axis); and ``hover_spec`` is read as the old spelling of ``hover``,
             ``hover`` winning when both are given. ``custom_zs``, which this noun
             computes, raises ``TypeError`` as a second value. A free-verb
-            parameter this noun does not name -- ``zoom``, ``hover_fields``, ...
+            parameter this noun does not name -- ``zoom`` (``hover_fields`` raises
+            ``TypeError``, ledger 498), ...
             -- reaches the verb by that name, while a per-layer field's ``bgs``,
             ``kstpkper``, ``per_timestep``, ``hover_layers`` and
             ``show_mounding`` raise ``TypeError`` (ledger 465). The rest

@@ -588,3 +588,22 @@ def test_a_mover_row_only_one_member_has_is_counted(movers):
     row = mvr.summary().set_index(["package", "direction"]).loc[("drn", "to_mvr")]
     assert (row["n"], row["n_one_sided"]) == (1, 2)
     assert not bool(row["within_tolerance"])
+
+
+# -- (d) a noun builds its own hover: hover_fields is the verb's (ledger 498) ----
+
+
+def test_a_group_or_diff_surface_refuses_hover_fields(toys):
+    group = mf.ModelGroup({"wet": toys["wet"], "dry": toys["dry"]}, reference="wet")
+    diff = group.diff()
+    for surface, model in ((group.hds, "dry"), (group.packages.chd.results.q, "dry"),
+                           (group.packages.chd.inputs, "dry"), (diff.hds, "dry"),
+                           (diff.packages.chd.results.q, "dry")):
+        with pytest.raises(TypeError, match=r"hover_fields.*model\.plot\.map"):
+            surface.map(model, hover_fields=["x"])
+    for composer in (group.hds.mosaic, diff.hds.mosaic):
+        with pytest.raises(TypeError, match="hover_fields"):
+            composer(kind="map", hover_fields=["x"])
+    with pytest.raises(TypeError, match="hover_fields"):
+        diff.hds.animate(over="model", hover_fields=["x"])
+    assert toys["dry"].plot.map(hover_fields=["x"]).fig

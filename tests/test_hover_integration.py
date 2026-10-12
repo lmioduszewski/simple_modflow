@@ -155,14 +155,17 @@ def test_mosaic_hover_sugar_threads_through_without_leaking(canonical_run):
     heads_traces = [t for t in heads.data if getattr(t, "type", "") == "choroplethmap"]
     assert heads_traces and all("L1" in t.hovertemplate for t in heads_traces)
 
-    # package mosaic: hover_fields appends without erroring; hover_layers, a
+    # package mosaic: its own hover reaches every panel; hover_layers, a
     # per-layer field's option, is REFUSED -- q has no per-layer profile, so it
-    # changed nothing (ledger 465)
-    lak = model.lak.results.mosaic(field="q", hover_fields=["claktype"])
+    # changed nothing (ledger 465) -- and so is hover_fields, which the noun's
+    # hover took unchecked (the user's call, ledger 498)
+    lak = model.lak.results.mosaic(field="q")
     lak_traces = [t for t in lak.data if getattr(t, "type", "") == "choroplethmap"]
     assert lak_traces and all("Lake exchange" in t.hovertemplate for t in lak_traces)
     with pytest.raises(TypeError, match="hover_layers"):
         model.lak.results.mosaic(field="q", hover_layers="all")
+    with pytest.raises(TypeError, match=r"hover_fields.*model\.plot\.map"):
+        model.lak.results.mosaic(field="q", hover_fields=["claktype"])
 
 
 # ---------------------------------------------------------------------------

@@ -657,6 +657,36 @@ def test_a_one_value_noun_refuses_a_per_layer_fields_options(canonical_run, noun
             view.map(**call)
 
 
+_HOVER_FIELDS_NOUNS = {
+    **_ONE_VALUE_NOUNS,
+    "hds": lambda m: m.hds,
+    "lak.connections": lambda m: m.lak.connections,
+    "sfr.results.q": lambda m: m.sfr.results.q,
+}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("noun", sorted(_HOVER_FIELDS_NOUNS))
+def test_a_noun_refuses_hover_fields_naming_the_verb(canonical_run, noun):
+    """It rode the tail and ACTED -- `drn.results.q.map(hover_fields=["Record
+    Count"])` added that line -- so it was neither inert nor named; the user chose
+    to refuse it (ledger 498). The verb still takes it."""
+
+    view = _HOVER_FIELDS_NOUNS[noun](canonical_run)
+    with pytest.raises(TypeError, match=r"hover_fields.*model\.plot\.map\(\.\.\., hover_fields"):
+        view.map(hover_fields=["Record Count"])
+    if hasattr(view, "mosaic"):
+        with pytest.raises(TypeError, match="hover_fields"):
+            view.mosaic(kind="map", hover_fields=["Record Count"])
+    assert "hover_fields" in NOUN_REFUSED_PARAMS and "hover_fields" not in NOUN_INERT_PARAMS
+
+
+@pytest.mark.slow
+def test_the_verb_still_takes_hover_fields(canonical_run):
+    picture = canonical_run.plot.map(hover_fields=["Head"])
+    assert picture.get_choropleth().hovertemplate
+
+
 @pytest.mark.slow
 def test_a_heads_noun_still_takes_every_per_layer_option(canonical_run):
     for option in LAYER_FIELD_MAP_PARAMS:

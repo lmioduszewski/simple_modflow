@@ -694,7 +694,9 @@ LAYER_FIELD_MAP_PARAMS = (
 #:     hover, title and colorscale went on reporting real heads.
 #:   `custom_hover`/`hover_heads`/`hover_ks` -- the legacy hover path. A noun
 #:     always passes `hover_spec=`, which beats them, so they were dead.
-NOUN_REFUSED_PARAMS = ("values", "type", "custom_hover", "hover_heads", "hover_ks")
+NOUN_REFUSED_PARAMS = (
+    "values", "type", "custom_hover", "hover_heads", "hover_ks", "hover_fields",
+)
 
 #: The per-PANEL drawing options the composers name and forward to each panel's
 #: `map`. `backend` is excluded deliberately: on a composer it chooses the
@@ -773,18 +775,48 @@ def refuse_series_composer_options(where: str, verb: str, unexpected: dict) -> N
     )
 
 
-#: Reachable on a noun but deliberately not offered:
-#:   `hover_fields` -- NOT inert, measured (ledger 436): through a noun's tail it
-#:     appends a context field the noun's hover carries (`drn.results.q.map(
-#:     hover_fields=["Record Count"])` adds that line). Whether to name it on every
-#:     noun or refuse it for `hover=` is an open decision (ledger 465), so it
-#:     still rides the tail and acts.
+#: Reachable on a noun but deliberately not offered (`hover_fields` was here; it
+#: is NOT inert -- `drn.results.q.map(hover_fields=["Record Count"])` added that
+#: line -- and the user chose to REFUSE it on a noun, ledger 498, so it is in
+#: :data:`NOUN_REFUSED_PARAMS`):
 #:   `zoom` -- inert under the default `fit_bounds=True`, which replaces it with
 #:     a fitted zoom. (This line used to say it "needs a basemap the noun's
 #:     choropleth does not draw"; measured, nouns draw `carto-voyager` and
 #:     `fit_bounds=False, zoom=10` through the tail DOES act -- ledger 307.)
 #:   `rch_scale` / `animation_kstpkpers` -- recharge- and animate-specific.
-NOUN_INERT_PARAMS = ("hover_fields", "zoom", "rch_scale", "animation_kstpkpers")
+NOUN_INERT_PARAMS = ("zoom", "rch_scale", "animation_kstpkpers")
+
+
+def refuse_noun_hover_fields(where: str, kwargs: dict) -> None:
+    """Raise if ``hover_fields`` rode a noun's tail: the user's call, ledger 498.
+
+    Through a noun's tail it appended a field of the noun's hover context --
+    ``drn.results.q.map(hover_fields=["Record Count"])`` added that line, a name
+    the context lacked added nothing -- so it was neither inert nor named. Refused
+    at every noun, the group and diff surfaces and their composers included,
+    pointing at the verb, which honours it.
+
+    Parameters
+    ----------
+    where : str
+        The call, for the message (``"drn.results.q.map()"``).
+    kwargs : dict
+        The noun's tail, read and never modified.
+
+    Raises
+    ------
+    TypeError
+        When ``kwargs`` holds ``hover_fields``.
+    """
+
+    if "hover_fields" not in kwargs:
+        return
+    raise TypeError(
+        f"{where} does not accept hover_fields=: a noun builds its own hover. "
+        "Extra hover fields are the verb's -- model.plot.map(..., "
+        "hover_fields=[...]) -- or pass this noun hover= a HoverSpec carrying "
+        "them (spec.with_fields(...))."
+    )
 
 
 def refuse_noun_parameters(noun: str, field: str, kwargs: dict, *, honours=()) -> None:
@@ -802,6 +834,13 @@ def refuse_noun_parameters(noun: str, field: str, kwargs: dict, *, honours=()) -
     byte-identical, and ``show_mounding`` kept the colours and added a head row
     to every tooltip -- except ``hover_layers`` on the two pictures that keep a
     per-layer hover (the transmissivity nouns and ``model.inputs.uzf``).
+
+    ``hover_fields`` is refused at every noun, ``honours`` or not (the user's
+    call, ledger 498): through the tail it appended a field of the noun's
+    hover context -- ``drn.results.q.map(hover_fields=["Record Count"])`` added
+    that line, a name the context lacked added nothing -- so it was neither inert
+    nor named. The refusal points at the verb, ``model.plot.map(...,
+    hover_fields=...)``, and at ``hover=`` a :class:`HoverSpec`.
 
     Parameters
     ----------
@@ -842,6 +881,8 @@ def refuse_noun_parameters(noun: str, field: str, kwargs: dict, *, honours=()) -
                 f"To draw an arbitrary array on this grid use "
                 f"`myflopy.plot.map(model, values=...)`."
             )
+        if name == "hover_fields":
+            refuse_noun_hover_fields(f"{noun}.map()", kwargs)
         raise TypeError(
             f"{noun}.map() does not accept {name}=: it always supplies its own "
             f"hover, so the legacy hover arguments have no effect here. Pass "
@@ -1637,13 +1678,15 @@ class SpatialView:
             drawing options of :func:`myflopy.plot.map` (``zmin``/``zmax``,
             ``contours``, ``features``, ``extent``, ...). A diff hands them to the
             group's ``compare_map``, which ends at the reference model's bound map
-            verb.
+            verb. ``hover_fields`` raises ``TypeError`` (ledger 498): this
+            surface builds its own hover; the verb takes it.
 
         Returns
         -------
         Choro or matplotlib.figure.Figure
         """
 
+        refuse_noun_hover_fields(f"{type(self).__name__}.map()", map_kwargs)
         choro = self._spatial_map(per=int(per), layer=int(layer), model=model, **map_kwargs)
         if self._normalize_backend(backend) == "plotly":
             return choro
@@ -2357,6 +2400,8 @@ class SpatialView:
         own; its length must match the facet (ledger 309).
         """
 
+        refuse_noun_hover_fields(f"{type(self).__name__}.mosaic()", map_kwargs)
+
         if axis == "layer":
             reference = None if self._spatial_models() is None else self._resolve_models(model)[0]
             facets = [
@@ -2465,6 +2510,7 @@ class SpatialView:
         model animation fixes the period and layer and steps through models.
         """
 
+        refuse_noun_hover_fields(f"{type(self).__name__}.animate()", map_kwargs)
         base_layer = self._single_layer(layer)
         if axis == "period":
             reference = self._resolve_models(model)[0]

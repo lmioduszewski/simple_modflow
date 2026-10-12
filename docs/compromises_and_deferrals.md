@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 497 entries (502 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 498 entries (503 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 498 | `hover_fields` is refused at every noun and every group and diff surface; the verb takes it | 2026-10-11 |
 | 497 | The group and diff LAK exchange compare pairs a connection by where it sits, not by `iconn` | 2026-10-11 |
 | 496 | A read view refuses a `layer=` it does not number, on DIS, DISV and DISU, through one helper | 2026-10-11 |
 | 495 | Every head reader masks MF6's no-value numbers through `headsplus._is_sentinel`, and a calibration target s... | 2026-10-11 |
@@ -19488,12 +19489,15 @@ same day, which is the useful part of the result.
       the PRT pathline map (drawn over heads) honour all of it. `bgs=`/`show_mounding=`
       on a map with no run model -- `vor.plot.map`, an unrun model, both HFB maps --
       built and raised `AttributeError` at `.fig`; `_choropleth_factory` raises
-      `TypeError` at the call. **Not decided: `hover_fields`.** It is NOT inert, as
+      `TypeError` at the call. ~~**Not decided: `hover_fields`.** It is NOT inert, as
       `NOUN_INERT_PARAMS` said: through a noun's tail it appends a context field the
       noun's hover carries (`drn.results.q.map(hover_fields=["Record Count"])` adds that
       line; a name the context lacks adds nothing). Naming it on every noun (~18
       signatures and the composers) or refusing it for `hover=` are both house-rule
-      readings; the comment now says what it does and it still acts. Revert check:
+      readings; the comment now says what it does and it still acts.~~ **Decided by
+      the user: `hover_fields` is REFUSED** at every noun, the group and diff surfaces
+      and their composers included, pointing at `model.plot.map(..., hover_fields=)`
+      (ledger 498). Revert check:
       `tests/test_noun_signatures.py::test_a_one_value_noun_refuses_a_per_layer_fields_options`
       (8 cases), `test_a_bare_grid_map_refuses_a_heads_option_at_the_call`,
       `tests/test_hfb.py::test_both_barrier_maps_refuse_a_heads_option_at_the_call`,
@@ -20056,3 +20060,19 @@ same day, which is the useful part of the result.
       faces) pair in file order, one to one, by ledger 472's rule. Each side's `iconn` is
       carried as `iconn`/`reference_iconn`.
 
+498. **`hover_fields` is refused at every noun and every group and diff surface; the verb takes it (2026-10-11).**
+      This is the user's call on ledger 465's open question. Through a noun's tail the
+      option ACTED: it appended a field of the noun's hover context, unchecked, and a name
+      the context lacked added nothing. The user chose refusal over naming it on about 18
+      signatures. It moved from `NOUN_INERT_PARAMS` to `NOUN_REFUSED_PARAMS`, so
+      `refuse_noun_parameters` refuses it for every single-model noun, the heads and PRT
+      nouns included (their `honours=` covers the per-layer tier only). A group or diff
+      surface never called that helper: its tail goes to the bound map verb. So
+      `refuse_noun_hover_fields` runs in `SpatialView.map` and in the composers'
+      `_facet_panels`/`_frame_panels`. The message points at
+      `model.plot.map(..., hover_fields=[...])` and at `hover=` a `HoverSpec`
+      (`.with_fields(...)`). **Not done:** the rest of `NOUN_REFUSED_PARAMS`
+      (`values=`, `type=`, the legacy hover trio) is still not refused at the group and
+      diff surfaces. `group.packages.drn.results.q.map("b", values=[...])` builds, and
+      `custom_hover=` collides inside the verb with a message naming `ModelPlots.map`.
+      That is recorded as found, not fixed.
