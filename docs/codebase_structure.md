@@ -143,9 +143,11 @@ This is the main MF6 implementation area.
   Observation lookup and observation-head table shaping for `HeadsPlus`.
 - [src/myflopy/modflow/mf6/observations/](../src/myflopy/modflow/mf6/observations/__init__.py)
   Reusable observation-target package (split from the former single module,
-  plan 4.1): `heads.py`/`lake.py`/`sfr.py`/`drn.py` hold `HeadTargets`,
-  `LakeStageTargets`, `SfrStageTargets`/`SfrFlowTargets`, `DrnFlowTargets`
-  and their model-bound wrappers (`model.targets`); `registry.py` the
+  plan 4.1): `heads.py`/`lake.py`/`sfr.py`/`drn.py`/`riv.py` hold `HeadTargets`,
+  `LakeStageTargets`, `SfrStageTargets`/`SfrFlowTargets`, `DrnFlowTargets`,
+  `RivFlowTargets` and their model-bound wrappers (`model.targets`); `_zones.py`
+  the ONE cell-zone flow implementation `drn.py` and `riv.py` subclass (ledger
+  534); `registry.py` the
   `TargetRegistry`; `plots.py` the shared bound-series plots; `_shared.py`
   the normalization helpers. The package root re-exports everything, so both
   import paths work. The same target datasets drive plotting, residual

@@ -8,6 +8,7 @@ from myflopy.modflow.mf6.observations.conc import ConcTargets
 from myflopy.modflow.mf6.observations.drn import BoundDrnFlowTargets, DrnFlowTargets
 from myflopy.modflow.mf6.observations.heads import BoundHeadTargets, HeadTargets
 from myflopy.modflow.mf6.observations.lake import BoundLakeStageTargets, LakeStageTargets
+from myflopy.modflow.mf6.observations.riv import BoundRivFlowTargets, RivFlowTargets
 from myflopy.modflow.mf6.observations.sfr import (
     BoundSfrFlowTargets,
     BoundSfrStageTargets,
@@ -23,6 +24,7 @@ BOUND_TARGET_TYPES = (
     BoundSfrStageTargets,
     BoundSfrFlowTargets,
     BoundDrnFlowTargets,
+    BoundRivFlowTargets,
 )
 
 
@@ -74,17 +76,23 @@ class TargetRegistry:
             return BoundSfrFlowTargets(self.model, target)
         if isinstance(target, DrnFlowTargets):
             return BoundDrnFlowTargets(self.model, target)
+        if isinstance(target, RivFlowTargets):
+            return BoundRivFlowTargets(self.model, target)
         return target
 
     def _coerce_target(self, value):
         """Unwrap a bound helper back to its bare target, validating the type (raises otherwise)."""
 
         value = bare_targets(value)
-        if isinstance(value, (HeadTargets, ConcTargets, LakeStageTargets, SfrStageTargets, SfrFlowTargets, DrnFlowTargets)):
+        if isinstance(
+            value,
+            (HeadTargets, ConcTargets, LakeStageTargets, SfrStageTargets, SfrFlowTargets,
+             DrnFlowTargets, RivFlowTargets),
+        ):
             return value
         raise TypeError(
             "Model targets currently support HeadTargets, ConcTargets, LakeStageTargets, "
-            "SfrStageTargets, SfrFlowTargets, and DrnFlowTargets."
+            "SfrStageTargets, SfrFlowTargets, DrnFlowTargets, and RivFlowTargets."
         )
 
     def keys(self) -> list[str]:
@@ -184,6 +192,18 @@ class TargetRegistry:
 
         self["drn_flow"] = value
 
+    @property
+    def riv_flow(self) -> BoundRivFlowTargets:
+        """Return model-bound RIV exchange-flow (baseflow) targets."""
+
+        return self._named_target("riv_flow")
+
+    @riv_flow.setter
+    def riv_flow(self, value: RivFlowTargets | BoundRivFlowTargets):
+        """Register ``value`` as the ``riv_flow`` target set."""
+
+        self["riv_flow"] = value
+
     def __getitem__(self, key: str):
         """Return the model-bound helper for the registered target ``key``.
 
@@ -201,7 +221,7 @@ class TargetRegistry:
         -------
         BoundHeadTargets, BoundLakeStageTargets, BoundSfrStageTargets, ...
             The set bound to this registry's model -- a ``BoundSfrFlowTargets`` or
-            ``BoundDrnFlowTargets`` for a flow set. A ``ConcTargets`` set comes
+            ``BoundDrnFlowTargets`` or ``BoundRivFlowTargets`` for a flow set. A ``ConcTargets`` set comes
             back in a ``BoundHeadTargets`` (it subclasses ``HeadTargets``), which
             reads the concentration file for it.
         """

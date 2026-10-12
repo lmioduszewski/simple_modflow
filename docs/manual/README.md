@@ -173,7 +173,7 @@ Throughout, two example models recur so the code stays concrete:
 - 13.2 Heads: `model.hds.array(layer=…)`, `model.hds.kstpkper`, `model.all_heads`
 - 13.3 Budgets and cell-by-cell flows
 - 13.4 Per-package results: SFR/LAK/UZF/DRN output series
-- 13.5 Observation **targets** for review: `HeadTargets`, `LakeStageTargets`, `Sfr*Targets`, `DrnFlowTargets` — `compare`, `residuals`, `stats`
+- 13.5 Observation **targets** for review: `HeadTargets`, `LakeStageTargets`, `Sfr*Targets`, `DrnFlowTargets`, `RivFlowTargets` — `compare`, `residuals`, `stats`
 - 13.6 The raw FloPy objects when you need them: `run.flopy_model(name)`
 
 **14. Visualization** — *[14_visualization.md](14_visualization.md)*

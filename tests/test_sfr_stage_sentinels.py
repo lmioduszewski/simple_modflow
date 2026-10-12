@@ -387,7 +387,9 @@ def test_the_files_pest_reads_still_hold_the_raw_stage_at_a_dry_reach(sfr_stage_
     base = tmp_path / config["output_csv"]
     forward = tmp_path / "forward.csv"
     write_named_series_targets(
-        "sfr_stage", tmp_path / config["locations_file"], forward, sim_ws=model.workspace)
+        [{"kind": "sfr_stage", "locations_file": tmp_path / config["locations_file"],
+          "output_csv": forward}],
+        sim_ws=model.workspace)
 
     assert forward.read_text() == base.read_text()
     written = pd.read_csv(base, float_precision="round_trip")

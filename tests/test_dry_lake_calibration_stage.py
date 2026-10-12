@@ -343,7 +343,9 @@ def test_the_pest_files_hold_the_bottom_and_1e30_only_for_an_inactive_lake(runs,
     base = tmp_path / config["output_csv"]
     forward = tmp_path / "forward.csv"
     write_named_series_targets(
-        "lake_stage", tmp_path / config["locations_file"], forward, sim_ws=model.workspace)
+        [{"kind": "lake_stage", "locations_file": tmp_path / config["locations_file"],
+          "output_csv": forward}],
+        sim_ws=model.workspace)
 
     assert forward.read_text() == base.read_text()
     written = pd.read_csv(base, float_precision="round_trip")

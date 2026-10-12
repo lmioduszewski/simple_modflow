@@ -240,8 +240,10 @@ def test_pest_is_handed_mf6s_sign_on_both_routes(toy, tmp_path):
             str(table))["obsval"].to_dict())
         # A forward run writes the base run's table again, sign and all.
         again = tmp_path / f"{prefix}_forward.csv"
-        write_named_series_targets(kind, template / f"{prefix}_target_locations.csv", again,
-                                   sim_ws=toy.workspace, model_name="m")
+        write_named_series_targets(
+            [{"kind": kind, "locations_file": template / f"{prefix}_target_locations.csv",
+              "output_csv": again}],
+            sim_ws=toy.workspace, model_name="m")
         assert again.read_text() == table.read_text(), prefix
     assert (weighted["obsval"] < 0).all()
     simulated = np.array([read[name] for name in weighted.index], dtype=float)

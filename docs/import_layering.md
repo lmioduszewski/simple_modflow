@@ -138,7 +138,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.budget_plotting`
 - `myflopy.modflow.mf6.grid.interpolated_surface`
 - `myflopy.modflow.mf6.interactive_plotting`
-- `myflopy.modflow.mf6.observations.drn`
+- `myflopy.modflow.mf6.observations._zones`
 - `myflopy.modflow.mf6.observations.heads` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.observations.lake` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.observations.sfr`
@@ -158,6 +158,8 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.lakes` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.mvr`
 - `myflopy.modflow.mf6.observations.conc`
+- `myflopy.modflow.mf6.observations.drn`
+- `myflopy.modflow.mf6.observations.riv`
 - `myflopy.modflow.mf6.package_surface_water` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.pilot_points`
 - `myflopy.modflow.mf6.recharge`

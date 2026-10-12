@@ -315,7 +315,10 @@ def main():
             from myflopy.modflow.mf6.pest.forward_run import write_named_series_targets
 
             pd.DataFrame({"name": ["drying", "held"], "lake": [0, 1]}).to_csv(copy / "loc.csv", index=False)
-            write_named_series_targets("lake_stage", copy / "loc.csv", copy / "fw.csv", sim_ws=copy)
+            write_named_series_targets(
+                [{"kind": "lake_stage", "locations_file": copy / "loc.csv",
+                  "output_csv": copy / "fw.csv"}],
+                sim_ws=copy)
             return pd.read_csv(copy / "fw.csv")
 
         _attempt("G", "forward-run writer on the copy", forward)

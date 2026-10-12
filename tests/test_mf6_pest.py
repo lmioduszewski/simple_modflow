@@ -68,6 +68,7 @@ from myflopy.modflow.mf6.simulation.packages import (  # noqa: E402
     Recharge,
     Storage,
 )
+from tests.test_drn_zones_on_faces import attach_budget  # noqa: E402
 
 
 def _project_temp_dir(name: str) -> Path:
@@ -240,7 +241,7 @@ def _fake_surface_water_model():
         # How its cellids read: a LAK/SFR table splits them by the grid's own rule
         # (ledger 419).
         modelgrid=SimpleNamespace(grid_type="vertex", nlay=1, ncpl=2),
-        package=_answering_by_type({"lak": lak, "sfr": sfr, "drn": "drn_owner"}),
+        package=_answering_by_type({"lak": lak, "sfr": sfr}),
         fl=SimpleNamespace(lak=lak, sfr=sfr),
         sfr=SimpleNamespace(
             results=SimpleNamespace(
@@ -258,7 +259,8 @@ def _fake_surface_water_model():
             )
         ),
     )
-    model.bud = lambda package: SimpleNamespace(df=drn_df.copy())
+    # The DRN package and its cell-budget records, as the zone reader opens them.
+    attach_budget(model, drn_df)
     model.targets = TargetRegistry(model)
     return model
 
@@ -675,7 +677,7 @@ def test_named_surface_water_and_drn_targets_are_model_bound_and_plot_ready(monk
 
     assert calls["sfr_stage.obs"]["owner"] is model.package("sfr")
     assert calls["sfr_flow.obs"]["owner"] is model.package("sfr")
-    assert calls["drn_flow.obs"]["owner"] == "drn_owner"
+    assert calls["drn_flow.obs"]["owner"] is model.package("drn")
     assert calls["sfr_flow.obs"]["continuous"]["sfr_flow.csv"] == [
         ("reach_001", "DOWNSTREAM-FLOW", 1)
     ]
@@ -1129,9 +1131,9 @@ def test_named_series_observation_postprocessor_is_wired(tmp_path):
 
     assert any("_write_head_target_csv(" in call for call in recorded)
     series_call = next(call for call in recorded if "write_named_series_targets(" in call)
-    assert "kind='lake_stage'" in series_call
-    assert "locations_file='lak_stage_target_locations.gpkg'" in series_call
-    assert "output_csv='lak_stage_simulated_lake_stage.csv'" in series_call
+    assert "'kind': 'lake_stage'" in series_call
+    assert "'locations_file': 'lak_stage_target_locations.gpkg'" in series_call
+    assert "'output_csv': 'lak_stage_simulated_lake_stage.csv'" in series_call
 
     # An unknown kind raises a clear error, not one pointing at the deleted build.
     cal._prepared_observations = [{"prefix": "mystery"}]
@@ -1519,7 +1521,7 @@ def test_named_series_drn_observation_forward_run_end_to_end():
     # deleted legacy build_pst path).
     forward_run_text = (template / "forward_run.py").read_text(encoding="utf-8")
     assert "def write_named_series_targets(" in forward_run_text
-    assert "kind='drn_flow'" in forward_run_text
+    assert "'kind': 'drn_flow'" in forward_run_text
 
     # Run it: MF6 + the post-processor that reloads the model and regenerates the
     # DRN seepage series pyEMU reads back as observations.

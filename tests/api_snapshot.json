@@ -71,26 +71,10 @@
       "kind:KEYWORD_ONLY='DRN'",
       "package:KEYWORD_ONLY=None"
     ],
-    "BoundDrnFlowTargets.compare": [
-      "model:POSITIONAL_OR_KEYWORD=None"
-    ],
-    "BoundDrnFlowTargets.get": [],
-    "BoundDrnFlowTargets.residuals": [
-      "model:POSITIONAL_OR_KEYWORD=None"
-    ],
-    "BoundDrnFlowTargets.simulated_series": [
-      "model:POSITIONAL_OR_KEYWORD=None"
-    ],
-    "BoundDrnFlowTargets.stats": [
-      "model:POSITIONAL_OR_KEYWORD=None"
-    ],
-    "BoundDrnFlowTargets.summary": [],
     "BoundDrnFlowTargets.to_flopy_obs": [
       "csv_name:KEYWORD_ONLY='drn_flow_targets.csv'",
       "kind:KEYWORD_ONLY='DRN'"
     ],
-    "BoundDrnFlowTargets.to_long": [],
-    "BoundDrnFlowTargets.to_wide": [],
     "BoundHeadTargetPlots.calibration": [
       "type:KEYWORD_ONLY='calibration'"
     ],
@@ -190,6 +174,17 @@
       "name:POSITIONAL_OR_KEYWORD=None",
       "baseline:KEYWORD_ONLY=None",
       "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "BoundRivFlowTargets.attach_flopy_obs": [
+      "pname:KEYWORD_ONLY='riv_flow_obs'",
+      "filename:KEYWORD_ONLY='riv_flow_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='RIV'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "BoundRivFlowTargets.to_flopy_obs": [
+      "csv_name:KEYWORD_ONLY='riv_flow_targets.csv'",
+      "kind:KEYWORD_ONLY='RIV'"
     ],
     "BoundSfrFlowTargets.attach_flopy_obs": [
       "pname:KEYWORD_ONLY='sfr_flow_obs'",
@@ -762,35 +757,10 @@
       "kind:KEYWORD_ONLY='DRN'",
       "package:KEYWORD_ONLY=None"
     ],
-    "DrnFlowTargets.compare": [
-      "model:POSITIONAL_OR_KEYWORD=<required>"
-    ],
-    "DrnFlowTargets.get": [
-      "model:POSITIONAL_OR_KEYWORD=None"
-    ],
-    "DrnFlowTargets.residuals": [
-      "model:POSITIONAL_OR_KEYWORD=<required>"
-    ],
-    "DrnFlowTargets.simulated_series": [
-      "model:POSITIONAL_OR_KEYWORD=<required>"
-    ],
-    "DrnFlowTargets.stats": [
-      "model:POSITIONAL_OR_KEYWORD=<required>"
-    ],
-    "DrnFlowTargets.summary": [
-      "model:POSITIONAL_OR_KEYWORD=None"
-    ],
     "DrnFlowTargets.to_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
       "csv_name:KEYWORD_ONLY='drn_flow_targets.csv'",
       "kind:KEYWORD_ONLY='DRN'"
-    ],
-    "DrnFlowTargets.to_long": [
-      "model:POSITIONAL_OR_KEYWORD=None"
-    ],
-    "DrnFlowTargets.to_wide": [],
-    "DrnFlowTargets.zone_definitions": [
-      "model:POSITIONAL_OR_KEYWORD=<required>"
     ],
     "EVTBuilder": [
       "context:KEYWORD_ONLY=<required>",
@@ -3439,6 +3409,34 @@
       "name:POSITIONAL_OR_KEYWORD=<required>"
     ],
     "RegionRegistry.summary": [],
+    "RivFlowObservationSpec": [
+      "targets:POSITIONAL_OR_KEYWORD=<required>",
+      "prefix:POSITIONAL_OR_KEYWORD='riv_flow'"
+    ],
+    "RivFlowTargets": [
+      "locations:POSITIONAL_OR_KEYWORD=<required>",
+      "values:POSITIONAL_OR_KEYWORD=None",
+      "name_column:POSITIONAL_OR_KEYWORD='name'",
+      "group_column:POSITIONAL_OR_KEYWORD='group'",
+      "weight_column:POSITIONAL_OR_KEYWORD='weight'",
+      "time_column:POSITIONAL_OR_KEYWORD='time'",
+      "value_column:POSITIONAL_OR_KEYWORD='flow'",
+      "times:POSITIONAL_OR_KEYWORD=None",
+      "package:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "RivFlowTargets.attach_flopy_obs": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "pname:KEYWORD_ONLY='riv_flow_obs'",
+      "filename:KEYWORD_ONLY='riv_flow_targets.obs'",
+      "csv_name:KEYWORD_ONLY=None",
+      "kind:KEYWORD_ONLY='RIV'",
+      "package:KEYWORD_ONLY=None"
+    ],
+    "RivFlowTargets.to_flopy_obs": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "csv_name:KEYWORD_ONLY='riv_flow_targets.csv'",
+      "kind:KEYWORD_ONLY='RIV'"
+    ],
     "Run": [
       "name:POSITIONAL_OR_KEYWORD=<required>",
       "workspace:POSITIONAL_OR_KEYWORD=<required>",
@@ -5205,8 +5203,49 @@
     "_ArealBuilder.with_updates": [
       "updates:VAR_KEYWORD=<required>"
     ],
+    "_BoundCellZoneFlowTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "_BoundCellZoneFlowTargets.get": [],
+    "_BoundCellZoneFlowTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "_BoundCellZoneFlowTargets.simulated_series": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "_BoundCellZoneFlowTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "_BoundCellZoneFlowTargets.summary": [],
+    "_BoundCellZoneFlowTargets.to_long": [],
+    "_BoundCellZoneFlowTargets.to_wide": [],
     "_BuiltGrid.layer_cell": [
       "cellid:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "_CellZoneFlowTargets.compare": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "_CellZoneFlowTargets.get": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "_CellZoneFlowTargets.residuals": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "_CellZoneFlowTargets.simulated_series": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "_CellZoneFlowTargets.stats": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "_CellZoneFlowTargets.summary": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "_CellZoneFlowTargets.to_long": [
+      "model:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "_CellZoneFlowTargets.to_wide": [],
+    "_CellZoneFlowTargets.zone_definitions": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
     ],
     "_FocusedModelDiff.cells": [
       "package:POSITIONAL_OR_KEYWORD=<required>",
@@ -7253,6 +7292,8 @@
       "PrtModel",
       "Raster",
       "RasterSource",
+      "RivFlowObservationSpec",
+      "RivFlowTargets",
       "Run",
       "RunLibrary",
       "SaveReport",

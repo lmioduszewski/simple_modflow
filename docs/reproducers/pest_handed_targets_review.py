@@ -135,8 +135,10 @@ def section_b(model, root):
         # 372 and was ``stage`` before, and this runs against both trees.
         (locations,) = template.glob("*_target_locations.csv")
         (simulated,) = template.glob("*_simulated_lake_stage.csv")
-        write_named_series_targets("lake_stage", locations,
-                                   again, sim_ws=model.workspace, model_name="m")
+        write_named_series_targets(
+            [{"kind": "lake_stage", "locations_file": locations,
+              "output_csv": again}],
+            sim_ws=model.workspace, model_name="m")
         base = simulated.read_text().splitlines()[0]
         return f"base header {base}, forward-run header {again.read_text().splitlines()[0]}"
 

@@ -33,10 +33,17 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 533 entries (538 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 540 entries (545 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 540 | The PEST forward run opens the model ONCE for every named-series set | 2026-10-12 |
+| 539 | Zones by RIV/DRN BOUNDNAME are deferred | 2026-10-12 |
+| 538 | The DRN and RIV budget route refuses a target keyed past the run's periods | 2026-10-12 |
+| 537 | On the budget route a period in which a zone's cells hold no boundary reads 0.0, and a zone whose cells nev... | 2026-10-12 |
+| 536 | A zone set's budget route refuses a package in scope that wrote no cell-budget record, naming it and... | 2026-10-12 |
+| 535 | A zone drawn as geometry with no `layer` reads EVERY layer of the columns it covers | 2026-10-12 |
+| 534 | RIV exchange-flow targets: `mf.RivFlowTargets` / `model.targets.riv_flow` / `mf.RivFlowObservationSpec`, an... | 2026-10-12 |
 | 533 | `cal.resume_ies(workers=N)` continues an interrupted history match from its last completed iteration and le... | 2026-10-12 |
 | 532 | A parallel PESTPP-IES run keeps its own workers in `<master>.workers`, a master holding results is refused... | 2026-10-12 |
 | 531 | `CycleEquilibrium` counts a location with a value in ONE cycle only as unsettled, and reads any discretization | 2026-10-12 |
@@ -15807,7 +15814,9 @@ same day, which is the useful part of the result.
       target object stays, and Python's own registry still silences an IDENTICAL message
       from the same line, as it does for 288's.
       **A `layer` that is not a layer is refused** (1.5 was truncated to 1 by `int()`, -1
-      indexed from the end); a blank stays 0, as the resolver already read it.
+      indexed from the end); ~~a blank stays 0, as the resolver already read it.~~ A
+      blank is 0 on a row giving `cells` and EVERY layer on a geometry row since ledger
+      535.
       ~~**NOT done:** an explicit cell id outside the grid is still taken as given and
       matches nothing on the budget route (MF6 refuses it on the observation route).
       Checking it needs each layer's cell count at every consumer; recorded, not guessed.~~
@@ -15939,8 +15948,9 @@ same day, which is the useful part of the result.
       because their file belongs to one package (it failed on FloPy's list,
       `AttributeError: 'list' object has no attribute 'nlakes'`); an undeclared DRN set
       still reads the budget route, which sums every package's drains in a zone -- the
-      one file route that serves several packages -- so `package=` naming a DRN package
-      that declares none of the zone cells is refused rather than ignored. The packages
+      one file route that serves several packages -- ~~so `package=` naming a DRN package
+      that declares none of the zone cells is refused rather than ignored~~ and, since
+      ledger 534, reads the named package's drains alone. The packages
       are found by TYPE (`get_package(type, type_only=True)`): FloPy's `get_package(name)`
       answers a package NAMED like the type first, so `model.package("lak")` returns ONE
       package when one is named `lak` and another `lak_2` (found, not fixed, for
@@ -15966,7 +15976,7 @@ same day, which is the useful part of the result.
       0.64 s -> 1.99 s (min of 3, load average ~1). Paid once per model object; a live
       `run.model()` and a run any package was already read from pay nothing, the LAK/SFR
       file routes already paid it (`model.fl.lak`), and the PEST forward run already called
-      `load_all()`. Judgment call: accepted -- the alternative is parsing OBS input files
+      `load_all()` (~~once per set~~ once per forward run since ledger 540). Judgment call: accepted -- the alternative is parsing OBS input files
       beside FloPy, a second reader of the same declaration.
       **Test doubles:** a double reaching the observation route must answer
       `model.package(type)` with a package whose `obs[i].continuous.get_data()` holds the
@@ -20163,8 +20173,9 @@ same day, which is the useful part of the result.
       gave `n = 2` with no message, while the PEST build refused period 7. The periods
       checked against are the ones the route's TABLE holds, so a period whose output
       was never saved is refused like one past `nper`. The function takes `route=` to
-      name the file. **Not changed:** the DRN budget route, in `drn.py`, which this
-      batch does not own.
+      name the file. ~~**Not changed:** the DRN budget route, in `drn.py`, which this
+      batch does not own.~~ The DRN (and RIV) budget route refuses it too since ledger
+      538.
 
 501. **A head or concentration target's PRESENT layer column must give every row a layer number; a blank, a non-number, a fraction or a negative raises, naming the rows (2026-10-12).**
       `_load_locations` read the column with `to_numeric(errors="coerce").fillna(0)
@@ -20733,3 +20744,78 @@ same day, which is the useful part of the result.
       **Not done:** a SERIAL run resumes only while its template is not rebuilt -- `build()`
       deletes it (ledger 360), so the guidance is to run long calibrations in parallel;
       PESTPP-IES's other internal state (best-phi history) restarts at `n`.
+
+534. **RIV exchange-flow targets: `mf.RivFlowTargets` / `model.targets.riv_flow` / `mf.RivFlowObservationSpec`, and ONE zone implementation for DRN and RIV whose budget route reads by package (2026-10-12).**
+      A creek's gauged baseflow is the flux target that tells K from recharge. **Chosen:**
+      DRN and RIV are thin subclasses of `_CellZoneFlowTargets` in `observations/_zones.py`
+      (the user's one-rule rule; a copy of `drn.py` was the alternative), so every zone rule
+      and refusal is shared. The budget route reads through `build_budget_result_table`,
+      matching records by `paknam2`, so `package=` reads one package's records on BOTH
+      routes; `package=None` sums every package of the type in the zone's cells (ledger
+      352's cells rule; Ten Trails' `riv` and `crisp` share no cell). This RETIRES the DRN
+      refusal of `package=` on the budget route, which existed only because
+      `model.bud(...).df` carried no package. **Sign:** MF6's own on both routes (ledger
+      350): baseflow (aquifer to river) is NEGATIVE and entered `-Q`, the spelling
+      `SfrFlowTargets` uses; NO sign is refused for RIV, because a losing reach is physical
+      (Ten Trails `ss`: 18 of `riv`'s 500 and 85 of `crisp`'s 521 cells losing). DRN keeps
+      its positive-value refusal. **Measured on a copy of Ten Trails `ss`:** `riv`
+      -192,843.0 and `crisp` -207,276.7 ft3/d, a two-creek zone -400,119.7 with
+      `package=None`; each read in 0.02 s. Reproducer: `docs/reproducers/riv_flow_targets.py`.
+      **Not built:** a per-zone `package` column (one set per package covers it); a set
+      `weight=` on the spec (DRN has none either; a zone's `weight` column does it).
+
+535. **A zone drawn as geometry with no `layer` reads EVERY layer of the columns it covers (2026-10-12).**
+      flows-1. It read layer 0 alone, documented but silent: on a copy of Ten Trails `ss`
+      (DRN in layers 0, 2, 3, 4) a polygon over the south drains read -33,300.5 ft3/d
+      against -2,613,784.4 for every layer (1.3%). **Chosen:** ledger 482's rule for an
+      observation area -- a geometry row with no layer resolves to one row per layer, each
+      holding the covered columns active in that layer; a `layer` still picks one. **This
+      changes DRN results** for any geometry zone written without a layer column, and its
+      observation route now wants a declared record per layer (`<name>_lay<k>_c<cell>`);
+      MF6 accepts a `DRN`/`RIV` observation on a cell holding no boundary and writes 3e30,
+      read as 0.0 (measured, MF6 6.8). **Deliberately NOT changed:** a row giving explicit
+      `cells` with no layer keeps layer 0 -- its numbers are in-layer by the documented
+      contract, and whether a blank there should mean every layer is left to the user.
+
+536. **A zone set's budget route refuses a package in scope that wrote no cell-budget record, naming it and `save_flows=True` (2026-10-12).**
+      A package declared without `SAVE_FLOWS` writes nothing to the budget file, and its
+      boundaries were left out of the zone in silence: two drains, one in a package without
+      it, read -339.52 where both removed about 679. Judged from the file's headers
+      (`paknam2` under the family's term), never from the package's options. MF6 writes a
+      record with zero entries for a package that has no boundary in a period (measured),
+      so an empty period is not mistaken for an unsaved package. Applies to DRN and RIV.
+
+537. **On the budget route a period in which a zone's cells hold no boundary reads 0.0, and a zone whose cells never hold one keeps its column (2026-10-12).**
+      flows-2. It read `NaN`, which the PEST build wrote as an empty field and every
+      realization's instruction read failed on (ledger 506 then refused the build); a zone
+      over cells with no drain at all returned no rows and the build died on a bare
+      `IndexError`. **Chosen:** 0.0 for every saved period and every zone that HAS cells --
+      the flow is extensive and the observation route already reads MF6's 3e30 there as
+      0.0. A zone with NO cells (every geometry row missed, warned by ledger 211) still gets
+      no column, so the build refuses its target by name rather than calibrate it to zero.
+
+538. **The DRN and RIV budget route refuses a target keyed past the run's periods (2026-10-12).**
+      Ledger 500's rule, through `_refuse_keys_off_the_periods(route=...)`: keys `[0, 7]` on
+      three periods read `NaN` at 7 and `stats()` counted `n = 1`, in silence. A pure
+      fix; the entry exists because ledger 500 recorded the route as not changed.
+
+539. **Zones by RIV/DRN BOUNDNAME are deferred (2026-10-12).**
+      MF6's boundname observation sums its records exactly (measured: -982.232294 =
+      the three cells' sum), so it changes the API, not the numbers. Ten Trails' boundnames
+      are whole creeks, which a polygon or a cell list already expresses, and the budget
+      file carries no boundname, so the budget route would have to read the package's period
+      blocks -- a second identity rule in `_declared_route`, which refuses a boundname id for
+      a cell family today. Draw the creek or list its cells.
+
+540. **The PEST forward run opens the model ONCE for every named-series set (2026-10-12).**
+      `write_named_series_targets(sets, sim_ws, model_name)` takes every lake/SFR/DRN/RIV set
+      and the build writes ONE call; it was one call per set, each `load_mf6_run` +
+      `load_all()`. Measured (`docs/reproducers/named_series_one_load.py`, min of runs at load
+      averages 5-15): a copy of Ten Trails `ss` with three sets (two RIV, one DRN) 30.2 s ->
+      9.0 s per realization, beside a 17-20 s MF6 run; the canonical testing profile, four
+      sets, 1.04 s -> 0.37 s. No transition alias: a template built before keeps its own
+      extracted copy of the old function, which still runs. **Not done:** loading only the
+      packages the sets read -- `load_only=["disv", "oc", "riv", "drn"]` measured 4.5 s
+      against 8.3 s on the same template -- because `LoadedMf6Run` full-loads on any package
+      access ON PURPOSE (ledger 344: a partial load lost edits on write), and a read-only
+      partial-load hook is a new public surface on `project/run_model.py`.

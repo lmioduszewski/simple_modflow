@@ -50,6 +50,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _period_key_hints,
     _shown,
 )
+from myflopy.modflow.mf6.observations._zones import _CellZoneFlowTargets
 from myflopy.modflow.mf6.output_files import _declared_output_path
 from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.forward_run import (
@@ -62,6 +63,7 @@ from myflopy.modflow.mf6.pest.specs import (
     DrnFlowObservationSpec,
     HeadTargetObservationSpec,
     LakeStageObservationSpec,
+    RivFlowObservationSpec,
     SfrFlowObservationSpec,
     SfrStageObservationSpec,
 )
@@ -256,12 +258,12 @@ def _named_series_targets(targets, *, value_column: str, prefix: str) -> pd.Data
 
 
 def _zone_groups(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
-    """Each DRN zone's group label, from its location rows; refuse a zone given two.
+    """Each DRN or RIV zone's group label, from its location rows; refuse a zone given two.
 
     A zone is ONE observation per period, so it is in one group: a zone given as
     several rows carrying different labels is refused, as different weights are
     (:func:`_zone_weights`). Rows with no label defer to the ones that have one --
-    as ``DrnFlowTargets.compare()`` reads them (``_zone_details``, ledger 359).
+    as a zone set's ``compare()`` reads them (``_zone_details``, ledger 359).
     """
 
     locations = targets.locations_gdf
@@ -291,7 +293,7 @@ def _zone_groups(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
 
 
 def _zone_weights(targets, frame: pd.DataFrame, *, prefix: str) -> pd.Series:
-    """Each DRN zone's observation weight, from its location rows; refuse a zone given two."""
+    """Each DRN or RIV zone's observation weight, from its location rows; refuse a zone given two."""
 
     locations = targets.locations_gdf
     if "weight" not in locations.columns or frame.empty:
@@ -501,7 +503,7 @@ def _prepare_named_series_observations(
     # A reading's own weight, else its zone's, else the set's, else 1.0 (ledger
     # 504). The set's weight used to overwrite every row, and a values
     # table's weight column was dropped before it got here.
-    if metadata_kind == "drn_flow":
+    if isinstance(targets, _CellZoneFlowTargets):
         frame["weight"] = frame["weight"].fillna(_zone_weights(targets, frame, prefix=prefix))
         frame["group"] = _zone_groups(targets, frame, prefix=prefix)
     if weight is not None and not frame.empty:
@@ -971,13 +973,14 @@ def prepare_sfr_flow_observations(project, spec: SfrFlowObservationSpec):
     )
 
 
-def prepare_drn_flow_observations(project, spec: DrnFlowObservationSpec):
-    """Create simulated DRN-zone seepage CSVs and register pyEMU observations.
+def _prepare_zone_flow_observations(project, spec, *, kind: str):
+    """Create simulated zone-flow CSVs (DRN seepage, RIV exchange) and register pyEMU observations.
 
     The zone snapshot the forward run rebuilds the targets from carries each row's
-    RESOLVED ``cells`` and its ``layer``, so every realization sums the drains the
-    base run did. It dropped ``layer`` (ledger 342), and the forward run then read
-    each zone in layer 0.
+    RESOLVED ``cells`` and its ``layer``, so every realization sums the cells the
+    base run did -- a geometry zone given no layer as one row per layer it reads
+    (ledger 535). It dropped ``layer`` (ledger 342), and the forward
+    run then read each zone in layer 0.
     """
 
     targets = spec.targets
@@ -996,10 +999,28 @@ def prepare_drn_flow_observations(project, spec: DrnFlowObservationSpec):
         prefix=spec.prefix,
         value_column="flow_target",
         simulated_wide=pivot,
-        metadata_kind="drn_flow",
+        metadata_kind=kind,
         locations_snapshot=snapshot,
         geometry="zones",
     )
+
+
+def prepare_drn_flow_observations(project, spec: DrnFlowObservationSpec):
+    """Create simulated DRN-zone seepage CSVs and register pyEMU observations.
+
+    See :func:`_prepare_zone_flow_observations`, which serves the RIV family too.
+    """
+
+    return _prepare_zone_flow_observations(project, spec, kind="drn_flow")
+
+
+def prepare_riv_flow_observations(project, spec: RivFlowObservationSpec):
+    """Create simulated RIV-zone exchange-flow CSVs and register pyEMU observations.
+
+    See :func:`_prepare_zone_flow_observations`, which serves the DRN family too.
+    """
+
+    return _prepare_zone_flow_observations(project, spec, kind="riv_flow")
 
 
 def _instruction_names(path: Path, *, shape: tuple[int, int]) -> list[list[str]]:
@@ -1287,9 +1308,10 @@ def _refuse_base_cells_with_no_number(item: dict, names: list[list[str]]) -> Non
     it, whatever the observation's weight: PEST++ fails a run on an empty field or
     ``nan`` at weight 0 exactly as at weight 1 (measured,
     ``docs/reproducers/pest_no_value_fields.py``). A cell the forward run's own
-    writer left empty -- a DRN zone whose drains are off in a period, on the budget
-    route -- is empty in every realization written the same way, so the build
-    succeeded and every IES realization failed (ledger 506). A supplied
+    writer left empty -- a DRN zone whose drains were off in a period, on the
+    budget route, until ledger 537 made that period 0.0 -- is empty in
+    every realization written the same way, so the build succeeded and every IES
+    realization failed (ledger 506). A supplied
     ``simulated_values`` table must be what the forward run writes, so a gap there
     is refused the same. MF6's no-value numbers (``|value| >= 1e29``) ARE finite and
     are not refused here.
@@ -1322,9 +1344,8 @@ def _refuse_base_cells_with_no_number(item: dict, names: list[list[str]]) -> Non
         f"no number in {len(listing)} cell(s) PEST's instruction file reads: "
         f"{_listed(listing)}. PEST++ fails a run on reading an empty field whatever the "
         "observation's weight, and the forward run writes this table the same way, so "
-        "every realization would fail. Find why the model writes nothing there (a DRN "
-        "zone whose drains are off in that period, a gap in a supplied simulated table) "
-        "and give the set locations and periods the model writes a number for."
+        "every realization would fail. Find why the model writes nothing there (a gap "
+        "in a supplied simulated table, say) and give the set locations and periods the model writes a number for."
     )
 
 

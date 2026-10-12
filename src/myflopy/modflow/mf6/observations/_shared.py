@@ -293,10 +293,15 @@ class _ObservedQuantity:
         What a target's id names, for messages: ``"lake"``, ``"reach"``, ``"cell"``.
     file_route : str
         What the family reads when no target is declared, for messages.
-    file_route_reads_every_package : bool
-        Whether that file route serves a model carrying several packages of the
-        type: the DRN budget route sums every drain in a zone's cells whichever
-        package holds it; the LAK and SFR files belong to ONE package.
+    file_route_by_package : bool
+        Whether that file route reads a model carrying several packages of the
+        type, one of them or all: the DRN and RIV budget route reads the records
+        of the package ``package=`` names, or of every package of the type when it
+        names none (ledger 534); the LAK and SFR files belong to ONE
+        package.
+    boundary : str
+        What one record of the family measures in a cell, for messages
+        (``"drain"``, ``"river boundary"``); empty for a feature family.
     """
 
     owner: str
@@ -304,7 +309,8 @@ class _ObservedQuantity:
     obstype: str
     feature: str
     file_route: str
-    file_route_reads_every_package: bool = False
+    file_route_by_package: bool = False
+    boundary: str = ""
 
     @property
     def cellid(self) -> bool:
@@ -580,8 +586,9 @@ def _declared_route(
         As listed above; when ``package`` names no package of the type in the
         model; when the model carries several packages of the type, ``package``
         is not given and a label is declared in them; or when the file route
-        would have to read one of several packages (LAK, SFR) or one DRN package
-        apart from the others.
+        would have to read one of several LAK or SFR packages. A DRN or RIV
+        zone's budget route reads the named package's records, or every
+        package's (ledger 534), so it is never refused here.
     """
 
     everyone = _packages_of_type(model, quantity.package_type)
@@ -597,8 +604,8 @@ def _declared_route(
             packages,
             "the targets' labels are declared in their observations, and "
             + (
-                f"a {quantity.package_type.upper()} observation measures ONE package's drain in "
-                "its cell"
+                f"a {quantity.package_type.upper()} observation measures ONE package's "
+                f"{quantity.boundary or 'boundary'} in its cell"
                 if quantity.cellid
                 else f"a {quantity.feature} number counts within ONE package"
             ),
@@ -663,7 +670,11 @@ def _declared_route(
         )
     if chosen:
         return chosen
-    if len(everyone) > 1 and package is None and not quantity.file_route_reads_every_package:
+    if quantity.file_route_by_package:
+        # The cell-zone budget route reads the named package's records, or every
+        # package's (ledger 534): nothing to refuse here.
+        return None
+    if len(everyone) > 1 and package is None:
         raise _several_packages(
             quantity,
             everyone,
@@ -678,15 +689,8 @@ def _declared_route(
             quantity,
             everyone,
             f"package={package!r} declares none of the targets' labels, and "
-            + (
-                f"{quantity.file_route} sums every {quantity.package_type.upper()} package's "
-                "drains in a zone -- it cannot read one package's alone"
-                if quantity.file_route_reads_every_package
-                else f"{quantity.file_route} cannot be chosen by package"
-            ),
-            f"Declare the targets' observations on {package!r}"
-            + (", or drop package= to read every package's drains."
-               if quantity.file_route_reads_every_package else "."),
+            f"{quantity.file_route} cannot be chosen by package",
+            f"Declare the targets' observations on {package!r}.",
         )
     return None
 

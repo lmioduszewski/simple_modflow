@@ -1893,8 +1893,18 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   from the run's own ensembles and the outputs are spliced back into ONE run of
   iterations `0..N` (`pest/run_state.py`).
 - **Observations** accepted directly by `cal.observe(...)`/`cal.forecast(...)`: `HeadTargets`,
-  `LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets` (or their
-  pre-built `*ObservationSpec`). All are wired into the native build + forward run.
+  `LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets`, `RivFlowTargets`
+  (or their pre-built `*ObservationSpec`). All are wired into the native build + forward run.
+- **`RivFlowTargets` (creek baseflow) and `DrnFlowTargets` are ONE zone implementation**
+  (ledger 534): `observations/_zones.py`, each family a thin subclass naming its
+  MF6 quantity and sign rule -- add a zone family there, never copy `drn.py`. RIV is MF6's
+  sign with NO sign refused (baseflow `-Q`, a losing reach positive); DRN keeps its `-Q`
+  refusal. The budget route reads by `paknam2` through `build_budget_result_table`:
+  `package=` reads one package, `None` sums every package of the type in the zone's cells,
+  and a package in scope that wrote no record (`save_flows` off) is REFUSED (ledger
+  536). A period with no boundary in a zone reads 0.0 (537). A test
+  double reaching that route needs a budget READER, not `model.bud`:
+  `tests.test_drn_zones_on_faces.attach_budget`.
 - **What PEST is handed is exactly the targets** (ledger 340, 2026-09-27). The build
   matches each target to the row pyEMU's INSTRUCTION FILE reads -- by POSITION, the key
   read as a period by NUMBER through `_shared._numeric_periods` (`1.0` is period 1,
@@ -1947,7 +1957,10 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   MF6 once per cell (`<name>_lay<layer>_c<cell>` when it spans layers); a row with no
   `cells` entry is resolved from its geometry, so one table may mix the two, and an
   explicit pair the grid does not have is refused on the budget route (ledger 343: it
-  matched nothing, so `[20, 99]` read cell 20 alone). A partial
+  matched nothing, so `[20, 99]` read cell 20 alone). A GEOMETRY row with no `layer` reads
+  EVERY layer of the columns it covers (ledger 535, 482's area rule; it read
+  layer 0 alone -- 1.3% of the Ten Trails `ss` south drains); an explicit `cells` row with
+  no layer is layer 0. A partial
   miss of a DRN zone or a head/conc target is a Python warning as well as a log line
   (ledger 288's rule).
 - **The observation route reads what the package DECLARES, by identity** (ledger 344).
@@ -1977,7 +1990,10 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `simulated_series` -- but cannot pass `package=`, so a model of several packages of
   the type must be rebuilt.
 - `forward_run.py` — injected forward run: pyEMU's `apply_list_and_array_pars` for params,
-  plus post-processors that regenerate head + named-series (lake/SFR/DRN) simulated CSVs.
+  plus post-processors that regenerate head + named-series (lake/SFR/DRN/RIV) simulated CSVs.
+  Every named-series set goes through ONE `write_named_series_targets(sets=[...])` call that
+  opens the run once (ledger 540: one full reload PER SET cost ~7 s each beside
+  a 17-20 s Ten Trails `ss` run); do not add a per-set call back.
 - **Run discovery + review**: `model.pest_runs` / `run.pest_runs` (`runs.py`,
   `find_pest_runs`/`PestRunHandle`) list calibrations done on a model; `.review()` reopens
   one as `IesResults` (`ies.py`, `open_ies_run`) — phi, ensemble-vs-obs, forecasts,

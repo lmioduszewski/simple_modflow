@@ -649,8 +649,10 @@ def test_a_name_pandas_would_read_as_a_number_or_a_blank_reaches_pest_verbatim(
                            sim_ws=toy.workspace)
     assert rewritten.read_text() == heads.read_text()
     lake_again = tmp_path / "stage_again.csv"
-    write_named_series_targets("lake_stage", template / "lak_stage_target_locations.csv",
-                               lake_again, sim_ws=toy.workspace, model_name="m")
+    write_named_series_targets(
+        [{"kind": "lake_stage", "locations_file": template / "lak_stage_target_locations.csv",
+          "output_csv": lake_again}],
+        sim_ws=toy.workspace, model_name="m")
     assert lake_again.read_text().splitlines()[0] == "time,007"
 
 

@@ -347,7 +347,10 @@ def test_a_stale_copy_beside_the_declared_file_is_not_read(declared, tmp_path):
     np.testing.assert_array_equal(series["drying"], live["DRYING"])
 
     pd.DataFrame({"name": ["drying", "held"], "lake": [0, 1]}).to_csv(copy / "loc.csv", index=False)
-    write_named_series_targets("lake_stage", copy / "loc.csv", copy / "fw.csv", sim_ws=copy)
+    write_named_series_targets(
+        [{"kind": "lake_stage", "locations_file": copy / "loc.csv",
+          "output_csv": copy / "fw.csv"}],
+        sim_ws=copy)
     written = pd.read_csv(copy / "fw.csv", float_precision="round_trip")
     np.testing.assert_array_equal(written["held"], 118.0)
 
@@ -455,12 +458,14 @@ def test_several_packages_of_a_type_need_the_targets_package(two):
     series = mf.DrnFlowTargets(locations={"s": [20]}, package="drn_b").simulated_series(two)
     np.testing.assert_array_equal(series["s"], db["S_C20"])
     # A zone no DRN declares reads the budget file, which sums EVERY package's drains
-    # in its cells, as before -- so naming one package there is refused.
+    # in its cells -- and, named, reads that package's alone (ledger 534:
+    # it was refused, the budget table carrying no package to tell them apart by).
     both = mf.DrnFlowTargets(locations={"z": [20]}).simulated_series(two)
     np.testing.assert_allclose(
         both["z"].to_numpy(), (_csv(two, "da.csv")["S_C20"] + db["S_C20"]).to_numpy(), rtol=1e-10)
-    with pytest.raises(ValueError, match=r"package='drn_a' declares none.*cannot read one package"):
-        mf.DrnFlowTargets(locations={"z": [20]}, package="drn_a").simulated_series(two)
+    alone = mf.DrnFlowTargets(locations={"z": [20]}, package="drn_a").simulated_series(two)
+    np.testing.assert_allclose(alone["z"].to_numpy(), _csv(two, "da.csv")["S_C20"].to_numpy(),
+                               rtol=1e-10)
 
 
 @pytest.mark.slow
@@ -476,8 +481,10 @@ def test_the_targets_package_reaches_attach_and_the_pest_forward_run(two, tmp_pa
     config = prepared["named_series_forward_run_config"]
     assert config["package"] == "lak_b"
     forward = tmp_path / "forward.csv"
-    write_named_series_targets("lake_stage", tmp_path / config["locations_file"], forward,
-                               sim_ws=two.workspace, package=config["package"])
+    write_named_series_targets(
+        [{"kind": "lake_stage", "locations_file": tmp_path / config["locations_file"],
+          "output_csv": forward, "package": config["package"]}],
+        sim_ws=two.workspace)
     assert forward.read_text() == (tmp_path / config["output_csv"]).read_text()
     np.testing.assert_array_equal(
         pd.read_csv(forward, float_precision="round_trip")["pond"], _csv(two, "b.csv")["POND"])
@@ -592,7 +599,7 @@ def test_the_pest_forward_run_reads_the_package_the_targets_name(two, tmp_path):
         cal.build("pkg.pst", noptmax=0)
     template = cal.template_workspace
     forward = (template / "forward_run.py").read_text()
-    assert "package='lak_b'" in forward and "package='drn_b'" in forward
+    assert "'package': 'lak_b'" in forward and "'package': 'drn_b'" in forward
     tables = {name: (template / name).read_text() for name in (
         "lak_stage_simulated_lake_stage.csv", "drn_flow_simulated_drn_flow.csv")}
 

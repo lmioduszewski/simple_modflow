@@ -151,6 +151,12 @@ def build_budget_result_table(
         name, upper-cased as MF6 writes it; ``None`` for a record no package wrote,
         such as ``STO-SS``), ``kstpkper``, zero-based ``per``, ``layer``, ``cell``
         and the normalized result field, one row per record entry, in file order.
+
+    Raises
+    ------
+    ValueError
+        When a record names a node the model's grid does not have (``node_to_lni``
+        lacks it): the budget file and the model do not line up.
     """
 
     reader = model._get_budget_reader()
@@ -176,10 +182,19 @@ def build_budget_result_table(
         # left to normalize.
         frame = _normalize_budget_nodes(frame, columns=("node2",))
         nodes = frame["node"].astype(int).tolist()
+        lookup = model.node_to_lni
+        stray = sorted({int(node) for node in nodes if int(node) not in lookup})
+        if stray:
+            # A KeyError naming a bare number said nothing about why.
+            raise ValueError(
+                f"The {wanted} cell-budget record names node(s) {stray[:5]} (zero-based), "
+                f"which are not cells of this model's grid ({len(lookup)} nodes): the "
+                "budget file and the model do not line up."
+            )
         layers: list[int] = []
         cells: list[int] = []
         for node in nodes:
-            layer, cell = model.node_to_lni[int(node)]
+            layer, cell = lookup[int(node)]
             layers.append(int(layer))
             cells.append(int(cell))
         frame["layer"] = layers

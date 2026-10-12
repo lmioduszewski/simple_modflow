@@ -244,8 +244,10 @@ def section_c(root):
     realization = root / "c" / "realization.csv"
     from myflopy.modflow.mf6.pest.forward_run import write_named_series_targets
 
-    write_named_series_targets("drn_flow", workspace / "drn_target_locations.csv", realization,
-                               sim_ws=runs[2.0].workspace, model_name="m")
+    write_named_series_targets(
+        [{"kind": "drn_flow", "locations_file": workspace / "drn_target_locations.csv",
+          "output_csv": realization}],
+        sim_ws=runs[2.0].workspace, model_name="m")
     read = pyemu.pst_utils.InstructionFile(str(workspace / f"{table.name}.ins")).read_output_file(
         str(realization))["obsval"]
     truth = _period_end_values(runs[2.0], "drn_flow_targets.csv",

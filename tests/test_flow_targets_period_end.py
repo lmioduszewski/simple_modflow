@@ -360,7 +360,9 @@ def test_compare_and_the_files_pest_reads_carry_the_period_end_flow(runs, tmp_pa
         base = tmp_path / config["output_csv"]
         forward = tmp_path / f"{kind}_forward.csv"
         write_named_series_targets(
-            kind, tmp_path / config["locations_file"], forward, sim_ws=model.workspace)
+            [{"kind": kind, "locations_file": tmp_path / config["locations_file"],
+              "output_csv": forward}],
+            sim_ws=model.workspace)
         assert forward.read_text() == base.read_text()
         np.testing.assert_allclose(pd.read_csv(base)[column], _period_end(flows, name),
                                    rtol=1e-12)

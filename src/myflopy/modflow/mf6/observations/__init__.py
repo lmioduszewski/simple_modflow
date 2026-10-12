@@ -30,6 +30,7 @@ from myflopy.modflow.mf6.observations.heads import (
 from myflopy.modflow.mf6.observations.lake import BoundLakeStageTargets, LakeStageTargets
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
 from myflopy.modflow.mf6.observations.registry import TargetRegistry
+from myflopy.modflow.mf6.observations.riv import BoundRivFlowTargets, RivFlowTargets
 from myflopy.modflow.mf6.observations.sfr import (
     BoundSfrFlowTargets,
     BoundSfrStageTargets,
@@ -43,12 +44,14 @@ __all__ = [
     "BoundHeadTargets",
     "BoundLakeStageTargets",
     "BoundNamedSeriesTargetPlots",
+    "BoundRivFlowTargets",
     "BoundSfrFlowTargets",
     "BoundSfrStageTargets",
     "ConcTargets",
     "DrnFlowTargets",
     "HeadTargets",
     "LakeStageTargets",
+    "RivFlowTargets",
     "SfrFlowTargets",
     "SfrStageTargets",
     "TargetRegistry",

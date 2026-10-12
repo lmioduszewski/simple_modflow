@@ -427,7 +427,7 @@ class CalibrationPlot(f.Fig):
             Anything with a ``compare(model)`` method returning a compare table:
             a raw target set (``HeadTargets``, ``ConcTargets``,
             ``LakeStageTargets``, ``SfrStageTargets``, ``SfrFlowTargets``,
-            ``DrnFlowTargets``) or a model-bound helper (``model.targets.heads``
+            ``DrnFlowTargets``, ``RivFlowTargets``) or a model-bound helper (``model.targets.heads``
             and its siblings). An object with a ``targets`` attribute is read as
             BOUND.
         model : SimulationBase, optional

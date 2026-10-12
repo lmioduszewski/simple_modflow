@@ -22,7 +22,9 @@ What each test pins, in the order the defects were found:
   504);
 * the PEST head writer read ``<model>.hds`` whatever the OC declared (ledger
   505), and a cell the base run left empty built, whatever its weight (ledger
-  506); a DRN reading's weight beside its zone's split into `weight_x`/`weight_y`.
+  506); a DRN reading's weight beside its zone's split into `weight_x`/`weight_y`;
+* a DRN zone whose drains were off in a period left the base table empty there
+  (ledger 506 refused the build); it reads 0.0 now (ledger 537).
 """
 
 from __future__ import annotations
@@ -442,10 +444,13 @@ def test_a_cell_the_base_run_left_empty_is_refused_whatever_its_weight(toy, tmp_
                    observe=(HeadTargetObservationSpec(targets=targets, simulated_values=holed),))
 
 
-def test_a_drn_zone_whose_drains_are_off_in_an_unmeasured_period_is_refused(tmp_path):
+def test_a_drn_zone_whose_drains_are_off_in_a_period_reads_zero_there(tmp_path):
     """Measured on a real run: a zone whose drains are off in periods 1-2, measured in
     period 0 only, left those cells of the base table empty; the build succeeded and
-    every PESTPP-IES realization failed on `error tokenizing output line ('1,0.0,')`."""
+    every PESTPP-IES realization failed on `error tokenizing output line ('1,0.0,')`.
+    Ledger 506 refused the build. The budget route reads such a period as 0.0 now
+    (ledger 537) -- an absent drain took no water, and the observation
+    route reads it so -- and the build and every forward run write the number."""
 
     grid, props, edge = _grid_and_edges()
     model = mf.gwf("m", grid=grid, packages=[
@@ -461,12 +466,12 @@ def test_a_drn_zone_whose_drains_are_off_in_an_unmeasured_period_is_refused(tmp_
         mf.tdis(nper=NPER, perioddata=[(PERLEN, NSTP, 1.0)] * NPER)])).model()
     seep = mf.DrnFlowTargets(locations=pd.DataFrame({"name": ["zone", "b"], "cells": [[20, 21, 27], [30]]}),
                              values=pd.DataFrame({"time": [0], "zone": [-3.0]}))
-    with pytest.raises(ValueError, match=(
-            r"DrnFlowTargets \(PEST build, prefix 'drn_flow'\): the base run's table "
-            r"drn_flow_simulated_drn_flow\.csv holds no number in 2 cell\(s\).*"
-            r"'zone' at 1 \(oname:drn_flow_otype:lst_usecol:zone_time:1, weight 0\); "
-            r"'zone' at 2 ")):
-        _build(run, tmp_path / "pest", observe=(seep,))
+    series = seep.simulated_series(run)
+    assert series["zone"].iloc[0] < 0.0 and series["zone"].iloc[1:].tolist() == [0.0] * (NPER - 1)
+    cal, _pst = _build(run, tmp_path / "pest", observe=(seep,))
+    table = Path(cal.template_workspace) / "drn_flow_simulated_drn_flow.csv"
+    base = pd.read_csv(table)
+    np.testing.assert_allclose(base["zone"], series["zone"], rtol=1e-12)
 
 
 def test_a_drn_readings_weight_and_its_zones_are_one_weight_column(toy):

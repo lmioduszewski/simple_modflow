@@ -211,8 +211,10 @@ def section_b(model, root):
         base = pd.read_csv(template / "drn_simulated_drn_flow.csv")["basin"]
         again = root / "forward.csv"
         locations = next(template.glob("drn_target_locations.*"))
-        write_named_series_targets("drn_flow", locations, again, sim_ws=model.workspace,
-                                   model_name="m")
+        write_named_series_targets(
+            [{"kind": "drn_flow", "locations_file": locations,
+              "output_csv": again}],
+            sim_ws=model.workspace, model_name="m")
         forward = pd.read_csv(again)["basin"]
         snapshot = (pd.read_csv(locations) if locations.suffix == ".csv"
                     else gpd.read_file(locations))

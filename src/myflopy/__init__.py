@@ -110,6 +110,7 @@ if TYPE_CHECKING:
         DrnFlowTargets,
         HeadTargets,
         LakeStageTargets,
+        RivFlowTargets,
         SfrFlowTargets,
         SfrStageTargets,
     )
@@ -130,6 +131,7 @@ if TYPE_CHECKING:
         LakeStageObservationSpec,
         PestProject,
         PestRunHandle,
+        RivFlowObservationSpec,
         SfrFlowObservationSpec,
         SfrStageObservationSpec,
         VectorParameterSource,
@@ -457,6 +459,7 @@ _EXPORTS = {
     "load_mf6_run": ("myflopy.project", "load_mf6_run"),
     "MeshBuildProfile": ("myflopy.modflow.mf6.grid.triangle", "MeshBuildProfile"),
     "DrnFlowTargets": ("myflopy.modflow.mf6.observations", "DrnFlowTargets"),
+    "RivFlowTargets": ("myflopy.modflow.mf6.observations", "RivFlowTargets"),
     "ConcTargets": ("myflopy.modflow.mf6.observations", "ConcTargets"),
     "ZoneSpec": ("myflopy.modflow.mf6.pest.zones", "ZoneSpec"),
     "HeadTargets": ("myflopy.modflow.mf6.observations", "HeadTargets"),
@@ -475,6 +478,7 @@ _EXPORTS = {
     "SfrFlowTargets": ("myflopy.modflow.mf6.observations", "SfrFlowTargets"),
     "patch_simulation_plot": ("myflopy.project", "patch_simulation_plot"),
     "DrnFlowObservationSpec": ("myflopy.modflow.mf6.pest", "DrnFlowObservationSpec"),
+    "RivFlowObservationSpec": ("myflopy.modflow.mf6.pest", "RivFlowObservationSpec"),
     "ExpGeoStruct": ("myflopy.modflow.mf6.pest", "ExpGeoStruct"),
     "ConcObservationSpec": ("myflopy.modflow.mf6.pest", "ConcObservationSpec"),
     "HeadTargetObservationSpec": (

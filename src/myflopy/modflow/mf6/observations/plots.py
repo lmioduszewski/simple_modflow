@@ -7,7 +7,7 @@ class BoundNamedSeriesTargetPlots:
     """Shared plotting facade for model-bound stage/flow target sets.
 
     ``model.targets.<family>.plot`` for ``lake_stage``, ``sfr_stage``,
-    ``sfr_flow`` and ``drn_flow``. Every picture is drawn from the bound set's
+    ``sfr_flow``, ``drn_flow`` and ``riv_flow``. Every picture is drawn from the bound set's
     ``compare()`` on the bound model, so it reads what that reads (a period's
     value at its END, a flow in MF6's sign -- zero or negative, water leaving --
     a dry lake at its bottom); a ``baseline`` model adds the same comparison on
@@ -38,7 +38,7 @@ class BoundNamedSeriesTargetPlots:
         One point per comparison row holding both a target and a simulated
         value, with a 1:1 line spanning every value drawn, titled for the family
         ("Observed vs simulated lake stage", "... SFR stage", "... SFR flow",
-        "... DRN seepage"). A simulated value that is MODFLOW's no-value marker
+        "... DRN seepage", "... RIV exchange"). A simulated value that is MODFLOW's no-value marker
         (``|value| >= 1e29``: a dry or inactive SFR reach on the stage-file
         route) is not drawn (ledger 355); ``compare()`` keeps it. When no row of
         the bound model's comparison holds both values, its series is empty, the

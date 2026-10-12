@@ -394,7 +394,8 @@ def test_an_ats_realization_writes_the_rows_the_base_instruction_file_reads(runs
 
     realization = tmp_path / "realization.csv"
     write_named_series_targets(
-        "drn_flow", template / "drn_flow_target_locations.csv", realization,
+        [{"kind": "drn_flow", "locations_file": template / "drn_flow_target_locations.csv",
+          "output_csv": realization}],
         sim_ws=other.workspace, model_name="m")
     read = _read_by_pest(template, table, realization)
     expected = _at_period_ends(raw_other).loc[:, [f"SEEP_C{c}" for c in DRN_CELLS]].sum(axis=1)

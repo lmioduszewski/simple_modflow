@@ -299,7 +299,9 @@ def test_a_pest_build_holds_one_lake_row_per_period_carrying_the_targets(runs, t
     base = tmp_path / config["output_csv"]
     forward = tmp_path / "forward.csv"
     write_named_series_targets(
-        "lake_stage", tmp_path / config["locations_file"], forward, sim_ws=model.workspace)
+        [{"kind": "lake_stage", "locations_file": tmp_path / config["locations_file"],
+          "output_csv": forward}],
+        sim_ws=model.workspace)
     assert forward.read_text() == base.read_text()
     written = pd.read_csv(base)
     assert list(written["time"]) == list(range(NPER))

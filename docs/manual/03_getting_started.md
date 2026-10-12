@@ -468,7 +468,7 @@ unless noted.
 | Call | Purpose |
 |---|---|
 | `model.hds.array(layer=)`, `model.hds.kstpkper` | Heads. |
-| `HeadTargets / LakeStageTargets / Sfr*Targets / DrnFlowTargets` | Observation targets (`compare/stats`). |
+| `HeadTargets / LakeStageTargets / Sfr*Targets / DrnFlowTargets / RivFlowTargets` | Observation targets (`compare/stats`). |
 | `model.plot.map(layer=)`, `plot.animate(frames)`, `export_*_slider_html(...)` | Maps, animations, standalone sliders. |
 | `model.pest(name).parameterize / observe / forecast / build / run_ies` | Calibration. |
 | `model.particle_tracking.prt(workspace=, release_points=)` | Particle tracking (MF6 PRT). |

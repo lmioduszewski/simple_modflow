@@ -26,6 +26,8 @@ EXPECTED_HOMES = {
     "BoundSfrFlowTargets": "sfr",
     "DrnFlowTargets": "drn",
     "BoundDrnFlowTargets": "drn",
+    "RivFlowTargets": "riv",
+    "BoundRivFlowTargets": "riv",
     "BoundNamedSeriesTargetPlots": "plots",
     "TargetRegistry": "registry",
 }

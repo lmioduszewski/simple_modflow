@@ -787,6 +787,24 @@ pulls a calibration toward drying the reach or shutting the drain. A residual
 (simulated minus target) above zero means the model sends or drains LESS than was
 measured (`docs/reproducers/flow_target_sign.py`).
 
+**`mf.RivFlowTargets` -- a creek's baseflow** (ledger 534; bound as
+`model.targets.riv_flow`, wrapped by `mf.RivFlowObservationSpec(targets, prefix="riv_flow")`).
+`DrnFlowTargets`' river twin, sharing its one zone implementation (`observations/_zones.py`):
+a zone is a set of cells, the flow is MF6's `RIV` exchange summed over them at each
+period's end. MF6's sign, and BOTH signs are targets: NEGATIVE is water the aquifer gives
+the river (a gaining reach's baseflow `Q` is entered `-Q`), positive a losing zone; none
+is refused. **Both zone families, both routes:** the budget route reads the records of
+the package `package=` names, by the name MF6 writes on each record, or every package of
+the type in the zone's cells when it names none (a `riv` + `crisp` creek pair sums) --
+`package=` on the budget route was refused for DRN until then; a package read must have
+written records (`save_flows=True`), or reading raises naming it (ledger 536);
+a period whose zone cells hold no boundary reads 0.0 (ledger 537); a key past
+the run's periods is refused (ledger 538). **A zone drawn as geometry with no
+`layer` reads EVERY layer of the columns it covers** (ledger 535, ledger 482's
+area rule; it read layer 0 alone -- 1.3% of the Ten Trails `ss` south drains); an explicit
+`cells` list with no layer is layer 0. A zone by BOUNDNAME is not offered (ledger
+539).
+
 A lake, reach or zone target reads one of two routes: MF6's own observation, when
 EVERY target of the set is DECLARED in the owning package's OBS, else the output file.
 **Declared means by identity** (ledger 344): a target's label -- its name as
@@ -809,8 +827,8 @@ LAK, SFR or DRN packages needs `package=<name>` on the targets (their lake and r
 numbers each start at 0), carried into PEST's forward run -- the packages are found by
 TYPE, so one NAMED `lak` does not hide a `lak_2` beside it (ledger 345); with none it is refused
 wherever the targets are declared -- and for LAK and SFR always, since their file
-belongs to one package -- while an undeclared DRN zone still sums every package's
-drains. **A lake or reach target names its lake or reach by its ZERO-based number or
+belongs to one package -- while an undeclared DRN or RIV zone sums every package's
+records in its cells, or reads the one `package=` names (ledger 534). **A lake or reach target names its lake or reach by its ZERO-based number or
 its BOUNDNAME** (ledger 503): a boundname is found, any case, in the package's
 `packagedata` and must name exactly one feature; a number must be one the package has.
 Both are checked when the targets are read -- a missing lake or reach used to read an
@@ -947,8 +965,8 @@ takes a PESTPP-IES phi-factor tag of its own: the lake default was `stage`, insi
 a blank blank), is `nan`/`None`/`<NA>` -- what `astype(str)` writes for a missing one --
 holds no letter or digit, takes a group the build gives a set, starts as
 PESTPP-IES reads an INEQUALITY (`l_`, `less`, `g_`, `greater` -- a set prefix too), or
-becomes the same name as a different label (`"North"`, `"north"`); a DRN zone's rows
-carry one label. pyEMU used to give every simulated column a group of its own, so a
+becomes the same name as a different label (`"North"`, `"north"`); a DRN or RIV zone's
+rows carry one label. pyEMU used to give every simulated column a group of its own, so a
 group was one well. The PEST guide shows the groups with PEST++'s phi-factor file.
 
 **Pilot points** (`cal.parameterize("k"|"k33"|"porosity", style="pilotpoints", ...)`):
@@ -966,7 +984,7 @@ Sets are named `<name>l<layer>[z<zone>]`, lower-cased; `spec.pilot_point_sets` a
 `pilot_point_sets.json` lists every set for a write-back.
 
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
-`mf.LakeStageTargets`, `mf.DrnFlowTargets`. Calibration: `model.pest(name,
+`mf.LakeStageTargets`, `mf.DrnFlowTargets`, `mf.RivFlowTargets`. Calibration: `model.pest(name,
 start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(...)` /
 `cal.forecast(...)` / `cal.build(...)` / `cal.run_ies(...)` (`observe`/`forecast` take a
 set registered on the model too, `cal.observe(model.targets.heads)`); discovery via
@@ -1004,7 +1022,7 @@ pyEMU locates a node by its centre, a head target is in layer 0 (a deeper node b
 DISU's stacked nodes; use `zone`, `pilotpoints` or `constant`). A DRN zone's
 observations are written and read in the grid's own cellid on DIS and DISU, and a head
 or concentration target's `to_flopy_obs`/`attach_flopy_obs` write it too (ledger
-455). `DrnFlowTargets.to_flopy_obs(None)` -- a DRN declared before its model exists --
+455). `DrnFlowTargets.to_flopy_obs(None)` (or `RivFlowTargets`') -- a DRN declared before its model exists --
 writes DISV's `(layer, cell)`, having no grid to read, and a build REFUSES an OBS cellid
 of another form than the discretization's (ledger 490; on a DISU MF6 read the pair as
 another node, under Normal termination): on DIS or DISU, declare the DRN without

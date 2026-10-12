@@ -272,7 +272,7 @@ def _relabel_log_colorbar(figure, colorbar: dict | None) -> None:
 def _parse_cell_list(value) -> list[int]:
     """Parse a snapshotted ``"0,1,2"`` cell list, tolerating an empty zone.
 
-    `_resolve_drn_zone_cells` assigns ``[]`` to a zone that covers no active cell
+    `_zones._resolve_zone_cells` assigns ``[]`` to a zone that covers no active cell
     while other zones do (all of them missing raises, ledger 238), which the CSV
     snapshot round-trips as NaN (``str(nan) == "nan"``) while the GeoPackage
     snapshot round-trips as ``""``. Both mean the same thing.
@@ -539,8 +539,8 @@ class IesResults:
         One entry per ``cal.observe(...)`` **and** ``cal.forecast(...)`` call —
         a forecast is registered as an ordinary observation set carrying weight
         0, and nothing in the persisted metadata distinguishes the two. Each
-        entry has its ``kind`` (``head_targets``, ``drn_flow``, ``lake_stage``,
-        ``sfr_stage``, ``sfr_flow``), observation-name ``prefix``, and the
+        entry has its ``kind`` (``head_targets``, ``drn_flow``, ``riv_flow``,
+        ``lake_stage``, ``sfr_stage``, ``sfr_flow``), observation-name ``prefix``, and the
         snapshot files written beside the control file. This is what lets a
         completed run be re-joined to where its observations are on the grid.
         """

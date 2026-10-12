@@ -385,9 +385,11 @@ def test_the_files_pest_reads_agree_row_for_row_and_have_no_empty_field(
         project, LakeStageObservationSpec(targets=targets, prefix="lk"))
     base = tmp_path / prepared["named_series_forward_run_config"]["output_csv"]
     forward = tmp_path / "forward.csv"
+    config = prepared["named_series_forward_run_config"]
     write_named_series_targets(
-        "lake_stage", tmp_path / prepared["named_series_forward_run_config"]["locations_file"],
-        forward, sim_ws=model.workspace)
+        [{"kind": "lake_stage", "locations_file": tmp_path / config["locations_file"],
+          "output_csv": forward}],
+        sim_ws=model.workspace)
 
     assert forward.read_text() == base.read_text()
     lines = base.read_text().splitlines()

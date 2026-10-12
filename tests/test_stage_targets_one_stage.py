@@ -311,7 +311,9 @@ def test_the_files_pest_reads_carry_each_lake_once(lake_runs, tmp_path, names):
     base = tmp_path / config["output_csv"]
     forward = tmp_path / "forward.csv"
     write_named_series_targets(
-        "lake_stage", tmp_path / config["locations_file"], forward, sim_ws=lake_runs.workspace)
+        [{"kind": "lake_stage", "locations_file": tmp_path / config["locations_file"],
+          "output_csv": forward}],
+        sim_ws=lake_runs.workspace)
 
     assert forward.read_text() == base.read_text()
     written = pd.read_csv(base)
@@ -429,7 +431,9 @@ def test_an_sfr_compare_and_the_files_pest_reads_carry_the_period_end_stage(sfr_
     base = tmp_path / config["output_csv"]
     forward = tmp_path / "forward.csv"
     write_named_series_targets(
-        "sfr_stage", tmp_path / config["locations_file"], forward, sim_ws=sfr_run.workspace)
+        [{"kind": "sfr_stage", "locations_file": tmp_path / config["locations_file"],
+          "output_csv": forward}],
+        sim_ws=sfr_run.workspace)
 
     assert forward.read_text() == base.read_text()
     np.testing.assert_allclose(pd.read_csv(base)["a"], expected, rtol=1e-14)

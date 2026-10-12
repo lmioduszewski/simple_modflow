@@ -43,6 +43,7 @@ from shapely.geometry import Point
 import myflopy as mf
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 from myflopy.modflow.mf6.pest.forward_run import write_named_series_targets
+from tests.test_drn_zones_on_faces import attach_budget
 
 NPER, NSTP, PERLEN = 2, 2, 10.0
 ZONE = [20, 21, 27]
@@ -205,8 +206,10 @@ def test_the_pest_forward_run_reads_the_zone_in_its_layer(toy, tmp_path, drawn):
 
     table = "drn_simulated_drn_flow.csv"
     forward = tmp_path / "forward.csv"
-    write_named_series_targets("drn_flow", snapshot, forward, sim_ws=toy.workspace,
-                               model_name="m")
+    write_named_series_targets(
+        [{"kind": "drn_flow", "locations_file": snapshot,
+          "output_csv": forward}],
+        sim_ws=toy.workspace, model_name="m")
     expected = _raw(toy, DEEP)
     for output in (template / table, forward):
         ins = pyemu.pst_utils.InstructionFile(str(template / f"{table}.ins"))
@@ -313,10 +316,9 @@ def test_a_budget_node_the_grid_does_not_have_is_refused():
     """A record that does not line up with the model raises rather than matching
     nothing (a stub: a real run cannot write one)."""
 
-    budget = pd.DataFrame({"kstpkper": [(0, 0)], "node": [5], "q": [-1.0]}).set_index(
-        ["kstpkper", "node"])
-    model = SimpleNamespace(node_to_lni={0: (0, 0), 1: (0, 1)}, workspace=None,
-                            bud=lambda package: SimpleNamespace(df=budget.copy()))
+    model = attach_budget(
+        SimpleNamespace(node_to_lni={0: (0, 0), 1: (0, 1)}, workspace=None, name="m"),
+        pd.DataFrame({"kstpkper": [(0, 0)], "node": [5], "q": [-1.0]}))
     with pytest.raises(ValueError, match=r"node\(s\) \[5\].*not cells of this model's grid"):
         mf.DrnFlowTargets(locations={"z": [1]}).simulated_series(model)
 
@@ -342,6 +344,66 @@ def test_a_zone_cell_the_grid_does_not_have_is_refused_on_the_budget_route(toy, 
     kept = mf.DrnFlowTargets(locations=[{"name": "basin", "layer": 0, "cells": [INACTIVE, DECOY]}])
     np.testing.assert_allclose(kept.simulated_series(toy)["basin"], _raw(toy, [(0, DECOY)]),
                                rtol=1e-12)
+
+
+# -- a drawn zone reads every layer; a period with no drain reads 0.0 ------------------
+
+
+def test_a_drawn_zone_with_no_layer_reads_every_layer_of_its_columns(toy):
+    """flows-1 (ledger 535): a zone drawn as geometry with no ``layer`` read
+    layer 0 alone, in silence -- on the user's model a polygon over a drain stacked in
+    four layers read 1.8% of its flow. It reads every layer of the columns it covers
+    now, ledger 482's rule for an observation area; a ``layer`` still picks one."""
+
+    polygon = toy.vor.gdf_vorPolys.geometry.loc[DECOY].buffer(-1.0)
+    drawn = mf.DrnFlowTargets(locations=gpd.GeoDataFrame(
+        {"name": ["z"]}, geometry=[polygon], crs=toy.vor.crs))
+    zones = drawn.zone_definitions(toy)
+    # Layer 0's cell 3 is inactive; cell 20 is active in both layers.
+    assert zones["layer"].tolist() == [0, 1] and zones["cells"].tolist() == [[DECOY], [DECOY]]
+    np.testing.assert_allclose(drawn.simulated_series(toy)["z"],
+                               _raw(toy, [(0, DECOY), (1, DECOY)]), rtol=1e-12)
+    assert drawn.to_flopy_obs(toy)["drn_flow_targets.csv"] == [
+        ("z_lay0_c20", "DRN", (0, DECOY)), ("z_lay1_c20", "DRN", (1, DECOY))]
+    top = mf.DrnFlowTargets(locations=gpd.GeoDataFrame(
+        {"name": ["z"], "layer": [0]}, geometry=[polygon], crs=toy.vor.crs))
+    np.testing.assert_allclose(top.simulated_series(toy)["z"], _raw(toy, [(0, DECOY)]),
+                               rtol=1e-12)
+    # An explicit cell list keeps its documented layer 0.
+    np.testing.assert_allclose(
+        mf.DrnFlowTargets(locations={"z": [DECOY]}).simulated_series(toy)["z"],
+        _raw(toy, [(0, DECOY)]), rtol=1e-12)
+
+
+def test_a_key_past_the_periods_is_refused_on_the_budget_route(toy):
+    """Ledger 538: keys [0, 7] on two periods read NaN at 7 and ``stats``
+    counted n = 1, with no message (every other file route refused it, ledger 500)."""
+
+    targets = mf.DrnFlowTargets(locations=[{"name": "basin", "layer": 1, "cells": ZONE}],
+                                values=pd.DataFrame({"time": [0, 7], "basin": [-1.0, -1.0]}))
+    with pytest.raises(ValueError, match=(
+            r"DrnFlowTargets\.compare\(\.\.\.\).*the periods the model's cell-budget file "
+            r"holds are 0 \.\. 1; 1 target row\(s\) name none of them: 'basin' at time 7")):
+        targets.stats(toy)
+
+
+@pytest.mark.slow
+def test_a_zone_over_cells_with_no_drain_reads_zero_and_builds(toy, tmp_path):
+    """The budget route returned no rows for it, and the PEST build died on a bare
+    ``IndexError: single positional indexer is out-of-bounds`` (ledger
+    537). It reads 0.0 in every period, as the observation route does."""
+
+    dry = mf.DrnFlowTargets(locations={"dry": [0, 1]},
+                            values=pd.DataFrame({"time": [0], "dry": [-1.0]}))
+    assert dry.simulated_series(toy)["dry"].tolist() == [0.0] * NPER
+    cal = toy.pest("dry", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
+    cal.observe(dry)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("dry.pst", noptmax=0)
+    base = pd.read_csv(Path(cal.template_workspace) / "drn_flow_simulated_drn_flow.csv")
+    assert base["dry"].tolist() == [0.0] * NPER
 
 
 # -- a partial miss is heard ---------------------------------------------------------

@@ -340,13 +340,17 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
         ucn.close()
 
 
-def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", model_name=None, package=None):
-    """Regenerate one lake/SFR/DRN simulated-target CSV in the native forward run.
+def write_named_series_targets(sets, sim_ws=".", model_name=None):
+    """Regenerate every lake/SFR/DRN/RIV simulated-target CSV in the native forward run.
 
     Post-model command for named-series observations (lake stage, SFR stage/flow,
-    DRN seepage): it reloads the just-run MF6 workspace, rebuilds the target set
-    from the saved definition file (the ``*_target_locations`` CSV/GPKG written at
-    build time), and writes the simulated series pyEMU reads back as observations.
+    DRN seepage, RIV exchange): it opens the just-run MF6 workspace ONCE, rebuilds
+    each target set from the saved definition file (the ``*_target_locations``
+    CSV/GPKG written at build time), and writes the simulated series pyEMU reads
+    back as observations. It loaded the whole simulation once PER SET, every
+    realization -- about 9 s a set on an externalized Ten Trails template beside a
+    20 s MF6 run (ledger 540). Now the sets share one file-backed model,
+    which loads what the first set needs once.
 
     Self-contained: pyEMU copies only this function's source into the generated
     forward run, so it loads the model and reads the saved locations inline rather
@@ -384,38 +388,35 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
 
     Parameters
     ----------
-    kind : {"lake_stage", "sfr_stage", "sfr_flow", "drn_flow"}
-        Which target family the saved definition file describes.
-    locations_file : str or pathlib.Path
-        The ``*_target_locations`` snapshot the build wrote: a CSV (lake and
-        reach ids, or DRN zones with their ``layer`` and comma-joined resolved
-        ``cells``) or a GeoPackage (DRN zones drawn as geometry, with the same
-        columns). A CSV's names are read as text, verbatim, as the base run's
-        table has them (ledger 341); a DRN zone is read in its snapshot's
-        ``layer`` (ledger 342 -- the snapshot carried none, so it was read in
-        layer 0).
-    output_csv : str or pathlib.Path
-        The simulated CSV to write, the file pyEMU's instruction file reads.
+    sets : list of dict
+        One entry per named-series set, in the order to write them, each with
+        ``kind`` (``"lake_stage"``, ``"sfr_stage"``, ``"sfr_flow"``,
+        ``"drn_flow"`` or ``"riv_flow"``: which target family the saved
+        definition file describes), ``locations_file`` (the
+        ``*_target_locations`` snapshot the build wrote: a CSV -- lake and reach
+        ids, or zones with their ``layer`` and comma-joined resolved ``cells`` --
+        or a GeoPackage for zones drawn as geometry, with the same columns; a
+        CSV's names are read as text, verbatim, as the base run's table has them,
+        ledger 341, and a zone is read in its snapshot's ``layer``, ledger 342),
+        ``output_csv`` (the simulated CSV to write, the file pyEMU's instruction
+        file reads) and ``package`` (the targets' ``package`` -- the name of the
+        LAK, SFR, DRN or RIV package they belong to, which the build records;
+        ``None`` reads the model's one package of the type, or for a zone family
+        every one on the budget route). A missing ``package`` key is ``None``.
     sim_ws : str or pathlib.Path, default "."
-        The just-run MF6 workspace to reload.
+        The just-run MF6 workspace to open.
     model_name : str or None, optional
-        The CALIBRATED model's name, which the build records. ``None`` (a
-        forward run generated before ledger 340) reloads the simulation's first
-        GWF model -- which, in a simulation of several, handed PEST another
-        model's lake, reach or zone every realization while the base run's
-        values came from the calibrated one.
-    package : str or None, optional
-        The targets' ``package`` -- the name of the LAK, SFR or DRN package they
-        belong to -- which the build records. ``None`` (the default, and what a
-        forward run generated before ledger 344 passes) reads the model's one
-        package of the type; with several, the family refuses as it did at build.
+        The CALIBRATED model's name, which the build records. ``None`` opens the
+        simulation's first GWF model -- in a simulation of several, possibly
+        another model's lake, reach or zone (ledger 340).
 
     Raises
     ------
     ValueError
         For an unknown ``kind``; or, as the family's ``simulated_series`` does,
-        when a period the output file saved lacks its final step, or its
-        observation route refuses what the package declares (ledger 344).
+        when a period the output file saved lacks its final step, its observation
+        route refuses what the package declares (ledger 344), or a zone's package
+        wrote no budget record (ledger 536).
     FileNotFoundError
         As the family's ``simulated_series``: a declared observation file is not
         in ``sim_ws`` -- only the files the package's OBS names are read, so a
@@ -430,38 +431,40 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
     import myflopy as mf
     from myflopy.modflow.mf6.pest.forward_run import read_target_table
 
-    locations_path = Path(locations_file)
-    if locations_path.suffix.lower() == ".gpkg":
-        import geopandas as gpd
-
-        locations = gpd.read_file(locations_path)
-    else:
-        # Names read VERBATIM, as the base run's table has them (ledger 341): a
-        # zone named 007 read as the integer 7, one named NA as a missing value.
-        locations = read_target_table(locations_path)
-        if "cells" in locations.columns:
-            locations["cells"] = locations["cells"].fillna("").apply(
-                lambda text: [int(v) for v in str(text).split(",") if str(v).strip() != ""]
-            )
-
-    model = mf.load_mf6_run(Path(sim_ws), model_name=model_name, verbosity_level=0)
-    model.load_all()
-
     builders = {
         "lake_stage": mf.LakeStageTargets,
         "sfr_stage": mf.SfrStageTargets,
         "sfr_flow": mf.SfrFlowTargets,
         "drn_flow": mf.DrnFlowTargets,
+        "riv_flow": mf.RivFlowTargets,
     }
-    kind_key = str(kind).strip().lower()
-    if kind_key not in builders:
-        raise ValueError(f"Unsupported named-series observation kind {kind!r}.")
-    targets = builders[kind_key](locations=locations, values=None, package=package)
-    simulated = targets.simulated_series(model)
-    if kind_key == "lake_stage":
-        simulated = simulated.fillna(targets._PEST_NO_STAGE)
-    simulated.to_csv(output_csv, index=False)
+    for entry in sets:
+        if str(entry["kind"]).strip().lower() not in builders:
+            raise ValueError(f"Unsupported named-series observation kind {entry['kind']!r}.")
 
+    # ONE file-backed model for every set: it loads the simulation when a set
+    # first needs it, and every later set reads what is already loaded.
+    model = mf.load_mf6_run(Path(sim_ws), model_name=model_name, verbosity_level=0)
+    for entry in sets:
+        kind_key = str(entry["kind"]).strip().lower()
+        locations_path = Path(entry["locations_file"])
+        if locations_path.suffix.lower() == ".gpkg":
+            import geopandas as gpd
+
+            locations = gpd.read_file(locations_path)
+        else:
+            # Names read VERBATIM, as the base run's table has them (ledger 341): a
+            # zone named 007 read as the integer 7, one named NA as a missing value.
+            locations = read_target_table(locations_path)
+            if "cells" in locations.columns:
+                locations["cells"] = locations["cells"].fillna("").apply(
+                    lambda text: [int(v) for v in str(text).split(",") if str(v).strip() != ""]
+                )
+        targets = builders[kind_key](locations=locations, values=None, package=entry.get("package"))
+        simulated = targets.simulated_series(model)
+        if kind_key == "lake_stage":
+            simulated = simulated.fillna(targets._PEST_NO_STAGE)
+        simulated.to_csv(entry["output_csv"], index=False)
 
 
 def carry_river_bottom(model_file, pair_csv, stage_col, rbot_col):

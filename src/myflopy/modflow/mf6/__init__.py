@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         DrnFlowTargets,
         HeadTargets,
         LakeStageTargets,
+        RivFlowTargets,
         SfrFlowTargets,
         SfrStageTargets,
     )
@@ -103,6 +104,7 @@ _EXPORTS = {
     "GHBFromVector": ("myflopy.modflow.mf6.ghb", "GHBFromVector"),
     "HeadTargets": ("myflopy.modflow.mf6.observations", "HeadTargets"),
     "DrnFlowTargets": ("myflopy.modflow.mf6.observations", "DrnFlowTargets"),
+    "RivFlowTargets": ("myflopy.modflow.mf6.observations", "RivFlowTargets"),
     "LakeStageTargets": ("myflopy.modflow.mf6.observations", "LakeStageTargets"),
     "InitialConditions": ("myflopy.modflow.mf6.simulation.packages", "InitialConditions"),
     "KFlow": ("myflopy.modflow.mf6.simulation.packages", "KFlow"),
@@ -120,6 +122,7 @@ _EXPORTS = {
     "SfrStageObservationSpec": ("myflopy.modflow.mf6.pest", "SfrStageObservationSpec"),
     "SfrFlowObservationSpec": ("myflopy.modflow.mf6.pest", "SfrFlowObservationSpec"),
     "DrnFlowObservationSpec": ("myflopy.modflow.mf6.pest", "DrnFlowObservationSpec"),
+    "RivFlowObservationSpec": ("myflopy.modflow.mf6.pest", "RivFlowObservationSpec"),
     "MeshBuildProfile": ("myflopy.modflow.mf6.grid.triangle", "MeshBuildProfile"),
     "ModelRegion": ("myflopy.modflow.mf6.simulation.regions", "ModelRegion"),
     "OutputControl": ("myflopy.modflow.mf6.simulation.packages", "OutputControl"),

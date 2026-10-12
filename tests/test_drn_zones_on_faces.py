@@ -25,10 +25,10 @@ from shapely.geometry import LineString, Point, box
 
 from myflopy.modflow.mf6.grid import geometry as grid_geometry
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
-from myflopy.modflow.mf6.observations import drn as drn_module
+from myflopy.modflow.mf6.observations import _zones as zones_module
 from myflopy.modflow.mf6.observations.drn import DrnFlowTargets
 
-LOGGER = "myflopy.modflow.mf6.observations.drn"
+LOGGER = "myflopy.modflow.mf6.observations._zones"
 OFF_GRID = box(1_000.0, 1_000.0, 1_050.0, 1_050.0)
 
 
@@ -71,7 +71,57 @@ def _model(grid, idomain=None, budget=None):
                      for layer in range(nlay) for cell in range(ncpl)},
     )
     if budget is not None:
-        model.bud = lambda package, frame=budget: SimpleNamespace(df=frame.copy())
+        attach_budget(model, budget)
+    return model
+
+
+def attach_budget(model, budget, *, package_type="drn", names=("drn",)):
+    """Give a model double the cell-budget file a zone set reads, and its packages.
+
+    ``budget`` holds ``kstpkper``, ``node`` (MF6's ZERO-based user node) and ``q``,
+    as columns or index levels, and optionally ``pname``, the package that wrote
+    each row (default: the first of ``names``). Every package of ``names`` writes
+    one record per saved time, empty or not, as MF6 does for a package declared with
+    ``save_flows``; ``names`` beyond those rows still write empty records. The
+    zone reader matches records by ``paknam2`` (ledger 534), so the
+    double answers ``model.package(<type>)`` with packages of those names.
+    """
+
+    frame = budget.reset_index() if "node" not in budget.columns else budget.copy()
+    if "pname" not in frame.columns:
+        frame["pname"] = names[0]
+    times = list(dict.fromkeys(tuple(item) for item in frame["kstpkper"]))
+    headers, records = [], []
+    for kstpkper in times:
+        for name in names:
+            keep = [tuple(item) == kstpkper and str(owner).upper() == name.upper()
+                    for item, owner in zip(frame["kstpkper"], frame["pname"], strict=True)]
+            rows = frame.loc[keep]
+            headers.append((kstpkper[0] + 1, kstpkper[1] + 1, package_type.upper().rjust(16),
+                            name.upper().ljust(16)))
+            records.append(np.array(
+                [(int(node) + 1, 0, float(q)) for node, q in zip(rows["node"], rows["q"], strict=True)],
+                dtype=[("node", "<i4"), ("node2", "<i4"), ("q", "<f8")]))
+    reader = SimpleNamespace(
+        recordarray=np.array(headers, dtype=[("kstp", "<i4"), ("kper", "<i4"),
+                                             ("text", "S16"), ("paknam2", "S16")]),
+        get_record=lambda index: records[index],
+        get_kstpkper=lambda: times,
+    )
+    model._get_budget_reader = lambda: reader
+    if not hasattr(model, "name"):
+        model.name = "m"
+    packages = [SimpleNamespace(package_name=name) for name in names]
+    previous = getattr(model, "package", None)
+
+    def package(kind):
+        if str(kind).lower() == package_type:
+            return packages[0] if len(packages) == 1 else packages
+        if previous is None:
+            raise AttributeError(f"Package {kind!r} is not attached to model 'fake'.")
+        return previous(kind)
+
+    model.package = package
     return model
 
 
@@ -358,6 +408,6 @@ def test_the_flopy_observation_records_follow_the_resolved_cells(grid):
 
 
 def test_the_rule_is_the_shared_one_not_a_copy():
-    assert drn_module.cell_shares is grid_geometry.cell_shares
-    assert drn_module.domain_active is grid_geometry.domain_active
-    assert drn_module.miss_reason is grid_geometry.miss_reason
+    assert zones_module.cell_shares is grid_geometry.cell_shares
+    assert zones_module.domain_active is grid_geometry.domain_active
+    assert zones_module.miss_reason is grid_geometry.miss_reason
