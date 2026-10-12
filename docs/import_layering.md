@@ -22,9 +22,9 @@ review the diff, commit the regenerated files together.
 - `myflopy._logging`
 - `myflopy._optional`
 - `myflopy._pythonpath`
+- `myflopy._time_units`
 - `myflopy._warnings`
 - `myflopy.areas`
-- `myflopy.grid_identity`
 - `myflopy.modflow`
 - `myflopy.modflow.calcs`
 - `myflopy.modflow.mf6._typechecking`
@@ -38,7 +38,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.grid.mesh_quality` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.grid.seed_optimization`
 - `myflopy.modflow.mf6.grid.surfaces`
-- `myflopy.modflow.mf6.hydraulics`
 - `myflopy.modflow.mf6.observations.plots` *(deferred imports: 3)*
 - `myflopy.modflow.mf6.package_explorer_utils`
 - `myflopy.modflow.mf6.package_registry`
@@ -75,14 +74,15 @@ review the diff, commit the regenerated files together.
 
 ## Layer 1
 
+- `myflopy.grid_identity`
 - `myflopy.modflow.mf6`
 - `myflopy.modflow.mf6.boundaries`
 - `myflopy.modflow.mf6.contour_plotting`
 - `myflopy.modflow.mf6.cross_section_plotting` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.grid.geometry`
 - `myflopy.modflow.mf6.grid.geometry_cleanup`
-- `myflopy.modflow.mf6.grid.tessellation`
 - `myflopy.modflow.mf6.heads_observations`
+- `myflopy.modflow.mf6.hydraulics`
 - `myflopy.modflow.mf6.lak_implicit`
 - `myflopy.modflow.mf6.mf2Dplots`
 - `myflopy.modflow.mf6.package_plotting` *(deferred imports: 2)*
@@ -100,20 +100,16 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.utils.prism_ppt`
 - `myflopy.modflow.utils.surfaces`
 - `myflopy.project.group._shared` *(deferred imports: 1)*
-- `myflopy.specs` *(deferred imports: 10)*
 
 ## Layer 2
 
-- `myflopy.advanced`
-- `myflopy.builders`
-- `myflopy.library`
-- `myflopy.modflow.mf6.areal`
 - `myflopy.modflow.mf6.budget_tables`
 - `myflopy.modflow.mf6.chd`
 - `myflopy.modflow.mf6.drn`
 - `myflopy.modflow.mf6.ghb`
 - `myflopy.modflow.mf6.grid.remap`
 - `myflopy.modflow.mf6.grid.selection`
+- `myflopy.modflow.mf6.grid.tessellation`
 - `myflopy.modflow.mf6.grid.triangle` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.headsplus` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.interactive_plotting`
@@ -126,69 +122,73 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.prt_maps` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.simulation.indexing`
 - `myflopy.modflow.usg.model` *(deferred imports: 5)*
-- `myflopy.project.bundle`
 - `myflopy.project.components`
+- `myflopy.specs` *(deferred imports: 10)*
 - `myflopy.surfaces` *(deferred imports: 4)*
 
 ## Layer 3
 
-- `myflopy.geopackage`
+- `myflopy.advanced`
+- `myflopy.builders`
+- `myflopy.library`
+- `myflopy.modflow.mf6.areal`
 - `myflopy.modflow.mf6.budget_plotting`
 - `myflopy.modflow.mf6.grid.interpolated_surface`
-- `myflopy.modflow.mf6.lakes` *(deferred imports: 1)*
-- `myflopy.modflow.mf6.mvr`
 - `myflopy.modflow.mf6.observations.drn`
 - `myflopy.modflow.mf6.observations.heads` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.observations.lake` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.observations.sfr`
 - `myflopy.modflow.mf6.package_results`
 - `myflopy.modflow.mf6.pest.native_parameters`
-- `myflopy.modflow.mf6.recharge`
-- `myflopy.modflow.mf6.simplemodel`
 - `myflopy.modflow.mf6.simulation.regions`
-- `myflopy.modflow.mf6.uzf`
 - `myflopy.modflow.usg.reader` *(deferred imports: 1)*
 - `myflopy.modflow.utils.datatypes.choros` *(deferred imports: 1)*
+- `myflopy.project.bundle`
 - `myflopy.project.freeze` *(deferred imports: 2)*
 
 ## Layer 4
 
+- `myflopy.geopackage`
 - `myflopy.modflow.mf6.budget` *(deferred imports: 1)*
-- `myflopy.modflow.mf6.evapotranspiration`
 - `myflopy.modflow.mf6.grid.plotting` *(deferred imports: 1)*
-- `myflopy.modflow.mf6.mfsimbase`
+- `myflopy.modflow.mf6.lakes` *(deferred imports: 1)*
+- `myflopy.modflow.mf6.mvr`
 - `myflopy.modflow.mf6.observations.conc`
 - `myflopy.modflow.mf6.package_surface_water` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.pilot_points`
-- `myflopy.modflow.mf6.sfr` *(deferred imports: 1)*
+- `myflopy.modflow.mf6.recharge`
+- `myflopy.modflow.mf6.simplemodel`
+- `myflopy.modflow.mf6.uzf`
 - `myflopy.modflow.usg`
 - `myflopy.modflow.utils.datatypes.xsections` *(deferred imports: 2)*
 - `myflopy.modflow.utils.inputs`
 
 ## Layer 5
 
+- `myflopy.modflow.mf6.evapotranspiration`
 - `myflopy.modflow.mf6.grid.voronoi` *(deferred imports: 4)*
+- `myflopy.modflow.mf6.mfsimbase`
 - `myflopy.modflow.mf6.observations.registry`
 - `myflopy.modflow.mf6.package_model` *(deferred imports: 1)*
+- `myflopy.modflow.mf6.sfr` *(deferred imports: 1)*
 - `myflopy.modflow.utils.outputs`
-- `myflopy.package_api` *(deferred imports: 3)*
 
 ## Layer 6
 
 - `myflopy.grid_spec_resolver`
-- `myflopy.layers` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.canonical` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.observations`
 - `myflopy.modflow.mf6.package_explorer`
 - `myflopy.modflow.mf6.pest.ies`
 - `myflopy.modflow.mf6.voronoiplus`
-- `myflopy.modflow.usg.convert`
+- `myflopy.package_api` *(deferred imports: 3)*
 
 ## Layer 7
 
+- `myflopy.layers` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.specs`
 - `myflopy.modflow.mf6.simulation.accessors`
-- `myflopy.plot`
+- `myflopy.modflow.usg.convert`
 - `myflopy.project.group.spatial` *(deferred imports: 1)*
 
 ## Layer 8
@@ -196,7 +196,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest.geostats` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.gis`
 - `myflopy.modflow.mf6.pest.observations`
-- `myflopy.modflow.mf6.simulation.base` *(deferred imports: 7)*
+- `myflopy.plot`
 - `myflopy.project.group.conc`
 - `myflopy.project.group.inputs`
 - `myflopy.project.group.results`
@@ -205,25 +205,26 @@ review the diff, commit the regenerated files together.
 
 ## Layer 9
 
-- `myflopy.modflow.calcs.calibration`
-- `myflopy.modflow.mf6.canonical_example`
 - `myflopy.modflow.mf6.pest.project` *(deferred imports: 2)*
+- `myflopy.modflow.mf6.simulation.base` *(deferred imports: 7)*
 - `myflopy.project.group.lak`
 - `myflopy.project.group.sfr`
 - `myflopy.project.group.uzf`
-- `myflopy.project.run_model`
 
 ## Layer 10
 
-- `myflopy.modflow.mf6.canonical_calibration`
-- `myflopy.modflow.mf6.canonical_transport` *(deferred imports: 1)*
+- `myflopy.modflow.calcs.calibration`
+- `myflopy.modflow.mf6.canonical_example`
 - `myflopy.project.group.packages`
 - `myflopy.project.model_results_diff`
-- `myflopy.workspace` *(deferred imports: 1)*
+- `myflopy.project.run_model`
 
 ## Layer 11
 
+- `myflopy.modflow.mf6.canonical_calibration`
+- `myflopy.modflow.mf6.canonical_transport` *(deferred imports: 1)*
 - `myflopy.project.group.core` *(deferred imports: 1)*
+- `myflopy.workspace` *(deferred imports: 1)*
 
 ## Layer 12
 

@@ -36,6 +36,7 @@ from myflopy._length_units import (
     check_model_length_units,
 )
 from myflopy._logging import get_logger
+from myflopy._time_units import check_model_time_units, check_tdis_time_units
 
 # Re-exported so no caller changed when these moved out (ledger 264). Each name is
 # marked unused-import-exempt individually: ruff cannot tell a re-export from a stray
@@ -1620,7 +1621,8 @@ def fork_package(
     So the values are copied and handed to :func:`dataclasses.replace`, which is
     the ordinary construction path -- every check guarding a hand-written
     ``mf.npf(...)`` guards a forked one. An edited discretization ``length_units`` must be MF6's
-    own word, as at ``mf.disv`` (ledger 432).
+    own word, as at ``mf.disv`` (ledger 432), and an edited TDIS ``time_units`` one of
+    MF6's six, as at ``mf.tdis`` (ledger 456).
 
     ``deep=True`` (the default) also unaliases options the fork never touched,
     which is where the real hazard lives: :meth:`PackageSpec.with_options`
@@ -1632,7 +1634,7 @@ def fork_package(
     on that same package and opts back into sharing.
     """
 
-    _check_length_units_override(
+    _check_unit_overrides(
         package.builder,
         overrides,
         route="packages.edit" if stamp == "edited" else "packages.fork",
@@ -1839,20 +1841,25 @@ def _builder_label_for_error(builder) -> str:
     return getattr(builder, "__name__", type(builder).__name__)
 
 
-def _check_length_units_override(builder, overrides: dict[str, Any], *, route: str) -> None:
-    """Refuse an edited discretization ``length_units`` that is not MF6's own word.
+def _check_unit_overrides(builder, overrides: dict[str, Any], *, route: str) -> None:
+    """Refuse an edited ``length_units`` or ``time_units`` that is not MF6's own word.
 
     The declaration rule of ``mf.dis``/``mf.disv``/``mf.disu`` (ledger 404) for the
     routes that edit an existing spec -- ``with_options``, ``packages.fork``,
-    ``packages.edit`` -- which built a ``FT`` MF6 read as unit 0 (ledger 432).
-    Keyed on the builder ACCEPTING ``length_units``, which only the DIS/DISV/DISU
-    classes do, and on the OVERRIDE only: an option the spec already held is the
-    builder's to map (``_length_units.mf6_length_option``), so a spec loaded from a
-    saved project can still be forked.
+    ``packages.edit`` -- which built a ``FT`` MF6 read as unit 0 (ledger 432); and
+    ``mf.tdis``'s for a TDIS, whose ``"d"`` MF6 stops on (ledger 456).
+    Keyed on the builder ACCEPTING the option, which only the DIS/DISV/DISU classes
+    (``length_units``) and the TDIS (``time_units``) do, and on the OVERRIDE only:
+    a length unit the spec already held is the builder's to map
+    (``_length_units.mf6_length_option``), so a spec loaded from a saved project can
+    still be forked.
     """
 
-    if "length_units" in overrides and "length_units" in (_accepted_options(builder) or ()):
+    accepted = _accepted_options(builder) or ()
+    if "length_units" in overrides and "length_units" in accepted:
         _check_mf6_length_token(overrides["length_units"], helper=route)
+    if "time_units" in overrides and "time_units" in accepted:
+        check_tdis_time_units(overrides["time_units"], helper=route)
 
 
 def _check_options(name: str, builder, options: dict[str, Any]) -> None:
@@ -2198,10 +2205,12 @@ class PackageSpec:
             ``length_units`` must be MF6's own word -- ``"feet"``, ``"meters"``,
             ``"centimeters"`` or ``"unknown"``, any case -- as at ``mf.disv``:
             another (``"ft"``, which MF6 reads as undefined) raises ``ValueError``
-            naming the word to write (ledger 432).
+            naming the word to write (ledger 432). On a TDIS, a ``time_units``
+            must be one of MF6's six words, as at ``mf.tdis`` -- MF6 stops the run on
+            any other (ledger 456).
         """
 
-        _check_length_units_override(
+        _check_unit_overrides(
             self.builder, overrides, route=f"{self.name}.with_options"
         )
         return replace(
@@ -3827,39 +3836,6 @@ def _grid_from_dict(data: dict[str, Any] | None) -> GridSpec | GridRef | None:
     return GridSpec.from_dict(data)
 
 
-# MF6 Manning/weir conversion factors. LENGTH_CONVERSION scales a length in METERS to
-# the model's length units -- `myflopy._length_units.mf6_length_conversion`, which reads
-# the one length-unit table (ledger 433).
-# TIME_CONVERSION scales a time in SECONDS to the model's time units. Used by SFR (and
-# LAK outlets) so the streamflow equations run in model units.
-_MF6_TIME_TO_MODEL = {
-    "seconds": 1.0, "second": 1.0, "sec": 1.0, "s": 1.0,
-    "minutes": 60.0, "minute": 60.0, "min": 60.0,
-    "hours": 3600.0, "hour": 3600.0, "hr": 3600.0, "h": 3600.0,
-    "days": 86400.0, "day": 86400.0, "d": 86400.0,
-    "years": 31557600.0, "year": 31557600.0, "yr": 31557600.0,
-}
-
-
-def mf6_time_conversion(units: str | None) -> float:
-    """Return MF6 ``TIME_CONVERSION`` (seconds -> model units) for a unit name.
-
-    ``days`` -> 86400, ``hours`` -> 3600, ``minutes`` -> 60, ``seconds`` -> 1.0,
-    ``years`` -> 31557600. ``None`` or ``"unknown"`` -> 1.0. Raises for unrecognized.
-    """
-    if units is None:
-        return 1.0
-    key = str(units).strip().lower()
-    if key in ("", "unknown"):
-        return 1.0
-    try:
-        return _MF6_TIME_TO_MODEL[key]
-    except KeyError as error:
-        raise ValueError(
-            f"Unknown time unit {units!r}; expected seconds, minutes, hours, days, or years."
-        ) from error
-
-
 @dataclass(frozen=True, slots=True)
 class ModelContext:
     """The geometry a model is built against -- the bridge to the GIS builders.
@@ -3921,10 +3897,18 @@ class ModelContext:
         ``units=`` (with no unit declared here such a surface is REFUSED), and
         for flux labels in build warnings. It does NOT set the DISV's
         ``length_units``. Serialized. Default ``"feet"``.
-    time_units : str, optional
-        The model's time unit, read the same way for ``TIME_CONVERSION``
-        (seconds, minutes, hours, days, years and their short forms). It does
-        NOT set TDIS's ``time_units``. Serialized. Default ``"days"``.
+    time_units : str or None, optional
+        The model's time unit: ``"seconds"``/``"second"``/``"sec"``/``"s"``,
+        ``"minutes"``/``"minute"``/``"min"``, ``"hours"``/``"hour"``/``"hr"``/
+        ``"h"``, ``"days"``/``"day"``/``"d"`` or ``"years"``/``"year"``/``"yr"``,
+        any case and surrounding spaces ignored, or ``None`` / ``""`` /
+        ``"unknown"`` for no declared unit. Anything else -- a non-``str``
+        included -- raises ``ValueError`` HERE, at construction (ledger
+        456). Read by ``mf.sfr``/``mf.lak`` to derive MF6's
+        ``TIME_CONVERSION`` when none is given (86400.0 for days, 3600.0 for
+        hours, 60.0 for minutes, 1.0 for seconds, 31557600.0 for years, 1.0 with
+        no unit) and for flux labels in build warnings. It does NOT set TDIS's
+        ``time_units``. Serialized. Default ``"days"``.
     metadata : dict, optional
         Free-form metadata, serialized with the model and visible to post-build
         hooks through the context. :meth:`ModelSpec.to_dict` adds the grid's
@@ -3943,13 +3927,14 @@ class ModelContext:
     dates: Any = None
     domain: Any = None
     length_units: str | None = "feet"
-    time_units: str = "days"
+    time_units: str | None = "days"
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Refuse a ``length_units`` no consumer can read (ledger 433)."""
+        """Refuse a ``length_units`` (ledger 433) or ``time_units`` (ledger 456) no consumer can read."""
 
         check_model_length_units(self.length_units)
+        check_model_time_units(self.time_units)
 
 #: The ``attrs`` key and value a lazy ``mf.disv`` stamps on the elevation table it
 #: publishes onto the model's context: that table IS the built discretization's, so a

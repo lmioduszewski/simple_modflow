@@ -51,6 +51,12 @@ Everything below is an attribute of the top-level `myflopy` module (imported as
 `mf.disv`, `mf.dis`, `mf.disu`, `mf.ic`, `mf.npf`, `mf.sto`, `mf.oc`, `mf.tdis`,
 `mf.ims`, `mf.ems` — each `mf.<name>(...)` returns a `PackageSpec`.
 
+`mf.tdis(time_units=)` takes MF6's own words only -- `unknown`, `seconds`,
+`minutes`, `hours`, `days`, `years`, any case -- and raises on any other, naming
+MF6's word for a short spelling (`"d"` -> `"days"`): FloPy writes any word, and MF6
+STOPS the run on one it does not read. `with_options`/`packages.fork`/`packages.edit`
+on a TDIS and `PRTProject(time_units=)` refuse the same words (ledger 456).
+
 `mf.ic` / `mf.oc` / `mf.disv` / `mf.dis` / `mf.disu` are **model-kind-aware**: they
 build the GWF/GWT/GWE (and, for `oc`/`disv`/`dis`, PRT) FloPy class off the model's
 type, so the same helper serves a transport, energy, or particle-tracking model
@@ -421,7 +427,13 @@ release-group boundnames; without them it names the fix and offers
   (`mf.gwf(..., context=ctx)`); carries the grid/idomain/surfaces the GIS-aware helpers use.
   Its `length_units=` (default `"feet"`) takes any spelling a `LayerStack` takes, or
   `None`/`"unknown"` for no unit, and refuses anything else at construction (ledger
-  433).
+  433); its `time_units=` (default `"days"`, read for SFR/LAK `TIME_CONVERSION`) takes
+  `seconds`/`second`/`sec`/`s`, `minutes`/`minute`/`min`, `hours`/`hour`/`hr`/`h`,
+  `days`/`day`/`d` or `years`/`year`/`yr`, any case, or `None`/`""`/`"unknown"`, and
+  refuses anything else at construction too, as does `LayerStack(time_units=)`
+  (ledger 456). Every label -- a build warning's `ft3/d`, a hover's units --
+  abbreviates through one table per dimension (`myflopy._length_units`,
+  `myflopy._time_units`).
 - `mf.LayerStack(vor, top=...).add(...).build()` — declarative layer top/botm/idomain
   (compiles to `mf.LayerSurfaces` / `mf.Surface`). `vor` is optional: the layering
   can be declared before any grid exists and bound at `build(vor)`.

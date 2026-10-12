@@ -19,8 +19,9 @@ conducts through:
 The maximum -- ``K * (top - bottom)`` -- needs no heads, so it is the one a model
 that has not been run can show.
 
-Pure numpy and duck-typed on the model, so it sits in import layer 0 and every
-plotting module can reach it.
+Pure numpy and duck-typed on the model, importing only the unit tables
+(``myflopy._length_units``, ``myflopy._time_units``), so it sits in import layer 1 and
+every plotting module can reach it.
 """
 
 from __future__ import annotations
@@ -29,7 +30,9 @@ from typing import NamedTuple
 
 import numpy as np
 
+from myflopy._length_units import mf6_length_abbreviation
 from myflopy._logging import get_logger
+from myflopy._time_units import MF6_TIME_UNITS
 
 __all__ = [
     "MF6_TIME_UNITS",
@@ -204,23 +207,6 @@ def model_transmissivity(model, *, heads=None) -> Transmissivity:
     )
 
 
-_LENGTH_ABBREVIATIONS = {"feet": "ft", "meters": "m", "centimeters": "cm"}
-
-#: MF6's TDIS ``TIME_UNITS`` words, each with its abbreviation. MF6 reads these six in
-#: any case and STOPS on any other word ("Unrecognized input value for TIME_UNITS
-#: option") -- unlike ``LENGTH_UNITS``, which it reads as undefined (ledger 404).
-#: ``unknown`` is MF6's own "undefined" and has no abbreviation
-#: (``docs/reproducers/tdis_time_units.py``, ledger 442).
-MF6_TIME_UNITS = {
-    "unknown": None,
-    "seconds": "s",
-    "minutes": "min",
-    "hours": "h",
-    "days": "d",
-    "years": "yr",
-}
-
-
 def _simulation_tdis(model):
     """The TDIS of the simulation ``model`` belongs to, or None.
 
@@ -301,7 +287,7 @@ def unit_labels(model) -> tuple[str | None, str | None]:
     for name in ("disv", "dis", "disu"):
         package = gwf.get_package(name) if gwf is not None and hasattr(gwf, "get_package") else None
         if package is not None:
-            length = _LENGTH_ABBREVIATIONS.get(str(_option(package, "length_units")).lower())
+            length = mf6_length_abbreviation(_option(package, "length_units"))
             break
     unit = declared_time_unit(model)
     time = MF6_TIME_UNITS[unit] if unit is not None else None

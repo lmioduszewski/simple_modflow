@@ -35,6 +35,7 @@ from myflopy._defaults import DEFAULT_CRS
 from myflopy._length_units import _mf6_length_units
 from myflopy._logging import get_logger
 from myflopy._optional import require
+from myflopy._time_units import check_model_time_units
 from myflopy.areas import Area
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.grid.plotting import GridPlots, _as_linestring
@@ -3396,10 +3397,14 @@ class LayerStack:
         .capped_at(...)`` is the DEM in feet, capped). :meth:`to_disv` writes it as
         DISV ``LENGTH_UNITS`` in MF6's word -- ``FEET``, ``METERS`` or
         ``CENTIMETERS``, whichever spelling was given. Also labels the plot axes.
-    time_units : str, optional
-        The model time unit. Default ``"days"``. Carried onto the built
-        :class:`LayerBuildResult` (its report prints it) and saved by
-        :meth:`to_dict`; nothing in the stack converts with it.
+    time_units : str or None, optional
+        The model time unit, in any spelling ``ModelContext(time_units=)`` takes
+        (``"days"``/``"day"``/``"d"``, ``"hours"``/``"hour"``/``"hr"``/``"h"``,
+        ... any case), or ``None`` / ``""`` / ``"unknown"`` for none; anything
+        else raises ``ValueError`` at construction (ledger 456). Default
+        ``"days"``. Carried onto the built :class:`LayerBuildResult` (its report
+        prints it) and saved by :meth:`to_dict`; nothing in the stack converts
+        with it.
 
     Examples
     --------
@@ -3468,7 +3473,8 @@ class LayerStack:
             form" but binds ``ground`` to the grid, which would fail much later
             and somewhere else.
         ValueError
-            If ``length_units`` is not a known spelling (see the class docstring).
+            If ``length_units`` or ``time_units`` is not a known spelling (see
+            the class docstring).
         """
 
         if top is None:
@@ -3497,6 +3503,9 @@ class LayerStack:
             # would otherwise carry it to the model's build (ledger 404).
             _mf6_length_units(length_units)
         self.length_units = length_units
+        # The same check as ModelContext's (ledger 456): the unit is a label
+        # here, and a label in a unit nothing reads is refused where it enters.
+        check_model_time_units(time_units)
         self.time_units = time_units
 
     #: Token :func:`myflopy.specs._json_value` writes this object under. See

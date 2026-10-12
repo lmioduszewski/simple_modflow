@@ -18,6 +18,7 @@ from shapely.geometry import Point
 from shapely.ops import nearest_points
 
 from myflopy._length_units import mf6_length_conversion
+from myflopy._time_units import mf6_time_conversion
 from myflopy.advanced import sfr_spec
 from myflopy.geopackage import _layer_index
 from myflopy.grid_identity import pin_metadata
@@ -27,7 +28,6 @@ from myflopy.specs import (
     ModelContext,
     PackageSpec,
     _layer_elevations,
-    mf6_time_conversion,
 )
 
 StreamLocation = str | Point

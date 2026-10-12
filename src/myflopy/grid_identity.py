@@ -26,7 +26,9 @@ import hashlib
 from numbers import Real
 from typing import Any
 
+from myflopy._length_units import length_abbreviation
 from myflopy._logging import get_logger
+from myflopy._time_units import time_abbreviation
 
 logger = get_logger(__name__)
 
@@ -619,8 +621,8 @@ def column_count(value) -> int | None:
     multi-layer model looks like written by hand. Strings are excluded because a
     time-series name is a scalar.
 
-    Lives here, in import layer 0, because three callers need the SAME rule and they sit
-    in layers 0, 2 and 5: ``package_move`` below, ``advanced._array_bc_spec``, and
+    Lives here, in import layer 1 (it imports only the unit tables), because three callers
+    need the SAME rule and they sit in this module and two above it: ``package_move`` below, ``advanced._array_bc_spec``, and
     ``package_api``'s lazy areal pin.
     """
 
@@ -1030,15 +1032,6 @@ _ARRAY_INDEX = {
     "evta": ("ievt", "rate", "evapotranspiration"),
 }
 
-#: Short spellings of the length and time units ``ModelContext`` carries, for a rate.
-_UNIT_ABBREVIATIONS = {
-    "feet": "ft", "foot": "ft", "ft": "ft", "meters": "m", "meter": "m", "m": "m",
-    "centimeters": "cm", "cm": "cm", "days": "d", "day": "d", "d": "d",
-    "seconds": "s", "second": "s", "s": "s", "minutes": "min", "hours": "h",
-    "years": "yr", "year": "yr",
-}
-
-
 def _built_idomain(disv, nlay: int, ncpl: int):
     """The built DISV's idomain as ``(nlay, ncpl)`` ints -- ``None`` in FloPy is all active.
 
@@ -1088,7 +1081,7 @@ def excavation_cells(context) -> dict[int, str]:
     ``excavations`` attribute, which ``LayerBuildResult.attach_to_grid`` sets. Only used
     to NAME the cause of a refusal, so every source is read and the first to name a
     cell wins; a record is duck-typed (``.name``, ``.cells``) because this module is
-    import layer 0 and ``ExcavationRecord`` lives in layer 2.
+    import layer 1 and ``ExcavationRecord`` lives above it.
 
     Parameters
     ----------
@@ -1385,15 +1378,17 @@ def _read_period_data(package, option: str, ncpl: int):
 
 
 def _flux_units(context) -> str:
-    """``ft3/d`` for a feet/days model, else the unit names spelled out."""
+    """``ft3/d`` for a feet/days context, ``length3/time`` for a unit it does not declare.
 
-    length = str(getattr(context, "length_units", None) or "length")
-    time = str(getattr(context, "time_units", None) or "time")
-    short_l = _UNIT_ABBREVIATIONS.get(length.lower())
-    short_t = _UNIT_ABBREVIATIONS.get(time.lower())
-    if short_l and short_t:
-        return f"{short_l}3/{short_t}"
-    return f"{length}^3/{time}"
+    Both halves abbreviate through the one table per dimension (ledger 456), so
+    a context in ``"metres"``/``"us-ft"``/``" FT "`` labels as ``m``/``ft``, as every
+    other label does. A ``ModelContext`` refuses a unit outside those tables, so
+    ``length``/``time`` stand only for a unit the context does not declare.
+    """
+
+    short_l = length_abbreviation(getattr(context, "length_units", None)) or "length"
+    short_t = time_abbreviation(getattr(context, "time_units", None)) or "time"
+    return f"{short_l}3/{short_t}"
 
 
 def _array_index_findings(model, context, packages, idomain, dug, built_packages=None):

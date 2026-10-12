@@ -22,6 +22,7 @@ from shapely.geometry import Point, Polygon
 
 from myflopy._length_units import _check_mf6_length_token, mf6_length_option
 from myflopy._logging import get_logger
+from myflopy._time_units import check_tdis_time_units
 from myflopy.advanced import (
     _array_bc_spec,
     _names_cells,
@@ -1562,7 +1563,12 @@ def tdis(
         One ``(perlen, nstp, tsmult)`` tuple per period -- period length, number of
         time steps, and time-step multiplier.
     time_units : str, optional
-        Time unit label, e.g. ``"days"`` / ``"seconds"``.
+        MF6's TDIS ``TIME_UNITS`` word: ``"unknown"``, ``"seconds"``,
+        ``"minutes"``, ``"hours"``, ``"days"`` or ``"years"``, any case. Any other
+        word -- ``"d"``, ``"day"`` included -- raises ``ValueError`` here, naming
+        MF6's word for a known short spelling: FloPy writes any word and MF6 STOPS
+        the run on one it does not read (ledger 456). Default ``None``:
+        nothing is written, which MF6 reads as undefined, as ``"unknown"``.
     start_date_time : str, optional
         ISO start datetime for the simulation.
     ats : bool, iterable of int, or mapping, optional
@@ -1618,6 +1624,7 @@ def tdis(
         _resolve_ats_periods,
     )
 
+    check_tdis_time_units(time_units, helper="mf.tdis")
     if ats is not None and ats is not False and ats_perioddata is not None:
         raise ValueError(
             "tdis: pass either ats= (built for you) or ats_perioddata= (raw FloPy "

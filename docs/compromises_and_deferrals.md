@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 455 entries (460 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 456 entries (461 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 456 | A time unit has one table and is checked where it enters: `mf.tdis` takes MF6's six words, `ModelContext`/... | 2026-10-11 |
 | 455 | A DRN zone's observation route reads DIS and DISU: `to_flopy_obs` writes the grid's own cellid and a declar... | 2026-10-11 |
 | 454 | `run_ies`/`prior` hand PEST++ an absolute `PYTHONPATH`, by the one rule in `myflopy._pythonpath`, and refus... | 2026-10-11 |
 | 453 | A PEST build refuses an output (`FILEOUT`) written outside the run directory, by a relative name OR an abso... | 2026-10-11 |
@@ -18887,10 +18888,13 @@ same day, which is the useful part of the result.
       **Measured and left: the deprecated `mp3du.legacy_prt.PRT`** copies FloPy's
       `modeltime.time_units`, which answers `"unknown"` for a TDIS naming no unit, so it
       writes `TIME_UNITS unknown`, which MF6 reads; it is the one reader the guard exempts.
-      **Not done:** `mf.tdis(time_units=)` still accepts a word MF6 refuses (the run then
+      **Not done:** ~~`mf.tdis(time_units=)` still accepts a word MF6 refuses (the run then
       stops naming the option), and `ModelContext.time_units` -- the context's unit for
       SFR/LAK conversions and `grid_identity._flux_units`, a different source -- keeps
-      its own spellings table.
+      its own spellings table.~~ (both done by ledger 456: `mf.tdis` and every TDIS
+      edit route refuse a word MF6 stops on, `ModelContext`/`LayerStack` check
+      `time_units` at construction, and `MF6_TIME_UNITS` moved to `myflopy._time_units`
+      beside the one spellings table every reader and label uses.)
       Tests: `tests/test_tdis_time_units.py` -- every case through every label;
       `test_only_the_one_reader_reads_a_tdis_time_unit` (an AST sweep) fails naming
       `prt.py` and `package_budget.py` with their readers restored, and
@@ -19193,3 +19197,35 @@ same day, which is the useful part of the result.
       read on DISU as node `layer + 1` -- a target at node 6 observed node 1 (100.0 ft
       for 93.35), Normal termination.
       Tests: `tests/test_drn_zone_obs_on_dis_and_disu.py` (6, real MF6 runs).
+
+456. **A time unit has one table and is checked where it enters: `mf.tdis` takes MF6's six words, `ModelContext`/`LayerStack` any listed spelling; every length and time label abbreviates through one table per dimension (2026-10-11).**
+      `myflopy/_time_units.py` (import layer 0) holds `MF6_TIME_UNITS` (moved from
+      `hydraulics`), the spellings table and `mf6_time_conversion` (moved from `specs`,
+      whose `_MF6_TIME_TO_MODEL` is gone); `_length_units` gained the one abbreviation
+      table. Gone: `grid_identity._UNIT_ABBREVIATIONS` (no `metres`/`us-ft`/`centimeter`,
+      no strip -- a build warning read `metres^3/days`) and `hydraulics._LENGTH_ABBREVIATIONS`.
+      **`mf.tdis(time_units=)` REFUSES a word MF6 stops on, naming MF6's word, rather
+      than mapping it** -- ledger 404's call for a raw `length_units=`: one simulation,
+      one spelling, one digest. So do `with_options`/`packages.fork`/`packages.edit` on a
+      TDIS and `PRTProject(time_units=)`. A SAVED TDIS spec holding `"d"` is not mapped
+      at build, unlike 432's DIS: MF6 stopped on every run of it, so nothing that ran
+      changes. **`ModelContext(time_units=)` and `LayerStack(time_units=)` refuse an
+      unknown spelling at construction**, as 433 did for length: a saved project whose
+      context names one no longer loads (every stored one measured, 36 under
+      `/home/lukem/models` and `examples/`, says `days`). A context with no unit labels
+      `length3/time` where it read `length^3/days`.
+      **PRT's DIS mirrors its flow DIS through `mf6_length_mirror`**: a known spelling
+      (`"ft"`, from a run loaded off disk) becomes MF6's word, so the PRT model reads unit
+      1 where the flow model read 0; **an unknown word is copied as it was** -- judgment
+      call: MF6 accepted it for the flow model as unit 0 and computes nothing from the
+      unit (ledger 432), so refusing it would refuse a run MF6 ran, and mapping it has
+      nothing to map to. A label read back from a DIS counts only MF6's words (`FT` reads
+      as no unit, what MF6 read), from a context any spelling.
+      Tests: `tests/test_time_unit_routes.py` -- each check reverted fails a named test
+      (`test_mf_tdis_refuses_a_word_mf6_stops_on`, `test_every_tdis_edit_route_...`,
+      `test_model_context_refuses_a_time_unit_nothing_reads`,
+      `test_layer_stack_refuses_...`, `test_check_tdis_time_units_is_what_prt_project_asks`,
+      `test_a_prt_dis_writes_mf6s_word_for_its_flow_dis[ft-feet]`); the old
+      `grid_identity` fails 204 `test_the_build_warning_flux_label_reads_the_one_table`
+      cases and `test_no_module_but_the_two_holds_a_unit_spelling_table` (an AST sweep
+      for a dict keyed by two unit words).

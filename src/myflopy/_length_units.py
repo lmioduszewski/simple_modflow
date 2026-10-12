@@ -47,6 +47,11 @@ _MF6_LENGTH_TOKENS = frozenset({"FEET", "METERS", "CENTIMETERS", "UNKNOWN"})
 #: MF6's ``LENGTH_CONVERSION`` (SFR, LAK outlets) per token: metres -> model units.
 _MF6_LENGTH_CONVERSION = {"FEET": 3.28081, "METERS": 1.0, "CENTIMETERS": 100.0}
 
+#: The label abbreviation of each MF6 length word -- the ONE table every label reads
+#: (ledger 456): a DIS read back from a run and a ``ModelContext`` in any
+#: spelling abbreviate through it. ``UNKNOWN`` has none.
+_MF6_LENGTH_ABBREVIATIONS = {"FEET": "ft", "METERS": "m", "CENTIMETERS": "cm"}
+
 
 def _is_unknown(units: Any) -> bool:
     """``True`` for MF6's ``UNKNOWN`` in any case and surrounding spaces."""
@@ -287,3 +292,78 @@ def _length_factor(from_units: str, to_units: str) -> float:
         raise ValueError(
             f"Unknown length unit {exc.args[0]!r}; known: {sorted(_LENGTH_TO_FEET)}."
         ) from None
+
+
+def mf6_length_mirror(value: Any) -> Any:
+    """The ``length_units`` a COPY of an existing discretization writes.
+
+    A PRT model's DIS/DISV mirrors its flow model's, which may come from a run
+    loaded off disk and so hold any word FloPy read there (ledger 456). A
+    spelling :data:`_MF6_LENGTH_UNITS` knows (``"ft"``) becomes MF6's word, as
+    :func:`mf6_length_option` maps it for a spec. Any other word is written as it
+    was: MF6 read it as unit 0, undefined, for the flow model and computes nothing
+    from the unit, so the copy declares what the flow model ran under -- refusing
+    it would refuse a run MF6 accepted.
+
+    Parameters
+    ----------
+    value : str or None
+        The flow discretization's ``length_units`` as FloPy holds it. ``None``
+        writes nothing.
+
+    Returns
+    -------
+    str or None
+        MF6's word for a known spelling, else ``value`` unchanged.
+    """
+
+    if isinstance(value, str) and value.upper() not in _MF6_LENGTH_TOKENS:
+        return _MF6_LENGTH_UNITS.get(_spelling(value), value)
+    return value
+
+
+def mf6_length_abbreviation(word: Any) -> str | None:
+    """The label abbreviation of a DIS ``LENGTH_UNITS`` word MF6 READ, or None.
+
+    Only MF6's own words count, in any case: ``FT`` is unit 0 to MF6, so a DIS
+    holding it declares no unit, and a label read from it says none (ledger
+    456).
+
+    Parameters
+    ----------
+    word : str or None
+        A discretization's ``length_units`` as FloPy holds it.
+
+    Returns
+    -------
+    str or None
+        ``"ft"``, ``"m"`` or ``"cm"``; ``None`` for ``unknown``, no word, or a
+        word MF6 reads as undefined.
+    """
+
+    if not isinstance(word, str):
+        return None
+    return _MF6_LENGTH_ABBREVIATIONS.get(word.strip().upper())
+
+
+def length_abbreviation(units: Any) -> str | None:
+    """The label abbreviation of a length unit in any spelling a ``ModelContext`` takes.
+
+    ``"ft"`` for ``"feet"``/``"foot"``/``"ft"``/``"us-ft"``/``"usft"``, ``"m"`` for
+    the metre spellings, ``"cm"`` for the centimetre ones, through the same table
+    as :func:`mf6_length_abbreviation` (ledger 456).
+
+    Parameters
+    ----------
+    units : str or None
+        A length unit, any case, surrounding spaces ignored.
+
+    Returns
+    -------
+    str or None
+        The abbreviation; ``None`` for no unit and for a word that is not a length
+        unit -- a label never raises.
+    """
+
+    token = _MF6_LENGTH_UNITS.get(_spelling(units))
+    return None if token is None else _MF6_LENGTH_ABBREVIATIONS[token]

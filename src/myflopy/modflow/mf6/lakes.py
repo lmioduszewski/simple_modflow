@@ -24,6 +24,7 @@ from shapely.geometry.base import BaseGeometry
 
 from myflopy._length_units import mf6_length_conversion
 from myflopy._logging import get_logger
+from myflopy._time_units import mf6_time_conversion
 from myflopy._warnings import stacklevel_outside_package
 from myflopy.advanced import lak_spec
 from myflopy.areas import Area
@@ -49,7 +50,6 @@ from myflopy.specs import (
     ModelContext,
     PackageSpec,
     _layer_elevation_source,
-    mf6_time_conversion,
 )
 from myflopy.surfaces import Surface, sample_bed
 

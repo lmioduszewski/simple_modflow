@@ -22,7 +22,9 @@ import geopandas as gpd
 import pandas as pd
 import shapely as shp
 
+from myflopy._length_units import mf6_length_mirror
 from myflopy._logging import get_logger
+from myflopy._time_units import check_tdis_time_units
 from myflopy.modflow.mf6.grid.domain import model_domain
 from myflopy.modflow.mf6.grid.geometry import (
     cell_shares,
@@ -94,14 +96,19 @@ def _tdis_perioddata(model: SimulationBase) -> list[tuple[float, int, float]]:
 
 
 def _copy_grid_to_prt(flow_model: SimulationBase, prt_model):
-    """Replicate the GWF DIS/DISV discretization onto a PRT model (raises for unsupported grids)."""
+    """Replicate the GWF DIS/DISV discretization onto a PRT model (raises for unsupported grids).
+
+    The ``length_units`` word goes through :func:`~myflopy._length_units.mf6_length_mirror`:
+    a short spelling a loaded run's DIS holds (``"ft"``) becomes MF6's word, and a
+    word MF6 read as undefined stays as it was (ledger 456).
+    """
 
     gwf = flow_model.gwf
     if getattr(gwf, "disv", None) is not None:
         disv = gwf.disv
         return flopy.mf6.ModflowPrtdisv(
             prt_model,
-            length_units=_mfdata_value(disv.length_units),
+            length_units=mf6_length_mirror(_mfdata_value(disv.length_units)),
             xorigin=_mfdata_value(disv.xorigin),
             yorigin=_mfdata_value(disv.yorigin),
             angrot=_mfdata_value(disv.angrot),
@@ -118,7 +125,7 @@ def _copy_grid_to_prt(flow_model: SimulationBase, prt_model):
         dis = gwf.dis
         return flopy.mf6.ModflowPrtdis(
             prt_model,
-            length_units=_mfdata_value(dis.length_units),
+            length_units=mf6_length_mirror(_mfdata_value(dis.length_units)),
             xorigin=_mfdata_value(dis.xorigin),
             yorigin=_mfdata_value(dis.yorigin),
             angrot=_mfdata_value(dis.angrot),
@@ -838,7 +845,11 @@ class PRTProject:
         ``(1.0, 1, 1.0)`` when it has no TDIS period data. PRT tracks through the flow
         model's saved flows, so these should match the flow run's periods.
     time_units : str, optional
-        TDIS time units for the PRT simulation (e.g. ``"DAYS"``). ``None`` (the
+        TDIS time units for the PRT simulation: one of MF6's words ``"unknown"``,
+        ``"seconds"``, ``"minutes"``, ``"hours"``, ``"days"``, ``"years"``, any case
+        (e.g. ``"DAYS"``); any other word raises ``ValueError`` before anything is
+        written, naming MF6's word for a known short spelling -- MF6 stops on it
+        (ledger 456). ``None`` (the
         default) copies the flow simulation's TDIS ``TIME_UNITS``, read through
         :func:`~myflopy.modflow.mf6.hydraulics.declared_time_unit`; when the flow
         simulation declares none (a plain ``mf.tdis(...)``, ``unknown``, or no TDIS
@@ -927,6 +938,8 @@ class PRTProject:
         )
         if not self.release_points.packagedata:
             raise ValueError("At least one PRT release point is required.")
+        # The declaration rule of mf.tdis (ledger 456): MF6 stops on any other word.
+        check_tdis_time_units(time_units, helper="PRTProject")
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.track_csv_path = self.workspace / f"{self.name}.trk.csv"
         self.budget_path = self.workspace / f"{self.name}.bud"
