@@ -584,9 +584,10 @@ missing `layer`/`cell` (pandas' nullable `Int64`).
 **A view's `layer=` is a layer the views number, or it is refused** (ledger 496):
 `package_explorer_utils.check_view_layers`, read against `views_nlay` -- the grid's
 layers on DIS and DISV, ONE on a DISU whatever FloPy infers from `IHC`. Every
-single-model `get(layer=)`, `model.hds.array(layer=)`, the head line profile and the
-cross-section's `layers=`/`head_layers=` raise `ValueError` naming the count, as the
-maps do (ledger 448); a `get` used to filter to zero rows. The cross-section counts its
+single-model `get(layer=)`, `model.hds.array(layer=)`, `model.region_heads(layer=)`, the
+head surface (`plot.surface`), the head line profile and the cross-section's
+`layers=`/`head_layers=` raise `ValueError` naming the count, as the maps do (ledger
+448); a `get` used to filter to zero rows. The cross-section counts its
 layers the same way, so `model.plot.section(line)` draws a DISU's one layer.
 
 **The BUILD reads the same rule** (ledger 469). `ModelSpec.build`'s range,

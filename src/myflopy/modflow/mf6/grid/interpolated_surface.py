@@ -37,6 +37,7 @@ from myflopy.modflow.mf6.grid.geometry import (
 )
 from myflopy.modflow.mf6.headsplus import DependentVariableFile, _is_sentinel
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
+from myflopy.modflow.mf6.package_explorer_utils import check_view_layers
 from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.viz import Picture
@@ -86,7 +87,10 @@ class InterpolatedSurface(Picture):
             without one, the model's own reader (``model.hds``/``.conc``/``.temp``
             by its kind) is used
         :param model: mf6 SimulationBase model
-        :param layer: defaults to 0
+        :param layer: zero-based layer, defaults to 0. With ``surf_type='hds'``
+            and no ``zs``, a layer the model's views do not number -- ONE on a
+            DISU -- raises ``ValueError`` naming the count (ledger 496); it
+            raised pandas' bare ``KeyError`` when the surface was drawn.
         :param per: stress period, zero-based: its LAST saved step is drawn
             (ledger 337, the one rule -- ``period_end.last_saved_step``); it
             indexed the saved records before, so ``per=1`` at ``nstp=3`` drew
@@ -148,6 +152,15 @@ class InterpolatedSurface(Picture):
             self.kstpkper = last_saved_step(self.model.kstpkper, per)
         else:
             self.kstpkper = kstpkper
+        if surf_type == 'hds' and zs is None:
+            # A layer the model's views do not number is refused here, naming the
+            # count -- ONE on a DISU -- rather than at `.fig` with pandas' bare
+            # `KeyError` (`check_view_layers`, ledger 496).
+            gwf = getattr(model, "gwf", None) if model is not None else None
+            if gwf is not None:
+                check_view_layers(gwf, layer)
+            elif hds is not None:
+                check_view_layers(int(hds.nlay), layer)
         self.layer = layer
         self.resolution = resolution
         self.neighbors = 10

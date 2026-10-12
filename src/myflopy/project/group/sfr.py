@@ -19,6 +19,7 @@ from myflopy.modflow.mf6.package_explorer import (
     build_sfr_stage_result_table,
     get_default_group_compare_colorscale,
 )
+from myflopy.modflow.mf6.package_plotting import refuse_noun_hover_fields
 from myflopy.modflow.mf6.package_surface_water import join_sfr_stage
 from myflopy.modflow.utils.datatypes.hover import compare_hover, dimension_units, sfr_hover
 from myflopy.project.group._shared import (
@@ -306,12 +307,19 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             own parameters (``type``, ``custom_zs``, ``custom_hover``,
             ``hover_heads``, ``hover_ks``) raise ``TypeError``; ``values=``
             REPLACES the drawn differences while the hover keeps them.
+            ``hover_fields`` raises ``TypeError`` (ledger 498): this map builds
+            its own hover, and a ``HoverSpec`` carrying extra fields
+            (``.with_fields(...)``) goes in ``hover_spec=``.
 
         Returns
         -------
         Choro or matplotlib.figure.Figure
             The map picture, or a bare Matplotlib figure with ``backend="mpl"``.
         """
+
+        # The tail ends at the reference model's map verb, which honours
+        # `hover_fields`; this map builds its own hover (ledger 498).
+        refuse_noun_hover_fields(f"{type(self).__name__}.compare_map()", kwargs)
 
         del agg
         target_name = _resolve_group_compare_target(self.group, model_name)

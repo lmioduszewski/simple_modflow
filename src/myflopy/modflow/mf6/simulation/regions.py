@@ -16,6 +16,7 @@ from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.package_explorer_utils import (
     CellNumbering,
     cell_numbering,
+    check_view_layers,
     has_cell_numbering,
 )
 from myflopy.modflow.mf6.period_end import last_saved_step
@@ -870,7 +871,9 @@ def filter_region_heads(
         file gives an empty frame.
     layer : int or list of int or None, optional
         Layer filter applied after the region cells are resolved; ``None`` uses the
-        region's own layer, if any.
+        region's own layer, if any. A layer the model's views do not number -- ONE
+        on a DISU -- raises ``ValueError`` naming the count (ledger 496); it
+        filtered to an empty frame.
 
     Returns
     -------
@@ -891,12 +894,19 @@ def filter_region_heads(
         values = pd.to_numeric(heads[column], errors="coerce")
         heads[column] = values.mask(_is_sentinel(values))
 
-    target_layer = layer if layer is not None else getattr(node, "layer", None)
+    if layer is not None:
+        # A layer the model's views do not number is refused, not filtered to an
+        # empty frame -- ONE layer on a DISU (`check_view_layers`, ledger 496).
+        target_layer = check_view_layers(model.gwf, layer)
+    else:
+        stored = getattr(node, "layer", None)
+        target_layer = (
+            None if stored is None
+            else [int(value) for value in stored] if isinstance(stored, (list, tuple))
+            else [int(stored)]
+        )
     if target_layer is not None:
-        if isinstance(target_layer, list):
-            heads = heads.loc[heads["layer"].isin(target_layer)]
-        else:
-            heads = heads.loc[heads["layer"] == int(target_layer)]
+        heads = heads.loc[heads["layer"].isin(target_layer)]
 
     if kstpkper is not None:
         heads = heads.loc[heads["kstpkper"] == tuple(kstpkper)]

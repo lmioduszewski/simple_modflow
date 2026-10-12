@@ -1104,3 +1104,24 @@ def test_pathline_group_is_matched_as_mf6_wrote_it_and_refused_when_absent(prt_r
     assert view.get(group="west_wells").equals(view.get(group="WEST_WELLS"))
     with pytest.raises(KeyError, match="no release group 'north_wells'"):
         view.get(group="north_wells")
+
+
+def test_a_prt_cell_map_refuses_hover_fields_naming_the_verb(two_group_run):
+    """The travel-time, endpoint and capture maps took `hover_fields` down their tail
+    to the verb, which added the field, while the pathline map refused it -- the user's
+    call is refusal at every noun (ledger 498). `hover=` still carries extras."""
+
+    for call in (
+        lambda **kw: two_group_run.travel_time.map(layer=0, **kw),
+        lambda **kw: two_group_run.endpoints.map(layer=0, **kw),
+        lambda **kw: two_group_run.capture.map(group="WEST", layer=0, **kw),
+        lambda **kw: two_group_run.capture.map(layer=0, **kw),
+    ):
+        with pytest.raises(TypeError, match=r"hover_fields.*model\.plot\.map"):
+            call(hover_fields=["particle_count"])
+    base = two_group_run.travel_time.map(layer=0)
+    extra = two_group_run.travel_time.map(
+        layer=0, hover=base.hover_spec.with_fields("particle_count", title="extra")
+    )
+    assert "EXTRA" in extra.fig.data[0].hovertemplate
+    assert "EXTRA" not in base.fig.data[0].hovertemplate

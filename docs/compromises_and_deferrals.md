@@ -20031,7 +20031,9 @@ same day, which is the useful part of the result.
       `get`s FILTERED to 0 rows, and `hds.array(layer=1)` raised numpy's bare `IndexError`.
       **Judgment call:** a `get` is a filter, but a layer the model does not have is
       refused rather than read as "nothing there". That was also true of a layer past a DIS
-      or DISV model's count, so the refusal changes that too. The group and diff tiers'
+      or DISV model's count, so the refusal changes that too. The review of R1 added
+      `model.region_heads(layer=)`, which also filtered to an empty frame, and the head
+      surface (`plot.surface(layer=)`), which raised pandas' bare `KeyError` at `.fig`. The group and diff tiers'
       `get(layer=)` still filter: their builders run inside `PACKAGE_TABLE_UNAVAILABLE`
       handlers, which would read a `ValueError` as "package missing". `hds.array` keeps
       its documented negative layer (`-1` is the bottom). `to_xugrid(layers=)` was not
@@ -20058,18 +20060,29 @@ same day, which is the useful part of the result.
       connections paired. The key is now `package`/`pname`/`per`/`lake`/`layer`/`cell`/
       `claktype`. Connections that share all of those (a cell the lake reaches through two
       faces) pair in file order, one to one, by ledger 472's rule. Each side's `iconn` is
-      carried as `iconn`/`reference_iconn`.
+      carried as `iconn`/`reference_iconn`. **The limit of file order:** MF6's LAK input
+      and budget name the AQUIFER cell of a connection and never the lake cell whose face
+      it is, so among such duplicates nothing in the files says which face is which. When
+      the footprints differ, the face the reference lacks can take a shared face's place
+      in the order and pair with it: harmless where the two faces' `connlen`/`connwidth`
+      are equal (a DIS grid -- equal faces carry equal flows), a wrong pairing where they
+      are not. Keying on those input floats instead was not done: an edit to either would
+      stop every connection it touches pairing at all.
 
 498. **`hover_fields` is refused at every noun and every group and diff surface; the verb takes it (2026-10-11).**
       This is the user's call on ledger 465's open question. Through a noun's tail the
       option ACTED: it appended a field of the noun's hover context, unchecked, and a name
       the context lacked added nothing. The user chose refusal over naming it on about 18
       signatures. It moved from `NOUN_INERT_PARAMS` to `NOUN_REFUSED_PARAMS`, so
-      `refuse_noun_parameters` refuses it for every single-model noun, the heads and PRT
-      nouns included (their `honours=` covers the per-layer tier only). A group or diff
-      surface never called that helper: its tail goes to the bound map verb. So
-      `refuse_noun_hover_fields` runs in `SpatialView.map` and in the composers'
-      `_facet_panels`/`_frame_panels`. The message points at
+      `refuse_noun_parameters` refuses it for every single-model noun that calls it, the
+      heads and PRT pathline nouns included (their `honours=` covers the per-layer tier
+      only). A group or diff surface never called that helper: its tail goes to the bound
+      map verb. So `refuse_noun_hover_fields` runs in `SpatialView.map` and in the
+      composers' `_facet_panels`/`_frame_panels`. The review found two more tails that
+      reached the verb and still took it: the PRT travel-time, endpoint and capture maps
+      (`_PRTDerivedView._cell_map`), and the seven group `compare_map`s, which every group
+      and diff map ends in but which are public in their own right; both refuse it now, and
+      a structural test holds every `compare_map` under `project/group` to it. The message points at
       `model.plot.map(..., hover_fields=[...])` and at `hover=` a `HoverSpec`
       (`.with_fields(...)`). **Not done:** the rest of `NOUN_REFUSED_PARAMS`
       (`values=`, `type=`, the legacy hover trio) is still not refused at the group and

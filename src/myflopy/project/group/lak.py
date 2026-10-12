@@ -24,6 +24,7 @@ from myflopy.modflow.mf6.package_explorer import (
 )
 from myflopy.modflow.mf6.package_plotting import (
     _apply_backend,
+    refuse_noun_hover_fields,
     refuse_noun_parameters,
     resolve_noun_hover,
 )
@@ -409,12 +410,19 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             own parameters (``type``, ``custom_zs``, ``custom_hover``,
             ``hover_heads``, ``hover_ks``) raise ``TypeError``; ``values=``
             REPLACES the drawn differences while the hover keeps them.
+            ``hover_fields`` raises ``TypeError`` (ledger 498): this map builds
+            its own hover, and a ``HoverSpec`` carrying extra fields
+            (``.with_fields(...)``) goes in ``hover_spec=``.
 
         Returns
         -------
         Choro or matplotlib.figure.Figure
             The map picture, or a bare Matplotlib figure with ``backend="mpl"``.
         """
+
+        # The tail ends at the reference model's map verb, which honours
+        # `hover_fields`; this map builds its own hover (ledger 498).
+        refuse_noun_hover_fields(f"{type(self).__name__}.compare_map()", kwargs)
 
         del agg
         target_name = _resolve_group_compare_target(self.group, model_name)

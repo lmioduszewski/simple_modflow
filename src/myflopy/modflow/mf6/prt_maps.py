@@ -42,6 +42,7 @@ from myflopy.modflow.mf6.package_plotting import (
     _explicit_options,
     as_mpl_figure,
     build_cell_input_map_payload,
+    refuse_noun_hover_fields,
     refuse_noun_parameters,
     resolve_noun_hover,
 )
@@ -343,6 +344,10 @@ class _PRTDerivedView(SpatialView):
         """
 
         kwargs = dict(options or {})
+        # The travel-time, endpoint and capture maps build their own hover, as the
+        # pathline map does; `hover_fields` rode this tail to the verb and added a
+        # field of it (ledger 498).
+        refuse_noun_hover_fields(f"{type(self).__name__}.map()", kwargs)
         reserved = sorted(set(kwargs) & _PRT_MAP_RESERVED)
         if reserved:
             raise TypeError(
@@ -514,7 +519,9 @@ class PRTTravelTimeView(_PRTDerivedView):
             (``type``, ``custom_zs``, ``custom_hover``, ``hover_heads``,
             ``hover_ks``, the legacy ``hover_spec`` -- pass ``hover=`` -- and
             ``value_column``/``fill_value``) raise ``TypeError`` (ledger 479:
-            ``fill_value`` painted every cell no particle reached).
+            ``fill_value`` painted every cell no particle reached), and so does
+            ``hover_fields`` -- this map builds its own hover; extra fields go in
+            ``hover=`` a ``HoverSpec`` (``.with_fields(...)``), ledger 498.
 
         Returns
         -------
@@ -1493,7 +1500,9 @@ class PRTEndpointsView(_PRTDerivedView):
             method sets itself (``type``, ``custom_zs``, ``custom_hover``,
             ``hover_heads``, ``hover_ks``, the legacy ``hover_spec`` -- pass
             ``hover=`` -- and ``value_column``/``fill_value``) raise ``TypeError``
-            (ledger 479).
+            (ledger 479), and so does ``hover_fields`` -- this map builds its own
+            hover; extra fields go in ``hover=`` a ``HoverSpec``
+            (``.with_fields(...)``), ledger 498.
 
         Returns
         -------
@@ -1742,7 +1751,9 @@ class PRTCaptureView(_PRTDerivedView):
             composer, one window for every panel or a list with one per panel.
             ``per=``/``agg=`` and the options this method sets itself (``type``,
             ``custom_zs``, ``custom_hover``, ``hover_heads``, ``hover_ks``,
-            ``hover_spec``, ``value_column``, ``fill_value``) raise ``TypeError``.
+            ``hover_spec``, ``value_column``, ``fill_value``) raise ``TypeError``,
+            as does ``hover_fields`` (ledger 498): each panel builds its own
+            hover.
 
         Returns
         -------

@@ -20,6 +20,7 @@ from myflopy.modflow.mf6.package_explorer import (
     build_group_input_compare_map_payload,
     get_default_group_compare_colorscale,
 )
+from myflopy.modflow.mf6.package_plotting import refuse_noun_hover_fields
 from myflopy.modflow.utils.datatypes.hover import compare_hover
 from myflopy.project.group._shared import (
     _coerce_kstpkper,
@@ -155,12 +156,19 @@ class _GroupStageView(_GroupSpatialView):
             unit; passing them overrides those. The names this method fills itself
             (``type``, ``custom_zs``, ``custom_hover``, ``hover_heads``,
             ``hover_ks``) raise ``TypeError``.
+            ``hover_fields`` raises ``TypeError`` (ledger 498): this map builds
+            its own hover, and a ``HoverSpec`` carrying extra fields
+            (``.with_fields(...)``) goes in ``hover_spec=``.
 
         Returns
         -------
         Choro or matplotlib.figure.Figure
             The map picture, or a bare Matplotlib figure with ``backend="mpl"``.
         """
+
+        # The tail ends at the reference model's map verb, which honours
+        # `hover_fields`; this map builds its own hover (ledger 498).
+        refuse_noun_hover_fields(f"{type(self).__name__}.compare_map()", kwargs)
 
         target_name = _resolve_group_compare_target(self.group, model_name)
         _ensure_group_map_compatible(self.group, target_name)
@@ -542,12 +550,19 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
             itself beyond its own parameters (``type``, ``custom_zs``,
             ``custom_hover``, ``hover_heads``, ``hover_ks``) raise ``TypeError``;
             ``values=`` REPLACES the drawn differences while the hover keeps them.
+            ``hover_fields`` raises ``TypeError`` (ledger 498): this map builds
+            its own hover, and a ``HoverSpec`` carrying extra fields
+            (``.with_fields(...)``) goes in ``hover_spec=``.
 
         Returns
         -------
         Choro or matplotlib.figure.Figure
             The map picture, or a bare Matplotlib figure with ``backend="mpl"``.
         """
+
+        # The tail ends at the reference model's map verb, which honours
+        # `hover_fields`; this map builds its own hover (ledger 498).
+        refuse_noun_hover_fields(f"{type(self).__name__}.compare_map()", kwargs)
 
         target_name = _resolve_group_compare_target(self.group, model_name)
         _ensure_group_map_compatible(self.group, target_name)

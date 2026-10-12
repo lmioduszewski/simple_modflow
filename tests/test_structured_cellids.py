@@ -333,8 +333,13 @@ def test_every_disu_read_view_refuses_a_layer_its_views_do_not_number(runs):
     reader (ledger 496). One refusal, ``check_view_layers``, names the count."""
 
     model = mf.load_mf6_run(runs.disu)
+    model.add_region("r", cellids=[13, 14])
     line = [(0.1, 15.0), (39.9, 15.0)]
     calls = {
+        # The review of R1 (ledger 496): a region's heads FILTERED to 0 rows,
+        # and a head surface raised pandas' bare `KeyError: 1` at `.fig`.
+        "region_heads": lambda: model.region_heads("r", layer=1),
+        "plot.surface": lambda: model.plot.surface(layer=1),
         "hds.get": lambda: model.hds.get(layer=1),
         "hds.array": lambda: model.hds.array(layer=1),
         "chd.results.q.get": lambda: model.chd.results.q.get(layer=1),
@@ -347,9 +352,12 @@ def test_every_disu_read_view_refuses_a_layer_its_views_do_not_number(runs):
     for name, call in calls.items():
         with pytest.raises(ValueError, match=r"outside this model's one layer, 0 .*DISU"):
             call()
+            pytest.fail(f"{name} did not refuse layer=1")
     # Layer 0 -- every node -- still reads, and -1 is the bottom (the one) layer.
     assert len(model.hds.get(layer=0)) == model.modelgrid.nnodes
     assert np.array_equal(model.hds.array(layer=-1), model.hds.array(layer=0))
+    assert sorted(model.region_heads("r", layer=0)["cell"]) == [13, 14]
+    assert model.plot.surface(layer=0).fig is not None
 
 
 def test_a_dis_read_view_refuses_a_layer_off_the_grid(runs):
@@ -362,6 +370,12 @@ def test_a_dis_read_view_refuses_a_layer_off_the_grid(runs):
         model.chd.results.q.get(layer=[0, 2, 5])
     with pytest.raises(ValueError, match="outside this model's 2 layers"):
         model.hds.array(layer=-3)
+    model.add_region("r", cellids=[0, 1])
+    with pytest.raises(ValueError, match=r"layers \[2\] are outside|layer=2 is outside"):
+        model.region_heads("r", layer=[0, 2])
+    with pytest.raises(ValueError, match="layer=2 is outside this model's 2 layers"):
+        model.plot.surface(layer=2)
+    assert set(model.region_heads("r", layer=(0, 1))["layer"]) == {0, 1}
     assert set(model.hds.get(layer=[0, 1])["layer"]) == {0, 1}
 
 

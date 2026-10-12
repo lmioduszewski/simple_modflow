@@ -607,3 +607,50 @@ def test_a_group_or_diff_surface_refuses_hover_fields(toys):
     with pytest.raises(TypeError, match="hover_fields"):
         diff.hds.animate(over="model", hover_fields=["x"])
     assert toys["dry"].plot.map(hover_fields=["x"]).fig
+
+
+def test_a_group_compare_map_refuses_hover_fields(toys, lakes):
+    """``compare_map`` -- what every group and diff map ends in -- forwarded its tail
+    to the reference model's map verb, which honours ``hover_fields``: a field of the
+    comparison hover (``reference_stage``) was added, unchecked. The review of R1
+    refuses it there too (ledger 498); ``hover_spec=`` still carries extras."""
+
+    group = mf.ModelGroup({"wet": toys["wet"], "dry": toys["dry"]}, reference="wet")
+    lake = mf.ModelGroup({"small": lakes["small"], "grown": lakes["grown"]},
+                         reference="small")
+    for compare_map in (group.hds.compare_map, group.packages.chd.results.q.compare_map,
+                        group.packages.chd.inputs.compare_map,
+                        lake.packages.lak.results.q.compare_map,
+                        lake.packages.lak.results.stage.compare_map):
+        with pytest.raises(TypeError, match=r"compare_map\(\) does not accept hover_fields"):
+            compare_map(hover_fields=["reference_stage"])
+    plain = lake.packages.lak.results.stage.compare_map(per=0)
+    extra = lake.packages.lak.results.stage.compare_map(
+        per=0, hover_spec=plain.hover_spec.with_fields("reference_stage", title="extra")
+    )
+    assert "EXTRA" in extra.fig.data[0].hovertemplate
+    assert "EXTRA" not in plain.fig.data[0].hovertemplate
+
+
+def test_every_group_compare_map_refuses_hover_fields():
+    """Structural: each ``compare_map`` under ``project/group`` calls
+    ``refuse_noun_hover_fields`` on its tail (ledger 498) -- seven definitions,
+    and the SFR and UZF ones have no small fixture here."""
+
+    import ast
+    from pathlib import Path
+
+    import myflopy.project.group as group_package
+
+    root = Path(group_package.__file__).parent
+    found = {}
+    for path in sorted(root.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.FunctionDef) and node.name == "compare_map":
+                calls = {
+                    call.func.id for call in ast.walk(node)
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                }
+                found[f"{path.name}:{node.lineno}"] = "refuse_noun_hover_fields" in calls
+    assert len(found) >= 7, found
+    assert all(found.values()), [where for where, ok in found.items() if not ok]

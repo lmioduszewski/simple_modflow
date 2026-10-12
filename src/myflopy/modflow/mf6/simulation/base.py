@@ -1916,7 +1916,10 @@ class SimulationBase:
         layer : int or list of int or None, optional
             Zero-based layer (or list of layers) to keep. Default ``None`` uses the
             layer stored on the region (a GROUP carries none, so every layer is
-            kept), and keeps every layer when that is ``None`` too.
+            kept), and keeps every layer when that is ``None`` too. A layer the
+            model's views do not number -- ONE on a DISU, whatever FloPy infers
+            from ``IHC`` -- raises ``ValueError`` naming the count (ledger
+            496); it filtered to an empty frame.
 
         Returns
         -------

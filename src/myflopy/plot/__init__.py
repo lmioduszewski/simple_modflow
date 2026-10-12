@@ -1145,7 +1145,9 @@ def surface(
     source : SimulationBase or VoronoiGridPlus
         Positional only.
     layer : int, default 0
-        Zero-based layer to interpolate.
+        Zero-based layer to interpolate. On a head (``surf_type='hds'``) surface
+        of a model, a layer the model's views do not number -- ONE on a DISU --
+        raises ``ValueError`` naming the count (ledger 496).
     per : int, optional
         Stress period (0-based), drawn at its LAST saved step, as on ``map`` and
         ``section`` (ledger 337). Mutually exclusive with ``kstpkper``: both
@@ -2081,7 +2083,9 @@ class ModelPlots:
         Parameters
         ----------
         layer : int, default 0
-            Zero-based layer to interpolate.
+            Zero-based layer to interpolate. On a head (``surf_type='hds'``) surface
+            of a model, a layer the model's views do not number -- ONE on a DISU --
+            raises ``ValueError`` naming the count (ledger 496).
         per : int, optional
             Stress period (0-based), drawn at its LAST saved step, as on ``map`` and
             ``section`` (ledger 337). Mutually exclusive with ``kstpkper``: both

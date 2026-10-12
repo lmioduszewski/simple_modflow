@@ -213,7 +213,8 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         dry) included: every view of it -- :meth:`get`, :meth:`long`, :meth:`wide`,
         :meth:`array`, :meth:`get_obs_heads`, ``model.region_heads``, the maps,
         the sections and the group and diff tiers -- reads them as ``NaN``
-        (ledger 315; the last two readers since ledger 495). A calibration
+        (ledger 315; :meth:`get_obs_heads` and ``model.region_heads`` since
+        ledger 495). A calibration
         TARGET is not a view: what a head target hands PEST keeps the number
         (ledgers 351, 355).
         """
