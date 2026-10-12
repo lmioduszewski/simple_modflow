@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 494 entries (499 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 495 entries (500 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 497 | The group and diff LAK exchange compare pairs a connection by where it sits, not by `iconn` | 2026-10-11 |
 | 494 | A USG export changes only the values whose copies differ, and a RIV warns only on differing `rbot`s | 2026-10-11 |
 | 493 | A USG export weights a shared cell's DRN/GHB/RIV elevations by conductance | 2026-10-11 |
 | 492 | A package artifact keeps an EMPTY period block, and the restored package runs as the original did | 2026-10-11 |
@@ -19821,7 +19822,10 @@ same day, which is the useful part of the result.
       LAK dropped 2 of the canonical lake's 72 connections at period 3 because MF6's wetted
       `FLOW-AREA` was a key. Both now reduce each member through `_reduce_to_period_end`
       (`period_end.at_last_saved_steps`, ledger 348). **Judgment calls:** a LAK connection
-      is paired on `package`/`per`/`lake`/`iconn`/`layer`/`cell`/`claktype` -- never on
+      is paired on ~~`package`/`per`/`lake`/`iconn`/`layer`/`cell`/`claktype`~~
+      `package`/`per`/`lake`/`layer`/`cell`/`claktype`, duplicates in file order --
+      `iconn` dropped by ledger 497, since MF6 renumbers it when a footprint
+      changes -- never on
       geometry, whose change is the inputs diff's question -- and `flow_area` is
       differenced beside `q_lake`/`q_per_area` rather than dropped; `group.bud` keys on
       `_stable_compare_keys` (integer and text columns), so a float auxiliary is no longer
@@ -19991,3 +19995,14 @@ same day, which is the useful part of the result.
       (h = 6.0: 250.0 both; `docs/reproducers/usg_export_shared_cell_elevation.py`). The
       warning, `cells_inexact` and the manifest note now count a DRN's differing `elev`,
       a RIV's differing `rbot` and a CHD's differing head.
+
+497. **The group and diff LAK exchange compare pairs a connection by where it sits, not by `iconn` (2026-10-11).**
+      MF6 numbers a lake's connections by their position in its list. A footprint one cell
+      larger therefore renumbers every connection after the new one, and the join that
+      keyed on `iconn` dropped them all, silently. Measured on two real runs: one lake on
+      cells 12 and 13, the other with cell 7 added first. Zero of the two shared
+      connections paired. The key is now `package`/`pname`/`per`/`lake`/`layer`/`cell`/
+      `claktype`. Connections that share all of those (a cell the lake reaches through two
+      faces) pair in file order, one to one, by ledger 472's rule. Each side's `iconn` is
+      carried as `iconn`/`reference_iconn`.
+

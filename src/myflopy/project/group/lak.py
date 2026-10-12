@@ -70,10 +70,13 @@ def _one_stage_per_lake(table: pd.DataFrame) -> pd.DataFrame:
 
 
 #: What a LAK connection IS, for pairing one member's with the reference's: the
-#: package, the period, the lake and its connection number, where it sits and its
-#: type. Never a float -- the geometry is the inputs diff's question, and MF6's
-#: wetted ``FLOW-AREA`` moves with the stage (ledger 485).
-_LAK_CONNECTION_KEYS = ("package", "pname", "per", "lake", "iconn", "layer", "cell", "claktype")
+#: package, the period, the lake, where it sits and its type. Never a float -- the
+#: geometry is the inputs diff's question, and MF6's wetted ``FLOW-AREA`` moves
+#: with the stage (ledger 485). NOT ``iconn``: it is the connection's POSITION in
+#: the lake's list, so a footprint one cell larger renumbers every connection
+#: after the new one, and the join keyed on it paired none of them
+#: (ledger 497). Connections sharing all of these pair in file order instead.
+_LAK_CONNECTION_KEYS = ("package", "pname", "per", "lake", "layer", "cell", "claktype")
 
 
 class GroupLakBudgetResults(GroupCellPackageResults):
@@ -184,9 +187,14 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         Each member is first reduced to its own LAST saved step of every period
         (``_reduce_to_period_end``, ledger 348), so members of different ``nstp``
         align by stress period, and a connection is paired with the reference's
-        by its IDENTITY -- ``package``, ``per``, ``lake``, ``iconn``, ``layer``,
-        ``cell`` and ``claktype`` -- by an inner join, so a connection only one
-        member has is dropped (``diff.packages.lak.inputs`` lists it). Until
+        by its IDENTITY -- ``package``, ``per``, ``lake``, ``layer``, ``cell``
+        and ``claktype`` -- by an inner join, so a connection only one member has
+        is dropped (``diff.packages.lak.inputs`` lists it). Connections sharing
+        all of those (a cell a lake reaches through two faces) pair in file
+        order, one to one. ``iconn`` is not a key: MF6 numbers a lake's
+        connections by position, so a footprint one cell larger renumbers the
+        connections after it, and the join on ``iconn`` dropped every one of them
+        silently until ledger 497. Until
         ledger 485 the join also matched ``kstpkper`` EXACTLY (with one step
         against two, the reference's period end against the other member's FIRST
         step) and every float column, MF6's wetted ``FLOW-AREA`` included, so a
@@ -219,7 +227,8 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         -------
         pandas.DataFrame
             ``model``, ``reference_model``, ``kstpkper`` (the compared member's own
-            step), the identity keys, then ``q_lake``, ``reference_q_lake``,
+            step), the identity keys, ``iconn`` and ``reference_iconn`` (each
+            side's own connection number), then ``q_lake``, ``reference_q_lake``,
             ``q_lake_diff`` and the same three for ``q_per_area`` and for
             ``flow_area`` (MF6's wetted area, length^2) -- each difference member
             minus reference, the lake's sign. Empty when :meth:`get` is.
@@ -236,11 +245,27 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             column for column in (q, "q_per_area", "flow_area") if column in data.columns
         ]
         key_columns = [column for column in _LAK_CONNECTION_KEYS if column in data.columns]
-        ref = data[data["model"] == reference][key_columns + value_columns].copy()
-        ref = ref.rename(columns={column: f"reference_{column}" for column in value_columns})
-        comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
+        carried = ["iconn"] if "iconn" in data.columns else []
+        # Connections sharing every key pair in file order, one to one (ledger
+        # 472's rule, as `group.bud`): `cumcount` within the keys, on the table's
+        # own order, which is MF6's connection order.
+        data = data.assign(
+            _record=data.groupby(["model", *key_columns], sort=False, dropna=False).cumcount()
+        )
+        ref = data[data["model"] == reference][
+            [*key_columns, "_record", *carried, *value_columns]
+        ].copy()
+        ref = ref.rename(
+            columns={column: f"reference_{column}" for column in [*carried, *value_columns]}
+        )
+        comp = data[data["model"] != reference].merge(
+            ref, on=[*key_columns, "_record"], how="inner"
+        ).drop(columns=["_record"])
         comp["reference_model"] = reference
-        ordered = ["model", "reference_model", "kstpkper", *key_columns]
+        ordered = [
+            "model", "reference_model", "kstpkper", *key_columns,
+            *[name for column in carried for name in (column, f"reference_{column}")],
+        ]
         for column in value_columns:
             comp[f"{column}_diff"] = (
                 comp[column].astype(float) - comp[f"reference_{column}"].astype(float)

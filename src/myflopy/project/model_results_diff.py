@@ -582,8 +582,11 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
           it was renamed ``sat`` beside it until ledger 471, and this
           raised).
         - LAK's ``results.q``: reduced the same way, and joined on the
-          connection's identity -- ``package``, ``per``, ``lake``, ``iconn``,
-          ``layer``, ``cell``, ``claktype`` -- never on a float. ``q_lake`` is the
+          connection's identity -- ``package``, ``per``, ``lake``, ``layer``,
+          ``cell``, ``claktype`` -- never on a float, connections sharing all of
+          it pairing in file order. Not on ``iconn``, which MF6 renumbers when a
+          footprint gains a cell: the join keyed on it dropped every connection
+          after the new one (ledger 497). ``q_lake`` is the
           lake's frame, positive INTO the lake; ``q_per_area`` and MF6's wetted
           ``flow_area`` are differenced beside it. Until ledger 485 it was
           joined on the exact ``kstpkper`` and on every float column: a member at

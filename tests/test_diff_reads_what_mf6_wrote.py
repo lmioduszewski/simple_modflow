@@ -15,6 +15,10 @@ Real MF6 runs, small enough to build per module:
              in the groundwater budget file and SFR's ``FROM-MVR`` in its own; the
              diff read ``FROM-MVR``/``TO-MVR`` from the former and was always empty
              (ledger 486).
+``lakes``    a 5 x 5 DIS model whose one lake sits VERTICALLY on cells 12 and 13,
+             and the same with cell 7 added FIRST: MF6 numbers a lake's
+             connections by position, so the two shared cells are ``iconn`` 0, 1
+             in one run and 1, 2 in the other (ledger 497).
 ``steps``    the canonical model on its testing grid (six 30-day periods, a 72-
              connection lake, an SFR-to-lake mover) at one time step per period and
              at two: a period is its END on both, and the LAK join keyed on the
@@ -200,6 +204,48 @@ def movers(tmp_path_factory):
     return runs
 
 
+def _lake(workspace, cells):
+    """The 5 x 5 one-lake model; the lake's VERTICAL connections are ``cells``, in order."""
+
+    sim = flopy.mf6.MFSimulation(sim_name="k", sim_ws=str(workspace), exe_name="mf6",
+                                 verbosity_level=0)
+    flopy.mf6.ModflowTdis(sim, nper=1, perioddata=[(1.0, 1, 1.0)])
+    flopy.mf6.ModflowIms(sim, complexity="MODERATE", linear_acceleration="BICGSTAB")
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="k", save_flows=True)
+    flopy.mf6.ModflowGwfdis(gwf, nlay=1, nrow=5, ncol=5, delr=100.0, delc=100.0,
+                            top=10.0, botm=[-10.0])
+    flopy.mf6.ModflowGwfnpf(gwf, k=10.0)
+    flopy.mf6.ModflowGwfic(gwf, strt=8.0)
+    flopy.mf6.ModflowGwfchd(gwf, stress_period_data=(
+        [[(0, r, 0), 9.0] for r in range(5)] + [[(0, r, 4), 7.0] for r in range(5)]
+    ))
+    flopy.mf6.ModflowGwflak(
+        gwf, save_flows=True, budget_filerecord="k_lak.bud", stage_filerecord="k_lak.stg",
+        nlakes=1, noutlets=0, ntables=0, packagedata=[[0, 8.5, len(cells)]],
+        connectiondata=[[0, i, (0, cell // 5, cell % 5), "VERTICAL", 1.0, 0.0, 0.0, 0.0, 0.0]
+                        for i, cell in enumerate(cells)],
+        perioddata={0: [[0, "RAINFALL", 0.001]]},
+    )
+    flopy.mf6.ModflowGwfoc(gwf, budget_filerecord="k.cbc", head_filerecord="k.hds",
+                           saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")])
+    return _write_run(sim, workspace)
+
+
+@pytest.fixture(scope="module")
+def lakes(tmp_path_factory):
+    """``small`` (cells 12, 13) and ``grown`` (cell 7 first, then 12, 13)."""
+
+    root = tmp_path_factory.mktemp("diff_lakes")
+    runs = {"small": _lake(root / "small", [12, 13]), "grown": _lake(root / "grown", [7, 12, 13])}
+    # What MF6 wrote, read with FloPy: the shared cells are renumbered.
+    for name, expected in (("small", {12: 0, 13: 1}), ("grown", {7: 0, 12: 1, 13: 2})):
+        sim = flopy.mf6.MFSimulation.load(sim_ws=str(root / name), verbosity_level=0,
+                                          load_only=["lak"])
+        rows = sim.get_model().lak.connectiondata.get_data()
+        assert {int(r["cellid"][1]) * 5 + int(r["cellid"][2]): int(r["iconn"]) for r in rows} == expected
+    return runs
+
+
 @pytest.fixture(scope="module")
 def steps(tmp_path_factory):
     """The canonical model run at one and at two time steps per period, reloaded."""
@@ -321,6 +367,23 @@ def test_a_connection_whose_wetted_area_moved_still_pairs(steps, monkeypatch):
     wet = compared["reference_flow_area"] > 0
     assert np.allclose(compared.loc[wet, "flow_area_diff"],
                        0.5 * compared.loc[wet, "reference_flow_area"])
+
+
+def test_lak_exchange_pairs_a_connection_whose_iconn_moved(lakes):
+    """The footprint gained cell 7 FIRST, so cells 12 and 13 are ``iconn`` 1, 2
+    where the reference has 0, 1: keyed on ``iconn`` nothing paired, silently
+    (ledger 497)."""
+
+    group = mf.ModelGroup({"small": lakes["small"], "grown": lakes["grown"]},
+                          reference="small")
+    compared = group.packages.lak.results.q.compare()
+    assert sorted(compared["cell"]) == [12, 13]
+    assert compared.set_index("cell")[["iconn", "reference_iconn"]].to_dict("index") == {
+        12: {"iconn": 1, "reference_iconn": 0}, 13: {"iconn": 2, "reference_iconn": 1},
+    }
+    assert np.isfinite(compared["q_lake_diff"]).all()
+    diffed = group.diff().packages.lak.results.q.get()
+    assert sorted(diffed["cell"]) == [12, 13]
 
 
 def test_group_budget_compares_each_period_end(steps):
