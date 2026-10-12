@@ -4631,8 +4631,6 @@
     "TriangleGrid.build_mesh": [
       "profile:KEYWORD_ONLY='balanced'",
       "optimize:KEYWORD_ONLY=None",
-      "protected_labels:KEYWORD_ONLY=None",
-      "protect_sources:KEYWORD_ONLY=('line',)",
       "verbose:KEYWORD_ONLY=False",
       "overrides:VAR_KEYWORD=<required>"
     ],
@@ -4647,7 +4645,6 @@
       "optimization_iterations:KEYWORD_ONLY=3",
       "damping:KEYWORD_ONLY=0.35",
       "min_move:KEYWORD_ONLY=0.001",
-      "protected_labels:KEYWORD_ONLY=None",
       "verbose:KEYWORD_ONLY=False"
     ],
     "TriangleGrid.clean_geometry": [
@@ -4674,7 +4671,6 @@
       "iterations:KEYWORD_ONLY=3",
       "damping:KEYWORD_ONLY=0.35",
       "min_move:KEYWORD_ONLY=0.001",
-      "protected_labels:KEYWORD_ONLY=None",
       "verbose:KEYWORD_ONLY=False"
     ],
     "TriangleGrid.prepare": [],

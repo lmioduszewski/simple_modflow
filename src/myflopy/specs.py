@@ -2559,26 +2559,6 @@ def _validate_concrete_packages(packages: Iterable[PackageSpec]) -> None:
                 )
 
 
-# Mesh options that were REMOVED, not merely unknown: a spec saved while they were
-# routed still carries them, and filtering them at resolve as any other stray key
-# would drop a setting the caller wrote, in silence (ledger 445).
-_REMOVED_MESH_OPTIONS = ("protect_sources", "protected_labels")
-
-
-def _refuse_removed_mesh_options(owner: str, carriers) -> None:
-    """Raise ``TypeError`` when any ``(where, mapping)`` in ``carriers`` holds a removed mesh option."""
-
-    for where, carried in carriers:
-        for key in _REMOVED_MESH_OPTIONS:
-            if carried and key in carried:
-                raise TypeError(
-                    f"{owner} carries {where}{{{key!r}: ...}}, which was removed (ledger "
-                    f"445): which vertices mesh optimization holds fixed is no longer "
-                    f"configurable -- every refinement ring's, and those near a 'line' "
-                    f"band's ring, as the old default held them. Delete the key."
-                )
-
-
 @dataclass(frozen=True, slots=True)
 class GridSpec:
     """A deferred recipe for the grid a model is built on.
@@ -3276,9 +3256,6 @@ class GridSpec:
                     "context=...); to exclude cells from the grid's edge, use "
                     "idomain_path= (a vector file covering the inactive cells)."
                 )
-        _refuse_removed_mesh_options(
-            "GridSpec.voronoi()", (("options=", options), ("mesh_options=", mesh_options))
-        )
         boundary = _grid_source(boundary, "boundary")
         if refinement is not None:
             refinement = _grid_source(refinement, "refinement")
@@ -3336,6 +3313,11 @@ class GridSpec:
                 merged_voronoi_options[key] = value
             elif key in _VORONOI_OPTION_KEYS:
                 merged_options[key] = value
+            elif key in _GRID_REMOVED_OPTION_KEYS:
+                raise TypeError(
+                    f"GridSpec.voronoi() got {key}=, which "
+                    f"{_GRID_REMOVED_OPTION_KEYS[key]}; delete it."
+                )
             else:
                 near = difflib.get_close_matches(
                     key, sorted(_VORONOI_OPTION_KEYS), n=1, cutoff=0.6
@@ -3687,6 +3669,16 @@ _GRID_REMOVED_OPTION_KEYS: dict[str, str] = {
     "max_optimization_points": (
         "was removed (ledger 410): it was only echoed into the optimizer's report and "
         "never applied, so deleting it changes no mesh"
+    ),
+    "protect_sources": (
+        "was removed (ledger 445): which vertices mesh optimization holds fixed is no "
+        "longer configurable -- every refinement ring's, and those near a 'line' band's "
+        "ring, as the old default held them"
+    ),
+    "protected_labels": (
+        "was removed (ledger 445): which vertices mesh optimization holds fixed is no "
+        "longer configurable -- every refinement ring's, and those near a 'line' band's "
+        "ring, as the old default held them"
     ),
 }
 #: Spellings of ONE option, each group in the order the resolver reads them: it

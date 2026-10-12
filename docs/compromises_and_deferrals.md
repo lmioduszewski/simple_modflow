@@ -18946,9 +18946,11 @@ same day, which is the useful part of the result.
       Passing either raises `TypeError` -- `build_mesh` now refuses ANY unknown override in
       every mode, where its non-optimizing modes used to ignore one (a typo meshed at the
       default in silence). A spec carrying either key in `options`/`mesh_options` is
-      refused by `GridSpec.voronoi` and, when saved earlier, at resolve, naming the key
-      -- not filtered like ledger 410's `max_optimization_points`: that one never acted,
-      these did. The report's `protected_label_count`/`protected_labels` are gone.
+      refused by `GridSpec.voronoi` and, when saved earlier, at resolve, naming the key,
+      through ledger 417's one table of removed option keys (`_GRID_REMOVED_OPTION_KEYS`,
+      beside ledger 410's `max_optimization_points`) -- this branch was written before 417
+      and carried a second refusal helper of its own, folded into that table when it
+      landed. The report's `protected_label_count`/`protected_labels` are gone.
       **Judgment call: the ring-proximity hold was NOT removed with them.** Ledger 411's
       "protection changes no mesh" was measured on one domain. On the refined workflow
       domain (`tests/test_mf6_refactor_smoke.py`, `refined_end_to_end_preferred_api_workflow

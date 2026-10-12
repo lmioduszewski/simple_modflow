@@ -410,11 +410,11 @@ def test_protection_options_are_gone_everywhere(tmp_path):
     assert not any("protect" in key for key in tri.build_mesh(profile="clean"))
 
     boundary = mf.ShapeSource(tmp_path / "domain.gpkg")
-    with pytest.raises(TypeError, match="protect_sources"):
+    with pytest.raises(TypeError, match=r"got protect_sources=, which was removed \(ledger 445\)"):
         mf.GridSpec.voronoi(boundary=boundary, protect_sources=("line",))
     for where in ("options", "mesh_options"):
         for key in ("protect_sources", "protected_labels"):
-            with pytest.raises(TypeError, match=rf"{where}=\{{'{key}': \.\.\.\}}, which was removed"):
+            with pytest.raises(TypeError, match=rf"{where} holds '{key}'.*was removed \(ledger 445\)"):
                 mf.GridSpec.voronoi(boundary=boundary, **{where: {key: ("line",)}})
 
 
@@ -431,7 +431,7 @@ def test_a_saved_gridspec_carrying_a_removed_mesh_option_is_refused_at_resolve(t
     ).to_dict()
     payload[where] = {**payload.get(where, {}), key: ["river"]}
     restored = mf.GridSpec.from_dict(payload)
-    with pytest.raises(TypeError, match=rf"GridSpec 'saved' carries {where}=\{{'{key}'"):
+    with pytest.raises(TypeError, match=rf"GridSpec 'saved': {where} holds '{key}'.*was removed \(ledger 445\)"):
         restored.resolve(workspace=tmp_path / "ws")
 
 
