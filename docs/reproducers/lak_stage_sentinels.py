@@ -31,7 +31,9 @@ WHAT IT MEASURES
 
 from __future__ import annotations
 
+import atexit
 import pathlib
+import shutil
 import tempfile
 import warnings
 
@@ -93,6 +95,7 @@ def _show(values) -> str:
 
 def main() -> None:
     root = pathlib.Path(tempfile.mkdtemp(prefix="lak_stage_sentinels_"))
+    atexit.register(shutil.rmtree, root, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
     dry = _run(root / "dry", withdrawal=300.0, switch=True)
     wet = _run(root / "wet", withdrawal=0.0, switch=False)
     raw = dry.outputs.lak.stage.get(masked=False)

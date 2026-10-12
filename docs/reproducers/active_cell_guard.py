@@ -30,7 +30,9 @@ PART 3 -- the cost of the list walk the guard adds: a 654,480-record list (72 pe
 
 from __future__ import annotations
 
+import atexit
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import time
@@ -47,6 +49,7 @@ from myflopy.specs import ModelContext
 
 warnings.simplefilter("ignore")
 WORK = pathlib.Path(tempfile.mkdtemp(prefix="active_cell_guard_"))
+atexit.register(shutil.rmtree, WORK, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
 RATE = 1e-3
 
 

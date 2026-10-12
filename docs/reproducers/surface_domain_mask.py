@@ -35,7 +35,9 @@ WHAT IT MEASURES
 
 from __future__ import annotations
 
+import atexit
 import pathlib
+import shutil
 import tempfile
 import warnings
 
@@ -63,7 +65,9 @@ def _l_grid(root: pathlib.Path):
 
 def main() -> None:
     warnings.simplefilter("ignore")
-    grid = _l_grid(pathlib.Path(tempfile.mkdtemp()))
+    root = pathlib.Path(tempfile.mkdtemp())
+    atexit.register(shutil.rmtree, root, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
+    grid = _l_grid(root)
     xs = np.asarray(grid.centroids_x, dtype=float)
     ys = np.asarray(grid.centroids_y, dtype=float)
     zs = 100.0 + 0.01 * xs + 0.02 * ys

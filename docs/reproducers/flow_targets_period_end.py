@@ -53,7 +53,9 @@ WHAT IT MEASURES
 
 from __future__ import annotations
 
+import atexit
 import pathlib
+import shutil
 import tempfile
 import warnings
 
@@ -174,6 +176,7 @@ def _try(call) -> str:
 
 def main() -> None:
     root = pathlib.Path(tempfile.mkdtemp(prefix="flow_targets_period_end_"))
+    atexit.register(shutil.rmtree, root, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
     last = len(REACHES) - 1
 
     print("1. SAVE ALL, nstp=3: a period's steps added, before; the step that ends it, after")

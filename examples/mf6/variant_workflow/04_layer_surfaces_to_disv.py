@@ -21,6 +21,8 @@ Run:
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -32,7 +34,9 @@ HERE = Path(__file__).resolve().parent
 def voronoi_grid() -> mf.VoronoiGridPlus:
     """Build one Voronoi mesh over a 1000 x 600 rectangular domain."""
 
-    tri = mf.TriangleGrid(model_ws=tempfile.mkdtemp(), angle=30)
+    triangle_ws = tempfile.mkdtemp()  # Triangle's working files, removed at exit
+    atexit.register(shutil.rmtree, triangle_ws, ignore_errors=True)
+    tri = mf.TriangleGrid(model_ws=triangle_ws, angle=30)
     tri.set_domain_rectangle(x_dist=1000, y_dist=600, origin=(0, 0), max_area=12000)
     tri.build()
     return mf.VoronoiGridPlus(tri)

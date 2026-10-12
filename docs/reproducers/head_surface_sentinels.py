@@ -36,7 +36,9 @@ WHAT IT MEASURES
 
 from __future__ import annotations
 
+import atexit
 import pathlib
+import shutil
 import tempfile
 import warnings
 
@@ -117,6 +119,7 @@ def _compare(model, vor, lo: float, hi: float) -> None:
 def main() -> None:
     warnings.simplefilter("ignore")
     root = pathlib.Path(tempfile.mkdtemp())
+    atexit.register(shutil.rmtree, root, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
     vor = _grid(root)
     x = np.asarray(vor.centroids_x, dtype=float)
     y = np.asarray(vor.centroids_y, dtype=float)

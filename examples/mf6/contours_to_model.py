@@ -30,7 +30,11 @@ another surface -- and differing resolutions need no pre-alignment, since every
 surface is area-weighted onto the same Voronoi cells.
 
 Run it directly and it builds its own raster + contour fixtures, so it works with
-no data of your own; the comments mark exactly where to swap yours in.
+no data of your own; the comments mark exactly where to swap yours in. It works in a
+scratch directory it removes when it exits; name a directory to keep the project,
+its run and the two pictures there::
+
+    python examples/mf6/contours_to_model.py my_valley
 
 **GRASS prerequisites.** ``mf.Contours`` shells out to GRASS GIS, a **system**
 dependency that ``pip`` does not supply: install it with your package manager
@@ -51,6 +55,8 @@ Reference: ``docs/model_building_cheatsheet.md``.
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -274,8 +280,15 @@ def surfaces_without_grass(contours_gpkg: Path) -> mf.Surface:
     return mf.Points(xs, ys, zs, method="linear")
 
 
-def main() -> int:
-    root = Path(tempfile.mkdtemp(prefix="contours_to_model_"))
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv:
+        root = Path(argv[0]).resolve()   # yours: kept
+        root.mkdir(parents=True, exist_ok=True)
+    else:
+        # /tmp is often a small, quota'd tmpfs: scratch is removed at exit.
+        root = Path(tempfile.mkdtemp(prefix="contours_to_model_"))
+        atexit.register(shutil.rmtree, root, ignore_errors=True)
     project, _, layering, vor = build(root)
 
     run = project.prepare_run("baseline", "baseline")

@@ -93,8 +93,7 @@ OFFSETS = ((0.0, 0.0), (1.2e6, 6.5e5), (5e6, 5e6))
 
 
 def _build(path: str, domain: Polygon, max_area: float, angle: float, profile: str | None,
-           root: pathlib.Path | None = None):
-    root = pathlib.Path(tempfile.mkdtemp()) if root is None else root
+           root: pathlib.Path):
     if path == "flopy":
         tri = Triangle(model_ws=str(root), angle=angle, maximum_area=max_area)
         tri.add_polygon(domain)

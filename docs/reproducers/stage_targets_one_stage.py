@@ -49,7 +49,9 @@ WHAT IT MEASURES
 
 from __future__ import annotations
 
+import atexit
 import pathlib
+import shutil
 import sys
 import tempfile
 import warnings
@@ -184,6 +186,7 @@ def _lake(model, names: dict[str, int], *, label: str) -> None:
 
 def main() -> None:
     root = pathlib.Path(tempfile.mkdtemp(prefix="stage_targets_one_stage_"))
+    atexit.register(shutil.rmtree, root, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
 
     print("1. a lake: its stage once per connected cell, before; once, after")
     lake = _lake_model(root / "lake")

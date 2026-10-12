@@ -21,11 +21,18 @@ self-contained and converges; the comments mark exactly where you would swap in
 your own geopackages, rasters and Excel/CSV tables.
 
 Run it directly to build + execute, or import :func:`build_full_stack_project`.
+Run directly, it works in a scratch directory it removes when it exits; name a
+directory to keep the project and its run there::
+
+    python examples/mf6/package_first_full_stack.py my_valley
 """
 
 from __future__ import annotations
 
+import atexit
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -204,10 +211,15 @@ def build_full_stack_project(root: Path | str, *, ncol: int = 22, nrow: int = 16
     return project, simulation
 
 
-def main() -> int:
-    import tempfile
-
-    root = Path(tempfile.mkdtemp(prefix="full_stack_demo_"))
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv:
+        root = Path(argv[0]).resolve()   # yours: kept
+        root.mkdir(parents=True, exist_ok=True)
+    else:
+        # /tmp is often a small, quota'd tmpfs: scratch is removed at exit.
+        root = Path(tempfile.mkdtemp(prefix="full_stack_demo_"))
+        atexit.register(shutil.rmtree, root, ignore_errors=True)
     project, _ = build_full_stack_project(root)
     run = project.prepare_run("baseline", "baseline")   # builds in memory
     success, report = run.execute()                     # writes + runs MF6

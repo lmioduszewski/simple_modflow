@@ -80,6 +80,7 @@ WHAT IT MEASURES
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import subprocess
@@ -531,7 +532,10 @@ def section_10(ws: Path, bed: Path) -> None:
 
 
 def main() -> None:
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix="lak_claims_"))
+    given = len(sys.argv) > 1
+    root = Path(sys.argv[1]) if given else Path(tempfile.mkdtemp(prefix="lak_claims_"))
+    if not given:  # a directory the caller named is theirs to keep
+        atexit.register(shutil.rmtree, root, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
     root.mkdir(parents=True, exist_ok=True)
     bed = root / "bed.tif"
     with rasterio.open(bed, "w", driver="GTiff", height=2, width=2, count=1, dtype="float64",

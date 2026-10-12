@@ -29,9 +29,11 @@ suite read their SOURCE or not at all (ledger 444):
 Each runs as a reader would: the scripts in a subprocess, the notebook's code cells
 in order in one namespace, with each cell's last expression and every ``display``
 argument RENDERED as Jupyter would -- a picture assembles its figure lazily, so
-executing the code alone draws nothing. The scripts write under
-``tempfile.mkdtemp()``, so TMPDIR points at the test's own directory and its teardown
-removes what they leave.
+executing the code alone draws nothing. A script's TMPDIR is a directory of its own,
+and a run that leaves anything there FAILS naming it (ledger 460): /tmp is a
+quota'd tmpfs, and fifteen scripts left their ``mkdtemp()`` behind (12 MB a run for
+``flow_targets_period_end.py``). ``tests/test_scripts_clean_up_their_scratch.py`` holds every script
+to the same rule statically.
 """
 
 from __future__ import annotations
@@ -50,12 +52,24 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _run_script(script: Path, tmp_path: Path, *, timeout: float = 600.0) -> str:
-    """Run ``script`` with this checkout's ``src`` first and its temp root in ``tmp_path``."""
+#: What a run may leave in its TMPDIR: pyEMU's ``PortManager`` makes ``port_locks``
+#: once, under a fixed name (ledger 335's allowance).
+_TMP_ALLOWED = {"port_locks"}
 
+
+def _run_script(script: Path, tmp_path: Path, *, timeout: float = 600.0) -> str:
+    """Run ``script`` with this checkout's ``src`` first, failing if it leaves temp files.
+
+    The working directory is ``tmp_path`` and TMPDIR a directory of its own beside
+    it, so anything the script -- or the library under it -- leaves in the temp root
+    is a named failure, not a quiet use of the user's quota'd /tmp.
+    """
+
+    temp_root = tmp_path / "TMPDIR"
+    temp_root.mkdir()
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT / "src")
-    env["TMPDIR"] = str(tmp_path)
+    env["TMPDIR"] = str(temp_root)
     env["MPLBACKEND"] = "Agg"
     done = subprocess.run(
         [sys.executable, str(script)], cwd=tmp_path, env=env, capture_output=True,
@@ -65,6 +79,8 @@ def _run_script(script: Path, tmp_path: Path, *, timeout: float = 600.0) -> str:
         f"{script.relative_to(ROOT)} exited {done.returncode}\n"
         f"--- stdout (tail)\n{done.stdout[-3000:]}\n--- stderr (tail)\n{done.stderr[-3000:]}"
     )
+    left = sorted(entry.name for entry in temp_root.iterdir() if entry.name not in _TMP_ALLOWED)
+    assert left == [], f"{script.relative_to(ROOT)} left {left} in its TMPDIR"
     return done.stdout
 
 

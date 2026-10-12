@@ -33,6 +33,7 @@ MEASURED (pestpp-glm, pyEMU 1.4.0, 2026-09-25):
 
 from __future__ import annotations
 
+import atexit
 import os
 import pathlib
 import re
@@ -90,6 +91,7 @@ def main() -> None:
     if shutil.which("pestpp-glm") is None:
         sys.exit("pestpp-glm is not on PATH")
     root = pathlib.Path(tempfile.mkdtemp(prefix="pest_no_value_fields_"))
+    atexit.register(shutil.rmtree, root, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
     for label, forward in CASES.items():
         _case(root, label, forward)
 

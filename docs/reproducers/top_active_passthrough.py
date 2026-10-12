@@ -48,6 +48,7 @@ before a review caught it -- which is why the case is run here.)
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import io
 import pathlib
@@ -144,6 +145,7 @@ def _old_irch_through_mf6(source: pathlib.Path, root: pathlib.Path, irch):
 
 def main() -> None:
     root = pathlib.Path(tempfile.mkdtemp(prefix="top_active_"))
+    atexit.register(shutil.rmtree, root, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
     vor = _grid(root)
     ncpl = int(vor.ncpl)
     area = np.asarray(vor.gdf_vorPolys.area, dtype=float)

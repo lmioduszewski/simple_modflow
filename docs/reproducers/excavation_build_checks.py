@@ -34,9 +34,11 @@ steady LAK toy at Normal termination with a 53.89% error).
 
 from __future__ import annotations
 
+import atexit
 import contextlib
 import io
 import pathlib
+import shutil
 import tempfile
 import warnings
 
@@ -53,6 +55,7 @@ from myflopy.specs import ModelContext, package_digest
 
 warnings.simplefilter("ignore")
 WORK = pathlib.Path(tempfile.mkdtemp(prefix="excavation_checks_"))
+atexit.register(shutil.rmtree, WORK, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
 
 
 def _raster(path, grid_bounds, z, res):

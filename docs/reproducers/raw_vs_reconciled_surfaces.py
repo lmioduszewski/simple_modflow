@@ -25,7 +25,9 @@ ALL THREE CONDITIONS ARE REQUIRED, which is why the default path is safe:
 
 from __future__ import annotations
 
+import atexit
 import pathlib
+import shutil
 import tempfile
 
 import geopandas as gpd
@@ -45,6 +47,7 @@ def _grid():
 
 def main() -> None:
     tmp = pathlib.Path(tempfile.mkdtemp())
+    atexit.register(shutil.rmtree, tmp, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
     grid = _grid()
     xmin, ymin, xmax, ymax = grid.gdf_vorPolys.total_bounds
 

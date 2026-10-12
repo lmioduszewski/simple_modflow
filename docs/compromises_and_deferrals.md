@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 459 entries (464 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 460 entries (465 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 460 | A reproducer or example script removes the scratch directory it makes, and a run that leaves anything in it... | 2026-10-11 |
 | 459 | The legacy `DisuGrid` reads `gdf_topbtm` by position and refuses to pick one of several bottoms | 2026-10-11 |
 | 458 | One grid option spelt two ways in two places is refused; one key in two places keeps its documented precedence | 2026-10-11 |
 | 457 | A path argument is read by one rule, `readers.as_path`, and a step or size by one, `_numbers.positive_number` | 2026-10-11 |
@@ -19275,3 +19276,30 @@ same day, which is the useful part of the result.
       omitted elevation unset, as before.
       Tests: `tests/test_grid_inputs_one_rule.py::test_disugrid_reads_top_and_bottom_whatever_the_columns_are_called`,
       `test_disugrid_refuses_to_pick_one_of_several_bottoms`.
+
+460. **A reproducer or example script removes the scratch directory it makes, and a run that leaves anything in its TMPDIR fails by name (2026-10-11).**
+      Fifteen scripts under `docs/reproducers/` and `examples/` made a `mkdtemp()` and
+      never removed it (round 2 measured 12 MB a run for `flow_targets_period_end.py`);
+      /tmp is a quota'd tmpfs (ledger 335). Each now registers
+      `atexit.register(shutil.rmtree, <dir>, ignore_errors=True)` beside its
+      `mkdtemp()` -- one added line, rather than re-indenting a body into a
+      `TemporaryDirectory` block -- and `voronoi_tiling_sweep._build` takes its
+      directory from the caller's `TemporaryDirectory` instead of making its own.
+      **Judgment call: the two examples whose output is meant to be LOOKED AT**
+      (`contours_to_model.py` writes `heads.html`/`section.png`;
+      `package_first_full_stack.py` a project and its run) **take an optional directory
+      argument and keep what is written there**; with none, the scratch goes at exit,
+      so `python <example>` leaves nothing. `lak_docstring_claims.py` already took a
+      directory and removes only the one it made.
+      **The check is STATIC for every script** (`tests/test_scripts_clean_up_their_scratch.py`:
+      a `mkdtemp()` bound to a name removed by `rmtree` in a `finally:` or by
+      `atexit.register(shutil.rmtree, ...)`; no `mkstemp`, no
+      `NamedTemporaryFile(delete=False)`), because running all of them is ~40 minutes of
+      MF6/PEST++ (ledger 444); **and DYNAMIC for the four `tests/test_examples_run.py`
+      executes**, which now give the script a TMPDIR of its own and fail naming what a
+      run leaves -- the library's leftovers included (pyEMU's `port_locks` allowed, as
+      ledger 335 allows it). **Not done:** notebooks keep their `mkdtemp()` (ledger 335
+      left `project_libraries_tour` so, its test redirects it; `lazy_gpkg_on_a_real_model`
+      reads `/home/lukem/models` and is not executed).
+      Revert check: dropping the `atexit` line from `top_active_passthrough.py` or
+      `contours_to_model.py` fails both the static case and the executed one.
