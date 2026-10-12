@@ -1299,7 +1299,9 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   bathymetry takes `bottom=mf.Basin(lakes, depth, water_surface=)`** (ledger
   554): 0 at the shore, `depth` at the pole of inaccessibility, `"bowl"` by
   default (1.5x a `"cone"`'s volume -- the user's call), each cell the AREA MEAN of the
-  profile (a centroid read missed the volume by 10%), NaN off the footprint; the
+  profile (a centroid read missed the volume by 10%), NaN off the footprint -- so as a
+  stack top or unit bottom it RAISES (MF6 ran that NaN to normal termination, every head
+  NaN; `mf.Min(<surface>, bed)` composes; ledger 555); the
   excavation footprint and `Surface.basin` share ONE reader (`_coerce_footprint`). The result carries `excavations` (`mf.ExcavationRecord`),
   `ground`, `excavated`, `absorbed`; `attach=True` publishes `grid.excavations`, which
   the `gdf_topbtm` SETTER clears. `stack.to_disv` is now `build().to_disv()` (0 digests

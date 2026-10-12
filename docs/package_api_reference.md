@@ -578,7 +578,9 @@ release-group boundnames; without them it names the fix and offers
   digests by the file's content, and refuses a relative or `fill="propagate"` water
   surface, `units=` on itself (put it on the water surface), a NULL or non-positive
   depth (naming the feature), and at sampling two overlapping features or a footprint
-  on no cell. `docs/reproducers/basin_volume.py` measures it, MF6 run included.
+  on no cell. It is not a LAYER surface on its own: as a stack's top or a unit's
+  bottom its `NaN` off the lake raises naming the cells (ledger 555) --
+  `mf.Min(<surface>, basin)` bakes the bed into a surface with a value everywhere. `docs/reproducers/basin_volume.py` measures it, MF6 run included.
 - `mf.Toward(target, fraction)` — the contact a share of the way from the surface
   above down to `target`; the primitive `split=` is built on.
 - `mf.CellSurfaceOffset("model_top"|"cell_top"|"cell_bottom", offset=, minimum=)`. The

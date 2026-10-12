@@ -153,6 +153,38 @@ def _carries_propagate(node) -> bool:
     )
 
 
+def _carries_basin(node) -> bool:
+    """Whether ``node``, or any surface under it, is a ``kind="basin"`` surface."""
+
+    return node.kind == "basin" or any(
+        _carries_basin(op) for op in node.operands if op is not None
+    )
+
+
+def _refuse_a_basin_gap(surface, values, *, label) -> None:
+    """Refuse a LAYER surface that reads a basin's ``NaN`` off its lake (ledger 555).
+
+    A basin has a bed only on its footprint's cells (:meth:`Surface.basin`); as a model
+    top or a unit's bottom every other cell is ``NaN``, which nothing in the stack fills,
+    and MF6 ran such a DISV to normal termination with every head ``NaN``. Composition
+    that gives every cell a value -- ``mf.Min(<surface>, basin)``, whose ``nanmin`` takes
+    the other surface off the lake -- passes, because only what reaches a cell is read.
+    """
+
+    missing = np.isnan(values)
+    if _carries_basin(surface) and missing.any():
+        cells = np.flatnonzero(missing)
+        raise ValueError(
+            f"layer surface {label!r} reads an mf.Basin, which has no bed off its lake's "
+            f"cells -- {cells.size} of {values.size} cells here (first "
+            f"{cells[:10].tolist()}). A layer elevation needs a value at every cell, "
+            "and a NaN one runs in MF6 to normal termination with every head NaN. To cut "
+            "a lake into the stack use stack.excavate(bottom=<basin>, within=<footprint>); "
+            "to bake its bed into this surface give it one to fall back on, "
+            "mf.Min(<surface>, <basin>)."
+        )
+
+
 def _looks_positional(value) -> bool:
     """Whether ``value`` reads as cell numbers or a boolean mask rather than a place."""
 
@@ -1361,7 +1393,11 @@ class Surface:
         profile's on every mesh (within 0.06% measured, where a centroid sample
         missed it by 10% at 200 ft cells on a 300 ft lake); a consequence is that no
         cell reaches ``depth`` itself. Every other cell is ``NaN``: ``mf.lak`` reads a lake neighbour with
-        no bed as the model top, as it does for a clipped bathymetry raster.
+        no bed as the model top, as it does for a clipped bathymetry raster. So it is
+        not a LAYER surface on its own: as a stack's top or a unit's bottom (or inside
+        algebra that keeps the ``NaN``) sampling raises naming the cells -- compose
+        ``mf.Min(<surface>, basin)`` to bake the bed into a surface that has a value
+        everywhere (ledger 555).
 
         It is an ABSOLUTE surface: pass it as ``stack.excavate(bottom=...)`` (with the
         same footprint as ``within=``) and declare the lake with ``mf.lak(lakes=...)``,
@@ -1424,7 +1460,8 @@ class Surface:
             water surface; a non-polygonal or zero-area footprint. When the surface
             is SAMPLED: features covering no cell (all of them -- some only warn, by
             name, ledger 211), two features overlapping, a column no longer in the
-            file, or two features giving one cell different water surfaces.
+            file, or two features giving one cell different water surfaces; and when a
+            layer stack samples it as a top or unit bottom that is ``NaN`` off the lake.
         TypeError
             ``within``, ``depth`` or ``water_surface`` of another type (a ``bool``
             included), or an integer ``layer``.
@@ -2660,6 +2697,15 @@ class LayerSurfaces:
         -------
         geopandas.GeoDataFrame
             Cell centroids with one column per surface, in stack order.
+
+        Raises
+        ------
+        ValueError
+            A surface that reads an ``mf.Basin`` (:meth:`Surface.basin`) is ``NaN`` at
+            some cell -- off the lake, where a basin has no bed -- naming the surface and
+            the cells (ledger 555); cut a lake with ``LayerStack.excavate``
+            instead, or compose ``mf.Min(<surface>, <basin>)``. A unit-conversion or
+            sampling error from :meth:`Surface.values`.
         """
 
         columns: dict = {}
@@ -2672,6 +2718,7 @@ class LayerSurfaces:
                 ),
                 dtype=float,
             )
+            _refuse_a_basin_gap(surface, vals, label=label)
             columns[label] = vals
             previous = vals
 

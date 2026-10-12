@@ -31,6 +31,15 @@ icelltype 1, NEWTON, steady, bed leakance 1/d. Measured: the record's bed equals
 cell's bed 88.24 ft; MF6 normal termination, GWF and LAK percent discrepancy both 0.00,
 lake stage 95.05 ft (about halfway between the boundary heads, as a lake in uniform flow
 should sit). About 10 s.
+
+PART 4 -- why a basin is not a LAYER surface on its own (ledger 555). Off
+its lake's cells a basin is NaN. Before the refusal, `LayerStack(top=100).add("a",
+bottom=basin).add("b", bottom=40)` wrote that NaN into the DISV's `botm`; this part
+writes the same arrays by hand (the stack now refuses them): 20 ft Voronoi cells over
+400 x 400 ft, an 80 ft-radius basin 12 ft deep under a flat 100 ft water surface, CHD 97
+west and 93 east in layer 2, k = 10, steady. Measured: MF6 normal termination, all 800
+heads NaN, percent discrepancy NaN. `mf.Min(mf.Flat(95.0), basin)` -- the composition
+the refusal names -- has a value at every cell and runs with finite heads.
 """
 
 from __future__ import annotations
@@ -122,7 +131,40 @@ def part_3(root):
           f"stage = {float(stage[0]):.2f} ft")
 
 
+def part_4(root):
+    print("PART 4 -- a basin's NaN as a layer bottom, written by hand, in MF6")
+    import dataclasses
+
+    grid = irregular_voronoi_grid(nrow=20, ncol=20, cell_size=20.0, refined=False)
+    x0, y0, x1, y1 = grid.gdf_vorPolys.total_bounds
+    bed = mf.Basin(mf.Area(Point((x0 + x1) / 2, (y0 + y1) / 2).buffer(80.0, 64)), 12.0,
+                   water_surface=100.0)
+    composed = (mf.LayerStack(top=mf.Flat(100.0)).add("a", bottom=mf.Min(mf.Flat(95.0), bed))
+                .add("b", bottom=mf.Flat(50.0)).build(grid))
+    botm = composed.botm.copy()
+    botm[0] = bed.values(grid)                     # what `add("a", bottom=bed)` wrote
+    bare = dataclasses.replace(composed, botm=botm)
+    xy = np.array([(c[1], c[2]) for c in grid.get_disv_gridprops()["cell2d"]])
+    west, east = np.flatnonzero(xy[:, 0] < x0 + 20), np.flatnonzero(xy[:, 0] > x1 - 20)
+    chd = [[(1, int(c)), h] for cells, h in ((west, 97.0), (east, 93.0)) for c in cells]
+    for label, result in (("bare basin", bare), ("mf.Min(95, basin)", composed)):
+        context = mf.ModelContext(grid=grid, domain=result.idomain, surfaces=result)
+        model = mf.gwf("m", context=context, packages=[
+            mf.disv(result), mf.npf(k=10.0), mf.ic(strt=95.0), mf.chd(stress_period_data={0: chd}),
+            mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")])])
+        simulation = mf.simulation(model, name="s", packages=[
+            mf.tdis(nper=1, perioddata=[(1.0, 1, 1.0)])])
+        with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+            warnings.simplefilter("ignore")
+            run = mf.Project(root / label.replace(" ", "_").replace(",", ""), name="p").run(
+                "r", simulation)
+        heads = flopy.utils.HeadFile(str(pathlib.Path(run.workspace) / "m.hds")).get_data()
+        print(f"  {label}: success={run.success}  NaN heads {int(np.isnan(heads).sum())} of "
+              f"{heads.size}  NaN botm {int(np.isnan(result.botm).sum())}")
+
+
 if __name__ == "__main__":
     part_1_and_2()
     with tempfile.TemporaryDirectory() as tmp:
         part_3(pathlib.Path(tmp))
+        part_4(pathlib.Path(tmp))

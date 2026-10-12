@@ -415,3 +415,38 @@ def test_drift_reports_an_edited_basin_footprint(tmp_path, archive):
     frame.loc[0, "max_depth"] = 15.0
     frame.to_file(pond)
     assert project.refresh_runs().drift().set_index("key").loc["disv", "source"].startswith("edited")
+
+
+# -- a basin is not a layer surface on its own (ledger 555) -------------------
+
+
+def _small_lake():
+    grid = irregular_voronoi_grid(nrow=20, ncol=20, cell_size=20.0, refined=False)
+    x0, y0, x1, y1 = grid.gdf_vorPolys.total_bounds
+    lake = mf.Area(Point((x0 + x1) / 2, (y0 + y1) / 2).buffer(80.0, 64))
+    return grid, mf.Basin(lake, 12.0, water_surface=100.0)
+
+
+@pytest.mark.parametrize("where", ["unit bottom", "top", "shifted unit bottom"])
+def test_a_basin_as_a_layer_surface_is_refused_where_it_has_no_bed(where):
+    """Off its lake a basin is NaN, and a stack wrote that NaN into the DISV: MF6 ran it
+    to normal termination with all 800 heads NaN (measured, review of R3-basin)."""
+
+    grid, bed = _small_lake()
+    stack = {
+        "unit bottom": lambda: mf.LayerStack(top=mf.Flat(100.0)).add("a", bottom=bed),
+        "top": lambda: mf.LayerStack(top=bed).add("a", bottom=mf.Flat(50.0)),
+        "shifted unit bottom": lambda: mf.LayerStack(top=mf.Flat(100.0)).add("a", bottom=bed - 1.0),
+    }[where]().add("b", bottom=mf.Flat(40.0))
+    with pytest.raises(ValueError, match=r"reads an mf.Basin, which has no bed off its lake.*stack.excavate"):
+        stack.build(grid)
+
+
+def test_a_basin_composed_onto_a_surface_with_a_value_everywhere_is_a_layer_surface():
+    grid, bed = _small_lake()
+    result = (mf.LayerStack(top=mf.Flat(100.0)).add("a", bottom=mf.Min(mf.Flat(95.0), bed))
+              .add("b", bottom=mf.Flat(40.0)).build(grid))
+    lake = np.isfinite(bed.values(grid))
+    assert np.isfinite(result.botm).all()
+    np.testing.assert_allclose(result.botm[0, ~lake], 95.0)
+    assert (result.botm[0, lake] < 95.0).any(), "the bed is baked in under the lake"

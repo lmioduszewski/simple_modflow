@@ -1052,7 +1052,9 @@ cell, which keeps the lake's volume within 0.06% on any mesh where a centroid re
 missed it by 10% on 200 ft cells; so no cell reaches `max_depth` itself
 (`docs/reproducers/basin_volume.py`). `depth` and `water_surface` also take a number,
 and `water_surface` a raster path, a Surface (with its own `units=`) or a column giving
-each lake a flat stage. It saves like any other surface (the footprint file under
+each lake a flat stage. Off its lakes a basin has no bed (`NaN`), so it is not a unit
+`bottom=` or a stack `top=` on its own -- the stack raises naming the cells (ledger
+555); `mf.Min(<surface>, bed)` is the spelling that bakes it into one. It saves like any other surface (the footprint file under
 `zone`), so a lazy `mf.disv` carrying it is bundled, hashed and drift-checked.
 
 **No stack?** A DISV built from a loaded run's arrays has no `LayerStack` to call

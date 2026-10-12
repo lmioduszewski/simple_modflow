@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 554 entries (559 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 555 entries (560 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 555 | A basin is not a LAYER surface on its own: its `NaN` off the lake is refused | 2026-10-12 |
 | 554 | `mf.Basin` gives a lake an ASSUMED bed where no bathymetry exists | 2026-10-12 |
 | 553 | The majority vote is by VALUE: a unit's features are united before values compete, and a polygon carrying t... | 2026-10-12 |
 | 552 | The uncovered part of a cell competes against a VALUE's cover, not one feature's | 2026-10-12 |
@@ -21235,3 +21236,17 @@ same day, which is the useful part of the result.
       the cut a table is optional); shapes beyond the two (a mean-depth-ratio
       parameter); a basin from an inline bare shapely geometry kept as such (it is
       coerced to an `mf.Area`, which serializes; `Surface.where`'s bare zone still does not).
+
+555. **A basin is not a LAYER surface on its own: its `NaN` off the lake is refused (2026-10-12).**
+      `mf.Basin` is `NaN` off its footprint's cells by design (ledger 554), and
+      `LayerSurfaces.sample` -- every `LayerStack` top and unit bottom -- passed that on:
+      `LayerStack(top=100).add("a", bottom=basin)` wrote 331 `NaN` bottoms into the DISV and
+      MF6 ran it to normal termination with all 800 heads `NaN`
+      (`docs/reproducers/basin_volume.py` PART 4). **Refused where the `NaN` REACHES a
+      layer, not wherever a basin appears**: a surface carrying a basin at any depth that
+      samples `NaN` at a cell raises naming the cells and the two spellings
+      (`stack.excavate(bottom=basin)`, `mf.Min(<surface>, basin)`), so `mf.Min` -- whose
+      `nanmin` takes the other surface off the lake -- stays a valid way to bake the bed
+      into a unit. **Not widened to every `NaN` layer surface**: a partial raster as a
+      unit bottom still writes `NaN` silently (measured, 200 of 400 cells) -- a
+      pre-existing gap of the same class, outside this batch.
