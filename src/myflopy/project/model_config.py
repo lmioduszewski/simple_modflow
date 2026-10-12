@@ -24,6 +24,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from flopy.mf6.mfbase import FlopyException, MFDataException
+from flopy.mf6.mfmodel import MFModel
 
 from myflopy._logging import get_logger
 
@@ -219,16 +220,22 @@ def _extract_settings(model) -> pd.DataFrame:
     """Build the ``(section, setting, value)`` settings table for a model."""
 
     rows: list[tuple] = []
+    # Every section READ, whether or not it set anything: a model with no option in
+    # its name file has a ``model`` section with no rows, and asking for it is not a
+    # typo (ledger 476 refuses only a name nothing here could answer).
+    read: list[str] = []
     sim = getattr(model, "sim", None)
     gwf = getattr(model, "gwf", None)
 
     tdis = getattr(sim, "tdis", None) if sim is not None else None
     if tdis is not None:
+        read.append("tdis")
         rows += _options_rows("tdis", tdis, ["options", "dimensions"])
         rows += _tdis_period_rows(tdis)
 
     ims = _ims_package(model)
     if ims is not None:
+        read.append("ims")
         rows += _options_rows("ims", ims, ["options", "nonlinear", "linear"])
 
     if gwf is not None:
@@ -240,12 +247,14 @@ def _extract_settings(model) -> pd.DataFrame:
         # tool that should have caught it could not see it (ledger 286).
         name_file = getattr(gwf, "name_file", None)
         if name_file is not None:
+            read.append("model")
             rows += _options_rows("model", name_file, ["options"])
 
         for pkg in getattr(gwf, "packagelist", None) or []:
             ptype = str(getattr(pkg, "package_type", "")).lower()
             section = str(getattr(pkg, "package_name", ptype) or ptype).lower()
             blocks = ["options", "period"] if ptype == "oc" else ["options"]
+            read.append(section)
             rows += _options_rows(section, pkg, blocks)
             # MF6's LAK IMPLICIT is no FloPy dataset: the package's CLASS writes it
             # (ledger 326), so the block walk above cannot see it and two runs differing
@@ -256,7 +265,9 @@ def _extract_settings(model) -> pd.DataFrame:
             if getattr(pkg, "writes_lak_implicit", False):
                 rows.append((section, "implicit", True))
 
-    return pd.DataFrame(rows, columns=_SETTINGS_COLUMNS)
+    frame = pd.DataFrame(rows, columns=_SETTINGS_COLUMNS)
+    frame.attrs["sections_read"] = list(dict.fromkeys(read))
+    return frame
 
 
 class ModelConfig:
@@ -280,11 +291,21 @@ class ModelConfig:
             the ``ims`` section, and ``model.gwf`` the ``model`` section (its name
             file) plus one section per package, named by the package's NAME in
             lower case. Each of the three is skipped when its attribute is
-            missing, so an object exposing none of them -- a bare FloPy
-            ``ModflowGwf``, which has no ``.sim``/``.gwf`` -- gives an EMPTY config
-            with no error.
+            missing; an object with neither ``.sim`` nor ``.gwf`` -- a bare FloPy
+            ``ModflowGwf`` -- raises ``TypeError`` naming the myflopy model (it
+            gave an EMPTY config with no error until ledger 476).
         """
 
+        # A FloPy model answers ANY attribute through its package lookup, so
+        # ``getattr(gwf, "sim", None)`` returns one of its packages: test the type.
+        if isinstance(model, MFModel) or (
+            getattr(model, "sim", None) is None and getattr(model, "gwf", None) is None
+        ):
+            raise TypeError(
+                f"ModelConfig.from_model reads a myflopy model (its .sim and .gwf), and "
+                f"a {type(model).__name__} is not one -- pass the myflopy model "
+                "(model.config does), not its FloPy model."
+            )
         return cls(_extract_settings(model))
 
     def settings(self, *, section: str | None = None) -> pd.DataFrame:
@@ -297,10 +318,22 @@ class ModelConfig:
             ``str(section).lower()``, so ``"IMS"`` reads ``ims``. The sections are
             ``tdis``, ``ims``, ``model`` and each package's NAME in lower case
             (``npf``, ``oc``, a second RIV's ``crisp``) -- see :attr:`sections`. A
-            name no section carries returns an empty table, not an error. Default
-            ``None``: every row. Always a copy; editing it leaves the config as it
-            was.
+            name no section carries raises ``KeyError`` listing the sections (it
+            returned an empty table until ledger 476). Default ``None``:
+            every row. Always a copy; editing it leaves the config as it was.
         """
+
+        readable = list(dict.fromkeys(
+            self.sections + list(self._settings.attrs.get("sections_read", []))
+        ))
+        if section is not None and str(section).lower() not in readable:
+            raise KeyError(
+                f"This model's config has no section {section!r}; it has {readable}."
+            )
+        return self._rows(section)
+
+    def _rows(self, section: str | None) -> pd.DataFrame:
+        """A copy of the settings rows, of one section (none when it is absent) or all."""
 
         frame = self._settings.copy()
         if section is not None:
@@ -322,30 +355,38 @@ class ModelConfig:
             The section, matched as :meth:`settings` matches ``section=``: exactly,
             after ``str(name).lower()`` -- ``tdis``, ``ims``, ``model`` or a
             package's NAME in lower case (:attr:`sections` lists them). A name no
-            section carries returns ``{}``, not an error, so a misspelt section
-            reads as one with no settings.
+            section carries raises ``KeyError`` listing them: a misspelt section
+            read as one with no settings until ledger 476. The
+            :attr:`tdis`/:attr:`ims`/:attr:`oc`/:attr:`model` properties read a
+            fixed name, and give ``{}`` for a model that has no such section.
         """
 
         frame = self.settings(section=name)
+        return dict(zip(frame["setting"], frame["value"], strict=False))
+
+    def _section_or_empty(self, name: str) -> dict:
+        """One section's settings, ``{}`` when the model has none (the fixed-name properties)."""
+
+        frame = self._rows(name)
         return dict(zip(frame["setting"], frame["value"], strict=False))
 
     @property
     def tdis(self) -> dict:
         """The TDIS (time-discretization) settings as a ``{setting: value}`` mapping."""
 
-        return self.section("tdis")
+        return self._section_or_empty("tdis")
 
     @property
     def ims(self) -> dict:
         """The IMS (solver) settings as a ``{setting: value}`` mapping."""
 
-        return self.section("ims")
+        return self._section_or_empty("ims")
 
     @property
     def oc(self) -> dict:
         """The OC (output-control) settings as a ``{setting: value}`` mapping."""
 
-        return self.section("oc")
+        return self._section_or_empty("oc")
 
     @classmethod
     def model_options(cls, gwf) -> dict:
@@ -385,7 +426,7 @@ class ModelConfig:
         extractor walked ``gwf.packagelist`` and the name file is not in it (ledger 286).
         """
 
-        return self.section("model")
+        return self._section_or_empty("model")
 
     def __repr__(self) -> str:
         """Show the config's sections and total setting count."""

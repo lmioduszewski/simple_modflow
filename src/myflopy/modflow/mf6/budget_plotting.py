@@ -17,6 +17,23 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 
+def _x_values(frame: pd.DataFrame, times: pd.DatetimeIndex | None) -> list:
+    """The x values of ``frame``'s rows: ``times`` when given, else each row's saved time.
+
+    A ``times`` of another length than the table is refused: it labels the rows
+    one for one, and plotly would draw the shorter of the two in silence.
+    """
+
+    if times is None:
+        return [f"{kstp}, {kper}" for kstp, kper in frame.index]
+    if len(times) != len(frame):
+        raise ValueError(
+            f"times= gives {len(times)} labels for {len(frame)} saved times of this "
+            "budget file; pass one label per saved time (the table's kstpkper index)."
+        )
+    return list(times)
+
+
 def plot_budget_obs(
     budget: Budget,
     *,
@@ -66,14 +83,13 @@ def plot_budget_obs(
         multiplier=multiplier,
     )
 
-    if y_range is None:
-        y_range = [0, 4]
     if plot_fig or return_fig:
         fig = Fig()
+        x = _x_values(frame, times)
         for col in frame.columns:
-            x = frame.index if times is None else times
             fig.add_scattergl(x=x, y=frame[col], name=col)
-        fig.update_yaxes(range=y_range)
+        if y_range is not None:
+            fig.update_yaxes(range=y_range)
         if plot_fig:
             fig.show()
         if return_fig:
@@ -129,7 +145,7 @@ def multimodel_plot_budget_obs(
 
     for model_name, frame in obs_dict.items():
         color = next(color_cycle)
-        x = frame.index if times is None else times
+        x = _x_values(frame, times)
         for col in frame.columns:
             fig.add_scattergl(
                 x=x,

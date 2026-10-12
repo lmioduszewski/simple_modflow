@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 475 entries (480 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 476 entries (481 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 476 | Observation-area budgets, head observation points and named registries answer by the shared rules or refuse | 2026-10-11 |
 | 475 | A LAK/SFR input field's series combines a lake's records by the field's kind, through `input_field_agg` | 2026-10-11 |
 | 474 | A LAK connection's `connection_area` is what MF6 reads it as, and `flow_area` is documented as MF6's wetted... | 2026-10-11 |
 | 473 | A record map's `multiplier` scales each record before `agg` and never the fill, and a LAK/SFR budget term i... | 2026-10-11 |
@@ -18880,7 +18881,7 @@ same day, which is the useful part of the result.
       changed the model)~~ (fixed by ledger 449: one non-mutating reader, and `per=N`
       reads the block MF6 has in force). ~~`ModelConfig.model_options` reports `newtonoptions="NEWTON"` for
       a model holding an EMPTY `newtonoptions` (`""`/`[]`), which FloPy writes as no option,
-      so a rebuild from it turns NEWTON on~~ (fixed by ledger 450). `model.bud(pkg).plot_budget_obs` does not
+      so a rebuild from it turns NEWTON on~~ (fixed by ledger 450). ~~`model.bud(pkg).plot_budget_obs` does not
       reproject its area polygons to the grid's CRS (an EPSG:4326 file reads 0.0 for every
       area), keeps only
       the FIRST record on a cell, returns an empty table for a `q` the budget lacks, labels
@@ -18888,29 +18889,33 @@ same day, which is the useful part of the result.
       `hds.get_obs_heads(<str path>)` ignores the string and reads the constructor's
       `obs_path`, and `get_obs_cells` gives a polygon over several cells the FIRST of them
       (its one-cell `assert` tests the outer list of ledger 192's `{name: [[cells]]}`
-      shape, so it never fires). `hds.long()`/`wide()` keep MF6's +/-1e30 (ledger 315's rule is not
-      applied there). `ModelConfig.from_model(model.gwf)` and `config.section(<typo>)` come
-      back empty. **Accepted, then forwarded or ignored:** ~~every record and array noun's
+      shape, so it never fires)~~ (fixed by ledger 476). `hds.long()`/`wide()` keep MF6's +/-1e30 (ledger 315's rule is not
+      applied there). ~~`ModelConfig.from_model(model.gwf)` and `config.section(<typo>)` come
+      back empty~~ (each raises since ledger 476). **Accepted, then forwarded or ignored:** ~~every record and array noun's
       `**trace_kwargs` tail carries `show_mounding` (and `kstpkper`/`per_timestep`/`bgs`/
       `hover_layers`) to the free verb unrefused -- on five nouns `show_mounding=True` keeps
       the colours and adds a head-derived row to every tooltip, which their own docstrings
       call worse than inert; refusing it is `NOUN_REFUSED_PARAMS`' job, and the narrowing
       rule (a dropped name still rides the tail) is why it was not~~ (refused since ledger
       465, bar `hover_layers` where it acts). `transmissivity_max
-      .get(per=)`; `get_obs_cells(crs=)`, which reprojects the points on to the grid's CRS
-      regardless; `long`/`wide(values=)`, whose one legal value is `store_column` (`"elev"`,
+      .get(per=)`; ~~`get_obs_cells(crs=)`, which reprojects the points on to the grid's CRS
+      regardless~~ (labels a file carrying no CRS since ledger 476); `long`/`wide(values=)`, whose one legal value is `store_column` (`"elev"`,
       not `"head"`); `LakBudget`/`SFRBudget.get(return_df=)`, which only the literal `False`
-      changes. **Loud failures:** `model.outputs.sfr.bud.plot_flows()` raises
-      `KeyError: 'rno'` on every model (FloPy 3.10 names the column `ifno`);
+      changes. **Loud failures:** ~~`model.outputs.sfr.bud.plot_flows()` raises
+      `KeyError: 'rno'` on every model (FloPy 3.10 names the column `ifno`)~~ (fixed by
+      ledger 476);
       ~~`model.inputs.rch.map()`'s default `per=None` raises `KeyError`~~ (reads
-      `self.per`, as `df()` does, since ledger 449), and a float
-      `multiplier` raises `TypeError` on a package carrying boundnames; `inputs.uzf.finf`
+      `self.per`, as `df()` does, since ledger 449), and ~~a float
+      `multiplier` raises `TypeError` on a package carrying boundnames~~ (scales only the
+      numbers since ledger 476); `inputs.uzf.finf`
       ~~raises `UnboundLocalError` for a NumPy integer `per`~~ (reads one since ledger
-      449) and raises `ValueError` for two UZF objects under one cell; `plot_budget_obs` raises on a multi-part area polygon in a
+      449) and ~~raises `ValueError` for two UZF objects under one cell~~ (reads the
+      land-surface object since ledger 476); ~~`plot_budget_obs` raises on a multi-part area polygon in a
       `.gpkg` (a `.shp`'s is read whole and works), on a file with no CRS and on a `str`
       path; a second `get_obs_heads` on one reader raises "No observation path found";
       `AoiLibrary.setdefault(1, ...)` stores `'1'` and then raises `TypeError`;
-      `TargetRegistry[1]` raises `KeyError` for a set stored by `registry[1] = ...`.
+      `TargetRegistry[1]` raises `KeyError` for a set stored by `registry[1] = ...`~~
+      (fixed by ledger 476).
       **Prose corrected:** the record nouns called `show_layer_elevs`/`hover_surfaces`
       deliberately absent though both are named and act (ledger 258), `UzfInput.finf`
       said it returned a Series (it is a DataFrame), and "measured byte-identical" did not
@@ -19610,3 +19615,29 @@ same day, which is the useful part of the result.
       the canonical model except `connlen`/`connwidth` on 16 cells holding two
       connections, where neither is the cell's one number and the documented default
       was left alone. An SFR series is one row per reach, so it did not move.
+
+476. **Observation-area budgets, head observation points and named registries answer by the shared rules or refuse (2026-10-11).**
+      Ledger 441's single-model defects, decided. **`Budget.plot_budget_obs` reads its areas
+      through the footprint reader** (`read_footprints` + `footprint_cells`, as `mf.lak` and
+      `excavate` do): reprojected to the grid's CRS (an EPSG:4326 file read 0.0 for every
+      area), a CRS-less file taken in the grid's, a multi-part polygon one area, and an area
+      on no cell REFUSED by `refuse_footprint_misses`. **Behaviour change, chosen as the
+      one rule:** a cell belongs to an area that COVERS it by area, no longer to one that
+      merely `intersects` it -- an area drawn along faces stops collecting its neighbours.
+      Every record on a cell ADDS (a flow is extensive, ledger 297), the rows are the
+      BUDGET file's saved times indexed by its own `kstpkper` (were the head file's, as
+      `0..n-1`), a missing `q` raises, and `y_range=None` fits the data (was `[0, 4]`).
+      `SFRBudget.plot_flows` reads the SFR budget's own nodes (it raised on FloPy 3.10's
+      `ifno`) and draws them against the zero-based `ifno`, on that file's clock.
+      **`get_obs_cells(crs=)` names the CRS of a file that carries NONE** -- its only
+      reading that can act; naming another CRS than the file's own raises. A location
+      reaching several cells raises (its `assert` never fired). `get_obs_heads` reads a
+      `str` path and a second path. `inputs.uzf.finf` draws each cell's LAND-SURFACE object
+      (`landflag` 1, the only one MF6 applies infiltration to); `inputs.rch.map(multiplier=)`
+      scales numbers, never a boundname. Area and target-set names must be `str`
+      (`TypeError`), where `str(key)` was stored and `key` looked up; `1 in registry` is
+      `False`. `ModelConfig.from_model(<FloPy model>)` and `section(<typo>)` raise; a
+      section READ with no setting (a name file with no option) still answers `{}`, as do
+      the fixed `tdis`/`ims`/`oc`/`model` properties. Revert check:
+      `tests/test_budget_obs_areas.py` (10), `tests/test_head_obs_locations.py` (4 of 5),
+      `tests/test_legacy_inputs_helpers.py` (3), `tests/test_text_keys_and_config_refusals.py` (6).

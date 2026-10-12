@@ -23,35 +23,43 @@ WHAT IT MEASURES
      cell, and the read ADDED an empty block 3, so the model written afterwards had no
      GHB records from period 3 on against 84. Fixed by ledger 449 and printed here
      as now: 84 rows at ``per=3``, no block added, 84 records in every period.
-  2. A record noun's ``**trace_kwargs`` tail carries the per-layer names the noun does
-     not name to ``model.plot.map``, unrefused: ``show_mounding=True`` keeps every colour
-     and changes every tooltip, on five nouns.
+  2. A record noun's ``**trace_kwargs`` tail carried the per-layer names the noun does
+     not name to ``model.plot.map``, unrefused: ``show_mounding=True`` kept every colour
+     and changed every tooltip, on five nouns. Refused since ledger 465, and printed
+     as now.
   3. ``npf.transmissivity_max.get(per=...)`` ignores ``per``.
   4. ``model.hds.long()``/``wide()`` accept only ``values="elev"`` (``"head"`` raises)
      and keep MF6's no-value sentinels where ``get()`` masks them.
-  5. ``model.hds.get_obs_cells(crs=...)`` returns the same cells whatever ``crs`` names,
-     a points file with no CRS raises, and a polygon over several cells gets the first
-     of them (its one-cell ``assert`` never fires); ``get_obs_heads`` reads the constructor's
-     ``obs_path`` when given a ``str`` path, and refuses a second ``Path`` on one reader.
-  6. ``model.bud("drn").plot_budget_obs``: a polygon file in another CRS reads 0.0 for
-     every area; a multi-part polygon raises ``TypeError``; a ``q`` the table lacks
-     returns an empty table; a second record on one cell is dropped; the default y range
-     is ``[0, 4]``; a ``str`` path raises ``TypeError``; the same multi-part polygon in a
-     ``.shp`` works; a file with no CRS raises ``AttributeError``.
+  5. ``model.hds.get_obs_cells(crs=...)`` returned the same cells whatever ``crs`` named,
+     a points file with no CRS raised, and a polygon over several cells got the first
+     of them; ``get_obs_heads`` read the constructor's ``obs_path`` when given a ``str``
+     path, and refused a second ``Path`` on one reader. Fixed by ledger 476 and
+     printed as now: ``crs`` labels a file carrying none (naming another raises), the
+     polygon raises, and each path given is read.
+  6. ``model.bud("drn").plot_budget_obs``: a polygon file in another CRS read 0.0 for
+     every area; a multi-part polygon raised; a ``q`` the table lacks returned an empty
+     table; a second record on one cell was dropped; the default y range was ``[0, 4]``;
+     a file with no CRS raised. Fixed by ledger 476 and printed as now: the same
+     sums in either CRS, records added, a missing ``q`` refused, the y range fitted.
   7. ``model.outputs.lak.bud.get(..., return_df=0)`` returns a DataFrame (only ``False``
      returns the raw list).
-  8. ``model.outputs.sfr.bud.plot_flows()`` raises ``KeyError: 'rno'`` (FloPy 3.10 names
-     the column ``ifno``).
-  9. ``model.inputs.uzf.finf``: a NumPy integer ``per`` raises ``UnboundLocalError``; two
-     UZF objects under one cell raise ``ValueError``. ``model.inputs.rch.map()`` raises
-     ``KeyError: None``, and on an RCH carrying boundnames ``multiplier=2.5`` raises
-     ``TypeError`` (``2`` doubles each name).
- 10. ``AoiLibrary.setdefault``: a non-string key is stored and then raises
-     ``TypeError``; ``setdefault("new")`` raises ``TypeError``.
- 11. ``TargetRegistry``: a set registered as ``registry[1]`` is ``in`` the registry and
-     ``registry[1]`` raises ``KeyError``.
- 12. ``ModelConfig.from_model(model.gwf)`` is empty, and ``config.section("zzz")`` is
-     ``{}``, with no error. ``ModelConfig.model_options`` reported ``"NEWTON"`` for a
+  8. ``model.outputs.sfr.bud.plot_flows()`` raised ``KeyError: 'rno'`` (FloPy 3.10 names
+     the column ``ifno``); it draws since ledger 476.
+  9. ``model.inputs.uzf.finf``: a NumPy integer ``per`` raised ``UnboundLocalError``
+     (reads since ledger 449); two land-surface UZF objects under one cell raise
+     ``ValueError`` naming the cells (ledger 476 draws a stacked column's
+     land-surface object). ``model.inputs.rch.map()`` raised ``KeyError: None`` (ledger
+     449), and on an RCH carrying boundnames ``multiplier=2.5`` raised ``TypeError`` and
+     ``2`` doubled each name; the multiplier scales only the numbers since ledger
+     476.
+ 10. ``AoiLibrary.setdefault``: a non-string key was stored and then raised
+     ``TypeError``; it is refused before anything is stored since ledger 476.
+     ``setdefault("new")`` raises ``TypeError``.
+ 11. ``TargetRegistry``: a set registered as ``registry[1]`` was ``in`` the registry and
+     ``registry[1]`` raised ``KeyError``; a non-string name raises ``TypeError`` since
+     ledger 476.
+ 12. ``ModelConfig.from_model(model.gwf)`` was empty, and ``config.section("zzz")`` was
+     ``{}``, with no error; both raise since ledger 476. ``ModelConfig.model_options`` reported ``"NEWTON"`` for a
      model whose ``newtonoptions`` is ``""`` or ``[]``, which FloPy writes as no option;
      it leaves the option out since ledger 450.
 """
@@ -167,10 +175,7 @@ def main(root: Path) -> None:
         "npf.transmissivity": lambda **k: model.npf.transmissivity.map(**k),
     }
     for label, draw in nouns.items():
-        z0, hover0 = _trace(draw())
-        z1, hover1 = _trace(draw(show_mounding=True))
-        print(f"  {label}: colours same {np.allclose(z0, z1, equal_nan=True)}, "
-              f"tooltip same {hover0 == hover1}")
+        _attempt(f"{label}.map(show_mounding=True)", lambda d=draw: d(show_mounding=True))
 
     print("3. transmissivity_max ignores per")
     tmax = model.npf.transmissivity_max
@@ -287,10 +292,11 @@ def main(root: Path) -> None:
 
     print("11. TargetRegistry keys")
     registry = TargetRegistry(None)
-    registry[1] = mf.ConcTargets(
+    conc = mf.ConcTargets(
         locations=pd.DataFrame({"name": ["w"], "cell": [3], "layer": [0]}),
         values=pd.DataFrame({"name": ["w"], "time": [0], "conc": [1.0]}),
     )
+    _attempt("registry[1] = <ConcTargets>", lambda: registry.__setitem__(1, conc))
     print(f"  1 in registry: {1 in registry}")
     _attempt("registry[1]", lambda: registry[1])
 

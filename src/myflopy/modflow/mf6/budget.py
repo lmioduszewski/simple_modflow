@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
-from pandas import IndexSlice as idxx
 
 from myflopy.modflow.mf6.budget_plotting import (
     multimodel_plot_budget_obs as _multimodel_plot_budget_obs,
@@ -169,38 +169,35 @@ class Budget:
 
         Reads :attr:`df`, so the accessor needs a package (``model.bud("drn")``;
         a bare ``model.bud()`` raises ``ValueError``). Each row is one saved time
-        of ``model.kstpkper`` -- the HEAD file's clock, not this budget file's own
-        -- at which the budget holds records, in order, labelled ``0..n-1``. Flows
-        are NEGATED (water leaving the aquifer, a drain's outflow, reads positive)
-        and divided by ``multiplier``. Two records on one cell at one time keep
-        only the FIRST, and an area's cells are those holding a record at the
-        FIRST saved time (ledger 441).
+        of THIS budget file, labelled by its own zero-based ``kstpkper`` (ledger
+        301; it read the HEAD file's clock until ledger 476). Flows are
+        NEGATED (water leaving the aquifer, a drain's outflow, reads positive),
+        every record on a cell is ADDED (a flow is extensive, ledger 297; it kept
+        the first until ledger 476), and the sum is divided by
+        ``multiplier``.
 
         Parameters
         ----------
         model : SimulationBase, optional
-            The model whose grid, ``kstpkper`` and cell polygons are used. Default
-            ``None``: the accessor's own model. The budget values always come from
-            the ACCESSOR's model (:attr:`df`), so another model here only changes
-            the clock and the cells the areas are matched against.
-        shp_gpkg : pathlib.Path
-            A polygon file (``.shp`` or ``.gpkg``; a ``.gpkg`` is read for its
-            FIRST layer) whose rows are the observation areas. Required despite
-            the ``None`` default. Must be a ``pathlib.Path`` -- a ``str`` raises
-            ``TypeError`` -- and must carry a CRS (a file with none raises
-            ``AttributeError``), which must be the GRID's: the areas are NOT
-            reprojected, so a file in another CRS matches no cell and every area
-            reads 0.0 in silence (measured: a canonical-model file written in
-            EPSG:4326). A cell belongs to every area whose polygon touches it
-            (``intersects``, not coverage). A multi-part polygon in a ``.gpkg``
-            raises ``TypeError``: one reader splits its parts into separate rows
-            and the other does not. In a ``.shp`` it is read whole by both and
-            works.
+            The model whose grid the areas are matched against. Default ``None``:
+            the accessor's own model. The budget values and their clock always
+            come from the ACCESSOR's model (:attr:`df`).
+        shp_gpkg : str or pathlib.Path
+            A polygon file (its FIRST layer) whose rows are the observation areas,
+            read through the one footprint reader (``mf.lak(lakes=)`` and
+            ``LayerStack.excavate`` read through it too). Required despite the
+            ``None`` default. The areas are REPROJECTED to the grid's CRS; a file
+            carrying no CRS is taken to be in it. A multi-part polygon is one area.
+            A cell belongs to an area that COVERS it by area (the footprint rule:
+            an area drawn along cell faces reaches only the cells inside it), and
+            an area covering no cell RAISES ``ValueError`` naming both extents and
+            both CRSs -- before ledger 476 a file in another CRS read 0.0 for
+            every area in silence. A feature that is not a polygon, or one with no
+            area, raises ``ValueError``.
         q : str, default 'q'
             The column of :attr:`df` to sum: ``"q"``, the flow (``df`` also holds
             ``node2`` and whatever auxiliary columns the record carries). A name
-            ``df`` lacks returns an EMPTY table with no error -- the ``KeyError``
-            is swallowed time by time.
+            ``df`` lacks raises ``KeyError`` naming the columns it has.
         plot_fig : bool, default True
             Draw a line per area (and ``total``) and ``show()`` it.
         return_fig : bool, default False
@@ -208,25 +205,26 @@ class Budget:
             ``plot_fig`` is False. With both False no figure is built.
         name_field : str, default 'name'
             The attribute column of ``shp_gpkg`` naming each area; its values
-            become the table's columns, after ``total``. A missing column raises
-            ``KeyError``.
+            (as text) become the table's columns, after ``total``. A missing
+            column, or two areas of one name, raises ``ValueError``.
         times : sequence of datetime-like or pandas.DatetimeIndex, optional
-            The figure's x values, one per table row, in place of the row
-            positions ``0..n-1``; converted with ``pandas.DatetimeIndex``. The
-            table itself keeps the positional index. Default ``None``.
+            The figure's x values, one per table row, in place of each row's
+            ``"kstp, kper"``; converted with ``pandas.DatetimeIndex``. A length
+            other than the table's raises ``ValueError``. The table itself keeps
+            its ``kstpkper`` index. Default ``None``.
         multiplier : float, default 86400
             The DIVISOR applied to every sum (``24 * 60 * 60``: ft3/d to ft3/s in a
             feet-and-days model). Pass ``1`` to keep the model's own flow units.
         y_range : list of float, optional
-            The figure's y-axis range. Default ``None`` draws ``[0, 4]``, which
-            hides every value outside it -- pass a range for any other data.
+            The figure's y-axis range. Default ``None`` lets plotly fit the data
+            (it was a fixed ``[0, 4]`` until ledger 476).
 
         Returns
         -------
         pandas.DataFrame or Fig
-            The table -- a ``total`` column over every cell of the package, then
-            one column per area, one row per saved time -- or, with
-            ``return_fig=True``, the figure (a :class:`myflopy.viz.Fig`).
+            The table -- indexed by the budget file's ``kstpkper``, a ``total``
+            column over every record of the package, then one column per area --
+            or, with ``return_fig=True``, the figure (a :class:`myflopy.viz.Fig`).
         """
         model = self.model if model is None else model
         return _plot_budget_obs(
@@ -269,19 +267,18 @@ class Budget:
             The budget record to summarize, read through ``model.bud(...)`` -- a
             case-insensitive substring of a record name. ``None`` also means
             ``"drn"``.
-        shp_gpkg : pathlib.Path
+        shp_gpkg : str or pathlib.Path
             The observation-area polygons, read as :meth:`plot_budget_obs` reads
-            them: a ``pathlib.Path`` in the GRID's CRS (another CRS matches no
-            cell and reads 0.0), each area of a ``.gpkg`` a single polygon (a
-            multi-part one raises ``TypeError``). Required despite the ``None``
-            default.
+            them (reprojected to each model's grid CRS; an area covering no cell
+            raises). Required despite the ``None`` default.
         q : str, default 'q'
             The budget column to sum, as in :meth:`plot_budget_obs`.
         name_field : str, default 'name'
             The attribute column naming each area.
         times : sequence of datetime-like or pandas.DatetimeIndex, optional
-            The x values for every model's lines, one per row; default ``None``
-            draws each model's rows at their positions ``0..n-1``.
+            The x values for every model's lines, one per row of each model's
+            table (another length raises ``ValueError``); default ``None`` draws
+            each row at its budget file's ``"kstp, kper"``.
         plot_fig : bool, default True
             ``show()`` the figure before returning it.
 
@@ -476,20 +473,19 @@ class SFRBudget:
 
         Draws, per selected time, each reach's NEGATIVE ``FLOW-JA-FACE`` entries
         (its flow to the next reach) sign-flipped to positive against the
-        reach number, and ``show()``s the figure. Returns ``None``.
-
-        **Broken on current FloPy:** it reads the reach numbers from a
-        ``packagedata`` column ``rno``, which FloPy 3.10 names ``ifno``, so every
-        call raises ``KeyError: 'rno'`` before anything is drawn (measured on
-        the canonical model, ledger 441). The parameters below describe what
-        the code would do past that line.
+        reach's zero-based ``ifno``, and ``show()``s the figure. Returns
+        ``None``. It raised ``KeyError: 'rno'`` on every model until ledger
+        476 (FloPy 3.10 names the column ``ifno``); it no longer reads
+        ``packagedata`` at all, since every node of the SFR budget is a reach.
 
         Parameters
         ----------
-        kstpkper : list of tuple of (int, int), optional
-            The zero-based ``(kstp, kper)`` times to draw, one trace each. A LIST
-            of tuples: a bare tuple is iterated element by element. Default
-            ``None``: ``model.kstpkper[0]``, the first time the HEAD file saved.
+        kstpkper : tuple of (int, int) or list of tuple of (int, int), optional
+            The zero-based ``(kstp, kper)`` times to draw, one trace each, on the
+            SFR budget file's OWN clock (ledger 301): a time that file did not save
+            raises ``ValueError`` naming the times it did. A bare tuple is one time.
+            Default ``None``: the first time the SFR budget file saved (it was the
+            HEAD file's first time until ledger 476).
         cfd_to_cfs : bool, default False
             Divide every flow by 86,400 (ft3/d to ft3/s in a feet-and-days model).
         cfd_to_gpm : bool, default False
@@ -499,25 +495,38 @@ class SFRBudget:
             Also write the figure to this HTML file (``Fig.write_html``). Default
             ``None``: nothing is written.
         """
+        flows: pd.DataFrame = self.get('flow')
+        saved = list(dict.fromkeys(flows['kstpkper']))
         if kstpkper is None:
-            kstpkper = [self.model.kstpkper[0]]
+            kstpkper = [saved[0]]
+        elif isinstance(kstpkper, tuple) and len(kstpkper) == 2 and all(
+            isinstance(part, (int, np.integer)) for part in kstpkper
+        ):
+            kstpkper = [kstpkper]
+        times = [tuple(int(part) for part in stpper) for stpper in kstpkper]
+        unsaved = [time for time in times if time not in saved]
+        if unsaved:
+            raise ValueError(
+                f"kstpkper {unsaved} is not a time this SFR budget file saved; it saved "
+                f"{saved[:6]}{' ...' if len(saved) > 6 else ''}."
+            )
         gpm = 448.8 if cfd_to_gpm else 1
         cfs = (24 * 60 * 60) if cfd_to_cfs or cfd_to_gpm else 1
-        flows: pd.DataFrame = self.get('flow')
-        flows = flows.set_index(['kstpkper', 'node'], drop=True)
-        stream_flows = []
-        reaches = pd.DataFrame(self._package().packagedata.get_data())["rno"].tolist()
-        for stpper in kstpkper:
-            riv_flows = flows.loc[idxx[stpper, reaches], :]
-            riv_flows = riv_flows[riv_flows.q < 0].q / cfs
-            riv_flows: pd.Series = riv_flows * -1 * gpm
-            stream_flows.append(riv_flows)
         from myflopy.viz import Fig
 
         fig = Fig()
-        for i, flows in enumerate(stream_flows):
-            flows = flows.reset_index().drop('kstpkper', axis=1)
-            fig.add_scattergl(x=flows.node, y=flows.q, name=f'stream {i}')
+        for time in times:
+            # A reach's NEGATIVE FLOW-JA-FACE entries are its flow to the reaches
+            # downstream. MF6 writes the reach number 1-based; FloPy's packagedata
+            # ``ifno`` (the rno this read before FloPy 3.10 renamed it) is
+            # zero-based, so the x axis is that ``ifno`` (ledger 476).
+            at_time = flows[(flows['kstpkper'] == time) & (flows['q'] < 0)]
+            fig.add_scattergl(
+                x=at_time['node'] - 1,
+                y=at_time['q'] * -1 / cfs * gpm,
+                name=f'{time}',
+            )
+        fig.update_xaxes(title_text='reach (ifno, zero-based)')
         if html is not None:
             fig.write_html(file=html)
         fig.show()

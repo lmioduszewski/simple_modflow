@@ -572,10 +572,26 @@ class AoiLibrary(SpecLibrary[Area]):
             "note": entry.note or "—",
         }
 
-    def __setitem__(self, key: str, value: Any) -> None:
-        """Store ``value`` as an :class:`Area` named ``key``."""
+    @staticmethod
+    def _name(key: Any) -> str:
+        """An area's name, which must be TEXT (ledger 476).
 
-        super().__setitem__(str(key), Area.coerce(value, name=str(key)))
+        ``str(key)`` was stored while every lookup used ``key`` as given, so
+        ``setdefault(1, box)`` stored ``'1'`` and then raised looking up ``1``.
+        """
+
+        if not isinstance(key, str):
+            raise TypeError(
+                f"An area is named by text, not {type(key).__name__} ({key!r}); "
+                f"pass str({key!r}) if that is the name you mean."
+            )
+        return str(key)
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Store ``value`` as an :class:`Area` named ``key`` (a ``str``; else ``TypeError``)."""
+
+        name = self._name(key)
+        super().__setitem__(name, Area.coerce(value, name=name))
 
     def update(self, *args, **kwargs) -> None:
         """``dict.update``, through the coercing assignment (dict's own skips it).
@@ -591,8 +607,8 @@ class AoiLibrary(SpecLibrary[Area]):
             mapping or iterable of ``(key, value)`` pairs (two raise ``TypeError``,
             as ``dict`` does), plus keyword entries, which win over a positional
             entry of the same name. The pairs are built into a plain ``dict`` first
-            and each is then stored through :meth:`__setitem__`: the key as
-            ``str(key)``, the value through :meth:`Area.coerce
+            and each is then stored through :meth:`__setitem__`: the key must be
+            a ``str`` (anything else raises ``TypeError``), the value through :meth:`Area.coerce
             <myflopy.areas.Area.coerce>` (four numbers ``(xmin, ymin, xmax,
             ymax)``, ``(x, y)`` points, a shapely geometry, a GeoDataFrame or
             GeoSeries, a vector-file path, or an ``Area``). A value none of those
@@ -610,11 +626,9 @@ class AoiLibrary(SpecLibrary[Area]):
         Parameters
         ----------
         key : str
-            The area's name. Pass a ``str``: the membership test and the lookup
-            that returns the area use ``key`` exactly as given, while the store
-            writes ``str(key)``, so a non-string key (``1``) is stored as ``'1'``
-            -- replacing an existing ``'1'`` -- and the lookup then raises
-            ``TypeError`` from the did-you-mean message.
+            The area's name. Anything but a ``str`` raises ``TypeError`` before
+            anything is stored (``setdefault(1, box)`` stored ``'1'`` and then
+            raised until ledger 476).
         default : Area, shapely geometry, GeoDataFrame, GeoSeries, sequence, str or Path, optional
             What to store when ``key`` is not already present -- four numbers
             ``(xmin, ymin, xmax, ymax)``, a run of ``(x, y)`` points, or any other
@@ -631,6 +645,7 @@ class AoiLibrary(SpecLibrary[Area]):
             The area now stored under ``key``.
         """
 
+        key = self._name(key)
         if key not in self:
             self[key] = default
         return self[key]
@@ -645,7 +660,7 @@ class AoiLibrary(SpecLibrary[Area]):
         both, since the model's library IS the project's when it has one.
         """
 
-        name = str(name)
+        name = self._name(name)
         if name in self and not overwrite:
             raise KeyError(
                 f"{where} already has an area '{name}'. Pass overwrite=True to "

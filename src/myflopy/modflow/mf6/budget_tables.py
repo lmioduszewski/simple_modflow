@@ -11,15 +11,16 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from myflopy.modflow.mf6.boundaries import Boundaries
+from myflopy.modflow.mf6.grid.geometry import (
+    footprint_cells,
+    read_footprints,
+    refuse_footprint_misses,
+)
 from myflopy.modflow.mf6.package_explorer_utils import _model_budget_record_frame
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, one_package
-from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
-
-idxx = pd.IndexSlice
 
 
 def budget_types(model: SimulationBase) -> list[str]:
@@ -168,61 +169,82 @@ def budget_obs_df(
     budget,
     *,
     model: SimulationBase,
-    shp_gpkg: Path,
+    shp_gpkg,
     q: str = "q",
     name_field: str = "name",
     multiplier: float = 24 * 60 * 60,
 ) -> pd.DataFrame:
-    """Aggregate package budget flows by observation polygon and stress period.
+    """Sum one package's budget flows over observation areas, per saved time.
+
+    Every rule here is a shared one (ledger 476): the areas are read through
+    :func:`~myflopy.modflow.mf6.grid.geometry.read_footprints` (reprojected to the
+    grid's CRS; a file carrying none is taken to be in it; a multi-part polygon is
+    one area), a cell belongs to an area it COVERS by area
+    (:func:`~myflopy.modflow.mf6.grid.geometry.footprint_cells`), an area on no cell
+    is refused naming both frames, every record on a cell is ADDED (a flow is
+    extensive, ledger 297), and the rows are the BUDGET file's own saved times
+    (ledger 301), never the head file's.
 
     Parameters
     ----------
-    budget
-        Parent :class:`~myflopy.modflow.mf6.budget.Budget` accessor.
-    model
-        Parent model providing the grid and stress-period selectors.
-    shp_gpkg
-        Polygon dataset defining the observation areas.
-    q
-        Budget value column to aggregate, usually ``"q"``.
-    name_field
-        Attribute field used to label each observation polygon.
-    multiplier
-        Unit-conversion divisor applied after summing flows.
+    budget : Budget
+        The package accessor (``model.bud("drn")``); its :attr:`Budget.df` holds the
+        flows, indexed by ``(node, kstpkper)``.
+    model : SimulationBase
+        The model whose grid (``model.vor``) the areas are matched against.
+    shp_gpkg : str or pathlib.Path
+        A polygon file (its first layer) whose rows are the observation areas.
+    q : str, default "q"
+        The column of :attr:`Budget.df` to sum; one it lacks raises ``KeyError``
+        naming the columns it has.
+    name_field : str, default "name"
+        The attribute column naming each area; a missing column raises
+        ``ValueError``.
+    multiplier : float, default 86400
+        The DIVISOR applied to every sum.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Indexed by the budget file's own ``kstpkper``, in file order: ``total``
+        (every record of the package), then one column per area. Flows are negated,
+        so water leaving the aquifer reads positive.
     """
 
-    full_idx = range(model.vor.ncpl)
-    df = budget.df[~budget.df.index.duplicated(keep="first")]
-    per0 = model.kstpkper[0]
+    frame = budget.df
+    if q not in frame.columns:
+        raise KeyError(
+            f"q={q!r} is not a column of this budget; it holds {list(frame.columns)}."
+        )
+    flows = frame[q].astype(float) * -1
+    times = list(dict.fromkeys(flows.index.get_level_values("kstpkper")))
+    by_time = flows.groupby(level="kstpkper", sort=False)
+    table = {"total": by_time.sum().reindex(times) / multiplier}
 
-    pkg_cells = df.loc[idxx[:, per0], :].index.get_level_values(0).to_list()
-    b_obs = read_shp_gpkg(shp_gpkg)
-    # The polygons are intersected in the GRID's CRS. Passing their own CRS as `crs=`
-    # reprojected them to themselves and intersected them against cells in another
-    # frame (ledger 466).
-    b_obs["cells"] = Boundaries(model, model.vor, shp_gpkg=shp_gpkg).intersections
-
-    def drop_non_pkg_cells(cells):
-        """Keep only the cells that belong to this package's cells."""
-
-        return [cell for cell in cells if cell in pkg_cells]
-
-    b_obs["cells"] = b_obs["cells"].apply(drop_non_pkg_cells)
-
-    budget_dict: dict[str, dict] = {"total": {}}
-    for obs in b_obs.iterrows():
-        budget_dict[obs[1].loc[name_field]] = {}
-        obs_cells = obs[1].loc["cells"]
-        for kstpkper in model.kstpkper:
-            try:
-                flows = df.loc[idxx[:, kstpkper], :][q].droplevel(1) * -1
-                budget_dict["total"][kstpkper] = flows.sum() / multiplier
-                flows = flows.reindex(full_idx, fill_value=0)
-                budget_dict[obs[1].loc[name_field]][kstpkper] = flows.loc[obs_cells].sum() / multiplier
-            except KeyError:
-                continue
-
-    return pd.DataFrame.from_dict(budget_dict).reset_index(drop=True)
+    polys = model.vor.gdf_vorPolys
+    areas = read_footprints(
+        Path(shp_gpkg), crs=model.vor.crs, id_field=name_field, noun="observation area"
+    )
+    area_cells = footprint_cells(polys, areas.geometry)
+    refuse_footprint_misses(
+        polys,
+        areas,
+        area_cells,
+        noun="observation areas",
+        consequence=", so they would read no flow",
+        source_crs=areas.attrs.get("source_crs"),
+        grid_crs=model.vor.crs,
+    )
+    nodes = flows.index.get_level_values("node")
+    for label, cells in zip(areas.index, area_cells, strict=True):
+        inside = flows[nodes.isin(cells)]
+        table[label] = (
+            inside.groupby(level="kstpkper", sort=False).sum().reindex(times, fill_value=0.0)
+            / multiplier
+        )
+    result = pd.DataFrame(table)
+    result.index = pd.Index(times, name="kstpkper", tupleize_cols=False)
+    return result
 
 
 def package_output_types(package) -> list[str]:

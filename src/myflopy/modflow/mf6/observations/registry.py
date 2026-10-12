@@ -77,6 +77,22 @@ class TargetRegistry:
         ]
         return pd.DataFrame(rows)
 
+    @staticmethod
+    def _name(key) -> str:
+        """A target set's name, which must be TEXT (ledger 476).
+
+        Registration stored ``str(key)`` while the lookup used ``key`` as given,
+        so a set registered as ``registry[1]`` was ``in`` the registry and
+        ``registry[1]`` raised ``KeyError``.
+        """
+
+        if not isinstance(key, str):
+            raise TypeError(
+                f"A target set is named by text, not {type(key).__name__} ({key!r}); "
+                f"pass str({key!r}) if that is the name you mean."
+            )
+        return str(key)
+
     def _named_target(self, name: str):
         """The model-bound helper for a registered target ``name`` (raises if absent)."""
 
@@ -153,10 +169,9 @@ class TargetRegistry:
             The name the set was registered under (``"heads"``, ``"lake_stage"``,
             or any name given through ``registry[name] = ...``), matched exactly
             and case-sensitively. A name not registered raises a plain
-            ``KeyError``. Pass a ``str``: registration, ``in`` and ``del`` store
-            and test ``str(key)``, but this lookup uses ``key`` as given, so a
-            set registered as ``registry[1]`` is found by ``registry["1"]`` and
-            ``registry[1]`` raises ``KeyError``.
+            ``KeyError``; anything but a ``str`` raises ``TypeError``, as
+            registration and ``del`` do, and is never ``in`` the registry
+            (ledger 476).
 
         Returns
         -------
@@ -167,22 +182,22 @@ class TargetRegistry:
             reads the concentration file for it.
         """
 
-        return self._bind(self._targets[key])
+        return self._bind(self._targets[self._name(key)])
 
     def __setitem__(self, key: str, value):
-        """Register ``value`` (coerced to a bare target) under name ``key``."""
+        """Register ``value`` (coerced to a bare target) under name ``key`` (a ``str``)."""
 
-        self._targets[str(key)] = self._coerce_target(value)
+        self._targets[self._name(key)] = self._coerce_target(value)
 
     def __contains__(self, key: str) -> bool:
-        """Whether a target set named ``key`` is registered."""
+        """Whether a target set named ``key`` is registered (never, for a non-``str``)."""
 
-        return str(key) in self._targets
+        return isinstance(key, str) and key in self._targets
 
     def __delitem__(self, key: str):
-        """Remove the registered target set named ``key``."""
+        """Remove the registered target set named ``key`` (a ``str``)."""
 
-        del self._targets[str(key)]
+        del self._targets[self._name(key)]
 
     def __getattr__(self, name: str):
         """Resolve ``registry.<name>`` to a registered target's bound helper (else ``AttributeError``)."""

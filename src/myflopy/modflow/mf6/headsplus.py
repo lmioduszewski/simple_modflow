@@ -1118,22 +1118,18 @@ class HeadsPlus(DependentVariableFile):
         ----------
         locs : pathlib.Path, str or None
             Required -- no default is declared. A vector file GeoPandas reads
-            (its FIRST layer) holding the observation points. It must carry a
-            CRS: a file without one raises ``ValueError``. A point gets the ONE
+            (its FIRST layer) holding the observation points. A point gets the ONE
             cell holding it, by the grid's own selection rule. A feature reaching
-            several cells (a line or polygon) gets the FIRST of them, in silence:
-            the one-cell ``assert`` tests the outer list of the selector's
-            ``{name: [[cells]]}`` shape, so it never fires (measured: a polygon
-            over cells 0, 1 and 22 returned 0; ledger 441). A feature
+            several cells (a line or polygon) RAISES ``ValueError`` naming it --
+            it got the first of them in silence until ledger 476. A feature
             reaching no cell is left out, named in a logged warning. ``None``
             reads :attr:`obs_path`, and raises ``ValueError`` when that is unset
             too.
         crs : str, int or pyproj.CRS, optional
-            A CRS the points are reprojected to on their way to the grid's. It
-            changes no cell -- the selection reprojects them on again to the
-            GRID's CRS (measured: ``"EPSG:4326"`` returned the same cells) -- and
-            it cannot label a file that carries no CRS, which still raises.
-            Default ``None``: this reader's ``crs`` (the grid's).
+            The CRS of a file that carries NONE (ledger 476; it changed no
+            cell before). A file carrying its own CRS is reprojected from it to
+            the grid's, and a ``crs`` naming another one raises ``ValueError``.
+            Default ``None``: a file with no CRS is taken to be in the grid's.
         loc_name_field : str, default 'ExploName'
             The attribute column naming each point; the names are the result's
             keys. A file without that column is keyed by row position
@@ -1162,22 +1158,20 @@ class HeadsPlus(DependentVariableFile):
 
         Parameters
         ----------
-        locs : pathlib.Path or list of int, optional
-            The locations. A ``pathlib.Path`` is stored as :attr:`obs_path` and
-            resolved through :meth:`get_obs_cells`, so the columns are the point
-            names. A ``list`` of Python ``int`` is read as zero-based cell ids
-            and names the columns itself; a numpy integer, or an id that is not a
-            cell, raises ``AssertionError``. Default ``None``: :attr:`obs_path`.
-            A path is resolved only while this reader holds NO observation cells:
-            a second call on the same reader with a ``Path`` (any path) or
-            ``None`` raises ``ValueError`` ("No observation path found"), while a
-            ``list`` always works. A ``str`` is not recognised as a path -- it is
-            ignored, so the call reads :attr:`obs_path` (the file given to the
-            constructor, in silence) when that is set and raises ``ValueError``
-            when it is not.
+        locs : str, pathlib.Path or list of int, optional
+            The locations. A path (``str`` or ``pathlib.Path``) is stored as
+            :attr:`obs_path` and resolved through :meth:`get_obs_cells` NOW, so
+            the columns are the point names -- a second path on one reader reads
+            that path (a ``str`` was ignored for the constructor's file, and a
+            second path raised, until ledger 476). A ``list`` of Python
+            ``int`` is read as zero-based cell ids and names the columns itself; a
+            numpy integer, or an id that is not a cell, raises ``AssertionError``.
+            Default ``None``: the locations this reader resolved last, else
+            :attr:`obs_path`, else ``ValueError``. Anything else raises
+            ``TypeError``.
         crs : str, int or pyproj.CRS, optional
-            Forwarded to :meth:`get_obs_cells`, where it changes no cell. Unused
-            for a list. Default ``None``: this reader's ``crs``.
+            Forwarded to :meth:`get_obs_cells`: the CRS of a points file that
+            carries none. Unused for a list. Default ``None``.
         loc_name_field : str, default 'ExploName'
             The point-name column, forwarded to :meth:`get_obs_cells`. Unused for
             a list.

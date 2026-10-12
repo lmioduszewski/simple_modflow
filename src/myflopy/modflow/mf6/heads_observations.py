@@ -7,11 +7,14 @@ model-aware head data.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
+import pyproj
 
+from myflopy.modflow.utils.datatypes.readers import read_vector_layer
 from myflopy.modflow.utils.validators import valid_list_of_cell_ints
 
 if TYPE_CHECKING:
@@ -31,44 +34,51 @@ def sort_dict_by_keys(dict_to_sort: dict | None = None) -> dict:
 
 def get_obs_cells(
     heads: HeadsPlus,
-    locs: Path | None,
+    locs: str | os.PathLike | None,
     crs: str | None = None,
     loc_name_field: str = "ExploName",
 ) -> dict:
-    """Return the single model cell containing each observation point.
+    """Return the single model cell holding each observation point.
 
     Parameters
     ----------
     heads
-        Parent :class:`HeadsPlus` instance providing ``vor`` and default CRS
-        information.
+        Parent :class:`HeadsPlus` instance providing ``vor``.
     locs
-        Path to a point shapefile or GeoPackage containing observation
-        locations. If omitted, ``heads.obs_path`` is used.
+        Path to a point file (its first layer). ``None`` reads ``heads.obs_path``.
     crs
-        Optional CRS override for the input file. Defaults to ``heads.crs``.
+        The CRS a file carrying NONE is in (ledger 476); ``None`` takes such a
+        file to be in the grid's. A file carrying its own CRS is reprojected to the
+        grid's, and a ``crs`` naming another one raises ``ValueError``.
     loc_name_field
         Attribute field containing observation names.
     """
 
     locs = heads.obs_path if locs is None else locs
-    crs = heads.crs if crs is None else crs
     if locs is None:
         raise ValueError("No observation path found. Provide locs or set heads.obs_path first.")
-
-    obs_dict = heads.vor.get_vor_cells_as_dict(
-        locs=locs,
-        crs=crs,
-        loc_name_field=loc_name_field,
-    )
-    obs_dict = sort_dict_by_keys(obs_dict)
-    obs_dict = {key: value for key, value in obs_dict.items() if len(value) > 0}
-
-    normalized: dict[str, int] = {}
-    for obs_name, cell_ids in obs_dict.items():
-        assert len(cell_ids) == 1, f"more than one cell found for {obs_name}. Fix to make it one cell"
-        normalized[obs_name] = cell_ids[0][0]
-    return normalized
+    frame = read_vector_layer(Path(locs), None)
+    if crs is not None:
+        named = pyproj.CRS.from_user_input(crs)
+        if frame.crs is None:
+            frame = frame.set_crs(named)
+        elif frame.crs != named:
+            raise ValueError(
+                f"crs={crs!r} names the frame of a points file that carries none, and "
+                f"{Path(locs).name} carries its own ({frame.crs.to_string()}), which it "
+                "is reprojected from. Drop crs=, or fix the file's CRS."
+            )
+    # The grid's own selector: the shared cell rule (a point is the one cell holding
+    # it, ledgers 210-212), the frame put in the grid's CRS, a miss logged by name.
+    cells = heads.vor.get_vor_cells_as_series(frame, name_field=loc_name_field).to_dict()
+    several = {name: list(found) for name, found in cells.items() if len(found) > 1}
+    if several:
+        listed = ", ".join(f"{name!r} ({len(found)} cells)" for name, found in several.items())
+        raise ValueError(
+            f"An observation location is ONE cell, and {listed} reach several -- a "
+            "line or polygon, not a point. Give each location as a point."
+        )
+    return {name: int(found[0]) for name, found in sort_dict_by_keys(cells).items() if found}
 
 
 def get_obs_heads(
@@ -86,9 +96,11 @@ def get_obs_heads(
         Parent :class:`HeadsPlus` instance supplying the heads dataframe and
         observation metadata cache.
     locs
-        Either a path to point locations or a list of zero-based cell ids.
+        A path (``str`` or path-like) to point locations, resolved now, or a list
+        of zero-based cell ids; ``None`` reuses the resolved locations, else
+        ``heads.obs_path``.
     crs
-        Optional CRS override for point inputs.
+        The CRS of a points file that carries none (see :func:`get_obs_cells`).
     loc_name_field
         Attribute field containing point names when ``locs`` is spatial data.
     long_format
@@ -96,42 +108,37 @@ def get_obs_heads(
         and stress period.
     """
 
-    crs = heads.crs if crs is None else crs
-
-    if isinstance(locs, Path):
-        heads.obs_path = locs
-
-    if isinstance(locs, list):
-        if valid_list_of_cell_ints(heads.model, locs):
-            obs_cells = locs
-            heads._obs = locs
-        else:
+    if isinstance(locs, (str, os.PathLike)):
+        # A path given HERE is read now, whatever the reader resolved before: a
+        # str was not recognised as one and the constructor's file was read in
+        # its place, and a second path raised (ledger 476).
+        heads.obs_path = Path(locs)
+        heads._obs = get_obs_cells(heads, heads.obs_path, crs=crs, loc_name_field=loc_name_field)
+    elif isinstance(locs, list):
+        if not valid_list_of_cell_ints(heads.model, locs):
             raise ValueError("locs must be a valid list of zero-based cell ids.")
-    elif not heads.obs and heads.obs_path is not None:
-        resolved = get_obs_cells(heads, heads.obs_path, crs=crs, loc_name_field=loc_name_field)
-        heads._obs.update(resolved)
-        obs_cells = list(heads.obs.values())
-    else:
-        raise ValueError("No observation path found or observation cells provided.")
+        heads._obs = {cell: cell for cell in locs}
+    elif locs is not None:
+        raise TypeError(
+            f"locs must be a path to a points file or a list of cell ids, not "
+            f"{type(locs).__name__}."
+        )
+    elif not heads.obs:
+        if heads.obs_path is None:
+            raise ValueError("No observation path found or observation cells provided.")
+        heads._obs = get_obs_cells(heads, heads.obs_path, crs=crs, loc_name_field=loc_name_field)
+    named_cells = dict(heads.obs)
 
-    all_heads = heads.all_heads.copy()
-    obs_heads = all_heads.loc[idxx[:, :, obs_cells], :]
-    obs_reset_idx = obs_heads.reset_index()
-    obs_heads = obs_reset_idx.pivot(
+    obs_cells = sorted(set(named_cells.values()))
+    obs_heads = heads.all_heads.loc[idxx[:, :, obs_cells], :].reset_index().pivot(
         index=["layer", "kstpkper"],
         columns="cell",
         values="elev",
     )
-
-    new_cols = []
-    for col in obs_heads.columns:
-        if isinstance(heads.obs, dict):
-            obs_name = next(key for key, value in heads.obs.items() if value == col)
-        else:
-            obs_name = col
-        new_cols.append(obs_name)
-    obs_heads.columns = new_cols
-    obs_heads = obs_heads[sorted(obs_heads.columns)]
+    obs_heads = pd.DataFrame(
+        {name: obs_heads[cell] for name, cell in sort_dict_by_keys(named_cells).items()},
+        index=obs_heads.index,
+    )
 
     if long_format:
         obs_heads = (

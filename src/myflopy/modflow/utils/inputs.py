@@ -144,9 +144,11 @@ class UzfInput:
         pandas.DataFrame
             Indexed by ``cell`` (``0..ncpl - 1``): one ``finf`` column for an int
             ``per``, one column per period (named by its number) for ``"all"``.
-            Several UZF objects under one cell in a period block (a stacked
-            unsaturated column) list that cell twice, and the reindex raises
-            ``ValueError``.
+            Each cell reads its LAND-SURFACE object's ``finf`` (``landflag`` 1):
+            MF6 applies no infiltration to an object below another in a stacked
+            unsaturated column, so those are not read (they raised ``ValueError``
+            until ledger 476). Two land-surface objects in one cell raise
+            ``ValueError`` naming the cells.
         """
         uzf = one_package(self.model, "uzf")  # several: refused, naming model.uzf(package=...)
         # The one cellid rule (ledger 419): a DIS cellid's cell is
@@ -180,8 +182,19 @@ class UzfInput:
                 else pd.DataFrame(in_force).loc[:, ['ifno', 'finf']]
             )
 
-        # create 'cell' column - converts ifno to cellid
+        # Only a LAND-SURFACE object (landflag 1) takes PERIOD data -- MF6 applies
+        # no infiltration to an object below another in its column -- so a stacked
+        # column is drawn from its land-surface object, where the reindex below
+        # raised on the repeated cell (ledger 476).
+        land = packagedata['landflag'].astype(int) == 1
+        perioddata = perioddata[perioddata.ifno.map(land).fillna(False).astype(bool)].copy()
         perioddata['cell'] = perioddata.ifno.map(cell_of_ifno)
+        repeated = sorted(set(perioddata.loc[perioddata['cell'].duplicated(), 'cell']))
+        if repeated:
+            raise ValueError(
+                f"Cells {repeated[:10]} each hold more than one land-surface UZF object "
+                "(landflag 1), so one finf per cell cannot be drawn."
+            )
         perioddata = perioddata.drop(columns='ifno')
 
         # create dataframe with just cellid and uzf infiltration data
@@ -552,11 +565,11 @@ class RchInput:
             reads them (the last block at or before ``per``; ledger 449).
             Default ``None``: ``self.per``, as :meth:`df`.
         multiplier : float or int, default 1
-            Multiplies every column of the record table before drawing -- the
-            coloured ``recharge`` and the hover's columns alike, zero-filled
-            cells included. A ``boundname`` column is multiplied too: on a
-            package carrying boundnames a non-integer multiplier raises
-            ``TypeError`` and an integer one repeats each name.
+            Multiplies every NUMERIC column of the record table before drawing
+            -- the coloured ``recharge`` and the hover's auxiliaries alike,
+            zero-filled cells included. A ``boundname`` is never multiplied (an
+            integer multiplier repeated each name and a float one raised until
+            ledger 476); a cell with no record has an empty one.
         """
 
         model = self.model
@@ -568,8 +581,13 @@ class RchInput:
         )
         df['cellid'] = _cell_numbers(model, df['cellid'])
         df = df.set_index('cellid')
-        c_hov = df.reindex(list(range(vor.ncpl)), fill_value=0)  # insert missing cell nums
-        c_hov = c_hov * multiplier
+        values = [column for column in df.columns if column != 'boundname']
+        c_hov = df.reindex(list(range(vor.ncpl)))  # insert missing cell nums
+        # The multiplier scales the NUMBERS, never a boundname: an integer one
+        # repeated each name and a float one raised (ledger 476).
+        c_hov[values] = c_hov[values].apply(pd.to_numeric).fillna(0) * multiplier
+        if 'boundname' in c_hov:
+            c_hov['boundname'] = c_hov['boundname'].fillna('')
         c_hov = c_hov.to_dict(orient='list')
         return Choro(vor=vor, custom_hover=c_hov, custom_zs=c_hov[list(c_hov.keys())[0]])
 
