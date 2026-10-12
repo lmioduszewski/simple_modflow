@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.grid.geometry import model_cell_polygons
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering
 from myflopy.modflow.mf6.pest.native_parameters import (
     _flatten_array_file,
     _resolve_files,
@@ -141,11 +142,13 @@ def _base_array_for(project, spec) -> np.ndarray:
             f"array {recipe.variable!r} on model {model.name!r}, which is not there."
         )
     values = np.asarray(array.get_data(), dtype=float)
-    nlay = int(model.modelgrid.nlay)
     # One row per layer, a cell per column, whatever shape FloPy hands back: a DIS
     # array is ``(nlay, nrow, ncol)``, which wrote no pilot-point table at all
-    # (ledger 420).
-    return values.reshape(nlay, -1)
+    # (ledger 420). The layers are the ones the views number (ledger 419): on DISU
+    # ONE, of every node -- FloPy's IHC-inferred `nlay` split the one node array
+    # its file holds into two halves, and the cell table came out half the length
+    # of the centres beside it (ledger 452).
+    return values.reshape(cell_numbering(model).nlay, -1)
 
 
 def add_pilot_point_parameter(project, spec) -> pd.DataFrame:

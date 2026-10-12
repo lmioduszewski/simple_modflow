@@ -8,12 +8,11 @@ from pathlib import Path
 from types import MethodType
 
 import flopy
-import geopandas as gpd
 import numpy as np
 
 from myflopy._defaults import DEFAULT_CRS
 from myflopy.modflow.mf6.grid.domain import idomain_from_flopy
-from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus, grid_view_from_modelgrid
 from myflopy.modflow.mf6.lak_implicit import keep_implicit, warn_if_implicit_unsupported
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, _package_type_name
 from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -357,76 +356,6 @@ def _file_sha256(path: Path) -> str:
             digest.update(stripped.encode("utf-8"))
             digest.update(b"\n")
     return digest.hexdigest()
-
-
-def _coerce_top_array(top, ncpl: int) -> np.ndarray:
-    """Normalize top elevation data to a one-dimensional ``ncpl``-length array."""
-
-    values = np.asarray(top, dtype=float).reshape(-1)
-    if values.size == 1:
-        values = np.repeat(values, ncpl)
-    if values.size != ncpl:
-        raise ValueError(f"Top array size {values.size} does not match ncpl {ncpl}.")
-    return values
-
-
-def _coerce_botm_layers(botm, ncpl: int) -> np.ndarray:
-    """Normalize bottom elevation data to a ``(nlay, ncpl)`` array."""
-
-    values = np.asarray(botm, dtype=float)
-    if values.ndim == 0:
-        return np.repeat(values.reshape(1), ncpl).reshape(1, ncpl)
-    if values.ndim == 1:
-        if values.size == ncpl:
-            return values.reshape(1, ncpl)
-        if values.size % ncpl == 0:
-            return values.reshape(values.size // ncpl, ncpl)
-    if values.ndim >= 2:
-        trailing = int(np.prod(values.shape[1:]))
-        if trailing == ncpl:
-            return values.reshape(values.shape[0], ncpl)
-    raise ValueError(f"Bottom array shape {values.shape} cannot be reshaped to ncpl {ncpl}.")
-
-
-def _build_voronoi_from_modelgrid(
-    modelgrid,
-    *,
-    crs: str,
-    name: str,
-) -> VoronoiGridPlus:
-    """Reconstruct a ``VoronoiGridPlus`` view from an MF6 vertex grid."""
-
-    verts = np.asarray(modelgrid.verts, dtype=float)
-    iverts = [[int(vertex) for vertex in cell] for cell in modelgrid.iverts]
-    xcyc = np.column_stack(
-        [
-            np.asarray(modelgrid.xcellcenters, dtype=float).reshape(-1),
-            np.asarray(modelgrid.ycellcenters, dtype=float).reshape(-1),
-        ]
-    )
-    return VoronoiGridPlus(
-        verts=verts,
-        iverts=iverts,
-        xcyc=xcyc,
-        crs=crs,
-        name=name,
-    )
-
-
-def _build_topbtm_frame(vor: VoronoiGridPlus, gwf) -> gpd.GeoDataFrame:
-    """Build the top/bottom GeoDataFrame expected by ``VoronoiGridPlus`` helpers."""
-
-    ncpl = vor.ncpl
-    top = _coerce_top_array(gwf.modelgrid.top, ncpl)
-    botm_layers = _coerce_botm_layers(gwf.modelgrid.botm, ncpl)
-
-    data: dict[object, object] = {
-        "geometry": vor.gdf_vorPolys.geometry,
-        0: top,
-    }
-    for idx, layer_botm in enumerate(botm_layers, start=1):
-        data[idx] = layer_botm
-    return gpd.GeoDataFrame(data, geometry="geometry", crs=vor.crs)
 
 
 def _grid_ncpl(modelgrid) -> int:
@@ -841,8 +770,7 @@ class LoadedMf6Run(SimulationBase):
         if self._vor is None:
             self._ensure_core_loaded()
             _progress(self._verbosity_level, "Building Voronoi grid view from the MF6 modelgrid")
-            vor = _build_voronoi_from_modelgrid(self._gwf.modelgrid, crs=self._crs, name=self.name)
-            vor.gdf_topbtm = _build_topbtm_frame(vor, self._gwf)
+            vor = grid_view_from_modelgrid(self._gwf.modelgrid, crs=self._crs, name=self.name)
             self._vor = vor
             _progress(self._verbosity_level, f"Voronoi grid ready (ncpl={self._vor.ncpl})")
         return self._vor

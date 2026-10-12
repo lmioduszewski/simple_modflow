@@ -13,6 +13,7 @@ import pandas as pd
 
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.grid.geometry import model_cell_polygons, where_they_are
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 from myflopy.modflow.mf6.package_registry import (
     agg_for_kind,
     model_packages_of_type,
@@ -388,13 +389,28 @@ def _attached_obs_packages(package) -> list:
 
 
 def _declared_features(package, ident, *, cellid: bool) -> tuple:
-    """What a declared id names: feature numbers from 0, or ``(layer, cell)`` pairs."""
+    """What a declared id names: feature numbers from 0, or ``(layer, cell)`` pairs.
+
+    A cellid is read through the package's model's ``CellNumbering`` when it has one
+    (a cellid off its grid names nothing), else taken as written.
+    """
 
     if cellid:
         if isinstance(ident, (tuple, list, np.ndarray)):
             try:
-                return (tuple(int(value) for value in ident),)
+                declared = tuple(int(value) for value in ident)
             except (TypeError, ValueError):
+                return ()
+            # Read as the model's own grid numbers it (ledger 419), so a DIS
+            # `(layer, row, col)` or a DISU `(node,)` compares with the zone's
+            # `(layer, cell)`; compared raw, a correct declaration was refused as
+            # "declared for" another cell (ledger 455).
+            model = getattr(package, "model_or_sim", None)
+            if not has_cell_numbering(model):
+                return (declared,)
+            try:
+                return (cell_numbering(model).layer_cell(declared),)
+            except ValueError:
                 return ()
         return ()
     text = str(ident).strip()

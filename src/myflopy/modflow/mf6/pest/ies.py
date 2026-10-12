@@ -39,6 +39,7 @@ from myflopy._logging import get_logger
 from myflopy._optional import require
 from myflopy.modflow.mf6.grid.geometry import model_cell_polygons
 from myflopy.modflow.mf6.grid.plotting import _choropleth_factory
+from myflopy.modflow.mf6.grid.voronoi import model_grid_view
 from myflopy.modflow.mf6.package_plotting import (
     _red_white_blue_diverging_colorscale,
     _symmetric_color_limit,
@@ -440,9 +441,11 @@ class IesResults:
         Control-file stem (e.g. ``"calib"`` for ``calib.pst``). Auto-discovered
         from the single ``.pst`` in ``workspace`` when omitted.
     model
-        Optional myflopy model (carrying the grid) used for spatial parameter
-        maps (:meth:`plot_field`). Populated automatically when the run is
-        launched via :meth:`PestProject.run_ies`.
+        Optional myflopy model used for spatial parameter maps (:meth:`plot_field`,
+        :meth:`plot_obs_residuals`): its grid view (``model.vor``), else one built
+        from its FloPy ``modelgrid`` -- a model declared with ``mf.dis(...)`` has no
+        view (``grid.voronoi.model_grid_view``, ledger 451). Populated
+        automatically when the run is launched via :meth:`PestProject.run_ies`.
 
     Notes
     -----
@@ -1964,7 +1967,7 @@ class IesResults:
             )
 
         stat_key = str(stat).lower()
-        ncpl = int(self.model.vor.ncpl)
+        ncpl = int(model_grid_view(self.model).ncpl)
         cells = frame["cell"].to_numpy(dtype=int)
 
         def _scatter(name: str) -> np.ndarray:
@@ -2033,13 +2036,14 @@ class IesResults:
         # whenever model is not None, so a PEST model with missing or stale heads
         # would raise at construction -- and a parameter field is not a head map.
         choro = _choropleth_factory(
-            self.model.vor, custom_zs=list(values), layer=layer, **choropleth_kwargs
+            model_grid_view(self.model), custom_zs=list(values), layer=layer,
+            **choropleth_kwargs
         )
         return choro, heading, choropleth_kwargs
 
     def plot_field(self, target: str, *, stat: str = "mean", which: str = "posterior",
                    layer: int = 0, backend: str = "plotly", **choropleth_kwargs):
-        """Map a captured parameter field on the model grid (Voronoi choropleth).
+        """Map a captured parameter field on the model grid (a choropleth of its cells).
 
         This answers "property patterns -- plausible or laughable?": it shows the
         spatial pattern of a calibrated property and how history matching changed
@@ -2080,12 +2084,12 @@ class IesResults:
             ``"plotly"`` (or ``"go"``) returns the interactive figure
             (``Choro.fig``, a :class:`viz.Fig`);
             ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
-            :class:`matplotlib.figure.Figure` of the Voronoi cells
+            :class:`matplotlib.figure.Figure` of the model cells
             (``Choro.plot_mpl``), with the same colours, limits and log-decade
             labels. Case and surrounding spaces are ignored; anything else raises
             ``ValueError``.
         **choropleth_kwargs
-            Forwarded to the Voronoi choropleth builder
+            Forwarded to the choropleth builder
             (``grid.plotting._choropleth_factory``, then ``Choro``): its named
             options -- ``colorscale``, ``logscale``, ``zmin``/``zmax``,
             ``features``, ``select``, ``extent``, ``contours``, ``hover_spec``,
@@ -2590,7 +2594,7 @@ class IesResults:
             Whatever is drawn, the method WARNS when the sets measure different
             quantities, since they then share one colour scale.
         **choropleth_kwargs
-            Forwarded to the Voronoi choropleth builder
+            Forwarded to the choropleth builder
             (``grid.plotting._choropleth_factory``, then ``Choro``): its named
             options and, past them, ``go.Choroplethmap`` trace properties that
             Plotly validates when the figure is built. ``colorscale``, ``zmin``,
@@ -2656,7 +2660,7 @@ class IesResults:
         half = _symmetric_color_limit(residuals) or 1.0
         colorscale = _red_white_blue_diverging_colorscale()
 
-        ncpl = int(self.model.vor.ncpl)
+        ncpl = int(model_grid_view(self.model).ncpl)
         cell_row = np.full(ncpl, -1, dtype=int)
         for position, row in enumerate(zones.itertuples()):
             for cell in row.cells:
@@ -2702,7 +2706,7 @@ class IesResults:
             choropleth_kwargs.setdefault("showscale", False)
 
         choro = _choropleth_factory(
-            self.model.vor, custom_zs=list(zone_values), layer=layer,
+            model_grid_view(self.model), custom_zs=list(zone_values), layer=layer,
             **choropleth_kwargs
         )
 
@@ -2727,7 +2731,7 @@ class IesResults:
             return figure
 
         if not points.empty:
-            lon, lat = self.model.vor.points_to_latlon(
+            lon, lat = model_grid_view(self.model).points_to_latlon(
                 points["x"].to_numpy(dtype=float), points["y"].to_numpy(dtype=float)
             )
             choro.add_overlay(go.Scattermap(

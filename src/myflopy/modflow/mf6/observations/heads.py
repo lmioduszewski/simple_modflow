@@ -39,6 +39,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _simulated_field_by_period,
     _wide_by_period,
 )
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 from myflopy.viz import mpl_axes
 
 logger = get_logger(__name__)
@@ -581,8 +582,15 @@ class HeadTargets:
         about somewhere else. A PEST build refuses the one left out when the
         values name it (ledger 341): there it would be a target PEST never sees. A target given as a cell id is checked instead: an
         id this grid does not have, or one inactive in its layer, raises.
+
+        A target's ``layer`` must be one the model's views number (ledger 419), or
+        ``ValueError`` names it: on DISU that is layer ``0`` alone, because MF6
+        numbers a DISU model's cells by node and writes its heads as one record of
+        every node. A point there resolves to the lowest-numbered node holding it;
+        name a deeper node by its ``cell`` (ledger 452).
         """
 
+        self._refuse_layers_off_the_grid(model)
         if "cell" in self._locations.columns:
             matches = self._validated_cells(model)
             if matches["x"].isna().any() or matches["y"].isna().any():
@@ -600,6 +608,29 @@ class HeadTargets:
             )
 
         return self._matched_from_geometry(model)
+
+    def _refuse_layers_off_the_grid(self, model) -> None:
+        """Refuse a target layer the model's views do not number (ledger 419).
+
+        A DISU target in layer 1 matched the node holding its point and was written
+        as layer 1, and the PEST build died reading the head file's one record with
+        ``IndexError: index 1 is out of bounds`` (ledger 452). A model whose
+        grid has no cellid form (a test double, no discretization) is not checked.
+        """
+
+        if not has_cell_numbering(model):
+            return
+        numbering = cell_numbering(model)
+        try:
+            numbering.check(layers=self._locations["layer"].astype(int))
+        except ValueError as error:
+            hint = (
+                " A DISU model's cells are numbered by node, in one layer: give a "
+                "target layer 0, and a node below the top one by its `cell`, since a "
+                "point resolves to the lowest-numbered node holding it."
+                if numbering.kind == "unstructured" else ""
+            )
+            raise ValueError(f"{self._FIELD_LABEL.capitalize()} targets: {error}{hint}") from error
 
     def _validated_cells(self, model) -> pd.DataFrame:
         """The locations, with their explicit cell ids checked against the grid.

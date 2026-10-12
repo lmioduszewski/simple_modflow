@@ -66,16 +66,17 @@ _SESSION_TEMP_ROOT = "MYFLOPY_PYTEST_TEMP_ROOT"
 
 
 def _load_absolute_pythonpath():
-    """The ONE rewrite, ``docs/reproducers/_absolute_pythonpath.py``'s (ledger 425).
+    """The ONE rewrite, ``src/myflopy/_pythonpath.py``'s (ledgers 425, 454).
 
-    Loaded by path: the reproducers run as plain scripts and use it too, and it has
-    no dependencies.
+    Loaded by path, before anything imports myflopy: it has no dependencies, and the
+    reproducers (through ``docs/reproducers/_absolute_pythonpath.py``) and
+    ``PestProject.run_ies``/``prior`` use the same function.
     """
 
     import importlib.util
 
-    path = Path(__file__).resolve().parents[1] / "docs" / "reproducers" / "_absolute_pythonpath.py"
-    spec = importlib.util.spec_from_file_location("_absolute_pythonpath", path)
+    path = Path(__file__).resolve().parents[1] / "src" / "myflopy" / "_pythonpath.py"
+    spec = importlib.util.spec_from_file_location("_myflopy_pythonpath_rule", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.absolute_pythonpath

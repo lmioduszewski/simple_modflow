@@ -847,13 +847,27 @@ never written is refused and an in-memory edit after the run does not reach it; 
 directory is refused** (ledger 421) -- a GWT model's FMI reading `../gwf/gwf.hds`,
 an `OPEN/CLOSE ../k.txt` -- naming it and what names it: every realization runs in its
 own copy of the template, where such a name reads a file beside the copy. Name it by its
-absolute path (read in place), or move it into the run directory. **A structured (DIS)
+absolute path (read in place), or move it into the run directory. **An output
+(`FILEOUT`) written outside the run directory is refused too**, by a relative name or
+an absolute one (ledger 453): every realization would write that one file. One
+written into a subdirectory of the run gets that directory in the template. **A structured (DIS)
 model calibrates like a DISV one** (ledger 420): array files are written one grid
 row per line, the shape pyEMU reads against the `StructuredGrid`; a list target's value
 is read one column further right, past the three-column `layer row col` cellid; zones
 are `(nrow, ncol)`; and targets, zones and pilot points on a model built from
 `mf.dis(...)` (whose `model.vor` is `None`) are located on FloPy's own cells, numbered
-`row * ncol + col`. **A build deletes the template and its staging
+`row * ncol + col`, and the review's maps (`plot_field`, `plot_obs_residuals`) draw on
+them through `grid.voronoi.model_grid_view` (ledger 451). **An array target the
+run's package does not declare is refused** -- `k33` on an NPF written with no `k33=`,
+where MF6 takes K33 from K -- naming the target and the package. **An unstructured
+(DISU) model calibrates** (ledger 452): one layer of every node (ledger 419) --
+pyEMU locates a node by its centre, a head target is in layer 0 (a deeper node by its
+`cell`), and a correlated `style="grid"` is refused when nodes share a centre (a layered
+DISU's stacked nodes; use `zone`, `pilotpoints` or `constant`). A DRN zone's
+observations are written and read in the grid's own cellid on DIS and DISU (ledger
+455). **`run_ies`/`prior` hand PEST++ an absolute `PYTHONPATH`** (ledger
+454), so a notebook started under `PYTHONPATH=src` runs its own myflopy in the
+forward run; a relative entry the process has `chdir`ed away from is refused. **A build deletes the template and its staging
 directory only when each is absent, empty, or one a build wrote** (ledger 360: marked by
 a visible `myflopy_pest_build.json` naming it, ledger 361); any other `workspace=` folder
 is refused with `FileExistsError`, and one that is, contains or sits inside the run

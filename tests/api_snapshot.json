@@ -461,6 +461,10 @@
       "values:KEYWORD_ONLY=None",
       "agg:KEYWORD_ONLY='sum'"
     ],
+    "CellNumbering.cellid": [
+      "layer:POSITIONAL_OR_KEYWORD=<required>",
+      "cell:POSITIONAL_OR_KEYWORD=<required>"
+    ],
     "CellNumbering.check": [
       "layers:KEYWORD_ONLY=()",
       "cells:KEYWORD_ONLY=()"

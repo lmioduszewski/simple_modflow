@@ -18,6 +18,7 @@ the run, in every family the toy carries.
 from __future__ import annotations
 
 import subprocess
+import sys
 import warnings
 from pathlib import Path
 
@@ -29,6 +30,8 @@ import myflopy as mf
 from myflopy.modflow.mf6.pest.project import (
     BUILD_MARKER,
     _inputs_outside_the_run,
+    _output_directories,
+    _outputs_outside_the_run,
     _simulation_input_files,
 )
 from tests.test_pest_handed_targets import DRN_CELLS, run_toy
@@ -86,7 +89,11 @@ END packages
     _write(tmp_path / "m.ts", "BEGIN timeseries\nEND timeseries\n")
     _write(tmp_path / "m.chd.obs", "BEGIN continuous FILEOUT m.chd.csv\nEND continuous\n")
     _write(tmp_path / "m.chd_1.txt")
-    _write(tmp_path / "m.obs", "BEGIN continuous FILEOUT heads.csv\nEND continuous\n")
+    _write(tmp_path / "m.obs", (
+        "BEGIN continuous FILEOUT heads.csv\nEND continuous\n"
+        "BEGIN continuous FILEOUT 'out dir/more.csv'\nEND continuous\n"
+        "BEGIN continuous FILEOUT ../up.csv\nEND continuous\n"
+        "BEGIN continuous FILEOUT /absolute/out.csv\nEND continuous\n"))
     (tmp_path / "m.hds").write_bytes(b"\0" * 64)
     for stray in ("m.lst", "m.chd.csv", "heads.csv", "never_scanned.txt", "not_me.txt",
                   "run.json", "pest/old.pst", "2"):
@@ -102,6 +109,51 @@ END packages
     assert _inputs_outside_the_run(tmp_path) == [
         ("../outside.txt", "OPEN/CLOSE in m.chd, named by the CHD6 'chd' entry of sub dir/m.nam"),
     ]
+    # An output written out of the directory, relatively or by an absolute name, is
+    # reported; one into a directory of its own names that directory (ledger 453).
+    obs = "named by the OBS6 'obs' entry of sub dir/m.nam"
+    assert _outputs_outside_the_run(tmp_path) == [
+        ("../up.csv", f"FILEOUT in m.obs, {obs}"),
+        ("/absolute/out.csv", f"FILEOUT in m.obs, {obs}"),
+    ]
+    assert _output_directories(tmp_path) == [Path("out dir")]
+
+
+@pytest.mark.parametrize("budget", ["../m.cbc", "ABSOLUTE", "out/m.cbc"])
+def test_an_output_is_written_inside_each_realizations_copy(tmp_path, budget):
+    """OC's budget file written ``../m.cbc`` or by an absolute name is refused before
+    anything is written: every realization -- several at once under parallel workers --
+    would write that one file, and an absolute name into the run overwrites the run's
+    own. One written ``out/m.cbc`` builds, and the template's forward run (MF6
+    included) runs: the directory holds no input, so the template lacked it and MF6
+    stopped with ``Could not open "out/m.cbc"`` (ledger 453)."""
+
+    from tests.test_pest_structured_grid import _dis_run
+
+    run = _dis_run(tmp_path / "run")
+    if budget == "ABSOLUTE":
+        budget = str(tmp_path / "run" / "m.cbc")
+    (run / "m.oc").write_text((run / "m.oc").read_text().replace("FILEOUT  m.cbc", f"FILEOUT  '{budget}'"))
+    (run / budget).parent.mkdir(exist_ok=True)
+    ran = subprocess.run(["mf6"], cwd=run, capture_output=True, text=True)
+    assert "Normal termination" in ran.stdout
+    model = mf.load_mf6_run(run)
+    cal = model.pest("out", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    if budget != "out/m.cbc":
+        with pytest.raises(ValueError, match=r"(?s)writes output outside its run directory: "
+                                             rf"'{budget}' \(FILEOUT in m.oc.*each would write "
+                                             r"that ONE file"):
+            cal.build("out.pst")
+        assert not (tmp_path / "pest").exists()
+        return
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("out.pst")
+    forward = subprocess.run([sys.executable, "forward_run.py"], cwd=cal.template_workspace,
+                             capture_output=True, text=True)
+    assert forward.returncode == 0, forward.stderr[-2000:]
+    assert (cal.template_workspace / "out" / "m.cbc").stat().st_size > 0
 
 
 def test_a_binary_input_is_copied_and_not_scanned(tmp_path):

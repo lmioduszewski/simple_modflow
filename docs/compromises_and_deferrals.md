@@ -33,10 +33,15 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 450 entries (455 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 455 entries (460 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 455 | A DRN zone's observation route reads DIS and DISU: `to_flopy_obs` writes the grid's own cellid and a declar... | 2026-10-11 |
+| 454 | `run_ies`/`prior` hand PEST++ an absolute `PYTHONPATH`, by the one rule in `myflopy._pythonpath`, and refus... | 2026-10-11 |
+| 453 | A PEST build refuses an output (`FILEOUT`) written outside the run directory, by a relative name OR an abso... | 2026-10-11 |
+| 452 | A DISU model calibrates: pyEMU locates its nodes by a node-centre dict, zones are `(nodes, 1)`/`(nodes,)`,... | 2026-10-11 |
+| 451 | The PEST review's maps draw a model declared with `mf.dis(...)`: `IesResults` reads its cells through... | 2026-10-11 |
 | 450 | An empty `newtonoptions` reads as no NEWTON, and NEWTON reads one way in memory and reloaded | 2026-10-11 |
 | 449 | An input view reads a period through one non-mutating reader, and `per=N` is the block MODFLOW 6 has in force | 2026-10-11 |
 | 448 | A map refuses a `layer=` its model's views do not number: one layer on a DISU | 2026-10-11 |
@@ -18265,11 +18270,12 @@ same day, which is the useful part of the result.
       together on DIS).
       Not routed: the BUILD-side builders (`areal`, `uzf`, `sfr`, `lakes`,
       `surface_water_validation`, `grid_identity`), which write DISV cellids, and
-      `components._grid_ncpl_array`, a grid fingerprint that must not move; and the DRN
+      `components._grid_ncpl_array`, a grid fingerprint that must not move; and ~~the DRN
       zone OBSERVATION route, which is DISV-only at both ends -- `to_flopy_obs` writes a
       `(layer, cell)` cellid, and `_shared._declared_features` compares a declared cellid
       to the zone's pair as raw tuples, so a DIS or DISU declaration is refused as
-      "declared for" another cell rather than read (from the code; not run on DIS).
+      "declared for" another cell rather than read (from the code; not run on DIS).~~
+      (**routed by ledger 455**: both ends read the cellid through `CellNumbering`.)
 
 420. **A structured (DIS) model calibrates: array files are written one grid row per line, a list target's columns follow the cellid's width, zones take the grid's shape, and a model with no grid view is located on FloPy's own cells (2026-10-11).**
       Every array parameter on a DIS model -- `style="constant"` on `k` included -- died
@@ -18290,8 +18296,9 @@ same day, which is the useful part of the result.
       reopened run (`load_mf6_run`) has one, a live view of the same model does not, and
       making them agree would put every map and section in front of DIS, which the
       package helpers leave DISV-only.
-      **DISU's columns are by format, not by run**: `list_columns` gives a one-column
-      cellid there, but no PEST build of a DISU model was run.
+      ~~**DISU's columns are by format, not by run**: `list_columns` gives a one-column
+      cellid there, but no PEST build of a DISU model was run.~~ (**Run by ledger
+      452**, which found and fixed what failed there.)
       **The review reads a DIS capture by row AND column** (found once DIS built): a
       captured array's observations are `arr_i:<row>_j:<col>`, and `IesResults.field`
       read `i` alone as the cell, putting a row's 6 values on cell `row`. It reads cell
@@ -18299,9 +18306,9 @@ same day, which is the useful part of the result.
       (review): `ncol` for an array the build writes a grid row per line, 1 for a
       pilot-point array, which its interpolation writes back one value per line -- taking
       the grid's `ncol` for both put a pilot-point layer's 30 values on cells 0..174
-      (`test_a_captured_dis_field_reviews_on_its_own_cells[pilotpoints]`). **Not done:** the review's MAPS on a
+      (`test_a_captured_dis_field_reviews_on_its_own_cells[pilotpoints]`). ~~**Not done:** the review's MAPS on a
       live `mf.dis` view (`model.vor` is `None`) -- maps of a DIS model draw through a
-      reopened run (`load_mf6_run`), which has one.
+      reopened run (`load_mf6_run`), which has one.~~ (**Done by ledger 451**.)
       Tests: `tests/test_pest_structured_grid.py` (7; the forward run scaling K, K33 by
       zone and every CHD head with cellids intact, a PESTPP-IES prior, the `mf.dis` route
       with pilot points and list zones, spectral simulation, a captured field's review).
@@ -18315,8 +18322,9 @@ same day, which is the useful part of the result.
       freeze a file another simulation writes (the flow model's heads a transport model
       reads), so a realization would read the copy while the user's run reads the
       original; the refusal says to use an absolute path or move the file into the run.
-      Checked before anything is deleted. **Not done:** a relative `FILEOUT` out of the
-      run directory is not refused -- every parallel worker would write the same file.
+      Checked before anything is deleted. ~~**Not done:** a relative `FILEOUT` out of the
+      run directory is not refused -- every parallel worker would write the same file.~~
+      (**Refused by ledger 453**, an absolute one too.)
       Test: `tests/test_pest_template_holds_inputs_only.py::test_a_build_refuses_an_input_named_relative_to_outside_the_run`
       (a real MF6 run reading `../shared/k.txt`; refused, and built once the name is
       absolute) and the scanner test, which now asserts the reported name and owner.
@@ -18387,9 +18395,11 @@ same day, which is the useful part of the result.
       reproducer that runs PEST++ and imports myflopy calls it at module level --
       `dry_lake_bottom`, `lake_default_prefix`, `obs_route_period_end`,
       `pest_handed_targets`, `pest_observation_groups`, `pilot_point_prior_bounds`.
-      **Not done:** myflopy's own `run_ies`/`prior` still hand PEST++ the environment as
+      ~~**Not done:** myflopy's own `run_ies`/`prior` still hand PEST++ the environment as
       given, so a NOTEBOOK or script started under a relative `PYTHONPATH` meets the same
-      trap (CLAUDE.md states it); making the library rewrite it was out of this scope.
+      trap (CLAUDE.md states it); making the library rewrite it was out of this scope.~~
+      (**Done by ledger 454**: the rule moved into the library, `myflopy._pythonpath`,
+      which this file now loads by path.)
       Test: `tests/test_reproducers_make_pythonpath_absolute.py` (discovers the scripts
       by what they run; fails naming one whose call is removed).
 
@@ -19107,3 +19117,75 @@ same day, which is the useful part of the result.
       empty `newtonoptions` has no row, as a model declaring none. A BLANK record
       (`[("",)]`), which FloPy writes as a bare `NEWTON` line, reads `"NEWTON"`, not the
       modifier list `[""]` (review).
+
+451. **The PEST review's maps draw a model declared with `mf.dis(...)`: `IesResults` reads its cells through `grid.voronoi.model_grid_view`, `model.vor` else a view of FloPy's `modelgrid` (2026-10-11).**
+      `plot_field` and `plot_obs_residuals` read `self.model.vor`, `None` on a live
+      `mf.dis` model, and raised `AttributeError` on both backends; a reopened run drew.
+      **Kept from ledger 420: `model.vor` stays `None` on a live DIS model** -- the view
+      is built for the maps alone, by the ONE constructor `load_mf6_run` uses
+      (`grid_view_from_modelgrid`, moved out of `project/run_model.py`), and cached on
+      the model per FloPy grid object. **Judgment call, its CRS:** FloPy's
+      `modelgrid.crs`, else `DEFAULT_CRS` -- `load_mf6_run`'s default; a reopened run with
+      a CRS recorded in `run.json` uses that one instead, so the two can differ only when
+      the live model's FloPy grid carries none and the run recorded one.
+      Test: `tests/test_pest_structured_grid.py::test_the_review_maps_of_a_model_built_from_mf_dis_draw_its_cells`
+      (a real PESTPP-IES prior; each captured K on its own cell, the marker where the
+      reopened run puts it).
+
+452. **A DISU model calibrates: pyEMU locates its nodes by a node-centre dict, zones are `(nodes, 1)`/`(nodes,)`, a pilot-point base is one layer of every node, and a head target is in layer 0 (2026-10-11).**
+      First PEST build of a DISU model (ledger 420 gave it a one-column cellid by format
+      only), a 2 x 3 x 4 `get_disu_kwargs` run: every array parameter died in pyEMU's
+      `write_array_tpl` (`IndexError: too many indices`), a zone parameter on pyEMU's
+      shape check, pilot points on a cell table half the length of its centres (FloPy's
+      IHC-inferred `nlay`), and a head target in layer 1 on reading head-file layer 1.
+      Each now follows ledger 419's DISU rule -- one layer of every node -- and the
+      forward run scales every K node and CHD head with node numbers intact, and a
+      PESTPP-IES prior reproduces the build's base heads. **Judgment calls:** (1) a head
+      target below layer 0 on DISU is REFUSED by name, not mapped through FloPy's
+      layering: a point resolves to the lowest-numbered node holding it, so a deeper
+      node is named by its `cell`. (2) `style="grid"` with `correlation=` is REFUSED
+      when nodes share a centre (a layered DISU's stacked nodes): their correlation is
+      1 and the prior draw dies; a `nugget` does not help -- pyEMU's
+      `geostatistical_draws` resets the diagonal to the bound-derived variance after
+      building the covariance, so the nugget is discarded (pyEMU 1.4.0,
+      `docs/reproducers/stacked_nodes_grid_prior.py`). Splitting the set per layer was
+      not built. (3) Pilot points are ONE set
+      over every node: the file holds one array, so stacked nodes share a multiplier.
+      Tests: `tests/test_pest_disu.py` (7; each piece reverted alone fails one).
+
+453. **A PEST build refuses an output (`FILEOUT`) written outside the run directory, by a relative name OR an absolute one, and makes the template's output-only directories (2026-10-11).**
+      Ledger 421's open half. **Judgment call: an ABSOLUTE `FILEOUT` is refused too**, unlike
+      an absolute input: an input is read, an output is WRITTEN, so every realization
+      (several at once under parallel workers) writes that one file, and an absolute name
+      into the run directory overwrites the run's own output. This refuses a model that
+      built before. Found beside it and fixed: a relative `FILEOUT` into a subdirectory
+      holding no input (`out/m.cbc`) was missing from the template -- the staging copy is
+      inputs only (ledger 383) -- and MF6, which never makes a directory, stopped every
+      realization with `Could not open "out/m.cbc"`. Not covered: a model name file's
+      `LIST` option, the one output named outside a `FILEOUT`.
+      Tests: `tests/test_pest_template_holds_inputs_only.py::test_an_output_is_written_inside_each_realizations_copy`
+      (real MF6 runs; both refusals, and the subdirectory's forward run) and the scanner
+      test.
+
+454. **`run_ies`/`prior` hand PEST++ an absolute `PYTHONPATH`, by the one rule in `myflopy._pythonpath`, and refuse a relative entry the working directory has left (2026-10-11).**
+      Ledger 425's open half: a notebook started under `PYTHONPATH=src` had PEST++ start
+      the forward run in the template, which imported another checkout's myflopy. The
+      rule (`absolute_pythonpath`) moved from `docs/reproducers/_absolute_pythonpath.py`
+      into the library, dependency-free, and `tests/conftest.py` and that file load it BY
+      PATH -- one rule, three callers. **Judgment call: relative entries are read against
+      the working directory at the call, and REFUSED when the result is not on
+      `sys.path`** -- Python put each entry there resolved against the start directory, so
+      a miss means an `os.chdir` since start (or an edited `PYTHONPATH`), and the
+      directory meant cannot be told; guessing would import the wrong myflopy in silence.
+      A process started with `-E`/`-I` read no `PYTHONPATH` and is not checked.
+      Test: `tests/test_pestpp_gets_an_absolute_pythonpath.py` (3).
+
+455. **A DRN zone's observation route reads DIS and DISU: `to_flopy_obs` writes the grid's own cellid and a declared cellid is read through `CellNumbering` (2026-10-11).**
+      Ledger 419's "not routed" DRN case, reproduced on real DIS and DISU runs: the
+      records named `(layer, cell)` on every grid, and a declaration written in the
+      grid's own form was refused as "declared for" another cell. `CellNumbering.cellid`
+      is the inverse of `layer_cell`. **Judgment call: `to_flopy_obs(None)` still writes
+      DISV's `(layer, cell)`** -- with no model there is no grid to read, and that form is
+      what a DRN declared for a myflopy (DISV) model before it exists needs. A declared
+      cellid off the grid names nothing (reads as "declared for nothing the package has").
+      Test: `tests/test_drn_zone_obs_on_dis_and_disu.py` (4, real MF6 runs).

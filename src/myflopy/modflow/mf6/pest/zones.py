@@ -361,7 +361,9 @@ def resolve_zone_array(zones: Any, *, family: str, model) -> np.ndarray:
     and why a single-layer list target is padded. On a structured (DIS) grid pyEMU
     reads an array file as ``(nrow, ncol)`` and a list record's zone at its
     ``(layer, row, col)``, so the result is ``(nrow, ncol)`` and
-    ``(nlay, nrow, ncol)`` there (ledger 420).
+    ``(nlay, nrow, ncol)`` there (ledger 420). On DISU an array file is one node
+    per line and a list record's cellid is its ``node``, so the result is
+    ``(nodes, 1)`` and ``(nodes,)`` (ledger 452).
 
     Parameters
     ----------
@@ -416,6 +418,12 @@ def resolve_zone_array(zones: Any, *, family: str, model) -> np.ndarray:
 
     per_cell = np.asarray(flat, dtype=int).reshape(ncpl)
     structured = getattr(modelgrid, "grid_type", None) == "structured"
+    if getattr(modelgrid, "grid_type", None) == "unstructured":
+        # DISU: pyEMU reads an array file one node per line as `(nodes, 1)` and keys
+        # a list record's zone by its one `node` column, so the zones are those two
+        # shapes; given a flat array for a file it raised `passed shape (24, 1) !=
+        # zone_array.shape (24,)` (ledger 452).
+        return per_cell.reshape(ncpl, 1) if family == "array" else per_cell
     if family == "array":
         return per_cell.reshape(int(modelgrid.nrow), int(modelgrid.ncol)) if structured else per_cell
 

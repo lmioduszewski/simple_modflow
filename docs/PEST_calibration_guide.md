@@ -109,6 +109,12 @@ that also made `parameterize("k33", style="pilotpoints")` overwrite K33 with hor
 K, 30x wrong and silent. Pilot points now multiply the array their own target names, so
 every array target (`k`, `k33`, `porosity`) supports them. See ledger 115.
 
+**An array target needs its array in the run's files.** `parameterize("k33")` on a
+model whose NPF was written with no `k33=` has nothing to multiply -- MF6 then takes
+K33 from K -- and `build()` refuses it naming the target and the package. It used to
+die inside the build with `cannot reshape array of size 1 into shape (2,newaxis)`.
+Declare `k33=` on the NPF and run the model again, or calibrate `k` alone.
+
 `physical=` is the safety rail: no matter what calibration does, the *final* K
 stays inside those bounds. Always set it for multipliers.
 

@@ -2428,3 +2428,140 @@ class VoronoiGridPlus(VoronoiGrid):
             rasters=rasters,
             idomain_path=idomain_path,
         )
+
+
+def _top_per_cell(top, ncpl: int) -> np.ndarray:
+    """Normalize top elevation data to a one-dimensional ``ncpl``-length array."""
+
+    values = np.asarray(top, dtype=float).reshape(-1)
+    if values.size == 1:
+        values = np.repeat(values, ncpl)
+    if values.size != ncpl:
+        raise ValueError(f"Top array size {values.size} does not match ncpl {ncpl}.")
+    return values
+
+
+def _bottoms_per_layer(botm, ncpl: int) -> np.ndarray:
+    """Normalize bottom elevation data to a ``(nlay, ncpl)`` array."""
+
+    values = np.asarray(botm, dtype=float)
+    if values.ndim == 0:
+        return np.repeat(values.reshape(1), ncpl).reshape(1, ncpl)
+    if values.ndim == 1:
+        if values.size == ncpl:
+            return values.reshape(1, ncpl)
+        if values.size % ncpl == 0:
+            return values.reshape(values.size // ncpl, ncpl)
+    if values.ndim >= 2:
+        trailing = int(np.prod(values.shape[1:]))
+        if trailing == ncpl:
+            return values.reshape(values.shape[0], ncpl)
+    raise ValueError(f"Bottom array shape {values.shape} cannot be reshaped to ncpl {ncpl}.")
+
+
+def grid_view_from_modelgrid(modelgrid, *, crs, name: str) -> VoronoiGridPlus:
+    """A :class:`VoronoiGridPlus` view of a FloPy ``modelgrid``, with its layer elevations.
+
+    The view :func:`myflopy.load_mf6_run` gives any MF6 run -- DIS, DISV or DISU --
+    and :func:`model_grid_view` gives a live model that has none: one polygon per
+    cell of a layer from ``modelgrid.verts``/``iverts`` in FloPy's order (on DIS,
+    row ``r`` column ``c`` is cell ``r * ncol + c``), the cell centres from
+    ``xcellcenters``/``ycellcenters``, and ``gdf_topbtm`` from ``top``/``botm``.
+
+    Parameters
+    ----------
+    modelgrid : flopy.discretization.Grid
+        A FloPy model grid: ``StructuredGrid``, ``VertexGrid`` or
+        ``UnstructuredGrid``. Its ``verts``, ``iverts``, ``xcellcenters``,
+        ``ycellcenters``, ``top`` and ``botm`` are read.
+    crs : str, int, pyproj.CRS or None
+        The view's CRS, as :class:`VoronoiGridPlus` takes it. Nothing is
+        reprojected: the coordinates are the grid's own.
+    name : str
+        A label stored as the view's ``name``.
+
+    Returns
+    -------
+    VoronoiGridPlus
+        The view, its ``gdf_topbtm`` set (geometry first, then the top, then one
+        bottom per layer).
+
+    Raises
+    ------
+    ValueError
+        When ``top`` or ``botm`` cannot be read as one value per cell of a layer.
+    """
+
+    verts = np.asarray(modelgrid.verts, dtype=float)
+    iverts = [[int(vertex) for vertex in cell] for cell in modelgrid.iverts]
+    xcyc = np.column_stack(
+        [
+            np.asarray(modelgrid.xcellcenters, dtype=float).reshape(-1),
+            np.asarray(modelgrid.ycellcenters, dtype=float).reshape(-1),
+        ]
+    )
+    view = VoronoiGridPlus(verts=verts, iverts=iverts, xcyc=xcyc, crs=crs, name=name)
+    ncpl = view.ncpl
+    data: dict[object, object] = {
+        "geometry": view.gdf_vorPolys.geometry,
+        0: _top_per_cell(modelgrid.top, ncpl),
+    }
+    for idx, layer_botm in enumerate(_bottoms_per_layer(modelgrid.botm, ncpl), start=1):
+        data[idx] = layer_botm
+    view.gdf_topbtm = gpd.GeoDataFrame(data, geometry="geometry", crs=view.crs)
+    return view
+
+
+def model_grid_view(model) -> VoronoiGridPlus:
+    """A model's grid view: ``model.vor``, else one built from FloPy's ``modelgrid``.
+
+    A model declared with ``mf.dis(...)`` carries no grid view (``model.vor`` is
+    ``None``), while the same run opened with :func:`myflopy.load_mf6_run` has one.
+    A view that only draws a model's cells -- the PEST review's maps -- reads it
+    here, so both draw: the live model gets the view :func:`grid_view_from_modelgrid`
+    builds (the one ``load_mf6_run`` builds), in FloPy's ``modelgrid.crs``, else
+    :data:`~myflopy._defaults.DEFAULT_CRS` (``load_mf6_run``'s default). Its
+    cells are the cells :func:`~myflopy.modflow.mf6.grid.geometry.model_cell_polygons`
+    returns, in the same order (ledger 451).
+
+    Parameters
+    ----------
+    model : SimulationBase or LoadedMf6Run
+        The model. Read: its ``vor`` (may be ``None``), else the ``modelgrid`` of
+        its ``gwf``, else its own ``modelgrid``.
+
+    Returns
+    -------
+    VoronoiGridPlus
+        ``model.vor`` when set; otherwise the built view, cached on the model for
+        as long as its FloPy grid object is the same one.
+
+    Raises
+    ------
+    ValueError
+        When the model has neither a grid view nor a FloPy ``modelgrid``.
+    """
+
+    vor = getattr(model, "vor", None)
+    if vor is not None:
+        return vor
+    gwf = getattr(model, "gwf", None)
+    grid = getattr(gwf, "modelgrid", None) if gwf is not None else None
+    if grid is None:
+        grid = getattr(model, "modelgrid", None)
+    if grid is None:
+        raise ValueError(
+            f"Model {getattr(model, 'name', model)!r} has no grid to draw: neither a "
+            "grid view (`model.vor`) nor a FloPy `modelgrid`."
+        )
+    cached = getattr(model, "_grid_view_from_modelgrid", None)
+    if cached is not None and cached[0] is grid:
+        return cached[1]
+    view = grid_view_from_modelgrid(
+        grid, crs=getattr(grid, "crs", None) or DEFAULT_CRS, name=str(getattr(model, "name", "model"))
+    )
+    try:
+        model._grid_view_from_modelgrid = (grid, view)
+    except AttributeError:
+        logger.debug("Grid view of %r not cached: the model takes no attribute", model)
+    return view

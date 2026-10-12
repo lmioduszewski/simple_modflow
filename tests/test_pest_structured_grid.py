@@ -29,6 +29,7 @@ import pytest
 
 import myflopy as mf
 from myflopy.modflow.mf6.grid.geometry import model_cell_polygons
+from myflopy.modflow.mf6.pest.ies import IesResults
 from myflopy.modflow.mf6.pest.native_parameters import _RECIPES, list_columns
 
 pyemu = pytest.importorskip("pyemu")
@@ -237,3 +238,85 @@ def test_a_captured_dis_field_reviews_on_its_own_cells(tmp_path, style):
         assert field["cell"].tolist() == list(range(NROW * NCOL))
         # PESTPP-IES writes its ensembles to six significant digits.
         assert np.allclose(field["base"], K[layer].reshape(-1), rtol=1e-5)
+
+
+@pytest.mark.slow
+def test_the_review_maps_of_a_model_built_from_mf_dis_draw_its_cells(tmp_path):
+    """``IesResults``' maps read ``model.vor``, which a model declared with
+    ``mf.dis(...)`` does not have, so ``plot_field`` and ``plot_obs_residuals`` raised
+    ``AttributeError: 'NoneType' object has no attribute 'ncpl'`` on both backends
+    (ledger 451). They draw on FloPy's cells now: each captured K on its own cell,
+    and the target on the point the same run opened with ``load_mf6_run`` places it."""
+
+    project = mf.Project(tmp_path / "p", name="p")
+    flow = mf.gwf("m", packages=[
+        mf.dis(nlay=NLAY, nrow=NROW, ncol=NCOL, delr=10.0, delc=10.0, top=100.0,
+               botm=[50.0, 0.0]),
+        mf.ic(strt=100.0), mf.npf(k=K, k33=0.5),
+        mf.chd(stress_period_data=[[(0, row, 0), 100.0] for row in range(NROW)]
+               + [[(0, row, NCOL - 1), 95.0] for row in range(NROW)]),
+        mf.oc(head_filerecord="m.hds", budget_filerecord="m.cbc",
+              saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")]),
+    ])
+    project.add_simulation(mf.simulation(flow, name="s", packages=[
+        mf.tdis(nper=2, perioddata=[(1.0, 1, 1.0)] * 2)]))
+    run = project.prepare_run("r", "s")
+    run.execute()
+    model = run.model("m")
+    assert model.vor is None
+    cal = model.pest("dis", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.5, 2.0), capture=True)
+    points = gpd.GeoDataFrame({"name": ["W"], "layer": [0]},
+                              geometry=gpd.points_from_xy([25.0], [25.0]))
+    cal.observe(mf.HeadTargets(locations=points,
+                               values=pd.DataFrame({"time": [0, 1], "W": [98.0, 98.0]})))
+    _build(cal, "dis")
+    results = cal.prior(reals=3)
+    assert results.model is model
+
+    for layer in range(NLAY):
+        cells = results.plot_field("k", stat="base", layer=layer).data[0]
+        assert list(cells.locations) == list(range(NROW * NCOL))
+        # The map colours log10(K); PESTPP-IES writes six significant digits.
+        assert np.allclose(10.0 ** np.asarray(cells.z, dtype=float), K[layer].reshape(-1),
+                           rtol=1e-5)
+    assert results.plot_field("k", stat="base", backend="mpl").axes
+
+    reopened = mf.load_mf6_run(run.workspace)
+    marker = results.plot_obs_residuals().data[-1]
+    expected = IesResults(results.workspace, model=reopened).plot_obs_residuals().data[-1]
+    assert np.allclose(marker.lon, expected.lon) and np.allclose(marker.lat, expected.lat)
+    assert results.plot_obs_residuals(backend="mpl").axes
+
+
+@pytest.mark.parametrize("nlay", [1, 2])
+def test_an_array_target_the_package_does_not_declare_is_refused_by_name(tmp_path, nlay):
+    """``parameterize("k33")`` on a model whose NPF declares no K33 died in the
+    relayering with ``cannot reshape array of size 1 into shape (2,newaxis)`` on two
+    layers and ``No external input file found`` on one, naming neither the target nor
+    the cause; it is refused naming both, and what MF6 uses instead.
+    A target the package declares still builds."""
+
+    sim = flopy.mf6.MFSimulation("s", sim_ws=str(tmp_path / "run"), exe_name="mf6")
+    flopy.mf6.ModflowTdis(sim, nper=1)
+    flopy.mf6.ModflowIms(sim)
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="m")
+    flopy.mf6.ModflowGwfdis(gwf, nlay=nlay, nrow=3, ncol=4, delr=10.0, delc=10.0,
+                            top=100.0, botm=[50.0, 0.0][:nlay])
+    flopy.mf6.ModflowGwfnpf(gwf, k=1.0, icelltype=0)
+    flopy.mf6.ModflowGwfic(gwf, strt=100.0)
+    flopy.mf6.ModflowGwfchd(gwf, stress_period_data=[[(0, 0, 0), 100.0], [(0, 2, 3), 95.0]])
+    flopy.mf6.ModflowGwfoc(gwf, head_filerecord="m.hds", saverecord=[("HEAD", "ALL")])
+    sim.write_simulation(silent=True)
+    assert sim.run_simulation(silent=True)[0]
+    model = mf.load_mf6_run(tmp_path / "run")
+
+    cal = model.pest("v", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("k33", style="constant", bounds=(0.5, 2.0))
+    with pytest.raises(ValueError, match=r"(?s)Target 'k33'.*NPF of model 'm'.*does not "
+                                         r"declare it.*K33 equal to K.*Declare `k33=`"):
+        _build(cal, "v")
+
+    cal = model.pest("k", workspace=tmp_path / "pest_k", start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.5, 2.0))
+    assert len(_build(cal, "k").parameter_data) == 1

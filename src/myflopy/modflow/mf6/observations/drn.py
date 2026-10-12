@@ -44,6 +44,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _wide_by_period,
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 from myflopy.modflow.mf6.period_end import period_ends
 
 logger = get_logger(__name__)
@@ -1254,9 +1255,11 @@ class DrnFlowTargets:
         ----------
         model : SimulationBase or None
             Passed to :meth:`zone_definitions`, whose ``Raises`` apply: it
-            resolves geometry zones. ``None`` works when every zone gives explicit
-            ``cells`` -- as when the records go into the ``observations=`` of the
-            DRN being declared, before any model exists.
+            resolves geometry zones. Its grid also says the form each cellid is
+            written in. ``None`` works when every zone gives explicit ``cells``
+            -- as when the records go into the ``observations=`` of the DRN being
+            declared, before any model exists -- and writes DISV's ``(layer,
+            cell)``.
         csv_name : str, optional
             The CSV file MF6 writes these observations to -- the dict's one key.
             Default ``"drn_flow_targets.csv"``. Any name: :meth:`simulated_series`
@@ -1272,13 +1275,16 @@ class DrnFlowTargets:
         Returns
         -------
         dict of str to list of tuple
-            ``{csv_name: [(label, kind, (layer, cell)), ...]}``: ONE record per
+            ``{csv_name: [(label, kind, cellid), ...]}``: ONE record per
             cell of each zone -- the ``(layer, cell)`` pairs its rows name,
             united, whether the zone is given as one row or several -- labelled
             ``<name>_c<cell>``, or ``<name>_lay<layer>_c<cell>`` for a zone
             reaching several layers, with every character that is not a letter
             or digit made ``_`` and leading ``_`` stripped; the cellid ZERO-based
-            as FloPy takes it. Records followed the ROWS before ledger 342, so
+            as FloPy takes it, in the model's own form -- ``(layer, row, col)``
+            on DIS, ``(layer, cell)`` on DISV, ``(node,)`` on DISU
+            (``CellNumbering.cellid``, ledger 455) -- and ``(layer, cell)``
+            when ``model`` is ``None`` or has no discretization to read. Records followed the ROWS before ledger 342, so
             every cell of a geometry zone given as several rows was written once
             per row under one label. The shape ``ModflowUtlobs(continuous=)`` and
             a DRN package's ``observations=`` take.
@@ -1293,8 +1299,11 @@ class DrnFlowTargets:
 
         kind = _refuse_observation_kind(kind, _DRN_FLOW)
         members = _zone_members(self.zone_definitions(model))
+        # The cellid the model's own DRN reads (ledger 455): `(layer, cell)`
+        # was written on every grid, which on DIS and DISU names no such cell.
+        numbering = cell_numbering(model) if has_cell_numbering(model) else None
         records = [
-            (label, kind, cellid)
+            (label, kind, cellid if numbering is None else numbering.cellid(*cellid))
             for entries in _zone_labels(members).values()
             for label, cellid in entries
         ]

@@ -225,6 +225,42 @@ class CellNumbering:
         layers, cells = self.layer_cells([cellid])
         return int(layers[0]), int(cells[0])
 
+    def cellid(self, layer: int, cell: int) -> tuple[int, ...]:
+        """The FloPy cellid of the ``(layer, cell)`` the model's views number: the inverse
+        of :meth:`layer_cell`.
+
+        ``(layer, cell // ncol, cell % ncol)`` on DIS, ``(layer, cell)`` on DISV and
+        ``(cell,)`` on DISU, whose views number one layer of every node. What a
+        writer of a cellid the model's own package will read uses -- a DRN zone's
+        OBS records wrote ``(layer, cell)`` on every grid, which MF6 reads as no
+        cell on DIS and DISU (ledger 455).
+
+        Parameters
+        ----------
+        layer : int
+            The zero-based layer, ``0..nlay - 1`` (``0`` alone on DISU).
+        cell : int
+            The zero-based in-layer cell number (the node on DISU), ``0..ncpl - 1``.
+
+        Returns
+        -------
+        tuple of int
+            The cellid, zero-based as FloPy holds it, :attr:`length` items long.
+
+        Raises
+        ------
+        ValueError
+            When the layer or the cell is off the grid (:meth:`check`).
+        """
+
+        self.check(layers=[layer], cells=[cell])
+        layer, cell = int(layer), int(cell)
+        if self.kind == "structured":
+            return (layer, cell // self.ncol, cell % self.ncol)
+        if self.kind == "vertex":
+            return (layer, cell)
+        return (cell,)
+
     def check(self, *, layers: Iterable[int] = (), cells: Iterable[int] = ()) -> None:
         """Refuse a layer or an in-layer cell number off the grid.
 

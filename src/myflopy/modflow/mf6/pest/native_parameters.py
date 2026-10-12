@@ -341,6 +341,37 @@ def array_row_length(modelgrid) -> int:
     return int(modelgrid.ncol) if modelgrid.grid_type == "structured" else 1
 
 
+def pyemu_spatial_reference(modelgrid):
+    """The spatial reference pyEMU locates a cell with, on ``modelgrid``.
+
+    The FloPy grid itself on DIS and DISV, which pyEMU indexes at ``[row, col]``
+    and ``[cell]``. On DISU a dict ``{node: (x, y)}`` of the zero-based nodes'
+    centres, pyEMU's spelling for an unstructured grid: handed the
+    ``UnstructuredGrid`` it indexed the one-dimensional centre array at ``[i, j]``
+    and every array parameter died in ``write_array_tpl`` with ``IndexError: too
+    many indices for array`` (ledger 452). An array file holds one node per
+    line there (:func:`array_row_length`), and a list file one ``node`` column
+    (:func:`list_columns`), and pyEMU reads both through the dict.
+
+    Parameters
+    ----------
+    modelgrid : flopy.discretization.Grid
+        The staged model's FloPy grid; ``grid_type`` and, on DISU,
+        ``xcellcenters``/``ycellcenters`` are read.
+
+    Returns
+    -------
+    flopy.discretization.Grid or dict
+        ``modelgrid`` unchanged, or the node-centre dict on DISU.
+    """
+
+    if getattr(modelgrid, "grid_type", None) != "unstructured":
+        return modelgrid
+    x = np.asarray(modelgrid.xcellcenters, dtype=float).reshape(-1)
+    y = np.asarray(modelgrid.ycellcenters, dtype=float).reshape(-1)
+    return {node: (float(x[node]), float(y[node])) for node in range(x.size)}
+
+
 def model_name_for(project, recipe: _Recipe) -> str:
     """Name of the model whose external input files this recipe reads.
 
@@ -429,6 +460,64 @@ def flopy_model_for(project, recipe: _Recipe):
     """
 
     return staged_model(project, model_name_for(project, recipe))
+
+
+#: What MF6 uses for an NPF array the package leaves out, said when a target names one.
+_UNDECLARED_MEANS = {
+    ("npf", "k33"): "MF6 then sets K33 equal to K in every cell",
+    ("npf", "k22"): "MF6 then sets K22 equal to K in every cell",
+}
+
+
+def refuse_an_undeclared_array(project, recipe: _Recipe) -> None:
+    """Refuse an array target whose package, in the run's files, holds no such array.
+
+    ``cal.parameterize("k33")`` on a model whose NPF declares no ``k33`` died inside
+    :func:`relayer_array_target` with ``cannot reshape array of size 1 into shape
+    (2,newaxis)`` on two layers, and with "No external input file found" on one --
+    neither naming the target nor the cause: there is no ``k33`` file to multiply,
+    because MF6 takes K33 from K. It reads the build's STAGED model
+    (:func:`flopy_model_for`), so it answers about the run's files.
+
+    Parameters
+    ----------
+    project : PestProject
+        The calibration being built; its staged simulation is read.
+    recipe : _Recipe
+        The target's recipe. Anything but an ``"array"`` recipe naming a package and
+        a variable is let through unread.
+
+    Raises
+    ------
+    ValueError
+        When the model has no such package, or the package does not declare the
+        array, naming the target, the package and what MF6 uses instead.
+    """
+
+    if recipe.family != "array" or not recipe.package or not recipe.variable:
+        return
+    model = flopy_model_for(project, recipe)
+    package = model.get_package(recipe.package)
+    if package is None:
+        raise ValueError(
+            f"Target {recipe.canonical!r} multiplies the {recipe.package.upper()} "
+            f"package's {recipe.variable.upper()}, and model {model.name!r} in the run's "
+            f"files has no {recipe.package.upper()} package. Add one to the model, or "
+            "parameterize a target the model has."
+        )
+    array = getattr(package, recipe.variable, None)
+    if array is not None and array.has_data():
+        return
+    means = _UNDECLARED_MEANS.get((recipe.package, recipe.variable))
+    raise ValueError(
+        f"Target {recipe.canonical!r} multiplies the {recipe.package.upper()} package's "
+        f"{recipe.variable.upper()}, and the {recipe.package.upper()} of model "
+        f"{model.name!r} in the run's files does not declare it"
+        + (f" ({means})" if means else "")
+        + ", so there is no array to multiply. Declare "
+        f"`{recipe.variable}=` on the package and run the model again, or parameterize "
+        "a target the package declares."
+    )
 
 
 def relayer_array_target(project, recipe: _Recipe) -> bool:
@@ -552,6 +641,43 @@ def _resolve_files(template_workspace: Path, model_name: str, recipe: _Recipe) -
     return matches
 
 
+def _refuse_a_singular_grid_prior(spec: NativeParameterSpec, modelgrid) -> None:
+    """Refuse a correlated ``grid`` parameter on DISU nodes that share a centre.
+
+    On DISU one array file holds every node, so a layered DISU puts one parameter
+    per node in ONE correlated set, and the nodes stacked in a column share their
+    centre. Their correlation is 1, so the prior covariance is singular and
+    PESTPP-IES's draw (pyEMU's ``geostatistical_draws``) died with ``LinAlgError:
+    Matrix is not positive definite`` (ledger 452). A ``nugget`` does not help:
+    pyEMU sets each parameter's variance from its bounds AFTER building the
+    covariance, which discards the nugget on the diagonal. DIS and DISV write one
+    file per layer, each its own set, whose centres are distinct.
+    """
+
+    if spec.correlation is None or getattr(modelgrid, "grid_type", None) != "unstructured":
+        return
+    centres = np.column_stack([
+        np.asarray(modelgrid.xcellcenters, dtype=float).reshape(-1),
+        np.asarray(modelgrid.ycellcenters, dtype=float).reshape(-1),
+    ])
+    _unique, group, counts = np.unique(centres, axis=0, return_inverse=True, return_counts=True)
+    group = np.asarray(group).reshape(-1)
+    stacked = counts[group] > 1
+    if not stacked.any():
+        return
+    node = int(np.flatnonzero(stacked)[0])
+    others = [int(other) for other in np.flatnonzero(group == group[node]) if other != node]
+    raise ValueError(
+        f"style='grid' with correlation= on target {spec.recipe.canonical!r} draws one "
+        f"correlated multiplier per node of this DISU model, and {int(stacked.sum())} of its "
+        f"{len(centres)} nodes share a centre with another -- node {node} at "
+        f"({centres[node, 0]:g}, {centres[node, 1]:g}) with node(s) {others[:5]}, as a "
+        "layered DISU's stacked nodes do -- so their correlation is 1 and the prior "
+        "cannot be drawn. Use style='zone' (a zone per layer of nodes), "
+        "style='pilotpoints', style='constant', or style='grid' without correlation=."
+    )
+
+
 def add_native_parameter(project, spec: NativeParameterSpec):
     """Compile one :class:`NativeParameterSpec` into ``pf.add_parameters``.
 
@@ -575,6 +701,9 @@ def add_native_parameter(project, spec: NativeParameterSpec):
             _flatten_array_file(
                 Path(project.template_workspace) / filename, array_row_length(grid)
             )
+
+    if recipe.family == "array" and spec.style == "grid":
+        _refuse_a_singular_grid_prior(spec, grid)
 
     if recipe.family == "array" and spec.style == "pilotpoints":
         raise NotImplementedError(

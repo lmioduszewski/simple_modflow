@@ -17,6 +17,7 @@ import flopy
 
 from myflopy._logging import get_logger
 from myflopy._optional import require
+from myflopy._pythonpath import pythonpath_for_children
 from myflopy.modflow.mf6.lak_implicit import keep_implicit
 from myflopy.modflow.mf6.observations import (
     ConcTargets,
@@ -33,6 +34,8 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     add_native_parameter,
     flopy_model_for,
     list_columns,
+    pyemu_spatial_reference,
+    refuse_an_undeclared_array,
     relayer_array_target,
     staged_model,
 )
@@ -151,6 +154,10 @@ _MF6_INPUT_REFERENCE = re.compile(
     r"(?i)(?<![\w/])(FILEIN|OPEN/CLOSE)\s+('[^']*'|\"[^\"]*\"|\S+)"
 )
 
+#: A file an MF6 input names to WRITE: ``FILEOUT <name>`` (OC's head and budget
+#: files, an OBS6 continuous block, a budget CSV, LAK/SFR stage ...).
+_MF6_OUTPUT_REFERENCE = re.compile(r"(?i)(?<![\w/])FILEOUT\s+('[^']*'|\"[^\"]*\"|\S+)")
+
 
 def _mf6_field(token: str) -> str:
     """One MF6 field with its quotes removed."""
@@ -225,12 +232,66 @@ def _inputs_outside_the_run(sim_ws: str | Path) -> list[tuple[str, str]]:
     return _scan_simulation_inputs(sim_ws)[1]
 
 
-def _scan_simulation_inputs(sim_ws: str | Path) -> tuple[list[Path], list[tuple[str, str]]]:
-    """The walk behind :func:`_simulation_input_files` and :func:`_inputs_outside_the_run`."""
+def _outputs_outside_the_run(sim_ws: str | Path) -> list[tuple[str, str]]:
+    """Each ``FILEOUT`` name that writes outside ``sim_ws``, with what names it.
+
+    A RELATIVE name leading out of the directory (``../heads.hds``) and an ABSOLUTE
+    name, wherever it points: MF6 writes either one outside the directory it runs
+    in, so every PEST realization -- each in its own copy of the template, several
+    at once under parallel workers -- writes the SAME file, and an absolute name
+    into the run directory overwrites the run's own output (ledger 453). Read
+    from every file :func:`_simulation_input_files` scans.
+
+    Parameters
+    ----------
+    sim_ws : str or pathlib.Path
+        The simulation directory, holding ``mfsim.nam``.
+
+    Returns
+    -------
+    list of tuple of (str, str)
+        ``(name as written, what names it)``, in the order MF6 meets them.
+    """
+
+    return _scan_simulation_inputs(sim_ws)[3]
+
+
+def _output_directories(sim_ws: str | Path) -> list[Path]:
+    """The directories inside ``sim_ws`` that a ``FILEOUT`` writes into, relative to it.
+
+    MF6 does not create a directory: ``OC ... BUDGET FILEOUT out/m.cbc`` stops the run
+    with ``Could not open "out/m.cbc"`` unless ``out/`` exists. The PEST staging copy
+    holds the run's INPUTS, so a directory holding only outputs was missing from the
+    template and every realization failed (ledger 453); the build makes these.
+
+    Parameters
+    ----------
+    sim_ws : str or pathlib.Path
+        The simulation directory, holding ``mfsim.nam``.
+
+    Returns
+    -------
+    list of pathlib.Path
+        Each directory once, relative to ``sim_ws``, ``sim_ws`` itself excluded.
+    """
+
+    return list(dict.fromkeys(
+        name.parent for name in _scan_simulation_inputs(sim_ws)[2] if name.parent != Path(".")
+    ))
+
+
+def _scan_simulation_inputs(
+    sim_ws: str | Path,
+) -> tuple[list[Path], list[tuple[str, str]], list[Path], list[tuple[str, str]]]:
+    """The walk behind :func:`_simulation_input_files`, :func:`_inputs_outside_the_run`,
+    :func:`_output_directories` and :func:`_outputs_outside_the_run`: the inputs, the
+    inputs named outside, the outputs written inside (relative) and those outside."""
 
     root = Path(sim_ws)
     found: dict[Path, None] = {}
     outside: list[tuple[str, str]] = []
+    written: dict[Path, None] = {}
+    written_outside: list[tuple[str, str]] = []
     # (relative name, how the file is read, what it is): "simulation" / "model"
     # name files are read for their blocks, "input" files scanned for
     # FILEIN/OPEN/CLOSE, "data" files (OPEN/CLOSE) copied unread.
@@ -274,14 +335,21 @@ def _scan_simulation_inputs(sim_ws: str | Path) -> tuple[list[Path], list[tuple[
                         "model" if block == "models" else "input",
                         f"the {entry} entry of {relative}",
                     ))
+        named_by = "" if kind in ("simulation", "model") else f", named by {owner}"
         for keyword, token in _MF6_INPUT_REFERENCE.findall(text):
             pending.append((
                 _mf6_field(token),
                 "input" if keyword.upper() == "FILEIN" else "data",
-                f"{keyword.upper()} in {relative}"
-                + ("" if kind in ("simulation", "model") else f", named by {owner}"),
+                f"{keyword.upper()} in {relative}{named_by}",
             ))
-    return list(found), outside
+        for token in _MF6_OUTPUT_REFERENCE.findall(text):
+            name_written = _mf6_field(token)
+            normal = Path(os.path.normpath(name_written))
+            if normal.is_absolute() or normal.parts[:1] == ("..",):
+                written_outside.append((name_written, f"FILEOUT in {relative}{named_by}"))
+            else:
+                written[normal] = None
+    return list(found), outside, list(written), written_outside
 
 
 def build_forward_run_command(template_workspace: Path, interpreter: str) -> str:
@@ -618,7 +686,11 @@ class PestProject:
             ``KeyError`` here, listing the known ones. Each target scales the
             external files FloPy writes for it (``recharge``, for instance,
             reads ``<model>.rch_stress_period_data_*.txt``), and :meth:`build`
-            raises ``FileNotFoundError`` when the model has none.
+            raises ``FileNotFoundError`` when the model has none. An ARRAY
+            target whose package the run's files do not declare it on -- ``k33``
+            on an NPF written with no ``k33=``, where MF6 takes K33 from K -- or
+            whose package the model lacks, is refused by :meth:`build` with a
+            ``ValueError`` naming the target and the package.
 
             Porosity is absent from the flow equation, so it is identifiable
             only from CONCENTRATION data — and since transport velocity is
@@ -1153,7 +1225,9 @@ class PestProject:
         # files (ledger 356).
         spatial_reference = self.spatial_reference
         if spatial_reference is None:
-            spatial_reference = getattr(staged_model(self, self.model.name), "modelgrid", None)
+            spatial_reference = pyemu_spatial_reference(
+                getattr(staged_model(self, self.model.name), "modelgrid", None)
+            )
 
         # Both resolved HERE, against the caller's working directory, never inside
         # the block: there a relative path resolves against the STAGING directory,
@@ -1246,34 +1320,62 @@ class PestProject:
             )
         return template.with_name(f"{template.name}{STAGING_SUFFIX}")
 
-    def _refuse_inputs_outside_the_run(self) -> None:
-        """Refuse an input named by a relative path out of the run directory (ledger 421).
+    def _refuse_files_outside_the_run(self) -> None:
+        """Refuse a file the simulation reads or writes outside the run directory.
 
-        The staging copy holds what the run directory holds; a name like
-        ``../gwf/gwf.hds`` is not in it, and in every realization -- each its own
-        copy of the template -- MF6 resolves it against that copy's directory, so
-        it reads a file beside the template (a missing one, or a stale or foreign
-        one) where the run read the one beside the run. It was skipped in silence
-        until then (ledger 383's "not copied"). An absolute name is the same file
-        from every copy, and is not refused.
+        An INPUT named by a relative path out of it (ledger 421): the staging copy
+        holds what the run directory holds; a name like ``../gwf/gwf.hds`` is not in
+        it, and in every realization -- each its own copy of the template -- MF6
+        resolves it against that copy's directory, so it reads a file beside the
+        template (a missing one, or a stale or foreign one) where the run read the
+        one beside the run. It was skipped in silence until then (ledger 383's "not
+        copied"). An absolute input name is the same file from every copy, and is
+        not refused.
+
+        An OUTPUT (``FILEOUT``) named by a relative path out of it or by an absolute
+        path (ledger 453): every realization writes that one file, several at
+        once under parallel workers, and an absolute name into the run directory
+        overwrites the run's own output.
         """
 
-        outside = _inputs_outside_the_run(self.original_workspace)
-        if not outside:
-            return
         run = Path(self.original_workspace).resolve()
-        listing = "; ".join(
-            f"{name!r} ({owner}), which the run read as "
-            f"{Path(os.path.normpath(run / name))}"
-            for name, owner in outside
-        )
+        problems = []
+        outside = _inputs_outside_the_run(self.original_workspace)
+        if outside:
+            listing = "; ".join(
+                f"{name!r} ({owner}), which the run read as "
+                f"{Path(os.path.normpath(run / name))}"
+                for name, owner in outside
+            )
+            problems.append(
+                f"It reads input from outside its run directory by a relative name: "
+                f"{listing}. Every PEST realization runs the model in its own copy of "
+                "the template, where that name reads a file beside the copy rather than "
+                "this one. Name it by its ABSOLUTE path (read in place by every "
+                "realization), or move the file into the run directory and name it "
+                "relative to it."
+            )
+        written = _outputs_outside_the_run(self.original_workspace)
+        if written:
+            listing = "; ".join(
+                f"{name!r} ({owner}), which the run wrote as "
+                f"{Path(os.path.normpath(run / name))}"
+                for name, owner in written
+            )
+            problems.append(
+                f"It writes output outside its run directory: {listing}. Every PEST "
+                "realization runs the model in its own copy of the template, several at "
+                "once with parallel workers, and each would write that ONE file -- an "
+                "absolute name into the run directory overwrites the run's own output. "
+                "Name it relative to the run directory and inside it (e.g. by its file "
+                "name alone)."
+            )
+        if not problems:
+            return
         raise ValueError(
-            f"The simulation in {run} reads input from outside its run directory by a "
-            f"relative name: {listing}. Every PEST realization runs the model in its own "
-            "copy of the template, where that name reads a file beside the copy rather "
-            "than this one. Name it by its ABSOLUTE path (read in place by every "
-            "realization), or move the file into the run directory and name it "
-            "relative to it, then write and run the simulation again."
+            f"The simulation in {run} cannot be copied for PEST as it stands. "
+            + " ".join(problems)
+            + " Then write and run the simulation again."
         )
 
     def _stage_model(self) -> Path:
@@ -1295,7 +1397,7 @@ class PestProject:
         It copied the whole directory until then, so all of those went into every
         template and every IES worker. An input named by a relative path out of the
         run directory is not in the copy, and the build has refused it before this
-        (``_refuse_inputs_outside_the_run``, ledger 421). The inputs are the
+        (``_refuse_files_outside_the_run``, ledger 421). The inputs are the
         run's FILES, which is what its output files -- the base observations PEST
         reads -- were computed from.
         FloPy's loader drops LAK ``IMPLICIT`` without a word (ledger 326), so the
@@ -1337,6 +1439,9 @@ class PestProject:
             # The file's content, never a link: FloPy writes the staged inputs back,
             # and through a link that would write into whatever it points at.
             shutil.copyfile(source / relative, destination)
+        # MF6 opens an output in a directory, never makes one (ledger 453).
+        for directory in _output_directories(source):
+            (staging / directory).mkdir(parents=True, exist_ok=True)
         copied = time.perf_counter()
         simulation = flopy.mf6.MFSimulation.load(sim_ws=str(staging), verbosity_level=0)
         keep_implicit(simulation)
@@ -1345,6 +1450,7 @@ class PestProject:
         # writes one whole-grid file that pyEMU cannot index against a DISV
         # spatial reference. See `relayer_array_target`.
         for spec in self._native_parameter_specs:
+            refuse_an_undeclared_array(self, spec.recipe)
             relayer_array_target(self, spec.recipe)
         simulation.set_all_data_external()
         simulation.write_simulation(silent=True)
@@ -1863,7 +1969,10 @@ class PestProject:
             model's FMI reading ``../gwf/gwf.hds`` -- naming each and what names it
             (ledger 421). Every realization runs in its own copy of the
             template, where such a name reads a file beside the template; an
-            absolute name is read in place and is not refused.
+            absolute name is read in place and is not refused. Likewise when an
+            output (``FILEOUT``) is named by a relative path leading out of the
+            run directory or by an absolute path (ledger 453): every
+            realization would write that one file.
         FileNotFoundError
             When the model's workspace holds no ``mfsim.nam``: the template is
             made from the run's files, and a model never written has none.
@@ -1877,7 +1986,7 @@ class PestProject:
 
         target_name = Path(filename).name if filename else f"{self.name}.pst"
         self._refuse_shared_prefixes()
-        self._refuse_inputs_outside_the_run()
+        self._refuse_files_outside_the_run()
         self._release_pyemu_log()
         self._clear_stale_template()
         staging = self._staging_workspace()
@@ -2023,18 +2132,32 @@ class PestProject:
         return name, None
 
     @contextlib.contextmanager
-    def _augmented_path(self, exe_dir):
-        """Temporarily prepend ``exe_dir`` to ``PATH`` so PEST++ tools resolve."""
+    def _pestpp_environment(self, exe_dir):
+        """The environment PEST++ and its workers start in, for the duration of a run.
 
-        import os
+        ``PATH`` gains ``exe_dir`` so PEST++ tools resolve. ``PYTHONPATH`` is made
+        absolute (:func:`myflopy._pythonpath.pythonpath_for_children`, the rule the
+        test suite and the reproducers use): PEST++ starts the forward run in the
+        template, where a relative entry -- a notebook started under
+        ``PYTHONPATH=src`` -- names another directory, and the forward run imported
+        another myflopy (ledger 454). Both are restored afterwards.
+        """
 
-        original = os.environ.get("PATH", "")
-        if exe_dir and exe_dir not in original:
-            os.environ["PATH"] = exe_dir + os.pathsep + original
+        pythonpath = pythonpath_for_children()
+        original = {name: os.environ.get(name) for name in ("PATH", "PYTHONPATH")}
+        path = original["PATH"] or ""
+        if exe_dir and exe_dir not in path:
+            os.environ["PATH"] = exe_dir + os.pathsep + path
+        if pythonpath is not None:
+            os.environ["PYTHONPATH"] = pythonpath
         try:
             yield
         finally:
-            os.environ["PATH"] = original
+            for name, value in original.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
 
     def run_ies(
         self,
@@ -2135,6 +2258,13 @@ class PestProject:
             For a parallel run, before pyEMU starts, when the master or a worker
             directory is a file or a non-empty folder that is not a copy of this
             calibration's template (ledger 361): pyEMU would delete it.
+        RuntimeError
+            Before PEST++ starts, when a RELATIVE ``PYTHONPATH`` entry, read
+            against the working directory, is not on ``sys.path`` -- the process
+            has changed directory since it started. PEST++ is handed
+            ``PYTHONPATH`` with every relative entry made absolute, so the forward
+            run, started in the template, imports this process's myflopy
+            (``myflopy._pythonpath.pythonpath_for_children``, ledger 454).
         """
 
         from myflopy.modflow.mf6.pest.ies import IesResults
@@ -2219,6 +2349,9 @@ class PestProject:
         FileExistsError
             As :meth:`run_ies` raises it, for a parallel run's master and worker
             directories (ledger 361).
+        RuntimeError
+            As :meth:`run_ies` raises it, for a relative ``PYTHONPATH`` entry the
+            process has changed directory away from (ledger 454).
         """
 
         from myflopy.modflow.mf6.pest.ies import IesResults
@@ -2547,7 +2680,7 @@ class PestProject:
         exe_name, exe_dir = self._resolve_pestpp(exe)
         pyemu = self.pyemu or _import_pyemu()
         if parallel:
-            with self._augmented_path(exe_dir):
+            with self._pestpp_environment(exe_dir):
                 pyemu.os_utils.start_workers(
                     str(self.template_workspace),
                     exe_name,
@@ -2558,6 +2691,6 @@ class PestProject:
                 )
             return master
 
-        with self._augmented_path(exe_dir):
+        with self._pestpp_environment(exe_dir):
             pyemu.os_utils.run(f"{exe_name} {case}", cwd=str(self.template_workspace))
         return self.template_workspace
