@@ -591,7 +591,13 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**7374 passed / 4 skipped**, 2026-10-11, the backlog's third round --
+- Full suite (**7435 passed / 4 skipped**, 2026-10-12, the backlog's last batch -- ledgers
+  489-498: a variogram's nugget reaches the PEST prior, an OBS cellid of another grid's form
+  is refused, every head reader masks MF6's no-value numbers, a DISU view refuses a layer it
+  does not number, `hover_fields` is refused on a noun, shared-cell USG elevations are
+  conductance-weighted): serial (`-n0`) **11m49s** and `-n 10` **2m31s**, both in a checkout
+  outside `.claude` with a RELATIVE `PYTHONPATH=src`, at load averages of ~4.7 and ~3.2.
+  Before it, 7374 passed / 4 skipped (2026-10-11, the third round --
   ledgers 447-488: the read views' defects the docstring pass found -- a period read no
   longer mutates a package, `per=N` reads the block MF6 has in force, SFR q per reach,
   diffs by package TYPE and the mover records -- plus PEST on DISU and one unit table per
