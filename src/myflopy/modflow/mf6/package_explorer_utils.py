@@ -602,10 +602,11 @@ def written_period_blocks(dataset) -> dict[int, object | None]:
 
     The one reader of a package's period blocks for the read views (ledger
     449). FloPy's ``get_data(key=N)`` -- and ``has_data(key=N)`` -- CREATE the
-    storage for a period they are asked about, and FloPy writes that storage as an
-    EMPTY ``PERIOD`` block, which MF6 reads as "no records from here on": a view that
-    read GHB at a period with no block of its own turned 84 records into 0 from that
-    period on, under Normal termination. This asks only for keys already stored.
+    storage for a period they are asked about, and wherever FloPy still holds a block
+    header for that period (a header outlives ``remove_transient_key``) it writes
+    that storage as an EMPTY ``PERIOD`` block, which MF6 reads as "no records from
+    here on": a view that read GHB at such a period turned 84 records into 0 from
+    that period on, under Normal termination. This asks only for keys already stored.
 
     Parameters
     ----------
@@ -621,12 +622,15 @@ def written_period_blocks(dataset) -> dict[int, object | None]:
         writes: the records (a recarray or DataFrame) or array FloPy stores there,
         or ``None`` for an EMPTY block -- one FloPy marks empty (``empty_keys``,
         what ``{N: []}`` declares and a file's ``BEGIN PERIOD N`` / ``END PERIOD``
-        loads as) or whose storage holds nothing.
+        loads as), or empty storage under a block header FloPy already holds. Empty
+        storage with NO header -- what any ``get_data(key=N)`` leaves behind, a
+        user's own included -- is not a block: FloPy writes nothing for it, and MF6
+        runs the block before it there (ledger 449).
     """
 
     if dataset is None:
         return {}
-    return {key: _block_data(dataset, key, stored) for key, stored in _written_block_keys(dataset)}
+    return dict(_written_blocks(dataset))
 
 
 def period_block_in_force(dataset, per) -> tuple[int | None, object | None]:
@@ -657,11 +661,8 @@ def period_block_in_force(dataset, per) -> tuple[int | None, object | None]:
     """
 
     period = checked_period(dataset, per)
-    in_force = [(key, stored) for key, stored in _written_block_keys(dataset) if key <= period]
-    if not in_force:
-        return None, None
-    block, stored = in_force[-1]
-    return block, _block_data(dataset, block, stored)
+    blocks = list(_written_blocks(dataset, upto=period))
+    return blocks[-1] if blocks else (None, None)
 
 
 def feature_records_in_force(dataset, per, *, id_field: str) -> pd.DataFrame | None:
@@ -694,10 +695,7 @@ def feature_records_in_force(dataset, per, *, id_field: str) -> pd.DataFrame | N
 
     period = checked_period(dataset, per)
     frames = []
-    for key, stored in _written_block_keys(dataset):
-        if key > period:
-            break
-        data = _block_data(dataset, key, stored)
+    for _key, data in _written_blocks(dataset, upto=period):
         if data is None:
             continue
         frame = pd.DataFrame(data)
@@ -712,11 +710,18 @@ def feature_records_in_force(dataset, per, *, id_field: str) -> pd.DataFrame | N
     return latest.sort_values(id_field, kind="stable").reset_index(drop=True)
 
 
-def _written_block_keys(dataset) -> list[tuple[int, bool]]:
-    """``(period, stored)`` for every block ``dataset`` writes, in period order.
+def _written_blocks(dataset, *, upto: int | None = None):
+    """``(period, data)`` for every block ``dataset`` WRITES, in period order.
 
-    A block is a key FloPy STORES or one it marks EMPTY (``empty_keys``); both are
-    read off the dataset's own bookkeeping, never through ``get_data(key=)``.
+    FloPy's own write rule (``MFBlock.write``): a key whose storage holds records is
+    written, so is one it marks EMPTY (``empty_keys``), and so is empty storage under
+    a block header FloPy already holds (a header outlives ``remove_transient_key``,
+    and a read re-creating the storage then writes as an empty block). Empty storage
+    with NO header -- which ``get_data(key=N)`` leaves, whoever called it -- is
+    written as nothing, so it is no block and MF6 runs the block before it (ledger
+    449). Read off the dataset's own bookkeeping, never through
+    ``get_data(key=)`` for a key it does not store. ``upto`` stops after that period.
+    ``data`` is ``None`` for an empty block.
     """
 
     stored = {
@@ -727,7 +732,27 @@ def _written_block_keys(dataset) -> list[tuple[int, bool]]:
         int(key) for key, flag in (getattr(dataset, "empty_keys", None) or {}).items()
         if flag and isinstance(key, (int, np.integer))
     }
-    return [(key, key in stored) for key in sorted(stored | empty)]
+    for key in sorted(stored | empty):
+        if upto is not None and key > upto:
+            return
+        data = _block_data(dataset, key, key in stored)
+        if data is None and key not in empty and not _block_header_exists(dataset, key):
+            continue
+        yield key, data
+
+
+def _block_header_exists(dataset, key: int) -> bool:
+    """Whether FloPy holds a ``PERIOD`` block header for ``key`` (what it writes).
+
+    ``True`` when the dataset names no block to ask (a test double), so its empty
+    storage is read as an empty block.
+    """
+
+    block = getattr(dataset, "_block", None)
+    header_exists = getattr(block, "header_exists", None)
+    if header_exists is None:
+        return True
+    return bool(header_exists(key))
 
 
 def _block_data(dataset, key: int, stored: bool):

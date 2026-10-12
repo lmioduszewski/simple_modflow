@@ -19064,7 +19064,13 @@ same day, which is the useful part of the result.
       Normal termination (ledger 441). Every read view now goes through
       `package_explorer_utils.written_period_blocks` / `period_block_in_force` /
       `feature_records_in_force`, which read FloPy's own key bookkeeping
-      (`get_active_key_dict`, `empty_keys`) and fetch only keys already stored. **The rule,
+      (`get_active_key_dict`, `empty_keys`) and fetch only keys already stored. **A block is
+      what FloPy WRITES** (`MFBlock.write`): stored records, a key flagged empty, or empty
+      storage under a block header FloPy still holds (one outlives `remove_transient_key`,
+      which is how the 84 -> 0 arose) -- NOT empty storage with no header, which any
+      caller's `get_data(key=N)` leaves and FloPy writes as nothing: read as an empty
+      block, `ghb.inputs.get(per=1)` gave 0 rows where MF6 ran period 0's two (measured,
+      case 5 of the reproducer; caught in review). **The rule,
       measured through MF6** (`docs/reproducers/period_block_in_force.py`): a list package's
       or HFB's block REPLACES every record before it, a period with no block reuses the last
       one, and an EMPTY block runs none; an array-form RCH/EVT keeps each array from the
@@ -19098,4 +19104,6 @@ same day, which is the useful part of the result.
       through it too, so it reads `"NEWTON"` / `("under_relaxation",)` (the `mf.gwf`
       spelling) where it held FloPy's raw tuples -- which differed between an in-memory and
       a reloaded copy of the same model, `(("NEWTON",),)` against `((True,),)` -- and an
-      empty `newtonoptions` has no row, as a model declaring none.
+      empty `newtonoptions` has no row, as a model declaring none. A BLANK record
+      (`[("",)]`), which FloPy writes as a bare `NEWTON` line, reads `"NEWTON"`, not the
+      modifier list `[""]` (review).

@@ -21,6 +21,13 @@ WHAT IT MEASURES, each through MF6's own budget file
   4. Reading every list and UZF input view at every period of the canonical model,
      with GHB written once in period 0, adds no block: written and run, GHB applies 84
      records in every period (it was 84 -> 0 from the period read, before the fix).
+  5. What FloPy WRITES for empty storage (the small model reloaded): ``get_data(key=1)``
+     -- any caller's -- leaves empty storage with no block header, which FloPy writes as
+     nothing, so MF6 runs period 0's block in period 1; ``remove_transient_key(3)`` then
+     ``get_data(key=3)`` leaves empty storage under the header FloPy kept, which it
+     writes as an EMPTY block, so MF6 runs none from period 3. ``inputs.get(per=N)``
+     reads both as MF6 runs them (the review of ledger 449; it read the first as
+     an empty block).
 """
 
 from __future__ import annotations
@@ -99,6 +106,22 @@ def small_model(root: Path):
     print(f"   the period-0 face (0, 1) in period 2, where no block holds it: q = {q:.4g}")
 
 
+def empty_storage(root: Path):
+    print("5. empty storage: FloPy writes a block only under a header it holds")
+    workspace = root / "storage"
+    shutil.copytree(root / "small" / "runs" / "r", workspace)
+    with contextlib.redirect_stdout(io.StringIO()):
+        model = mf.load_mf6_run(workspace, model_name="flow")
+        records = model.package("ghb").stress_period_data
+        records.get_data(key=1)  # no header for period 1
+        records.remove_transient_key(3)
+        records.get_data(key=3)  # the period-3 header outlives the removal
+        read = {p: sorted(model.ghb.inputs.get(per=p)["cell"]) for p in range(5)}
+    _run(model)
+    print(f"   MF6:   {_cells_mf6_ran(model, 'GHB')}")
+    print(f"   table: {read}")
+
+
 def _canonical(path):
     with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
         warnings.simplefilter("ignore")
@@ -161,6 +184,7 @@ def main(root: Path) -> None:
     small_model(root)
     uzf_rule(root)
     reads_change_nothing(root)
+    empty_storage(root)
 
 
 if __name__ == "__main__":

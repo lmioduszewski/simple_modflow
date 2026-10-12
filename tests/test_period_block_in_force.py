@@ -16,6 +16,7 @@ with the records MF6 writes to the budget file, period by period.
 
 from __future__ import annotations
 
+import shutil
 import warnings
 
 import flopy
@@ -201,6 +202,31 @@ def test_the_one_reader_answers_without_adding_a_block(run):
     assert period_block_in_force(records, 2) == (2, None)
     assert sorted(written_period_blocks(records)) == [0, 2, 3]
     assert (sorted(records.get_active_key_dict()), dict(records.empty_keys)) == before
+
+
+def test_storage_flopy_does_not_write_is_no_block(run, tmp_path):
+    """Empty storage is a block only when FloPy WRITES it (ledger 449).
+
+    Any ``get_data(key=N)`` -- a user's own, FloPy's -- leaves empty storage at ``N``.
+    With no block header there FloPy writes nothing and MF6 runs the block before it;
+    under a header FloPy still holds (it outlives ``remove_transient_key``) it writes
+    an EMPTY block and MF6 runs none. The view must read each as MF6 runs it.
+    """
+
+    workspace = tmp_path / "copy"
+    shutil.copytree(run.workspace, workspace)
+    model = mf.load_mf6_run(workspace, model_name="flow")
+    records = model.package("ghb").stress_period_data
+    records.get_data(key=1)  # no header for period 1: FloPy will write nothing there
+    records.remove_transient_key(3)
+    records.get_data(key=3)  # period 3's header outlives the removal: an EMPTY block
+    read = {per: sorted(model.ghb.inputs.get(per=per)["cell"].tolist()) for per in range(NPER)}
+    model.sim.write_simulation(silent=True)
+    success, report = model.sim.run_simulation(silent=True)
+    assert success, report[-10:]
+    ran = _budget_cells(model, "GHB")
+    assert ran == {0: [2, 5], 1: [2, 5], 2: [], 3: [], 4: []}
+    assert read == ran
 
 
 def test_the_group_reads_each_member_at_the_block_in_force(run):

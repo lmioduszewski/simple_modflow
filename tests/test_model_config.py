@@ -135,8 +135,12 @@ def _newton_model(newtonoptions, *, reload):
         ("NEWTON", "NEWTON"),
         ([("NEWTON",)], "NEWTON"),
         (["under_relaxation"], ["under_relaxation"]),
+        ([("",)], "NEWTON"),  # one BLANK record: FloPy writes a bare NEWTON line
     ],
-    ids=["empty_str", "empty_list", "undeclared", "newton", "newton_record", "under_relaxation"],
+    ids=[
+        "empty_str", "empty_list", "undeclared", "newton", "newton_record", "under_relaxation",
+        "blank_record",
+    ],
 )
 def test_model_options_report_newton_exactly_when_the_name_file_writes_it(declared, expected, reload):
     """An EMPTY ``newtonoptions`` was reported as ``"NEWTON"``, so a rebuild turned it on.

@@ -177,7 +177,8 @@ def _newton_kwarg(value):
             flat.append(item)
         elif item is not None and not isinstance(item, bool):
             flat.append(str(item))
-    modifiers = [word.lower() for word in flat if word.upper() != "NEWTON"]
+    # A blank word is no modifier: `[("",)]` writes a bare NEWTON line (ledger 450).
+    modifiers = [word.lower() for word in flat if word.strip() and word.upper() != "NEWTON"]
     return modifiers or "NEWTON"
 
 
