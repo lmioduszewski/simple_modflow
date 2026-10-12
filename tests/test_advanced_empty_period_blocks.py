@@ -43,3 +43,19 @@ def test_the_run_is_the_same_and_flopy_can_plot_it(tmp_path, factory, inflow):
     assert "AttributeError" in plots_empty["gwf.plot()"], "the defect the omission avoids"
     for name in ("m.cbc", f"m.{kind}.cbc", "m.hds", f"m.{kind}.stg"):
         assert filecmp.cmp(without / name, with_empty / name, shallow=False), name
+
+
+def test_the_input_views_read_a_package_that_sets_nothing_in_any_period(tmp_path):
+    """FloPy answers a package with no period data with ``None``, and the SFR input table
+    read it as a dict: ``model.sfr.inputs`` died -- through ``inputs.__getattr__``
+    retrying the property, as a RecursionError reported on the DISV's ``botm``. An
+    ``mf.sfr`` with no inflow writes exactly that (Review of M7)."""
+
+    import myflopy as mf
+
+    workspace, _plots, blocks, _kind = repro.run(repro._sfr_model, False, None, tmp_path)
+    assert blocks == 0
+    model = mf.load_mf6_run(workspace)
+    table = model.sfr.inputs.default.get()
+    assert sorted(table["reach"].unique()) == sorted(model.sfr.inputs.rtp.get()["reach"].unique())
+    assert len(table) == 3 * len(table["reach"].unique())  # every reach, every period

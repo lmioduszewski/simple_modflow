@@ -580,9 +580,9 @@ missing `layer`/`cell` (pandas' nullable `Int64`).
 removed-cell, observation and LAK-connection checks read the built DIS, DISV or DISU
 through it -- they read a DISV alone, so on a DIS or DISU a cellid past the grid or on a
 removed cell built clean -- and a cellid of ANOTHER discretization's form (a DISV pair
-on a DIS, a DIS triple on a DISV) is refused before FloPy sees it: FloPy stopped on a
-short one with `IndexError` and wrote only the leading parts of a long one, which MF6
-ran. Every LAK package is checked, a hand-written one included.
+on a DIS, a DIS triple on a DISV) is refused naming the grid's form: FloPy stopped on
+a short one with `IndexError` and wrote only the leading parts of a long one, which MF6
+ran. `mf.hfb`'s own refusal, naming `pairs=` in the grid's form, comes first. Every LAK package is checked, a hand-written one included.
 `validate_surface_water_configuration` reads each grid's own cellid. A lazy `mf.rch` /
 `mf.evt` / `mf.rch.array` / `mf.evt.array` / `mf.uzf` resolves on a DIS (its records
 written `(layer, row, col)`); on a DISU it is refused, as is a lazy `.gpkg` or

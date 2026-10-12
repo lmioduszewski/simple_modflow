@@ -49,7 +49,7 @@ def _chd(*cellids):
     [("dis", (0, 5), r"\(layer, row, col\)"), ("disv", (0, 1, 2), r"\(layer, cell\)"),
      ("disu", (3, 5), r"\(node,\)"), ("dis", (0,), r"\(layer, row, col\)")],
 )
-def test_a_cellid_of_another_form_is_refused_before_flopy(tmp_path, kind, cellid, form):
+def test_a_cellid_of_another_form_is_refused(tmp_path, kind, cellid, form):
     with pytest.raises(ValueError, match=rf"not this {kind.upper()}'s {form}: \({cellid[0]}"):
         _build(tmp_path, kind, _chd(cellid))
 

@@ -1201,11 +1201,12 @@ def cellid_form_complaints(model, packages) -> list[str]:
 
     A DIS cellid is ``(layer, row, col)``, a DISV one ``(layer, cell)`` and a DISU one
     ``(node,)`` (ledger 419). FloPy checks neither direction: a cellid SHORTER than the
-    grid's stopped inside FloPy's writer with ``IndexError: tuple index out of range``,
+    grid's stopped FloPy's package constructor with ``IndexError: tuple index out of range``,
     and a LONGER one built clean and FloPy wrote only the parts it expects -- a DISV CHD
     typed ``(0, 1, 2)`` ran in MF6 as ``(0, 1)``, a DISU one typed ``(3, 5)`` as node 3
     (ledger 469, ``docs/reproducers/build_cellids_dis_disu.py``). ``ModelSpec.build``
-    asks before FloPy builds each package.
+    asks after every package is built, and for a package whose build FloPy stopped with
+    that ``IndexError``, so a builder with its own refusal (``mf.hfb``'s) speaks first.
 
     Parameters
     ----------
@@ -1825,8 +1826,9 @@ def lak_geometry_complaints(
     connectiondata : sequence
         The LAK ``connectiondata`` records: ``[lakeno, iconn, cellid, claktype,
         bedleak, belev, telev, connlen, connwidth]``, lake numbers from zero. A record
-        whose cellid is not the grid's form, or is off it, is skipped -- the form and
-        range checks report it.
+        whose cellid is not the grid's form, or is off it, is skipped: FloPy refuses
+        both when it builds the LAK package (measured on DIS, DISV and DISU), since the
+        range checks do not walk ``connectiondata``.
     lake_rules : mapping of str to str
         ``{lake_id: rule}`` in lake-number order -- the :data:`LAKE_RULES` metadata
         ``mf.lak`` stamps. Only ``"excavated"`` changes what is checked. Empty for a
@@ -1895,11 +1897,11 @@ def lak_geometry_complaints(
             continue
         if numbering is not None:
             if len(cellid) != numbering.length:
-                continue  # another form: the form check reports it
+                continue  # another form: FloPy refuses it building the package
             try:
                 layer, cell = numbering.layer_cell(tuple(cellid))
             except ValueError:
-                continue  # off the grid: the range check reports it, by the cellid
+                continue  # off the grid: FloPy refuses it building the package
         elif len(cellid) != 2:
             continue
         else:
@@ -1969,13 +1971,15 @@ def _lak_complaints(model, packages, built_packages=None) -> list[str]:
     speaks for a package built before its discretization.
     """
 
+    if _discretization_package(model) is None:
+        return []  # nothing to check against, so no package is read
     types = _flopy_types(model)
     lakes = [
         package
         for package in packages
-        if "connectiondata" in (package.options or {})
+        if "connectiondata" in (getattr(package, "options", None) or {})
         and (
-            (package.metadata or {}).get(LAKE_RULES)
+            (getattr(package, "metadata", None) or {}).get(LAKE_RULES)
             or _built_type(package, types, built_packages) == "lak"
         )
     ]
@@ -2765,7 +2769,8 @@ def _discretization_complaint_families(
     # the test was `cellid[-1] >= ncpl` on a DISV alone, so a DIS or DISU model was never
     # range-checked at all, and on a DIS that test compared the COLUMN against
     # nrow * ncol (ledger 469). A cellid of another form is named by
-    # `cellid_form_complaints`, which `ModelSpec.build` also asks before FloPy builds.
+    # `cellid_form_complaints`, which `ModelSpec.build` also asks when FloPy's build of
+    # a package stops on a short one.
     built = _built_grid(model)
     if built is not None:
         complaints["cellid"] += cellid_form_complaints(model, packages)

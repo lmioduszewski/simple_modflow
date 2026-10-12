@@ -5072,9 +5072,10 @@ class ModelSpec:
             context's domain shape, a cellid no cell answers to (negative, or past
             the grid), a cell the discretization has removed, a lake connection it
             contradicts -- each group under its own heading and advice, read on a
-            DIS, DISV or DISU through its own cellid form (ledger 469); before
-            FloPy builds a package whose cellids are not that form (a DISV pair on a
-            DIS); and for a package ref with no ``build_context`` on a model without
+            DIS, DISV or DISU through its own cellid form (ledger 469); for a
+            package whose cellids are not that form (a DISV pair on a DIS), where
+            FloPy stopped with ``IndexError`` -- unless the package's own builder
+            refuses it first, as ``mf.hfb``'s does; and for a package ref with no ``build_context`` on a model without
             a deferred ``grid``.
         KeyError
             For a ref whose key is not in the build context's library -- which
@@ -5104,19 +5105,24 @@ class ModelSpec:
         built_packages = {}
         for package in packages:
             # A cellid of another form than the built discretization's -- a DISV pair on
-            # a DIS, a DIS triple on a DISV -- is refused BEFORE FloPy sees it: FloPy
-            # stopped on a shorter one with `IndexError: tuple index out of range` and
-            # wrote only the leading parts of a longer one, which MF6 then ran (ledger
-            # 469).
-            wrong = cellid_form_complaints(model, [package])
-            if wrong:
+            # a DIS, a DIS triple on a DISV -- is refused by name (ledger 469).
+            # FloPy stops on a SHORTER one with `IndexError: tuple index out of range`,
+            # which is translated here; a LONGER one builds, FloPy writing only its
+            # leading parts, and the complaints below refuse it before anything is
+            # written. Not asked before the build: a builder with its own refusal --
+            # `mf.hfb`'s, naming `pairs=` in the grid's form -- speaks first.
+            try:
+                built = package.build(model)
+            except IndexError as error:
+                wrong = cellid_form_complaints(model, [package])
+                if not wrong:
+                    raise
                 built_grid = _built_grid(model)
                 raise ValueError(
                     _build_refusal(
                         self.name, {"cellid": wrong}, built_grid.name if built_grid else "DISV"
                     )
-                )
-            built = package.build(model)
+                ) from error
             if built is not None:
                 built_packages[package.name] = built
         # RE-READ the context: a lazy DISV resolves the layer stack against the grid

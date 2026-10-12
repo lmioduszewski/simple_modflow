@@ -872,11 +872,16 @@ def summarize_input_table(
 def _numeric_period_settings(
     package, *, id_column: str, nper: int
 ) -> dict[int, dict[int, dict[str, float]]]:
-    """Return carried-forward numeric package settings keyed by period and feature id."""
+    """Return carried-forward numeric package settings keyed by period and feature id.
+
+    A package that sets nothing in ANY period has no period data, which FloPy answers
+    with ``None`` -- what ``mf.sfr`` writes for a stream with no inflow (ledger
+    468) -- and every period then carries no setting.
+    """
 
     current: dict[int, dict[str, float]] = {}
     by_period: dict[int, dict[int, dict[str, float]]] = {}
-    perioddata = package.perioddata.get_data()
+    perioddata = package.perioddata.get_data() or {}
     for period in range(int(nper)):
         records = perioddata.get(period)
         if records is not None:

@@ -19471,6 +19471,8 @@ same day, which is the useful part of the result.
       saved moves. NOT changed: MVR, where an empty block turns the movers OFF.
       Same pass: a package artifact restored with no period data (`perioddata` None,
       which FloPy returns for `{}`) raised in `project/components.py`; it reads none.
+      So did the SFR/LAK input table (`model.sfr.inputs`), on an SFR with no inflow --
+      found in review; the empty blocks were read back as `None` too.
 
 469. **The build-side cellid checks read a DIS `(layer, row, col)` and a DISU `(node,)` through `CellNumbering`, and a cellid of another discretization's form is refused before FloPy (2026-10-11).**
       The range, removed-cell, observation and LAK-connection checks in `ModelSpec.build`
@@ -19481,7 +19483,9 @@ same day, which is the useful part of the result.
       (`docs/reproducers/build_cellids_dis_disu.py`). Chosen: ONE reading of the built
       discretization, `grid_identity._built_grid` (the ledger-419 numbering from the
       PACKAGE's dimensions, its arrays as `(nlay, ncpl)`), behind every check; a wrong
-      FORM refused per package before FloPy builds it. **Widened on purpose:** the LAK
+      FORM refused by name, where FloPy's construction stopped on a short one and a long
+      one built -- after the package's own builder, so `mf.hfb`'s refusal naming
+      `pairs=` in the grid's form still speaks first (review). **Widened on purpose:** the LAK
       check now covers every LAK package, a hand-written one included (with no rules:
       removed cells, which FloPy refuses at construction, and HORIZONTAL faces outside
       their cell, which MF6 refuses -- measured on a DIS), so it refuses nothing MF6 runs.
@@ -19492,7 +19496,10 @@ same day, which is the useful part of the result.
       DISU (its nodes have no columns for `top_active`), and a lazy `.gpkg`/`mf.Polygons`
       recipe on a DIS or DISU (it resolves against a Voronoi context grid); each names the
       direct records. `sfr`/`lakes` builders resolve on a DISV context grid by construction
-      and were not changed. `grid_identity` now imports `package_explorer_utils`, which
-      moved 56 modules up one import layer. Not done: the DRN zone observation route
+      and were not changed. `grid_identity` now imports the rule from
+      `package_explorer_utils`, which takes it from import layer 0 to 1 and 28 modules
+      above it up one layer (measured by `scripts/derive_import_layers.py`); moving
+      `CellNumbering` into `grid_identity` instead moved 52, since `package_explorer_utils`
+      has more dependents, so the rule stays where ledger 419 put it. Not done: the DRN zone observation route
       (ledger 419's "Not routed" list) is still DISV-only at both ends.
 
