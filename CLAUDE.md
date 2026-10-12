@@ -591,13 +591,18 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**7435 passed / 4 skipped**, 2026-10-12, the backlog's last batch -- ledgers
-  489-498: a variogram's nugget reaches the PEST prior, an OBS cellid of another grid's form
-  is refused, every head reader masks MF6's no-value numbers, a DISU view refuses a layer it
-  does not number, `hover_fields` is refused on a noun, shared-cell USG elevations are
-  conductance-weighted): serial (`-n0`) **11m49s** and `-n 10` **2m31s**, both in a checkout
-  outside `.claude` with a RELATIVE `PYTHONPATH=src`, at load averages of ~4.7 and ~3.2.
-  Before it, 7374 passed / 4 skipped (2026-10-11, the third round --
+- Full suite (**7777 passed / 4 skipped**, 2026-10-12, the first round of the Ten Trails PEST
+  preparation -- ledgers 499-542: target hygiene, the IES review and run policy, parameters by
+  package TYPE with additive elevations, pilot points that stack and interpolate in log space,
+  `mf.AverageYear`, RIV flow targets, `mf.RasterValues`): serial (`-n0`) **18m18s** and `-n 10`
+  **4m22s**, NOT quiet clocks -- other lanes' tests and PESTPP-IES runs shared the machine (load
+  averages ~14 and ~4.3 at their starts, ~20 during the parallel run). The first `-n 10` run
+  failed one test, `test_sfr_stream_inputs.py`'s self-diversion case (MF6 6.8 segfaults on it
+  intermittently; it retries 5 times and passed 5/5 alone three times, in the serial run and on
+  the rerun). Before it, 7435 passed / 4 skipped (2026-10-12, the backlog's last batch -- ledgers
+  489-498): serial (`-n0`) 11m49s and `-n 10` 2m31s, both in a checkout outside `.claude` with a
+  RELATIVE `PYTHONPATH=src`, at load averages of ~4.7 and ~3.2.
+  Before that, 7374 passed / 4 skipped (2026-10-11, the third round --
   ledgers 447-488: the read views' defects the docstring pass found -- a period read no
   longer mutates a package, `per=N` reads the block MF6 has in force, SFR q per reach,
   diffs by package TYPE and the mover records -- plus PEST on DISU and one unit table per
