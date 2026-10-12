@@ -1232,6 +1232,28 @@ flow = mf.gwf(
 
 `k` accepts a scalar, one value per layer, or a full `(nlay, ncpl)` array.
 
+### K, storage and recharge from rasters
+
+Declare the raster, not the array you sampled from it: `mf.RasterValues` is sampled at
+BUILD onto whatever grid the model supplies, through the same sampler as
+`mf.Surface.raster(path).values(vor)` (identical numbers by default), and the model
+then moves, saves and freezes like any recipe (ledger 541). A sampled
+`ndarray` -- or a pickled one -- cannot be saved with the project and reads
+`unverifiable` on a move.
+
+```python
+rasters = Path("from_usg/arrays_filled")
+k33 = [mf.RasterValues(rasters / f"k33_{n}.tif") for n in range(1, 6)]
+k33[2] = k33[2] * mf.Polygons("pitdrains_sw.gpkg", value=0.1, default=1.0)  # a multiplier
+mf.npf(k=[mf.RasterValues(rasters / f"k_{n}.tif") for n in range(1, 6)], k33=k33, icelltype=1)
+mf.sto(ss=[mf.RasterValues(rasters / f"ss_{n}.tif") for n in range(1, 6)], sy=..., iconvert=1)
+mf.rch.array(recharge={0: mf.RasterValues(rasters / "recharge_01.tif"), ...})
+```
+
+A cell off the raster is refused unless `gaps="nearest"` or `default=` says what it
+means. A multiplier polygon multiplies every cell it overlaps under the default
+`rule="majority"`; pass `rule="centroid"` for the cells whose centre is inside.
+
 ### Three spellings for every list BC
 
 `chd` `ghb` `drn` `riv` `wel` `rch` `evt` each answer all three:
@@ -1483,9 +1505,10 @@ grid the build supplies — one declaration builds at ncpl 36 and ncpl 100. `mov
 reads it `rebuilt` where a plain array reads `unverifiable`, because an array names its
 cells by POSITION and carries nothing to check against a new mesh.
 
-Available on `mf.npf(k=, k22=, k33=)`, `mf.ic(strt=)` and `mf.sto(ss=, sy=)`.
-`icelltype` / `iconvert` are REFUSED: they are integer flags, and every polygon rule
-returns a float — there is no cell type 0.4.
+Available on `mf.npf(k=, k22=, k33=)`, `mf.ic(strt=)` and `mf.sto(ss=, sy=)` -- and,
+like `mf.RasterValues` (§7), inside a per-layer list, in a `*` product, and in
+`mf.rch.array`/`mf.evt.array`. `icelltype` / `iconvert` are REFUSED: they are integer
+flags, and every polygon rule returns a float — there is no cell type 0.4.
 
 **Name the rule if the default is not what you mean.** `rule="majority"` (default)
 gives a cell the value of whichever polygon covers most of it and so invents nothing;

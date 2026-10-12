@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 540 entries (545 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 541 entries (546 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 541 | A raster of values fills an array slot as a recipe, and `*` multiplies recipes | 2026-10-12 |
 | 540 | The PEST forward run opens the model ONCE for every named-series set | 2026-10-12 |
 | 539 | Zones by RIV/DRN BOUNDNAME are deferred | 2026-10-12 |
 | 538 | The DRN and RIV budget route refuses a target keyed past the run's periods | 2026-10-12 |
@@ -12489,9 +12490,10 @@ same day, which is the useful part of the result.
       ``_lazy_array_factory`` / ``_build_lazy_array`` for ``mf.rch.array`` (ledger 285) at
       ~line 5890; a second definition of the same name at ~line 1000 was silently
       overridden by it, so the new calls dispatched into the recharge builder and died on
-      ``_ARRAY_FIELDS[<flopy class>]``. Renamed to ``_polygon_array_factory`` /
-      ``_build_polygon_arrays``. The file is 5,900 lines; grep before adding a private
-      helper to it.
+      ``_ARRAY_FIELDS[<flopy class>]``. ~~Renamed to ``_polygon_array_factory`` /
+      ``_build_polygon_arrays``.~~ (**CHANGED by ledger 541**: generalized to
+      every array recipe and renamed ``_recipe_array_factory`` / ``_build_recipe_arrays``.)
+      The file is 5,900 lines; grep before adding a private helper to it.
       **Deliberately NOT here, and each for a reason:**
       * **Layer ELEVATIONS from a polygon map.** The user scoped it out for a follow-up.
         Nothing does it today -- ``Surface.where(zone, inside, outside)`` is a two-way
@@ -20836,3 +20838,44 @@ same day, which is the useful part of the result.
       against 8.3 s on the same template -- because `LoadedMf6Run` full-loads on any package
       access ON PURPOSE (ledger 344: a partial load lost edits on write), and a read-only
       partial-load hook is a new public surface on `project/run_model.py`.
+
+541. **A raster of values fills an array slot as a recipe, and `*` multiplies recipes (2026-10-12).**
+      `mf.RasterValues(path, band=, method=, mean=, nodata=, gaps=, default=)` is ledger
+      299's `mf.Polygons` for a raster: a `DataSourceSpec` in `PackageSpec.inputs`,
+      resolved at BUILD through the ONE sampler (`get_raster_vals_at_centroids`), so a
+      model whose K/storage/recharge came from rasters moves (`rebuilt`, was
+      `unverifiable`), saves (`simulations=1`, was 0), digests by content, bundles and
+      freezes its sampled arrays. `recipe * factor` is an `ArrayProduct` (token
+      `$array_product`) of `RasterValues`, `Polygons` and numbers; `Polygons` gains
+      `value=` (exactly one of `column`/`value`). Slots: `npf` `k`/`k22`/`k33`, `ic`
+      `strt`, `sto` `ss`/`sy` -- a recipe, a product, or a per-layer LIST of numbers and
+      recipes -- and, areal, `rch.array(recharge=)` / `evt.array(rate=, depth=,
+      surface=)`, bare or `{period: recipe}`.
+      **Chosen:** `mean="arithmetic"` by default, because it reproduces
+      `Surface.raster(p).values(vor)` bit for bit (asserted on two meshes), so moving
+      the user's arrays onto recipes changes no number; `"geometric"`/`"harmonic"` are
+      options, refusing a pixel at or below zero (ledger 300: which one is right for K
+      depends on flow direction). `gaps="raise"` by default, `"nearest"` or `default=`
+      to fill; the sampler's `"warn"`/`"ignore"` are refused because the array goes
+      straight to MF6 (ledger 247). A raster reaching NO cell raises even with
+      `default=`. A distinct recipe is sampled once per build (a 6-period two-raster
+      recharge read 2 files, not 6). A recipe in `rch.array`/`evt.array` refuses
+      `context=`: the recipe and `irch="top_active"` both resolve at build.
+      **Refused at the declaration:** an `ndarray` or `Surface` factor (an array names
+      cells by position -- `with_grid(remap=True)` is that route); an array entry in a
+      per-layer list holding a recipe; a `Polygons(layer_field=)` in a list or an areal
+      slot; a recipe in `icelltype`/`iconvert`/`irch`/`ievt` (integer flags, as 299).
+      This also closes two accepted-then-`MFDataException` inputs measured at HEAD:
+      `mf.npf(k=[mf.Polygons(...), 1.0])` and `mf.rch.array(recharge=mf.Polygons(...))`.
+      **Kept, not changed (`needs_decision`):** under `rule="majority"` the uncovered
+      rest of a cell is not a competitor, so a multiplier polygon multiplies EVERY cell
+      it overlaps at all -- `default=` fills only cells no polygon reaches (299's
+      contract). Measured, a pit covering 40% x 50% of a square footprint: 11 cells
+      multiplied on a 6x6 mesh where 6 are more than half inside (1.87x the pit's
+      area), 23 vs 15 on 10x10, 76 vs 64 on 20x20. `rule="centroid"` multiplies the
+      cells whose centre is inside (`docs/reproducers/polygon_multiplier_reach.py`).
+      Letting `default=` compete as the uncovered
+      fraction's vote would change existing `Polygons` maps with `default=`.
+      **Not built:** a recipe for an integer flag, so an explicit per-column `irch`
+      ARRAY beside a recharge recipe still reads `unverifiable` on a move (measured;
+      `"top_active"` or one integer reads `rebuilt`); `ArrayProduct` division or sums.

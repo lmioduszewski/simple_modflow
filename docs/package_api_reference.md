@@ -648,7 +648,7 @@ ran. `mf.hfb`'s own refusal, naming `pairs=` in the grid's form, comes first. Ev
 `validate_surface_water_configuration` reads each grid's own cellid. A lazy `mf.rch` /
 `mf.evt` / `mf.rch.array` / `mf.evt.array` / `mf.uzf` resolves on a DIS (its records
 written `(layer, row, col)`); on a DISU it is refused, as is a lazy `.gpkg` or
-`mf.Polygons` recipe on anything but a DISV -- give those records directly.
+`mf.Polygons` / `mf.RasterValues` recipe on anything but a DISV -- give those records directly.
 
 **The project's libraries.** `project.packages` / `.grids` / `.simulations` are
 `dict` **subclasses** — every dict operation works unchanged, and each also
@@ -1204,6 +1204,7 @@ so one declaration builds on two meshes, `move_report` reads it `rebuilt`, and
 | argument | meaning |
 | --- | --- |
 | `column` | attribute holding the value. A NULL is REFUSED naming the feature |
+| `value` | one number for every polygon, in place of `column` (exactly one of the two) -- for a constant MULTIPLIER, below |
 | `rule` | `"majority"` (default), `"mean"`, `"centroid"` — see below |
 | `default` | value for a cell no polygon reaches. Without it, REFUSED |
 | `layer` | layer/table name inside a multi-layer file |
@@ -1223,6 +1224,41 @@ field and used to be accepted, then die inside FloPy naming neither.
 For a boundary condition's conductance or elevation this is the wrong tool — the seven
 `mf.<pkg>.gpkg` forms already do it. `GeoPackageSource.k_array` is the EAGER sibling:
 still supported, but it needs the grid at declaration and its result cannot be saved.
+
+### A per-cell array from a raster — `mf.RasterValues`, and products
+
+The raster sibling of `mf.Polygons`, for a K, storage, starting-head or recharge raster
+(ledger 541). Sampled at BUILD through the same sampler as
+`mf.Surface.raster(path).values(vor)` -- with the default `mean="arithmetic"` the arrays
+are identical -- so a model built from rasters moves (`rebuilt`), saves, digests by the
+raster's content, bundles with `save(bundle_sources=True)` and freezes its sampled
+arrays in the run.
+
+| call | fills |
+| --- | --- |
+| `mf.npf(k=[mf.RasterValues("k_1.tif"), ..., mf.RasterValues("k_5.tif")])` | one raster per layer (a per-layer LIST of numbers and recipes; one recipe alone fills every layer) |
+| `mf.npf(k33=[..., mf.RasterValues("k33_3.tif") * mf.Polygons("pit.gpkg", value=0.1, default=1.0), ...])` | a polygon MULTIPLIER on one layer |
+| `mf.ic(strt=…)`, `mf.sto(ss=…, sy=…)` | the same shapes |
+| `mf.rch.array(recharge={0: mf.RasterValues("recharge_01.tif"), ...})` | areal, one value per column, bare or per period; each distinct raster sampled once per build |
+| `mf.evt.array(rate=…, depth=…, surface=mf.RasterValues("et_surface.tif"))` | the same, areal |
+
+| argument | meaning |
+| --- | --- |
+| `band` | 1-based band (default 1); one the file lacks raises at build |
+| `method` | `"area"` (default: mean of the pixels inside each cell, centroid pixel when none) or `"centroid"` |
+| `mean` | `"arithmetic"` (default), `"geometric"`, `"harmonic"` -- the last two refuse a pixel at or below zero. Which is right for K depends on flow direction (ledger 300) |
+| `nodata` | a no-data value overriding the file's |
+| `gaps` | `"raise"` (default) or `"nearest"`; `"warn"`/`"ignore"` are refused -- they would hand MF6 a NaN |
+| `default` | the value for a cell off the raster, in place of refusing it |
+
+**`*` builds an `ArrayProduct`** of `RasterValues`, `Polygons` and numbers, resolved
+cell by cell. An `ndarray` factor is refused (it names cells by position --
+`with_grid(remap=True)` is that route), and so is a `Surface`. Under the default
+`rule="majority"` a multiplier polygon multiplies every cell it OVERLAPS at all -- the
+uncovered rest of a cell is not a competitor, and `default=` fills only cells no polygon
+reaches; `rule="centroid"` multiplies the cells whose centre is inside. A recipe in
+`rch.array`/`evt.array` needs `context=` omitted. Integer flags (`icelltype`,
+`iconvert`, `irch`, `ievt`) refuse a recipe.
 It reads its source's `gaps=`/`snap_within=` exactly as the `.gpkg` forms do -- a missed
 zone is a `UserWarning` by default, `"raise"` refuses, `"nearest"` moves a point -- and
 leaves a missed zone's cells at `defaults` (ledger 394).

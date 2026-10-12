@@ -25,8 +25,14 @@ logger = get_logger(__name__)
 _AREA_SAMPLE_WARN_NCPL = 50_000
 
 
-def _centroid_sample(src, vor_crs, xs, ys, raster_path, nodata=None) -> np.ndarray:
-    """Sample the raster at each cell centroid (point sampling)."""
+#: The within-cell means ``method="area"`` can take. Re-stated from
+#: ``myflopy.sources.RASTER_MEANS`` (a layer below; this module may not import the
+#: recipe classes upward) and held equal by ``tests/test_raster_arrays.py``.
+RASTER_MEANS = ("arithmetic", "geometric", "harmonic")
+
+
+def _centroid_sample(src, vor_crs, xs, ys, raster_path, nodata=None, *, band=1) -> np.ndarray:
+    """Sample the raster's ``band`` at each cell centroid (point sampling)."""
 
     # Reproject centroids from the grid CRS to the raster CRS so we sample the
     # correct pixels when the two differ -- otherwise the coordinates are read
@@ -41,7 +47,11 @@ def _centroid_sample(src, vor_crs, xs, ys, raster_path, nodata=None) -> np.ndarr
         )
         sample_xs, sample_ys = list(xs), list(ys)
     sampled = np.array(
-        [val[0] for val in src.sample(zip(sample_xs, sample_ys, strict=False))], dtype=float
+        [
+            val[0]
+            for val in src.sample(zip(sample_xs, sample_ys, strict=False), indexes=band)
+        ],
+        dtype=float,
     )
     # rasterio.sample() yields the nodata value (e.g. -9999) for nodata and
     # out-of-bounds points, never None, so convert those to NaN explicitly.
@@ -53,12 +63,21 @@ def _centroid_sample(src, vor_crs, xs, ys, raster_path, nodata=None) -> np.ndarr
     return sampled
 
 
-def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path, nodata=None) -> np.ndarray:
+def _area_weighted_sample(
+    vor, src, vor_crs, xs, ys, raster_path, nodata=None, *, band=1, mean="arithmetic"
+) -> np.ndarray:
     """Per-cell mean of raster pixels falling within each Voronoi cell polygon.
 
     Cells that cover no raster pixel (too small relative to the raster, or
     outside coverage) fall back to point-at-centroid sampling so every cell
     still gets a value.
+
+    ``mean`` is how the pixels inside one cell combine: ``"arithmetic"``, or
+    ``"geometric"``/``"harmonic"`` -- the same sum taken over ``log(v)`` or ``1/v`` and
+    transformed back, so the arithmetic path is byte-for-byte what it always was. Both
+    of the others REFUSE a zero or negative pixel (they have no log or reciprocal),
+    naming how many; a centroid-fallback cell is one pixel, which is its own mean of
+    any kind, and is checked the same way.
     """
 
     polys = vor.gdf_vorPolys
@@ -73,7 +92,7 @@ def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path, nodata=None) -
         polys_r = polys
     geoms = list(polys_r.geometry.values)
     ncpl = len(geoms)
-    mean = np.full(ncpl, np.nan, dtype=float)
+    averaged = np.full(ncpl, np.nan, dtype=float)
     covered = np.zeros(ncpl, dtype=bool)
 
     # Read only the window covering the cells, clamped to the raster extent.
@@ -89,13 +108,13 @@ def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path, nodata=None) -
         except WindowError:
             win = None
     if win is not None and win.width >= 1 and win.height >= 1:
-        band = src.read(1, window=win).astype(float)
+        pixels = src.read(band, window=win).astype(float)
         # Masked BEFORE the per-cell mean: averaging first would blend the
         # sentinel into every cell that straddles the edge, and no later
         # comparison could recover it (half of 0 and 500 is a plausible 250).
         fill = src.nodata if nodata is None else nodata
         if fill is not None:
-            band[band == fill] = np.nan
+            pixels[pixels == fill] = np.nan
         # Burn cell ids (1..ncpl) onto the raster grid, then average the valid
         # pixels of each cell in one vectorized pass.
         shapes = (
@@ -105,20 +124,26 @@ def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path, nodata=None) -
         )
         labels_arr = rasterize(
             shapes,
-            out_shape=band.shape,
+            out_shape=pixels.shape,
             transform=src.window_transform(win),
             fill=0,
             dtype="int32",
         )
         flat_labels = labels_arr.ravel()
-        flat_vals = band.ravel()
+        flat_vals = pixels.ravel()
         valid = (flat_labels > 0) & np.isfinite(flat_vals)
-        sums = np.bincount(
-            flat_labels[valid], weights=flat_vals[valid], minlength=ncpl + 1
-        )[1:]
+        weights = flat_vals[valid]
+        if mean != "arithmetic":
+            _refuse_non_positive(weights, mean=mean, raster_path=raster_path)
+            weights = np.log(weights) if mean == "geometric" else 1.0 / weights
+        sums = np.bincount(flat_labels[valid], weights=weights, minlength=ncpl + 1)[1:]
         counts = np.bincount(flat_labels[valid], minlength=ncpl + 1)[1:]
         covered = counts > 0
-        mean[covered] = sums[covered] / counts[covered]
+        averaged[covered] = sums[covered] / counts[covered]
+        if mean == "geometric":
+            averaged[covered] = np.exp(averaged[covered])
+        elif mean == "harmonic":
+            averaged[covered] = 1.0 / averaged[covered]
 
     missing = ~covered
     if missing.any():
@@ -126,11 +151,29 @@ def _area_weighted_sample(vor, src, vor_crs, xs, ys, raster_path, nodata=None) -
         # counts as uncovered, so it lands in this fallback -- and without the
         # override the centroid read hands the sentinel straight back, undoing
         # the masking for exactly the cells that needed it most.
-        mean[missing] = _centroid_sample(
+        fallback = _centroid_sample(
             src, vor_crs, np.asarray(xs)[missing], np.asarray(ys)[missing],
-            raster_path, nodata=nodata,
+            raster_path, nodata=nodata, band=band,
         )
-    return mean
+        if mean != "arithmetic":
+            _refuse_non_positive(
+                fallback[np.isfinite(fallback)], mean=mean, raster_path=raster_path
+            )
+        averaged[missing] = fallback
+    return averaged
+
+
+def _refuse_non_positive(values: np.ndarray, *, mean: str, raster_path) -> None:
+    """Refuse a zero or negative pixel under a geometric or harmonic mean."""
+
+    bad = int(np.count_nonzero(values <= 0.0))
+    if bad:
+        raise ValueError(
+            f"Raster '{raster_path}' holds {bad} pixel(s) at or below zero (smallest "
+            f"{float(np.min(values)):g}) inside the cells, and a {mean} mean has no "
+            f"{'logarithm' if mean == 'geometric' else 'reciprocal'} of one. Use "
+            "mean='arithmetic', or mark the value as no-data with nodata=."
+        )
 
 
 GAP_MODES = ("warn", "ignore", "nearest", "raise")
@@ -196,6 +239,36 @@ def _disjoint(vor, src) -> bool:
     return gl >= rr or gr <= rl or gb >= rt or gt <= rb
 
 
+def _extents_text(vor, src) -> str:
+    """Where the raster and the grid each are, in their own CRSs -- one wording."""
+
+    return (
+        f"The raster covers {tuple(round(b, 2) for b in src.bounds)} in {src.crs}; the "
+        f"grid covers {tuple(round(b, 2) for b in vor.gdf_vorPolys.total_bounds)} in "
+        f"{getattr(vor, 'crs', None)}. Check they are the same place in the same CRS."
+    )
+
+
+def raster_extents_text(vor, raster_path) -> str:
+    """:func:`_extents_text` for a raster named by its path.
+
+    Parameters
+    ----------
+    vor : VoronoiGridPlus
+        The grid; its cell polygons' bounds and its CRS are printed.
+    raster_path : str or os.PathLike
+        The raster, opened with ``rasterio`` for its bounds and CRS.
+
+    Returns
+    -------
+    str
+        One sentence pair naming both extents and both CRSs.
+    """
+
+    with rasterio.open(raster_path) as src:
+        return _extents_text(vor, src)
+
+
 def _resolve_gaps(values, vor, src, xs, ys, *, label, raster_path, gaps: str) -> np.ndarray:
     """Say something about the cells a raster gave no value for -- or fill them.
 
@@ -230,10 +303,8 @@ def _resolve_gaps(values, vor, src, xs, ys, *, label, raster_path, gaps: str) ->
         # because claiming a mismatch would send the reader looking for the wrong bug.
         raise ValueError(
             f"Raster '{raster_path}' gave no value for ANY of the {values.size} cells "
-            f"of this grid, so column {label!r} would be entirely no-data. The raster "
-            f"covers {tuple(round(b, 2) for b in src.bounds)} in {src.crs}; the grid "
-            f"covers {tuple(round(b, 2) for b in vor.gdf_vorPolys.total_bounds)} in "
-            f"{getattr(vor, 'crs', None)}. Check they are the same place in the same CRS."
+            f"of this grid, so column {label!r} would be entirely no-data. "
+            f"{_extents_text(vor, src)}"
         )
 
     listing = ", ".join(str(cell) for cell in missing[:10])
@@ -305,6 +376,8 @@ def get_raster_vals_at_centroids(
     method: str = "area",
     nodata: float | None = None,
     gaps: str = "warn",
+    band: int = 1,
+    mean: str = "arithmetic",
 ) -> gpd.GeoDataFrame | None:
     """Sample raster values or constants onto Voronoi cells.
 
@@ -334,6 +407,44 @@ def get_raster_vals_at_centroids(
     A raster that covers NO cell of the grid raises whatever the mode, except
     ``"ignore"``: that is a location or CRS mismatch, and the error prints both
     extents and both CRSs.
+
+    ``band`` is the 1-based band read from every raster in the call; one the file
+    lacks raises ``ValueError`` naming how many it has. ``mean`` is how
+    ``method="area"`` averages the pixels inside a cell: ``"arithmetic"`` (default),
+    ``"geometric"`` or ``"harmonic"`` -- the last two refuse a pixel at or below zero,
+    and any but ``"arithmetic"`` with ``method="centroid"`` raises ``ValueError``
+    (one pixel has no mean). This is the sampler ``mf.RasterValues`` resolves
+    through (ledger 541).
+
+    Parameters
+    ----------
+    vor : VoronoiGridPlus
+        The grid sampled onto: its cell polygons (``gdf_vorPolys``), centroids and
+        CRS are read.
+    raster_files : str or os.PathLike, or list of (str or os.PathLike or float)
+        One raster path, or a list whose items are raster paths or numbers (a
+        number, numpy's included, becomes a constant column). Any other item raises
+        ``TypeError`` naming it (ledger 414). ``None`` (the default) logs a warning
+        and returns ``None``.
+    labels : str, or list of str or int, optional
+        Column names, one per item of ``raster_files``. Default ``0``, ``1``, ...;
+        a length mismatch raises ``ValueError``.
+    method : {"area", "centroid"}, default "area"
+        As above. Anything else raises ``ValueError``.
+    nodata : float, optional
+        As above: a no-data value overriding each raster's declared one.
+    gaps : {"warn", "nearest", "raise", "ignore"}, default "warn"
+        As above. Another word raises ``ValueError``.
+    band : int, default 1
+        As above.
+    mean : {"arithmetic", "geometric", "harmonic"}, default "arithmetic"
+        As above.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame or None
+        ``geometry`` (the cell CENTROIDS) then one column per label, one row per
+        cell; ``None`` when ``raster_files`` is ``None``.
     """
     if raster_files is None:
         logger.warning('no raster files provided; there are no surfaces to sample')
@@ -349,6 +460,13 @@ def get_raster_vals_at_centroids(
         raise ValueError("Labels length must match raster_files length")
     if method not in ("area", "centroid"):
         raise ValueError(f"Unknown method {method!r}; expected 'area' or 'centroid'.")
+    if mean not in RASTER_MEANS:
+        raise ValueError(f"Unknown mean {mean!r}; expected one of {RASTER_MEANS}.")
+    if method == "centroid" and mean != "arithmetic":
+        raise ValueError(
+            f"mean={mean!r} needs method='area': a centroid read is ONE pixel, which has "
+            "no mean."
+        )
 
     xs, ys = np.array(vor.centroids[0]), np.array(vor.centroids[1])
     centroid_vals = vor.gdf_vorPolys.copy()
@@ -375,13 +493,19 @@ def get_raster_vals_at_centroids(
     for label, raster_path in raster_items:
         logger.info('sampling raster %s', raster_path)
         with rasterio.open(raster_path) as src:
+            if not 1 <= int(band) <= src.count:
+                raise ValueError(
+                    f"Raster '{raster_path}' has {src.count} band(s), so band={band} "
+                    "does not exist; bands are numbered from 1."
+                )
             if method == "area":
                 sampled = _area_weighted_sample(
-                    vor, src, vor_crs, xs, ys, raster_path, nodata=nodata
+                    vor, src, vor_crs, xs, ys, raster_path, nodata=nodata,
+                    band=band, mean=mean,
                 )
             else:
                 sampled = _centroid_sample(
-                    src, vor_crs, xs, ys, raster_path, nodata=nodata
+                    src, vor_crs, xs, ys, raster_path, nodata=nodata, band=band
                 )
             centroid_vals[label] = _resolve_gaps(
                 sampled, vor, src, xs, ys,

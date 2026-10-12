@@ -662,3 +662,44 @@ def test_drift_reads_the_polygon_file_and_notices_an_edit(meshes, tmp_path):
     edited.to_file(source, layer="geology", driver="GPKG")
 
     assert set(project.runs.drift()["source"]) == {"edited"}
+
+
+# ------------------------------------------------- value= and products (ledger 541)
+
+
+def test_value_paints_one_number_into_every_polygon(meshes, geology):
+    """``value=`` in place of ``column=``: a constant factor without editing the file."""
+
+    small, _ = meshes
+    array = array_from_polygons(
+        Polygons(path=geology, value=0.25, layer="geology"), small, nlay=1, parameter="npf.k"
+    )
+    assert set(np.unique(array)) == {0.25}
+
+
+def test_value_round_trips_and_column_payloads_did_not_move(geology):
+    recipe = mf.Polygons(path=geology, value=0.1, default=1.0, rule="centroid")
+    assert source_from_dict(recipe.to_dict()) == recipe
+    assert set(recipe.to_dict()) == {"kind", "path", "value", "default", "rule"}
+    assert list(mf.Polygons(path=geology, column="k").to_dict()) == ["kind", "path", "column"]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [({"column": "k", "value": 1.0}, "not both"), ({}, "cannot be empty"),
+     ({"value": float("inf")}, "finite"), ({"value": "k"}, "real number")],
+)
+def test_exactly_one_of_column_and_value(kwargs, match, geology):
+    with pytest.raises(ValueError, match=match):
+        mf.Polygons(path=geology, **kwargs)
+
+
+def test_a_polygon_map_multiplies_into_a_product(meshes, geology, tmp_path):
+    """``Polygons * number`` is an :class:`ArrayProduct`, resolved cell by cell."""
+
+    small, _ = meshes
+    product = 2.0 * mf.Polygons(path=geology, column="k", layer="geology")
+    assert isinstance(product, mf.ArrayProduct)
+    built = _model(small, mf.npf(k=product), tmp_path, "product")
+    k = built.simulation.get_model("m").get_package("npf").k.get_data()
+    assert set(np.unique(k)) == {2.0, 200.0}

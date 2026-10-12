@@ -38,6 +38,17 @@
       "values:POSITIONAL_OR_KEYWORD=<required>",
       "units:KEYWORD_ONLY=None"
     ],
+    "ArrayProduct": [
+      "factors:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ArrayProduct.digest_payload": [],
+    "ArrayProduct.from_dict": [
+      "data:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "ArrayProduct.of": [
+      "factors:VAR_POSITIONAL=<required>"
+    ],
+    "ArrayProduct.to_dict": [],
     "AverageYear": [
       "cycles:POSITIONAL_OR_KEYWORD=<required>",
       "start:KEYWORD_ONLY=<required>",
@@ -3163,7 +3174,8 @@
       "path:POSITIONAL_OR_KEYWORD=<required>",
       "external:POSITIONAL_OR_KEYWORD=False",
       "metadata:POSITIONAL_OR_KEYWORD=<factory>",
-      "column:KEYWORD_ONLY=<required>",
+      "column:KEYWORD_ONLY=None",
+      "value:KEYWORD_ONLY=None",
       "layer:KEYWORD_ONLY=None",
       "rule:KEYWORD_ONLY='majority'",
       "default:KEYWORD_ONLY=None",
@@ -3334,6 +3346,20 @@
       "crs:POSITIONAL_OR_KEYWORD=None"
     ],
     "RasterSource.to_dict": [],
+    "RasterValues": [
+      "path:POSITIONAL_OR_KEYWORD=<required>",
+      "external:POSITIONAL_OR_KEYWORD=False",
+      "metadata:POSITIONAL_OR_KEYWORD=<factory>",
+      "band:KEYWORD_ONLY=1",
+      "method:KEYWORD_ONLY='area'",
+      "mean:KEYWORD_ONLY='arithmetic'",
+      "nodata:KEYWORD_ONLY=None",
+      "gaps:KEYWORD_ONLY='raise'",
+      "default:KEYWORD_ONLY=None",
+      "source_sha:KEYWORD_ONLY=None"
+    ],
+    "RasterValues.digest_payload": [],
+    "RasterValues.to_dict": [],
     "RchInput.df": [
       "per:POSITIONAL_OR_KEYWORD=None"
     ],
@@ -5062,7 +5088,9 @@
       "labels:POSITIONAL_OR_KEYWORD=None",
       "method:KEYWORD_ONLY='area'",
       "nodata:KEYWORD_ONLY=None",
-      "gaps:KEYWORD_ONLY='warn'"
+      "gaps:KEYWORD_ONLY='warn'",
+      "band:KEYWORD_ONLY=1",
+      "mean:KEYWORD_ONLY='arithmetic'"
     ],
     "VoronoiGridPlus.get_vor_cells_as_dict": [
       "locs:POSITIONAL_OR_KEYWORD=<required>",
@@ -7207,6 +7235,7 @@
     "myflopy.__preferred__": [
       "Area",
       "Array",
+      "ArrayProduct",
       "AverageYear",
       "BoundarySource",
       "BuiltModel",
@@ -7292,6 +7321,7 @@
       "PrtModel",
       "Raster",
       "RasterSource",
+      "RasterValues",
       "RivFlowObservationSpec",
       "RivFlowTargets",
       "Run",

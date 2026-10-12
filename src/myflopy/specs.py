@@ -84,6 +84,7 @@ from myflopy.grid_identity import (
     void_pin,
 )
 from myflopy.sources import (
+    ArrayProduct,
     DataSourceSpec,
     LiteralSource,
     is_source_payload,
@@ -548,6 +549,12 @@ def _json_value(value: Any) -> Any:
         # attribute rather than imported -- `specs` is import layer 1 and `layers`
         # is layer 6.
         return {token: _json_value(value.to_dict())}
+    if isinstance(value, ArrayProduct):
+        # Its own token, and NOT a `_SPEC_TOKEN`: its factors are SOURCES, so every
+        # walker below treats them as sources (role "source", `external` honoured, the
+        # package helpers stamp their hashes) rather than as a token payload whose
+        # `path` keys would be repointed as a surface's (ledger 541).
+        return {ArrayProduct.TOKEN: _json_value(value.to_dict())}
     if isinstance(value, (DataSourceSpec, LiteralSource)):
         # Recursed, not handed straight back. A source's own `to_dict` writes its
         # fields raw -- `metadata`, `table`, `crs`, `band`, `value` -- so this was the
@@ -665,6 +672,13 @@ def _spec_value(value: Any, *, int_keys: bool = False) -> Any:
             from myflopy.geopackage import CellSurfaceOffset
 
             return CellSurfaceOffset.from_dict(_untag_tuples(value["$cell_surface_offset"]))
+        if ArrayProduct.TOKEN in value:
+            # Each factor through THIS function, so a source factor is revived exactly
+            # as a bare one is -- `from_dict` keeps an already-live recipe as it is.
+            payload = value[ArrayProduct.TOKEN]
+            return ArrayProduct.from_dict(
+                {"factors": [_spec_value(item) for item in payload["factors"]]}
+            )
     if isinstance(value, dict) and "kind" in value:
         # The registry decides, not a name heuristic: ``DataSourceSpec``'s kind
         # ends in "Spec", so an ``endswith("Source")`` test handed the public
@@ -823,6 +837,14 @@ def _canonical(value: Any) -> Any:
         # archive, which is the churn ledger 293 exists to remove (found in review).
         payload = getattr(value, "digest_payload", value.to_dict)()
         return (sys.intern(token), _canonical(payload))
+    if isinstance(value, ArrayProduct):
+        # Its factors as each one digests -- a raster or polygon map by its CONTENT
+        # (ledger 293) -- in order: a product is not commutative in what it SAYS, and
+        # a reordered declaration reading as edited is the safe direction.
+        return (
+            sys.intern(ArrayProduct.TOKEN),
+            tuple(_canonical(factor) for factor in value.factors),
+        )
     if isinstance(value, (DataSourceSpec, LiteralSource)):
         # A CONSTANT tag, not the class name: a source's own `to_dict` already carries
         # the `kind` its reader dispatches on, so renaming the Python class must not
@@ -935,9 +957,11 @@ def repoint_source_paths(
 
     Parameters
     ----------
-    value : DataSourceSpec, Surface, LayerStack, Spread, CellSurfaceOffset, dict, list, tuple, or any other object
+    value : DataSourceSpec, ArrayProduct, Surface, LayerStack, Spread, CellSurfaceOffset, dict, list, tuple, or any other object
         What to walk. A :class:`~myflopy.sources.DataSourceSpec` has its ``path``
-        transformed. A token-bearing object (one with a ``_SPEC_TOKEN``) is written
+        transformed. An :class:`~myflopy.sources.ArrayProduct` has each factor walked
+        as a source, ``honor_external`` included, and is rebuilt when one moved. A
+        token-bearing object (one with a ``_SPEC_TOKEN``) is written
         down with its own ``to_dict()``, every ``path``/``contours``/
         ``region_raster``/``region_vector``/``zone`` string and every ``out`` string
         in that payload is transformed, and the object is rebuilt from the result
@@ -1010,6 +1034,19 @@ def repoint_source_paths(
         # here with it set, and only by copying the file inside -- which is what makes
         # the flag false. The anchor returned above without touching it.
         return replace(value, path=stored, external=False)
+    if isinstance(value, ArrayProduct):
+        # Its factors are sources, walked as sources: the bundler copies a factor's
+        # raster, the anchor joins a relative one to the project root and honours
+        # `external`, and `source_paths` lists each -- with no wiring of their own.
+        factors = tuple(
+            repoint_source_paths(
+                factor, transform, honor_external=honor_external, notes=notes
+            )
+            for factor in value.factors
+        )
+        if all(new is old for new, old in zip(factors, value.factors, strict=True)):
+            return value
+        return ArrayProduct(factors=factors)
     if getattr(type(value), "_SPEC_TOKEN", None) is not None:
         try:
             payload = value.to_dict()

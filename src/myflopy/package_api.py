@@ -57,10 +57,10 @@ from myflopy.geopackage import (
     RowValue,
     Spread,
     SurfaceResolver,
-    array_from_polygons,
     check_placement_options,
     refuse_mixed_spread_modes,
     refuse_spread_on_elevation,
+    resolve_array_recipe,
 )
 from myflopy.grid_identity import (
     CELLWISE_OPTIONS,
@@ -90,7 +90,7 @@ from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.mf6.recharge import RCHBuilder
 from myflopy.modflow.mf6.sfr import SFRBuilder, StreamConnection, StreamDiversion
 from myflopy.modflow.mf6.uzf import UZFBuilder
-from myflopy.sources import BoundarySource, Polygons
+from myflopy.sources import ArrayProduct, BoundarySource, Polygons, RasterValues
 from myflopy.specs import (
     _PUBLISHED_BY_DISV,
     _PUBLISHED_BY_KEY,
@@ -1266,59 +1266,137 @@ def _lazy_areal_spec(package: str, *, name: str, recipe: dict[str, Any], options
     )
 
 
-#: Per-cell VALUE arrays a :class:`~myflopy.sources.Polygons` map may fill, per helper.
-#: An allowlist rather than "anything that is a Polygons", because a helper's ``**options``
-#: tail also carries things that are not per-cell arrays at all -- ``steady_state``,
-#: ``transient``, filerecords -- and silently painting one of those would produce an
-#: array where MF6 expects a period dict.
-_POLYGON_ARRAYS: dict[str, frozenset[str]] = {
+#: Per-cell VALUE arrays an array recipe (:class:`~myflopy.sources.RasterValues`,
+#: :class:`~myflopy.sources.Polygons`, an :class:`~myflopy.sources.ArrayProduct`, or a
+#: per-layer list holding one) may fill, per helper. An allowlist rather than "anything
+#: that is a recipe", because a helper's ``**options`` tail also carries things that
+#: are not per-cell arrays at all -- ``steady_state``, ``transient``, filerecords -- and
+#: silently painting one of those would produce an array where MF6 expects a period
+#: dict.
+_RECIPE_ARRAYS: dict[str, frozenset[str]] = {
     "npf": frozenset({"k", "k22", "k33"}),
     "ic": frozenset({"strt"}),
     "sto": frozenset({"ss", "sy"}),
 }
 
-#: Array parameters that are integer FLAGS, and why a polygon map is refused on them.
-#: Every rule in :func:`~myflopy.modflow.mf6.grid.geometry.polygon_cell_values` returns a
-#: FLOAT, and two of the three can return one that is in no polygon -- there is no cell
-#: type 0.4. ``majority`` and ``centroid`` would in fact be meaningful here, but shipping
-#: that means shipping a cast this commit has not measured, so it is refused by name
-#: instead of half-supported (ledger 299).
-_POLYGON_FLAGS: dict[str, frozenset[str]] = {
+#: Array parameters that are integer FLAGS, and why a recipe is refused on them. Every
+#: polygon rule and every raster mean returns a FLOAT, and most can return one no
+#: mapped unit or pixel holds -- there is no cell type 0.4. ``majority`` and
+#: ``centroid`` would in fact be meaningful here, but shipping that means shipping a
+#: cast nothing has measured, so it is refused by name instead of half-supported
+#: (ledgers 299, 300).
+_RECIPE_FLAGS: dict[str, frozenset[str]] = {
     "npf": frozenset({"icelltype"}),
     "sto": frozenset({"iconvert"}),
 }
 
+_RECIPE_TYPES = (RasterValues, Polygons, ArrayProduct)
 
-def _split_polygon_recipes(helper: str, values: dict) -> tuple[dict, dict]:
-    """Split ``values`` into plain options and :class:`Polygons` recipes.
 
-    A recipe is MOVED out of ``options`` into ``inputs`` rather than copied: the two are
-    splatted into one builder call, so a key in both is a ``TypeError`` five frames down
-    naming FloPy rather than the declaration.
+def _is_recipe(value: Any) -> bool:
+    """Whether ``value`` is ONE array recipe: a raster, a polygon map, or a product."""
+
+    return isinstance(value, _RECIPE_TYPES)
+
+
+def _carries_recipe(value: Any) -> bool:
+    """Whether ``value`` is a recipe or a list/tuple holding at least one."""
+
+    return _is_recipe(value) or (
+        isinstance(value, (list, tuple)) and any(_is_recipe(item) for item in value)
+    )
+
+
+def _recipe_noun(value: Any) -> str:
+    """How a recipe is named in a refusal: ``mf.RasterValues(...)`` and so on."""
+
+    if isinstance(value, (list, tuple)):
+        value = next(item for item in value if _is_recipe(item))
+    return {
+        RasterValues: "mf.RasterValues(...)",
+        Polygons: "mf.Polygons(...)",
+        ArrayProduct: "a product of recipes",
+    }[type(value)]
+
+
+def _layered_factors(value: Any) -> list:
+    """Every RasterValues/Polygons a recipe declaration names, products opened."""
+
+    items = value if isinstance(value, (list, tuple)) else [value]
+    found = []
+    for item in items:
+        if isinstance(item, ArrayProduct):
+            found.extend(factor for factor in item.factors if _is_recipe(factor))
+        elif _is_recipe(item):
+            found.append(item)
+    return found
+
+
+def _check_recipe_list(verb: str, value: Any) -> None:
+    """Refuse what a per-layer list holding a recipe cannot hold, at the DECLARATION.
+
+    Each entry fills ONE layer, so it is a number or a recipe resolving to one value
+    per cell -- never an array (positional: the list would be unsaveable again), and
+    never a polygon map that paints layers of its own (``layer_field=``), which would
+    disagree with the list about which layer is which.
     """
 
-    fillable = _POLYGON_ARRAYS.get(helper, frozenset())
-    flags = _POLYGON_FLAGS.get(helper, frozenset())
+    for index, item in enumerate(value):
+        if _is_recipe(item):
+            for factor in _layered_factors(item):
+                if isinstance(factor, Polygons) and factor.layer_field is not None:
+                    raise ValueError(
+                        f"{verb}: entry {index} of the per-layer list is a polygon map with "
+                        f"layer_field={factor.layer_field!r}, which paints layers of its "
+                        "own -- the list already says which layer each entry fills. Drop "
+                        "layer_field=, or pass the map alone (not in a list) to let it "
+                        "paint the layers it names."
+                    )
+            continue
+        if isinstance(item, bool) or not isinstance(item, (int, float, np.integer, np.floating)):
+            raise TypeError(
+                f"{verb}: entry {index} of a per-layer list holding a recipe is "
+                f"{type(item).__name__}; each entry is a number or a recipe "
+                "(mf.RasterValues, mf.Polygons, or a product of them). A per-cell array "
+                "names cells by position and would make the package unsaveable -- put it "
+                "in a raster, or keep the whole parameter an array."
+            )
+
+
+def _split_array_recipes(helper: str, values: dict) -> tuple[dict, dict]:
+    """Split ``values`` into plain options and array recipes.
+
+    A recipe -- bare, a product, or inside a per-layer list -- is MOVED out of
+    ``options`` into ``inputs`` rather than copied: the two are splatted into one
+    builder call, so a key in both is a ``TypeError`` five frames down naming FloPy
+    rather than the declaration.
+    """
+
+    fillable = _RECIPE_ARRAYS.get(helper, frozenset())
+    flags = _RECIPE_FLAGS.get(helper, frozenset())
     options: dict = {}
     recipes: dict = {}
     for key, value in values.items():
-        if not isinstance(value, Polygons):
+        if not _carries_recipe(value):
             options[key] = value
             continue
+        noun = _recipe_noun(value)
         if key in flags:
             raise TypeError(
-                f"mf.{helper}({key}=mf.Polygons(...)) is refused: {key!r} is an integer "
-                "flag, not a measured value, and every polygon rule returns a float -- "
-                "there is no cell type 0.4. Paint the flag with a plain array or a "
-                "scalar; a polygon map is for a value that varies by mapped unit."
+                f"mf.{helper}({key}={noun}) is refused: {key!r} is an integer flag, not a "
+                "measured value, and every polygon rule and raster mean returns a float "
+                "-- there is no cell type 0.4. Give the flag as a plain array or a "
+                "scalar; a recipe is for a value that varies in space."
             )
         if key not in fillable:
             raise TypeError(
-                f"mf.{helper}({key}=mf.Polygons(...)) is refused: {key!r} is not a "
-                "per-cell array this helper fills from a polygon map. It fills "
+                f"mf.{helper}({key}={noun}) is refused: {key!r} is not a per-cell array "
+                "this helper fills from a recipe. It fills "
                 + ", ".join(sorted(fillable))
                 + "."
             )
+        if isinstance(value, (list, tuple)):
+            _check_recipe_list(f"mf.{helper}({key}=[...])", value)
         recipes[key] = value
     return options, recipes
 
@@ -1328,8 +1406,9 @@ def _refuse_unpaintable_array(helper: str, parameter: str, value) -> None:
 
     ``mf.npf(k=<Surface>)`` was accepted here and died at BUILD inside FloPy with an
     ``MFDataException`` that names neither ``Surface`` nor what to do -- measured, and
-    the same for a ``LayerStack``. A slot that says yes to something it cannot use is
-    the defect, not the message; this closes the yes.
+    the same for a ``LayerStack``, alone or as an entry of a per-layer list. A slot
+    that says yes to something it cannot use is the defect, not the message; this
+    closes the yes.
 
     Deliberately NARROW. It names the two types measured to fail rather than allowing a
     list of accepted ones, because the array slots genuinely take a scalar, a sequence,
@@ -1337,16 +1416,19 @@ def _refuse_unpaintable_array(helper: str, parameter: str, value) -> None:
     written the other way round would refuse something that works today.
     """
 
-    token = getattr(type(value), "_SPEC_TOKEN", None)
-    if token not in ("$surface", "$layer_stack"):
-        return
-    noun = "Surface" if token == "$surface" else "LayerStack"
-    raise TypeError(
-        f"mf.{helper}({parameter}=<{noun}>) is not supported: a {noun} describes an "
-        "ELEVATION field and MF6 is handed it unresolved, which fails inside FloPy with "
-        "an error naming neither. Pass a scalar, a per-cell array, or "
-        f"`mf.Polygons(path, column=...)` to paint {parameter} from a polygon map."
-    )
+    items = value if isinstance(value, (list, tuple)) else [value]
+    for item in items:
+        token = getattr(type(item), "_SPEC_TOKEN", None)
+        if token not in ("$surface", "$layer_stack"):
+            continue
+        noun = "Surface" if token == "$surface" else "LayerStack"
+        raise TypeError(
+            f"mf.{helper}({parameter}=<{noun}>) is not supported: a {noun} describes an "
+            "ELEVATION field and MF6 is handed it unresolved, which fails inside FloPy "
+            "with an error naming neither. Pass a scalar, a per-cell array, "
+            f"`mf.RasterValues(path)` to sample {parameter} from a raster of values, or "
+            f"`mf.Polygons(path, column=...)` to paint it from a polygon map."
+        )
 
 
 def _array_package_spec(helper: str, name: str, builder, values: dict) -> PackageSpec:
@@ -1354,44 +1436,68 @@ def _array_package_spec(helper: str, name: str, builder, values: dict) -> Packag
 
     The eager path is byte-identical to what it was -- same builder object, same
     ``options``, no ``inputs`` -- so declaring ``mf.npf(k=10.0)`` cannot move a stored
-    digest. Only a declaration that actually carries a ``Polygons`` becomes lazy.
+    digest. Only a declaration that actually carries a recipe becomes lazy.
     """
 
     for parameter, value in values.items():
         _refuse_unpaintable_array(helper, parameter, value)
-    options, recipes = _split_polygon_recipes(helper, values)
+    options, recipes = _split_array_recipes(helper, values)
     if not recipes:
         return PackageSpec(name, builder, options)
     return PackageSpec(
         name,
-        _polygon_array_factory(builder),
+        _recipe_array_factory(builder),
         options,
         requires=(),
-        inputs={key: _stamped_polygons(recipe) for key, recipe in recipes.items()},
+        inputs={key: _stamped_recipe(recipe) for key, recipe in recipes.items()},
     )
 
 
-def _stamped_polygons(recipe: Polygons) -> Polygons:
-    """Resolve the recipe's path and stamp its content hash, both at DECLARATION.
+def _stamped_recipe(recipe: Any) -> Any:
+    """Resolve each recipe's path and stamp its content hash, both at DECLARATION.
 
     Resolved HERE because the declaration would otherwise check the path against the
     cwd while the build anchors it to the project root -- two bases for one string, and
     with a same-named file under the root a model BUILDS CLEAN from the wrong one
     (ledger 293). Hashed here for the same reason ``BoundarySource`` is: the digest must
-    read the file's CONTENT, not its address.
+    read the file's CONTENT, not its address. Walks a product's factors and a
+    per-layer list's entries; anything else is returned as it is.
     """
 
+    if isinstance(recipe, (list, tuple)):
+        return type(recipe)(_stamped_recipe(item) for item in recipe)
+    if isinstance(recipe, ArrayProduct):
+        return ArrayProduct(factors=tuple(_stamped_recipe(f) for f in recipe.factors))
+    if not isinstance(recipe, (RasterValues, Polygons)):
+        return recipe
     path = Path(recipe.path)
     if not path.exists():
-        raise FileNotFoundError(f"Polygon source not found: {path}")
+        noun = "Raster" if isinstance(recipe, RasterValues) else "Polygon"
+        raise FileNotFoundError(f"{noun} source not found: {path}")
     path = path.resolve()
     return _replace(recipe, path=path, source_sha=source_fingerprint(path))
 
 
-def _build_polygon_arrays(builder, model, *, _spec, **values):
-    """Resolve every :class:`Polygons` in ``values`` against the model's grid, then build.
+def _recipe_cache(model) -> dict:
+    """The per-BUILD memo of sampled recipes, kept on the FloPy model being built.
 
-    Bound to its real builder by :func:`_polygon_array_factory` so the declaration-time
+    One per model object, and a build makes a new one, so a sample never outlives the
+    build that took it -- while every slot and period naming the same raster in that
+    build reads it once (twelve monthly rasters cited by 1 + 12N periods are sampled
+    twelve times, not 1 + 12N).
+    """
+
+    cache = getattr(model, "_myflopy_recipe_cache", None)
+    if cache is None:
+        cache = {}
+        model._myflopy_recipe_cache = cache
+    return cache
+
+
+def _build_recipe_arrays(builder, model, *, _spec, **values):
+    """Resolve every array recipe in ``values`` against the model's grid, then build.
+
+    Bound to its real builder by :func:`_recipe_array_factory` so the declaration-time
     option check still sees that package's own signature -- ``_accepted_options``
     unwraps a ``functools.partial`` and inspects what is inside it, so binding a
     generic wrapper WITHOUT the target would silently turn the typo check off
@@ -1401,12 +1507,14 @@ def _build_polygon_arrays(builder, model, *, _spec, **values):
     context = _lazy_resolution_context(model, _spec.name)
     discretization = _built_discretization(model)
     nlay = getattr(getattr(discretization, "nlay", None), "get_data", lambda: None)()
+    cache = _recipe_cache(model)
     resolved = {
         key: (
-            array_from_polygons(
-                value, context.grid, nlay=int(nlay or 1), parameter=f"{_spec.name}.{key}"
+            resolve_array_recipe(
+                value, context.grid, nlay=int(nlay or 1),
+                parameter=f"{_spec.name}.{key}", cache=cache,
             )
-            if isinstance(value, Polygons)
+            if _carries_recipe(value)
             else value
         )
         for key, value in values.items()
@@ -1428,7 +1536,7 @@ def _build_polygon_arrays(builder, model, *, _spec, **values):
 
 
 @functools.cache
-def _polygon_array_factory(builder):
+def _recipe_array_factory(builder):
     """The array-resolving builder, bound to the real one.
 
     Memoized for the reason :func:`_lazy_factory` is: ``specs._required_keyword_only``
@@ -1437,7 +1545,7 @@ def _polygon_array_factory(builder):
     call.
     """
 
-    return functools.partial(_build_polygon_arrays, builder)
+    return functools.partial(_build_recipe_arrays, builder)
 
 
 @functools.cache
@@ -3089,10 +3197,21 @@ def ic(*, strt: Any, name: str = "ic", **options: Any) -> PackageSpec:
 
     Parameters
     ----------
-    strt : float or array-like
+    strt : float, array-like, recipe, or list
         Starting value -- a scalar, a per-cell array ``(ncpl,)``, or a
-        ``(nlay, ncpl)`` array. For GWF a sensible head (near the water table)
-        helps Newton / under-relaxation runs converge.
+        ``(nlay, ncpl)`` array; or a RECIPE resolved at BUILD against whatever grid the
+        model supplies -- so the model moves to another mesh and saves with its
+        project (ledger 299; ledger 541): ``mf.RasterValues(path)`` samples a
+        raster of values, ``mf.Polygons(path, column=...)`` paints a polygon map, and
+        ``*`` multiplies recipes and numbers (``mf.RasterValues("k.tif") *
+        mf.Polygons("pit.gpkg", value=0.1, default=1.0)``). One recipe fills every
+        layer alike; a per-layer LIST fills one layer per entry, each a number or a
+        recipe (``[mf.RasterValues("k_1.tif"), 5.0, ...]``, one entry per model layer
+        or the build raises). A list holding a recipe refuses an array entry
+        (``TypeError``), and a ``Surface``/``LayerStack`` -- an elevation -- is refused
+        here, alone or in a list.
+        For GWF a sensible head (near the water table) helps Newton /
+        under-relaxation runs converge.
     name : str, default "ic"
         Package name.
     **options
@@ -3125,14 +3244,27 @@ def npf(
 
     Parameters
     ----------
-    k : float or array-like
+    k : float, array-like, recipe, or list
         Horizontal hydraulic conductivity -- a scalar, per-cell array, or
-        ``(nlay, ncpl)`` array.
-    k33 : float or array-like, optional
-        Vertical (z) hydraulic conductivity; defaults to isotropic (``k``) in MF6.
+        ``(nlay, ncpl)`` array; or a RECIPE resolved at BUILD against whatever grid the
+        model supplies -- so the model moves to another mesh and saves with its
+        project (ledger 299; ledger 541): ``mf.RasterValues(path)`` samples a
+        raster of values, ``mf.Polygons(path, column=...)`` paints a polygon map, and
+        ``*`` multiplies recipes and numbers (``mf.RasterValues("k.tif") *
+        mf.Polygons("pit.gpkg", value=0.1, default=1.0)``). One recipe fills every
+        layer alike; a per-layer LIST fills one layer per entry, each a number or a
+        recipe (``[mf.RasterValues("k_1.tif"), 5.0, ...]``, one entry per model layer
+        or the build raises). A list holding a recipe refuses an array entry
+        (``TypeError``), and a ``Surface``/``LayerStack`` -- an elevation -- is refused
+        here, alone or in a list.
+        ``k22`` (through ``**options``) takes the same.
+    k33 : float, array-like, recipe, or list, optional
+        Vertical (z) hydraulic conductivity, the same shapes as ``k``; defaults to
+        isotropic (``k``) in MF6.
     icelltype : int or array-like, optional
         Cell type: 0 = confined, non-zero = convertible (water-table). Use a
-        convertible type for unconfined / wetting-and-drying layers.
+        convertible type for unconfined / wetting-and-drying layers. An integer
+        FLAG, so a recipe is refused here (``TypeError``).
     save_flows : bool, default True
         Save cell-by-cell flows.
     save_specific_discharge : bool, default False
@@ -3140,16 +3272,21 @@ def npf(
     name : str, default "npf"
         Package name.
     **options
-        Extra ``flopy.mf6.ModflowGwfnpf`` options.
+        Extra ``flopy.mf6.ModflowGwfnpf`` options, ``k22`` among them. A recipe in
+        any option but ``k22`` raises ``TypeError`` naming the ones that take one.
 
     Returns
     -------
     PackageSpec
+        A recipe makes it LAZY: ``inputs`` holds the recipes, path resolved and
+        content hashed at the call, and the build samples them and records the
+        resulting arrays for the run's frozen snapshot.
 
     Examples
     --------
     >>> mf.npf(k=10.0)                       # uniform K
     >>> mf.npf(k=k_array, k33=k_array * 0.1, icelltype=1)   # per-cell, convertible
+    >>> mf.npf(k=[mf.RasterValues(f"k_{n}.tif") for n in range(1, 6)])   # by layer
     """
 
     values = {
@@ -3182,12 +3319,24 @@ def sto(
 
     Parameters
     ----------
-    ss : float or array-like, optional
-        Specific storage (used in transient periods).
-    sy : float or array-like, optional
-        Specific yield (used in transient periods for convertible cells).
+    ss : float, array-like, recipe, or list, optional
+        Specific storage (used in transient periods), 1/length; or a RECIPE resolved at BUILD against whatever grid the
+        model supplies -- so the model moves to another mesh and saves with its
+        project (ledger 299; ledger 541): ``mf.RasterValues(path)`` samples a
+        raster of values, ``mf.Polygons(path, column=...)`` paints a polygon map, and
+        ``*`` multiplies recipes and numbers (``mf.RasterValues("k.tif") *
+        mf.Polygons("pit.gpkg", value=0.1, default=1.0)``). One recipe fills every
+        layer alike; a per-layer LIST fills one layer per entry, each a number or a
+        recipe (``[mf.RasterValues("k_1.tif"), 5.0, ...]``, one entry per model layer
+        or the build raises). A list holding a recipe refuses an array entry
+        (``TypeError``), and a ``Surface``/``LayerStack`` -- an elevation -- is refused
+        here, alone or in a list.
+    sy : float, array-like, recipe, or list, optional
+        Specific yield (used in transient periods for convertible cells),
+        dimensionless; the same shapes as ``ss``.
     iconvert : int or array-like, optional
-        Convertible-storage flag per cell (non-zero enables ``sy``).
+        Convertible-storage flag per cell (non-zero enables ``sy``). An integer
+        FLAG, so a recipe is refused here (``TypeError``).
     steady_state : dict, optional
         ``{period: True}`` marking steady-state stress periods.
     transient : dict, optional
@@ -5108,9 +5257,18 @@ class _RCHPackage:
 
         Parameters
         ----------
-        recharge : float, int, array_like, str, or dict of {int: any of those}
+        recharge : float, int, array_like, str, recipe, or dict of {int: any of those}
             Recharge rate, length/time in the model's units (ft/d on a model in
             feet and days), applied over each column's plan area. Required.
+
+            A RECIPE -- ``mf.RasterValues(path)``, ``mf.Polygons(path, ...)`` without
+            ``layer_field``, or a product of them and numbers -- is sampled at BUILD
+            onto whatever grid the model supplies, one value per column, so the
+            package moves and saves (ledger 541); in a ``{period:
+            recipe}`` dict each DISTINCT recipe is sampled once per build however many
+            periods name it. It needs ``context=`` omitted (``TypeError`` otherwise:
+            the recipe and ``irch="top_active"`` both resolve at build). A per-layer
+            list means nothing here and raises ``TypeError``.
 
             A number writes MODFLOW's ``CONSTANT``. An array or list of ``ncpl``
             values (a ``(1, ncpl)`` array works too) gives each column its own rate,
@@ -5128,7 +5286,8 @@ class _RCHPackage:
             (``metadata['grid_pin']``), so moving the model to another mesh refuses
             it rather than applying one mesh's layer per column to another's cells.
             Omit it, with ``irch`` left at ``"top_active"``, for the LAZY mode. With
-            an explicit ``irch`` it resolves nothing and only pins.
+            an explicit ``irch`` it resolves nothing and only pins. Refused
+            (``TypeError``) beside a recipe in ``recharge``, which resolves at build.
         irch : {"top_active"}, array_like of int, dict of {int: array_like of int}, or None, default "top_active"
             The ZERO-based layer each column's recharge enters. FloPy adds one when
             it writes MODFLOW's 1-based IRCH, so 1-based values shift every column
@@ -5201,7 +5360,7 @@ class _RCHPackage:
         PackageSpec
             EAGER: ``options['irch']`` holds the resolved array and ``inputs`` is
             empty. LAZY: ``inputs == {'irch': 'top_active'}``, which is also what
-            its digest holds.
+            its digest holds -- plus ``recharge`` when it holds a recipe.
 
         Raises
         ------
@@ -5213,7 +5372,8 @@ class _RCHPackage:
         TypeError
             A ``mf.Spread`` or ``mf.CellSurfaceOffset`` in any keyword: both describe
             a per-FEATURE resolution and the array form has no features. Also a
-            keyword ``ModflowGwfrcha`` does not accept.
+            keyword ``ModflowGwfrcha`` does not accept; a recipe with ``context=``, in
+            a list, or in ``irch`` (an integer layer index).
 
         Notes
         -----
@@ -5637,20 +5797,23 @@ class _EVTPackage:
 
         Parameters
         ----------
-        rate : float, int, array_like, str, or dict of {int: any of those}
+        rate : float, int, array_like, str, recipe, or dict of {int: any of those}
             Maximum ET rate, length/time in the model's units (ft/d on a model in
             feet and days), taken where the head is at or above ``surface`` and
             falling to zero at ``surface - depth``. Required. Shapes as ``recharge``
             on :meth:`_RCHPackage.array`: a number, ``ncpl`` values, an external
-            file name (``str``), or a zero-based ``{period: value}`` dict whose
+            file name (``str``), a recipe (``mf.RasterValues``/``mf.Polygons``/a
+            product, sampled at BUILD, one value per column, ``context=`` omitted --
+            ledger 541), or a zero-based ``{period: value}`` dict whose
             missing periods repeat the one before (measured: ``{0: 1e-3, 1: 0.0}``
             took 162.35 ft3/d, then 0).
-        depth : float, int, array_like, str, or dict of {int: any of those}
+        depth : float, int, array_like, str, recipe, or dict of {int: any of those}
             Extinction depth below ``surface``, length (ft on a model in feet).
             Required. Same shapes as ``rate``.
-        surface : float, int, array_like, or dict of {int: any of those}, optional
+        surface : float, int, array_like, recipe, or dict of {int: any of those}, optional
             The ET surface ELEVATION, length, where the maximum rate applies. Same
-            numeric shapes as ``rate``.
+            numeric shapes as ``rate``, a recipe included --
+            ``mf.RasterValues("et_surface.tif")`` samples it at build.
 
             Omitted, it is the MODEL TOP -- resolved at the call from a
             ``context=`` carrying ``grid`` and ``surfaces`` (a ``LayerBuildResult``
@@ -5663,13 +5826,13 @@ class _EVTPackage:
             ledger 319): a ``str`` is read as "the model top" whatever it says --
             ``surface="dem.tif"`` wrote the same 162.35 ft3/d as omitting it -- and a
             ``mf.Surface`` is accepted here and refused by FloPy at build
-            (``MFDataException``). Sample a raster onto the cells yourself and pass
-            the array.
+            (``MFDataException``). A raster is ``mf.RasterValues("dem.tif")``.
         context : ModelContext, optional
             As on :meth:`_RCHPackage.array`: ``context.domain`` resolves
             ``ievt="top_active"``, and a ``grid`` pins the result to that mesh. With
             ``surface`` omitted it must ALSO carry ``grid`` and ``surfaces``, or the
-            call raises. Omit it for the LAZY mode.
+            call raises. Omit it for the LAZY mode. Refused (``TypeError``) beside a
+            recipe in ``rate``/``depth``/``surface``, which resolves at build.
         ievt : {"top_active"}, array_like of int, dict of {int: array_like of int}, or None, default "top_active"
             The ZERO-based layer each column's ET is taken from, with exactly the
             rules of ``irch`` on :meth:`_RCHPackage.array`: ``"top_active"`` is the
@@ -5716,7 +5879,8 @@ class _EVTPackage:
         PackageSpec
             EAGER: ``options`` holds the resolved ``ievt`` and ``surface``, and
             ``inputs`` is empty. LAZY: ``inputs`` holds what was left to the grid --
-            ``{'ievt': 'top_active', 'surface': 'model_top'}`` with both omitted.
+            ``{'ievt': 'top_active', 'surface': 'model_top'}`` with both omitted, and
+            any of ``rate``/``depth``/``surface`` holding a recipe.
 
         Raises
         ------
@@ -5728,7 +5892,8 @@ class _EVTPackage:
             with ``context=``, at build without it.
         TypeError
             A ``mf.Spread`` or ``mf.CellSurfaceOffset`` in any keyword, or a keyword
-            ``ModflowGwfevta`` does not accept.
+            ``ModflowGwfevta`` does not accept; a recipe with ``context=``, in a
+            list, or in ``ievt`` (an integer layer index).
 
         Notes
         -----
@@ -8173,7 +8338,25 @@ def _array_bc_result(
     (ledger 285).
     """
 
-    deferred = {}
+    if _field_carries_recipe(index):
+        raise TypeError(
+            f"{verb}({index_name}=<recipe>) is refused: {index_name!r} is an integer "
+            "LAYER index, and every raster mean and polygon rule returns a float. Give "
+            f"it as 'top_active', an array, or a {{period: array}} mapping."
+        )
+    recipes = {key: value for key, value in fields.items() if _field_carries_recipe(value)}
+    if recipes:
+        _check_areal_recipes(verb, recipes)
+        if context is not None:
+            raise TypeError(
+                f"{verb}: {', '.join(sorted(recipes))} holds a recipe "
+                "(mf.RasterValues / mf.Polygons), which resolves at BUILD against the "
+                "model's own grid -- and so then do "
+                f"{index_name}='top_active' and an omitted surface. `context=` asks for "
+                "the opposite, resolution at the call. Drop `context=` (ledger "
+                "541)."
+            )
+    deferred = {key: _stamped_areal(value) for key, value in recipes.items()}
     if context is None:
         if isinstance(index, str):
             deferred[index_name] = index
@@ -8227,6 +8410,14 @@ def _build_lazy_array(constructor, index_name, model, *, _spec, **kwargs):
     kwargs = dict(kwargs)
     index = kwargs.pop(index_name, None)
     fields = {key: kwargs.pop(key) for key in _ARRAY_FIELDS[index_name] if key in kwargs}
+    if any(_field_carries_recipe(value) for value in fields.values()):
+        # The recipe's GRID, which the domain-only context above does not need.
+        grid = _lazy_resolution_context(model, _spec.name).grid
+        cache = _recipe_cache(model)
+        fields = {
+            key: _resolve_areal(value, grid, parameter=f"{verb}({key}=)", cache=cache)
+            for key, value in fields.items()
+        }
     if isinstance(fields.get("surface"), str):
         fields["surface"] = _model_top_surface(context, verb=verb)
     values = _array_bc_values(
@@ -8260,6 +8451,70 @@ def _build_lazy_array(constructor, index_name, model, *, _spec, **kwargs):
         model._myflopy_resolved = resolved
     resolved[_spec.name] = eager
     return eager.build(model)
+
+
+def _field_carries_recipe(value: Any) -> bool:
+    """Whether an array-form field holds a recipe, bare or in a ``{period: ...}`` dict."""
+
+    if isinstance(value, dict):
+        return any(_carries_recipe(item) for item in value.values())
+    return _carries_recipe(value)
+
+
+def _check_areal_recipes(verb: str, recipes: dict) -> None:
+    """Refuse, at the DECLARATION, a recipe shape an AREAL slot cannot hold.
+
+    ``recharge``/``rate``/``depth``/``surface`` hold ONE value per column, so a
+    per-layer list and a polygon map naming model layers (``layer_field=``) mean
+    nothing there.
+    """
+
+    for key, value in recipes.items():
+        items = value.values() if isinstance(value, dict) else [value]
+        for item in items:
+            if isinstance(item, (list, tuple)) and _carries_recipe(item):
+                raise TypeError(
+                    f"{verb}({key}=[...]): a per-layer list means nothing here -- {key} "
+                    "is ONE value per column. Give one recipe, or a {period: recipe} "
+                    "mapping."
+                )
+            for factor in _layered_factors(item) if _is_recipe(item) else ():
+                if isinstance(factor, Polygons) and factor.layer_field is not None:
+                    raise ValueError(
+                        f"{verb}({key}=...): Polygons(layer_field="
+                        f"{factor.layer_field!r}) paints model layers, and {key} is ONE "
+                        "value per column. Drop layer_field=."
+                    )
+
+
+def _stamped_areal(value: Any) -> Any:
+    """:func:`_stamped_recipe` over a bare recipe or each value of a ``{period: ...}`` dict."""
+
+    if isinstance(value, dict):
+        return {period: _stamped_recipe(item) for period, item in value.items()}
+    return _stamped_recipe(value)
+
+
+def _resolve_areal(value: Any, grid, *, parameter: str, cache: dict) -> Any:
+    """Each recipe in an array-form field resolved to ``(ncpl,)``; the rest as given."""
+
+    if isinstance(value, dict):
+        return {
+            period: (
+                resolve_array_recipe(
+                    item, grid, nlay=1, areal=True,
+                    parameter=f"{parameter} period {period}", cache=cache,
+                )
+                if _is_recipe(item)
+                else item
+            )
+            for period, item in value.items()
+        }
+    if _is_recipe(value):
+        return resolve_array_recipe(
+            value, grid, nlay=1, areal=True, parameter=parameter, cache=cache
+        )
+    return value
 
 
 def _ncpl_of(discretization) -> int:

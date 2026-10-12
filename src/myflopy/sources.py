@@ -739,8 +739,9 @@ class RasterSource(DataSourceSpec):
     resolver raises ``TypeError`` (it reads GeoPackage, shape and table sources only);
     in the grid's path-valued ``rasters=``/``idomain_path=`` options only its anchored
     ``path`` is taken; and in ``PackageSpec.inputs`` it reaches the builder
-    unresolved. To sample a raster onto cells, use
-    :meth:`myflopy.surfaces.Surface.raster` (``mf.Raster``) in a ``LayerStack``, or
+    unresolved. To fill a per-cell array from a raster, use :class:`RasterValues`
+    (``mf.RasterValues``); for an elevation, :meth:`myflopy.surfaces.Surface.raster`
+    (``mf.Raster``) in a ``LayerStack``; to sample one by hand,
     ``vor.get_raster_vals_at_centroids``.
 
     Parameters
@@ -895,6 +896,8 @@ class Polygons(DataSourceSpec):
     tool and is not needed: the seven ``mf.<pkg>.gpkg(...)`` forms already read a
     polygon's attribute columns, and have been lazy since ledger 279.
 
+    A RASTER of values is :class:`RasterValues`, accepted in the same slots.
+
     Parameters
     ----------
     path : pathlib.Path or str
@@ -909,12 +912,22 @@ class Polygons(DataSourceSpec):
         build. The helpers never set it.
     metadata : dict, optional
         As :class:`DataSourceSpec`: free-form annotations, carried not read.
-    column : str
+    column : str, optional
         Attribute column holding the value to paint. A NULL in it is REFUSED naming
         the feature, never filled with a default -- substituting a number the user did
         not give is its own silent guess (ledger 247). An empty string raises
         ``ValueError`` here; a column the file lacks raises ``ValueError`` at build,
-        naming the file's columns.
+        naming the file's columns. Give exactly one of ``column`` and ``value``:
+        both, or neither, raises ``ValueError`` here.
+    value : float, optional
+        One number painted into every cell the polygons reach, in place of a
+        column -- for a constant factor that is not worth adding to the file, most
+        often a MULTIPLIER in a product: ``mf.RasterValues("k33_3.tif") *
+        mf.Polygons("pit.gpkg", value=0.1, default=1.0)`` is the raster times 0.1
+        inside the polygons and times 1.0 outside (ledger 541). The
+        ``rule`` still decides which cells the polygons reach. Must be a finite real
+        number (``bool`` refused), else ``ValueError`` here. Exactly one of
+        ``column`` and ``value``.
     layer : str, optional
         Layer/table name inside a multi-layer file. ``None`` (the default) reads the
         file's first layer, which is right for a single-layer one.
@@ -973,13 +986,23 @@ class Polygons(DataSourceSpec):
     name frozen in a recipe survives ``fork_package``'s rename and two renamed forks
     then collapse into one MF6 package.
 
+    **``*`` builds a product.** ``polygons * factor`` (or ``factor * polygons``) is an
+    :class:`ArrayProduct`, whose factors may be :class:`RasterValues`, ``Polygons`` and
+    numbers; see that class for what a factor may not be.
+
     Examples
     --------
     >>> mf.npf(k=mf.Polygons("geology.gpkg", column="k", layer="units", default=1.0))
     >>> mf.ic(strt=mf.Polygons("zones.shp", column="head", rule="mean", default=9.0))
+    >>> mf.Polygons("pit.gpkg", value=0.1, default=1.0)     # a constant multiplier
     """
 
-    column: str
+    #: Numpy must not claim ``ndarray * Polygons`` element by element before this
+    #: class's ``__rmul__`` refuses the array (an ARRAY factor is position-bound).
+    __array_ufunc__: ClassVar[None] = None
+
+    column: str | None = None
+    value: float | None = None
     layer: str | None = None
     rule: str = "majority"
     default: float | None = None
@@ -1001,10 +1024,23 @@ class Polygons(DataSourceSpec):
                 "of it, 'mean' the area-weighted mean of them, 'centroid' the one "
                 "holding the cell's centre."
             )
+        if self.column is not None and self.value is not None:
+            raise ValueError(
+                f"Polygons(column={self.column!r}, value={self.value!r}) gives two "
+                "values to paint. Give `column=` to read each polygon's own value from "
+                "the file, or `value=` to paint one number into every polygon -- not "
+                "both."
+            )
+        if self.value is not None:
+            object.__setattr__(
+                self, "value", _finite_number(self.value, "Polygons(value=...)")
+            )
+            return
         if not self.column:
             raise ValueError(
                 "Polygons(column=...) names the attribute column holding the value to "
-                "paint, and cannot be empty."
+                "paint, and cannot be empty -- or give `value=` to paint one number "
+                "into every polygon."
             )
 
     def to_dict(self) -> dict[str, Any]:
@@ -1016,10 +1052,14 @@ class Polygons(DataSourceSpec):
         """
 
         payload = DataSourceSpec.to_dict(self)
-        payload["column"] = self.column
+        # `column` stays written FIRST and unconditionally when set, exactly as before
+        # `value=` existed, so no stored Polygons digest moves (ledger 273's rule).
+        if self.column is not None:
+            payload["column"] = self.column
         from myflopy.specs import _json_value
 
         for name, default in (
+            ("value", None),
             ("layer", None),
             ("rule", "majority"),
             ("default", None),
@@ -1053,13 +1093,24 @@ class Polygons(DataSourceSpec):
             payload.pop("path", None)
         return payload
 
+    def __mul__(self, other: Any) -> ArrayProduct:
+        """``polygons * factor``: an :class:`ArrayProduct` of the two."""
+
+        return ArrayProduct.of(self, other)
+
+    def __rmul__(self, other: Any) -> ArrayProduct:
+        """``factor * polygons``: an :class:`ArrayProduct` of the two."""
+
+        return ArrayProduct.of(other, self)
+
     @classmethod
     def _from_dict(cls, data: dict[str, Any]) -> Polygons:
         """Rebuild a :class:`Polygons` from a payload dict."""
 
         return cls(
             path=data["path"],
-            column=data["column"],
+            column=data.get("column"),
+            value=data.get("value"),
             layer=data.get("layer"),
             rule=data.get("rule", "majority"),
             default=data.get("default"),
@@ -1071,6 +1122,442 @@ class Polygons(DataSourceSpec):
         )
 
 
+#: How :class:`RasterValues` reads a cell's value off a raster, and how it averages the
+#: pixels inside one. Stated here, the lowest layer that needs them, so a declaration is
+#: refused at the call; the sampler in ``modflow/mf6/grid/surfaces.py`` re-states them
+#: (it sits a layer above) and ``tests/test_raster_arrays.py`` holds the two together.
+RASTER_METHODS: tuple[str, ...] = ("area", "centroid")
+RASTER_MEANS: tuple[str, ...] = ("arithmetic", "geometric", "harmonic")
+#: What a cell the raster gives no value for becomes. Narrower than the sampler's four
+#: words on purpose: ``"warn"`` and ``"ignore"`` would hand MF6 a NaN, which it answers
+#: with a NaN budget under Normal termination (ledger 247).
+RASTER_GAPS: tuple[str, ...] = ("raise", "nearest")
+
+
+def _finite_number(value: Any, what: str) -> float:
+    """``value`` as a finite ``float``, or ``ValueError`` naming ``what``.
+
+    ``bool`` is refused although it subclasses ``int``: ``value=True`` is a typo for a
+    flag, not the number 1.
+    """
+
+    import math
+    import numbers
+
+    if isinstance(value, bool) or type(value).__name__ == "bool_":
+        raise ValueError(f"{what} must be a number, not {value!r}.")
+    if not isinstance(value, numbers.Real):
+        raise ValueError(f"{what} must be a real number, not {value!r} ({type(value).__name__}).")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{what} must be finite, not {value!r}.")
+    return number
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RasterValues(DataSourceSpec):
+    """A raster that fills a per-cell ARRAY parameter, as plain data.
+
+    The recipe behind ``mf.npf(k=mf.RasterValues("k_1.tif"))``: one raster band,
+    sampled onto whatever grid the build supplies -- the same sampler, the same
+    numbers, as ``mf.Surface.raster("k_1.tif").values(vor)``, but held as a
+    DECLARATION. So a model built from it moves to another mesh (``with_grid`` reads
+    ``rebuilt``), saves with its project (an ``ndarray`` is refused by ``to_dict``,
+    ledger 193, so a model holding sampled arrays persisted no simulation at all), and
+    its run freezes the arrays the build sampled (ledger 251). Its digest reads the
+    raster's CONTENT, not its location (ledger 293), and
+    ``project.save(bundle_sources=True)`` copies the raster into the project (ledger
+    256/293). See ledger 541.
+
+    It is NOT :class:`myflopy.surfaces.Surface` (``mf.Raster``), which is an
+    ELEVATION: it carries length units and the relative kinds that only mean something
+    for a layer surface, and the array slots refuse it on purpose. ``RasterValues`` is
+    a property field -- a conductivity, a storage coefficient, a starting head, a
+    recharge rate -- in whatever units the raster holds, written as it is.
+
+    One object is ONE file. A layered parameter takes a per-layer LIST --
+    ``k=[mf.RasterValues("k_1.tif"), ..., mf.RasterValues("k_5.tif")]`` -- and one
+    recipe in a layered slot is broadcast to every layer. ``*`` builds an
+    :class:`ArrayProduct` with another recipe or a number.
+
+    Where it is accepted: ``mf.npf(k=, k22=, k33=)``, ``mf.ic(strt=)``,
+    ``mf.sto(ss=, sy=)`` -- a recipe, a per-layer list of recipes and numbers, or a
+    product -- and, AREAL, ``mf.rch.array(recharge=)`` and ``mf.evt.array(rate=,
+    surface=, depth=)``, as a recipe or a ``{period: recipe}`` dict. Never in an
+    integer flag (``icelltype``, ``iconvert``, ``irch``, ``ievt``).
+
+    Parameters
+    ----------
+    path : pathlib.Path or str
+        The raster file (GeoTIFF, IMG, anything ``rasterio`` opens). Coerced to a
+        :class:`~pathlib.Path`. The array helpers check it exists and store it
+        RESOLVED to an absolute path at declaration -- a missing file raises
+        ``FileNotFoundError`` there. A raster in another CRS than the grid is sampled
+        by reprojecting the cells to it; with either CRS missing it is sampled
+        without reprojection and warned about.
+    external : bool, default False
+        As :class:`DataSourceSpec`: ``True`` leaves a relative ``path`` unanchored at
+        build. The helpers never set it.
+    metadata : dict, optional
+        As :class:`DataSourceSpec`: free-form annotations, carried not read.
+    band : int, default 1
+        The 1-based band to read. Below 1, or not a whole number, raises
+        ``ValueError`` here; a band the file lacks raises ``ValueError`` at build,
+        naming how many it has.
+    method : {"area", "centroid"}, default "area"
+        How a cell's value is read off the raster. ``"area"`` averages every pixel
+        whose CENTRE falls inside the cell polygon (``mean`` says how), and a cell
+        holding no such pixel -- smaller than a pixel, or on the raster's edge --
+        falls back to the pixel at its centroid. ``"centroid"`` reads that one pixel
+        for every cell. Another word raises ``ValueError`` here.
+    mean : {"arithmetic", "geometric", "harmonic"}, default "arithmetic"
+        How ``method="area"`` averages the pixels inside one cell. ``"arithmetic"``
+        is the default because it reproduces, bit for bit, the arrays
+        ``Surface.raster(path).values(vor)`` samples -- so moving a model onto
+        recipes changes no number. ``"geometric"`` (the exponential of the mean
+        log) and ``"harmonic"`` (the reciprocal of the mean reciprocal) are for a
+        conductivity whose pixels are much finer than the cells. **Which one is
+        right for K depends on the direction of FLOW, which is a property of the
+        solution, not of the field** (ledger 300): with the contrast across the
+        flow the harmonic is nearly exact and the arithmetic far too high (264x on
+        one measured coarsening), and turned 90 degrees the ordering reverses. The
+        geometric is never best and never catastrophic. Both refuse a pixel that is
+        zero or negative, at build, naming the count. Not ``"arithmetic"`` with
+        ``method="centroid"`` raises ``ValueError`` here: one pixel has no mean.
+    nodata : float, optional
+        A value to treat as no-data, overriding the file's own declared one, for a
+        raster that uses a sentinel (often 0 or -9999) without recording it.
+        ``None`` (the default) uses the file's.
+    gaps : {"raise", "nearest"}, default "raise"
+        What a cell the raster gives no value for means -- off the raster, or on its
+        no-data. ``"raise"`` refuses at build naming how many cells and which, unless
+        ``default`` is given; ``"nearest"`` takes each from its nearest valued cell,
+        by centroid distance, and logs which. The sampler's other two words,
+        ``"warn"`` and ``"ignore"``, are refused here (``ValueError``): both hand MF6 a
+        NaN, which it answers with a NaN budget under Normal termination (ledger
+        247). Whatever the mode, a raster giving NO cell a value raises at build,
+        printing both extents and both CRSs.
+    default : float, optional
+        The value for a cell the raster gives no value for, in place of refusing
+        it. Must be a finite number. Giving it with ``gaps="nearest"`` raises
+        ``ValueError`` here: they are two answers to one question.
+    source_sha : str, optional
+        16-character content hash of ``path`` when the recipe was declared. It is
+        what the DIGEST sees in place of the path (:meth:`digest_payload`), so
+        bundling a project moves no digest and editing the raster does (ledger 293).
+        The array helpers stamp it at declaration, replacing any value passed here.
+
+    Notes
+    -----
+    **``kind`` is ``"RasterValuesSource"``**, for the reason :class:`Polygons`
+    records: the kind must end in ``"Source"`` so that an unregistered one raises.
+
+    It sits beside :class:`RasterSource`, which RECORDS a raster for a grid recipe and
+    is sampled by nothing; this one is resolved.
+
+    Examples
+    --------
+    >>> mf.npf(k=[mf.RasterValues(f"k_{n}.tif") for n in range(1, 6)])
+    >>> mf.sto(ss=mf.RasterValues("ss.tif", gaps="nearest"))
+    >>> mf.npf(k=mf.RasterValues("k.tif", mean="geometric", default=1.0))
+    >>> mf.rch.array(recharge={0: mf.RasterValues("recharge_01.tif"),
+    ...                        1: mf.RasterValues("recharge_02.tif")})
+    """
+
+    #: See :attr:`Polygons.__array_ufunc__`.
+    __array_ufunc__: ClassVar[None] = None
+
+    band: int = 1
+    method: str = "area"
+    mean: str = "arithmetic"
+    nodata: float | None = None
+    gaps: str = "raise"
+    default: float | None = None
+    source_sha: str | None = None
+
+    kind: ClassVar[str] = "RasterValuesSource"
+
+    def __post_init__(self) -> None:
+        """Coerce ``path`` and refuse what cannot be resolved, at the DECLARATION."""
+
+        DataSourceSpec.__post_init__(self)
+        import numbers
+
+        band = self.band
+        if isinstance(band, bool) or not isinstance(band, numbers.Integral):
+            raise ValueError(f"RasterValues(band={band!r}) must be a whole number from 1.")
+        object.__setattr__(self, "band", int(band))
+        if self.band < 1:
+            raise ValueError(
+                f"RasterValues(band={self.band}) is not a band: bands are numbered from 1."
+            )
+        for name, allowed in (
+            ("method", RASTER_METHODS),
+            ("mean", RASTER_MEANS),
+            ("gaps", RASTER_GAPS),
+        ):
+            if getattr(self, name) not in allowed:
+                extra = (
+                    " 'warn' and 'ignore' would hand MODFLOW a NaN for those cells, "
+                    "which it answers with a NaN budget under Normal termination; give "
+                    "`default=` to say what an uncovered cell means."
+                    if name == "gaps"
+                    else ""
+                )
+                raise ValueError(
+                    f"RasterValues({name}={getattr(self, name)!r}) is not one of "
+                    + ", ".join(repr(word) for word in allowed)
+                    + "."
+                    + extra
+                )
+        if self.method == "centroid" and self.mean != "arithmetic":
+            raise ValueError(
+                f"RasterValues(method='centroid', mean={self.mean!r}): a centroid read is "
+                "ONE pixel, which has no mean. Use method='area' to average the pixels "
+                "inside each cell."
+            )
+        if self.default is not None:
+            object.__setattr__(
+                self, "default", _finite_number(self.default, "RasterValues(default=...)")
+            )
+            if self.gaps == "nearest":
+                raise ValueError(
+                    "RasterValues(gaps='nearest', default=...) gives two answers to one "
+                    "question -- what a cell the raster gives no value for means. Give "
+                    "one."
+                )
+        if self.nodata is not None:
+            object.__setattr__(
+                self, "nodata", _finite_number(self.nodata, "RasterValues(nodata=...)")
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize like the base spec, adding every field that is not a default.
+
+        Defaults are omitted so that adding a defaulted field later cannot move an
+        existing package's digest (ledger 273).
+        """
+
+        payload = DataSourceSpec.to_dict(self)
+        # No `_json_value` pass, unlike `Polygons.to_dict`: `__post_init__` already made
+        # every field a plain Python value (`band` an `int`, `nodata`/`default` a
+        # `float`), so a numpy scalar cannot reach the payload (ledger 265).
+        for name, default in (
+            ("band", 1),
+            ("method", "area"),
+            ("mean", "arithmetic"),
+            ("nodata", None),
+            ("gaps", "raise"),
+            ("default", None),
+            ("source_sha", None),
+        ):
+            value = getattr(self, name)
+            if value != default or type(value) is not type(default):
+                payload[name] = value
+        return payload
+
+    def digest_payload(self) -> dict[str, Any]:
+        """The declaration with the file's CONTENT standing in for its LOCATION.
+
+        :meth:`Polygons.digest_payload`'s rule (ledger 293): falls back to the path
+        when the file could not be read.
+        """
+
+        payload = RasterValues.to_dict(self)
+        if payload.get("source_sha") is not None:
+            payload.pop("path", None)
+        return payload
+
+    def __mul__(self, other: Any) -> ArrayProduct:
+        """``raster * factor``: an :class:`ArrayProduct` of the two."""
+
+        return ArrayProduct.of(self, other)
+
+    def __rmul__(self, other: Any) -> ArrayProduct:
+        """``factor * raster``: an :class:`ArrayProduct` of the two."""
+
+        return ArrayProduct.of(other, self)
+
+    @classmethod
+    def _from_dict(cls, data: dict[str, Any]) -> RasterValues:
+        """Rebuild a :class:`RasterValues` from a payload dict."""
+
+        return cls(
+            path=data["path"],
+            band=data.get("band", 1),
+            method=data.get("method", "area"),
+            mean=data.get("mean", "arithmetic"),
+            nodata=data.get("nodata"),
+            gaps=data.get("gaps", "raise"),
+            default=data.get("default"),
+            source_sha=data.get("source_sha"),
+            external=bool(data.get("external", False)),
+            metadata=dict(data.get("metadata", {})),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ArrayProduct:
+    """The cell-by-cell PRODUCT of array recipes and numbers, as plain data.
+
+    What ``recipe * factor`` builds: ``mf.RasterValues("k33_3.tif") *
+    mf.Polygons("pit.gpkg", value=0.1, default=1.0)`` is the raster's K33, times 0.1
+    inside the pit polygons and unchanged outside -- a polygon MULTIPLIER without a
+    hand-edited copy of the raster (ledger 541). Every factor is resolved
+    on the grid the build supplies and the results multiplied, so the product moves,
+    saves, digests and bundles exactly as its factors do.
+
+    Accepted wherever :class:`RasterValues` is, and inside a per-layer list.
+
+    Parameters
+    ----------
+    factors : tuple of (RasterValues or Polygons or float)
+        What to multiply, in order. A factor that is itself a product is flattened
+        into this one. At least one must be a recipe (``ValueError`` otherwise: a
+        product of numbers is a number, so write it). A number must be finite. An
+        ``ndarray`` is REFUSED (``TypeError``): it names cells by POSITION, which is
+        exactly what makes a package unsaveable and unmovable -- the reason the
+        recipe exists; ``with_grid(remap=True)`` carries a per-cell array to a new
+        mesh. A ``Surface``/``LayerStack`` (an ELEVATION) and anything else are
+        refused too, naming the type. Build it with ``*`` or :meth:`of`; the
+        constructor checks the same.
+
+    Notes
+    -----
+    Serialized under its own ``"$array_product"`` token, each factor written as the
+    factor writes itself, so the walkers that repoint, bundle and anchor a source
+    reach a factor's path unchanged. Its digest is its factors' digests -- content
+    keyed -- in order.
+
+    Examples
+    --------
+    >>> pit = mf.Polygons("pit.gpkg", value=0.1, default=1.0)
+    >>> mf.npf(k33=[mf.RasterValues("k33_1.tif"), mf.RasterValues("k33_2.tif") * pit])
+    >>> mf.ic(strt=0.5 * mf.RasterValues("head.tif"))
+    """
+
+    #: See :attr:`Polygons.__array_ufunc__`.
+    __array_ufunc__: ClassVar[None] = None
+
+    factors: tuple[Any, ...]
+
+    #: The key it is written under; :mod:`myflopy.specs` dispatches on it.
+    TOKEN: ClassVar[str] = "$array_product"
+
+    def __post_init__(self) -> None:
+        """Flatten nested products and refuse a factor that is not a recipe or a number."""
+
+        flat: list[Any] = []
+        for factor in tuple(self.factors):
+            if isinstance(factor, ArrayProduct):
+                flat.extend(factor.factors)
+            elif isinstance(factor, (RasterValues, Polygons)):
+                flat.append(factor)
+            else:
+                flat.append(_product_number(factor))
+        if not any(isinstance(factor, (RasterValues, Polygons)) for factor in flat):
+            raise ValueError(
+                "An ArrayProduct needs at least one RasterValues or Polygons factor; a "
+                "product of numbers is a number, so pass the number."
+            )
+        object.__setattr__(self, "factors", tuple(flat))
+
+    @classmethod
+    def of(cls, *factors: Any) -> ArrayProduct:
+        """The product of ``factors``, as ``*`` builds it.
+
+        Parameters
+        ----------
+        *factors : RasterValues, Polygons, ArrayProduct or float
+            What to multiply, in order; a product among them is flattened in. See
+            the class's ``factors`` for what is refused.
+
+        Returns
+        -------
+        ArrayProduct
+        """
+
+        return cls(factors=tuple(factors))
+
+    def __mul__(self, other: Any) -> ArrayProduct:
+        """``product * factor``: one longer product."""
+
+        return ArrayProduct.of(self, other)
+
+    def __rmul__(self, other: Any) -> ArrayProduct:
+        """``factor * product``: one longer product."""
+
+        return ArrayProduct.of(other, self)
+
+    def to_dict(self) -> dict[str, Any]:
+        """``{"factors": [...]}``, each recipe as its own ``to_dict()`` writes it."""
+
+        return {
+            "factors": [
+                factor.to_dict() if isinstance(factor, DataSourceSpec) else factor
+                for factor in self.factors
+            ]
+        }
+
+    def digest_payload(self) -> dict[str, Any]:
+        """The factors' content-keyed payloads, in order (ledger 293)."""
+
+        return {
+            "factors": [
+                factor.digest_payload() if isinstance(factor, DataSourceSpec) else factor
+                for factor in self.factors
+            ]
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ArrayProduct:
+        """Rebuild a product from what :meth:`to_dict` wrote.
+
+        Parameters
+        ----------
+        data : dict
+            ``{"factors": [...]}``; a dict factor is revived through
+            :func:`source_from_dict` (or is already a live recipe), a number is kept.
+
+        Returns
+        -------
+        ArrayProduct
+        """
+
+        return cls(
+            factors=tuple(
+                source_from_dict(factor) if isinstance(factor, dict) else factor
+                for factor in data["factors"]
+            )
+        )
+
+
+def _product_number(factor: Any) -> float:
+    """A number factor of a product, or the refusal naming what the factor is."""
+
+    if getattr(factor, "ndim", 0) and hasattr(factor, "shape"):
+        raise TypeError(
+            "An array cannot be a factor of an array recipe: it names cells by "
+            "POSITION, so the package would again be unsaveable and could not move to "
+            "another mesh -- which is what the recipe exists to avoid. Put the values "
+            "in a raster (mf.RasterValues) or a polygon map (mf.Polygons(value=...)); "
+            "to carry a calibrated per-cell array to a new mesh use "
+            "sim.with_grid(grid, remap=True)."
+        )
+    token = getattr(type(factor), "_SPEC_TOKEN", None)
+    if token in ("$surface", "$layer_stack"):
+        raise TypeError(
+            "A Surface or LayerStack is an ELEVATION and cannot be a factor of an array "
+            "recipe. A raster of values is mf.RasterValues(path)."
+        )
+    if isinstance(factor, (int, float)) or type(factor).__module__ == "numpy":
+        return _finite_number(factor, "A number factor of an ArrayProduct")
+    raise TypeError(
+        f"{factor!r} ({type(factor).__name__}) cannot be a factor of an array recipe: a "
+        "factor is mf.RasterValues, mf.Polygons, or a number."
+    )
+
+
 _SOURCE_TYPES: dict[str, type[Any]] = {
     DataSourceSpec.kind: DataSourceSpec,
     TableSource.kind: TableSource,
@@ -1078,6 +1565,7 @@ _SOURCE_TYPES: dict[str, type[Any]] = {
     GeoPackageSourceSpec.kind: GeoPackageSourceSpec,
     BoundarySource.kind: BoundarySource,
     Polygons.kind: Polygons,
+    RasterValues.kind: RasterValues,
     RasterSource.kind: RasterSource,
     LiteralSource.kind: LiteralSource,
 }
@@ -1136,9 +1624,14 @@ def source_from_dict(data: dict[str, Any]) -> DataSourceSpec | LiteralSource:
 
 
 __all__ = [
+    "ArrayProduct",
     "BoundarySource",
     "POLYGON_RULES",
     "Polygons",
+    "RASTER_GAPS",
+    "RASTER_MEANS",
+    "RASTER_METHODS",
+    "RasterValues",
     "DataSourceSpec",
     "is_source_payload",
     "GeoPackageSourceSpec",

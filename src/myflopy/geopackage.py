@@ -32,9 +32,14 @@ from myflopy.modflow.mf6.grid.geometry import (
     polygon_cell_values,
     where_they_are,
 )
-from myflopy.modflow.mf6.grid.surfaces import check_gaps
+from myflopy.modflow.mf6.grid.surfaces import (
+    _fill_nearest,
+    check_gaps,
+    get_raster_vals_at_centroids,
+    raster_extents_text,
+)
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
-from myflopy.sources import BoundarySource, Polygons
+from myflopy.sources import ArrayProduct, BoundarySource, Polygons, RasterValues
 from myflopy.specs import (
     GRID_PIN,
     GRID_PIN_OPTIONS,
@@ -744,8 +749,10 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
     """Resolve a :class:`~myflopy.sources.Polygons` recipe to an ``(nlay, ncpl)`` array.
 
     The build-time half of ``mf.npf(k=mf.Polygons(...))``. It reads the file, refuses a
-    NULL naming the feature, paints each cell by the recipe's own ``rule``, and fills
-    what no polygon reached with ``default`` -- or refuses when there is none.
+    NULL naming the feature (or paints the recipe's one ``value`` into every polygon),
+    paints each cell by the recipe's own ``rule``, and fills what no polygon reached
+    with ``default`` -- or refuses when there is none. Products and per-layer lists
+    reach it through :func:`resolve_array_recipe`.
 
     **Refusing an unfilled cell is the point, not a convenience.** The array goes
     straight into MF6, where a NaN is answered with a NaN budget under "Normal
@@ -773,7 +780,7 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
         gdf = gdf.to_crs(grid_crs)
 
     source = f"'{path.name}'" + (f" (layer {recipe.layer!r})" if recipe.layer else "")
-    if recipe.column not in gdf.columns:
+    if recipe.column is not None and recipe.column not in gdf.columns:
         import difflib
 
         close = difflib.get_close_matches(recipe.column, list(gdf.columns), n=1, cutoff=0.6)
@@ -792,13 +799,17 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
         repr(str(row["name"])) if "name" in gdf.columns else f"#{index}"
         for index, row in gdf.iterrows()
     ]
-    numbers = np.array(
-        [
-            float(_finite(value, field=recipe.column, label=label, source=source))
-            for value, label in zip(gdf[recipe.column], labels, strict=True)
-        ],
-        dtype=float,
-    )
+    if recipe.column is None:
+        # `value=`: one number for every polygon, finite by construction.
+        numbers = np.full(len(gdf), float(recipe.value), dtype=float)
+    else:
+        numbers = np.array(
+            [
+                float(_finite(value, field=recipe.column, label=label, source=source))
+                for value, label in zip(gdf[recipe.column], labels, strict=True)
+            ],
+            dtype=float,
+        )
 
     painted = np.full((int(nlay), len(cells)), np.nan, dtype=float)
     if recipe.layer_field is None:
@@ -885,6 +896,202 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
             )
         painted[unfilled] = float(recipe.default)
     return painted
+
+
+def array_from_raster(recipe: RasterValues, grid, *, parameter: str) -> np.ndarray:
+    """Resolve a :class:`~myflopy.sources.RasterValues` recipe to an ``(ncpl,)`` array.
+
+    The build-time half of ``mf.npf(k=mf.RasterValues(...))``, through the ONE raster
+    sampler, :func:`~myflopy.modflow.mf6.grid.surfaces.get_raster_vals_at_centroids` --
+    with the default ``mean="arithmetic"`` it returns exactly what
+    ``Surface.raster(path).values(grid)`` does. A cell left without a value is never
+    handed on: ``gaps="nearest"`` fills it from its nearest valued cell, ``default=``
+    with that number, and otherwise it is REFUSED naming the count (ledger 247: MF6
+    answers a NaN with a NaN budget under Normal termination). A raster giving NO cell
+    a value is refused whatever the recipe says, naming both extents and both CRSs --
+    ``default=`` everywhere would paint a misplaced raster in silence.
+
+    Parameters
+    ----------
+    recipe : RasterValues
+        What to sample; its ``path`` must already be anchored.
+    grid : VoronoiGridPlus
+        The grid to sample onto.
+    parameter : str
+        How the parameter is named in an error, e.g. ``"npf.k layer 2"``.
+
+    Returns
+    -------
+    numpy.ndarray of float, shape (ncpl,)
+        Every value finite.
+
+    Raises
+    ------
+    ValueError
+        A band the file lacks; a zero or negative pixel under a geometric or harmonic
+        mean; cells left without a value as described above.
+    """
+
+    path = Path(recipe.path)
+    sampled = get_raster_vals_at_centroids(
+        grid, [path], ["value"], method=recipe.method, nodata=recipe.nodata,
+        gaps="ignore", band=recipe.band, mean=recipe.mean,
+    )
+    values = sampled["value"].to_numpy(dtype=float)
+    missing = np.flatnonzero(~np.isfinite(values))
+    if missing.size == 0:
+        return values
+    if missing.size == values.size:
+        raise ValueError(
+            f"Raster '{path.name}' gave no value for ANY of the {values.size} cells, so "
+            f"{parameter} would be entirely {'its default' if recipe.default is not None else 'no-data'}. "
+            f"{raster_extents_text(grid, path)}"
+        )
+    if recipe.gaps == "nearest":
+        xs, ys = np.asarray(grid.centroids[0]), np.asarray(grid.centroids[1])
+        logger.info(
+            "%s: filled %d of %d cells off raster '%s' from the nearest valued cell (%s)",
+            parameter, missing.size, values.size, path.name, _listed([str(cell) for cell in missing]),
+        )
+        return _fill_nearest(values, xs, ys, missing)
+    if recipe.default is not None:
+        logger.info(
+            "%s: %d of %d cells off raster '%s' take default=%g (%s)",
+            parameter, missing.size, values.size, path.name, recipe.default,
+            _listed([str(cell) for cell in missing]),
+        )
+        filled = values.copy()
+        filled[missing] = recipe.default
+        return filled
+    raise ValueError(
+        f"Raster '{path.name}' gives no value for {missing.size} of {values.size} cells, "
+        f"so {parameter} has none there: cells {_listed([str(cell) for cell in missing])}. MF6 would be "
+        "written a non-finite value and report success. Pass `gaps='nearest'` to take "
+        "each from its nearest valued cell, or `default=` to say what an uncovered cell "
+        "means."
+    )
+
+
+def _recipe_key(recipe: Any) -> str:
+    """A hashable key for one recipe's declaration, for the per-build sample memo."""
+
+    import json
+
+    return json.dumps(_json_value(recipe), sort_keys=True)
+
+
+def _resolve_factor(
+    factor: Any, grid, *, nlay: int, areal: bool, parameter: str, cache: dict | None
+) -> np.ndarray | float:
+    """One recipe (or a number) resolved to ``(ncpl,)``, ``(nlay, ncpl)`` or a float."""
+
+    if not isinstance(factor, (RasterValues, Polygons)):
+        return float(factor)
+    key = None
+    if cache is not None:
+        # Only a polygon map that paints model layers depends on the slot's shape; a
+        # raster or an areal map is one value per cell wherever it is named.
+        layered = isinstance(factor, Polygons) and factor.layer_field is not None
+        key = (_recipe_key(factor), id(grid)) + ((nlay, areal) if layered else ())
+        if key in cache:
+            return cache[key]
+    if isinstance(factor, RasterValues):
+        resolved = array_from_raster(factor, grid, parameter=parameter)
+    elif areal and factor.layer_field is not None:
+        raise ValueError(
+            f"{parameter} takes ONE value per column, and Polygons(layer_field="
+            f"{factor.layer_field!r}) paints model layers. Drop layer_field= here."
+        )
+    elif areal or factor.layer_field is None:
+        # An areal map paints every layer alike, so one layer is the whole answer.
+        resolved = array_from_polygons(factor, grid, nlay=1, parameter=parameter)[0]
+    else:
+        resolved = array_from_polygons(factor, grid, nlay=nlay, parameter=parameter)
+    if cache is not None:
+        cache[key] = resolved
+    return resolved
+
+
+def resolve_array_recipe(
+    value: Any,
+    grid,
+    *,
+    nlay: int,
+    parameter: str,
+    areal: bool = False,
+    cache: dict | None = None,
+) -> np.ndarray:
+    """Resolve an array recipe -- one, a product, or a per-layer list -- on ``grid``.
+
+    The ONE resolver behind every array slot that takes :class:`~myflopy.sources.
+    RasterValues`, :class:`~myflopy.sources.Polygons` or an
+    :class:`~myflopy.sources.ArrayProduct` (ledger 541). A single recipe
+    in a LAYERED slot is broadcast to every layer, as an areal polygon map always was;
+    a per-layer LIST fills one layer per element, each a number or a recipe; a product
+    multiplies its factors cell by cell after resolving each.
+
+    Parameters
+    ----------
+    value : RasterValues, Polygons, ArrayProduct, or list of (those or float)
+        The declaration. A list is accepted only when ``areal`` is ``False``.
+    grid : VoronoiGridPlus
+        The grid to resolve on.
+    nlay : int
+        The model's layer count. A list of another length raises ``ValueError``.
+    parameter : str
+        How the parameter is named in an error, e.g. ``"npf.k"``.
+    areal : bool, default False
+        ``True`` for a slot holding ONE value per column (``mf.rch.array``'s
+        ``recharge``, ``mf.evt.array``'s fields): the result is ``(ncpl,)``.
+    cache : dict, optional
+        A memo shared across one build: each distinct recipe is sampled once however
+        many periods or slots name it. ``None`` samples every time.
+
+    Returns
+    -------
+    numpy.ndarray of float
+        ``(ncpl,)`` when ``areal``, else ``(nlay, ncpl)``.
+
+    Raises
+    ------
+    ValueError
+        A per-layer list of the wrong length, and whatever resolving a recipe raises
+        (:func:`array_from_raster`, :func:`array_from_polygons`).
+    """
+
+    nlay = int(nlay)
+    ncpl = len(grid.gdf_vorPolys)
+
+    def one(item: Any, label: str, *, item_areal: bool) -> np.ndarray:
+        factors = item.factors if isinstance(item, ArrayProduct) else (item,)
+        result: np.ndarray | float = 1.0
+        for factor in factors:
+            resolved = _resolve_factor(
+                factor, grid, nlay=nlay, areal=item_areal, parameter=label, cache=cache
+            )
+            result = result * np.asarray(resolved, dtype=float)
+        shape = (ncpl,) if item_areal else (nlay, ncpl)
+        return np.broadcast_to(np.asarray(result, dtype=float), shape).copy()
+
+    if isinstance(value, (list, tuple)):
+        if areal:
+            raise ValueError(
+                f"{parameter} takes ONE value per column; a per-layer list means nothing "
+                "there."
+            )
+        if len(value) != nlay:
+            raise ValueError(
+                f"{parameter} is a per-layer list of {len(value)} entries, and the model "
+                f"has {nlay} layer(s). Give one entry -- a number or a recipe -- per "
+                "layer."
+            )
+        return np.vstack(
+            [
+                one(item, f"{parameter} layer {index}", item_areal=True)
+                for index, item in enumerate(value)
+            ]
+        )
+    return one(value, parameter, item_areal=areal)
 
 
 def _field_name(field: RowValue) -> str:

@@ -224,12 +224,14 @@ if TYPE_CHECKING:
     )
     from myflopy.run_record import ListingOutcome, read_listing_outcome
     from myflopy.sources import (
+        ArrayProduct,
         BoundarySource,
         DataSourceSpec,
         GeoPackageSourceSpec,
         LiteralSource,
         Polygons,
         RasterSource,
+        RasterValues,
         ShapeSource,
         TableSource,
     )
@@ -307,6 +309,8 @@ _EXPORTS = {
     "SpecBuildContext": ("myflopy.specs", "SpecBuildContext"),
     "BoundarySource": ("myflopy.sources", "BoundarySource"),
     "Polygons": ("myflopy.sources", "Polygons"),
+    "RasterValues": ("myflopy.sources", "RasterValues"),
+    "ArrayProduct": ("myflopy.sources", "ArrayProduct"),
     "Area": ("myflopy.areas", "Area"),
     "AverageYear": ("myflopy.cycles", "AverageYear"),
     "PeriodCalendar": ("myflopy.modflow.mf6.period_calendar", "PeriodCalendar"),

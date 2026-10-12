@@ -1662,6 +1662,26 @@ with the resolver re-stating the three names (it cannot import upward); a test h
 two together. **`package_api.py` already had `_lazy_array_factory`** for `mf.rch.array`
 at ~line 5890 -- a second definition at line 1000 was silently shadowed by it. Grep
 before adding a private helper to that file.
+**A RASTER of values is `mf.RasterValues`, and `*` multiplies recipes** (ledger
+541). Same slots, plus a per-layer LIST (`k=[mf.RasterValues("k_1.tif"),
+5.0, ...]`, one entry per layer; one recipe alone fills every layer) and, AREAL,
+`mf.rch.array(recharge=)`/`mf.evt.array(rate=, depth=, surface=)` bare or
+`{period: recipe}` (each distinct recipe sampled once per build; `context=` refused
+beside one). `recipe * factor` is an `ArrayProduct` of `RasterValues`, `Polygons` and
+numbers; `Polygons(value=0.1, default=1.0)` is a constant multiplier (exactly one of
+`column`/`value`). It samples through the ONE sampler, `get_raster_vals_at_centroids`
+(`band=`/`mean=` added there), and `mean="arithmetic"` reproduces
+`Surface.raster(p).values(vor)` BIT FOR BIT -- do not add a second sampler.
+`gaps="raise"` by default (`"nearest"` or `default=` fill; `"warn"`/`"ignore"` refused);
+a raster on NO cell raises even with `default=`. An `ndarray` factor is refused (it is
+what makes a package unsaveable; `with_grid(remap=True)` is that route). **`mf.Raster`
+(a `Surface`) stays refused in an array slot** -- it is an elevation with length units.
+**Trap:** under `rule="majority"` a multiplier polygon multiplies EVERY cell it overlaps
+(the uncovered rest is not a competitor; `default=` fills only unreached cells) -- 11
+cells against 6 more than half inside on a 6x6 mesh; `rule="centroid"` takes the cells
+whose centre is inside. Whether `default=` should compete is an open user decision.
+`ArrayProduct` is NOT a `_SPEC_TOKEN` object: `specs.py` handles it by type so its
+factors are walked as SOURCES (bundler, anchor, `source_paths`, digest) with no wiring.
 
 ## Barriers? `mf.hfb`, and it is NOT in the package registry (2026-08-29, ledger 162)
 `mf.hfb()` / `.line` / `.gpkg` / `.enclose` / `.flopy`. A barrier sits on the FACE

@@ -1283,6 +1283,8 @@ class VoronoiGridPlus(VoronoiGrid):
         method: str = "area",
         nodata: float | None = None,
         gaps: str = "warn",
+        band: int = 1,
+        mean: str = "arithmetic",
     ) -> gpd.GeoDataFrame | None:
         """Sample raster values at Voronoi cell centroids.
 
@@ -1322,6 +1324,15 @@ class VoronoiGridPlus(VoronoiGrid):
             ``"ignore"``: NaN, silently. Unless ``"ignore"``, a raster that gives NO
             cell a value while not overlapping the grid at all raises
             ``ValueError`` printing both extents and both CRSs.
+        band : int, optional
+            The 1-based band read from every raster in the call. Default ``1``. One
+            the file lacks raises ``ValueError`` naming how many it has.
+        mean : {"arithmetic", "geometric", "harmonic"}, optional
+            How ``method="area"`` averages the pixels inside one cell. Default
+            ``"arithmetic"``; ``"geometric"`` (exponential of the mean log) and
+            ``"harmonic"`` (reciprocal of the mean reciprocal) refuse a pixel at or
+            below zero. Any but ``"arithmetic"`` with ``method="centroid"`` raises
+            ``ValueError``: one pixel has no mean.
 
         Returns
         -------
@@ -1331,7 +1342,7 @@ class VoronoiGridPlus(VoronoiGrid):
         """
         return surface_get_raster_vals_at_centroids(
             self, raster_files=raster_files, labels=labels,
-            method=method, nodata=nodata, gaps=gaps,
+            method=method, nodata=nodata, gaps=gaps, band=band, mean=mean,
         )
 
     def get_gdf_topbtm_multilyr(self, rasters: list, labels: list = None):
