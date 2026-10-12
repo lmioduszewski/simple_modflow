@@ -56,7 +56,12 @@ from myflopy.modflow.mf6.observations._shared import (
 )
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
 from myflopy.modflow.mf6.package_budget import build_budget_result_table
-from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
+from myflopy.modflow.mf6.package_explorer_utils import (
+    cell_numbering,
+    has_cell_numbering,
+    views_ncpl,
+    views_nlay,
+)
 from myflopy.modflow.mf6.package_registry import package_name_of
 from myflopy.modflow.mf6.period_end import period_ends
 
@@ -147,11 +152,13 @@ def _normalize_zone_locations(
     row gives none -- a row :func:`_resolve_zone_cells` resolves from its geometry.
     An EMPTY list (``[]``, or ``""`` in a CSV) is an explicit zone of no cells.
 
-    ``layer`` is an int where the row gives one. A blank layer is 0 on a row giving
-    ``cells`` -- they are numbers WITHIN a layer -- and ``None`` on a row to be
-    resolved from geometry, which then reads EVERY layer of the columns it covers
-    (ledger 535, ledger 482's area rule): it read layer 0 alone, so a
-    drain four layers deep under a seepage polygon read 1.8% of its flow.
+    ``layer`` is an int where the row gives one, and ``None`` where it is blank:
+    the row then reads EVERY layer of its columns -- a row resolved from geometry
+    the columns it covers (ledger 535, ledger 482's area rule), and a row giving
+    ``cells`` those columns (ledger 550), both expanded by
+    :func:`_resolve_zone_cells`. Either read layer 0 alone: a drain four layers
+    deep under a seepage polygon read 1.8% of its flow, and the Ten Trails ``ss``
+    south drains listed by column read 245 of their 935 records.
     """
 
     if isinstance(locations, pd.Series):
@@ -194,16 +201,12 @@ def _normalize_zone_locations(
         frame["cells"] = pd.Series(
             [_coerce_cells(values) for values in frame["cells"]], index=frame.index, dtype=object
         )
-    given = (
-        [values is not None for values in frame["cells"]]
-        if "cells" in frame.columns
-        else [False] * len(frame)
-    )
-    layers = frame["layer"] if "layer" in frame.columns else [None] * len(frame)
-    resolved_layers = []
-    for value, name, explicit in zip(layers, frame["name"], given, strict=True):
-        layer = _zone_layer(value, name, owner=owner)
-        resolved_layers.append(0 if layer is None and explicit else layer)
+    # A blank layer is ``None`` -- every layer -- whichever way the row names its cells.
+    layers =frame["layer"] if "layer" in frame.columns else [None] * len(frame)
+    resolved_layers = [
+        _zone_layer(value, name, owner=owner)
+        for value, name in zip(layers, frame["name"], strict=True)
+    ]
     # Whole numbers as int64 once every row has one, so a snapshot written to a
     # GeoPackage reads back as numbers; ``None`` (every layer) keeps it object.
     every = any(layer is None for layer in resolved_layers)
@@ -232,6 +235,137 @@ def _layer_count(model, domain, ncpl: int) -> int:
         return max(1, len(lookup) // max(int(ncpl), 1))
     nlay = getattr(model, "nlay", None)
     return int(nlay) if nlay else 1
+
+
+def _is_every_layer(layer) -> bool:
+    """Whether a normalized zone row's ``layer`` is blank: the row reads every layer."""
+
+    return layer is None or (not isinstance(layer, (int, np.integer)) and pd.isna(layer))
+
+
+def _grid_layers(model, *, owner_name: str) -> tuple[int, int]:
+    """The model's layers and cells per layer, as its views number them.
+
+    :func:`~myflopy.modflow.mf6.package_explorer_utils.views_nlay` and
+    ``views_ncpl`` -- the rule the observation route writes cellids by (one layer
+    of nodes on a DISU) -- else, for a model whose grid has no type, the
+    ``(layer, cell)`` pairs of its ``node_to_lni``, the cells the budget route
+    reads.
+
+    Raises
+    ------
+    ValueError
+        When the model offers neither, naming ``layer``.
+    """
+
+    if has_cell_numbering(model):
+        return views_nlay(model), views_ncpl(model)
+    lookup = getattr(model, "node_to_lni", None)
+    if lookup:
+        pairs = list(lookup.values())
+        return 1 + max(int(layer) for layer, _cell in pairs), 1 + max(int(cell) for _layer, cell in pairs)
+    raise ValueError(
+        f"{owner_name}: model {getattr(model, 'name', '?')!r} has no grid whose layers "
+        "can be read, so a zone given no `layer` cannot be read in every layer; give each "
+        "zone row its `layer`."
+    )
+
+
+def _expand_listed_columns(frame: pd.DataFrame, model, *, owner_name: str) -> pd.DataFrame:
+    """Each row LISTING ``cells`` with no ``layer`` as one row per layer: every layer of its columns.
+
+    The rule a zone drawn as geometry with no layer follows (ledger 535,
+    ledger 482's area rule), for a zone whose columns are LISTED (ledger
+    550): one row per layer of the model, each holding the listed
+    columns ACTIVE in that layer, since MF6 writes neither a budget entry nor an
+    observation where there is no cell. It read layer 0 alone: the Ten Trails
+    ``ss`` south drains listed by column read 245 of their 935 records
+    (-33,300.5 ft3/d where every layer holds -2,613,784.4). A row with a
+    ``layer`` keeps its pairs as given, an inactive cell included (ledger 343).
+
+    Refused, naming the zones: a listed column the grid does not have (it would
+    match nothing in any layer), and one ACTIVE IN NO LAYER -- a column every
+    layer drops is a column no boundary can be in, so the zone would lose a cell
+    its caller typed, in silence.
+
+    Raises
+    ------
+    ValueError
+        When ``model`` is ``None`` (the layers are the model's), when the model's
+        layers cannot be read, or naming a listed column the grid does not have
+        or one active in no layer.
+    """
+
+    listed = [
+        cells is not None and _is_every_layer(layer)
+        for cells, layer in zip(frame["cells"], frame["layer"], strict=True)
+    ] if "cells" in frame.columns else [False] * len(frame)
+    if not any(listed):
+        return frame
+    names = [name for name, every in zip(frame["name"], listed, strict=True) if every]
+    if model is None:
+        raise ValueError(
+            f"{owner_name} zone(s) {_zone_listing(names)} list `cells` with no `layer`, "
+            "which reads EVERY layer of those columns -- and the layers are the model's. "
+            "Pass the model (it is None here), or give each row its `layer`: "
+            "[{'name': ..., 'layer': 0, 'cells': [...]}]."
+        )
+    nlay, ncpl = _grid_layers(model, owner_name=owner_name)
+    domain = model_domain(model, ncpl)
+    off: dict[str, list[int]] = {}
+    dead: dict[str, list[int]] = {}
+    rows = []
+    for every, (_index, row) in zip(listed, frame.iterrows(), strict=True):
+        if not every:
+            rows.append(row)
+            continue
+        name = str(row["name"])
+        columns = [int(cell) for cell in row["cells"]]
+        stray = [cell for cell in columns if not 0 <= cell < ncpl]
+        if stray:
+            off.setdefault(name, []).extend(stray)
+            continue
+        per_layer = [
+            [cell for cell in columns if domain_active(domain, k, cell)] for k in range(nlay)
+        ]
+        held = {cell for cells in per_layer for cell in cells}
+        unheld = [cell for cell in columns if cell not in held]
+        if unheld:
+            dead.setdefault(name, []).extend(unheld)
+            continue
+        for k, cells in enumerate(per_layer):
+            entry = row.copy()
+            entry["layer"] = k
+            entry["cells"] = cells
+            rows.append(entry)
+    if off:
+        raise ValueError(
+            f"{owner_name}: zone(s) "
+            + "; ".join(f"{name!r} {sorted(set(cells))[:10]}" for name, cells in list(off.items())[:10])
+            + f" list cells this model's grid does not have: {nlay} layer(s) of {ncpl} "
+            "cells, numbered from 0. A zone's `cells` are ZERO-based numbers within a layer."
+        )
+    if dead:
+        raise ValueError(
+            f"{owner_name}: zone(s) "
+            + "; ".join(f"{name!r} {sorted(set(cells))[:10]}" for name, cells in list(dead.items())[:10])
+            + " list columns active in NO layer of the model, so no boundary can be "
+            "there; a zone given no `layer` reads each listed column in every layer it "
+            "is active in. Remove those cells, or check the cell numbers."
+        )
+    if isinstance(frame, gpd.GeoDataFrame):
+        expanded = gpd.GeoDataFrame(rows, geometry=frame.geometry.name, crs=frame.crs)
+    else:
+        expanded = pd.DataFrame(rows)
+    expanded = expanded.reset_index(drop=True)
+    expanded["cells"] = pd.Series(list(expanded["cells"]), index=expanded.index, dtype=object)
+    layers = list(expanded["layer"])
+    every = any(_is_every_layer(layer) for layer in layers)
+    expanded["layer"] = pd.Series(
+        [None if _is_every_layer(layer) else int(layer) for layer in layers],
+        index=expanded.index, dtype=object if every else "int64",
+    )
+    return expanded
 
 
 def _resolve_zone_cells(
@@ -270,34 +404,45 @@ def _resolve_zone_cells(
     Misses follow ledger 211. A zone set that lands nowhere raises, naming both
     extents and both CRSs; a partial miss warns, by name, once per set rather than
     once per call, because every consumer resolves the zones again.
+
+    **A row LISTING ``cells`` with no layer reads every layer of those columns**
+    too, by the same rule (:func:`_expand_listed_columns`, ledger
+    550); a row listing them with a layer keeps its pairs as given.
     """
 
+    def drawn(frame):
+        """Which rows are to be resolved from geometry: those giving no ``cells``."""
+
+        if "cells" in frame.columns:
+            return frame["cells"].isna().to_numpy()
+        return np.ones(len(frame), dtype=bool)
+
     frame = locations.copy()
-    if "cells" in frame.columns:
-        pending = frame["cells"].isna().to_numpy()
-    else:
-        pending = np.ones(len(frame), dtype=bool)
+    pending = drawn(frame)
+    if pending.any():
+        waiting = frame.loc[pending, "name"]
+        if not isinstance(frame, gpd.GeoDataFrame):
+            raise ValueError(
+                f"{owner_name} zone(s) {_zone_listing(waiting)} give no cells and no geometry. "
+                "Give each a 'cells' list, or give the zones as a GeoDataFrame, a vector file, "
+                "or record dicts carrying a 'geometry'."
+            )
+        empty = frame.geometry.isna().to_numpy() | frame.geometry.is_empty.to_numpy()
+        if (pending & empty).any():
+            raise ValueError(
+                f"{owner_name} zone(s) {_zone_listing(frame.loc[pending & empty, 'name'])} give "
+                "neither cells nor a geometry, so there is nothing to resolve them from."
+            )
+        if model is None:
+            raise ValueError(
+                f"{owner_name} zone(s) {_zone_listing(waiting)} are drawn as geometry, which is "
+                "resolved against a model's grid; pass the model (it is None here), or give "
+                "their 'cells'."
+            )
+    frame = _expand_listed_columns(frame, model, owner_name=owner_name)
+    pending = drawn(frame)
     if not pending.any():
         return frame
-    waiting = frame.loc[pending, "name"]
-    if not isinstance(frame, gpd.GeoDataFrame):
-        raise ValueError(
-            f"{owner_name} zone(s) {_zone_listing(waiting)} give no cells and no geometry. "
-            "Give each a 'cells' list, or give the zones as a GeoDataFrame, a vector file, "
-            "or record dicts carrying a 'geometry'."
-        )
-    empty = frame.geometry.isna().to_numpy() | frame.geometry.is_empty.to_numpy()
-    if (pending & empty).any():
-        raise ValueError(
-            f"{owner_name} zone(s) {_zone_listing(frame.loc[pending & empty, 'name'])} give "
-            "neither cells nor a geometry, so there is nothing to resolve them from."
-        )
-    if model is None:
-        raise ValueError(
-            f"{owner_name} zone(s) {_zone_listing(waiting)} are drawn as geometry, which is "
-            "resolved against a model's grid; pass the model (it is None here), or give "
-            "their 'cells'."
-        )
     polys = model_cell_polygons(model)
     domain = model_domain(model, len(polys))
     nlay = _layer_count(model, domain, len(polys))
@@ -309,7 +454,7 @@ def _resolve_zone_cells(
         located.loc[pending, "name"], located.loc[pending, "layer"],
         located.geometry[pending], strict=True,
     ):
-        every = layer is None or (not isinstance(layer, (int, np.integer)) and pd.isna(layer))
+        every = _is_every_layer(layer)
         key = (str(name), None if every else int(layer))
         if every:
             def usable(cells):
@@ -342,7 +487,7 @@ def _resolve_zone_cells(
             rows.append(entry)
             continue
         layer = row["layer"]
-        every = layer is None or (not isinstance(layer, (int, np.integer)) and pd.isna(layer))
+        every = _is_every_layer(layer)
         if not every:
             entry = row.copy()
             entry["cells"] = list(covered[(str(row["name"]), int(layer))])
@@ -393,7 +538,8 @@ def _zone_members(zones: pd.DataFrame) -> dict[str, set[tuple[int, int]]]:
     ----------
     zones : pandas.DataFrame
         Zones with ``name``, ``layer`` and ``cells`` (``zone_definitions``); a row
-        whose ``cells`` is ``None`` (unresolved geometry) adds nothing.
+        whose ``cells`` is ``None`` (unresolved geometry) or whose ``layer`` is
+        blank (an unresolved every-layer row) adds nothing.
 
     Returns
     -------
@@ -406,10 +552,10 @@ def _zone_members(zones: pd.DataFrame) -> dict[str, set[tuple[int, int]]]:
     for row in zones.itertuples(index=False):
         cells = getattr(row, "cells", None)
         entry = members.setdefault(str(row.name), set())
-        if not cells:
+        layer = getattr(row, "layer", None)
+        if not cells or _is_every_layer(layer):
             continue
-        layer = int(getattr(row, "layer", 0))
-        entry.update((layer, int(value)) for value in cells)
+        entry.update((int(layer), int(value)) for value in cells)
     return members
 
 
@@ -483,8 +629,8 @@ def _refuse_zones_holding_no_boundary(
     A zone empty in only SOME periods reads 0.0 there -- an absent boundary took no
     water (ledger 537). One empty in EVERY period the budget file saved is not a
     zone of zero flow but a zone in the wrong place: its cells in the wrong layer
-    (an explicit ``cells`` list with no ``layer`` is read in layer 0), or the
-    boundaries in a package ``package=`` leaves out. It read 0.0 in every period,
+    (a row given a ``layer`` reads that layer alone), or the boundaries in a
+    package ``package=`` leaves out. It read 0.0 in every period,
     and a PEST build calibrated the target to a flow the model could never move
     (ledger 537, amended).
 
@@ -510,7 +656,7 @@ def _refuse_zones_holding_no_boundary(
     ------
     ValueError
         Naming each empty zone (the first ten) with its layer(s), the packages
-        read and ``package=``, and that a cell list with no layer reads layer 0.
+        read and ``package=``, and that a zone given no layer reads every layer.
     """
 
     held = set(zip(budget["layer"].astype(int), budget["cell"].astype(int), strict=True))
@@ -538,9 +684,9 @@ def _refuse_zones_holding_no_boundary(
     raise ValueError(
         f"{quantity.owner}: zone(s) {zones} hold no {quantity.boundary} of {read} in any "
         f"period {_BUDGET_FILE} saved, so their flow would read 0.0 in every period -- "
-        "a zone in the wrong layer or package, not a zone of zero flow. A `cells` list "
-        "given with no `layer` is read in layer 0: give the zone's `layer`, or draw it "
-        "as geometry with no layer to read every layer of its columns; or check which "
+        "a zone in the wrong layer or package, not a zone of zero flow. A zone given a "
+        "`layer` reads that layer alone: check its `layer` -- or give none, to read every "
+        "layer of its columns -- or check which "
         f"package holds its boundaries{other}."
     )
 
@@ -771,37 +917,43 @@ class _CellZoneFlowTargets:
     def zone_definitions(self, model) -> pd.DataFrame:
         """Resolve each zone's member cells against ``model`` (covering geometry if needed).
 
-        A row given ``cells`` keeps them as given; a row given none is resolved from
-        its geometry: it reaches the cells it COVERS -- the rule ``.gpkg``
-        boundaries and head targets use -- active in its own layer, or, when the
-        row gives no layer, in EVERY layer of the columns it covers, one row per
-        layer (ledger 535); it comes back in the GRID's CRS, whatever
-        the zone file's own was.
+        A row given ``cells`` AND a ``layer`` keeps its pairs as given. A row given
+        ``cells`` with no layer reads EVERY layer of those columns, one row per
+        layer, each holding the columns active in that layer (ledger
+        550). A row given no cells is resolved from its geometry: it
+        reaches the cells it COVERS -- the rule ``.gpkg`` boundaries and head
+        targets use -- active in its own layer, or, when the row gives no layer,
+        in EVERY layer of the columns it covers, one row per layer (ledger 535);
+        it comes back in the GRID's CRS, whatever the zone file's own was.
 
         Parameters
         ----------
         model : SimulationBase or None
-            The model whose grid (``model.vor``) and active domain geometry rows
-            are resolved against. Not read when every row gives its ``cells``,
-            which are returned as given; ``None`` then works.
+            The model whose grid (``model.vor``), layers and active domain the
+            rows without a layer, and the geometry rows, are resolved against.
+            Not read when every row gives its ``cells`` AND its ``layer``, which
+            are returned as given; ``None`` then works.
 
         Returns
         -------
         pandas.DataFrame or geopandas.GeoDataFrame
-            One row per ``locations`` row -- and per LAYER for a geometry row that
-            gives none: ``name``, ``cells`` (zero-based cell numbers in the row's
-            layer: an explicit row's own; a geometry row's, the union over every
-            geometry row of that name IN THAT LAYER), ``group``, ``weight``,
-            ``layer`` (an int on every row), and, where the zones carry geometry,
-            the geometry, converted to the grid's CRS when both CRSs are known.
+            One row per ``locations`` row -- and per LAYER for a row that gives
+            none: ``name``, ``cells`` (zero-based cell numbers in the row's layer:
+            a row with a layer, its own; a listed row with none, its columns
+            active in that layer; a geometry row's, the union over every geometry
+            row of that name IN THAT LAYER), ``group``, ``weight``, ``layer`` (an
+            int on every row), and, where the zones carry geometry, the geometry,
+            converted to the grid's CRS when both CRSs are known.
 
         Raises
         ------
         ValueError
             When a row gives no cells and has no geometry to resolve them from,
-            or ``model`` is ``None`` while one does; or when no zone lands on an
-            active cell, naming the zones (the first ten) and both extents and
-            CRSs (ledger 211).
+            or ``model`` is ``None`` while a row needs it (a geometry row, or
+            ``cells`` with no layer); when a row listing ``cells`` with no layer
+            names a column the grid does not have, or one active in no layer;
+            or when no zone lands on an active cell, naming the zones (the first
+            ten) and both extents and CRSs (ledger 211).
 
         Warns
         -----
@@ -826,8 +978,8 @@ class _CellZoneFlowTargets:
             When given, zones are resolved through :meth:`zone_definitions`,
             whose ``Raises`` apply. Default ``None``: the zones as normalized at
             construction -- a geometry row's ``cells`` is ``None``, unresolved,
-            its ``layer`` ``None`` when it gives none (every layer), and its
-            geometry in the zone file's own CRS.
+            any row's ``layer`` is ``None`` when it gives none (every layer, not
+            yet expanded), and geometry is in the zone file's own CRS.
 
         Returns
         -------
@@ -916,8 +1068,8 @@ class _CellZoneFlowTargets:
         ----------
         model : SimulationBase or None, optional
             When given, zones are resolved through :meth:`zone_definitions`
-            first, whose ``Raises`` apply. Default ``None``: geometry rows are
-            unresolved and count no cells.
+            first, whose ``Raises`` apply. Default ``None``: geometry rows and
+            rows with no ``layer`` are unresolved and count no cells.
 
         Returns
         -------
@@ -1124,8 +1276,8 @@ class _CellZoneFlowTargets:
         boundary reads 0.0, as the observation route reads it (ledger
         537); a zone whose cells hold none in ANY record the file saved is
         refused (ledger 537, amended), naming its layer(s) and ``package=``: it is
-        a zone in the wrong layer or package -- an explicit ``cells`` list with no
-        ``layer`` is read in layer 0 -- not a zone of zero flow. A period whose
+        a zone in the wrong layer or package -- a zone given a ``layer`` reads that
+        layer alone -- not a zone of zero flow. A period whose
         final step was not saved is refused, because its end-of-period flow does
         not exist in the file; so is a package in scope that wrote no record
         (ledger 536).

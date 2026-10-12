@@ -758,7 +758,8 @@ forward run reads the same drains. A zone's rows may sit in different layers; it
 zone of their union. A row gives explicit `cells` or is resolved from its geometry, and
 one table may mix the two (a missing `cells` entry means "resolve me"); a dict or a list
 of record dicts with a `geometry` key is a geometry zone in the grid's coordinates.
-Explicit cells are taken as given, except that reading the budget file refuses a
+Explicit cells given a `layer` are taken as given (cells given none read every layer
+of those columns, below), except that reading the budget file refuses a
 `(layer, cell)` the model's grid does not have (ledger 343): it matched no row, so a zone
 of cells `[20, 99]` on 36-cell layers read cell 20 alone, where MF6 refuses the same
 cellid on the observation route.
@@ -823,12 +824,14 @@ written records (`save_flows=True`), or reading raises naming it (ledger 536);
 a period whose zone cells hold no boundary reads 0.0 (ledger 537), and a zone whose
 cells hold none in ANY period the budget file saved is REFUSED, naming the zone, its
 layer(s) and `package=` -- a zone in the wrong layer or package, not one of zero flow
-(an explicit `cells` list with no layer is read in layer 0); a key past
-the run's periods is refused (ledger 538). **A zone drawn as geometry with no
-`layer` reads EVERY layer of the columns it covers** (ledger 535, ledger 482's
-area rule; it read layer 0 alone -- 1.3% of the Ten Trails `ss` south drains); an explicit
-`cells` list with no layer is layer 0. A zone by BOUNDNAME is not offered (ledger
-539).
+(a zone given a `layer` reads that layer alone); a key past
+the run's periods is refused (ledger 538). **A zone given no `layer` reads EVERY layer
+of its columns**, each layer holding those active in it, whether DRAWN as geometry
+(ledger 535, ledger 482's area rule) or LISTED as `cells` (ledger 550) --
+both read layer 0 alone: 1.3% of the Ten Trails `ss` south drains, 245 of their 935
+records. The `{name: cells}` dict carries no layer, so it reads every layer; record dicts
+with a `layer` read one, and `to_flopy_obs(None)` refuses a zone with none, naming the
+spelling. A zone by BOUNDNAME is not offered (ledger 539).
 
 A lake, reach or zone target reads one of two routes: MF6's own observation, when
 EVERY target of the set is DECLARED in the owning package's OBS, else the output file.
@@ -1079,7 +1082,8 @@ DISU's stacked nodes; use `zone`, `pilotpoints` or `constant`). A DRN zone's
 observations are written and read in the grid's own cellid on DIS and DISU, and a head
 or concentration target's `to_flopy_obs`/`attach_flopy_obs` write it too (ledger
 455). `DrnFlowTargets.to_flopy_obs(None)` (or `RivFlowTargets`') -- a DRN declared before its model exists --
-writes DISV's `(layer, cell)`, having no grid to read, and a build REFUSES an OBS cellid
+writes DISV's `(layer, cell)`, having no grid to read (and so needs every zone's
+`layer`: one given none reads the model's every layer), and a build REFUSES an OBS cellid
 of another form than the discretization's (ledger 490; on a DISU MF6 read the pair as
 another node, under Normal termination): on DIS or DISU, declare the DRN without
 `observations=` and `targets.attach_flopy_obs(run.model())` before `run.execute()`.

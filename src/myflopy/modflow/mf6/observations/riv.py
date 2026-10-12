@@ -66,8 +66,9 @@ class RivFlowTargets(_CellZoneFlowTargets):
     (ledger 537); a zone whose cells hold no river boundary of the packages read
     in ANY period the budget file saved is REFUSED on the budget route, naming
     its layer(s) and ``package=`` -- a zone in the wrong layer or package, not
-    one of zero flow (ledger 537, amended; an explicit ``cells`` list with no
-    ``layer`` is read in layer 0).
+    one of zero flow (ledger 537, amended; a zone given a ``layer`` reads that
+    layer alone). A zone given NO ``layer`` reads every layer of its columns,
+    listed or drawn (ledgers 535 and 550).
 
     **Several RIV packages** (a main stem and a tributary, say): on the
     budget-file route ``package=None`` sums every RIV package's records in the
@@ -84,7 +85,8 @@ class RivFlowTargets(_CellZoneFlowTargets):
         cells united across the rows and their layers. Each row names its cells
         one of two ways. EXPLICIT: a ``cells`` entry holding a list of ints, one
         int or a comma-separated string (``"317, 342"``) -- ZERO-based cell
-        numbers within the row's ``layer``, taken as given (an empty list, or
+        numbers within the row's ``layer``, taken as given -- with no layer,
+        COLUMNS read in every layer they are active in -- (an empty list, or
         ``""``, is a zone of no cells), except that reading the budget file
         refuses a ``(layer, cell)`` the model's grid does not have (ledger 343;
         MF6 refuses it on the observation route); the ``{name: cells}`` dict and a
@@ -104,10 +106,16 @@ class RivFlowTargets(_CellZoneFlowTargets):
         DROPPED. ``layer`` is zero-based: the layer a row's cells are in, which
         every route reads (MF6's cell-budget node is ``layer * ncpl + cell`` on
         a DISV, ledger 342). A BLANK layer (no column, or a missing value) is
-        layer 0 on an EXPLICIT row and EVERY layer on a GEOMETRY row -- each
-        layer's covered cells active in that layer, ledger 482's area rule
-        (ledger 535). ``ValueError`` when ``name_column`` is
-        missing, or a ``layer`` is not a whole number 0 or more. A zone by RIV
+        EVERY layer, on an EXPLICIT row and on a GEOMETRY row alike -- one row
+        per layer, each holding the listed or covered columns ACTIVE in that
+        layer, ledger 482's area rule (ledgers 535 and 550; an
+        explicit row read layer 0). The ``{name: cells}`` dict and the
+        ``Series`` carry no layer, so they read every layer; give record dicts
+        with a ``layer`` to read one. Such a row needs the model to be read
+        (``to_flopy_obs(None)`` refuses it), and a listed column the grid does
+        not have, or one active in no layer, raises ``ValueError``; so does a
+        missing ``name_column``, or a ``layer`` that is not a whole number 0 or
+        more. A zone by RIV
         BOUNDNAME is not offered (ledger 539): draw the creek, or
         list its cells.
     values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
@@ -222,8 +230,9 @@ class RivFlowTargets(_CellZoneFlowTargets):
         ----------
         model : SimulationBase or None
             Passed to :meth:`zone_definitions`, whose ``Raises`` apply: it
-            resolves geometry zones. Its grid also says the form each cellid is
+            resolves geometry zones and zones given no ``layer``. Its grid also says the form each cellid is
             written in. ``None`` works when every zone gives explicit ``cells``
+            AND a ``layer`` (a row with none reads the model's every layer)
             -- as when the records go into the ``observations=`` of the RIV being
             declared, before any model exists -- and writes DISV's ``(layer,
             cell)``, having no grid to read: a DIS or DISU model's build refuses
@@ -247,7 +256,7 @@ class RivFlowTargets(_CellZoneFlowTargets):
         dict of str to list of tuple
             ``{csv_name: [(label, kind, cellid), ...]}``: ONE record per cell of
             each zone -- the ``(layer, cell)`` pairs its rows name, united, and
-            every layer's for a geometry row given no layer -- labelled
+            every layer's for a row given no layer -- labelled
             ``<name>_c<cell>``, or ``<name>_lay<layer>_c<cell>`` for a zone
             reaching several layers, with every character that is not a letter
             or digit made ``_`` and leading ``_`` stripped; the cellid ZERO-based
@@ -294,7 +303,7 @@ class RivFlowTargets(_CellZoneFlowTargets):
             raise ``ValueError`` naming them and ``package=``, none
             ``AttributeError``; ledger 352); also passed to :meth:`to_flopy_obs`
             to resolve the zones. With ``package`` given and every zone's
-            ``cells`` explicit, ``None`` works.
+            ``cells`` and ``layer`` explicit, ``None`` works.
         pname : str, optional
             FloPy package name. Default ``"riv_flow_obs"``.
         filename : str or pathlib.Path, optional

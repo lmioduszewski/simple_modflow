@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 549 entries (554 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 550 entries (555 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 550 | A DRN/RIV zone given as a `cells` list with no `layer` reads EVERY layer of those columns, like a drawn zone | 2026-10-12 |
 | 549 | `periods=` groups a target's per-period files into parameter sets; `"month"` by each transient period's mid... | 2026-10-12 |
 | 548 | `sto.ss` and `sto.sy` are array targets, refused where they cannot act | 2026-10-12 |
 | 547 | `recharge` on an ARRAY RCH scales its per-period `recharge` files; their periods are FloPy's records, they... | 2026-10-12 |
@@ -15824,9 +15825,10 @@ same day, which is the useful part of the result.
       target object stays, and Python's own registry still silences an IDENTICAL message
       from the same line, as it does for 288's.
       **A `layer` that is not a layer is refused** (1.5 was truncated to 1 by `int()`, -1
-      indexed from the end); ~~a blank stays 0, as the resolver already read it.~~ A
+      indexed from the end); ~~a blank stays 0, as the resolver already read it.~~ ~~A
       blank is 0 on a row giving `cells` and EVERY layer on a geometry row since ledger
-      535.
+      535.~~ A blank is EVERY layer on a row giving `cells` and on a geometry row alike
+      since ledger 550.
       ~~**NOT done:** an explicit cell id outside the grid is still taken as given and
       matches nothing on the budget route (MF6 refuses it on the observation route).
       Checking it needs each layer's cell count at every consumer; recorded, not guessed.~~
@@ -20793,9 +20795,11 @@ same day, which is the useful part of the result.
       changes DRN results** for any geometry zone written without a layer column, and its
       observation route now wants a declared record per layer (`<name>_lay<k>_c<cell>`);
       MF6 accepts a `DRN`/`RIV` observation on a cell holding no boundary and writes 3e30,
-      read as 0.0 (measured, MF6 6.8). **Deliberately NOT changed:** a row giving explicit
+      read as 0.0 (measured, MF6 6.8). ~~**Deliberately NOT changed:** a row giving explicit
       `cells` with no layer keeps layer 0 -- its numbers are in-layer by the documented
-      contract, and whether a blank there should mean every layer is left to the user.
+      contract, and whether a blank there should mean every layer is left to the user.~~
+      The user's answer (2026-10-12): a row giving `cells` with no layer reads every layer
+      of those columns too -- ledger 550.
       The PEST build snapshots such a zone as one row per layer; `IesResults` reads the
       snapshot back as ONE row per zone (its cells the columns any row covers) -- at review
       `obs_residuals()` listed a drawn zone's residual once per layer.
@@ -20819,8 +20823,9 @@ same day, which is the useful part of the result.
       the R2-rivflow review):** a zone whose cells hold NO boundary of the packages read in
       ANY period the budget file saved is REFUSED on the budget route -- and so at the PEST
       build, which reads the base run through it -- naming the zone, its layer(s) and
-      `package=`, with the hint that a `cells` list given with no layer reads layer 0
-      (`_zones._refuse_zones_holding_no_boundary`). Raise, don't guess: such a zone is in
+      `package=`, with the hint ~~that a `cells` list given with no layer reads layer 0~~
+      that a zone given a `layer` reads that layer alone and one given none every layer
+      (ledger 550) (`_zones._refuse_zones_holding_no_boundary`). Raise, don't guess: such a zone is in
       the wrong layer or package (on the test toy, a cell list naming layer-1 drains with no
       layer), and 0.0 in every period calibrated it against a flow no parameter moves. A
       zone empty in only SOME periods still reads 0.0 there. Judged over every saved RECORD
@@ -21061,3 +21066,24 @@ same day, which is the useful part of the result.
       `PstFrom.add_parameters` is now refused at the call (`TypeError`) -- `temporal=`
       used to die only at build, after staging. **Not done:** a temporal correlation of
       the monthly multipliers in the prior (they are drawn independently).
+
+550. **A DRN/RIV zone given as a `cells` list with no `layer` reads EVERY layer of those columns, like a drawn zone (2026-10-12).**
+      The user's answer B. It read layer 0 alone: on a copy of Ten Trails `ss` the 245
+      south-drain columns listed with no layer read -33,300.5 ft3/d, 245 of the 935 DRN
+      records, against -2,613,784.4 for every layer -- the same as the polygon over them
+      (ledger 535). **Chosen:** ONE rule for both forms, `_zones._expand_listed_columns`
+      in `zone_definitions`, so every route follows: one row per layer, each holding the
+      listed columns ACTIVE in that layer; the budget route, the OBS labels
+      (`<name>_lay<k>_c<cell>` once a zone spans layers), the PEST snapshot and forward
+      run, `compare()`/`stats()` and the IES review read those rows. A `layer` still picks
+      one, a row giving both keeps its pairs (an inactive one included, ledger 343). The
+      `{name: cells}` dict and the `Series` carry no layer, so they now read every layer.
+      **Judgment calls:** such a zone needs the model -- `zone_definitions(None)` and
+      `to_flopy_obs(None)` REFUSE it naming the `layer` spelling, rather than guess the
+      layer count; a listed column the grid does not have, or one active in NO layer, is
+      refused naming the zone (every layer would drop it in silence). **Behaviour change:**
+      a listed zone with no layer on a model of several layers reads more cells (its
+      flow, and the PEST base table, move), and its OBS labels change, so an OBS package
+      written earlier for it no longer matches: the zone then reads the budget file. A
+      template built before keeps its snapshot's layer 0 and stays self-consistent until
+      rebuilt. Reproducer: `docs/reproducers/riv_flow_targets.py` (F, G).

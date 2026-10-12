@@ -43,6 +43,9 @@ NPER, NSTP, PERLEN = 2, 2, 10.0
 GAIN = [14, 15, 16]
 DEEP = 14
 LOSE = [20, 21]
+#: crisp's declared zone, in its layer: a zone given no layer reads every layer of its
+#: columns (ledger 550), whose labels crisp's OBS does not declare.
+LOSERS = [{"name": "losers", "layer": 0, "cells": LOSE}]
 
 
 def _grid_and_edges():
@@ -75,7 +78,7 @@ def rivers(tmp_path_factory):
     """The two-creek model of the module docstring, run."""
 
     grid, props, edge = _grid_and_edges()
-    crisp_obs = mf.RivFlowTargets(locations={"losers": LOSE}).to_flopy_obs(
+    crisp_obs = mf.RivFlowTargets(locations=LOSERS).to_flopy_obs(
         None, csv_name="crisp_obs.csv")
     model = mf.gwf("m", grid=grid, packages=[
         _disv(grid, props),
@@ -178,7 +181,8 @@ def test_a_period_is_its_end_step_not_the_sum_of_its_steps(rivers):
                     if int(node) - 1 in GAIN)
     finally:
         cbc.close()
-    series = mf.RivFlowTargets(locations={"g": GAIN}, package="riv").simulated_series(rivers)
+    series = mf.RivFlowTargets(locations=[{"name": "g", "layer": 0, "cells": GAIN}],
+                               package="riv").simulated_series(rivers)
     end = _truth(rivers, [(0, c) for c in GAIN], ("RIV",))
     np.testing.assert_allclose(series["g"], end, rtol=1e-12)
     assert not np.isclose(series["g"].iloc[0], first + end[0])
@@ -203,16 +207,16 @@ def test_a_zone_whose_cells_never_hold_a_river_of_the_packages_read_is_refused(r
     RIV package."""
 
     with pytest.raises(ValueError, match=(
-            r"RivFlowTargets: zone\(s\) 'dry' \(layer 0\) hold no river boundary of "
+            r"RivFlowTargets: zone\(s\) 'dry' \(layers 0, 1\) hold no river boundary of "
             r"package=None \(every RIV package: 'riv', 'crisp'\) in any period the "
-            r"model's cell-budget file saved.*read in layer 0")):
+            r"model's cell-budget file saved.*or give none, to read every layer")):
         mf.RivFlowTargets(locations={"dry": [0, 1], "trib": LOSE}).simulated_series(rivers)
     # Not ``losers``: crisp's OBS declares that name, which would read the other route.
     wrong_package = mf.RivFlowTargets(locations={"trib": LOSE}, package="riv",
                                       values={"time": [0], "trib": [100.0]})
     for read in (wrong_package.simulated_series, wrong_package.stats):
         with pytest.raises(ValueError, match=(
-                r"zone\(s\) 'trib' \(layer 0\) hold no river boundary of package='riv' "
+                r"zone\(s\) 'trib' \(layers 0, 1\) hold no river boundary of package='riv' "
                 r"\(RIV package 'riv'\).*package=None reads every RIV package\.")):
             read(rivers)
     # riv's own layer-1 boundary reads; crisp holds none in layer 1.
@@ -224,15 +228,21 @@ def test_a_zone_whose_cells_never_hold_a_river_of_the_packages_read_is_refused(r
                           package="crisp").simulated_series(rivers)
 
 
-def test_a_zone_reads_its_own_layer_and_a_drawn_one_every_layer(rivers):
-    """Ledger 342: a cell is a (layer, cell) pair. Ledger 535: a zone drawn
-    as GEOMETRY with no layer reads every layer of the columns it covers (ledger 482's
-    area rule) -- it read layer 0 alone."""
+def test_a_zone_reads_its_own_layer_and_one_given_no_layer_every_layer(rivers):
+    """Ledger 342: a cell is a (layer, cell) pair. A zone given no layer reads every
+    layer of its columns (ledger 482's area rule), whether DRAWN as geometry (ledger
+    535) or LISTED as cells (ledger 550) -- both read layer 0
+    alone, so the listed zone here read riv's layer-0 cell and missed its layer-1 one."""
 
     top = _truth(rivers, [(0, DEEP)], ("RIV",))
     deep = _truth(rivers, [(1, DEEP)], ("RIV",))
-    explicit = mf.RivFlowTargets(locations={"z": [DEEP]}).simulated_series(rivers)
-    np.testing.assert_allclose(explicit["z"], top, rtol=1e-12)
+    assert np.all(np.abs(deep) > 0) and np.all(np.abs(top) > 0)
+    for listed in ({"z": [DEEP]}, pd.DataFrame({"name": ["z"], "cells": [[DEEP]],
+                                                  "layer": [np.nan]})):
+        explicit = mf.RivFlowTargets(locations=listed).simulated_series(rivers)
+        np.testing.assert_allclose(explicit["z"], np.add(top, deep), rtol=1e-12)
+    zero = mf.RivFlowTargets(locations=[{"name": "z", "layer": 0, "cells": [DEEP]}])
+    np.testing.assert_allclose(zero.simulated_series(rivers)["z"], top, rtol=1e-12)
     layered = mf.RivFlowTargets(locations=[{"name": "z", "layer": 1, "cells": [DEEP]}])
     np.testing.assert_allclose(layered.simulated_series(rivers)["z"], deep, rtol=1e-12)
 
@@ -284,7 +294,7 @@ def test_the_observation_route_reads_crisps_declared_riv_observations(rivers):
     (no river there) reads 0.0. Without ``package=`` the two RIV packages are refused
     (ledger 352)."""
 
-    observed = mf.RivFlowTargets(locations={"losers": LOSE}, package="crisp")
+    observed = mf.RivFlowTargets(locations=LOSERS, package="crisp")
     series = observed.simulated_series(rivers)
     raw = pd.read_csv(Path(rivers.workspace) / "crisp_obs.csv")
     assert len(raw) == NPER * NSTP and series["time"].tolist() == list(range(NPER))
@@ -294,9 +304,9 @@ def test_the_observation_route_reads_crisps_declared_riv_observations(rivers):
     np.testing.assert_allclose(series["losers"], budget["other"], rtol=1e-10)
     with pytest.raises(ValueError, match=r"2 RIV packages \('riv', 'crisp'\).*ONE package's "
                                          r"river boundary in its cell.*package=<its name>"):
-        mf.RivFlowTargets(locations={"losers": LOSE}).simulated_series(rivers)
+        mf.RivFlowTargets(locations=LOSERS).simulated_series(rivers)
     with pytest.raises(ValueError, match=r"RivFlowTargets writes RIV observations.*kind='DRN'"):
-        mf.RivFlowTargets(locations={"losers": LOSE}).to_flopy_obs(None, kind="DRN")
+        mf.RivFlowTargets(locations=LOSERS).to_flopy_obs(None, kind="DRN")
 
 
 def test_attach_flopy_obs_goes_on_the_named_package(rivers, monkeypatch):
@@ -312,7 +322,9 @@ def test_attach_flopy_obs_goes_on_the_named_package(rivers, monkeypatch):
     mf.RivFlowTargets(locations={"z": [LOSE[0]]}, package="crisp").attach_flopy_obs(rivers)
     assert calls["owner"] is rivers.package("crisp")
     assert calls["pname"] == "riv_flow_obs" and calls["filename"] == "riv_flow_targets.obs"
-    assert calls["continuous"] == {"riv_flow_targets.csv": [("z_c20", "RIV", (0, LOSE[0]))]}
+    # Given no layer, the zone is cell 20 of EVERY layer (ledger 550).
+    assert calls["continuous"] == {"riv_flow_targets.csv": [
+        ("z_lay0_c20", "RIV", (0, LOSE[0])), ("z_lay1_c20", "RIV", (1, LOSE[0]))]}
     with pytest.raises(ValueError, match=r"2 RIV packages.*ONE of them"):
         mf.RivFlowTargets(locations={"z": [LOSE[0]]}).attach_flopy_obs(rivers)
 
@@ -368,7 +380,8 @@ def test_a_package_that_saved_no_flows_is_refused_naming_it(unsaved, family, cel
 
 
 def test_model_targets_riv_flow_binds_the_bound_helper(rivers):
-    targets = mf.RivFlowTargets(locations={"g": GAIN}, package="riv")
+    targets = mf.RivFlowTargets(locations=[{"name": "g", "layer": 0, "cells": GAIN}],
+                                package="riv")
     rivers.targets.riv_flow = targets
     bound = rivers.targets.riv_flow
     assert isinstance(bound, BoundRivFlowTargets) and bound.targets is targets
@@ -389,10 +402,10 @@ def test_the_pest_build_hands_pest_the_zone_and_every_realization_rewrites_it(ri
 
     assert any(target is mf.RivFlowTargets for target, _spec in pest_project._TARGET_SPEC_TYPES)
     gaining = mf.RivFlowTargets(
-        locations=pd.DataFrame({"name": ["rock"], "cells": [GAIN], "group": ["baseflow"],
-                                "weight": [0.01]}),
+        locations=pd.DataFrame({"name": ["rock"], "layer": [0], "cells": [GAIN],
+                                "group": ["baseflow"], "weight": [0.01]}),
         values={"time": [0, 1], "rock": [-900.0, -950.0]}, package="riv")
-    losing = mf.RivFlowTargets(locations={"losers": LOSE}, package=np.str_("crisp"),
+    losing = mf.RivFlowTargets(locations=LOSERS, package=np.str_("crisp"),
                                values={"time": [1], "losers": [120.0]})
     cal = rivers.pest("riv", workspace=tmp_path / "pest", start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
@@ -437,7 +450,9 @@ def test_pestpp_ies_runs_a_riv_flow_calibration_end_to_end(rivers, tmp_path):
     each realization's riv_flow observations read back from the forward run. The
     ``losers`` zone is DRAWN with no layer, so its snapshot is one row per layer
     (ledger 535); the review reads it back as ONE zone -- it listed the
-    zone's residual once per layer in ``obs_residuals()``."""
+    zone's residual once per layer in ``obs_residuals()``. The ``rock`` zone is a cell
+    LIST with no layer, snapshotted one row per layer the same way (ledger
+    550) and read back as one zone too."""
 
     targets = mf.RivFlowTargets(locations={"rock": GAIN}, package="riv",
                                 values={"time": [0, 1], "rock": [-900.0, -950.0]})
@@ -463,3 +478,6 @@ def test_pestpp_ies_runs_a_riv_flow_calibration_end_to_end(rivers, tmp_path):
         ("crisp_flow", "losers"), ("riv_flow", "rock")]
     losers = residuals.set_index("location").loc["losers"]
     assert losers["cells"] == LOSE and losers["n"] == 1
+    snapshot = pd.read_csv(Path(cal.template_workspace) / "riv_flow_target_locations.csv")
+    assert snapshot["layer"].tolist() == [0, 1]
+    assert residuals.set_index("location").loc["rock"]["cells"] == GAIN

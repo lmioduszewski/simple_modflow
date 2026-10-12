@@ -387,7 +387,7 @@ as for `DrnFlowTargets` — the two share one implementation:
 
 ```python
 baseflow = mf.RivFlowTargets(
-    locations=gauged_reaches,                      # one polygon per gauged reach, or {"name": cells}
+    locations=gauged_reaches,                      # one polygon per gauged reach, or {"name": cells} (every layer)
     values={"time": [0], "rock_creek": [-208_000.0], "crisp_creek": [-240_000.0]},
 )
 cal.observe(baseflow)                              # group "riv_flow" unless the zones carry a label
@@ -397,9 +397,9 @@ cal.observe(baseflow)                              # group "riv_flow" unless the
 |---|---|
 | budget route (no OBS declared — the default) | the model's cell-budget file, by the package NAME MF6 writes on each record: `package="crisp"` reads that package alone; `package=None` sums EVERY package of the type in the zone's cells (`riv` + `crisp`). Every package read must be declared `save_flows=True`, or reading raises naming it (ledger 536). |
 | observation route | the package's declared `DRN`/`RIV` observations (`to_flopy_obs` / `attach_flopy_obs`), one per zone cell; with several packages of the type, `package=` is required (ledger 352). |
-| a zone drawn with no `layer` | every layer of the columns it covers (ledger 535; it read layer 0 alone). A `layer` picks one; an explicit `cells` list with no layer is layer 0. |
+| a zone given no `layer` | EVERY layer of its columns, each layer holding those active in it -- the columns a geometry COVERS (ledger 535) or the `cells` it LISTS (ledger 550); both read layer 0 alone. A `layer` picks one. The `{name: cells}` dict carries no layer, so it reads every layer; give record dicts with a `layer` to read one. `to_flopy_obs(None)` refuses such a zone (the layers are the model's): pass the model, or give the `layer`. |
 | a period with no boundary in the zone's cells | 0.0, on both routes (ledger 537). |
-| a zone whose cells hold no boundary of the packages read in ANY period the budget file saved | REFUSED on the budget route and so at the build, naming the zone, its layer(s) and `package=` (ledger 537, as amended): a zone in the wrong layer or package, not one of zero flow. An explicit `cells` list with no `layer` is read in layer 0. |
+| a zone whose cells hold no boundary of the packages read in ANY period the budget file saved | REFUSED on the budget route and so at the build, naming the zone, its layer(s) and `package=` (ledger 537, as amended): a zone in the wrong layer or package, not one of zero flow. A zone given a `layer` reads that layer alone. |
 
 The budget route is the cheap one for a big model (Ten Trails `ss`: 0.02 s a set) and
 needs no OBS declaration; declare RIV observations only to cross-check. A zone by RIV

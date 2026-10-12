@@ -93,8 +93,11 @@ def _build_and_run(root: Path, *, ats=False, k=10.0, perlen=PERLEN, nper=NPER):
     )
     drain = mf.drn(
         stress_period_data={0: [[(0, c), 96.0, 50.0] for c in DRN_CELLS]},
-        observations=mf.DrnFlowTargets(locations={"seep": DRN_CELLS}).to_flopy_obs(
-            None, csv_name="drn_flow_targets.csv"),
+        # In its layer: with no model there are no layers to read (a zone given none
+        # reads every layer, ledger 550).
+        observations=mf.DrnFlowTargets(
+            locations=[{"name": "seep", "layer": 0, "cells": DRN_CELLS}]
+        ).to_flopy_obs(None, csv_name="drn_flow_targets.csv"),
     )
     lake = mf.lak.flopy(
         nlakes=1, packagedata=[[0, 115.0, len(LAKE_CELLS), "pond"]],

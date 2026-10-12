@@ -2014,10 +2014,11 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   MF6 once per cell (`<name>_lay<layer>_c<cell>` when it spans layers); a row with no
   `cells` entry is resolved from its geometry, so one table may mix the two, and an
   explicit pair the grid does not have is refused on the budget route (ledger 343: it
-  matched nothing, so `[20, 99]` read cell 20 alone). A GEOMETRY row with no `layer` reads
-  EVERY layer of the columns it covers (ledger 535, 482's area rule; it read
-  layer 0 alone -- 1.3% of the Ten Trails `ss` south drains); an explicit `cells` row with
-  no layer is layer 0. A partial
+  matched nothing, so `[20, 99]` read cell 20 alone). A row with no `layer` reads EVERY
+  layer of its columns, those a GEOMETRY covers (ledger 535, 482's area rule) and those a
+  `cells` list names (ledger 550, the user's call) alike -- both read
+  layer 0 alone, 1.3% of the Ten Trails `ss` south drains; `to_flopy_obs(None)` refuses
+  such a zone, having no layers to read. A partial
   miss of a DRN zone or a head/conc target is a Python warning as well as a log line
   (ledger 288's rule).
 - **The observation route reads what the package DECLARES, by identity** (ledger 344).

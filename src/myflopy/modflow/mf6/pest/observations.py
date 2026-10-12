@@ -1015,9 +1015,9 @@ def _prepare_zone_flow_observations(project, spec, *, kind: str):
 
     The zone snapshot the forward run rebuilds the targets from carries each row's
     RESOLVED ``cells`` and its ``layer``, so every realization sums the cells the
-    base run did -- a geometry zone given no layer as one row per layer it reads
-    (ledger 535). It dropped ``layer`` (ledger 342), and the forward
-    run then read each zone in layer 0.
+    base run did -- a zone given no layer, drawn or listed, as one row per layer
+    it reads (ledgers 535 and 550). It dropped ``layer`` (ledger
+    342), and the forward run then read each zone in layer 0.
     """
 
     targets = spec.targets

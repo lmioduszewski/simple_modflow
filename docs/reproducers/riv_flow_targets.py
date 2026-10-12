@@ -1,7 +1,8 @@
 """RIV exchange-flow targets and the zone budget route: the MF6 facts they rest on.
 
-Ledgers 534 .. -f. ``RivFlowTargets`` and ``DrnFlowTargets`` share one zone
-implementation whose budget route reads records by the package that wrote them.
+Ledgers 534 .. 540 and 550. ``RivFlowTargets`` and ``DrnFlowTargets``
+share one zone implementation whose budget route reads records by the package that
+wrote them.
 
     PYTHONPATH=src /home/lukem/python/envs/gw/bin/python docs/reproducers/riv_flow_targets.py [<copy of a Ten Trails run>]
 
@@ -25,10 +26,12 @@ observations by cellid and by boundname; one names a cell with no river.
      entries; a package without ``save_flows`` writes none (ledger 536).
   E. ``RivFlowTargets`` budget route: every package, one package, the unsaved one.
   F. A zone drawn over ``drn_a``'s column with no layer: every layer (ledger
-     535); a zone over ``crisp``'s cell 21 in period 2: 0.0 (ledger
+     535); the same column LISTED with no layer: every layer too (ledger
+     550); a zone over ``crisp``'s cell 21 in period 2: 0.0 (ledger
      537).
   G. Optional: on a copy of a Ten Trails run (READ-ONLY source -- copy it first), the
-     south DRN polygon with and without a layer, and ``riv`` / ``crisp`` apart.
+     south DRN polygon with and without a layer, the same drains LISTED by column with
+     and without a layer, and ``riv`` / ``crisp`` apart.
 
 MEASURED (2026-10-12, MF6 6.8, this tree):
 
@@ -44,11 +47,16 @@ MEASURED (2026-10-12, MF6 6.8, this tree):
      toy: -339.52 where both drains removed ~679), and ``package=`` was refused on the
      budget route.
   F. The drawn zone with no layer: -1773.34 (both layers); with layer 0: -243.29 --
-     what it read before this commit with no layer. crisp's cell 21: 100.0, 100.0, 0.0
-     (it read NaN in period 2 before).
-  G. Ten Trails ``ss`` copy: south DRN polygon -2,613,784.4 every layer, -33,300.5 in
-     layer 0 (1.3%, before); every river cell -400,119.7 summed, ``riv`` -192,843.0,
-     ``crisp`` -207,276.7.
+     what it read before ledger 535 with no layer. The LISTED column with no layer:
+     -1773.34 -- it read -243.29 before ledger 550. crisp's cell 21:
+     100.0, 100.0, 0.0 (it read NaN in period 2 before).
+  G. Ten Trails ``ss`` copy (2026-10-12): DRN records by layer (0, 245), (2, 230),
+     (3, 230), (4, 230). South DRN polygon -2,613,784.4 every layer, -33,300.5 in
+     layer 0 (1.3%, before ledger 535). The 245 drain columns LISTED with no layer:
+     -2,613,784.4, 5 rows of 245 cells (every layer active there); with layer 0
+     -33,300.5 -- what the listed form read before ledger 550, 245 of the
+     935 records. Every river cell -400,119.7 summed (both RIV packages are in layer 0,
+     so the listed form did not move), ``riv`` -192,843.0, ``crisp`` -207,276.7.
 """
 
 from __future__ import annotations
@@ -151,6 +159,11 @@ def main():
              .simulated_series(model)["z"].tolist())
         _try("layer 0", lambda: mf.DrnFlowTargets(locations=drawn.assign(layer=0), package="drn_a")
              .simulated_series(model)["z"].tolist())
+        _try("listed [27], no layer", lambda: mf.DrnFlowTargets(locations={"z": [27]}, package="drn_a")
+             .simulated_series(model)["z"].tolist())
+        _try("listed [27], layer 0", lambda: mf.DrnFlowTargets(
+            locations=[{"name": "z", "layer": 0, "cells": [27]}], package="drn_a")
+             .simulated_series(model)["z"].tolist())
         _try("crisp cell 21", lambda: mf.RivFlowTargets(locations={"c21": [21]}, package="crisp")
              .simulated_series(model)["c21"].tolist())
 
@@ -169,6 +182,15 @@ def main():
             frame = {"name": ["south"]} if layer is None else {"name": ["south"], "layer": [layer]}
             zone = mf.DrnFlowTargets(locations=gpd.GeoDataFrame(frame, geometry=[south], crs=tt.vor.crs))
             print(f"  south polygon, layer {layer}: {float(zone.simulated_series(tt)['south'].iloc[-1]):,.1f}")
+        for layer in (None, 0):
+            frame = {"name": ["south"], "cells": [columns]}
+            if layer is not None:
+                frame["layer"] = [layer]
+            zone = mf.DrnFlowTargets(locations=frame)
+            rows = zone.zone_definitions(tt)
+            print(f"  south drains listed by column, layer {layer}: "
+                  f"{float(zone.simulated_series(tt)['south'].iloc[-1]):,.1f} "
+                  f"({len(rows)} rows, {sum(len(c) for c in rows['cells'])} cells)")
         rivers = tt.package("riv")
         cells = sorted({int(c[1]) for package in rivers for c in package.stress_period_data.get_data(0)["cellid"]})
         for package in (None, *(p.package_name for p in rivers)):
