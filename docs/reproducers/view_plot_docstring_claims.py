@@ -46,8 +46,9 @@ WHAT IT MEASURES
   8. ``stack.plot.map(1)`` raises ``ValueError: list.index(x): x not in list``; a name
      works.
   9. ``stack.plot.map(bounds_padding=0.1)`` without ``extent=`` raises ``TypeError``.
- 10. ``model.drn.inputs.elev.plot()`` draws the SUM of the drains' elevations per
-     period (``agg="sum"``), where the field's ``map`` takes its kind's rule (ledger 297).
+ 10. ``model.drn.inputs.elev.plot()`` drew the SUM of the drains' elevations per
+     period (``agg="sum"``), where the field's ``map`` took its kind's rule (ledger 297).
+     Fixed by ledger 472, and printed as now: the mean.
  11. A diff's LAK ``results`` lists ``'stage'`` among its fields, and
      ``map(field='stage')``/``section(field='stage')`` raise ``AttributeError``.
  12. ``mosaic(kind="section", <unknown>=...)``'s ``TypeError`` lists ``cells`` as a

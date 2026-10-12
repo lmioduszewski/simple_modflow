@@ -34,10 +34,11 @@ WHAT IT MEASURES
      against the other member's FIRST step, and LAK's also keys on the wetted
      ``FLOW-AREA`` and drops rows where it differs. ``sfr.results.q.compare()`` and
      ``lak.results.q.compare_map()`` reduce each member to its own period end first.
-  2. On a cell holding two records, the group inputs ``map()`` ADDS ``bhead`` (12.0
-     where the single-model map draws 6.0), ``compare()`` cross-pairs the records
-     (four rows) and ``compare_map()`` draws 4.0 for a change of 1.0 -- through the
-     public ``group.diff()`` route too.
+  2. On a cell holding two records, the group inputs ``map()`` ADDED ``bhead`` (12.0
+     where the single-model map draws 6.0), ``compare()`` cross-paired the records
+     (four rows) and ``compare_map()`` drew 4.0 for a change of 1.0 -- through the
+     public ``group.diff()`` route too. Fixed by ledger 472, and printed as now:
+     6.0, two rows, 1.0.
   3. ``group.hds.compare()`` differences MF6's -1e30 at a cell dry in one member only,
      and ``compare_map()``'s default colour range becomes plus/minus 1e30.
   4. A member with no LAK or UZF package ends the group LAK and UZF views with

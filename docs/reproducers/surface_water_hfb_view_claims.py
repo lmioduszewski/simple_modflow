@@ -19,18 +19,21 @@ model with a wall of barriers straight across the middle, declared in period 0
 MODFLOW 6 REPLACES a period's barriers with a later block's.
 
 WHAT IT MEASURES
-  1. ``model.sfr.results.q.get()`` joins each ``SFR`` record to the reach table on the
-     CELL, not on the record's own reach (``node2``): a cell of three reaches carries
-     nine rows, and ``model.sfr.results.profile`` gives each of the three the cell's
-     total.
-  2. ``model.sfr.budget.<term>.wide()``'s default ``index=("per", "lake")`` raises
-     ``KeyError: 'lake'`` on every SFR term.
-  3. ``model.<lak|sfr>.budget.get(term="ext_inflow")`` matches nothing, silently.
+  1. ``model.sfr.results.q.get()`` joined each ``SFR`` record to the reach table on the
+     CELL, not on the record's own reach (``node2``): a cell of three reaches carried
+     nine rows, and ``model.sfr.results.profile`` gave each of the three the cell's
+     total. Fixed by ledger 470, and printed as now: three rows, each reach's own.
+  2. ``model.sfr.budget.<term>.wide()``'s default ``index=("per", "lake")`` raised
+     ``KeyError: 'lake'`` on every SFR term. Fixed by ledger 473 (printed as now).
+  3. ``model.<lak|sfr>.budget.get(term="ext_inflow")`` matched nothing, silently; it
+     raises ``ValueError`` naming ``'EXT-INFLOW'`` since ledger 473.
   4. Both SFR profile views draw by reach number for ANY ``x`` but ``"distance"``.
-  5. ``model.lak.connections.map(per=1)`` raises a ``TypeError`` naming
-     ``ModelPlots.map`` while its (spliced) docstring documents ``per``.
-  6. ``multiplier`` on a record map is applied after ``agg`` and scales the
-     ``fill_value`` cells -- but not when the selection holds no record at all.
+  5. ``model.lak.connections.map(per=1)`` raised a ``TypeError`` naming
+     ``ModelPlots.map`` while its (spliced) docstring documented ``per``; since ledger
+     473 it refuses ``per`` by name and documents none.
+  6. ``multiplier`` on a record map was applied after ``agg`` and scaled the
+     ``fill_value`` cells -- but not when the selection held no record at all. Since
+     ledger 473 each record is scaled before ``agg`` and the fill never is.
   7. A map's unknown ``**trace_kwargs`` key raises at ``.fig`` on Plotly and is
      ignored under ``backend="mpl"``.
   8. ``model.budget[key]`` returns a namespace attribute for ``"model"``/``"types"``
@@ -48,7 +51,8 @@ WHAT IT MEASURES
      vertical connection reads its cell's whole area or 0.0), not the connection
      table's ``connection_area``; a package budget's ``FLOW-JA-FACE`` is written from
      both ends, ``q`` positive INTO ``reach``; and ``model.surface_water.results.q``'s
-     SFR ``q``/``rlen`` are tripled on cell 195 while ``exchange_intensity`` is right.
+     SFR ``q``/``rlen`` were tripled on cell 195 while ``exchange_intensity`` was right
+     (fixed by ledger 470; printed as now).
 """
 
 from __future__ import annotations
@@ -113,7 +117,7 @@ def _with_barriers(path: Path):
 
 
 def section_1(m):
-    print("\n1. SFR records joined to reaches on the CELL")
+    print("\n1. SFR records joined to their own reach (they joined on the CELL until ledger 470)")
     records = m._get_budget_reader().get_data(text="SFR", kstpkper=(0, 3))[0]
     at = records[records["node"] == 196]  # cell 195, one-based node
     print(f"    the budget file at cell 195: reaches {(at['node2'] - 1).tolist()},"
