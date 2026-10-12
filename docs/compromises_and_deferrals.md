@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 446 entries (451 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 447 entries (452 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 447 | A run's and a spec's MF6 executable is stored as text: a `str` as given, an `os.PathLike` through... | 2026-10-11 |
 | 446 | An explicit `trigger_sep` never thins a `"floor"` unit at or above its own minimum | 2026-10-11 |
 | 445 | `protect_sources` / `protected_labels` are removed; the vertices near a `"line"` band's ring stay held, as... | 2026-10-11 |
 | 444 | Examples, reproducers and notebooks the library broke are EXECUTED by a test, and the rest were run once an... | 2026-10-11 |
@@ -19007,3 +19008,19 @@ same day, which is the useful part of the result.
       `test_an_explicit_trigger_never_thins_a_floor_unit_above_its_minimum[None]`/`[3]` and
       `test_an_explicit_trigger_leaves_a_floor_unit_exactly_at_its_minimum_where_it_is`,
       which also fails a floor cap of `_UNDER_THE_MINIMUM`.
+
+447. **A run's and a spec's MF6 executable is stored as text: a `str` as given, an `os.PathLike` through `os.fspath`, anything else refused (2026-10-11).**
+      Every `executable=` -- `prepare_run`/`run`, `load_run`, `Run.load`/`reopen`,
+      `Project.reopen_run`/`refresh_runs`/`discover_runs`/`discover_native_runs`,
+      `RunLibrary.discover`, `SimulationSpec` -- documented `str` and stored a `Path` as
+      the `Path`, so the JSON manifest refused it: `prepare_run(executable=Path(...))`
+      died writing `run.json`, a reopened run in `execute()`. ONE rule,
+      `specs.executable_name`, applied where a `Run` (`__post_init__`, which every route
+      reaches) and a `SimulationSpec` store it, so the reopen paths need no copy of it.
+      **Judgment call:** `None` and a `bytes` path are REFUSED (`TypeError`) on a `Run`
+      and a `SimulationSpec` rather than read; `Run(executable=None)` used to be stored
+      and handed to FloPy as `exe_name`, which runs nothing. `executable=None` on the
+      REOPEN paths keeps its documented meaning, "the recorded one". Not changed: a
+      `run.executable = Path(...)` assignment after construction (the field is not a
+      property) is not normalized.
+

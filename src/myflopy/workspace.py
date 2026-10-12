@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pickle
 import re
 import warnings
@@ -54,6 +55,7 @@ from myflopy.specs import (
     _json_value,
     _package_entry_label,
     dropped_context_fields,
+    executable_name,
     package_digest,
     package_moves,
     source_fingerprint,
@@ -99,7 +101,7 @@ class ModelView(SimulationBase):
 def load_run(
     workspace: Path | str,
     *,
-    executable: str | None = None,
+    executable: str | os.PathLike[str] | None = None,
     load: bool = True,
 ) -> Run:
     """Reopen a previously prepared/executed :class:`Run` from its workspace.
@@ -115,13 +117,15 @@ def load_run(
         The run directory (``<project>/runs/<name>``). With a ``run.json``
         manifest it is reopened as :meth:`Run.reopen` does; without one it is
         opened as a bare MF6 workspace (``status="loaded"``).
-    executable : str or None, optional
+    executable : str, os.PathLike or None, optional
         MF6 executable name/path for a later ``run.execute()``, also set on the
-        simulation ``load=True`` opens. A string WINS over the executable a
+        simulation ``load=True`` opens. A name or path WINS over the executable a
         ``run.json`` manifest recorded -- the way to re-run a run with another
         MF6 build, or on a machine where the recorded path does not exist.
         ``None`` (the default) keeps the manifest's executable, or ``"mf6"`` when
         the workspace has no manifest or the manifest records none.
+        A path is stored as its text (``os.fspath``); anything but a ``str`` or
+        ``os.PathLike`` raises ``TypeError``.
     load : bool, optional
         ``True`` (the default) loads the FloPy simulation from the MF6 files now
         (``run.open()``; no ``mfsim.nam`` then raises ``FileNotFoundError``);
@@ -216,17 +220,20 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _chosen_executable(explicit: str | None, recorded: str | None = None) -> str:
+def _chosen_executable(
+    explicit: str | os.PathLike[str] | None, recorded: str | None = None
+) -> str:
     """The MF6 executable a reopened run will run: ONE rule for every reopen path.
 
     An explicit argument wins -- it is the caller choosing the MF6 build to run
     now, and the recorded one may not exist on this machine. ``None`` keeps what
     the run's manifest recorded, or ``"mf6"`` when there is no manifest or it
-    records none.
+    records none. An explicit path is read by ``specs.executable_name``, the rule
+    a :class:`Run` stores its executable by (ledger 447).
     """
 
     if explicit is not None:
-        return explicit
+        return executable_name(explicit, where="a reopened run")
     return recorded or "mf6"
 
 
@@ -957,7 +964,7 @@ class RunLibrary(SpecLibrary["Run"]):
         cls,
         project: Project,
         *,
-        executable: str | None = None,
+        executable: str | os.PathLike[str] | None = None,
         load: bool = False,
     ) -> RunLibrary:
         """Scan a project for runs. Never raises on a bad manifest.
@@ -975,14 +982,16 @@ class RunLibrary(SpecLibrary["Run"]):
             workspaces inside a PEST calibration tree, which are counted in
             :attr:`calibrations` instead. The library is bound to the project's
             package library and root, which :meth:`drift` compares against.
-        executable : str or None, optional
+        executable : str, os.PathLike or None, optional
             MF6 executable name/path for a later ``run.execute()`` on every run
-            listed, also set on each simulation ``load=True`` opens. A string WINS
+            listed, also set on each simulation ``load=True`` opens. A name or path WINS
             over the executable a ``run.json`` manifest recorded -- the way to
             re-run with another MF6 build, or on a machine where the recorded path
             does not exist. ``None`` (the default) keeps each manifest's executable,
             or ``"mf6"`` for a discovered workspace, an unreadable manifest, or a
             manifest that records none.
+            A path is stored as its text (``os.fspath``); anything but a ``str`` or
+            ``os.PathLike`` raises ``TypeError``.
         load : bool, optional
             ``False`` (the default) reads manifests only. ``True`` also loads each
             run's FloPy simulation from its MF6 files (``Run.reopen(load=True)``
@@ -1523,8 +1532,10 @@ class Run:
         The simulation :meth:`build` builds. ``None`` (the default) for a run
         discovered or loaded without a manifest, or reopened from a manifest
         holding no rebuildable recipe and no frozen snapshot.
-    executable : str, optional
+    executable : str or os.PathLike, optional
         MF6 executable name or path that :meth:`execute` runs. Default ``"mf6"``.
+        A path is stored as its text (``os.fspath``); anything but a ``str`` or
+        ``os.PathLike`` raises ``TypeError``.
     status : str, optional
         myflopy's lifecycle verb -- what the library did to the run, not what MF6
         did (that is :attr:`outcome`): ``"created"`` (the default), ``"built"``,
@@ -1647,9 +1658,15 @@ class Run:
     )
 
     def __post_init__(self) -> None:
-        """Coerce ``workspace`` to a :class:`~pathlib.Path`."""
+        """Coerce ``workspace`` to a :class:`~pathlib.Path` and ``executable`` to a ``str``.
+
+        Every route that makes a run constructs one here, so the executable rule
+        (``specs.executable_name``) is applied once: a ``Path`` is stored as its
+        text, which the JSON manifest can write (ledger 447).
+        """
 
         self.workspace = Path(self.workspace)
+        self.executable = executable_name(self.executable, where=f"Run {self.name!r}")
 
     @property
     def manifest_path(self) -> Path:
@@ -2509,7 +2526,7 @@ class Run:
         cls,
         workspace: Path | str,
         *,
-        executable: str | None = None,
+        executable: str | os.PathLike[str] | None = None,
         load: bool = True,
     ) -> Run:
         """Reopen a run from its manifest and optionally load the MF6 simulation.
@@ -2524,11 +2541,13 @@ class Run:
         workspace : str or pathlib.Path
             The run directory, holding ``run.json``; none raises
             ``FileNotFoundError``.
-        executable : str or None, optional
+        executable : str, os.PathLike or None, optional
             MF6 executable name/path for a later :meth:`execute`, also set on the
-            simulation ``load=True`` opens. A string WINS over the executable the
+            simulation ``load=True`` opens. A name or path WINS over the executable the
             manifest recorded; ``None`` (the default) keeps the recorded one, or
             ``"mf6"`` when the manifest records none.
+            A path is stored as its text (``os.fspath``); anything but a ``str`` or
+            ``os.PathLike`` raises ``TypeError``.
         load : bool, optional
             ``True`` (the default) also loads the FloPy simulation from the MF6
             files (:meth:`open`, which raises ``FileNotFoundError`` without an
@@ -2578,7 +2597,7 @@ class Run:
         cls,
         workspace: Path | str,
         *,
-        executable: str | None = None,
+        executable: str | os.PathLike[str] | None = None,
         load: bool = True,
     ) -> Run:
         """Open a native MF6 workspace, with or without a myflopy manifest.
@@ -2589,12 +2608,14 @@ class Run:
             The MF6 run directory. With a ``run.json`` it is reopened by
             :meth:`reopen`; without one it becomes a run named after the
             directory with ``status="loaded"``.
-        executable : str or None, optional
+        executable : str, os.PathLike or None, optional
             MF6 executable name/path for a later :meth:`execute`, also set on the
-            simulation ``load=True`` opens. A string WINS over the executable a
+            simulation ``load=True`` opens. A name or path WINS over the executable a
             ``run.json`` manifest recorded; ``None`` (the default) keeps the
             recorded one, or ``"mf6"`` when there is no manifest or it records
             none.
+            A path is stored as its text (``os.fspath``); anything but a ``str`` or
+            ``os.PathLike`` raises ``TypeError``.
         load : bool, optional
             ``True`` (the default) loads the FloPy simulation now (:meth:`open`;
             no ``mfsim.nam`` raises ``FileNotFoundError``); ``False`` defers it.
@@ -2949,22 +2970,24 @@ class Project:
             self._runs = RunLibrary.discover(self)
         return self._runs
 
-    def refresh_runs(self, *, executable: str | None = None) -> RunLibrary:
+    def refresh_runs(self, *, executable: str | os.PathLike[str] | None = None) -> RunLibrary:
         """Re-scan the project for runs and return the refreshed library.
 
         The result replaces the cache, so :attr:`runs` returns it afterwards.
 
         Parameters
         ----------
-        executable : str or None, optional
+        executable : str, os.PathLike or None, optional
             MF6 executable name/path for a later ``run.execute()`` on every run
-            listed, also set on each simulation ``load=True`` opens. A string WINS
+            listed, also set on each simulation ``load=True`` opens. A name or path WINS
             over the executable a ``run.json`` manifest recorded -- the way to
             re-run with another MF6 build, or on a machine where the recorded path
             does not exist. ``None`` (the default) keeps each manifest's executable,
             or ``"mf6"`` for a workspace with no manifest, or a manifest that
             records none. The chosen executable stays on the cached runs until the
             next refresh. :attr:`runs`' own first scan uses ``None``.
+            A path is stored as its text (``os.fspath``); anything but a ``str`` or
+            ``os.PathLike`` raises ``TypeError``.
         """
 
         self._runs = RunLibrary.discover(self, executable=executable)
@@ -3092,7 +3115,7 @@ class Project:
         name: str,
         simulation: SimulationSpec | str,
         *,
-        executable: str = "mf6",
+        executable: str | os.PathLike[str] = "mf6",
         metadata: dict[str, Any] | None = None,
         overwrite: bool = False,
         build: bool = True,
@@ -3116,8 +3139,10 @@ class Project:
         simulation : SimulationSpec or str
             The simulation spec to build, or the name of one registered via
             :meth:`add_simulation`.
-        executable : str, default "mf6"
+        executable : str or os.PathLike, default "mf6"
             MF6 executable name/path used when the run is executed.
+            A path is stored as its text (``os.fspath``); anything but a ``str`` or
+            ``os.PathLike`` raises ``TypeError``.
         metadata : dict, optional
             Arbitrary metadata recorded in the run manifest.
         overwrite : bool, default False
@@ -3182,7 +3207,7 @@ class Project:
         name: str,
         simulation: SimulationSpec | str,
         *,
-        executable: str = "mf6",
+        executable: str | os.PathLike[str] = "mf6",
         metadata: dict[str, Any] | None = None,
         overwrite: bool = False,
         silent: bool = True,
@@ -3198,8 +3223,10 @@ class Project:
         simulation : SimulationSpec or str
             The simulation spec to run, or the name of one registered via
             :meth:`add_simulation`.
-        executable : str, optional
+        executable : str or os.PathLike, optional
             MF6 executable name/path to run. Default ``"mf6"``.
+            A path is stored as its text (``os.fspath``); anything but a ``str`` or
+            ``os.PathLike`` raises ``TypeError``.
         metadata : dict or None, optional
             Arbitrary metadata recorded in the run manifest. Default ``None``
             records an empty dict.
@@ -3231,7 +3258,7 @@ class Project:
         self,
         name: str,
         *,
-        executable: str | None = None,
+        executable: str | os.PathLike[str] | None = None,
         load: bool = True,
     ) -> Run:
         """Reopen one project-owned run by name.
@@ -3251,13 +3278,15 @@ class Project:
         name : str
             The run's directory name under ``<project>/runs``; a run without a
             ``run.json`` there raises ``FileNotFoundError``.
-        executable : str or None, optional
+        executable : str, os.PathLike or None, optional
             MF6 executable name/path for a later :meth:`Run.execute`, also set on
-            the simulation ``load=True`` opens. A string WINS over the executable
+            the simulation ``load=True`` opens. A name or path WINS over the executable
             the manifest recorded -- the way to re-run with another MF6 build, or
             on a machine where the recorded path does not exist. ``None`` (the
             default) keeps the recorded one, or ``"mf6"`` when the manifest
             records none.
+            A path is stored as its text (``os.fspath``); anything but a ``str`` or
+            ``os.PathLike`` raises ``TypeError``.
         load : bool, optional
             ``True`` (the default) also loads the FloPy simulation from the MF6
             files; ``False`` reads the manifest only.
@@ -3277,7 +3306,7 @@ class Project:
         return run
 
     def discover_runs(
-        self, *, executable: str | None = None, load: bool = False
+        self, *, executable: str | os.PathLike[str] | None = None, load: bool = False
     ) -> list[Run]:
         """Discover project-owned runs that have lifecycle manifests.
 
@@ -3286,13 +3315,15 @@ class Project:
 
         Parameters
         ----------
-        executable : str or None, optional
+        executable : str, os.PathLike or None, optional
             MF6 executable name/path for a later ``run.execute()`` on every run
-            returned, also set on each simulation ``load=True`` opens. A string WINS
+            returned, also set on each simulation ``load=True`` opens. A name or path WINS
             over the executable a ``run.json`` manifest recorded -- the way to
             re-run with another MF6 build, or on a machine where the recorded path
             does not exist. ``None`` (the default) keeps each manifest's executable,
             or ``"mf6"`` for a manifest that records none.
+            A path is stored as its text (``os.fspath``); anything but a ``str`` or
+            ``os.PathLike`` raises ``TypeError``.
         load : bool, optional
             ``True`` also loads each run's FloPy simulation from its MF6 files;
             ``False`` (the default) reads manifests only.
@@ -3307,7 +3338,7 @@ class Project:
         self,
         search_root: Path | str | None = None,
         *,
-        executable: str | None = None,
+        executable: str | os.PathLike[str] | None = None,
         load: bool = False,
     ) -> list[Run]:
         """Discover native MF6 workspaces, including runs without manifests.
@@ -3322,14 +3353,16 @@ class Project:
         ----------
         search_root : str, pathlib.Path or None, optional
             Directory to search. ``None`` (the default) searches the project root.
-        executable : str or None, optional
+        executable : str, os.PathLike or None, optional
             MF6 executable name/path for a later ``run.execute()`` on every run
-            returned, also set on each simulation ``load=True`` opens. A string WINS
+            returned, also set on each simulation ``load=True`` opens. A name or path WINS
             over the executable a ``run.json`` manifest recorded -- the way to
             re-run with another MF6 build, or on a machine where the recorded path
             does not exist. ``None`` (the default) keeps each manifest's executable,
             or ``"mf6"`` for a workspace with no manifest, or a manifest that
             records none.
+            A path is stored as its text (``os.fspath``); anything but a ``str`` or
+            ``os.PathLike`` raises ``TypeError``.
         load : bool, optional
             ``True`` also loads each workspace's FloPy simulation; ``False`` (the
             default) does not.

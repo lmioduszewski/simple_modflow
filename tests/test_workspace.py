@@ -732,6 +732,62 @@ def test_a_run_reopened_through_the_project_runs_the_chosen_build(tmp_path):
     assert recorded == real
 
 
+@pytest.mark.skipif(shutil.which("mf6") is None, reason="needs the mf6 executable")
+def test_a_path_executable_is_stored_as_its_text_on_every_route(tmp_path):
+    """``executable=Path(...)`` was stored as the ``Path`` itself (ledger 447).
+
+    The manifest is JSON, so ``prepare_run`` died writing it (``Object of type
+    PosixPath is not JSON serializable``), and a reopened run given a ``Path``
+    died the same way in ``execute()``. One rule now -- ``specs.executable_name``,
+    applied where a ``Run`` and a ``SimulationSpec`` store it -- reads a path
+    through ``os.fspath``.
+    """
+
+    from pathlib import Path
+
+    real = shutil.which("mf6")
+    as_path = Path(real)
+    project = mf.Project(tmp_path / "proj", name="p")
+    run = project.prepare_run("baseline", _tiny_flow_spec(), executable=as_path)
+    assert type(run.executable) is str and run.executable == real
+    ok, _ = run.execute()
+    assert ok
+    assert json.loads(run.manifest_path.read_text())["run"]["executable"] == real
+
+    reopened = [
+        mf.load_run(run.workspace, executable=as_path, load=False),
+        mf.Run.load(run.workspace, executable=as_path, load=False),
+        mf.Run.reopen(run.workspace, executable=as_path, load=False),
+        project.reopen_run("baseline", executable=as_path, load=False),
+        project.refresh_runs(executable=as_path)["baseline"],
+        *project.discover_runs(executable=as_path),
+        *project.discover_native_runs(executable=as_path),
+    ]
+    assert [type(r.executable) for r in reopened] == [str] * len(reopened)
+    again = mf.load_run(run.workspace, executable=as_path)
+    assert type(again.simulation.exe_name) is str
+    ok, _ = again.execute()
+    assert ok
+
+    spec = mf.SimulationSpec(
+        "s", models=_tiny_flow_spec().models, executable=as_path
+    )
+    assert type(spec.executable) is str
+    json.dumps(spec.to_dict())
+
+
+@pytest.mark.parametrize("bad", [None, 5, b"mf6"])
+def test_an_executable_that_names_no_file_is_refused(tmp_path, bad):
+    """A run or spec stores its executable as text, so anything that is not a
+    ``str`` or ``os.PathLike`` is refused at construction, naming the spelling --
+    ``None`` included: it used to be stored and handed to FloPy as ``exe_name``."""
+
+    with pytest.raises(TypeError, match=r"executable= .*str or os\.PathLike"):
+        mf.Run(name="r", workspace=tmp_path, executable=bad)
+    with pytest.raises(TypeError, match=r"executable= .*str or os\.PathLike"):
+        mf.SimulationSpec("s", models=_tiny_flow_spec().models, executable=bad)
+
+
 def test_one_unserializable_simulation_no_longer_costs_the_whole_library(tmp_path):
     """``save()`` used to refuse everything when any simulation embedded an array.
 

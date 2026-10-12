@@ -13,6 +13,7 @@ import difflib
 import functools
 import hashlib
 import inspect
+import os
 import pickle
 import sys
 import warnings
@@ -5581,6 +5582,42 @@ def _bicgstab_for_implicit_lakes(solvers, simulation) -> list:
     return chosen
 
 
+def executable_name(value: Any, *, where: str) -> str:
+    """The MF6 executable as a ``str``: ONE rule wherever one is stored (ledger 447).
+
+    A ``str`` is kept as given and an ``os.PathLike`` is read through
+    ``os.fspath``, so ``Path(shutil.which("mf6"))`` is stored as its text. A run
+    manifest and :meth:`SimulationSpec.to_dict` write JSON, which refuses a
+    ``Path`` -- stored as-is it failed only later, writing the manifest. Anything
+    else (``None`` included, and a ``bytes`` path) is refused, naming ``where``.
+
+    Parameters
+    ----------
+    value : str or os.PathLike
+        The executable as the caller gave it. A ``str`` is returned unchanged; an
+        ``os.PathLike`` whose ``os.fspath`` is a ``str`` returns that text.
+        Anything else raises ``TypeError``.
+    where : str
+        What is storing it (``"Run 'baseline'"``), named in the refusal.
+
+    Returns
+    -------
+    str
+        The executable's name or path as text.
+    """
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, os.PathLike):
+        name = os.fspath(value)
+        if isinstance(name, str):
+            return name
+    raise TypeError(
+        f"executable= ({where}) takes the MF6 executable's name or path as a str "
+        f"or os.PathLike (e.g. 'mf6' or Path('/opt/mf6/bin/mf6')), not {value!r}."
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class SimulationSpec:
     """One complete MF6 simulation: timing, solver(s), and the model(s).
@@ -5626,10 +5663,12 @@ class SimulationSpec:
         The default run directory for :meth:`build` and :meth:`build_flopy`
         when they are given none (passed to FloPy as ``sim_ws``). Default
         ``None``.
-    executable : str, optional
+    executable : str or os.PathLike, optional
         The MF6 executable a :meth:`build` run is given (set as the FloPy
         simulation's ``exe_name`` there). :meth:`build_flopy` does not use it.
         Default ``"mf6"``.
+        A path is stored as its text (``os.fspath``); anything but a ``str`` or
+        ``os.PathLike`` raises ``TypeError``.
     run_name : str, optional
         The run name :meth:`build` uses when not given one, and the default run
         directory name; :meth:`derive` sets it. ``None`` falls back to
@@ -5672,6 +5711,11 @@ class SimulationSpec:
         """
 
         object.__setattr__(self, "models", tuple(self.models))
+        object.__setattr__(
+            self,
+            "executable",
+            executable_name(self.executable, where=f"SimulationSpec {self.name!r}"),
+        )
         object.__setattr__(
             self,
             "packages",

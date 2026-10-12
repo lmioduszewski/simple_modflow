@@ -478,6 +478,8 @@ be a path on another machine. Pass `executable=` to choose another build:
 `project.reopen_run(name, executable=...)`, `project.refresh_runs(executable=...)`,
 `project.discover_runs(...)`, `project.discover_native_runs(...)` and
 `mf.load_run(path, executable=...)` all take it, and an explicit one always wins.
+A name or a `pathlib.Path` both work -- here and on `prepare_run`/`run` -- and a
+path is recorded as its text (anything else raises `TypeError`).
 
 ## Persistence is opt-in
 

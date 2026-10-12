@@ -530,7 +530,9 @@ release-group boundnames; without them it names the fix and offers
 another**, on every reopen path -- `mf.load_run`, `mf.Run.load`/`reopen`,
 `project.reopen_run`, `refresh_runs`, `discover_runs`, `discover_native_runs` and
 `mf.RunLibrary.discover`. An explicit one wins; `None` keeps the recorded one, or
-`"mf6"` with no manifest.
+`"mf6"` with no manifest. A `str` or an `os.PathLike` (`Path(shutil.which("mf6"))`) is accepted there, on
+`prepare_run`/`run` and on `SimulationSpec(executable=)`, and stored as its text -- the
+manifest is JSON -- by one rule, `specs.executable_name`; anything else raises.
 
 **Groups and diffs of runs.** `mf.ModelGroup({"base": a, "wet": b})` keys its members
 by the mapping; a LIST keys them by model name, so two runs of one model (both named,
