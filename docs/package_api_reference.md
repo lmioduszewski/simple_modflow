@@ -86,7 +86,12 @@ The one reading of the TDIS clock: `starts`, `ends`, `midpoints`, `months` and
 2017-09-30, so each period's START is the day before its month). The steady flags
 follow MF6's STO rule -- no STO is steady throughout, and a period before the first STO
 block is TRANSIENT (measured, `docs/reproducers/sto_default_transient.py`).
-`same_clock(other)` compares two calendars to FloPy's 8-decimal write. A TDIS without
+`same_clock(other)` compares two calendars to FloPy's 8-decimal write, and
+`clock_difference(other, steady=False)` says what differs first (period count, start,
+unit, a period's length, and with `steady=True` a period's STO flag) -- the one rule a
+`from_hydrographs` set's clock stamp and `AverageYear.equilibrium` both ask (ledger 546).
+`mf.AverageYear.from_model` reads a run's cycle through
+`period_calendar.monthly_cycle(model)`, which the average-year targets read too. A TDIS without
 `START_DATE_TIME` or `TIME_UNITS` is refused naming `mf.tdis(start_date_time=...,
 time_units="days")`; `model.pest()` takes its default start date from the same reader.
 

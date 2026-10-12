@@ -11,7 +11,6 @@
  "myflopy.modflow.mf6.headsplus": 2,
  "myflopy.modflow.mf6.lakes": 1,
  "myflopy.modflow.mf6.observations.heads": 4,
- "myflopy.modflow.mf6.observations.hydrographs": 1,
  "myflopy.modflow.mf6.observations.lake": 1,
  "myflopy.modflow.mf6.observations.plots": 3,
  "myflopy.modflow.mf6.package_model": 1,

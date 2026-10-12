@@ -42,20 +42,23 @@ from myflopy.modflow.mf6.package_budget import build_lak_stage_result_table
 from myflopy.modflow.mf6.package_plotting import normalize_backend
 from myflopy.modflow.mf6.package_registry import model_packages_of_type
 from myflopy.modflow.mf6.period_calendar import (
+    NONLEAP_DAYS,
+    MonthlyCycle,
     PeriodCalendar,
+    _is_int,
+    _month_name,
     format_start,
+    monthly_cycle,
     parse_start,
     period_calendar,
 )
-from myflopy.modflow.mf6.period_end import END_RTOL, period_ends, period_records
+from myflopy.modflow.mf6.period_end import period_ends
 from myflopy.package_api import tdis as _tdis
 
 logger = get_logger(__name__)
 
-#: Days in each calendar month of a NON-leap year, January = 1. An average year has
-#: no 29 February: the user's own 72-period TDIS runs 28-day Februaries throughout.
-NONLEAP_DAYS = {1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 6: 30, 7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
-_MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+# ``NONLEAP_DAYS`` (the month lengths of a NON-leap year) lives with the calendar, in
+# ``period_calendar``, beside the one reading of a run's cycle (``monthly_cycle``).
 
 #: What ``AverageYear.tdis()`` sets itself, and the argument that sets it.
 _TDIS_OWNED = {
@@ -66,16 +69,8 @@ _TDIS_OWNED = {
 }
 
 
-def _is_int(value: Any) -> bool:
-    return isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_))
-
-
 def _is_number(value: Any) -> bool:
     return isinstance(value, (Real, np.number)) and not isinstance(value, (bool, np.bool_))
-
-
-def _month_name(month: int) -> str:
-    return _MONTH_NAMES[int(month) - 1]
 
 
 class AverageYear:
@@ -209,7 +204,12 @@ class AverageYear:
         if not _is_number(tsmult) or not np.isfinite(tsmult) or float(tsmult) <= 0:
             raise ValueError(f"AverageYear(tsmult={tsmult!r}) must be a finite number > 0.")
         self._tsmult = float(tsmult)
-        self._months = tuple((stamp.month - 1 + k) % 12 + 1 for k in range(12))
+        # The period layout -- months, months_of and the midpoint check -- is the one
+        # monthly_cycle() reads back from a run (period_calendar, ledger 546).
+        self._layout = MonthlyCycle(
+            self._cycles, stamp, steady, steady_length, self._nstp, self._tsmult
+        )
+        self._months = self._layout.months
         self._check_midpoints()
 
     # -- construction -----------------------------------------------------------
@@ -250,19 +250,7 @@ class AverageYear:
     def _check_midpoints(self) -> None:
         """Refuse a cycle whose leap-day drift moves a midpoint out of its month."""
 
-        calendar = self.calendar
-        first = int(self._steady)
-        assigned = np.asarray(self._period_months()[first:])
-        found = calendar.months[first:]
-        off = np.flatnonzero(assigned != found)
-        if off.size:
-            per = int(off[0]) + first
-            raise ValueError(
-                f"AverageYear: period {per} is {_month_name(assigned[off[0]])} in the cycle but "
-                f"its midpoint falls in {_month_name(found[off[0]])} -- the 28-day Februaries "
-                "have drifted the periods past half a month over this many leap years; run "
-                "fewer cycles, or start in a later year."
-            )
+        self._layout.check_midpoints(self.calendar)
 
     # -- what it declares -------------------------------------------------------
 
@@ -319,7 +307,7 @@ class AverageYear:
     def _period_months(self) -> list[int | None]:
         """Each period's calendar month, ``None`` for the steady period."""
 
-        return ([None] if self._steady else []) + list(self._months) * self._cycles
+        return self._layout.period_months()
 
     @property
     def perioddata(self) -> list[tuple[float, int, float]]:
@@ -446,13 +434,7 @@ class AverageYear:
             Each calendar month (January = 1) to its zero-based stress period.
         """
 
-        if not _is_int(cycle):
-            raise TypeError(f"months_of(cycle=) takes an int, got {cycle!r}.")
-        index = int(cycle) + self._cycles if int(cycle) < 0 else int(cycle)
-        if not 0 <= index < self._cycles:
-            raise IndexError(f"months_of(cycle={cycle!r}): this year runs {self._cycles} cycle(s).")
-        first = int(self._steady) + 12 * index
-        return {month: first + offset for offset, month in enumerate(self._months)}
+        return self._layout.months_of(cycle)
 
     # -- forcing ----------------------------------------------------------------
 
@@ -540,7 +522,9 @@ class AverageYear:
         """The cycle a run was built on, read back from its own TDIS and STO.
 
         How a run recovers its year: ``mf.load_mf6_run(ws)`` and the PEST build read
-        files only (ledger 356), so the cycle is inferred, not recorded. The run must
+        files only (ledger 356), so the cycle is inferred, not recorded -- by
+        :func:`~myflopy.modflow.mf6.period_calendar.monthly_cycle`, the one reading of a
+        run's cycle, which ``from_hydrographs(mode="average_year")`` reads too. The run must
         be days, with ``START_DATE_TIME`` declared; its periods 0 or 1 steady-state
         period, then transient periods of non-leap calendar month lengths starting on
         the first of a month, in whole twelve-month cycles; each month's step count
@@ -566,73 +550,14 @@ class AverageYear:
             (the STO flags are the flow model's).
         """
 
-        calendar = period_calendar(model)
-        if calendar.time_units != "days":
-            raise ValueError(
-                f"The run's TDIS counts time in {calendar.time_units}; an AverageYear is in days."
-            )
-        if calendar.steady is None:
-            raise ValueError(
-                "AverageYear.from_model reads the steady-state flags of a FLOW model's STO; "
-                "pass the GWF model."
-            )
-        steady = bool(calendar.steady[0])
-        first = int(steady)
-        late = [per for per in range(first, calendar.nper) if calendar.steady[per]]
-        if late:
-            raise ValueError(
-                f"Period {late[0]} is steady state; an AverageYear has at most one steady "
-                "period, period 0, and every period after it transient."
-            )
-        count = calendar.nper - first
-        if count < 12 or count % 12:
-            raise ValueError(
-                f"The run has {count} transient period(s), not a whole number of twelve-month "
-                "cycles."
-            )
-        begin = calendar.starts[first]
-        if begin != begin.normalize().replace(day=1):
-            raise ValueError(
-                f"Period {first}, the first month, starts at {begin.isoformat()}, not at midnight "
-                "on the first of a month."
-            )
-        records = period_records(model) or []
-        months = tuple((begin.month - 1 + k) % 12 + 1 for k in range(12))
-        steps: dict[int, int] = {}
-        multipliers = set()
-        for offset in range(count):
-            per = first + offset
-            month = months[offset % 12]
-            length = calendar.perlen[per]
-            expected = NONLEAP_DAYS[month]
-            if abs(length - expected) > END_RTOL * max(1.0, expected):
-                raise ValueError(
-                    f"Period {per} is {length:g} days long where an AverageYear's "
-                    f"{_month_name(month)} is {expected}; the run is not a calendar cycle "
-                    f"from {format_start(begin)}."
-                )
-            _, nstp, tsmult = records[per] if per < len(records) else (None, None, None)
-            if nstp is None or tsmult is None:
-                raise ValueError(f"The run's TDIS holds no nstp/tsmult for period {per}.")
-            if steps.setdefault(month, nstp) != nstp:
-                raise ValueError(
-                    f"Period {per} ({_month_name(month)}) takes {nstp} steps where an earlier "
-                    f"{_month_name(month)} took {steps[month]}; an AverageYear repeats each "
-                    "month's steps."
-                )
-            multipliers.add(round(tsmult, 6))
-        if len(multipliers) > 1:
-            raise ValueError(
-                f"The run's monthly periods use several time-step multipliers ({sorted(multipliers)}); "
-                "an AverageYear uses one."
-            )
+        cycle = monthly_cycle(model)
         return cls(
-            count // 12,
-            start=begin,
-            steady=steady,
-            steady_length=calendar.perlen[0] if steady else None,
-            nstp={month: steps[month] for month in range(1, 13)},
-            tsmult=float(records[first][2]),
+            cycle.cycles,
+            start=cycle.start,
+            steady=cycle.steady,
+            steady_length=cycle.steady_length,
+            nstp={month: cycle.nstp[month - 1] for month in range(1, 13)},
+            tsmult=cycle.tsmult,
         )
 
     def equilibrium(
@@ -1001,31 +926,29 @@ class CycleEquilibrium:
 def _calendar_difference(on_model: PeriodCalendar, declared: PeriodCalendar) -> str | None:
     """What makes a model's calendar another year's, in words, or ``None`` when it is this one.
 
-    The steady flags are compared only when the model carries them: a transport
-    model's periods are as steady as the flow model it reads (``steady`` is ``None``).
+    The difference is :meth:`PeriodCalendar.clock_difference`'s, the one comparison of
+    two calendars (ledger 546), asked with ``steady=True``: the steady flags are
+    compared only when the model carries them -- a transport model's periods are as
+    steady as the flow model it reads (``steady`` is ``None``).
     """
 
-    if on_model.nper != declared.nper:
-        return f"it runs {on_model.nper} period(s) where the year runs {declared.nper}"
-    if on_model.start != declared.start:
+    difference = on_model.clock_difference(declared, steady=True)
+    if difference is None:
+        return None
+    mine, theirs, per = difference.mine, difference.theirs, difference.per
+    if difference.what == "nper":
+        return f"it runs {mine} period(s) where the year runs {theirs}"
+    if difference.what == "start":
+        return f"it starts {format_start(mine)} where the year starts {format_start(theirs)}"
+    if difference.what == "time_units":
+        return f"it counts time in {mine} where the year counts {theirs}"
+    if difference.what == "perlen":
         return (
-            f"it starts {format_start(on_model.start)} where the year starts "
-            f"{format_start(declared.start)}"
+            f"its period {per} is {mine:g} {on_model.time_units} long where "
+            f"the year's is {theirs:g} {declared.time_units}"
         )
-    if on_model.time_units != declared.time_units:
-        return f"it counts time in {on_model.time_units} where the year counts days"
-    if not on_model.same_clock(declared):
-        lengths = np.abs(np.asarray(on_model.perlen) - np.asarray(declared.perlen))
-        per = int(np.argmax(lengths))
-        return (
-            f"its period {per} is {on_model.perlen[per]:g} {on_model.time_units} long where "
-            f"the year's is {declared.perlen[per]:g} days"
-        )
-    if on_model.steady is not None and on_model.steady != declared.steady:
-        per = next(p for p, (a, b) in enumerate(zip(on_model.steady, declared.steady, strict=True)) if a != b)
-        state = "steady state" if on_model.steady[per] else "transient"
-        return f"its STO runs period {per} {state}, where the year's does not"
-    return None
+    state = "steady state" if mine else "transient"
+    return f"its STO runs period {per} {state}, where the year's does not"
 
 
 def _where(row: pd.Series) -> str:

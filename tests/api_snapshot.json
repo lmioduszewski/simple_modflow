@@ -2568,6 +2568,13 @@
     "ModflowGwflakImplicit.write": [
       "ext_file_action:POSITIONAL_OR_KEYWORD=None"
     ],
+    "MonthlyCycle.check_midpoints": [
+      "calendar:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "MonthlyCycle.months_of": [
+      "cycle:POSITIONAL_OR_KEYWORD=-1"
+    ],
+    "MonthlyCycle.period_months": [],
     "Move": [
       "source:POSITIONAL_OR_KEYWORD=<required>",
       "receiver:POSITIONAL_OR_KEYWORD=<required>",
@@ -3075,6 +3082,10 @@
       "perlen:POSITIONAL_OR_KEYWORD=<required>",
       "time_units:POSITIONAL_OR_KEYWORD='days'",
       "steady:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "PeriodCalendar.clock_difference": [
+      "other:POSITIONAL_OR_KEYWORD=<required>",
+      "steady:KEYWORD_ONLY=False"
     ],
     "PeriodCalendar.same_clock": [
       "other:POSITIONAL_OR_KEYWORD=<required>"

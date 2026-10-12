@@ -12,7 +12,10 @@ must put those together the same way. What these tests pin:
 - the steady flags follow MF6's STO rule, measured on MF6: a period BEFORE the first
   STO block is TRANSIENT, and a model with no STO is steady throughout;
 - a live model and the same run read back from its files give the same calendar;
-- ``model.pest()`` takes its start date from the one reader.
+- ``model.pest()`` takes its start date from the one reader;
+- how two calendars differ is ONE rule, ``PeriodCalendar.clock_difference`` (ledger
+  546): a ``from_hydrographs`` set's clock stamp and an ``AverageYear``'s run name the
+  same difference, each in its own words.
 """
 
 from __future__ import annotations
@@ -25,9 +28,13 @@ import pandas as pd
 import pytest
 
 import myflopy as mf
+from myflopy.cycles import _calendar_difference
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.modflow.mf6.observations.hydrographs import clock_difference
 from myflopy.modflow.mf6.period_calendar import (
+    CalendarDifference,
     PeriodCalendar,
+    format_start,
     steady_periods,
     tdis_start_date_time,
 )
@@ -123,6 +130,82 @@ def test_flopys_written_lengths_are_the_same_clock():
     assert not exact.same_clock(PeriodCalendar("2020-01-01", [1.0] * 48, "hours"))
     with pytest.raises(TypeError, match="two PeriodCalendars"):
         exact.same_clock("2020-01-01")
+
+
+def _year_calendar(cycles=3, start="2016-10-01"):
+    return mf.AverageYear(cycles, start=start, nstp=2).calendar
+
+
+def test_the_targets_and_the_year_name_the_same_difference():
+    """Ledger 546: one rule decides WHAT differs; the two callers only word it.
+
+    ``hydrographs.clock_difference(stamp, on_model)`` (a binned target set meeting a
+    model) and ``cycles._calendar_difference(on_model, declared)`` (an
+    ``AverageYear`` meeting its run) were near-copies. Each case puts the same two
+    calendars to both and checks they name the same thing -- the same counts, the same
+    starts, the same period and lengths -- or both nothing.
+    """
+
+    model = _year_calendar(3)
+    lengths = list(model.perlen)
+    lengths[3] += 0.5
+    lengths[7] += 2.0  # the period whose lengths differ MOST is the one named
+    cases = {
+        "nper": (_year_calendar(4), ["37", "49"]),
+        "start": (_year_calendar(3, start="2017-10-01"), ["2016-09-30", "2017-09-30"]),
+        "time_units": (PeriodCalendar(model.start, model.perlen, "hours", steady=model.steady),
+                       ["days", "hours"]),
+        "perlen": (PeriodCalendar(model.start, lengths, "days", steady=model.steady),
+                   ["period 7", f"{model.perlen[7]:g}", f"{lengths[7]:g}"]),
+    }
+    for what, (other, named) in cases.items():
+        assert model.clock_difference(other).what == what
+        targets = clock_difference(other, model)  # the set was binned on `other`
+        year = _calendar_difference(model, other)  # the year declared `other`
+        for words in named:
+            assert words in targets and words in year, (what, words, targets, year)
+    assert model.clock_difference(_year_calendar(3)) is None
+    assert clock_difference(_year_calendar(3), model) is None
+    assert _calendar_difference(model, _year_calendar(3)) is None
+    # The steady flags are the flow model's, not the clock's: a period number names the
+    # same dates whatever its storage state, so only the year's run compares them.
+    flagged = PeriodCalendar(model.start, model.perlen, "days", steady=[False] * model.nper)
+    assert model.clock_difference(flagged) is None
+    assert model.clock_difference(flagged, steady=True) == CalendarDifference("steady", True, False, 0)
+    assert clock_difference(flagged, model) is None
+    assert _calendar_difference(model, flagged) == "its STO runs period 0 steady state, where the year's does not"
+    # ...and only when both carry flags: a transport model's are None.
+    assert model.clock_difference(PeriodCalendar(model.start, model.perlen, "days"), steady=True) is None
+    assert model.same_clock(flagged) and not model.same_clock(cases["perlen"][0])
+    with pytest.raises(TypeError, match="two PeriodCalendars"):
+        model.clock_difference("2016-09-30")
+    with pytest.raises(TypeError, match="True or False"):
+        model.clock_difference(flagged, steady="yes")
+
+
+def test_both_callers_ask_the_one_rule(monkeypatch):
+    """Neither caller keeps a comparison of its own: each words what the rule answers."""
+
+    asked = []
+
+    def answer(self, other, *, steady=False):
+        asked.append(steady)
+        return CalendarDifference("perlen", 12.5, 30.0, 4)
+
+    monkeypatch.setattr(PeriodCalendar, "clock_difference", answer)
+    model = _year_calendar(3)
+    assert clock_difference(model, model) == (
+        "this model's period 4 is 12.5 days long where the targets' was 30"
+    )
+    assert _calendar_difference(model, model) == "its period 4 is 12.5 days long where the year's is 30 days"
+    assert not model.same_clock(model)
+    assert asked == [False, True, False]  # the targets ask for the clock, the year for the flags too
+    monkeypatch.setattr(PeriodCalendar, "clock_difference",
+                        lambda self, other, *, steady=False: CalendarDifference(
+                            "start", pd.Timestamp("2016-09-30"), pd.Timestamp("2017-09-30 12:00")))
+    expected = f"2016-09-30 where the {{}} {format_start(pd.Timestamp('2017-09-30 12:00'))}"
+    assert clock_difference(model, model).endswith(expected.format("targets' model started"))
+    assert _calendar_difference(model, model).endswith(expected.format("year starts"))
 
 
 @pytest.mark.parametrize(

@@ -45,6 +45,7 @@ from myflopy.modflow.mf6.observations._shared import ROW_WEIGHT_COLUMN, _long_va
 from myflopy.modflow.mf6.period_calendar import (
     PeriodCalendar,
     format_start,
+    monthly_cycle,
     parse_start,
     period_calendar,
 )
@@ -681,9 +682,11 @@ def model_clock(model: Any, *, mode: str, owner: str) -> tuple[PeriodCalendar, d
     Returns
     -------
     tuple
-        ``(model.calendar, months)``: ``months`` is
-        ``mf.AverageYear.from_model(model).months_of(-1)`` in average-year mode and
-        ``None`` in history mode.
+        ``(model.calendar, months)``: ``months`` is the last cycle's
+        ``{calendar month: period}`` in average-year mode -- read by
+        :func:`~myflopy.modflow.mf6.period_calendar.monthly_cycle`, the one reading of a
+        run's cycle (``mf.AverageYear.from_model(model).months_of(-1)`` is the same map)
+        -- and ``None`` in history mode.
 
     Raises
     ------
@@ -701,12 +704,10 @@ def model_clock(model: Any, *, mode: str, owner: str) -> tuple[PeriodCalendar, d
         raise ValueError(f"{caller} dates the stress periods from the model's TDIS: {error}") from None
     if mode != "average_year":
         return calendar, None
-    # cycles.py imports the observation layer, so it cannot be imported at the top of
-    # this module; AverageYear.from_model is the ONE reading of a run's cycle.
-    from myflopy.cycles import AverageYear
-
+    # monthly_cycle is the ONE reading of a run's cycle (AverageYear.from_model is it); it
+    # lives with the calendar, below this layer, so myflopy.cycles is never imported here.
     try:
-        year = AverageYear.from_model(model)
+        cycle = monthly_cycle(model)
     except ValueError as error:
         raise ValueError(
             f"{caller}: mode='average_year' places each calendar month's target on that "
@@ -714,11 +715,15 @@ def model_clock(model: Any, *, mode: str, owner: str) -> tuple[PeriodCalendar, d
             f"cycle ({error}). Build its time setup with mf.AverageYear(...) -- year.tdis() "
             "and the year's mf.sto flags -- or bin the record with mode='history'."
         ) from None
-    return calendar, year.months_of(-1)
+    return calendar, cycle.months_of(-1)
 
 
 def clock_difference(stamp: PeriodCalendar, on_model: PeriodCalendar) -> str | None:
     """What makes ``on_model``'s periods other dates than ``stamp``'s, in words, or ``None``.
+
+    The difference is :meth:`PeriodCalendar.clock_difference`'s, the one comparison of
+    two calendars (ledger 546), asked for the CLOCK only: the steady flags are the flow
+    model's, and a period number names the same dates whatever its storage state.
 
     Parameters
     ----------
@@ -735,23 +740,23 @@ def clock_difference(stamp: PeriodCalendar, on_model: PeriodCalendar) -> str | N
         (:meth:`PeriodCalendar.same_clock`; the steady flags are not compared).
     """
 
-    if on_model.nper != stamp.nper:
-        return f"this model runs {on_model.nper} stress period(s) where the targets were binned on {stamp.nper}"
-    if on_model.start != stamp.start:
+    difference = on_model.clock_difference(stamp)
+    if difference is None:
+        return None
+    mine, theirs, per = difference.mine, difference.theirs, difference.per
+    if difference.what == "nper":
+        return f"this model runs {mine} stress period(s) where the targets were binned on {theirs}"
+    if difference.what == "start":
         return (
-            f"this model starts {on_model.start.isoformat()} where the targets' model started "
-            f"{stamp.start.isoformat()}"
+            f"this model starts {format_start(mine)} where the targets' model started "
+            f"{format_start(theirs)}"
         )
-    if on_model.time_units != stamp.time_units:
-        return f"this model counts time in {on_model.time_units} where the targets' counted {stamp.time_units}"
-    if not on_model.same_clock(stamp):
-        gaps = np.abs(np.asarray(on_model.perlen) - np.asarray(stamp.perlen))
-        per = int(np.argmax(gaps))
-        return (
-            f"this model's period {per} is {on_model.perlen[per]:g} {on_model.time_units} long "
-            f"where the targets' was {stamp.perlen[per]:g}"
-        )
-    return None
+    if difference.what == "time_units":
+        return f"this model counts time in {mine} where the targets' counted {theirs}"
+    return (
+        f"this model's period {per} is {mine:g} {on_model.time_units} long "
+        f"where the targets' was {theirs:g}"
+    )
 
 
 def refuse_another_clock(targets: Any, model: Any, *, caller: str) -> None:

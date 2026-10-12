@@ -40,6 +40,8 @@ from myflopy import viz
 from myflopy.cycles import NONLEAP_DAYS, CycleEquilibrium
 from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.modflow.mf6.observations.hydrographs import model_clock
+from myflopy.modflow.mf6.period_calendar import MonthlyCycle, monthly_cycle
 
 #: Calendar month lengths of a non-leap October-September year.
 WATER_YEAR = [31, 30, 31, 31, 28, 31, 30, 31, 30, 31, 31, 30]
@@ -282,6 +284,23 @@ def test_from_model_recovers_the_cycle_live_and_from_the_files(runs):
         assert mf.AverageYear.from_model(mf.load_mf6_run(run.workspace)) == year
     year, run = runs["three"]
     assert run.model("flow").calendar.steady == year.calendar.steady  # mf.sto took the flags
+
+
+@pytest.mark.slow
+def test_a_runs_cycle_is_read_in_one_place(runs):
+    """Ledger 546: ``monthly_cycle`` is the one reading of a run's cycle, below the
+    observation layer -- ``from_model`` is it, and ``from_hydrographs`` places its
+    average-year targets on its last cycle without importing ``myflopy.cycles``."""
+
+    for key in ("three", "unsettled"):
+        year, run = runs[key]
+        for model in (run.model("flow"), mf.load_mf6_run(run.workspace)):
+            cycle = monthly_cycle(model)
+            assert isinstance(cycle, MonthlyCycle) and cycle.nper == year.nper
+            assert [cycle.months_of(c) for c in range(year.cycles)] == [
+                year.months_of(c) for c in range(year.cycles)
+            ]
+            assert model_clock(model, mode="average_year", owner="HeadTargets")[1] == year.months_of(-1)
 
 
 @pytest.mark.slow

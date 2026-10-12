@@ -1946,7 +1946,10 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   carries the model's calendar as a CLOCK STAMP: `compare()` and the PEST build refuse it
   on a model with other dates (another cycle count). Do not bin dates anywhere else. The
   build records each set's `period_end_dates`, and the IES review draws dates (ledger
-  544).
+  544). **How two calendars differ is ONE rule, `PeriodCalendar.clock_difference`**, and
+  a run's cycle ONE reading, `period_calendar.monthly_cycle` (ledger 546): the stamp check
+  and `AverageYear.equilibrium` both ask the first and word it themselves; never compare
+  two calendars by hand.
 - **What PEST is handed is exactly the targets** (ledger 340, 2026-09-27). The build
   matches each target to the row pyEMU's INSTRUCTION FILE reads -- by POSITION, the key
   read as a period by NUMBER through `_shared._numeric_periods` (`1.0` is period 1,

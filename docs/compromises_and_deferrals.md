@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 545 entries (550 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 546 entries (551 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 546 | How two calendars differ is ONE rule, `PeriodCalendar.clock_difference`, and a run's average-year cycle is... | 2026-10-12 |
 | 545 | A text date column that admits two day orders is REFUSED; one that admits one is read in it | 2026-10-12 |
 | 544 | The PEST build records each set's period-end dates, what its observations are, and how it was binned; the r... | 2026-10-12 |
 | 543 | Dated readings are binned onto a model's stress periods EAGERLY, by one rule per mode, and the set carries... | 2026-10-12 |
@@ -20917,11 +20918,10 @@ same day, which is the useful part of the result.
       period holding it; a tie between two readings goes to the earlier. Average-year
       mode is, per calendar month, the median over calendar years of each year's
       monthly median (`rule="mean"`: means), on the LAST cycle's period of that month.
-      The months come from `mf.AverageYear.from_model(model).months_of(-1)` -- the one
-      reading of a run's cycle -- not from period midpoints and a `cycle_length=`, so a
-      model that is not an average-year cycle is REFUSED naming `mf.AverageYear`.
-      `hydrographs.model_clock` imports `myflopy.cycles` inside the function (cycles sits
-      at import layer 7, above the observations), one more deferred import. **Eager, with
+      The months come from the run's own cycle, `monthly_cycle(model).months_of(-1)` --
+      the one reading of a run's cycle, which `mf.AverageYear.from_model` is (ledger
+      546) -- not from period midpoints and a `cycle_length=`, so a model that is not an
+      average-year cycle is REFUSED naming `mf.AverageYear`. **Eager, with
       a stamp, not a lazy recipe:** every downstream path stays period-keyed and
       unchanged; `compare()`, `simulated_heads()`/`simulated_series()` and the PEST build
       refuse a set on a model whose calendar differs (another cycle count, start, unit or
@@ -20967,3 +20967,27 @@ same day, which is the useful part of the result.
       date-and-time (`"1/2/2018"`, `"1/16/2018 08:30"`), the shape a logger export
       takes when it drops midnight. **The blind spot:** a column written day first whose
       every day is 1-12 reads month first and cannot be told apart, as in pandas.
+
+546. **How two calendars differ is ONE rule, `PeriodCalendar.clock_difference`, and a run's average-year cycle is read below the observations, `monthly_cycle` (2026-10-12).**
+      Integration of 543 with 530/531. `hydrographs.clock_difference` (a target set's
+      clock stamp) and `cycles._calendar_difference` (an `AverageYear` against its run)
+      were near-copies of one comparison. **Chosen:** `PeriodCalendar.clock_difference(
+      other, steady=False)` decides WHAT differs first -- period count, start, unit, a
+      period's length (to FloPy's 8-decimal write; the period differing MOST), then, with
+      `steady=True` and both calendars carrying flags, a period's steady flag -- and
+      returns a `CalendarDifference`; `same_clock` is `clock_difference(...) is None`.
+      Each caller keeps its own WORDS, because the two sentences name different things
+      (the targets' model, the year). **The flags are compared only for the year**: a
+      period number names the same dates whatever its storage state, so a binned set
+      meeting a model whose STO differs is not refused. One copy had hard-coded "the
+      year counts days", which named the wrong unit for a calendar in hours; the rule's
+      own value is printed now. **The cycle inference moved down with it:**
+      `AverageYear.from_model` read the cycle at import layer 7 and the observation layer
+      (3) reached it through a deferred import of `myflopy.cycles`. `monthly_cycle(model)`
+      in `period_calendar` (layer 2) is that reading now, returning a `MonthlyCycle`
+      (months, `months_of`, the leap-day midpoint check) that `AverageYear` also keeps for
+      its own `months_of` and midpoint check; `from_model` builds the `AverageYear` from
+      it. The deferred import is gone (ratchet 86 -> 85). `NONLEAP_DAYS` lives there too
+      and `myflopy.cycles` re-exports it. **Not done:** the two messages share no text,
+      and the `"start"` difference of a target set is printed as the TDIS writes it
+      (`2017-09-30`) where it read `2017-09-30T00:00:00`.

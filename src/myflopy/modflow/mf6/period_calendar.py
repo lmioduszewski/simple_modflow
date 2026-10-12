@@ -20,6 +20,15 @@ a STO period block switches the state until the next one. **A period before the
 first STO block is TRANSIENT**, not steady (measured on MF6 6.8: a STO declaring
 ``TRANSIENT`` from period 2 alone ran period 1 with the same storage flows as one
 declaring it from period 1; ``docs/reproducers/sto_default_transient.py``).
+
+**How two calendars differ is one rule too** (ledger 546):
+:meth:`PeriodCalendar.clock_difference` names the first difference -- the period
+count, the start, the unit, a period's length, and (when asked) a period's steady
+flag -- and :meth:`PeriodCalendar.same_clock`, a ``from_hydrographs`` set's clock
+stamp and ``AverageYear.equilibrium`` all ask it; each says the answer in its own
+words. **And the one reading of a run's average-year cycle is here**,
+:func:`monthly_cycle` (``mf.AverageYear.from_model`` is it), so the observation layer
+reads a cycle without importing ``myflopy.cycles``, which sits above it.
 """
 
 from __future__ import annotations
@@ -37,7 +46,7 @@ from myflopy._time_units import mf6_time_conversion, mf6_time_word
 from myflopy.modflow.mf6.hydraulics import _simulation_tdis, declared_time_unit
 from myflopy.modflow.mf6.package_explorer_utils import written_period_blocks
 from myflopy.modflow.mf6.package_registry import model_packages_of_type
-from myflopy.modflow.mf6.period_end import END_RTOL, period_lengths
+from myflopy.modflow.mf6.period_end import END_RTOL, period_lengths, period_records
 
 logger = get_logger(__name__)
 
@@ -45,6 +54,19 @@ logger = get_logger(__name__)
 #: hour read back in days is ``0.04166667`` -- 3600.0003 s -- and a date carrying
 #: that 0.3 ms is not the date the modeller declared.
 _DATE_RESOLUTION = "ms"
+
+#: Days in each calendar month of a NON-leap year, January = 1. An average year has
+#: no 29 February: the user's own 72-period TDIS runs 28-day Februaries throughout.
+NONLEAP_DAYS = {1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 6: 30, 7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
+_MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_))
+
+
+def _month_name(month: int) -> str:
+    return _MONTH_NAMES[int(month) - 1]
 
 
 def parse_start(value: Any, *, what: str) -> pd.Timestamp:
@@ -114,6 +136,38 @@ def format_start(stamp: pd.Timestamp) -> str:
     if stamp == stamp.normalize():
         return stamp.strftime("%Y-%m-%d")
     return stamp.isoformat()
+
+
+@dataclass(frozen=True)
+class CalendarDifference:
+    """The first way one calendar dates its periods otherwise than another.
+
+    Returned by :meth:`PeriodCalendar.clock_difference`, which decides WHAT differs;
+    every caller says it in its own words (a target set's clock stamp, an average
+    year's run).
+
+    Attributes
+    ----------
+    what : str
+        What differs, the first of these in this order: ``"nper"`` (the period
+        count), ``"start"`` (the instant period 0 begins), ``"time_units"`` (the unit
+        of the lengths), ``"perlen"`` (a period's length, beyond FloPy's 8-decimal
+        write) or ``"steady"`` (a period's steady-state flag; only when asked).
+    mine : int or pandas.Timestamp or str or float or bool
+        The value of the calendar ``clock_difference`` was called on: the period
+        count, the start, the unit word, period ``per``'s length (in that unit) or
+        period ``per``'s flag (``True`` = steady state).
+    theirs : int or pandas.Timestamp or str or float or bool
+        The other calendar's value of the same thing.
+    per : int or None
+        The period, zero-based, for ``"perlen"`` (the one whose lengths differ MOST)
+        and ``"steady"`` (the first whose flags differ); ``None`` otherwise.
+    """
+
+    what: str
+    mine: Any
+    theirs: Any
+    per: int | None = None
 
 
 @dataclass(frozen=True)
@@ -295,11 +349,70 @@ class PeriodCalendar:
 
         if not isinstance(other, PeriodCalendar):
             raise TypeError(f"same_clock() compares two PeriodCalendars, got {type(other).__name__}.")
-        if self.start != other.start or self.time_units != other.time_units or self.nper != other.nper:
-            return False
+        return self.clock_difference(other) is None
+
+    def clock_difference(self, other: PeriodCalendar, *, steady: bool = False) -> CalendarDifference | None:
+        """The first way ``other`` dates its periods otherwise than this calendar, or ``None``.
+
+        The ONE comparison of two calendars (ledger 546): :meth:`same_clock` is
+        ``clock_difference(other) is None``, a ``from_hydrographs`` target set checks
+        its clock stamp through it, and ``AverageYear.equilibrium`` checks a run
+        through it with ``steady=True``. Each caller words the answer itself. Checked
+        in this order, and the first that differs is returned: the period count, the
+        start, the unit, the period lengths -- to
+        :data:`~myflopy.modflow.mf6.period_end.END_RTOL` of each period, floored at
+        one time unit, as FloPy writes a ``perlen`` at 8 decimals -- and, with
+        ``steady=True``, the steady-state flags.
+
+        Parameters
+        ----------
+        other : PeriodCalendar
+            The calendar compared against; its values are the difference's ``theirs``,
+            this calendar's its ``mine``.
+        steady : bool, default False
+            Whether the steady-state flags count. ``False`` compares the CLOCK only --
+            what dates a period, which is all a period number needs to name the same
+            dates. ``True`` also compares the flags, after every date, when BOTH
+            calendars carry them: a transport model's are ``None`` (its periods are as
+            steady as the flow model it reads), and then nothing is compared. A
+            non-bool raises ``TypeError``.
+
+        Returns
+        -------
+        CalendarDifference or None
+            What differs first (:class:`CalendarDifference`: ``what``, ``mine``,
+            ``theirs`` and the period ``per`` for a length or a flag); ``None`` when
+            every compared value agrees.
+
+        Raises
+        ------
+        TypeError
+            When ``other`` is not a :class:`PeriodCalendar`, or ``steady`` is not a
+            bool.
+        """
+
+        if not isinstance(other, PeriodCalendar):
+            raise TypeError(
+                f"clock_difference() compares two PeriodCalendars, got {type(other).__name__}."
+            )
+        if not isinstance(steady, (bool, np.bool_)):
+            raise TypeError(f"clock_difference(steady=) takes True or False, got {steady!r}.")
+        if self.nper != other.nper:
+            return CalendarDifference("nper", self.nper, other.nper)
+        if self.start != other.start:
+            return CalendarDifference("start", self.start, other.start)
+        if self.time_units != other.time_units:
+            return CalendarDifference("time_units", self.time_units, other.time_units)
         mine = np.asarray(self.perlen)
         theirs = np.asarray(other.perlen)
-        return bool(np.all(np.abs(mine - theirs) <= END_RTOL * np.maximum(1.0, np.abs(mine))))
+        gaps = np.abs(mine - theirs)
+        if np.any(gaps > END_RTOL * np.maximum(1.0, np.abs(mine))):
+            per = int(np.argmax(gaps))
+            return CalendarDifference("perlen", self.perlen[per], other.perlen[per], per)
+        if steady and self.steady is not None and other.steady is not None and self.steady != other.steady:
+            per = next(p for p, (a, b) in enumerate(zip(self.steady, other.steady, strict=True)) if a != b)
+            return CalendarDifference("steady", self.steady[per], other.steady[per], per)
+        return None
 
 
 def tdis_start_date_time(model: Any) -> str | None:
@@ -440,9 +553,243 @@ def period_calendar(model: Any) -> PeriodCalendar:
     return PeriodCalendar(stamp, perlen, units, steady_periods(model, len(perlen)))
 
 
+@dataclass(frozen=True)
+class MonthlyCycle:
+    """The period layout of an average water year: an optional steady period, then cycles of twelve months.
+
+    What ``mf.AverageYear`` declares and :func:`monthly_cycle` reads back from a run,
+    in the one place the import layers let both reach: ``AverageYear`` keeps one and
+    answers ``months_of`` and its midpoint check through it, and the observation
+    layer (``from_hydrographs(mode="average_year")``) reads a run's last cycle
+    through :func:`monthly_cycle` without importing ``myflopy.cycles``. Nothing here
+    is validated: ``AverageYear`` checks what it is given, and :func:`monthly_cycle`
+    builds one only from a run that IS such a cycle.
+
+    Parameters
+    ----------
+    cycles : int
+        How many times the twelve months repeat after the steady period, ``>= 1``.
+    start : pandas.Timestamp
+        The first day of the first cycle, at midnight; its month is the cycle's
+        first month.
+    steady : bool
+        Whether a steady-state period, period 0, comes first.
+    steady_length : float or None
+        The steady period's length in days; ``None`` without one.
+    nstp : tuple of int
+        Twelve time-step counts by CALENDAR month, January first.
+    tsmult : float
+        The time-step multiplier of every monthly period.
+
+    Attributes
+    ----------
+    months : tuple of int
+        The twelve calendar months in cycle order, ``start``'s month first.
+    nper : int
+        The number of stress periods, ``int(steady) + 12 * cycles``.
+    """
+
+    cycles: int
+    start: pd.Timestamp
+    steady: bool
+    steady_length: float | None
+    nstp: tuple[int, ...]
+    tsmult: float
+
+    @property
+    def months(self) -> tuple[int, ...]:
+        """The twelve calendar months in cycle order, ``start``'s month first."""
+
+        return tuple((self.start.month - 1 + k) % 12 + 1 for k in range(12))
+
+    @property
+    def nper(self) -> int:
+        """The number of stress periods, ``int(steady) + 12 * cycles``."""
+
+        return int(self.steady) + 12 * self.cycles
+
+    def period_months(self) -> list[int | None]:
+        """Each stress period's calendar month, zero-based; ``None`` for the steady period.
+
+        Returns
+        -------
+        list of int or None
+            ``nper`` entries: ``None`` first when there is a steady period, then
+            :attr:`months` once per cycle.
+        """
+
+        return ([None] if self.steady else []) + list(self.months) * self.cycles
+
+    def months_of(self, cycle: int = -1) -> dict[int, int]:
+        """``{calendar month: period}`` for one cycle, in cycle order.
+
+        Parameters
+        ----------
+        cycle : int, default -1
+            The cycle, zero-based; negative counts from the last (``-1`` is the last
+            cycle, the one targets are compared on). Out of range raises
+            ``IndexError``; a bool or non-integer ``TypeError``.
+
+        Returns
+        -------
+        dict of int to int
+            Each calendar month (January = 1) to its zero-based stress period.
+        """
+
+        if not _is_int(cycle):
+            raise TypeError(f"months_of(cycle=) takes an int, got {cycle!r}.")
+        index = int(cycle) + self.cycles if int(cycle) < 0 else int(cycle)
+        if not 0 <= index < self.cycles:
+            raise IndexError(f"months_of(cycle={cycle!r}): this year runs {self.cycles} cycle(s).")
+        first = int(self.steady) + 12 * index
+        return {month: first + offset for offset, month in enumerate(self.months)}
+
+    def check_midpoints(self, calendar: PeriodCalendar) -> None:
+        """Refuse a cycle whose leap-day drift moves a period's midpoint out of its month.
+
+        The months run NON-leap lengths, so each leap year starts the later periods
+        one day early; after about 14 leap years (some 56 cycles) a period's MIDPOINT
+        -- which names its month on a :class:`PeriodCalendar` -- leaves the month
+        the cycle gives it.
+
+        Parameters
+        ----------
+        calendar : PeriodCalendar
+            The calendar of these periods (``nper`` of them): ``AverageYear.calendar``
+            for a declared year, the run's own for one read back.
+
+        Raises
+        ------
+        ValueError
+            Naming the first period whose midpoint month is not its cycle month.
+        """
+
+        first = int(self.steady)
+        assigned = np.asarray(self.period_months()[first:])
+        found = calendar.months[first:]
+        off = np.flatnonzero(assigned != found)
+        if off.size:
+            per = int(off[0]) + first
+            raise ValueError(
+                f"AverageYear: period {per} is {_month_name(assigned[off[0]])} in the cycle but "
+                f"its midpoint falls in {_month_name(found[off[0]])} -- the 28-day Februaries "
+                "have drifted the periods past half a month over this many leap years; run "
+                "fewer cycles, or start in a later year."
+            )
+
+
+def monthly_cycle(model: Any) -> MonthlyCycle:
+    """The average-year cycle a run was built on, read back from its own TDIS and STO.
+
+    The ONE reading of a run's cycle: ``mf.AverageYear.from_model`` is this, and
+    ``from_hydrographs(mode="average_year")`` places its targets on
+    ``monthly_cycle(model).months_of(-1)``. ``mf.load_mf6_run(ws)`` and the PEST build
+    read files only (ledger 356), so the cycle is inferred, not recorded. The run must
+    be days, with ``START_DATE_TIME`` declared; its periods 0 or 1 steady-state period,
+    then transient periods of non-leap calendar month lengths starting on the first of
+    a month, in whole twelve-month cycles; each month's step count the same in every
+    cycle and one multiplier throughout. The steady period's own steps and multiplier
+    are not read (``AverageYear`` always writes 1 and 1.0).
+
+    Parameters
+    ----------
+    model : SimulationBase
+        A myflopy GWF model -- ``run.model(name)`` or ``mf.load_mf6_run(ws)``.
+
+    Returns
+    -------
+    MonthlyCycle
+        The layout ``mf.AverageYear`` would declare for this run.
+
+    Raises
+    ------
+    ValueError
+        When the run is not such a cycle, naming the first period that breaks the
+        pattern and its length; when its TDIS has no ``START_DATE_TIME``, no
+        ``TIME_UNITS`` or units other than days; when it is not a flow model (the STO
+        flags are the flow model's); or when a period's midpoint has drifted out of its
+        month (:meth:`MonthlyCycle.check_midpoints`).
+    """
+
+    calendar = period_calendar(model)
+    if calendar.time_units != "days":
+        raise ValueError(
+            f"The run's TDIS counts time in {calendar.time_units}; an AverageYear is in days."
+        )
+    if calendar.steady is None:
+        raise ValueError(
+            "AverageYear.from_model reads the steady-state flags of a FLOW model's STO; "
+            "pass the GWF model."
+        )
+    steady = bool(calendar.steady[0])
+    first = int(steady)
+    late = [per for per in range(first, calendar.nper) if calendar.steady[per]]
+    if late:
+        raise ValueError(
+            f"Period {late[0]} is steady state; an AverageYear has at most one steady "
+            "period, period 0, and every period after it transient."
+        )
+    count = calendar.nper - first
+    if count < 12 or count % 12:
+        raise ValueError(
+            f"The run has {count} transient period(s), not a whole number of twelve-month "
+            "cycles."
+        )
+    begin = calendar.starts[first]
+    if begin != begin.normalize().replace(day=1):
+        raise ValueError(
+            f"Period {first}, the first month, starts at {begin.isoformat()}, not at midnight "
+            "on the first of a month."
+        )
+    records = period_records(model) or []
+    months = tuple((begin.month - 1 + k) % 12 + 1 for k in range(12))
+    steps: dict[int, int] = {}
+    multipliers = set()
+    for offset in range(count):
+        per = first + offset
+        month = months[offset % 12]
+        length = calendar.perlen[per]
+        expected = NONLEAP_DAYS[month]
+        if abs(length - expected) > END_RTOL * max(1.0, expected):
+            raise ValueError(
+                f"Period {per} is {length:g} days long where an AverageYear's "
+                f"{_month_name(month)} is {expected}; the run is not a calendar cycle "
+                f"from {format_start(begin)}."
+            )
+        _, nstp, tsmult = records[per] if per < len(records) else (None, None, None)
+        if nstp is None or tsmult is None:
+            raise ValueError(f"The run's TDIS holds no nstp/tsmult for period {per}.")
+        if steps.setdefault(month, nstp) != nstp:
+            raise ValueError(
+                f"Period {per} ({_month_name(month)}) takes {nstp} steps where an earlier "
+                f"{_month_name(month)} took {steps[month]}; an AverageYear repeats each "
+                "month's steps."
+            )
+        multipliers.add(round(tsmult, 6))
+    if len(multipliers) > 1:
+        raise ValueError(
+            f"The run's monthly periods use several time-step multipliers ({sorted(multipliers)}); "
+            "an AverageYear uses one."
+        )
+    cycle = MonthlyCycle(
+        cycles=count // 12,
+        start=begin,
+        steady=steady,
+        steady_length=float(calendar.perlen[0]) if steady else None,
+        nstp=tuple(int(steps[month]) for month in range(1, 13)),
+        tsmult=float(records[first][2]),
+    )
+    cycle.check_midpoints(calendar)
+    return cycle
+
+
 __all__ = [
+    "NONLEAP_DAYS",
+    "CalendarDifference",
+    "MonthlyCycle",
     "PeriodCalendar",
     "format_start",
+    "monthly_cycle",
     "parse_start",
     "period_calendar",
     "steady_periods",

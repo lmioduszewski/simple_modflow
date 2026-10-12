@@ -9,7 +9,7 @@ longest-path depth in the module-level runtime import graph
 lower layer, and the graph must stay acyclic. Upward references belong in
 `TYPE_CHECKING` blocks or (sparingly) function-level deferred imports —
 the deferred-import ratchet (`tests/deferred_import_allowlist.json`,
-currently **86** function-level `myflopy` imports) counts those and
+currently **85** function-level `myflopy` imports) counts those and
 only ever goes down. To update after a legitimate change: run the script,
 review the diff, commit the regenerated files together.
 
@@ -139,7 +139,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.grid.interpolated_surface`
 - `myflopy.modflow.mf6.interactive_plotting`
 - `myflopy.modflow.mf6.observations._zones`
-- `myflopy.modflow.mf6.observations.hydrographs` *(deferred imports: 1)*
+- `myflopy.modflow.mf6.observations.hydrographs`
 - `myflopy.modflow.mf6.observations.sfr`
 - `myflopy.modflow.mf6.package_results`
 - `myflopy.modflow.mf6.pest.native_parameters`
