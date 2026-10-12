@@ -88,10 +88,10 @@ class GroupCellPackageResults(_GroupSpatialView):
             length^3/time with MF6's sign), ``layer``, ``cell``, ``package``,
             ``pname``, ``kstpkper`` (zero-based, on that member's budget-file
             clock), ``per`` and ``model``. The UZF ``sat`` accessor reads NPF's
-            ``DATA-SAT`` record, whose table carries TWO ``sat`` columns -- the
-            record's flow (0.0) renamed, then the dimensionless saturation -- so
-            its :meth:`compare`, ``map`` and :meth:`compare_map` raise (ledger
-            439).
+            ``DATA-SAT`` record: ``sat`` is its dimensionless saturation (the
+            record's placeholder flow of 0.0 is dropped; it was renamed ``sat``
+            beside it until ledger 471, and :meth:`compare`, ``map`` and
+            :meth:`compare_map` raised).
         """
 
         frames = []

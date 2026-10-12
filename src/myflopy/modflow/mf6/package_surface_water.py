@@ -424,11 +424,10 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         MODFLOW 6's own aquifer-referenced sign (``q_gwf`` NEGATIVE where the reach
         GAINS), model length³/time -- one row per record at every saved step,
         joined to the reach table for ``reach``, ``rlen`` and the ``distance_*``
-        columns. **The join is on the CELL, not on the record's own reach**
-        (``node2``): a cell holding several reaches gets every one of its records
-        once per reach, each tagged with every reach -- measured on the testing
-        canonical model, cell 195 holds reaches 22, 37 and 38 and carries 9 rows
-        for its 3 records. Read a multi-reach cell's flows through ``node2``.
+        columns on the record's OWN reach (``node2``), so a cell holding several
+        reaches carries one row per reach, each with that reach's flow. It joined
+        on the CELL until ledger 470: the testing canonical model's cell 195
+        (reaches 22, 37 and 38) carried 9 rows for its 3 records.
 
         Parameters
         ----------
@@ -3455,11 +3454,11 @@ class SurfaceWaterExchangeResultsExplorer(SpatialView):
             (each package's raw sign) and ``exchange_intensity`` and ``source``
             (``"sfr"``/``"lak"``), plus ``rlen``/``q_per_length`` on SFR rows and
             ``flow_area``/``q_per_area`` on LAK rows (``NaN`` on the other's).
-            The SFR rows sum ``model.sfr.results.q.get()``, which joins records to
-            reaches on the CELL, so on a cell holding ``k`` reaches the SFR ``q``
-            and ``rlen`` are each ``k`` times their true sums while
-            ``exchange_intensity``, their ratio, is right (testing canonical cell
-            195 at period 3: ``q`` -1480.68 for -493.56; ledger 440).
+            The SFR rows sum ``model.sfr.results.q.get()`` over a cell's reaches,
+            each record once (it joined records to reaches on the CELL until
+            ledger 470, so a cell of ``k`` reaches read ``k`` times its
+            ``q`` and ``rlen``: testing canonical cell 195 at period 3, ``q``
+            -1480.68 for -493.56).
         """
 
         return build_surface_water_exchange_cell_table(

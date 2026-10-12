@@ -134,7 +134,10 @@ def build_budget_result_table(
         Logical package name reported in the table's ``package`` column (the
         type: ``"drn"``); it selects nothing.
     value_name : str, default "q"
-        Public column name to use for the normalized budget quantity.
+        Public column name to use for the normalized budget quantity: the
+        record's ``q`` renamed -- unless the record carries an AUXILIARY of that
+        name (NPF's ``DATA-SAT`` writes the saturation as aux ``sat`` beside a
+        placeholder flow of 0.0), which is then the value, and ``q`` is dropped.
     packages : iterable of str or None, optional
         Package NAMES whose records to read, compared with each record's
         ``paknam2`` stripped and upper-cased -- the one package a LAK/SFR/UZF view
@@ -185,7 +188,14 @@ def build_budget_result_table(
         frame["pname"] = header["paknam2"].decode().strip().upper() or None
         frame["kstpkper"] = [kstpkper] * len(frame)
         frame["per"] = kstpkper[1]
-        if value_name != "q" and "q" in frame.columns:
+        if value_name != "q" and value_name in frame.columns and "q" in frame.columns:
+            # The record carries the value as an AUXILIARY of that name -- NPF's
+            # DATA-SAT writes the saturation as aux ``sat`` beside a placeholder
+            # flow of 0.0 -- so the aux column is the value and the placeholder
+            # goes. Renaming it as below made two ``sat`` columns, and every
+            # ``uzf.results.sat`` map and comparison raised (ledger 471).
+            frame = frame.drop(columns=["q"])
+        elif value_name != "q" and "q" in frame.columns:
             # TRUE rename (drop FloPy's raw "q"): the public column carries the
             # reference frame in its name (q_gwf / q_lake). Renaming rather than
             # duplicating means any consumer that still reads a bare "q" fails
@@ -448,6 +458,10 @@ def build_sfr_budget_result_table(
     normalized -- ``ResultSpec.reference_frame`` declares the frame so plots can
     orient their colours, and the column is presented as ``q_gwf`` downstream.
 
+    Each record is joined to the reach it names (``node2``), one row per record; a
+    cell holding several reaches carries one row per reach. The join was on the
+    CELL until ledger 470, which gave a cell of ``k`` reaches ``k * k`` rows.
+
     ONE package's records: ``package`` names it (any case), ``None`` -- the default
     -- is the model's only SFR package, and several raise ``SeveralPackagesError``,
     because each numbers its own reaches (ledger 352). It read the first ``SFR``
@@ -480,11 +494,18 @@ def build_sfr_budget_result_table(
             ]
         )
 
+    # Each record names its OWN reach: MF6 writes the GWF cell as ``node`` and the
+    # reach as ``node2`` (one-based on file, zero-based here). Joining on the CELL
+    # instead gave a cell of k reaches k*k rows, each reach carrying every flow in
+    # its cell -- canonical cell 195: reaches 22, 37 and 38 each read the cell's
+    # -493.56, where MF6's own SFR budget gives them -20.91, -471.96 and -0.69.
     reach_map = build_sfr_reach_table(model, package=package)
+    frame["reach"] = pd.to_numeric(frame["node2"], errors="coerce").astype("Int64")
     frame = frame.merge(
-        reach_map, on=["layer", "cell"], how="left", suffixes=("", "_pkg")
+        reach_map.drop(columns=["layer", "cell"]).drop_duplicates(subset=["reach"]),
+        on="reach",
+        how="left",
     )
-    frame["reach"] = frame["reach"].astype("Int64")
     has_per_length = value_name in frame.columns and "rlen" in frame.columns
     if has_per_length:
         # Keep MF6's RAW sign -- do NOT normalize. This is the SFR cell-by-cell

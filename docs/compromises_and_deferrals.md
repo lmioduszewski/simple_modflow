@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 469 entries (474 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 471 entries (476 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 471 | A budget record whose value is an AUXILIARY reads one value column | 2026-10-11 |
+| 470 | An SFR exchange record joins the reach it names, so a cell of several reaches counts each flow once | 2026-10-11 |
 | 469 | The build-side cellid checks read a DIS `(layer, row, col)` and a DISU `(node,)` through `CellNumbering`, a... | 2026-10-11 |
 | 468 | `mf.sfr`/`mf.lak` write no empty period block | 2026-10-11 |
 | 467 | A USG export combines several records one period gives one cell into one feature, by kind | 2026-10-11 |
@@ -18795,24 +18797,26 @@ same day, which is the useful part of the result.
       same grid"); and ~~an input table holds the period BLOCKS written, so a CHD declared
       in period 0 reads 0 rows at `per=1`, single-model and group alike, while MF6 runs it
       in every period~~ (fixed by ledger 449: `per=N` reads the block MF6 has in force,
-      single-model and group alike). **Two `sat` columns:** `group.packages.uzf.results.sat` (and
+      single-model and group alike). ~~**Two `sat` columns:** `group.packages.uzf.results.sat` (and
       `model.uzf.results.sat`) read NPF's `DATA-SAT`, whose table holds the record's flow
       (0.0) renamed `sat` beside the saturation, so `compare()`/`compare_map()` raise
-      `ValueError` and `map()` `AttributeError`. One docstring was simply wrong and is
+      `ValueError` and `map()` `AttributeError`~~ (fixed by ledger 471: the record's
+      `sat` auxiliary is the value and its placeholder flow is dropped). One docstring was simply wrong and is
       corrected: `lak.connections.map`'s `multiplier` acts AFTER `agg`, not before.
 
 440. **Defects the LAK/SFR/surface-water, budget-term and HFB views' docstring pass found and documented rather than fixed (2026-10-11).**
       Writing the missing entries in `modflow/mf6/{package_surface_water,package_results,
       package_model}.py` (instructed: document the truth, do not change code) turned these
       up, each measured in `docs/reproducers/surface_water_hfb_view_claims.py`; each
-      docstring now says what the code does. **Wrong numbers:** `model.sfr.results.q`
+      docstring now says what the code does. **Wrong numbers:** ~~`model.sfr.results.q`
       joins each `SFR` record to the reach table on the CELL, not on its own reach
       (`node2`), so a cell of three reaches carries nine rows and
       `model.sfr.results.profile` gives each reach the cell's total (canonical cell 195:
       -493.56 for reaches 22, 37 and 38, whose own flows are -20.91, -471.96, -0.69); the
       SFR q MAP is unaffected (a ratio of tripled sums), and so is
       `model.surface_water.results.q`'s `exchange_intensity`, while its SFR `q` and `rlen`
-      columns are tripled there (-1480.68 for -493.56). A LAK results row's `flow_area`
+      columns are tripled there (-1480.68 for -493.56)~~ (fixed by ledger 470: each
+      record joins the reach it names, checked against MF6's own SFR budget). A LAK results row's `flow_area`
       is MF6's own wetted `FLOW-AREA` -- a vertical connection's whole cell area or 0.0 --
       not the `connection_area` formula `build_lak_budget_result_table`'s docstring
       (`package_budget.py`, not this pass's file) still states. ~~`model.hfb.results.q.get()` lists
@@ -19508,3 +19512,21 @@ same day, which is the useful part of the result.
       ends.~~ (**routed by ledger 455**, which landed beside this entry: both ends read
       the cellid through `CellNumbering`.)
 
+470. **An SFR exchange record joins the reach it names, so a cell of several reaches counts each flow once (2026-10-11).**
+      MF6's GWF-budget `SFR` record names the cell (`node`) AND the reach (`node2`);
+      `build_sfr_budget_result_table` joined the reach table on the cell, giving a cell of
+      `k` reaches `k * k` rows (ledger 440). It joins on `node2` now, and the row's
+      `layer`/`cell` are the RECORD's, not the package table's -- the record is what MF6
+      wrote the flow for. Checked against MF6's own SFR package budget (its `GWF` term,
+      reach-referenced): on the testing canonical model cell 195's reaches 22, 37 and 38
+      read -20.91, -471.96 and -0.69 (each read -493.56), and `surface_water.results.q`'s
+      SFR `q` there -493.56 (it read -1480.68). The SFR q map's value, a ratio of sums, did
+      not move; its hover's `q`/`rlen`/record count did.
+
+471. **A budget record whose value is an AUXILIARY reads one value column (2026-10-11).**
+      NPF's `DATA-SAT` writes the saturation as aux `sat` beside a placeholder flow of
+      0.0, and `build_budget_result_table` renamed the placeholder to the value name as
+      well, so `uzf.results.sat` held two `sat` columns and its map and every group/diff
+      comparison raised (ledger 439). The rule: when the record carries an auxiliary
+      named as the value, that column IS the value and `q` is dropped; otherwise `q` is
+      renamed, as before.

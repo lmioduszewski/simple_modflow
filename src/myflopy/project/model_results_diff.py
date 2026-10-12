@@ -523,10 +523,10 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
           sign, positive INTO the aquifer, in model volume per time (SFR adds
           ``q_per_length``); ``gwrch`` is UZF's recharge to the water table, same
           sign and unit. ``sat`` reads MF6's ``DATA-SAT`` (NPF's, under
-          ``SAVE_SATURATION``, for every cell), but the table it reads holds TWO
-          ``sat`` columns -- the record's always-zero ``q`` renamed beside its
-          ``SAT`` -- so :meth:`get` and :meth:`summary` RAISE ``ValueError``
-          ("Cannot set a DataFrame with multiple columns") on it (measured).
+          ``SAVE_SATURATION``, for every cell): the saturated fraction, 0-1,
+          from the record's ``SAT`` auxiliary (its placeholder flow is dropped;
+          it was renamed ``sat`` beside it until ledger 471, and this
+          raised).
         - LAK's ``results.q``: NOT reduced, and joined on ``kstpkper`` and every
           other non-value column, float geometry and MF6's wetted ``FLOW-AREA``/
           ``flow_area`` included. Members with the same time steps compare step
@@ -787,8 +787,8 @@ class UzfResultsDiffNamespace(FieldMappable):
         MF6's ``DATA-SAT`` record, which NPF writes under ``SAVE_SATURATION`` for
         EVERY groundwater cell (the saturated fraction of the cell, 0-1) -- not
         the unsaturated zone's saturation, though it sits under ``uzf``. Its
-        ``get()`` and ``summary()`` raise ``ValueError``: the table read holds two
-        ``sat`` columns (:meth:`CellBudgetResultDiff.get`).
+        ``get()``, ``summary()`` and ``map()`` difference that fraction (they
+        raised until ledger 471, which left one ``sat`` column).
         """
 
         return CellBudgetResultDiff(self._diff, self._uzf_results().sat)
