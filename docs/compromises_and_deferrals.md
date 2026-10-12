@@ -19805,7 +19805,9 @@ same day, which is the useful part of the result.
       geometry, whose change is the inputs diff's question -- and `flow_area` is
       differenced beside `q_lake`/`q_per_area` rather than dropped; `group.bud` keys on
       `_stable_compare_keys` (integer and text columns), so a float auxiliary is no longer
-      a key. `diff.bud` keeps its `totim` join (an exact time match, which lines up period
+      a key, and records sharing every key (two packages of the type on one cell, which
+      `model.bud(...).df` does not name) pair in file order, one to one -- they paired
+      each with each, four rows for two. `diff.bud` keeps its `totim` join (an exact time match, which lines up period
       ends across `nstp`) and no longer melts FloPy's `time_step`/`stress_period`/`tslen`
       into terms: they label each row as `per`/`kstpkper`.
 

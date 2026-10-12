@@ -65,6 +65,28 @@ def _toy(workspace, pumping):
     return _write_run(sim, workspace)
 
 
+def _two_drains(workspace, second_cond):
+    """A 3 x 3 model of two DRN packages on ONE cell (``d1`` cond 10, ``d2`` ``second_cond``)."""
+
+    sim = flopy.mf6.MFSimulation(sim_name="t", sim_ws=str(workspace), exe_name="mf6",
+                                 verbosity_level=0)
+    flopy.mf6.ModflowTdis(sim, nper=1, perioddata=[(1.0, 1, 1.0)])
+    flopy.mf6.ModflowIms(sim, complexity="SIMPLE")
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="t", save_flows=True)
+    flopy.mf6.ModflowGwfdis(gwf, nlay=1, nrow=3, ncol=3, delr=10.0, delc=10.0,
+                            top=10.0, botm=0.0)
+    flopy.mf6.ModflowGwfnpf(gwf, k=10.0)
+    flopy.mf6.ModflowGwfic(gwf, strt=9.0)
+    flopy.mf6.ModflowGwfchd(gwf, stress_period_data=[[(0, r, 0), 9.0] for r in range(3)])
+    flopy.mf6.ModflowGwfdrn(gwf, pname="d1", filename="t1.drn",
+                            stress_period_data=[[(0, 1, 2), 5.0, 10.0]])
+    flopy.mf6.ModflowGwfdrn(gwf, pname="d2", filename="t2.drn",
+                            stress_period_data=[[(0, 1, 2), 6.0, second_cond]])
+    flopy.mf6.ModflowGwfoc(gwf, budget_filerecord="t.cbc", head_filerecord="t.hds",
+                           saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")])
+    return _write_run(sim, workspace)
+
+
 def _named(workspace, cond):
     """The 3 x 3 model of a DRN named ``seeps`` and a GHB named ``lake_edge``."""
 
@@ -417,3 +439,15 @@ def test_a_receiver_with_no_budget_file_is_refused_not_read_as_nothing(movers):
     with pytest.warns(UserWarning, match="leaves out SFR's mover terms"):
         summary = mvr.summary()
     assert set(summary["package"]) == {"drn", "wel"}
+
+
+def test_group_budget_pairs_two_packages_on_one_cell_in_file_order(tmp_path):
+    a, b = _two_drains(tmp_path / "a", 10.0), _two_drains(tmp_path / "b", 40.0)
+    by_package = {
+        name: _moved(tmp_path / name / "t.cbc", "DRN") for name in ("a", "b")
+    }
+    compared = mf.ModelGroup({"a": a, "b": b}, reference="a").bud("drn").compare()
+    assert len(compared) == 2
+    for row, pname in zip(compared.itertuples(), ("D1", "D2"), strict=True):
+        assert row.reference_q == pytest.approx(by_package["a"][pname])
+        assert row.q == pytest.approx(by_package["b"][pname])

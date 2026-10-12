@@ -96,7 +96,9 @@ class GroupBudget:
         ``nstp`` align by stress period, and a record is paired with the
         reference's on its integer and text identity -- ``node``, ``node2``,
         ``per`` and any non-float column -- by an inner join, so a record with no
-        partner is dropped. Until ledger 485 the join matched ``kstpkper``
+        partner is dropped. Records sharing all of those (two packages of the type
+        on one cell) pair in file order, one to one: they paired each with each,
+        four rows for two, until ledger 485. Until ledger 485 the join matched ``kstpkper``
         EXACTLY and every float column, so with one step against two it paired
         the reference's period end with the other member's FIRST step, and an
         auxiliary that moved with the solution (a wetted area) dropped the row.
@@ -133,11 +135,19 @@ class GroupBudget:
         data = _reduce_to_period_end(data)
         reference = self.group.reference
         key_columns = _stable_compare_keys(data, [value_column])
+        # Records sharing every key -- two packages of the type on one cell, which
+        # ``model.bud(...).df`` does not tell apart -- pair in FILE order, one to one
+        # (ledger 472's rule for input records); they paired each with each before.
+        data = data.assign(
+            _record=data.groupby(["model", *key_columns], sort=False).cumcount()
+        )
         ref = (
-            data[data["model"] == reference][[*key_columns, value_column]]
+            data[data["model"] == reference][[*key_columns, "_record", value_column]]
             .rename(columns={value_column: f"reference_{value_column}"})
         )
-        comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
+        comp = data[data["model"] != reference].merge(
+            ref, on=[*key_columns, "_record"], how="inner"
+        )
         comp["reference_model"] = reference
         comp["diff"] = comp[value_column].astype(float) - comp[f"reference_{value_column}"].astype(float)
         ordered = [
