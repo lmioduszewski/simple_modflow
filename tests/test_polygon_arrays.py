@@ -812,12 +812,15 @@ def test_overlapping_polygons_do_not_cover_a_cell_twice():
 
 
 def test_mean_averages_the_remainder_in_at_the_default():
-    """30% at 10.0 beside 70% uncovered at default 0.0 is 3.0; without a default, 10.0."""
+    """30% at 10.0 beside 70% uncovered at default 2.0 is 4.4; without a default, 10.0.
+
+    A NON-zero default, so the remainder's value is read and not only its area.
+    """
 
     cells = _square_cells(1)
     zones = _zones(box(0, 0, 3, 10), values=[10.0])
-    blended, reached = polygon_cell_values(cells, zones, [10.0], rule="mean", default=0.0)
-    assert blended[0] == pytest.approx(3.0, rel=1e-12) and reached.all()
+    blended, reached = polygon_cell_values(cells, zones, [10.0], rule="mean", default=2.0)
+    assert blended[0] == pytest.approx(4.4, rel=1e-12) and reached.all()
     bare, _ = polygon_cell_values(cells, zones, [10.0], rule="mean")
     assert bare[0] == 10.0
 
@@ -919,3 +922,86 @@ def test_a_layered_map_competes_per_layer(meshes, tmp_path):
     assert np.array_equal(array[0], np.ones(small.ncpl))
     assert np.array_equal(array[1], np.where(share > 0.5, 0.1, 1.0))
     assert (share > 0).sum() > (share > 0.5).sum()
+
+
+def test_a_pit_split_into_touching_features_takes_what_the_dissolved_pit_takes():
+    """The remainder competes against a VALUE's cover, not one feature's (ledger 552).
+
+    Cell 0 is 30% + 30% covered by two touching features of one multiplier map and 40%
+    uncovered: the map covers 60% of it, so it takes the cell, exactly as the dissolved
+    pit does. Judging the one winning feature (30%) against the remainder (40%) gave the
+    cell to the default, so how a polygon was digitized decided the array. The same
+    geometry carrying two DIFFERENT values still loses to the remainder.
+    """
+
+    cells = _square_cells(2)
+    halves = (box(4, 0, 7, 10), box(7, 0, 20, 10))
+    split, split_reached, split_painting = polygon_cell_values(
+        cells, _zones(*halves), [0.1, 0.1], rule="majority", default=1.0, painters=True
+    )
+    dissolved, _ = polygon_cell_values(
+        cells, _zones(box(4, 0, 20, 10)), [0.1], rule="majority", default=1.0
+    )
+    assert split.tolist() == dissolved.tolist() == [0.1, 0.1]
+    assert split_reached.all() and split_painting.all()
+
+    distinct, _ = polygon_cell_values(
+        cells, _zones(*halves, values=[0.1, 0.2]), [0.1, 0.2], rule="majority", default=1.0
+    )
+    assert distinct.tolist() == [1.0, 0.2]
+
+
+def test_a_split_multiplier_map_paints_and_warns_like_its_dissolved_self(meshes, tmp_path):
+    """Through the recipe: ``value=`` over a pit drawn as two touching features.
+
+    Each covers less of a straddled cell than its bare part; together they cover more. The
+    array equals the dissolved pit's and neither half is warned as painting nothing.
+    """
+
+    import warnings
+
+    small, _ = meshes
+    cells = small.gdf_vorPolys
+    xmin, ymin, xmax, ymax = cells.total_bounds
+    # A Voronoi cell is ragged, so the cuts are SOLVED on one cell (by bisection): the
+    # pit's top edge leaves it 60% covered, and the cut between the features splits that
+    # 30% + 30% -- each half under its 40% bare part, together over it.
+    target = cells.geometry.iloc[14]
+    right = target.bounds[2] + 0.5 * (xmax - target.bounds[2])
+
+    def solve(share, low, high, shape):
+        for _ in range(60):
+            mid = 0.5 * (low + high)
+            low, high = (mid, high) if target.intersection(shape(mid)).area < share * target.area else (low, mid)
+        return 0.5 * (low + high)
+
+    top = solve(0.6, target.bounds[1], target.bounds[3], lambda y: box(xmin, ymin, right, y))
+    middle = solve(0.3, target.bounds[0], target.bounds[2], lambda x: box(xmin, ymin, x, top))
+    pieces = [box(xmin, ymin, middle, top), box(middle, ymin, right, top)]
+
+    def array(geometries, name):
+        frame = gpd.GeoDataFrame(
+            {"name": [f"p{i}" for i in range(len(geometries))]},
+            geometry=geometries, crs=small.crs,
+        )
+        path = tmp_path / f"{name}.gpkg"
+        frame.to_file(path, layer="pit", driver="GPKG")
+        recipe = Polygons(path=path, value=0.1, layer="pit", default=1.0)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("error", message=".*set no cell.*")
+            return array_from_polygons(recipe, small, nlay=1, parameter="k")
+
+    split = array(pieces, "split")
+    dissolved = array([pieces[0].union(pieces[1])], "dissolved")
+    assert np.array_equal(split, dissolved)
+    assert (split == 0.1).any() and (split == 1.0).any()
+    # The fixture straddles at least one cell the way the docstring says, or this
+    # test certifies nothing: neither half alone outcovers that cell's bare part.
+    pit = pieces[0].union(pieces[1])
+    straddled = [
+        cell for cell in cells.geometry
+        if 0.5 < cell.intersection(pit).area / cell.area
+        and all(cell.intersection(one).area < cell.area - cell.intersection(pit).area
+                for one in pieces)
+    ]
+    assert straddled

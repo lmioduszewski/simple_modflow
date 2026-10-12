@@ -963,11 +963,13 @@ class Polygons(DataSourceSpec):
 
         Given, it fills every cell no polygon reaches AND the uncovered part of each
         cell competes as the default (ledger 551, the user's call):
-        under ``majority`` a polygon takes a cell only when it covers MORE of it than
-        the part no polygon covers (and than any other polygon), so a lone polygon --
-        a multiplier -- takes exactly the cells it covers more than half of; a tie
-        with the uncovered part (to 1e-9 of the cell's area) leaves the default,
-        while a tie between two polygons still goes to the earlier feature. Under
+        under ``majority`` the polygon winning among the polygons (largest share,
+        a tie to the earlier feature, as without ``default``) takes a cell only when
+        the polygons carrying ITS value together cover MORE of the cell than the part
+        no polygon covers, so a single-valued map -- a multiplier -- takes exactly the
+        cells it covers more than half of, however its features split it (ledger
+        552); a tie with the uncovered part (to 1e-9 of the cell's
+        area) leaves the default. Under
         ``mean`` the uncovered part is averaged in AT the default, by area.
         ``centroid`` is unchanged: a cell whose centre is in no polygon reads the
         default. A map that tiles the grid paints exactly what it painted without

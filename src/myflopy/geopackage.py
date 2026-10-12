@@ -752,8 +752,9 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
     NULL naming the feature (or paints the recipe's one ``value`` into every polygon),
     paints each cell by the recipe's own ``rule``, and fills what no polygon reached
     with ``default`` -- or refuses when there is none. With ``default`` the part of a
-    cell no polygon covers COMPETES as the default (``majority``: a polygon takes a cell
-    only when it covers more of it than that remainder; ``mean``: the remainder is
+    cell no polygon covers COMPETES as the default (``majority``: the winning polygon
+    takes a cell only when the polygons carrying its value cover more of it than that
+    remainder; ``mean``: the remainder is
     averaged in at the default), and a feature that reaches the grid but so paints no
     cell is warned by name (ledger 551). Products and per-layer lists
     reach it through :func:`resolve_array_recipe`.
@@ -900,8 +901,8 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
             beaten = (
                 "holds no cell's centre"
                 if recipe.rule == "centroid"
-                else "covers no more of any cell it touches than the part no polygon "
-                "covers there, or than another polygon"
+                else "loses every cell it touches -- to another polygon, or to the "
+                "part no polygon covers there, which its value does not outcover"
             )
             listing = ", ".join(labels[position] for position in silent[:10])
             if silent.size > 10:
@@ -909,7 +910,7 @@ def array_from_polygons(recipe: Polygons, grid, *, nlay: int, parameter: str) ->
             message = (
                 f"{silent.size} of {len(gdf)} features in {source} reach the grid but "
                 f"set no cell of {parameter} under rule={recipe.rule!r} with "
-                f"default={recipe.default!r}: each {beaten}: {listing}. "
+                f"default={float(recipe.default)!r}: each {beaten}: {listing}. "
                 "A finer mesh there, or rule='mean' to blend by area, keeps them."
             )
             logger.warning("%s", message)

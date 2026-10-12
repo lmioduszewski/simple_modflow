@@ -1523,8 +1523,9 @@ conductivities where the map holds 2. `rule="centroid"` matches `ZoneSpec.from_p
 **A cell no polygon reaches is REFUSED unless you pass `default=`.** An unfilled cell
 is a NaN, and MF6 answers a NaN budget while reporting normal termination. With
 `default=` the part of every cell no polygon covers also COMPETES as the default
-(ledger 551): under `majority` a polygon takes a cell only when it covers
-more of it than that uncovered part does (a tie leaves the default), under `mean` the
+(ledger 551): under `majority` the winning polygon takes a cell only when
+the polygons carrying its value cover more of it than that uncovered part does (a tie
+leaves the default; ledger 552), under `mean` the
 uncovered part is averaged in at the default. A map that tiles the grid is unaffected.
 
 For a BOUNDARY condition — a conductance, a stage, an invert — this is the wrong tool:

@@ -1087,12 +1087,13 @@ def polygon_cell_values(
 
     **``default`` makes the UNCOVERED part of a cell a competitor** (ledger
     551, the user's call). Under ``majority`` the part of a cell no polygon
-    covers votes for ``default``: a polygon takes the cell only when it covers MORE of
-    it than that remainder does (and than any other polygon), so a lone polygon takes
-    exactly the cells it covers more than half of. A tie with the remainder -- equal
-    to within ``_UNCOVERED_TIE`` of the cell's area -- leaves the default, because a polygon at
-    exactly half holds no majority; a tie between two polygons still goes to the lower
-    row. Under ``mean`` the remainder is averaged in at ``default``, by area. Without
+    covers votes for ``default``: the polygon winning among the polygons (largest piece,
+    ties to the lower row, exactly as without ``default``) takes the cell only when the
+    polygons carrying ITS VALUE together cover MORE of the cell than that remainder --
+    so a single-valued map (``value=``, a multiplier) takes exactly the cells it covers
+    more than half of however it was split into features (ledger 552). A
+    tie with the remainder -- equal to within ``_UNCOVERED_TIE`` of the cell's area --
+    leaves the default, because a value at exactly half holds no majority. Under ``mean`` the remainder is averaged in at ``default``, by area. Without
     ``default`` the remainder is not a competitor (a partly covered cell takes the
     polygon(s) covering it) and a cell no polygon reaches is ``NaN``: what an unreached
     cell MEANS is then the caller's, and filling it here would hide it. ``centroid``
@@ -1210,30 +1211,44 @@ def polygon_cell_values(
     leading[0] = True
     leading[1:] = ordered[1:] != ordered[:-1]
     winners = order[leading]
-    if default is not None:
-        # The remainder is one more competitor and wins a tie: a polygon must cover
-        # MORE of the cell than the part nothing covers (ledger 551).
-        won = cell_index[winners]
-        margin = area[winners] - uncovered[won]
-        winners = winners[margin > _UNCOVERED_TIE * cell_area[won]]
+    if default is None:
+        painted[cell_index[winners]] = numbers[zone_index[winners]]
+        reached[cell_index[winners]] = True
+        painting[np.unique(zone_index[winners])] = True
+        return answer()
+
+    # The remainder is one more competitor and wins a tie: the winning VALUE must cover
+    # MORE of the cell than the part nothing covers (ledger 551). Measured
+    # by value, over every polygon carrying it, not by the one winning feature: a pit
+    # digitized as two touching features covering 30% + 30% of a cell covers 60% of it,
+    # as the dissolved pit does, and must take the cell the same way (ledger
+    # 552). Which feature wins among the polygons is unchanged.
+    won = cell_index[winners]
+    winning_value = np.full(len(cells), np.nan, dtype=float)
+    winning_value[won] = numbers[zone_index[winners]]
+    carries = numbers[zone_index] == winning_value[cell_index]
+    value_cover = _union_area(pieces, cell_index, area, len(cells), keep=carries)
+    margin = value_cover[won] - uncovered[won]
+    taken = margin > _UNCOVERED_TIE * cell_area[won]
+    winners = winners[taken]
     painted[cell_index[winners]] = numbers[zone_index[winners]]
     reached[cell_index[winners]] = True
-    painting[np.unique(zone_index[winners])] = True
+    painting[np.unique(zone_index[carries & reached[cell_index]])] = True
     return answer()
 
 
-def _uncovered_area(pieces, cell_index, area, cell_area) -> np.ndarray:
-    """Per cell, the area no polygon covers -- zero where that is rounding.
+def _union_area(pieces, cell_index, area, ncell, *, keep=None) -> np.ndarray:
+    """Per cell, the area its pieces cover -- their UNION, so an overlap counts once.
 
-    Measured against the UNION of a cell's pieces, so two overlapping polygons do not
-    cover a cell twice; a cell holding one piece (most of them) skips the union. A
-    remainder below ``_UNCOVERED_TIE`` of the cell's area is overlay rounding on a
-    cell its polygons tile, and is returned as exactly zero.
+    ``keep`` (a boolean per piece) restricts it to some of the pieces; a cell holding
+    one kept piece (most of them) skips the union.
     """
 
-    covered = np.bincount(cell_index, weights=area, minlength=cell_area.size)
-    counts = np.bincount(cell_index, minlength=cell_area.size)
-    several = counts[cell_index] > 1
+    keep = np.ones(len(cell_index), dtype=bool) if keep is None else np.asarray(keep)
+    owners_all = cell_index[keep]
+    covered = np.bincount(owners_all, weights=area[keep], minlength=ncell)
+    counts = np.bincount(owners_all, minlength=ncell)
+    several = keep & (counts[cell_index] > 1)
     if several.any():
         shapes = pieces.geometry.to_numpy()[several]
         owners = cell_index[several]
@@ -1242,11 +1257,24 @@ def _uncovered_area(pieces, cell_index, area, cell_area) -> np.ndarray:
         cuts = np.flatnonzero(np.diff(owners)) + 1
         for group, shared in zip(np.split(shapes, cuts), np.split(owners, cuts), strict=True):
             covered[shared[0]] = shp.union_all(group).area
+    return covered
+
+
+def _uncovered_area(pieces, cell_index, area, cell_area) -> np.ndarray:
+    """Per cell, the area no polygon covers -- zero where that is rounding.
+
+    Measured against the UNION of a cell's pieces (:func:`_union_area`), so two
+    overlapping polygons do not cover a cell twice. A remainder below
+    ``_UNCOVERED_TIE`` of the cell's area is overlay rounding on a cell its polygons
+    tile, and is returned as exactly zero.
+    """
+
+    covered = _union_area(pieces, cell_index, area, cell_area.size)
     remainder = np.clip(cell_area - covered, 0.0, None)
     remainder[remainder <= _UNCOVERED_TIE * cell_area] = 0.0
     # A cell no polygon touches is entirely uncovered; it never reaches the vote, but
     # say so rather than leave a zero that reads as "covered".
-    untouched = counts == 0
+    untouched = np.bincount(cell_index, minlength=cell_area.size) == 0
     remainder[untouched] = cell_area[untouched]
     return remainder
 

@@ -1273,10 +1273,11 @@ area-integral ran 0–60% from `majority`'s across 19 contact positions. `centro
 matches `ZoneSpec.from_polygons`; it differs from `majority` on at most one cell in 64.
 
 **With `default=` the uncovered part of a cell is a competitor** (ledger
-551). Under `majority` it votes for the default: a polygon takes a cell
-only when it covers more of it than the part no polygon covers (and than any other
-polygon) -- a lone polygon exactly the cells it covers more than half of -- and a tie
-with that part (to 1e-9 of the cell) leaves the default. Under `mean` it is averaged in
+551). Under `majority` it votes for the default: the polygon winning among
+the polygons takes a cell only when the polygons carrying its VALUE together cover more
+of it than the part no polygon covers -- a single-valued map (a multiplier) exactly the
+cells it covers more than half of, however it is split into features (ledger
+552) -- and a tie with that part (to 1e-9 of the cell) leaves the default. Under `mean` it is averaged in
 at the default, by area. `centroid` is unchanged. A map tiling the grid paints what it
 painted without `default=`; a feature on the grid that so takes no cell is warned by
 name. Without `default=` nothing competes: a partly covered cell takes its polygon(s).

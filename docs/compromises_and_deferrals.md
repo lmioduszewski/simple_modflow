@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 551 entries (556 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 552 entries (557 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 552 | The uncovered part of a cell competes against a VALUE's cover, not one feature's | 2026-10-12 |
 | 551 | A polygon given `default=` competes with it for the part of each cell it does not cover | 2026-10-12 |
 | 550 | A DRN/RIV zone given as a `cells` list with no `layer` reads EVERY layer of those columns, like a drawn zone | 2026-10-12 |
 | 549 | `periods=` groups a target's per-period files into parameter sets; `"month"` by each transient period's mid... | 2026-10-12 |
@@ -20899,7 +20900,7 @@ same day, which is the useful part of the result.
       ~~**Kept, not changed (`needs_decision`):** under `rule="majority"` the uncovered
       rest of a cell is not a competitor, so a multiplier polygon multiplies EVERY cell
       it overlaps at all -- `default=` fills only cells no polygon reaches (299's
-      contract).~~ Measured, a pit covering 40% x 50% of a square footprint: 11 cells
+      contract).~~ Measured under that contract, a pit covering 40% x 50% of a square footprint: 11 cells
       multiplied on a 6x6 mesh where 6 are more than half inside (1.87x the pit's
       area), 23 vs 15 on 10x10, 76 vs 64 on 20x20. ~~`rule="centroid"` multiplies the
       cells whose centre is inside (`docs/reproducers/polygon_multiplier_reach.py`).
@@ -21105,8 +21106,10 @@ same day, which is the useful part of the result.
 
 551. **A polygon given `default=` competes with it for the part of each cell it does not cover (2026-10-12).**
       The user's answer A. Under `mf.Polygons` `rule="majority"` the uncovered part of a
-      cell votes for `default`: a polygon takes the cell only when it covers MORE of it
-      than that part (and than any other polygon), so `Polygons("pit.gpkg", value=0.1,
+      cell votes for `default`: ~~a polygon takes the cell only when it covers MORE of it
+      than that part (and than any other polygon)~~ (**CHANGED by ledger
+      552**: the winning polygon takes it only when the polygons carrying
+      its VALUE cover more of it than that part), so `Polygons("pit.gpkg", value=0.1,
       default=1.0)` multiplies exactly the cells it covers more than half of; under
       `rule="mean"` the part is averaged in at the default, by area; `centroid` is
       unchanged. ONE rule, `grid/geometry.polygon_cell_values(default=)`, so the column
@@ -21133,3 +21136,19 @@ same day, which is the useful part of the result.
       package digests as before and `runs.drift()` reads it `unchanged` while a rebuild
       writes the new array. A run's frozen snapshot keeps the arrays it built, so a
       reopened run reproduces its old self; a re-prepared one takes the new rule.
+
+552. **The uncovered part of a cell competes against a VALUE's cover, not one feature's (2026-10-12).**
+      Review of ledger 551. As landed, the remainder was compared with the
+      one winning FEATURE's piece, so the answer depended on how a map was digitized:
+      a pit drawn as two touching `value=0.1` features covering a cell 30% + 30% (40%
+      bare) gave it the default, while the dissolved pit (60%) took it -- measured on
+      two unit squares, `[1.0, 0.1]` against `[0.1, 0.1]`. **Chosen:** which polygon
+      wins AMONG the polygons is unchanged (largest piece, ties to the lower row --
+      ledger 299's per-feature vote, so no tiling map moves); that winner then takes
+      the cell only when the UNION of the pieces carrying its value outcovers the bare
+      part. A single-valued map (every multiplier) is therefore judged by its union,
+      however it is split. **Not done:** making the whole vote by value -- two features
+      of one unit at 30% + 30% beside another unit at 40% still go to the 40% unit with
+      or without `default=`, as they always have; changing that moves tiling maps and
+      ledger 299's sweep. A piece whose value EQUALS `default` does not add to the bare
+      part's vote either.
