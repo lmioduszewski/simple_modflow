@@ -547,7 +547,12 @@ class DrnFlowTargets:
         row naming no zone gets no cells and no simulated flow, and the PEST
         build refuses it. A blank value (missing, or empty text) is unmeasured; any other
         entry that is not a finite number raises ``ValueError`` naming the target and
-        its column (ledger 340). Default ``None`` makes a
+        its column (ledger 340). A LONG or one-series table may carry a
+        ``weight`` column (matched ignoring case): each READING's own PEST
+        weight, which beats the zone's (the locations' ``weight`` column),
+        which beats 1.0 (ledger 504); a blank means none of its own, a
+        weight that is not a finite number from 0 raises, and a WIDE table
+        with a ``weight`` column raises, naming the LONG form. Default ``None`` makes a
         capture template: observed, its rows register at weight 0; forecast,
         every row is a forecast.
     name_column : str, optional

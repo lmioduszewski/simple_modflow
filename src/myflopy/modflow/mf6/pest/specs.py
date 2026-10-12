@@ -247,11 +247,12 @@ class LakeStageObservationSpec:
     value_column : str, optional
         Ignored (see above). Default ``"stage"``.
     weight : float or None, optional
-        Uniform observation weight. When not ``None`` every target row holding a
-        value gets it (cast with ``float``). Default ``None``: a
-        ``LakeStageTargets`` carries none, so those rows get weight ``1.0``.
-        Every row no target measures gets weight 0 either way (ledger 340), and a
-        forecast's weights are zero regardless.
+        The set's observation weight. When not ``None`` every target row holding
+        a value and no weight of its own gets it (cast with ``float``): a
+        reading's weight in the targets' values table wins (ledger
+        504; this used to overwrite it). Default ``None``: those rows get
+        weight ``1.0``. Every row no target measures gets weight 0 either way
+        (ledger 340), and a forecast's weights are zero regardless.
     prefix : str, optional
         pyEMU observation-name prefix, default ``"lak_stage"``; it is the set's
         PEST observation group (ledger 358). It also names the files the build
@@ -281,8 +282,8 @@ class SfrStageObservationSpec:
 
     Pairs a :class:`~myflopy.modflow.mf6.observations.SfrStageTargets` with the
     pyEMU observation-name ``prefix``. ``cal.observe(...)`` accepts a bare
-    ``SfrStageTargets`` and wraps it for you; build this spec explicitly only to
-    pin a non-default prefix. The native build registers the observations and the
+    ``SfrStageTargets`` and wraps it for you; build this spec explicitly to pin a
+    non-default prefix or a set ``weight``. The native build registers the observations and the
     forward run regenerates the simulated SFR-stage CSV.
 
     Parameters
@@ -295,10 +296,20 @@ class SfrStageObservationSpec:
         the files the build writes (``<prefix>_simulated_sfr_stage.csv``,
         ``<prefix>_target_values.csv``, ``<prefix>_target_locations.csv``), so
         two sets need two prefixes.
+    weight : float or None, optional
+        The set's observation weight (ledger 504, as a lake set's): every
+        target row holding a value and no weight of its own in the targets'
+        values table gets it (cast with ``float``). Default ``None``: those rows
+        get weight ``1.0``. Rows no target measures get weight 0 either way, and
+        a forecast's weights are zero regardless. ``cal.observe(targets)`` builds
+        the spec without one; build this spec to set it. PESTPP-IES draws a
+        reading's noise with standard deviation 1/weight, so a flow in
+        ft3/d at weight 1 carries 1 ft3/d of noise.
     """
 
     targets: SfrStageTargets
     prefix: str = "sfr_stage"
+    weight: float | None = None
 
 
 @dataclass
@@ -307,8 +318,8 @@ class SfrFlowObservationSpec:
 
     Pairs a :class:`~myflopy.modflow.mf6.observations.SfrFlowTargets` with the
     pyEMU observation-name ``prefix``. ``cal.observe(...)`` / ``cal.forecast(...)``
-    accept a bare ``SfrFlowTargets`` and wrap it; build this spec explicitly only
-    to pin a non-default prefix. Typical for gaged-discharge calibration targets.
+    accept a bare ``SfrFlowTargets`` and wrap it; build this spec explicitly to
+    pin a non-default prefix or a set ``weight``. Typical for gaged-discharge calibration targets.
 
     Parameters
     ----------
@@ -320,10 +331,20 @@ class SfrFlowObservationSpec:
         the files the build writes (``<prefix>_simulated_sfr_flow.csv``,
         ``<prefix>_target_values.csv``, ``<prefix>_target_locations.csv``), so
         two sets need two prefixes.
+    weight : float or None, optional
+        The set's observation weight (ledger 504, as a lake set's): every
+        target row holding a value and no weight of its own in the targets'
+        values table gets it (cast with ``float``). Default ``None``: those rows
+        get weight ``1.0``. Rows no target measures get weight 0 either way, and
+        a forecast's weights are zero regardless. ``cal.observe(targets)`` builds
+        the spec without one; build this spec to set it. PESTPP-IES draws a
+        reading's noise with standard deviation 1/weight, so a flow in
+        ft3/d at weight 1 carries 1 ft3/d of noise.
     """
 
     targets: SfrFlowTargets
     prefix: str = "sfr_flow"
+    weight: float | None = None
 
 
 @dataclass

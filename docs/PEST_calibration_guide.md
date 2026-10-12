@@ -178,6 +178,13 @@ Observations are first-class myflopy objects; you hand them to the project:
 cal.observe(head_targets)          # history-matching targets (measured values + weights)
 ```
 
+**Where a weight comes from** (ledger 504): a reading's OWN weight -- a `weight`
+column in a LONG values table (`time`, `name`, value, `weight`) -- beats its location's
+(the locations' `weight` column, for head, concentration and DRN-zone targets), which
+beats the set's (`LakeStageObservationSpec(weight=)`, `SfrStageObservationSpec(weight=)`,
+`SfrFlowObservationSpec(weight=)`), which beats 1.0. A blank weight means "none of its
+own". A WIDE values table cannot carry one and is refused naming the LONG form.
+
 **What the control file holds is exactly your targets** (ledger 340). Each target is
 matched to the simulated row whose index equals its `time` read as a zero-based stress
 period — `1.0` is period 1 — and `build()` REFUSES, naming the target, a key with a

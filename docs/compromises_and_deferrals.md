@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 503 entries (508 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 504 entries (509 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 504 | A reading's own weight is honoured: a `weight` column in a LONG values table beats the location's weight, w... | 2026-10-12 |
 | 503 | A lake or reach target's id is checked against its package, and a boundname is accepted | 2026-10-12 |
 | 502 | A head or concentration target name given twice in ONE layer is refused, naming it | 2026-10-12 |
 | 501 | A head or concentration target's PRESENT layer column must give every row a layer number; a blank, a non-nu... | 2026-10-12 |
@@ -20158,3 +20159,23 @@ same day, which is the useful part of the result.
       A model with several packages of the type and no `package=` is not checked here,
       because every route refuses it by name (ledger 352). A package without
       `packagedata` (a test double) is not checked either.
+
+504. **A reading's own weight is honoured: a `weight` column in a LONG values table beats the location's weight, which beats the set's, which beats 1.0; SFR sets take a set weight (2026-10-12).**
+      The LONG branch of the values readers kept only `time`/`name`/value, so a
+      per-reading `weight` column was dropped without a word. A suspect reading could not
+      be down-weighted except by deleting it. SFR stage and flow sets had no weight at
+      all, and a lake set's `weight` OVERWROTE every row. Now one reader,
+      `_shared._long_values`, serves every family. It keeps `weight` (case-insensitive)
+      from a LONG or one-series table: blank means "none of its own", and anything but
+      a finite number from 0 raises naming the reading. The build applies the order
+      row > location (heads/conc/DRN zone) > set (lake, SFR) > 1.0, and `get()` shows
+      the combined weight. **Behaviour changes for existing sets:** a LONG table that
+      carried a `weight` column now has it applied. `HeadTargets.from_records` reads a
+      record's `weight` as that reading's; it was the name's FIRST record's, given to
+      every reading. A lake spec's `weight` no longer overrides a reading's own.
+      **Judgment calls:** a WIDE table with a `weight` column is REFUSED. It would
+      otherwise be read as a target named `weight`, and a wide table has no row per
+      reading to weigh. Other extra columns of a LONG table are still dropped, not
+      refused, because refusing them would break tables that carry notes or units.
+      **Not done:** a standard-deviation column in place of a weight, and a set
+      `weight` on `DrnFlowObservationSpec`, whose zones already carry one.

@@ -1292,6 +1292,134 @@ def _refuse_names_repeated_in_a_layer(frame: pd.DataFrame) -> None:
     )
 
 
+#: The column of a LONG values table holding one reading's own PEST weight (ledger
+#: 504), matched ignoring case. It beats the location's weight, which beats
+#: the set's, which beats 1.0.
+ROW_WEIGHT_COLUMN = "weight"
+
+
+def _long_values(
+    frame: pd.DataFrame,
+    *,
+    time_column: str,
+    value_column: str,
+    output_column: str,
+    owner: str,
+) -> pd.DataFrame:
+    """A values table in any of its three shapes, as one long table of ``time``, ``name``, values.
+
+    The ONE reading of a target set's values table, for every family. LONG: a
+    ``name`` and a ``value_column`` column (headers matched ignoring case), one row
+    per target per time; ONE SERIES: ``time_column`` and ``value_column`` only;
+    WIDE: every other column one target. A LONG or one-series table may carry a
+    ``weight`` column, each reading's own PEST weight (ledger 504): it was
+    dropped without a word, so one suspect reading could not be down-weighted. A
+    WIDE table cannot -- its ``weight`` column would be read as a target named
+    ``weight`` -- and is refused naming the LONG form.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        The table as read, holding ``time_column``.
+    time_column : str
+        Its time-key column, renamed ``time``.
+    value_column : str
+        Its value column in the LONG and one-series shapes.
+    output_column : str
+        What the value column is called in the result (``"head_target"``, ...).
+    owner : str
+        The target class, for the refusals.
+
+    Returns
+    -------
+    pandas.DataFrame
+        ``time``, ``name`` (text; absent for one series), ``output_column`` as
+        float (``NaN`` = blank) and, when the table gave one, ``weight`` as float
+        (``NaN`` = this reading has none).
+
+    Raises
+    ------
+    ValueError
+        As :func:`_coerce_target_values`; for a weight that is neither blank nor a
+        finite number from 0; or for a ``weight`` column in a WIDE table.
+    """
+
+    lower_columns = {str(column).strip().lower(): column for column in frame.columns}
+    name_column = lower_columns.get("name")
+    explicit_value_column = lower_columns.get(value_column.strip().lower())
+    weight_column = lower_columns.get(ROW_WEIGHT_COLUMN)
+    if weight_column == time_column or weight_column == explicit_value_column:
+        weight_column = None
+    series_columns = {time_column, explicit_value_column} | ({weight_column} if weight_column else set())
+
+    if name_column is not None and explicit_value_column is not None:
+        long = frame.rename(
+            columns={time_column: "time", name_column: "name", explicit_value_column: output_column}
+        ).loc[:, ["time", "name", output_column]]
+        source = explicit_value_column
+    elif (
+        name_column is None
+        and explicit_value_column is not None
+        and set(frame.columns) == series_columns
+    ):
+        long = frame.rename(columns={time_column: "time", explicit_value_column: output_column}).loc[
+            :, ["time", output_column]
+        ]
+        source = explicit_value_column
+    else:
+        if weight_column is not None:
+            raise ValueError(
+                f"{owner} values: a WIDE table (one column per target) has no room for a "
+                f"per-reading weight, so its {weight_column!r} column would be read as a "
+                "target of that name. Give per-reading weights in the LONG form -- columns "
+                f"{time_column!r}, 'name', {value_column!r} and 'weight', one row per reading -- "
+                "or a weight per location (the locations' weight column)."
+            )
+        value_columns = [column for column in frame.columns if column != time_column]
+        long = frame.melt(
+            id_vars=[time_column],
+            value_vars=value_columns,
+            var_name="name",
+            value_name=output_column,
+        ).rename(columns={time_column: "time"})
+        source = long["name"]
+    if "name" in long.columns:
+        long["name"] = long["name"].astype(str)
+    long[output_column] = _coerce_target_values(long, output_column, owner=owner, source=source)
+    if weight_column is not None:
+        long["weight"] = _coerce_row_weights(frame[weight_column], long, owner=owner, column=weight_column)
+    return long
+
+
+def _coerce_row_weights(raw: pd.Series, long: pd.DataFrame, *, owner: str, column) -> pd.Series:
+    """Each reading's PEST weight: a blank is none, anything else a finite number from 0.
+
+    A negative weight has no meaning to PEST, and an infinite one makes phi
+    infinite; both are refused naming the reading, as a value that is not a
+    number is (:func:`_coerce_target_values`).
+    """
+
+    blank = raw.map(_is_blank).astype(bool)
+    numbers = pd.to_numeric(raw.where(~blank), errors="coerce").astype(float)
+    failed = (~blank & ~np.isfinite(numbers.to_numpy())) | (numbers.to_numpy() < 0)
+    if failed.any():
+        offenders = [
+            (
+                f"{_shown(long.at[index, 'name'])} at time {_shown(long.at[index, 'time'])}"
+                if "name" in long.columns else f"time {_shown(long.at[index, 'time'])}"
+            )
+            + f" weighs {_shown(raw.at[index])}"
+            for index in raw.index[failed][:5]
+        ]
+        raise ValueError(
+            f"{owner} values: a reading's weight (column {column!r}) must be blank -- the "
+            "location's weight then applies -- or a finite number from 0, and "
+            f"{int(failed.sum())} are not: {_listing(offenders)}. PESTPP-IES draws a "
+            "reading's noise with standard deviation 1/weight."
+        )
+    return numbers
+
+
 def _normalize_values_frame(
     values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple,
     *,
@@ -1335,38 +1463,12 @@ def _normalize_values_frame(
             f"Head target values must include the time/per column {time_column!r}."
         )
 
-    lower_columns = {str(column).strip().lower(): column for column in frame.columns}
-    name_column = lower_columns.get("name")
-    explicit_value_column = lower_columns.get(value_column.strip().lower())
-
-    if name_column is not None and explicit_value_column is not None:
-        long = frame.rename(
-            columns={
-                time_column: "time",
-                name_column: "name",
-                explicit_value_column: "head_target",
-            }
-        ).loc[:, ["time", "name", "head_target"]]
-        source = explicit_value_column
-    elif name_column is None and explicit_value_column is not None and len(frame.columns) == 2:
-        long = frame.rename(columns={time_column: "time", explicit_value_column: "head_target"}).loc[
-            :, ["time", "head_target"]
-        ]
-        source = explicit_value_column
-    else:
-        value_columns = [column for column in frame.columns if column != time_column]
-        long = frame.melt(
-            id_vars=[time_column],
-            value_vars=value_columns,
-            var_name="name",
-            value_name="head_target",
-        ).rename(columns={time_column: "time"})
-        source = long["name"]
-
+    long = _long_values(
+        frame, time_column=time_column, value_column=value_column,
+        output_column="head_target", owner=owner,
+    )
     if "name" in long.columns:
-        long["name"] = long["name"].astype(str)
         long["name_key"] = _normalize_identifier_series(long["name"])
-    long["head_target"] = _coerce_target_values(long, "head_target", owner=owner, source=source)
     return _copy_frame(long)
 
 
@@ -1577,36 +1679,10 @@ def _normalize_lake_stage_values(
 
     if time_column not in frame.columns:
         raise ValueError(f"Lake-stage target values must include {time_column!r}.")
-    lower_columns = {str(column).strip().lower(): column for column in frame.columns}
-    name_column = lower_columns.get("name")
-    explicit_value_column = lower_columns.get(value_column.strip().lower())
-    if name_column is not None and explicit_value_column is not None:
-        long = frame.rename(
-            columns={
-                time_column: "time",
-                name_column: "name",
-                explicit_value_column: "stage",
-            }
-        ).loc[:, ["time", "name", "stage"]]
-        source = explicit_value_column
-    elif name_column is None and explicit_value_column is not None and len(frame.columns) == 2:
-        long = frame.rename(columns={time_column: "time", explicit_value_column: "stage"}).loc[
-            :, ["time", "stage"]
-        ]
-        source = explicit_value_column
-    else:
-        value_columns = [column for column in frame.columns if column != time_column]
-        long = frame.melt(
-            id_vars=[time_column],
-            value_vars=value_columns,
-            var_name="name",
-            value_name="stage",
-        ).rename(columns={time_column: "time"})
-        source = long["name"]
-    if "name" in long.columns:
-        long["name"] = long["name"].astype(str)
-    long["stage"] = _coerce_target_values(long, "stage", owner=owner, source=source)
-    return _copy_frame(long)
+    return _copy_frame(_long_values(
+        frame, time_column=time_column, value_column=value_column,
+        output_column="stage", owner=owner,
+    ))
 
 
 def _feature_id(value, *, name, owner: str, feature: str):
@@ -1862,37 +1938,10 @@ def _normalize_named_series_values(
     if time_column not in frame.columns:
         raise ValueError(f"Target values must include {time_column!r}.")
 
-    lower_columns = {str(column).strip().lower(): column for column in frame.columns}
-    name_column = lower_columns.get("name")
-    explicit_value_column = lower_columns.get(value_column.strip().lower())
-
-    if name_column is not None and explicit_value_column is not None:
-        long = frame.rename(
-            columns={
-                time_column: "time",
-                name_column: "name",
-                explicit_value_column: output_column,
-            }
-        ).loc[:, ["time", "name", output_column]]
-        source = explicit_value_column
-    elif name_column is None and explicit_value_column is not None and len(frame.columns) == 2:
-        long = frame.rename(columns={time_column: "time", explicit_value_column: output_column}).loc[
-            :, ["time", output_column]
-        ]
-        source = explicit_value_column
-    else:
-        value_columns = [column for column in frame.columns if column != time_column]
-        long = frame.melt(
-            id_vars=[time_column],
-            value_vars=value_columns,
-            var_name="name",
-            value_name=output_column,
-        ).rename(columns={time_column: "time"})
-        source = long["name"]
-    if "name" in long.columns:
-        long["name"] = long["name"].astype(str)
-    long[output_column] = _coerce_target_values(long, output_column, owner=owner, source=source)
-    return _copy_frame(long)
+    return _copy_frame(_long_values(
+        frame, time_column=time_column, value_column=value_column,
+        output_column=output_column, owner=owner,
+    ))
 
 
 def _numeric_periods(frame: pd.DataFrame, *, caller: str) -> pd.Series:

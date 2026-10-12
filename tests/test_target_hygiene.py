@@ -23,6 +23,7 @@ import pandas as pd
 import pytest
 
 import myflopy as mf
+from myflopy.modflow.mf6.pest.specs import LakeStageObservationSpec, SfrFlowObservationSpec
 from tests.test_pest_handed_targets import (
     NPER,
     NSTP,
@@ -32,6 +33,7 @@ from tests.test_pest_handed_targets import (
     _disv,
     _grid_and_edges,
     _head_targets,
+    _observation_at,
     _run,
     run_toy,
 )
@@ -287,3 +289,61 @@ def test_a_lake_or_reach_given_no_value_keeps_its_column_in_every_realization(to
         assert (template / table).read_text().splitlines()[0] == base[table]
         pyemu.pst_utils.InstructionFile(str(template / f"{table}.ins")).read_output_file(
             str(template / table))
+
+
+# -- ledger 504: a reading's own weight ---------------------------------
+
+
+def test_a_readings_weight_beats_its_locations_which_beats_the_sets_which_beats_one(toy, tmp_path):
+    """A `weight` column in a LONG values table was dropped without a word; SFR sets had
+    no weight at all; a lake set's weight overwrote every row."""
+
+    heads = mf.HeadTargets(
+        locations=pd.DataFrame({"name": ["A", "B"], "cell": [22, 5], "layer": 0, "weight": [2.0, None]}),
+        values=pd.DataFrame({"time": [0, 1, 0, 1], "name": ["A", "A", "B", "B"],
+                             "head": [95.0, 96.0, 97.0, 98.0], "weight": [0.1, None, 5.0, None]}))
+    assert heads.get().set_index(["name", "time"])["weight"].to_dict() == {
+        ("A", 0): 0.1, ("A", 1): 2.0, ("B", 0): 5.0, ("B", 1): pytest.approx(float("nan"), nan_ok=True)}
+    pond = mf.LakeStageTargets(locations={"pond": 0}, values=pd.DataFrame(
+        {"time": [0, 1], "name": ["pond", "pond"], "stage": [99.0, 98.0], "WEIGHT": [0.5, ""]}))
+    flow = mf.SfrFlowTargets(locations={"gage": 3}, values=pd.DataFrame(
+        {"time": [0, 1], "name": ["gage", "gage"], "flow": [-40.0, -41.0], "weight": [0.01, None]}))
+    stage = mf.SfrStageTargets(locations={"g": 1}, values=pd.DataFrame(
+        {"time": [0, 1], "stage": [95.0, 95.5], "weight": [3.0, None]}))
+    seep = mf.DrnFlowTargets(
+        locations=pd.DataFrame({"name": ["zone"], "cells": [[20, 21, 27]], "weight": [0.2]}),
+        values=pd.DataFrame({"time": [0, 1], "name": ["zone", "zone"], "flow": [-3.0, -4.0],
+                             "weight": [7.0, None]}))
+    cal, pst = _build(toy, tmp_path / "pest", observe=(
+        heads, LakeStageObservationSpec(targets=pond, weight=4.0),
+        SfrFlowObservationSpec(targets=flow, weight=0.03), stage, seep))
+    template = cal.template_workspace
+    obs = pst.observation_data
+    for table, period, column, weight in (
+        ("hds_simulated_heads.csv", 0, "A", 0.1),   # the reading's
+        ("hds_simulated_heads.csv", 1, "A", 2.0),   # the location's
+        ("hds_simulated_heads.csv", 0, "B", 5.0),
+        ("hds_simulated_heads.csv", 1, "B", 1.0),   # neither
+        ("lak_stage_simulated_lake_stage.csv", 0, "pond", 0.5),
+        ("lak_stage_simulated_lake_stage.csv", 1, "pond", 4.0),   # the set's
+        ("sfr_flow_simulated_sfr_flow.csv", 0, "gage", 0.01),
+        ("sfr_flow_simulated_sfr_flow.csv", 1, "gage", 0.03),
+        ("sfr_stage_simulated_sfr_stage.csv", 0, "g", 3.0),
+        ("sfr_stage_simulated_sfr_stage.csv", 1, "g", 1.0),
+        ("drn_flow_simulated_drn_flow.csv", 0, "zone", 7.0),
+        ("drn_flow_simulated_drn_flow.csv", 1, "zone", 0.2),   # the zone's
+    ):
+        name = _observation_at(template, table, period, column)
+        assert obs.loc[name, "weight"] == pytest.approx(weight), (table, period, column)
+
+
+def test_a_weight_that_is_not_a_number_from_0_or_sits_in_a_wide_table_is_refused():
+    long = pd.DataFrame({"time": [0, 1], "name": ["A", "A"], "head": [1.0, 2.0], "weight": [-1, "x"]})
+    locations = pd.DataFrame({"name": ["A"], "cell": [1]})
+    with pytest.raises(ValueError, match=r"a reading's weight \(column 'weight'\) must be blank.*"
+                                         r"2 are not: 'A' at time 0 weighs -1; 'A' at time 1 weighs 'x'"):
+        mf.HeadTargets(locations=locations, values=long)
+    with pytest.raises(ValueError, match=r"a WIDE table \(one column per target\) has no room for a "
+                                         r"per-reading weight"):
+        mf.LakeStageTargets(locations={"pond": 0},
+                            values=pd.DataFrame({"time": [0], "pond": [99.0], "weight": [2.0]}))

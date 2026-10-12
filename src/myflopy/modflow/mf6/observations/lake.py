@@ -213,6 +213,14 @@ class LakeStageTargets:
         it. A blank value (missing, or empty text) is unmeasured; any other
         entry that is not a finite number raises ``ValueError`` naming the target and
         its column (ledger 340).
+        A LONG or one-series table may carry a ``weight`` column (matched
+        ignoring case): each READING's own PEST weight (ledger 504). It
+        beats the set's weight (a ``LakeStageObservationSpec``'s ``weight``), which beats 1.0; a blank means "none of its own", and
+        anything but a blank or a finite number from 0 raises ``ValueError``.
+        PESTPP-IES draws a reading's noise with standard deviation 1/weight. A
+        WIDE table cannot carry one (its ``weight`` column would be a target of
+        that name) and raises, naming the LONG form. Any other extra column of
+        a LONG table is not read.
         Default ``None`` makes a template that only captures simulated series:
         observed, its rows register at weight 0; forecast, every row is a
         forecast.

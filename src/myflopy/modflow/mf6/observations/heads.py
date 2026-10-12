@@ -123,6 +123,14 @@ class HeadTargets:
         weight 0 -- and any other entry that is not a finite number raises
         ``ValueError`` naming the target and its column (ledger 340; it used to
         become ``NaN`` silently).
+        A LONG or one-series table may carry a ``weight`` column (matched
+        ignoring case): each READING's own PEST weight (ledger 504). It
+        beats the location's weight (``weight_column``), which beats 1.0; a blank means "none of its own", and
+        anything but a blank or a finite number from 0 raises ``ValueError``.
+        PESTPP-IES draws a reading's noise with standard deviation 1/weight. A
+        WIDE table cannot carry one (its ``weight`` column would be a target of
+        that name) and raises, naming the LONG form. Any other extra column of
+        a LONG table is not read.
     name_column : str, optional
         Column of ``locations`` holding each target's name. Default ``"name"``.
         Required: ``ValueError`` when absent. For a ``Series`` or a
@@ -167,8 +175,9 @@ class HeadTargets:
         Column of ``locations`` holding a per-location observation weight,
         carried as ``weight``. When ``cal.observe(...)`` builds the PEST control
         file, a weight that is not ``NaN`` becomes the weight of each
-        observation at that location that has a target value, and ``NaN``
-        gives those observations weight 1; a period with no target value
+        observation at that location that has a target value and no weight of
+        its own in ``values`` (a reading's weight wins, ledger 504), and
+        ``NaN`` gives those observations weight 1; a period with no target value
         carries weight 0 (ledger 340). Default ``"weight"``; ``None`` or an
         absent column leaves it ``NaN``.
     time_column : str, optional
@@ -399,8 +408,11 @@ class HeadTargets:
             it. Required columns, matched exactly: ``name``, ``time_column``,
             ``value_column``, and a location given as ``cell`` or ``node`` (the
             zero-based cell index within a layer) or as a point ``geometry``.
-            Optional: ``layer`` (zero-based, default 0), ``group``, ``weight``.
-            A target's location is taken from its FIRST row. A ``geometry``
+            Optional: ``layer`` (zero-based, default 0), ``group``, and
+            ``weight`` -- each RECORD's own PEST weight, a blank meaning 1.0
+            (ledger 504; it was the name's first record's, given to
+            every reading). A target's location and group are taken from its
+            FIRST row. A ``geometry``
             column of plain shapely points (record dicts, a ``DataFrame``)
             carries no CRS, so its coordinates are read in the grid's own
             frame; a ``GeoDataFrame``'s CRS is kept, and reprojected to the
@@ -434,13 +446,17 @@ class HeadTargets:
             raise ValueError("from_records(...) requires 'cell', 'node', or 'geometry' columns.")
         locations_columns = [
             column
-            for column in ["name", "layer", "cell", "node", "group", "weight", "geometry", "x", "y"]
+            for column in ["name", "layer", "cell", "node", "group", "geometry", "x", "y"]
             if column in frame.columns
         ]
         locations = frame.loc[:, locations_columns].drop_duplicates(subset=["name"]).copy()
         if "geometry" in locations.columns:
             locations = gpd.GeoDataFrame(locations, geometry="geometry")
-        values_frame = frame.loc[:, [time_column, "name", value_column]].copy()
+        # A record's weight is ITS reading's (ledger 504): it was taken from
+        # each name's first record and given to every reading of it.
+        values_frame = frame.loc[
+            :, [time_column, "name", value_column, *(["weight"] if "weight" in frame.columns else [])]
+        ].copy()
         return cls(
             locations=locations,
             values=values_frame,
@@ -459,7 +475,20 @@ class HeadTargets:
         return self._locations.copy()
 
     def get(self) -> pd.DataFrame:
-        """Return the merged long-format target table."""
+        """Return the merged long-format target table.
+
+        One row per values row and location row sharing its name (two for a well
+        screened in two layers). ``weight`` is the reading's own weight where the
+        values table gave one, else its location's (ledger 504) -- the
+        weight the PEST build gives the observation, ``NaN`` meaning 1.0 there.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The values (``time``, ``head_target``, ``name_key``) joined to the
+            location columns (``name``, ``cell``, ``layer``, ``group``,
+            ``weight``, ``x``, ``y``).
+        """
 
         if isinstance(self._locations, gpd.GeoDataFrame):
             location_frame = self._locations.drop(columns=self._locations.geometry.name)
@@ -473,6 +502,10 @@ class HeadTargets:
         )
         if "name_loc" in merged.columns:
             merged = merged.drop(columns=["name"]).rename(columns={"name_loc": "name"})
+        if "weight_loc" in merged.columns:
+            # A reading's own weight beats its location's (ledger 504).
+            merged["weight"] = merged["weight"].fillna(merged["weight_loc"])
+            merged = merged.drop(columns=["weight_loc"])
         return _copy_frame(merged)
 
     def to_long(self) -> pd.DataFrame:

@@ -244,7 +244,11 @@ def _named_series_targets(targets, *, value_column: str, prefix: str) -> pd.Data
             "time": values["time"],
             "per": per,
             "value": values[value_column].astype(float),
-            "weight": np.nan,
+            # A reading's own weight, when the values table gave one (ledger
+            # 504); the zone's and the set's fill in below.
+            "weight": (
+                values["weight"].astype(float) if "weight" in values.columns else np.nan
+            ),
             "group": pd.Series(pd.NA, index=values.index, dtype=object),
         }
     ).reset_index(drop=True)
@@ -486,11 +490,14 @@ def _prepare_named_series_observations(
     _register_table(project, simulated_wide, simulated_path, prefix=prefix)
 
     frame = _named_series_targets(targets, value_column=value_column, prefix=prefix)
+    # A reading's own weight, else its zone's, else the set's, else 1.0 (ledger
+    # 504). The set's weight used to overwrite every row, and a values
+    # table's weight column was dropped before it got here.
     if metadata_kind == "drn_flow":
-        frame["weight"] = _zone_weights(targets, frame, prefix=prefix)
+        frame["weight"] = frame["weight"].fillna(_zone_weights(targets, frame, prefix=prefix))
         frame["group"] = _zone_groups(targets, frame, prefix=prefix)
     if weight is not None and not frame.empty:
-        frame["weight"] = float(weight)
+        frame["weight"] = frame["weight"].fillna(float(weight))
     located = _locate_targets(
         frame, simulated_wide, owner=owner, prefix=prefix, table=simulated_path.name,
         perlen=period_lengths(project.model),
@@ -645,6 +652,7 @@ def _point_target_frame(targets, labels: pd.DataFrame, *, prefix: str) -> pd.Dat
         )
     joined = (
         values.drop(columns=["name"], errors="ignore")
+        .rename(columns={"weight": "row_weight"})
         .assign(per=per.to_numpy())
         .merge(
             labels.loc[:, ["name_key", "name", "obsname", "weight", "group"]],
@@ -652,6 +660,10 @@ def _point_target_frame(targets, labels: pd.DataFrame, *, prefix: str) -> pd.Dat
             how="inner",
         )
     )
+    # A reading's own weight beats its location's (ledger 504).
+    weight = pd.to_numeric(joined["weight"]).astype(float)
+    if "row_weight" in joined.columns:
+        weight = joined["row_weight"].astype(float).fillna(weight)
     return pd.DataFrame(
         {
             "name": joined["name"].astype(str),
@@ -659,7 +671,7 @@ def _point_target_frame(targets, labels: pd.DataFrame, *, prefix: str) -> pd.Dat
             "time": joined["time"],
             "per": joined["per"].astype(int),
             "value": joined["head_target"].astype(float),
-            "weight": pd.to_numeric(joined["weight"]).astype(float),
+            "weight": weight,
             "group": joined["group"].astype(object),
         }
     ).reset_index(drop=True)
@@ -879,6 +891,7 @@ def prepare_sfr_stage_observations(project, spec: SfrStageObservationSpec):
         simulated_wide=pivot,
         metadata_kind="sfr_stage",
         locations_snapshot=locations_snapshot,
+        weight=spec.weight,
     )
 
 
@@ -897,6 +910,7 @@ def prepare_sfr_flow_observations(project, spec: SfrFlowObservationSpec):
         simulated_wide=pivot,
         metadata_kind="sfr_flow",
         locations_snapshot=locations_snapshot,
+        weight=spec.weight,
     )
 
 

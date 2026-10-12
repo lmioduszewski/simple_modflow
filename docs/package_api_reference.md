@@ -858,6 +858,16 @@ concentration set, `stage_target`/`flow_target`/`sim_flow` on SFR and DRN sets),
 pandas refused with `value_name (stage) cannot match an element` (review of ledger
 423).
 
+**A reading's own weight beats its location's, which beats its set's, which beats 1.0**
+(ledger 504). A LONG values table (`time`, `name`, value) may carry a `weight`
+column, one weight per reading; it was dropped without a word. A blank is none of its
+own, a weight that is not a finite number from 0 is refused, and a WIDE table with a
+`weight` column is refused naming the LONG form. Head, concentration and DRN-zone
+locations carry a location weight; lake and SFR sets take a set weight through their
+spec (`SfrStageObservationSpec(weight=)` / `SfrFlowObservationSpec(weight=)` are new; a
+lake spec's `weight` no longer overrides a reading's). `HeadTargets.from_records` reads
+a record's `weight` as that reading's.
+
 **What PEST is handed is exactly the targets** (ledger 340). `cal.build()` matches each
 target to the simulated row whose index EQUALS its period and to its column by name,
 and takes the observation pyEMU's instruction file reads there -- never a name rebuilt
