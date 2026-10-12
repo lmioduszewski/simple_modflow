@@ -194,7 +194,14 @@ def test_pilot_points_on_recharge_interpolate_one_field_into_every_period_file(r
     (record,) = manifest["sets"]
     assert record["array_files"] == ["m.rcha_recharge_1.txt", "m.rcha_recharge_2.txt"]
     assert record["layer"] is None and record["periods"] == [0, 1, 2]
-    forward = (cal.template_workspace / "forward_run.py").read_text()
+    # The points CSV and the set's frame carry the manifest's layer: blank / None, not a
+    # -1 a reader would take for a layer number (integration of R2-arrays).
+    (item,) = cal._pilot_point_sets
+    assert item["frame"]["layer"].isna().all()
+    points_text = (cal.template_workspace / record["points_csv"]).read_text().splitlines()
+    assert points_text[0] == "parnme,x,y,layer,zone"
+    assert all(line.split(",")[3] == "" for line in points_text[1:])
+    forward =(cal.template_workspace / "forward_run.py").read_text()
     assert forward.count("apply_pilotpoints_to_array(") == 2  # its definition and ONE call
 
     points = pst.parameter_data.index[pst.parameter_data["pargp"] == "rchpp"]

@@ -304,7 +304,8 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
 
     Places the spec's points, then for each of its layer files and each zone writes
     a SET: the pp value template, ``<set>_pp.points.csv`` (``parnme, x, y, layer,
-    zone``) and ``<set>_pp.factors.npz`` (the cells it covers, their centres and
+    zone``; ``layer`` blank for a set on period files, as the manifest's ``None``)
+    and ``<set>_pp.factors.npz`` (the cells it covers, their centres and
     :func:`idw_factors`), and records it on ``project._pilot_point_sets`` so that
     :func:`emit_pilot_point_commands` adds one forward-run command per array file
     and :func:`register_pilot_point_parameters` registers the parameters after
@@ -326,7 +327,8 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
     -------
     pandas.DataFrame
         Every set's parameter rows (``parnme, pargp, partrans, parval1, value,
-        parlbnd, parubnd, x, y, layer, zone``).
+        parlbnd, parubnd, x, y, layer, zone``); ``layer`` is ``None`` for a set on
+        period files.
 
     Raises
     ------
@@ -417,7 +419,9 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
                     "parubnd": float(spec.bounds[1]),
                     "x": points["x"].to_numpy(dtype=float),
                     "y": points["y"].to_numpy(dtype=float),
-                    "layer": -1 if layer is None else layer,
+                    # The manifest's value: None (a blank in the points CSV) for
+                    # period files, which have no layer -- never a -1 sentinel.
+                    "layer": layer,
                     "zone": zone if labels is not None else 0,
                 })
                 pp_csv = template / f"{base}_pp.csv"
