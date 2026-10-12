@@ -19248,8 +19248,11 @@ same day, which is the useful part of the result.
       built before. Found beside it and fixed: a relative `FILEOUT` into a subdirectory
       holding no input (`out/m.cbc`) was missing from the template -- the staging copy is
       inputs only (ledger 383) -- and MF6, which never makes a directory, stopped every
-      realization with `Could not open "out/m.cbc"`. Not covered: a model name file's
-      `LIST` option, the one output named outside a `FILEOUT`.
+      realization with `Could not open "out/m.cbc"`. ~~Not covered: a model name file's
+      `LIST` option, the one output named outside a `FILEOUT`.~~ (Covered since: a model
+      name file's `OPTIONS` `LIST <file>` is read as an output by the same scan -- refused
+      outside the run or absolute, its subdirectory made in the template;
+      `tests/test_pest_template_holds_inputs_only.py::test_a_models_listing_file_is_written_inside_each_realizations_copy`.)
       Tests: `tests/test_pest_template_holds_inputs_only.py::test_an_output_is_written_inside_each_realizations_copy`
       (real MF6 runs; both refusals, and the subdirectory's forward run) and the scanner
       test.

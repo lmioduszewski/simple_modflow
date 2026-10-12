@@ -877,8 +877,9 @@ directory is refused** (ledger 421) -- a GWT model's FMI reading `../gwf/gwf.hds
 an `OPEN/CLOSE ../k.txt` -- naming it and what names it: every realization runs in its
 own copy of the template, where such a name reads a file beside the copy. Name it by its
 absolute path (read in place), or move it into the run directory. **An output
-(`FILEOUT`) written outside the run directory is refused too**, by a relative name or
-an absolute one (ledger 453): every realization would write that one file. One
+(`FILEOUT`, or a model name file's `LIST` listing) written outside the run directory is
+refused too**, by a relative name or an absolute one (ledger 453): every realization
+would write that one file. One
 written into a subdirectory of the run gets that directory in the template. **A structured (DIS)
 model calibrates like a DISV one** (ledger 420): array files are written one grid
 row per line, the shape pyEMU reads against the `StructuredGrid`; a list target's value

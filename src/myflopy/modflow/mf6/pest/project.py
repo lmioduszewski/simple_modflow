@@ -137,7 +137,8 @@ def _pest_run_slug(name: str) -> str:
 
 #: Name-file blocks whose entries name an INPUT file in their second field: the
 #: simulation name file's ``timing``/``models``/``exchanges``/``solutiongroup`` and a
-#: model name file's ``packages``. Never ``options``, whose ``LIST`` names an OUTPUT.
+#: model name file's ``packages``. Never ``options``, whose ``LIST`` names an OUTPUT
+#: (read as one by the output scan, ledger 453).
 _NAME_FILE_BLOCKS = frozenset({"timing", "models", "exchanges", "solutiongroup", "packages"})
 
 #: The file type opening a name-file entry -- ``TDIS6``, ``gwf6``, ``GWF6-GWT6``,
@@ -233,14 +234,15 @@ def _inputs_outside_the_run(sim_ws: str | Path) -> list[tuple[str, str]]:
 
 
 def _outputs_outside_the_run(sim_ws: str | Path) -> list[tuple[str, str]]:
-    """Each ``FILEOUT`` name that writes outside ``sim_ws``, with what names it.
+    """Each output name -- a ``FILEOUT``, or a model's ``LIST`` -- that writes outside ``sim_ws``.
 
     A RELATIVE name leading out of the directory (``../heads.hds``) and an ABSOLUTE
     name, wherever it points: MF6 writes either one outside the directory it runs
     in, so every PEST realization -- each in its own copy of the template, several
     at once under parallel workers -- writes the SAME file, and an absolute name
     into the run directory overwrites the run's own output (ledger 453). Read
-    from every file :func:`_simulation_input_files` scans.
+    from every file :func:`_simulation_input_files` scans, and from each model name
+    file's ``OPTIONS`` ``LIST <file>``, the listing file.
 
     Parameters
     ----------
@@ -257,10 +259,11 @@ def _outputs_outside_the_run(sim_ws: str | Path) -> list[tuple[str, str]]:
 
 
 def _output_directories(sim_ws: str | Path) -> list[Path]:
-    """The directories inside ``sim_ws`` that a ``FILEOUT`` writes into, relative to it.
+    """The directories inside ``sim_ws`` that a ``FILEOUT`` or a model's ``LIST`` writes into.
 
     MF6 does not create a directory: ``OC ... BUDGET FILEOUT out/m.cbc`` stops the run
-    with ``Could not open "out/m.cbc"`` unless ``out/`` exists. The PEST staging copy
+    with ``Could not open "out/m.cbc"`` unless ``out/`` exists, and a name file's
+    ``LIST out/m.lst`` stops it the same way. The PEST staging copy
     holds the run's INPUTS, so a directory holding only outputs was missing from the
     template and every realization failed (ledger 453); the build makes these.
 
@@ -296,6 +299,16 @@ def _scan_simulation_inputs(
     # name files are read for their blocks, "input" files scanned for
     # FILEIN/OPEN/CLOSE, "data" files (OPEN/CLOSE) copied unread.
     pending: list[tuple[str, str, str]] = [("mfsim.nam", "simulation", "mfsim.nam")]
+
+    def _record_output(name_written: str, owner: str) -> None:
+        """File an output name as written inside ``sim_ws`` or outside it."""
+
+        normal = Path(os.path.normpath(name_written))
+        if normal.is_absolute() or normal.parts[:1] == ("..",):
+            written_outside.append((name_written, owner))
+        else:
+            written[normal] = None
+
     while pending:
         name, kind, owner = pending.pop(0)
         relative = Path(os.path.normpath(name))
@@ -324,6 +337,10 @@ def _scan_simulation_inputs(
                     block = fields[1].lower() if len(fields) > 1 else None
                 elif word == "end":
                     block = None
+                elif kind == "model" and block == "options" and word == "list" and len(fields) > 1:
+                    # The model's listing file, the one output named outside a FILEOUT
+                    # (ledger 453): every realization writes it like any other.
+                    _record_output(fields[1], f"LIST in {relative}")
                 elif (
                     block in _NAME_FILE_BLOCKS
                     and len(fields) > 1
@@ -343,12 +360,7 @@ def _scan_simulation_inputs(
                 f"{keyword.upper()} in {relative}{named_by}",
             ))
         for token in _MF6_OUTPUT_REFERENCE.findall(text):
-            name_written = _mf6_field(token)
-            normal = Path(os.path.normpath(name_written))
-            if normal.is_absolute() or normal.parts[:1] == ("..",):
-                written_outside.append((name_written, f"FILEOUT in {relative}{named_by}"))
-            else:
-                written[normal] = None
+            _record_output(_mf6_field(token), f"FILEOUT in {relative}{named_by}")
     return list(found), outside, list(written), written_outside
 
 
@@ -1341,10 +1353,10 @@ class PestProject:
         copied"). An absolute input name is the same file from every copy, and is
         not refused.
 
-        An OUTPUT (``FILEOUT``) named by a relative path out of it or by an absolute
-        path (ledger 453): every realization writes that one file, several at
-        once under parallel workers, and an absolute name into the run directory
-        overwrites the run's own output.
+        An OUTPUT -- a ``FILEOUT``, or a model name file's ``LIST`` -- named by a
+        relative path out of it or by an absolute path (ledger 453): every realization writes that one file, several at once under
+        parallel workers, and an absolute name into the run directory overwrites
+        the run's own output.
         """
 
         run = Path(self.original_workspace).resolve()
@@ -1987,7 +1999,8 @@ class PestProject:
             absolute name is read in place and is not refused. Likewise when an
             output (``FILEOUT``) is named by a relative path leading out of the
             run directory or by an absolute path (ledger 453): every
-            realization would write that one file.
+            realization would write that one file -- and the same for a model name
+            file's ``LIST <file>``, its listing (ledger 453).
         FileNotFoundError
             When the model's workspace holds no ``mfsim.nam``: the template is
             made from the run's files, and a model never written has none.

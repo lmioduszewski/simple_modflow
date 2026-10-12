@@ -156,6 +156,46 @@ def test_an_output_is_written_inside_each_realizations_copy(tmp_path, budget):
     assert (cal.template_workspace / "out" / "m.cbc").stat().st_size > 0
 
 
+@pytest.mark.parametrize("listing", ["../m.lst", "ABSOLUTE", "out/m.lst"])
+def test_a_models_listing_file_is_written_inside_each_realizations_copy(tmp_path, listing):
+    """The model name file's ``OPTIONS LIST <file>`` is an output too, named outside a
+    ``FILEOUT``, and the scan read only ``FILEOUT``: a listing written ``../m.lst`` or by
+    an absolute name built, and every realization would write that one file (ledger
+    453). Refused like a ``FILEOUT``; one written ``out/m.lst`` builds and the
+    template's forward run makes it there (MF6 does not create a directory)."""
+
+    from tests.test_pest_structured_grid import _dis_run
+
+    run = _dis_run(tmp_path / "run")
+    if listing == "ABSOLUTE":
+        listing = str(tmp_path / "run" / "elsewhere.lst")
+    name_file = run / "m.nam"
+    text = name_file.read_text()
+    assert "LIST" not in text.upper().split("BEGIN PACKAGES")[0]
+    name_file.write_text(text.replace("BEGIN options", f"BEGIN options\n  LIST  '{listing}'", 1))
+    (run / listing).parent.mkdir(exist_ok=True)
+    ran = subprocess.run(["mf6"], cwd=run, capture_output=True, text=True)
+    assert "Normal termination" in ran.stdout
+    assert (run / listing).stat().st_size > 0
+    model = mf.load_mf6_run(run)
+    cal = model.pest("lst", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    if listing != "out/m.lst":
+        with pytest.raises(ValueError, match=r"(?s)writes output outside its run directory: "
+                                             rf"'{listing}' \(LIST in m\.nam\).*each would "
+                                             r"write that ONE file"):
+            cal.build("lst.pst")
+        assert not (tmp_path / "pest").exists()
+        return
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("lst.pst")
+    forward = subprocess.run([sys.executable, "forward_run.py"], cwd=cal.template_workspace,
+                             capture_output=True, text=True)
+    assert forward.returncode == 0, forward.stderr[-2000:]
+    assert (cal.template_workspace / "out" / "m.lst").stat().st_size > 0
+
+
 def test_a_binary_input_is_copied_and_not_scanned(tmp_path):
     """FMI's flow files and a binary array are inputs too; their bytes are never read
     for names."""
