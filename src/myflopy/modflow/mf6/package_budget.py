@@ -26,6 +26,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_connection_type_filter,
     _normalize_surface_water_include,
     _normalize_term_filter,
+    cell_index_column,
     cell_numbering,
     split_cellid_columns,
 )
@@ -276,8 +277,8 @@ def build_sfr_stage_result_table(
     stage_long = stage_long.merge(reach_table, on="reach", how="left")
     stage_long["model"] = model.name
     stage_long["package"] = "sfr"
-    stage_long["layer"] = stage_long["layer"].astype(int)
-    stage_long["cell"] = stage_long["cell"].astype(int)
+    stage_long["layer"] = cell_index_column(stage_long["layer"])
+    stage_long["cell"] = cell_index_column(stage_long["cell"])
     ordered = [
         "model",
         "package",
@@ -339,8 +340,8 @@ def build_sfr_long_profile_table(
     if "ifno" in packagedata.columns:
         packagedata = packagedata.rename(columns={"ifno": "reach"})
     packagedata["reach"] = packagedata["reach"].astype(int)
-    packagedata["layer"] = packagedata["layer"].astype(int)
-    packagedata["cell"] = packagedata["cell"].astype(int)
+    packagedata["layer"] = cell_index_column(packagedata["layer"])
+    packagedata["cell"] = cell_index_column(packagedata["cell"])
     for column in ("rlen", "rwid", "rgrd", "rtp", "rbth", "rhk", "man"):
         if column in packagedata.columns:
             packagedata[column] = pd.to_numeric(packagedata[column], errors="coerce")
@@ -609,8 +610,8 @@ def build_lak_stage_result_table(
     stage_long = stage_long.merge(cell_map, on="lake", how="left")
     stage_long["model"] = model.name
     stage_long["package"] = "lak"
-    stage_long["layer"] = stage_long["layer"].astype(int)
-    stage_long["cell"] = stage_long["cell"].astype(int)
+    stage_long["layer"] = cell_index_column(stage_long["layer"])
+    stage_long["cell"] = cell_index_column(stage_long["cell"])
     return stage_long[
         ["model", "package", "kstpkper", "per", "lake", "layer", "cell", "stage"]
     ]

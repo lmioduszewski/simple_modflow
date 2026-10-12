@@ -399,6 +399,32 @@ def cell_numbering(source) -> CellNumbering:
     )
 
 
+def cell_index_column(values) -> pd.Series:
+    """A ``layer`` or ``cell`` column as integers, nullable where a cell is missing.
+
+    ``int`` when every value is present; pandas' nullable ``Int64`` when one is not --
+    an SFR reach connected to NO cell (MF6 ``NONE``), which
+    :func:`split_cellid_columns` gives a missing ``layer`` and ``cell``. A plain
+    ``astype(int)`` raised on it in every SFR table.
+
+    Parameters
+    ----------
+    values : pandas.Series
+        The column, numeric or numeric-like; a value that is not a number reads as
+        missing.
+
+    Returns
+    -------
+    pandas.Series
+        Same index, ``int64`` or ``Int64``.
+    """
+
+    numbers = pd.to_numeric(pd.Series(values), errors="coerce")
+    if numbers.isna().any():
+        return numbers.astype("Int64")
+    return numbers.astype(int)
+
+
 def split_cellid_columns(frame: pd.DataFrame, numbering: CellNumbering) -> pd.DataFrame:
     """Expand a FloPy ``cellid`` column into zero-based ``layer`` and ``cell``.
 
@@ -412,7 +438,8 @@ def split_cellid_columns(frame: pd.DataFrame, numbering: CellNumbering) -> pd.Da
         ``(layer, row, col)`` on DIS is ``(layer, row * ncol + col)``, ``(layer,
         cell)`` on DISV is itself, ``(node,)`` on DISU is ``(0, node)``. A cellid of
         ``None`` or MF6's ``NONE`` (an SFR reach connected to no cell, which FloPy
-        reads back as the string ``'none'``) gives a missing value in both columns.
+        reads back as the string ``'none'``) gives a missing value in both columns, which
+        are then pandas' nullable ``Int64`` (:func:`cell_index_column`).
 
     Returns
     -------
@@ -445,12 +472,8 @@ def split_cellid_columns(frame: pd.DataFrame, numbering: CellNumbering) -> pd.Da
         for index, layer, cell in zip(present, found_layers, found_cells, strict=True):
             layers[index] = int(layer)
             cells[index] = int(cell)
-    if len(present) == len(raw):
-        expanded["layer"] = np.asarray(layers, dtype=int)
-        expanded["cell"] = np.asarray(cells, dtype=int)
-    else:
-        expanded["layer"] = layers
-        expanded["cell"] = cells
+    expanded["layer"] = cell_index_column(pd.Series(layers, index=expanded.index, dtype=object))
+    expanded["cell"] = cell_index_column(pd.Series(cells, index=expanded.index, dtype=object))
     return expanded.drop(columns=["cellid"])
 
 
@@ -979,6 +1002,7 @@ __all__ = [
     "_coerce_numeric_like_columns",
     "CELLID_FORMS",
     "CellNumbering",
+    "cell_index_column",
     "cell_numbering",
     "has_cell_numbering",
     "views_nlay",

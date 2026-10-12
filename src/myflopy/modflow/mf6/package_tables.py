@@ -16,6 +16,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _extract_structured_column,
     _get_package_explorer_cache,
     _normalize_iterable_filter,
+    cell_index_column,
     cell_numbering,
     checked_period,
     feature_records_in_force,
@@ -486,8 +487,8 @@ def build_sfr_reach_table(model: SimulationBase, *, package: str | None = None) 
     if "ifno" in packagedata.columns:
         packagedata = packagedata.rename(columns={"ifno": "reach"})
     packagedata["reach"] = packagedata["reach"].astype(int)
-    packagedata["layer"] = packagedata["layer"].astype(int)
-    packagedata["cell"] = packagedata["cell"].astype(int)
+    packagedata["layer"] = cell_index_column(packagedata["layer"])
+    packagedata["cell"] = cell_index_column(packagedata["cell"])
     packagedata["rlen"] = pd.to_numeric(packagedata["rlen"], errors="coerce")
     packagedata = packagedata.sort_values("reach").reset_index(drop=True)
     packagedata["distance_start"] = packagedata["rlen"].fillna(
@@ -779,8 +780,8 @@ def build_sfr_input_table(model: SimulationBase, *, package: str | None = None) 
     if "ifno" in base.columns:
         base = base.rename(columns={"ifno": "reach"})
     base["reach"] = pd.to_numeric(base["reach"], errors="coerce").astype(int)
-    base["layer"] = pd.to_numeric(base["layer"], errors="coerce").astype(int)
-    base["cell"] = pd.to_numeric(base["cell"], errors="coerce").astype(int)
+    base["layer"] = cell_index_column(base["layer"])
+    base["cell"] = cell_index_column(base["cell"])
     settings = _numeric_period_settings(sfr, id_column="ifno", nper=model.nper)
     frames = []
     for period in range(int(model.nper)):
