@@ -69,6 +69,13 @@ def _one_stage_per_lake(table: pd.DataFrame) -> pd.DataFrame:
     return frame.loc[:, ["kstpkper", "per", "lake", "stage"]].reset_index(drop=True)
 
 
+#: What a LAK connection IS, for pairing one member's with the reference's: the
+#: package, the period, the lake and its connection number, where it sits and its
+#: type. Never a float -- the geometry is the inputs diff's question, and MF6's
+#: wetted ``FLOW-AREA`` moves with the stage (ledger 485).
+_LAK_CONNECTION_KEYS = ("package", "pname", "per", "lake", "iconn", "layer", "cell", "claktype")
+
+
 class GroupLakBudgetResults(GroupCellPackageResults):
     """Grouped LAK exchange accessor with area-normalized maps."""
 
@@ -174,17 +181,17 @@ class GroupLakBudgetResults(GroupCellPackageResults):
     ) -> pd.DataFrame:
         """Compare grouped LAK exchange rows against the reference model.
 
-        Each non-reference member's rows are paired with the reference's on
-        EVERY column of :meth:`get` but ``model``, ``q_lake`` and ``q_per_area``
-        by an inner join -- ``kstpkper`` and the float columns ``flow_area``/
-        ``FLOW-AREA`` and the geometry included -- and NOT reduced to period ends
-        first. So ``kstpkper`` pairs the reference's step ``(k, p)`` with the
-        other member's step ``(k, p)``: with different ``nstp`` that is not the
-        same time in the period (with one step against two, the reference's
-        period end against the other's FIRST step). And because MF6's wetted
-        ``FLOW-AREA`` moves with the stage, a connection whose wetted area
-        differs between the members has no partner and is dropped (ledger
-        439).
+        Each member is first reduced to its own LAST saved step of every period
+        (``_reduce_to_period_end``, ledger 348), so members of different ``nstp``
+        align by stress period, and a connection is paired with the reference's
+        by its IDENTITY -- ``package``, ``per``, ``lake``, ``iconn``, ``layer``,
+        ``cell`` and ``claktype`` -- by an inner join, so a connection only one
+        member has is dropped (``diff.packages.lak.inputs`` lists it). Until
+        ledger 485 the join also matched ``kstpkper`` EXACTLY (with one step
+        against two, the reference's period end against the other member's FIRST
+        step) and every float column, MF6's wetted ``FLOW-AREA`` included, so a
+        connection whose wetted area moved with the stage had no partner: 2 of
+        the canonical lake's 72 connections dropped out at period 3.
 
         Parameters
         ----------
@@ -193,8 +200,8 @@ class GroupLakBudgetResults(GroupCellPackageResults):
             Default ``None``: every non-reference member. The reference's own
             name, or a name not in the group, returns an empty frame.
         per : int or None, optional
-            Compare one stress period, zero-based -- every step it saved, paired
-            step by step as above. Default ``None``: every period.
+            Compare one stress period, zero-based, each member at its own last
+            saved step of it. Default ``None``: every period.
         layer : int or list of int or None, optional
             Compare only the connections in these zero-based layers. Default
             ``None``: every layer.
@@ -211,31 +218,34 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         Returns
         -------
         pandas.DataFrame
-            ``model``, ``reference_model``, the join keys, ``q_lake``,
-            ``reference_q_lake``, ``q_lake_diff``, and the same three for
-            ``q_per_area`` -- each difference member minus reference, the lake's
-            sign. Empty when :meth:`get` is.
+            ``model``, ``reference_model``, ``kstpkper`` (the compared member's own
+            step), the identity keys, then ``q_lake``, ``reference_q_lake``,
+            ``q_lake_diff`` and the same three for ``q_per_area`` and for
+            ``flow_area`` (MF6's wetted area, length^2) -- each difference member
+            minus reference, the lake's sign. Empty when :meth:`get` is.
         """
 
         data = self.get(per=per, layer=layer, cells=cells, connection_type=connection_type)
         if data.empty:
             return pd.DataFrame()
+        data = _reduce_to_period_end(data)
 
         reference = self.group.reference
         q = self.value_name  # feature-referenced exchange column (q_lake)
-        value_columns = [q, "q_per_area"] if "q_per_area" in data.columns else [q]
-        key_columns = [column for column in data.columns if column not in {"model", *value_columns}]
-        ref = data[data["model"] == reference].drop(columns=["model"]).copy()
-        rename_map = {column: f"reference_{column}" for column in value_columns}
-        ref = ref.rename(columns=rename_map)
+        value_columns = [
+            column for column in (q, "q_per_area", "flow_area") if column in data.columns
+        ]
+        key_columns = [column for column in _LAK_CONNECTION_KEYS if column in data.columns]
+        ref = data[data["model"] == reference][key_columns + value_columns].copy()
+        ref = ref.rename(columns={column: f"reference_{column}" for column in value_columns})
         comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
         comp["reference_model"] = reference
-        comp[f"{q}_diff"] = comp[q].astype(float) - comp[f"reference_{q}"].astype(float)
-        if "q_per_area" in value_columns:
-            comp["q_per_area_diff"] = comp["q_per_area"].astype(float) - comp["reference_q_per_area"].astype(float)
-        ordered = ["model", "reference_model", *key_columns, q, f"reference_{q}", f"{q}_diff"]
-        if "q_per_area" in value_columns:
-            ordered.extend(["q_per_area", "reference_q_per_area", "q_per_area_diff"])
+        ordered = ["model", "reference_model", "kstpkper", *key_columns]
+        for column in value_columns:
+            comp[f"{column}_diff"] = (
+                comp[column].astype(float) - comp[f"reference_{column}"].astype(float)
+            )
+            ordered.extend([column, f"reference_{column}", f"{column}_diff"])
         result = comp[ordered]
         return _filter_group_input_table(
             result,
@@ -320,8 +330,8 @@ class GroupLakBudgetResults(GroupCellPackageResults):
         sum(flow_area)`` over the connections in the cell -- the flow per unit
         wetted area, positive where the lake gains -- and the map draws member
         minus reference on the reference's grid, for the cells both members
-        connect a lake to. (Unlike :meth:`compare`, this does align each member
-        at its own period end.)
+        connect a lake to (each member at its own period end, as in
+        :meth:`compare`).
 
         Parameters
         ----------

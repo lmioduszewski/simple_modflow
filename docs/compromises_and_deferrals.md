@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 484 entries (489 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 485 entries (490 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 485 | Group and diff exchange and budget comparisons pair each member's period end, a LAK connection by what it I... | 2026-10-11 |
 | 484 | A dry or inactive cell is a gap at the group and diff tiers, and `hds.long()`/`wide()` read it as `NaN` | 2026-10-11 |
 | 483 | The location-file calibration plot draws the (location, layer) pairs observed, paired by time | 2026-10-11 |
 | 482 | An observation area sums every layer of its columns | 2026-10-11 |
@@ -18786,11 +18787,13 @@ same day, which is the useful part of the result.
       spatial,surface_water}.py` (instructed: document the truth, do not change code)
       turned these up, each measured in `docs/reproducers/group_view_docstring_claims.py`;
       each docstring now says what the code does. **Steps paired, not periods:**
-      `group.packages.lak.results.q.compare()` and `group.bud(...).compare()` join on the
+      ~~`group.packages.lak.results.q.compare()` and `group.bud(...).compare()` join on the
       EXACT `kstpkper` (LAK also on MF6's wetted `FLOW-AREA`), never reducing to period
       ends as the rest of the group tier does (ledger 337): at nstp 1 against 2 they diff
       the reference's period end against the other member's FIRST step (up to 209 ft3/d
-      on a canonical connection), and LAK drops 2 of 432 rows whose wetted area differs.
+      on a canonical connection), and LAK drops 2 of 432 rows whose wetted area differs~~
+      (fixed by ledger 485: each member at its period end, a LAK connection paired
+      by its identity).
       ~~**Elevations added, records cross-paired:** the group inputs `map()`/`compare_map()`
       take `agg="sum"` whatever the field's kind -- two GHB records of `bhead` 5 and 7
       draw 12.0 where `model.ghb.inputs.bhead.map()` draws 6.0 (ledger 297, at the group
@@ -19783,3 +19786,18 @@ same day, which is the useful part of the result.
       `model.hds.long()`/`wide()` mask too, with no `masked=` switch: the raw numbers
       are `model.hds.all_values`, which stays the file's. Measured on a 1 x 5 DIS row,
       four cells dry at a -50 well (`tests/test_diff_reads_what_mf6_wrote.py`).
+
+485. **Group and diff exchange and budget comparisons pair each member's period end, a LAK connection by what it IS, and the listing diff differences budget terms only (2026-10-11).**
+      `group.packages.lak.results.q.compare()` (and `diff.packages.lak.results.q`) and
+      `group.bud(pkg).compare()` joined on the EXACT `kstpkper` and on every float column:
+      at one step against two they read the other member's FIRST step of each period, and
+      LAK dropped 2 of the canonical lake's 72 connections at period 3 because MF6's wetted
+      `FLOW-AREA` was a key. Both now reduce each member through `_reduce_to_period_end`
+      (`period_end.at_last_saved_steps`, ledger 348). **Judgment calls:** a LAK connection
+      is paired on `package`/`per`/`lake`/`iconn`/`layer`/`cell`/`claktype` -- never on
+      geometry, whose change is the inputs diff's question -- and `flow_area` is
+      differenced beside `q_lake`/`q_per_area` rather than dropped; `group.bud` keys on
+      `_stable_compare_keys` (integer and text columns), so a float auxiliary is no longer
+      a key. `diff.bud` keeps its `totim` join (an exact time match, which lines up period
+      ends across `nstp`) and no longer melts FloPy's `time_step`/`stress_period`/`tslen`
+      into terms: they label each row as `per`/`kstpkper`.

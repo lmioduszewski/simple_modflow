@@ -1375,10 +1375,7 @@ class ModelDiff:
             tolerances (``atol`` = ``rtol`` = 1e-3) as a "Results differences"
             table, and a breach makes the model "differs" -- a cell dry or
             inactive in one model only is one (``n_one_sided``, ledger 484),
-            and the heads row says how many there are; their caveats included
-            (FloPy's ``tslen`` and
-            ``time_step`` columns counted as budget terms, so a change of ``nstp``
-            alone breaches the budget). When either read fails
+            and the heads row says how many there are. When either read fails
             with a missing or unreadable output (``OSError``, ``ValueError``,
             ``KeyError``, ...), the report says "outputs unavailable" for that
             model and the results do not count against "identical".

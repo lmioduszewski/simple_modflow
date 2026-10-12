@@ -62,7 +62,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.utils.derived_raster`
 - `myflopy.modflow.utils.raster`
 - `myflopy.modflow.utils.validators`
-- `myflopy.project.group.budget`
 - `myflopy.project.model_config`
 - `myflopy.run_record`
 - `myflopy.sources` *(deferred imports: 3)*
@@ -123,6 +122,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.simulation.indexing`
 - `myflopy.modflow.usg.model` *(deferred imports: 5)*
 - `myflopy.project.components`
+- `myflopy.project.group.budget`
 - `myflopy.specs` *(deferred imports: 10)*
 - `myflopy.surfaces` *(deferred imports: 4)*
 

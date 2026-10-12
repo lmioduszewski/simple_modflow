@@ -9,15 +9,26 @@ Real MF6 runs, small enough to build per module:
 ``named``    a 3 x 3 DIS model whose DRN is NAMED ``seeps`` (conductance 10 against
              30) and whose GHB is named ``lake_edge``: a package found by its NAME
              prefix was never compared, and the GHB counted as a LAK.
+``steps``    the canonical model on its testing grid (six 30-day periods, a 72-
+             connection lake, an SFR-to-lake mover) at one time step per period and
+             at two: a period is its END on both, and the LAK join keyed on the
+             exact ``kstpkper`` and on MF6's wetted ``FLOW-AREA`` (ledger 485).
 """
 
 from __future__ import annotations
+
+import contextlib
+import dataclasses
+import io
+import warnings
 
 import flopy
 import numpy as np
 import pytest
 
 import myflopy as mf
+from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig
+from tests.conftest import _build_canonical
 
 # -- the runs ------------------------------------------------------------------------
 
@@ -90,6 +101,26 @@ def named(tmp_path_factory):
     return {"a": _named(root / "a", 10.0), "b": _named(root / "b", 30.0)}
 
 
+@pytest.fixture(scope="module")
+def steps(tmp_path_factory):
+    """The canonical model run at one and at two time steps per period, reloaded."""
+
+    root = tmp_path_factory.mktemp("diff_steps")
+    runs = {}
+    for name, nstp in (("one", 1), ("two", 2)):
+        config = dataclasses.replace(CanonicalModelConfig.testing(), steps_per_period=nstp)
+        with contextlib.redirect_stdout(io.StringIO()), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            model = _build_canonical(root / name, config)
+            ok, _ = model.run_simulation()
+        assert ok, f"{name} did not run"
+        runs[name] = mf.load_mf6_run(model.workspace)
+    saved = {name: {tuple(k) for k in run.kstpkper} for name, run in runs.items()}
+    assert saved["one"] == {(0, p) for p in range(6)}
+    assert saved["two"] == {(k, p) for p in range(6) for k in (0, 1)}
+    return runs
+
+
 # -- (a) MF6's no-value numbers are a gap, not a difference --------------------------
 
 
@@ -156,3 +187,56 @@ def test_diff_package_answers_package_types_only(named):
     for name in ("_diff", "__init__", "nope"):
         with pytest.raises(AttributeError, match="does not diff package"):
             diff.package(name)
+
+
+# -- (b) a period is its end, and a connection is paired by what it IS ---------------
+
+
+def test_lak_exchange_pairs_every_connection_at_each_period_end(steps):
+    group = mf.ModelGroup({"one": steps["one"], "two": steps["two"]}, reference="one")
+    compared = group.packages.lak.results.q.compare()
+    assert compared.groupby("per").size().to_dict() == {p: 72 for p in range(6)}
+    assert set(compared["kstpkper"]) == {(1, p) for p in range(6)}
+    diff_rows = group.diff().packages.lak.results.q.get(per=1)
+    assert set(diff_rows["kstpkper"]) == {(1, 1)}
+
+
+def test_a_connection_whose_wetted_area_moved_still_pairs(steps, monkeypatch):
+    """MF6's ``FLOW-AREA`` moves with the stage; it is a value, never a join key."""
+
+    import myflopy.project.group.lak as group_lak
+
+    real = group_lak.build_lak_budget_result_table
+
+    def wetter(model, **kwargs):
+        table = real(model, **kwargs)
+        if model is steps["two"]:
+            for column in ("flow_area", "FLOW-AREA"):
+                table[column] = table[column] * 1.5
+        return table
+
+    monkeypatch.setattr(group_lak, "build_lak_budget_result_table", wetter)
+    group = mf.ModelGroup({"one": steps["one"], "two": steps["two"]}, reference="one")
+    compared = group.packages.lak.results.q.compare(per=3)
+    assert len(compared) == 72
+    wet = compared["reference_flow_area"] > 0
+    assert np.allclose(compared.loc[wet, "flow_area_diff"],
+                       0.5 * compared.loc[wet, "reference_flow_area"])
+
+
+def test_group_budget_compares_each_period_end(steps):
+    group = mf.ModelGroup({"one": steps["one"], "two": steps["two"]}, reference="one")
+    compared = group.bud("drn").compare()
+    assert set(compared["kstpkper"]) == {(1, p) for p in range(6)}
+    assert compared.groupby("per").size().nunique() == 1
+    assert "kstpkper" not in compared.columns[3:]
+
+
+def test_listing_budget_diff_has_no_bookkeeping_terms(steps):
+    diff = mf.ModelGroup({"one": steps["one"], "two": steps["two"]}, reference="one").diff()
+    terms = set(diff.bud.summary()["term"])
+    assert not terms & {"time_step", "stress_period", "tslen"}
+    assert {"TOTAL_IN", "PERCENT_DISCREPANCY"} <= terms
+    rows = diff.bud.get()
+    assert set(rows["per"]) == set(range(6))
+    assert set(rows["kstpkper"]) == {(1, p) for p in range(6)}

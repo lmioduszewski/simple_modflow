@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from myflopy.project.group._shared import _reduce_to_period_end, _stable_compare_keys
+
 if TYPE_CHECKING:
     from myflopy.project.group.core import ModelGroup
 
@@ -89,14 +91,15 @@ class GroupBudget:
     ) -> pd.DataFrame:
         """Compare budget values for all models against the reference model.
 
-        Rows of each non-reference member are paired with the reference's on
-        EVERY other column of :meth:`get` -- ``node``, ``kstpkper``, ``node2`` and
-        any auxiliary column -- by an inner join, so a row with no identical
-        partner is dropped. ``kstpkper`` is matched EXACTLY, never reduced to the
-        period's end: two members of different ``nstp`` pair the reference's
-        step ``(k, p)`` with the other member's step ``(k, p)``, which is not the
-        same time in the period (with one step against two, the reference's
-        period end against the other's FIRST step; ledger 439).
+        Each member is first reduced to its own LAST saved step of every period
+        (``_reduce_to_period_end``, ledgers 337 and 348), so members of different
+        ``nstp`` align by stress period, and a record is paired with the
+        reference's on its integer and text identity -- ``node``, ``node2``,
+        ``per`` and any non-float column -- by an inner join, so a record with no
+        partner is dropped. Until ledger 485 the join matched ``kstpkper``
+        EXACTLY and every float column, so with one step against two it paired
+        the reference's period end with the other member's FIRST step, and an
+        auxiliary that moved with the solution (a wetted area) dropped the row.
 
         Parameters
         ----------
@@ -107,15 +110,15 @@ class GroupBudget:
             with neither, ``ValueError``.
         value_column : str, default "q"
             The column of :meth:`get` to difference -- ``"q"``, the flow in model
-            length^3/time with MF6's sign. A name :meth:`get` does not have raises
-            ``KeyError``. Every OTHER column becomes a join key, so naming one
-            other than the flow leaves ``q`` among the keys and keeps only rows
-            whose flows are identical.
+            length^3/time with MF6's sign, or a FLOAT auxiliary column. A name
+            :meth:`get` does not have raises ``KeyError``. The other float
+            columns are neither keys nor carried.
 
         Returns
         -------
         pandas.DataFrame
-            ``model``, ``reference_model``, the join keys, ``value_column``,
+            ``model``, ``reference_model``, ``kstpkper`` (the compared member's
+            own step), the join keys, ``value_column``,
             ``reference_<value_column>`` and ``diff`` (member minus reference).
             Empty, with those columns, when no row pairs.
         """
@@ -127,17 +130,18 @@ class GroupBudget:
         if value_column not in data.columns:
             raise KeyError(f"Budget value column {value_column!r} was not found.")
 
+        data = _reduce_to_period_end(data)
         reference = self.group.reference
-        key_columns = [column for column in data.columns if column not in {"model", value_column}]
+        key_columns = _stable_compare_keys(data, [value_column])
         ref = (
-            data[data["model"] == reference]
+            data[data["model"] == reference][[*key_columns, value_column]]
             .rename(columns={value_column: f"reference_{value_column}"})
-            .drop(columns=["model"])
         )
         comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
         comp["reference_model"] = reference
         comp["diff"] = comp[value_column].astype(float) - comp[f"reference_{value_column}"].astype(float)
-        ordered = ["model", "reference_model", *key_columns, value_column, f"reference_{value_column}", "diff"]
+        ordered = [
+            "model", "reference_model", "kstpkper", *key_columns,
+            value_column, f"reference_{value_column}", "diff",
+        ]
         return comp[ordered]
-
-

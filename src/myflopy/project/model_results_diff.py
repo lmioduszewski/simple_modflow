@@ -354,8 +354,18 @@ class BudgetResultDiff(_ResultDiffBase):
     time discretization still line up where their timesteps coincide.
     """
 
+    #: FloPy's bookkeeping columns in ``get_incremental()``: the time step, its
+    #: stress period and its length -- what a row IS, not a budget term. They were
+    #: melted and differenced like terms until ledger 485, so two runs differing
+    #: only in ``nstp`` read ``tslen`` at -50% and ``time_step`` out of tolerance.
+    _BOOKKEEPING = ("time_step", "stress_period", "tslen")
+
     def _model_budget(self, model_name: str) -> pd.DataFrame:
-        """One model's incremental listing budget, melted to ``totim`` / ``term`` / ``value``."""
+        """One model's incremental listing budget, melted to ``totim`` / ``term`` / ``value``.
+
+        Carries the step's ``per`` and ``kstpkper`` (zero-based) when FloPy's table
+        has them, and never melts a bookkeeping column into a term.
+        """
 
         # ``budget_incremental`` is a property on real models (returns a
         # DataFrame); tolerate a callable too so fakes/other readers work.
@@ -364,13 +374,24 @@ class BudgetResultDiff(_ResultDiffBase):
         frame = pd.DataFrame(raw).copy()
         if "totim" not in frame.columns:
             frame = frame.reset_index().rename(columns={"index": "totim"})
+        if {"time_step", "stress_period"} <= set(frame.columns):
+            frame["per"] = frame["stress_period"].astype(int)
+            frame["kstpkper"] = [
+                (int(kstp), int(kper))
+                for kstp, kper in zip(frame["time_step"], frame["stress_period"], strict=True)
+            ]
+        else:
+            frame["per"] = None
+            frame["kstpkper"] = None
+        keys = ("totim", "per", "kstpkper", *self._BOOKKEEPING)
         terms = [
             column
             for column in frame.columns
-            if column != "totim" and pd.api.types.is_numeric_dtype(frame[column])
+            if column not in keys and pd.api.types.is_numeric_dtype(frame[column])
         ]
         return frame.melt(
-            id_vars=["totim"], value_vars=terms, var_name="term", value_name="value"
+            id_vars=["totim", "per", "kstpkper"], value_vars=terms,
+            var_name="term", value_name="value",
         )
 
     def get(self, *, model_name=None) -> pd.DataFrame:
@@ -380,13 +401,13 @@ class BudgetResultDiff(_ResultDiffBase):
         FloPy's ``get_incremental()``: the rate for each time step, in the model's
         volume per time unit) is melted to one row per ``(totim, term)`` and
         inner-joined to the reference's on an equal ``totim``, so a time step only
-        one model's listing file holds is absent. A "term" is EVERY numeric
-        column of that table but ``totim`` --
-        the budget's ``<TERM>_IN``/``<TERM>_OUT``, ``TOTAL_IN``/``TOTAL_OUT``,
-        ``IN-OUT``, ``PERCENT_DISCREPANCY``, and also FloPy's bookkeeping columns
-        ``time_step``, ``stress_period`` and ``tslen``, which are not budget terms
-        but are differenced like them (measured,
-        ``docs/reproducers/diff_results_tier.py``).
+        one model's listing file holds is absent. A "term" is every numeric
+        column of that table bar ``totim`` and FloPy's bookkeeping columns -- the
+        budget's ``<TERM>_IN``/``<TERM>_OUT``, ``TOTAL_IN``/``TOTAL_OUT``,
+        ``IN-OUT`` and ``PERCENT_DISCREPANCY``. ``time_step``, ``stress_period``
+        and ``tslen`` say what a row IS; they label it (``per``, ``kstpkper``)
+        and are not differenced -- they were, as terms, until ledger 485
+        (``docs/reproducers/diff_results_tier.py``).
 
         Parameters
         ----------
@@ -398,12 +419,18 @@ class BudgetResultDiff(_ResultDiffBase):
         Returns
         -------
         pandas.DataFrame
-            ``model``, ``totim``, ``term``, ``reference_value``, ``model_value``
-            and ``diff`` (model minus reference).
+            ``model``, ``totim``, ``per`` and ``kstpkper`` (the compared model's
+            zero-based stress period and ``(kstp, kper)`` of that time; ``None``
+            where its table carries no such columns), ``term``,
+            ``reference_value``, ``model_value`` and ``diff`` (model minus
+            reference).
         """
 
-        reference = self._model_budget(self.group.reference)
-        columns = ["model", "totim", "term", "reference_value", "model_value", "diff"]
+        reference = self._model_budget(self.group.reference).drop(columns=["per", "kstpkper"])
+        columns = [
+            "model", "totim", "per", "kstpkper", "term",
+            "reference_value", "model_value", "diff",
+        ]
         frames = []
         for name in self._targets(model_name):
             model = self._model_budget(name)
@@ -436,9 +463,10 @@ class BudgetResultDiff(_ResultDiffBase):
         """One row per (model, budget term): totals, percent change, worst
         per-timestep difference, and whether every timestep is within tolerance.
 
-        Over :meth:`get`'s rows, so FloPy's ``time_step``/``stress_period``/
-        ``tslen`` columns get rows too: two members differing only in ``nstp``
-        read ``tslen`` at -50% and ``time_step`` out of tolerance (measured).
+        Over :meth:`get`'s rows: budget terms only. FloPy's ``time_step``/
+        ``stress_period``/``tslen`` had rows too until ledger 485, so two
+        members differing only in ``nstp`` read ``tslen`` at -50% and
+        ``time_step`` out of tolerance.
 
         Parameters
         ----------
@@ -540,16 +568,16 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
           from the record's ``SAT`` auxiliary (its placeholder flow is dropped;
           it was renamed ``sat`` beside it until ledger 471, and this
           raised).
-        - LAK's ``results.q``: NOT reduced, and joined on ``kstpkper`` and every
-          other non-value column, float geometry and MF6's wetted ``FLOW-AREA``/
-          ``flow_area`` included. Members with the same time steps compare step
-          for step; with different ``nstp`` the rows that share a ``(kstp, kper)``
-          are compared -- measured, a member at ``nstp=2`` read at the FIRST step
-          of each period against a reference at ``nstp=1``. A connection whose
-          wetted area differs between the two (dry on one side, say) has no
-          partner and is dropped -- measured, 2 of 72 at period 3 in that pair
-          (``docs/reproducers/diff_results_tier.py``). ``q_lake`` is the lake's
-          frame, positive INTO the lake (adds ``q_per_area``).
+        - LAK's ``results.q``: reduced the same way, and joined on the
+          connection's identity -- ``package``, ``per``, ``lake``, ``iconn``,
+          ``layer``, ``cell``, ``claktype`` -- never on a float. ``q_lake`` is the
+          lake's frame, positive INTO the lake; ``q_per_area`` and MF6's wetted
+          ``flow_area`` are differenced beside it. Until ledger 485 it was
+          joined on the exact ``kstpkper`` and on every float column: a member at
+          ``nstp=2`` was read at the FIRST step of each period against a
+          reference at ``nstp=1``, and a connection whose wetted area moved had
+          no partner (2 of 72 at period 3, ``docs/reproducers/
+          diff_results_tier.py``).
         - MVR (:class:`MvrResultDiff`): the reduced form, column ``q``.
 
         Parameters
@@ -560,10 +588,9 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
             ``KeyError`` and the reference's ``ValueError`` -- only when there are
             rows to filter; an empty comparison comes back unchecked.
         per : int or None, optional
-            Keep one zero-based stress period (each member's last saved step of it
-            on the reduced branches; every saved step on LAK's). A period no member
-            saved gives an empty frame, not an error. Default ``None`` keeps every
-            period.
+            Keep one zero-based stress period, each member at its last saved step
+            of it. A period no member saved gives an empty frame, not an error.
+            Default ``None`` keeps every period.
         layer : int or sequence of int or None, optional
             Keep these zero-based layers. Default ``None`` keeps every layer.
         cells : int or sequence of int or None, optional
@@ -606,8 +633,7 @@ class CellBudgetResultDiff(_ResultDiffBase, DiffSpatialView):
         """One row per model: max/mean/RMSE of the per-cell flow Δ, where the max
         is, and whether every cell is within tolerance.
 
-        Over the rows :meth:`get` returns (its alignment rules apply, LAK's
-        step-for-step join included).
+        Over the rows :meth:`get` returns (its alignment rules apply).
 
         Parameters
         ----------
