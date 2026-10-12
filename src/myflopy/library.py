@@ -385,7 +385,11 @@ class PackageLibrary(SpecLibrary[PackageSpec]):
             rebuilding the spec through :func:`dataclasses.replace` -- an option
             the package's builder does not accept raises ``TypeError``, as it
             would in ``mf.npf(...)``. An override naming an option the source's
-            grid pin certifies voids that pin.
+            grid pin certifies voids that pin. An array recipe
+            (``mf.RasterValues``, ``mf.Polygons``, a product) raises ``TypeError``:
+            it resolves only from a package's recipe inputs, which an override
+            cannot reach -- declare the package through its helper and register
+            that (ledger 542).
 
         Returns
         -------
@@ -442,7 +446,7 @@ class PackageLibrary(SpecLibrary[PackageSpec]):
             Package options merged over the current ones and validated by
             rebuilding the spec, as in :meth:`fork` -- an unknown option raises
             ``TypeError``, and an override of a pin-certified option voids the
-            pin.
+            pin. An array recipe raises ``TypeError``, as in :meth:`fork`.
 
         Returns
         -------

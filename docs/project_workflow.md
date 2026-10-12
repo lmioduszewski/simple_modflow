@@ -271,6 +271,12 @@ project.packages.fork("npf/base", "npf/high", kk_typo=1.0)
 # TypeError: npf: ModflowGwfnpf does not accept 'kk_typo'. Did you mean 'k'?
 ```
 
+An override cannot be an array RECIPE (`mf.RasterValues`, `mf.Polygons`, a product):
+a recipe resolves at build from the package's recipe inputs, which an override does
+not reach, so both verbs raise `TypeError`. Declare that variant through the helper --
+`project.add_package("npf/high", mf.npf(k=mf.RasterValues("k_high.tif")))` -- instead
+(ledger 542).
+
 Both **deep-copy by default**, including options the fork never touched. That is
 not caution for its own sake: `with_options` rebuilds the options dict but not its
 values, so without the copy, editing a "copy" writes through into the original's

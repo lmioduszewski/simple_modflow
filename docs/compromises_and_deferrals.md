@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 541 entries (546 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 542 entries (547 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 542 | An array recipe in a package's OPTIONS is refused, so an edit route cannot carry one | 2026-10-12 |
 | 541 | A raster of values fills an array slot as a recipe, and `*` multiplies recipes | 2026-10-12 |
 | 540 | The PEST forward run opens the model ONCE for every named-series set | 2026-10-12 |
 | 539 | Zones by RIV/DRN BOUNDNAME are deferred | 2026-10-12 |
@@ -20879,3 +20880,19 @@ same day, which is the useful part of the result.
       **Not built:** a recipe for an integer flag, so an explicit per-column `irch`
       ARRAY beside a recharge recipe still reads `unverifiable` on a move (measured;
       `"top_active"` or one integer reads `rebuilt`); `ArrayProduct` division or sums.
+
+542. **An array recipe in a package's OPTIONS is refused, so an edit route cannot carry one (2026-10-12).**
+      `PackageSpec` refuses `mf.RasterValues`/`mf.Polygons`/a product as an option value,
+      list item or dict value (`specs._refuse_recipe_options`): a recipe resolves at
+      build only from `inputs`, by the builder the array helpers wrap, and every edit
+      route -- `packages.fork`, `packages.edit`, `with_options`, a hand-built spec --
+      writes `options`. Measured before: `packages.fork("npf", "npf2",
+      k=mf.RasterValues(p))` constructed and died at build with FloPy's
+      `MFDataException`. **Chosen: refuse, naming the helper**, not route: moving the
+      recipe into `inputs` also needs the recipe-resolving builder, which lives in
+      `package_api` (import layer above `specs`). So a variant with a recipe is declared
+      through `mf.npf(...)` and registered with `add_package(..., overwrite=True)`. The
+      opposite direction -- a plain override over a recipe package, which builds
+      `supplied twice` -- is item 14's (`fork_package` override replaces the recipe).
+      The scan is shallow (value, list items, dict values) so a record list is never
+      walked on construction.

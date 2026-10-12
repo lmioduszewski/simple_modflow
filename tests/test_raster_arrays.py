@@ -662,3 +662,44 @@ def test_a_recharge_recipe_moves_rebuilt(meshes, k_tif):
         sim = _sim(small, mf.rch.array(recharge=mf.RasterValues(k_tif), irch=irch),
                    extra=(mf.npf(k=1.0), mf.ic(strt=5.0)))
         assert _verdict(sim.with_grid(large), "rch") == verdict
+
+
+# --------------------------------------------------- review of R2-rasters (542)
+
+
+def test_an_edit_route_refuses_a_recipe_it_would_put_in_the_options(k_tif, tmp_path):
+    """Ledger 542: a recipe resolves from ``inputs`` only.
+
+    Every edit route writes ``options``, and a recipe there reached FloPy unresolved:
+    ``packages.fork("npf", "npf2", k=mf.RasterValues(p))`` constructed fine and died at
+    build with an ``MFDataException`` naming neither the recipe nor the fork.
+    """
+
+    recipe = mf.RasterValues(k_tif)
+    project = mf.Project(tmp_path / "proj", name="p")
+    project.add_package("npf", mf.npf(k=1.0))
+    attempts = {
+        "fork": lambda: project.packages.fork("npf", "npf2", k=recipe),
+        "edit": lambda: project.packages.edit("npf", k33=[recipe, 1.0]),
+        "with_options": lambda: mf.npf(k=1.0).with_options(k=recipe * 2.0),
+        "by hand": lambda: PackageSpec("npf", flopy.mf6.ModflowGwfnpf, {"k": recipe}),
+        "period dict": lambda: PackageSpec(
+            "rch", flopy.mf6.ModflowGwfrcha, {"recharge": {0: recipe}}
+        ),
+    }
+    for route, attempt in attempts.items():
+        with pytest.raises(TypeError, match="array recipe") as caught:
+            attempt()
+        assert "through its helper" in str(caught.value), route
+    assert "npf2" not in project.packages
+    assert project.packages["npf"].options["k"] == 1.0
+
+
+def test_nearest_on_a_raster_blank_over_the_grid_names_the_raster(meshes, tmp_path):
+    """``gaps='nearest'`` with no valued cell died in a k-d tree with ``IndexError``."""
+
+    small, _ = meshes
+    blank = _tif(tmp_path / "blank.tif", small, lambda x, y: -9999.0 + 0.0 * x)
+    with pytest.raises(ValueError, match="no valued cell") as caught:
+        grid_surfaces.get_raster_vals_at_centroids(small, [blank], ["v"], gaps="nearest")
+    assert "blank.tif" in str(caught.value)

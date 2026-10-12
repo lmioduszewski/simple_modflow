@@ -1682,6 +1682,9 @@ cells against 6 more than half inside on a 6x6 mesh; `rule="centroid"` takes the
 whose centre is inside. Whether `default=` should compete is an open user decision.
 `ArrayProduct` is NOT a `_SPEC_TOKEN` object: `specs.py` handles it by type so its
 factors are walked as SOURCES (bundler, anchor, `source_paths`, digest) with no wiring.
+A recipe lives in `inputs` ONLY: `PackageSpec` refuses one in `options`, so
+`packages.fork`/`edit`/`with_options` cannot carry one -- declare the variant through
+the helper and `add_package(..., overwrite=True)` (ledger 542).
 
 ## Barriers? `mf.hfb`, and it is NOT in the package registry (2026-08-29, ledger 162)
 `mf.hfb()` / `.line` / `.gpkg` / `.enclose` / `.flopy`. A barrier sits on the FACE

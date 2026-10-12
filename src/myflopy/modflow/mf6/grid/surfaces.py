@@ -318,6 +318,15 @@ def _resolve_gaps(values, vor, src, xs, ys, *, label, raster_path, gaps: str) ->
             "gaps='warn' to receive them as NaN."
         )
     if gaps == "nearest":
+        if missing.size == values.size:
+            # No valued cell to be nearest TO: the k-d tree over zero cells died with
+            # `IndexError: index 0 is out of bounds`, naming neither the raster nor why.
+            raise ValueError(
+                f"Raster '{raster_path}' gave no value for ANY of the {values.size} "
+                f"cells of this grid, so column {label!r} has no valued cell for "
+                "gaps='nearest' to fill from. The raster is no-data over the whole "
+                f"grid. {_extents_text(vor, src)}"
+            )
         filled = _fill_nearest(values, xs, ys, missing)
         logger.info(
             "column %r: filled %d of %d cells from the nearest valued cell (%s)",
@@ -397,7 +406,9 @@ def get_raster_vals_at_centroids(
     ``"nearest"``
         Take each gap from its nearest valued cell, by centroid distance, and log
         which. This is the fix for sampling a raster interpolated from another
-        grid's centroids, whose data stops half a cell inside the model edge.
+        grid's centroids, whose data stops half a cell inside the model edge. A
+        raster giving NO cell a value -- no-data over a grid it overlaps -- raises
+        ``ValueError``: there is no valued cell to be nearest to.
     ``"raise"``
         Refuse the sample.
     ``"ignore"``

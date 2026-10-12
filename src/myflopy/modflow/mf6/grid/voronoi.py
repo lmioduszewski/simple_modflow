@@ -1320,7 +1320,8 @@ class VoronoiGridPlus(VoronoiGrid):
         gaps : {"warn", "nearest", "raise", "ignore"}, optional
             What a cell the raster gave no value for becomes. ``"warn"`` (default):
             NaN, with a warning naming the cells. ``"nearest"``: the value of the
-            nearest valued cell, by centroid distance. ``"raise"``: ``ValueError``.
+            nearest valued cell, by centroid distance (``ValueError`` when no cell
+            has a value to be nearest to). ``"raise"``: ``ValueError``.
             ``"ignore"``: NaN, silently. Unless ``"ignore"``, a raster that gives NO
             cell a value while not overlapping the grid at all raises
             ``ValueError`` printing both extents and both CRSs.

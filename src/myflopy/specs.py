@@ -87,6 +87,8 @@ from myflopy.sources import (
     ArrayProduct,
     DataSourceSpec,
     LiteralSource,
+    Polygons,
+    RasterValues,
     is_source_payload,
     source_from_dict,
 )
@@ -1938,6 +1940,48 @@ def _check_options(name: str, builder, options: dict[str, Any]) -> None:
     )
 
 
+def _is_array_recipe(value: Any) -> bool:
+    """Whether ``value`` is ONE array recipe: ``mf.RasterValues``, ``mf.Polygons`` or a product."""
+
+    return isinstance(value, (RasterValues, Polygons, ArrayProduct))
+
+
+def _refuse_recipe_options(name: str, options: dict[str, Any]) -> None:
+    """Refuse an array recipe sitting in a package's OPTIONS (ledger 542).
+
+    A recipe (``mf.RasterValues``, ``mf.Polygons``, a product of them) is resolved at
+    BUILD only from ``inputs``, and only by the builder the ``mf.npf``/``mf.ic``/
+    ``mf.sto``/``mf.rch.array``/``mf.evt.array`` helpers wrap around FloPy's. In
+    ``options`` it reaches FloPy unresolved, which dies five frames down with an
+    ``MFDataException`` naming neither the recipe nor the edit. Every edit route --
+    ``packages.fork``, ``packages.edit``, ``with_options``, a hand-built spec -- writes
+    ``options``, so they all put a recipe there; measured: ``packages.fork("npf",
+    "npf2", k=mf.RasterValues(p))`` constructed fine and failed at build.
+
+    Shallow on purpose: the value itself, the items of a list/tuple, and the values of a
+    dict -- the three shapes a recipe is ever declared in. Records are never walked: a
+    654,480-record EVT would cost a scan on every construction.
+    """
+
+    for key, value in options.items():
+        if isinstance(value, (list, tuple)):
+            items = value
+        elif isinstance(value, dict):
+            items = list(value.values())
+        else:
+            items = (value,)
+        if _is_array_recipe(value) or any(_is_array_recipe(item) for item in items):
+            raise TypeError(
+                f"{name}: option {key!r} holds an array recipe (mf.RasterValues, "
+                "mf.Polygons or a product of them), which is resolved at BUILD from a "
+                "package's recipe inputs -- never from its options, where FloPy would be "
+                "handed it unresolved. Declare the package again through its helper "
+                f"(mf.npf/mf.ic/mf.sto({key}=...), mf.rch.array/mf.evt.array) and "
+                "register that, e.g. project.add_package(key, spec, overwrite=True); "
+                "packages.fork, packages.edit and with_options cannot route a recipe."
+            )
+
+
 def _check_input_collisions(
     name: str, builder, inputs: dict[str, Any], options: dict[str, Any]
 ) -> None:
@@ -2125,7 +2169,10 @@ class PackageSpec:
         of the class a ``functools.partial`` binds -- and an unknown name raises
         ``TypeError``, suggesting the closest valid name when one is close. A
         plain function with no ``mf6_targets``, or a partial binding no class,
-        is not checked. Default: empty.
+        is not checked. An array recipe (``mf.RasterValues``, ``mf.Polygons`` or
+        a product of them) as a value, a list item or a dict value raises
+        ``TypeError``: it is resolved only from ``inputs``, by the builder the
+        array helpers wrap (ledger 542). Default: empty.
     enabled : bool, optional
         ``False`` keeps the package declared but skipped: :meth:`build` returns
         ``None``, and an enabled sibling that ``requires`` it is refused with
@@ -2169,6 +2216,7 @@ class PackageSpec:
     def __post_init__(self) -> None:
         """Freeze ``requires`` to a tuple for hashable, immutable dependency ordering."""
         _check_options(self.name, self.builder, self.options)
+        _refuse_recipe_options(self.name, self.options)
         _check_input_collisions(self.name, self.builder, self.inputs, self.options)
         _check_recipe_complete(self.name, self.builder, self.inputs, self.options)
 
@@ -2247,7 +2295,10 @@ class PackageSpec:
             another (``"ft"``, which MF6 reads as undefined) raises ``ValueError``
             naming the word to write (ledger 432). On a TDIS, a ``time_units``
             must be one of MF6's six words, as at ``mf.tdis`` -- MF6 stops the run on
-            any other (ledger 456).
+            any other (ledger 456). An array recipe (``mf.RasterValues``,
+            ``mf.Polygons``, a product) raises ``TypeError``: it resolves only from
+            ``inputs``, so declare it through the package's helper (ledger
+            542).
         """
 
         _check_unit_overrides(
