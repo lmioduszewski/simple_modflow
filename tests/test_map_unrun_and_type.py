@@ -182,7 +182,7 @@ def test_the_documented_type_set_is_the_accepted_one():
 @pytest.mark.parametrize(
     ("layer", "error", "match"),
     [
-        (4, ValueError, r"outside this model's layers 0\.\.3"),
+        (4, ValueError, r"outside this model's 4 layers, 0\.\.3"),
         (None, TypeError, "zero-based integer"),
         ("all", TypeError, "zero-based integer"),
         (True, TypeError, "zero-based integer"),

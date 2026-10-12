@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 447 entries (452 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 448 entries (453 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 448 | A map refuses a `layer=` its model's views do not number: one layer on a DISU | 2026-10-11 |
 | 447 | A run's and a spec's MF6 executable is stored as text: a `str` as given, an `os.PathLike` through... | 2026-10-11 |
 | 446 | An explicit `trigger_sep` never thins a `"floor"` unit at or above its own minimum | 2026-10-11 |
 | 445 | `protect_sources` / `protected_labels` are removed; the vertices near a `"line"` band's ring stay held, as... | 2026-10-11 |
@@ -19024,3 +19025,17 @@ same day, which is the useful part of the result.
       `run.executable = Path(...)` assignment after construction (the field is not a
       property) is not normalized.
 
+448. **A map refuses a `layer=` its model's views do not number: one layer on a DISU (2026-10-11).**
+      `Choro.nlay` read FloPy's `modelgrid.nlay`, which FloPy INFERS from a DISU's `IHC`
+      (2 on the 2 x 3 x 4 fixture), while every view numbers a DISU's nodes as ONE layer
+      (ledger 419's `CellNumbering`). So `model.plot.map(layer=1)` was accepted and died
+      at `.fig` with a bare `KeyError: 1`, and a noun's `chd.results.q.map(layer=1)` /
+      `chd.inputs.head.map(layer=1)` PAINTED all 24 nodes. `Choro.nlay` now reads
+      `CellNumbering.nlay` (FloPy's count when the grid has no type, as a test double's),
+      so the call refuses naming "one layer, 0" and the DISU reason; DIS/DISV are
+      unchanged. The heads hover's per-layer rows loop over the same count, and looping
+      over FloPy's two made EVERY heads map of a DISU -- `model.plot.map()`,
+      `model.hds.map()`, layer 0 included -- raise `KeyError: 1` at `.fig`; they draw
+      now, with one layer in the hover. Not changed: `model.hds.get(layer=1)` and
+      `q.get(layer=1)` on a DISU still FILTER to zero rows, and `model.hds.array(layer=1)`
+      raises numpy's `IndexError` -- a `get` is a filter, and the array reader is not a map.

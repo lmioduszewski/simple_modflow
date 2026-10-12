@@ -28,6 +28,7 @@ from myflopy._warnings import stacklevel_outside_package
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.hydraulics import flow_model, model_transmissivity, unit_labels
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.extent import Extent, resolve_extent
@@ -831,9 +832,18 @@ class Choro(Picture):
 
     @property
     def nlay(self):
-        """Number of layers in the bound model's grid."""
+        """Layers the bound model's VIEWS number: the grid's, and one on a DISU.
 
-        return self._inputs.gwf.modelgrid.nlay
+        Read through ``CellNumbering`` (ledger 419), the rule every table and the
+        heads reader key cells by: MF6 writes a DISU model's heads as ONE record of
+        nodes, so ``layer=1`` names nothing there even when FloPy infers two layers
+        from ``IHC`` -- it was accepted and painted every node (ledger 448).
+        """
+
+        gwf = self._inputs.gwf
+        if has_cell_numbering(gwf):
+            return cell_numbering(gwf).nlay
+        return gwf.modelgrid.nlay
 
     @property
     def number_style(self) -> str:
@@ -902,9 +912,16 @@ class Choro(Picture):
             return layer
         nlay = int(self.nlay)
         if not 0 <= layer < nlay:
+            span = "one layer, 0" if nlay == 1 else f"{nlay} layers, 0..{nlay - 1}"
+            disu = (
+                " A DISU model's views number its nodes as ONE layer, whatever layering "
+                "FloPy infers from IHC."
+                if getattr(self._inputs.gwf.modelgrid, "grid_type", None) == "unstructured"
+                else ""
+            )
             raise ValueError(
-                f"layer={layer} is outside this model's layers 0..{nlay - 1} "
-                "(zero-based; layer=-1 means 'above ground' only with show_mounding=True)."
+                f"layer={layer} is outside this model's {span} (zero-based; layer=-1 "
+                f"means 'above ground' only with show_mounding=True).{disu}"
             )
         return layer
 

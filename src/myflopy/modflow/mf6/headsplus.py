@@ -743,7 +743,11 @@ class DependentVariableFile(SpatialView, bf.HeadFile):
             Which timestep WITHIN ``per`` to read, when a period has several. Ignored
             when ``kstpkper`` names the timestep outright.
         layer : int, default 0
-            Zero-based layer. Layer 0 is the top.
+            Zero-based layer. Layer 0 is the top. It must be one of the layers the
+            model's views number -- the grid's, and ONE on a DISU model, whose nodes
+            MF6 writes as one record whatever layering FloPy infers -- or the call
+            raises ``ValueError`` naming the count (ledger 448); ``-1`` is
+            accepted only beside ``show_mounding=True``. A bare grid checks nothing.
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat

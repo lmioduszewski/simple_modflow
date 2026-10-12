@@ -270,6 +270,35 @@ def test_a_disu_region_reads_a_node_and_refuses_a_layer_cell_pair(runs):
 # --- regions bound every layer and cell when the grid is known ---------------
 
 
+def test_a_disu_map_refuses_a_layer_its_views_do_not_number(runs):
+    """A DISU model's views number its nodes as ONE layer (ledger 448).
+
+    The map checked ``layer=`` against FloPy's ``modelgrid.nlay``, which FloPy
+    infers from ``IHC`` -- 2 here -- so ``model.plot.map(layer=1)`` was accepted
+    and died at ``.fig`` with a bare ``KeyError: 1``, and a noun's
+    ``q.map(layer=1)`` PAINTED all 24 nodes as if layer 1 existed. Both are
+    refused at the call now, naming the one layer -- and a heads map of a DISU,
+    which raised ``KeyError: 1`` at ``.fig`` even at layer 0, draws.
+    """
+
+    model = mf.load_mf6_run(runs.disu)
+    assert model.modelgrid.nlay == 2  # FloPy's inference: what the map read before
+    match = r"layer=1 is outside this model's one layer, 0 .*DISU"
+    with pytest.raises(ValueError, match=match):
+        model.chd.results.q.map(layer=1)
+    with pytest.raises(ValueError, match=match):
+        model.plot.map(layer=1)
+    with pytest.raises(ValueError, match=match):
+        model.hds.map(layer=1)
+    with pytest.raises(ValueError, match=match):
+        model.chd.inputs.head.map(layer=1)
+    # Layer 0 -- every node -- draws on both backends. The heads maps did not draw
+    # at all before: their hover looped over FloPy's two layers (`KeyError: 1`).
+    assert model.plot.map(layer=0).fig is not None
+    assert model.hds.map().fig is not None
+    assert model.chd.results.q.map(layer=0, backend="mpl") is not None
+
+
 def test_a_dis_region_refuses_a_layer_or_cell_off_the_grid(runs):
     model = mf.load_mf6_run(runs.base)
     with pytest.raises(ValueError, match=r"off the grid.*layers 0\.\.1"):

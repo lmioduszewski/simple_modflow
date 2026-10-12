@@ -314,7 +314,11 @@ def map(      # noqa: A001 - the verb IS `map`
         Which timestep WITHIN ``per`` to read, when a period has several. Ignored
         when ``kstpkper`` names the timestep outright.
     layer : int, default 0
-        Zero-based layer. Layer 0 is the top.
+        Zero-based layer. Layer 0 is the top. It must be one of the layers the
+        model's views number -- the grid's, and ONE on a DISU model, whose nodes
+        MF6 writes as one record whatever layering FloPy infers -- or the call
+        raises ``ValueError`` naming the count (ledger 448); ``-1`` is
+        accepted only beside ``show_mounding=True``. A bare grid checks nothing.
     type : {'hds', 'conc', 'temp', 'rch', 'ks', 'trans', 'trans_max', 'custom'}, default 'hds'
         Which field to read when ``values`` is not given. ``'hds'`` heads,
         ``'conc'`` GWT concentration, ``'temp'`` GWE temperature -- these three
@@ -1594,7 +1598,11 @@ class ModelPlots:
             Which timestep WITHIN ``per`` to read, when a period has several. Ignored
             when ``kstpkper`` names the timestep outright.
         layer : int, default 0
-            Zero-based layer. Layer 0 is the top.
+            Zero-based layer. Layer 0 is the top. It must be one of the layers the
+            model's views number -- the grid's, and ONE on a DISU model, whose nodes
+            MF6 writes as one record whatever layering FloPy infers -- or the call
+            raises ``ValueError`` naming the count (ledger 448); ``-1`` is
+            accepted only beside ``show_mounding=True``. A bare grid checks nothing.
         type : {'hds', 'conc', 'temp', 'rch', 'ks', 'trans', 'trans_max', 'custom'}, default 'hds'
             Which field to read when ``values`` is not given. ``'hds'`` heads,
             ``'conc'`` GWT concentration, ``'temp'`` GWE temperature -- these three
