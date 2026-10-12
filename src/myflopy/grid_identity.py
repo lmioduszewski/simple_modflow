@@ -23,12 +23,14 @@ import it there.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from numbers import Real
 from typing import Any
 
 from myflopy._length_units import length_abbreviation
 from myflopy._logging import get_logger
 from myflopy._time_units import time_abbreviation
+from myflopy.modflow.mf6.package_explorer_utils import CellNumbering
 
 logger = get_logger(__name__)
 
@@ -1048,6 +1050,200 @@ def _built_idomain(disv, nlay: int, ncpl: int):
     return np.asarray(data, dtype=int).reshape(nlay, ncpl)
 
 
+#: The FloPy package types of a model's discretization, and the name a refusal uses.
+_DISCRETIZATION_NAMES = {"dis": "DIS", "disv": "DISV", "disu": "DISU"}
+
+
+@dataclass(frozen=True)
+class _BuiltGrid:
+    """A model's BUILT discretization, as the ``(layer, cell)`` its views number.
+
+    One reading for every build-time check (ledger 469), so a DIS ``(layer, row,
+    col)`` and a DISU ``(node,)`` are checked as their own grids and not as DISV pairs:
+    ``numbering`` is the :class:`CellNumbering` rule (ledger 419) built from the
+    PACKAGE's dimensions, and the arrays are ``(nlay, ncpl)`` in that numbering -- a
+    DIS row-major, a DISU one "layer" of every node. ``top`` is each cell's top in
+    layer 0 (a DISU node's own top), ``None`` with ``botm`` when only the idomain was
+    asked for.
+    """
+
+    name: str
+    package: Any
+    numbering: CellNumbering
+    idomain: Any
+    top: Any = None
+    botm: Any = None
+
+    def layer_cell(self, cellid) -> tuple[int, int] | None:
+        """``cellid`` as ``(layer, cell)``, or ``None`` when it is not this grid's form or is off it.
+
+        Parameters
+        ----------
+        cellid : tuple of int
+            A FloPy cellid: ``(layer, row, col)`` on a DIS, ``(layer, cell)`` on a
+            DISV, ``(node,)`` on a DISU (:attr:`numbering`'s form); any other length
+            answers ``None``.
+
+        Returns
+        -------
+        tuple of (int, int) or None
+            The ``(layer, cell)`` the views number it, or ``None``.
+        """
+
+        if len(cellid) != self.numbering.length:
+            return None
+        try:
+            return self.numbering.layer_cell(cellid)
+        except ValueError:
+            return None
+
+
+def _discretization_package(model):
+    """The model's built DIS/DISV/DISU package, found by TYPE, or ``None``."""
+
+    for package in getattr(model, "packagelist", None) or ():
+        if getattr(package, "package_type", None) in _DISCRETIZATION_NAMES:
+            return package
+    return None
+
+
+def _built_grid(model, *, elevations: bool = False) -> _BuiltGrid | None:
+    """The model's built discretization as a :class:`_BuiltGrid`, or ``None``.
+
+    ``None`` when the model has no discretization yet, or its dimensions or arrays
+    cannot be read (an array still an ``OPEN/CLOSE`` name, an unwritten workspace):
+    the checks that need it are skipped then, as they were when no DISV existed.
+    The idomain is read off the PACKAGE -- ``None`` there is every cell active
+    (ledger 279).
+    """
+
+    import numpy as np
+
+    package = _discretization_package(model)
+    if package is None:
+        return None
+    kind = str(package.package_type)
+
+    def dimension(name):
+        field = getattr(package, name, None)
+        return _as_int(field.get_data()) if field is not None else None
+
+    if kind == "dis":
+        nlay, nrow, ncol = dimension("nlay"), dimension("nrow"), dimension("ncol")
+        if not (nlay and nrow and ncol):
+            return None
+        numbering = CellNumbering("structured", nlay=nlay, ncpl=nrow * ncol, ncol=ncol)
+    elif kind == "disv":
+        nlay, ncpl = dimension("nlay"), dimension("ncpl")
+        if not (nlay and ncpl):
+            return None
+        numbering = CellNumbering("vertex", nlay=nlay, ncpl=ncpl)
+    else:
+        nodes = dimension("nodes")
+        if not nodes:
+            return None
+        numbering = CellNumbering("unstructured", nlay=1, ncpl=nodes)
+    shape = (numbering.nlay, numbering.ncpl)
+    try:
+        field = getattr(package, "idomain", None)
+        data = field.get_data() if field is not None else None
+        idomain = (
+            np.ones(shape, dtype=int) if data is None else np.asarray(data, dtype=int).reshape(shape)
+        )
+        top = botm = None
+        if elevations:
+            top = np.asarray(package.top.get_data(), dtype=float).reshape(numbering.ncpl)
+            bottoms = package.bot if kind == "disu" else package.botm
+            botm = np.asarray(bottoms.get_data(), dtype=float).reshape(shape)
+    except (AttributeError, TypeError, ValueError) as error:
+        logger.debug("could not read the built %s's arrays; not checked: %s", kind, error)
+        return None
+    return _BuiltGrid(_DISCRETIZATION_NAMES[kind], package, numbering, idomain, top, botm)
+
+
+def _cell_areas(built: _BuiltGrid):
+    """Each cell's plan area on a built DIS or DISV, ``(ncpl,)``, or ``None``.
+
+    What MF6 multiplies a rate by: ``delr * delc`` on a DIS, the shoelace of the DISV's
+    own vertices (:func:`_disv_areas`).
+    """
+
+    import numpy as np
+
+    if built.name == "DISV":
+        return _disv_areas(built.package, built.numbering.ncpl)
+    if built.name == "DIS":
+        try:
+            delr = np.asarray(built.package.delr.get_data(), dtype=float).reshape(-1)
+            delc = np.asarray(built.package.delc.get_data(), dtype=float).reshape(-1)
+        except (AttributeError, TypeError, ValueError) as error:
+            logger.debug("could not read delr/delc off the DIS; rates go unreported: %s", error)
+            return None
+        return np.outer(delc, delr).reshape(-1)
+    return None
+
+
+def _grid_extent(numbering: CellNumbering) -> str:
+    """The grid's dimensions in its own terms: ``nlay=2, ncpl=12`` on a DISV."""
+
+    if numbering.kind == "structured":
+        return (
+            f"nlay={numbering.nlay}, nrow={numbering.ncpl // numbering.ncol}, "
+            f"ncol={numbering.ncol}"
+        )
+    if numbering.kind == "unstructured":
+        return f"nodes={numbering.ncpl}"
+    return f"nlay={numbering.nlay}, ncpl={numbering.ncpl}"
+
+
+def cellid_form_complaints(model, packages) -> list[str]:
+    """Each package whose cellids are not the built discretization's form, one sentence each.
+
+    A DIS cellid is ``(layer, row, col)``, a DISV one ``(layer, cell)`` and a DISU one
+    ``(node,)`` (ledger 419). FloPy checks neither direction: a cellid SHORTER than the
+    grid's stopped inside FloPy's writer with ``IndexError: tuple index out of range``,
+    and a LONGER one built clean and FloPy wrote only the parts it expects -- a DISV CHD
+    typed ``(0, 1, 2)`` ran in MF6 as ``(0, 1)``, a DISU one typed ``(3, 5)`` as node 3
+    (ledger 469, ``docs/reproducers/build_cellids_dis_disu.py``). ``ModelSpec.build``
+    asks before FloPy builds each package.
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        The model being built; its discretization must already be built, or there is
+        nothing to compare against and the answer is empty.
+    packages : iterable of PackageSpec
+        The declared packages to read; only ``stress_period_data`` cellids are read
+        (the same records :func:`_cellids_in` reads for the range check).
+
+    Returns
+    -------
+    list of str
+        One complaint per package holding a cellid of another length, naming it, a
+        sample and the grid's form; empty when every cellid has the grid's form.
+    """
+
+    built = _built_grid(model)
+    if built is None:
+        return []
+    numbering = built.numbering
+    complaints = []
+    for package in packages:
+        wrong = sorted(
+            {
+                cellid
+                for cellid in _cellids_in(getattr(package, "options", None) or {}, lengths=(1, 2, 3))
+                if len(cellid) != numbering.length
+            }
+        )
+        if wrong:
+            complaints.append(
+                f"package {package.name!r} holds {len(wrong)} cellid(s) that are not this "
+                f"{built.name}'s {numbering.form}: {_listing(wrong)}"
+            )
+    return complaints
+
+
 def _disv_areas(disv, ncpl: int):
     """Each cell's plan area from the DISV's own vertices (the shoelace), or ``None``.
 
@@ -1204,8 +1400,8 @@ def _flopy_types(model) -> dict[str, str]:
     }
 
 
-def _inactive_cellid_complaints(model, packages, idomain, dug, built_packages=None) -> list[str]:
-    """A list boundary or an observation naming a cell the built DISV removed.
+def _inactive_cellid_complaints(model, packages, built, dug, built_packages=None) -> list[str]:
+    """A list boundary or an observation naming a cell the built discretization removed.
 
     MF6 REFUSES both at read (``Cell is outside active grid domain`` for a boundary,
     ``Error reading data from ID string`` for a head observation -- both measured in
@@ -1216,11 +1412,16 @@ def _inactive_cellid_complaints(model, packages, idomain, dug, built_packages=No
     grid pin) against a context from before the stack was excavated (or re-pinched)
     names cells that no longer exist; one with no pin was written as given, so its
     cellid is what to move (ledger 428).
+
+    ``built`` is the model's :class:`_BuiltGrid`: each cellid is read through its
+    numbering (ledger 419), so a DIS ``(layer, row, col)`` and a DISU ``(node,)`` are
+    checked, where only a DISV ``(layer, cell)`` pair was (ledger 469). A cellid
+    of another form or off the grid is left to the form and range checks.
     """
 
     import numpy as np
 
-    nlay, ncpl = idomain.shape
+    idomain = built.idomain
     complaints: list[str] = []
     types = _flopy_types(model)
     resolved = getattr(model, "_myflopy_resolved", None) or {}
@@ -1228,16 +1429,12 @@ def _inactive_cellid_complaints(model, packages, idomain, dug, built_packages=No
         effective = resolved.get(package.name, package)
         if _built_type(package, types, built_packages) not in _LIST_BC_TYPES:
             continue
-        removed = sorted(
-            {
-                cellid
-                for cellid in _cellids_in(effective.options)
-                if len(cellid) == 2
-                and 0 <= cellid[0] < nlay
-                and 0 <= cellid[1] < ncpl
-                and idomain[cellid[0], cellid[1]] <= 0
-            }
-        )
+        found = {
+            cellid: pair
+            for cellid in _cellids_in(effective.options, lengths=(1, 2, 3))
+            if (pair := built.layer_cell(cellid)) is not None and idomain[pair] <= 0
+        }
+        removed = sorted(found)
         if removed:
             lazy = _is_lazy(model, package)
             typed = not lazy and (getattr(package, "metadata", None) or {}).get(GRID_PIN) is None
@@ -1256,11 +1453,12 @@ def _inactive_cellid_complaints(model, packages, idomain, dug, built_packages=No
                     "Re-declare it against the context of the layer stack this DISV "
                     "was built from"
                 )
+            pairs = [found[cellid] for cellid in removed]
             complaints.append(
-                f"package {package.name!r} names {len(removed)} cell(s) the built DISV "
-                f"has REMOVED (idomain <= 0), which MF6 refuses at read ('Cell is "
-                f"outside active grid domain'): {_listing(removed)}"
-                f"{_dug_note(removed, idomain, dug, stale=not typed, lazy=lazy)}. {advice}"
+                f"package {package.name!r} names {len(removed)} cell(s) the built "
+                f"{built.name} has REMOVED (idomain <= 0), which MF6 refuses at read ('Cell "
+                f"is outside active grid domain'): {_listing(removed)}"
+                f"{_dug_note(pairs, idomain, dug, stale=not typed, lazy=lazy)}. {advice}"
             )
 
     for package in getattr(model, "packagelist", ()) or ():
@@ -1276,18 +1474,18 @@ def _inactive_cellid_complaints(model, packages, idomain, dug, built_packages=No
             for record in records if records is not None else ():
                 for field in ("id", "id2"):
                     value = record[field] if field in (record.dtype.names or ()) else None
-                    if (
+                    if not (
                         isinstance(value, tuple)
-                        and len(value) == 2
                         and all(
                             isinstance(part, (int, np.integer)) and not isinstance(part, bool)
                             for part in value
                         )
-                        and 0 <= int(value[0]) < nlay
-                        and 0 <= int(value[1]) < ncpl
-                        and idomain[int(value[0]), int(value[1])] <= 0
                     ):
-                        removed.append((str(record["obsname"]), (int(value[0]), int(value[1]))))
+                        continue
+                    cellid = tuple(int(part) for part in value)
+                    pair = built.layer_cell(cellid)
+                    if pair is not None and idomain[pair] <= 0:
+                        removed.append((str(record["obsname"]), cellid, pair))
         if removed:
             parent = getattr(package, "parent_file", None)
             owner = (
@@ -1296,11 +1494,11 @@ def _inactive_cellid_complaints(model, packages, idomain, dug, built_packages=No
                 else f"observation file {getattr(package, 'filename', None) or _flopy_name(package)!r}"
             )
             complaints.append(
-                f"{owner} name {len(removed)} cell(s) the built DISV has REMOVED "
+                f"{owner} name {len(removed)} cell(s) the built {built.name} has REMOVED "
                 "(idomain <= 0), which MF6 cannot read (a head observation there stops it "
                 "with 'Error reading data from ID string'): "
-                + _listing(f"{name!r} at {cellid}" for name, cellid in removed)
-                + _dug_note([cellid for _name, cellid in removed], idomain, dug)
+                + _listing(f"{name!r} at {cellid}" for name, cellid, _pair in removed)
+                + _dug_note([pair for _name, _cellid, pair in removed], idomain, dug)
                 + ". Observe an active cell -- in a dug column, the one under the bed"
             )
     return complaints
@@ -1391,7 +1589,7 @@ def _flux_units(context) -> str:
     return f"{short_l}3/{short_t}"
 
 
-def _array_index_findings(model, context, packages, idomain, dug, built_packages=None):
+def _array_index_findings(model, context, packages, built, dug, built_packages=None):
     """``(complaints, warnings)`` for every array-form RCH/EVT built on the model.
 
     A per-column index (``irch``/``ievt`` as an array -- ``"top_active"`` resolved,
@@ -1408,10 +1606,17 @@ def _array_index_findings(model, context, packages, idomain, dug, built_packages
     by name otherwise. For EVT the figure is the MAXIMUM rate over the lost area -- MF6
     scales ET by the head's depth below the surface, so what it drops lies between zero
     and that -- where for RCH it is exact.
+
+    ``built`` is the model's :class:`_BuiltGrid`; a DIS's columns are its row-major
+    cells (ledger 469). A DISU has no array form (MF6 refuses ``READASARRAYS``
+    there), so it has nothing to check.
     """
 
     import numpy as np
 
+    if built.name == "DISU":
+        return [], []
+    idomain = built.idomain
     nlay, ncpl = idomain.shape
     complaints: list[str] = []
     warned: list[str] = []
@@ -1460,7 +1665,7 @@ def _array_index_findings(model, context, packages, idomain, dug, built_packages
             lost = total = None
             if rate is not None:
                 if areas is None:
-                    areas = _disv_areas(model.get_package("disv"), ncpl)
+                    areas = _cell_areas(built)
                 if areas is not None:
                     flux = np.abs(np.asarray(rate, dtype=float)) * areas
                     lost = float(flux[removed].sum())
@@ -1471,11 +1676,15 @@ def _array_index_findings(model, context, packages, idomain, dug, built_packages
 
         period, index, removed, beyond, lost, total = findings[0]
         pairs = [(int(index[cell]), int(cell)) for cell in np.flatnonzero(removed)]
-        where = _listing(f"cell {cell} (layer {layer + 1})" for layer, cell in pairs)
+        where = _listing(
+            f"cell {cell} (layer {layer + 1})" if built.name == "DISV"
+            else f"cell {built.numbering.cellid(layer, cell)}"
+            for layer, cell in pairs
+        )
         if beyond.any():
             where = (where + "; " if where else "") + (
-                f"{int(beyond.sum())} column(s) whose {index_name} names a layer this DISV "
-                f"does not have (nlay={nlay}), which MF6 stops on"
+                f"{int(beyond.sum())} column(s) whose {index_name} names a layer this "
+                f"{built.name} does not have (nlay={nlay}), which MF6 stops on"
             )
         cost = ""
         if lost is not None and total:
@@ -1500,13 +1709,13 @@ def _array_index_findings(model, context, packages, idomain, dug, built_packages
                 f"so it {_STALE_MODEL_CONTEXT}"
                 if lazy
                 else f"Its {index_name} was resolved against a domain that is not this "
-                "DISV's: declare the package without context= (so "
-                f"{index_name}='top_active' resolves at build against this DISV) or "
+                f"{built.name}'s: declare the package without context= (so "
+                f"{index_name}='top_active' resolves at build against this {built.name}) or "
                 "against the excavated result's idomain"
             )
             complaints.append(
                 f"package {name!r} ({noun} as arrays) addresses its {noun} in {count} "
-                f"column(s) to a cell the built DISV has REMOVED although the column has "
+                f"column(s) to a cell the built {built.name} has REMOVED although the column has "
                 f"an active cell below: {where}{note}. MF6 drops {noun} addressed to a "
                 f"removed cell without a word{cost}. {advice}"
             )
@@ -1516,7 +1725,7 @@ def _array_index_findings(model, context, packages, idomain, dug, built_packages
             note = _dug_note(pairs, idomain, dug, stale=False)
             warned.append(
                 f"package {name!r} ({noun} as arrays): {said} puts {noun} in "
-                f"one layer in every column, and the built DISV has REMOVED that cell in "
+                f"one layer in every column, and the built {built.name} has REMOVED that cell in "
                 f"{count} column(s) that have an active cell below: {where}{note}. MF6 "
                 f"drops {noun} addressed to a removed cell without a word{cost}. Leave "
                 f"{index_name} at its default, 'top_active', to put it on each column's "
@@ -1525,28 +1734,18 @@ def _array_index_findings(model, context, packages, idomain, dug, built_packages
     return complaints, warned
 
 
-def _activity_inputs(model):
-    """The built DISV's ``(nlay, ncpl)`` idomain, or ``None`` when there is nothing to check.
+def _activity_inputs(model) -> _BuiltGrid | None:
+    """The built discretization (:class:`_BuiltGrid`), or ``None`` when there is nothing to check.
 
-    ``None`` for a model with no DISV (the activity checks are DISV-only, as the mesh
-    checks are), and for one whose every cell is active -- nothing can name a removed
-    cell there, so the per-package walks are skipped entirely.
+    ``None`` for a model with no discretization, and for one whose every cell is active
+    -- nothing can name a removed cell there, so the per-package walks are skipped
+    entirely. A DIS and a DISU are checked as well as a DISV (ledger 469).
     """
 
-    disv = model.get_package("disv") if hasattr(model, "get_package") else None
-    if disv is None or isinstance(disv, list):
+    built = _built_grid(model)
+    if built is None or (built.idomain > 0).all():
         return None
-    ncpl = _as_int(disv.ncpl.get_data())
-    nlay = _as_int(disv.nlay.get_data())
-    if not ncpl or not nlay:
-        return None
-    try:
-        idomain = _built_idomain(disv, nlay, ncpl)
-    except ValueError as error:
-        # An idomain that is not (nlay, ncpl) is not this check's to report.
-        logger.debug("the built idomain could not be shaped; activity not checked: %s", error)
-        return None
-    return None if (idomain > 0).all() else idomain
+    return built
 
 
 def _active_cell_complaints(model, context, packages, built_packages=None) -> list[str]:
@@ -1559,13 +1758,14 @@ def _active_cell_complaints(model, context, packages, built_packages=None) -> li
     domain still names the dug cells.
     """
 
-    idomain = _activity_inputs(model)
-    if idomain is None:
+    built = _activity_inputs(model)
+    if built is None:
         return []
-    dug = excavation_cells(context)
-    complaints = _inactive_cellid_complaints(model, packages, idomain, dug, built_packages)
+    # An excavation record numbers DISV cells; no other discretization carries one.
+    dug = excavation_cells(context) if built.name == "DISV" else {}
+    complaints = _inactive_cellid_complaints(model, packages, built, dug, built_packages)
     return complaints + _array_index_findings(
-        model, context, packages, idomain, dug, built_packages
+        model, context, packages, built, dug, built_packages
     )[0]
 
 
@@ -1599,7 +1799,9 @@ def _disv_arrays(disv):
     return idomain, top, botm
 
 
-def lak_geometry_complaints(idomain, top, botm, connectiondata, lake_rules, *, name="lak") -> list[str]:
+def lak_geometry_complaints(
+    idomain, top, botm, connectiondata, lake_rules, *, name="lak", numbering=None
+) -> list[str]:
     """What in a LAK package's connections the built discretization contradicts.
 
     One check, run from two places because neither alone sees every build order
@@ -1607,27 +1809,36 @@ def lak_geometry_complaints(idomain, top, botm, connectiondata, lake_rules, *, n
     model already has its DISV -- FloPy validates a connection's cellid against the
     idomain at construction and would otherwise stop first, naming only the cellid --
     and by :func:`_discretization_complaints` after every package is built, which
-    covers a lake declared before its DISV.
+    covers a lake declared before its DISV -- and, since ledger 469, every LAK
+    package on a DIS, DISV or DISU, a hand-written one included.
 
     Parameters
     ----------
     idomain : array_like of int, shape (nlay, ncpl)
-        The built DISV's idomain (``None`` in FloPy means every cell is active; pass
-        ones then). ``<= 0`` is a removed cell.
+        The built discretization's idomain, in the ``(layer, cell)`` numbering of
+        ``numbering`` (``None`` in FloPy means every cell is active; pass ones then).
+        ``<= 0`` is a removed cell.
     top : array_like of float, shape (ncpl,)
-        The built DISV's model top, in model length units.
+        The model top of each cell (a DISU node's own top), in model length units.
     botm : array_like of float, shape (nlay, ncpl)
-        The built DISV's layer bottoms.
+        The layer bottoms (a DISU node's bottom, one "layer").
     connectiondata : sequence
-        The LAK ``connectiondata`` records, as ``mf.lak`` writes them: ``[lakeno,
-        iconn, (layer, cell), claktype, bedleak, belev, telev, connlen, connwidth]``,
-        lake numbers from zero. A record whose cellid is not a ``(layer, cell)`` pair
-        (a structured grid) is skipped.
+        The LAK ``connectiondata`` records: ``[lakeno, iconn, cellid, claktype,
+        bedleak, belev, telev, connlen, connwidth]``, lake numbers from zero. A record
+        whose cellid is not the grid's form, or is off it, is skipped -- the form and
+        range checks report it.
     lake_rules : mapping of str to str
         ``{lake_id: rule}`` in lake-number order -- the :data:`LAKE_RULES` metadata
-        ``mf.lak`` stamps. Only ``"excavated"`` changes what is checked.
+        ``mf.lak`` stamps. Only ``"excavated"`` changes what is checked. Empty for a
+        package ``mf.lak`` did not resolve: its lakes are named by number, and each
+        complaint says to correct the records rather than to re-declare ``mf.lak``.
     name : str, default "lak"
         The package's name, for the messages.
+    numbering : CellNumbering, optional
+        Keyword-only. How a cellid names a ``(layer, cell)`` of the arrays (ledger
+        419): a DIS ``(layer, row, col)``, a DISV ``(layer, cell)``, a DISU
+        ``(node,)``; the messages name the discretization it describes. Default
+        ``None``: a DISV ``(layer, cell)`` pair, read as itself.
 
     Returns
     -------
@@ -1664,6 +1875,14 @@ def lak_geometry_complaints(idomain, top, botm, connectiondata, lake_rules, *, n
     top = np.asarray(top, dtype=float).reshape(-1)
     botm = np.asarray(botm, dtype=float)
     nlay, ncpl = botm.shape
+    grid = _DISCRETIZATION_NAMES[
+        {"structured": "dis", "unstructured": "disu"}.get(getattr(numbering, "kind", None), "disv")
+    ]
+    cause = (
+        _LAK_GEOMETRY_CAUSE if lake_rules else
+        f"The connections were written as given, not resolved by mf.lak: correct each "
+        f"one against this {grid}"
+    )
     ids = list(lake_rules)
     removed: dict[str, list] = {}
     misplaced: dict[str, list] = {}
@@ -1672,86 +1891,109 @@ def lak_geometry_complaints(idomain, top, botm, connectiondata, lake_rules, *, n
     for row in connectiondata if connectiondata is not None else ():
         row = list(row)
         lake, cellid, kind = int(row[0]), row[2], str(row[3]).upper()
-        if not isinstance(cellid, (tuple, list)) or len(cellid) != 2:
+        if not isinstance(cellid, (tuple, list)):
             continue
-        layer, cell = int(cellid[0]), int(cellid[1])
+        if numbering is not None:
+            if len(cellid) != numbering.length:
+                continue  # another form: the form check reports it
+            try:
+                layer, cell = numbering.layer_cell(tuple(cellid))
+            except ValueError:
+                continue  # off the grid: the range check reports it, by the cellid
+        elif len(cellid) != 2:
+            continue
+        else:
+            layer, cell = int(cellid[0]), int(cellid[1])
         if not (0 <= layer < nlay and 0 <= cell < ncpl):
             continue  # out of range: the range check reports it, by the cellid
+        written = tuple(int(part) for part in cellid)
         lake_id = ids[lake] if 0 <= lake < len(ids) else str(lake)
         rule = lake_rules.get(lake_id)
         cell_top = float(top[cell] if layer == 0 else botm[layer - 1, cell])
         cell_bottom = float(botm[layer, cell])
         if idomain[layer, cell] <= 0:
-            removed.setdefault(lake_id, []).append((layer, cell))
+            removed.setdefault(lake_id, []).append(written)
             continue
         belev, telev = float(row[5]), float(row[6])
         if kind == "VERTICAL" and rule == "excavated":
             if abs(cell_top - belev) > bed_tolerance(belev):
-                misplaced.setdefault(lake_id, []).append(((layer, cell), belev, cell_top))
+                misplaced.setdefault(lake_id, []).append((written, belev, cell_top))
             if layer and (idomain[:layer, cell] > 0).any():
-                covered.setdefault(lake_id, []).append((layer, cell))
+                covered.setdefault(lake_id, []).append(written)
         elif kind == "HORIZONTAL" and belev != telev:
             if belev < cell_bottom - bed_tolerance(cell_bottom) or telev > cell_top + bed_tolerance(cell_top):
-                outside.setdefault(lake_id, []).append(((layer, cell), belev, telev, cell_bottom, cell_top))
+                outside.setdefault(lake_id, []).append((written, belev, telev, cell_bottom, cell_top))
 
     complaints = []
     for lake_id, cells in removed.items():
         complaints.append(
             f"package {name!r}: lake {lake_id!r} connects to {len(cells)} cell(s) the built "
-            f"DISV has REMOVED (idomain <= 0), which MF6 refuses: {_listing(cells)}. "
-            f"{_LAK_GEOMETRY_CAUSE}"
+            f"{grid} has REMOVED (idomain <= 0), which MF6 refuses: {_listing(cells)}. "
+            f"{cause}"
         )
     for lake_id, found in misplaced.items():
         worst = max(found, key=lambda item: abs(item[2] - item[1]))
         complaints.append(
             f"package {name!r}: excavated lake {lake_id!r} was resolved with its VERTICAL "
-            f"connections at the excavated bed, and the built DISV puts {len(found)} of "
+            f"connections at the excavated bed, and the built {grid} puts {len(found)} of "
             f"those cells' tops elsewhere (worst {worst[0]}: bed {worst[1]:.6g}, cell top "
             f"{worst[2]:.6g}). MF6 counts a VERTICAL connection from its cell's TOP. "
-            f"{_LAK_GEOMETRY_CAUSE}"
+            f"{cause}"
         )
     for lake_id, cells in covered.items():
         complaints.append(
             f"package {name!r}: excavated lake {lake_id!r} connects VERTICALLY to "
-            f"{len(cells)} cell(s) with an ACTIVE cell above them in the built DISV: "
-            f"{_listing(cells)} -- the pond is not dug out of this DISV. "
-            f"{_LAK_GEOMETRY_CAUSE}"
+            f"{len(cells)} cell(s) with an ACTIVE cell above them in the built {grid}: "
+            f"{_listing(cells)} -- the pond is not dug out of this {grid}. "
+            f"{cause}"
         )
     for lake_id, found in outside.items():
         example = found[0]
         complaints.append(
             f"package {name!r}: lake {lake_id!r} has {len(found)} HORIZONTAL connection(s) "
-            f"reaching outside their cell in the built DISV, which MF6 refuses ('belev ... "
+            f"reaching outside their cell in the built {grid}, which MF6 refuses ('belev ... "
             f"MUST BE >= cell bottom' / 'telev ... MUST BE <= cell top'); e.g. {example[0]} "
             f"written {example[1]:.6g}-{example[2]:.6g} in a cell {example[3]:.6g}-"
-            f"{example[4]:.6g}. {_LAK_GEOMETRY_CAUSE}"
+            f"{example[4]:.6g}. {cause}"
         )
     return complaints
 
 
-def _lak_complaints(model, packages) -> list[str]:
-    """:func:`lak_geometry_complaints` for every ``mf.lak`` package built on ``model``."""
+def _lak_complaints(model, packages, built_packages=None) -> list[str]:
+    """:func:`lak_geometry_complaints` for every LAK package built on ``model``.
 
-    disv = model.get_package("disv") if hasattr(model, "get_package") else None
-    if disv is None or isinstance(disv, list):
-        return []
+    On a DIS, DISV or DISU, each cellid read through the grid's numbering, and a
+    hand-written package too, with no rules -- its removed cells and its HORIZONTAL
+    faces outside their cell are what MF6 refuses (ledger 469). FloPy itself
+    refuses a connection to a removed cell when it builds the package, so that half
+    speaks for a package built before its discretization.
+    """
+
+    types = _flopy_types(model)
     lakes = [
         package
         for package in packages
-        if (package.metadata or {}).get(LAKE_RULES) and "connectiondata" in (package.options or {})
+        if "connectiondata" in (package.options or {})
+        and (
+            (package.metadata or {}).get(LAKE_RULES)
+            or _built_type(package, types, built_packages) == "lak"
+        )
     ]
     if not lakes:
         return []
-    arrays = _disv_arrays(disv)
-    if arrays is None:
+    built = _built_grid(model, elevations=True)
+    if built is None:
         return []
     complaints = []
     for package in lakes:
         complaints += lak_geometry_complaints(
-            *arrays,
+            built.idomain,
+            built.top,
+            built.botm,
             package.options["connectiondata"],
-            package.metadata[LAKE_RULES],
+            (package.metadata or {}).get(LAKE_RULES) or {},
             name=package.name,
+            numbering=built.numbering,
         )
     return complaints
 
@@ -2229,7 +2471,8 @@ def active_cell_warnings(model, context, packages, *, built_packages=None) -> li
     -------
     list of str
         One message per package that loses flux; empty when none does, when the model
-        has no DISV, or when every cell of it is active. The rate is exact for recharge;
+        has no discretization (or a DISU, which has no array form), or when every cell
+        of it is active. The rate is exact for recharge;
         for ET it is the MAXIMUM rate over the lost area ("up to ... at the maximum ET
         rate"), because MF6 scales ET by the head's depth below the ET surface.
 
@@ -2242,12 +2485,11 @@ def active_cell_warnings(model, context, packages, *, built_packages=None) -> li
     []
     """
 
-    idomain = _activity_inputs(model)
-    if idomain is None:
+    built = _activity_inputs(model)
+    if built is None:
         return []
-    return _array_index_findings(
-        model, context, packages, idomain, excavation_cells(context), built_packages
-    )[1]
+    dug = excavation_cells(context) if built.name == "DISV" else {}
+    return _array_index_findings(model, context, packages, built, dug, built_packages)[1]
 
 
 def _mesh_scale(points) -> float:
@@ -2519,22 +2761,30 @@ def _discretization_complaint_families(
                 f"package {package.name!r} holds {len(negative)} cellid(s) with a negative "
                 f"part: {listing}"
             )
-    if ncpl is not None:
+    # Past the grid, read through the built discretization's own numbering (ledger 419):
+    # the test was `cellid[-1] >= ncpl` on a DISV alone, so a DIS or DISU model was never
+    # range-checked at all, and on a DIS that test compared the COLUMN against
+    # nrow * ncol (ledger 469). A cellid of another form is named by
+    # `cellid_form_complaints`, which `ModelSpec.build` also asks before FloPy builds.
+    built = _built_grid(model)
+    if built is not None:
+        complaints["cellid"] += cellid_form_complaints(model, packages)
         for package in packages:
             stale = sorted(
                 {
                     cellid
-                    for cellid in _cellids_in(package.options)
-                    if cellid[-1] >= ncpl or (nlay is not None and cellid[0] >= nlay)
+                    for cellid in _cellids_in(
+                        getattr(package, "options", None) or {}, lengths=(1, 2, 3)
+                    )
+                    if len(cellid) == built.numbering.length
+                    and min(cellid) >= 0
+                    and built.layer_cell(cellid) is None
                 }
             )
             if stale:
-                listing = ", ".join(str(cellid) for cellid in stale[:5])
-                if len(stale) > 5:
-                    listing += f", and {len(stale) - 5} more"
                 complaints["cellid"].append(
                     f"package {package.name!r} holds {len(stale)} cellid(s) this model's "
-                    f"grid does not have (nlay={nlay}, ncpl={ncpl}): {listing}"
+                    f"grid does not have ({_grid_extent(built.numbering)}): {_listing(stale)}"
                 )
     # In range is not enough: a cell can exist on this mesh and still have been REMOVED
     # by the DISV's idomain -- what a context declared before an excavation leaves.
@@ -2543,7 +2793,7 @@ def _discretization_complaint_families(
     # `connectiondata` on purpose): active cells, faces inside their cells, and for an
     # excavated lake the vertical cell at the bed (ledger 325). The LAK builder runs the
     # same check before FloPy when the DISV already exists; this covers the other order.
-    complaints["lake"] += _lak_complaints(model, packages)
+    complaints["lake"] += _lak_complaints(model, packages, built_packages)
     return complaints
 
 
@@ -2582,16 +2832,18 @@ BUILD_COMPLAINT_FAMILIES: dict[str, tuple[str, str]] = {
         "A cellid is zero-based: each part counts up from 0 to one below the grid's "
         "count. A negative part is Python's from-the-end index to everything upstream "
         "of MF6, and FloPy writes it as an id the record never named; a part past the "
-        "grid was typed wrong or resolved on a larger mesh. Correct the records, or "
-        "re-declare the package against this grid.",
+        "grid was typed wrong or resolved on a larger mesh. A cellid also has the "
+        "grid's own form -- (layer, row, col) on a DIS, (layer, cell) on a DISV, "
+        "(node,) on a DISU. Correct the records, or re-declare the package against "
+        "this grid.",
     ),
     "removed": (
-        "addresses cells the DISV it was built with has removed",
-        "A cell is removed where the DISV's idomain is 0 or less. Each line above says "
+        "addresses cells the {dis} it was built with has removed",
+        "A cell is removed where the {dis}'s idomain is 0 or less. Each line above says "
         "what MF6 does with what names one, and what to correct.",
     ),
     "lake": (
-        "has lake connections the DISV it was built with contradicts",
+        "has lake connections the {dis} it was built with contradicts",
         "MF6 refuses a connection to a removed cell or a face outside its cell, and "
         "runs an excavated lake whose vertical connections are misplaced, exchanging "
         "through the wrong cell without a word.",
@@ -2599,16 +2851,22 @@ BUILD_COMPLAINT_FAMILIES: dict[str, tuple[str, str]] = {
 }
 
 
-def _build_refusal(model_name: str, families: dict[str, list[str]]) -> str | None:
+def _build_refusal(
+    model_name: str, families: dict[str, list[str]], discretization: str = "DISV"
+) -> str | None:
     """The message refusing a build, one paragraph per family that has complaints.
 
     ``None`` when no family has any. Each paragraph is the family's heading, its
     complaints as bullets and its closing (:data:`BUILD_COMPLAINT_FAMILIES`), so a
     refusal carrying several families says what each group is about.
+    ``discretization`` (``"DIS"``, ``"DISV"`` or ``"DISU"``) fills a heading's
+    ``{dis}``.
     """
 
     paragraphs = [
-        f"Model {model_name!r} {heading}:\n  - " + "\n  - ".join(found) + f"\n{closing}"
+        f"Model {model_name!r} {heading.format(dis=discretization)}:\n  - "
+        + "\n  - ".join(found)
+        + f"\n{closing.format(dis=discretization)}"
         for family, (heading, closing) in BUILD_COMPLAINT_FAMILIES.items()
         if (found := families.get(family))
     ]
@@ -2670,6 +2928,7 @@ __all__ = [
     "implicit_lake_models",
     "implicit_solver_complaints",
     "lak_build_warnings",
+    "cellid_form_complaints",
     "lak_geometry_complaints",
     "pin_metadata",
 ]

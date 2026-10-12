@@ -56,6 +56,7 @@ from myflopy.grid_identity import (
     SOURCE_SHA,  # noqa: F401
     _as_int,  # noqa: F401
     _build_refusal,
+    _built_grid,
     _canonical_ring,  # noqa: F401
     _cellids_in,  # noqa: F401
     _context_metadata,  # noqa: F401
@@ -64,6 +65,7 @@ from myflopy.grid_identity import (
     _mesh_residual,  # noqa: F401
     _mesh_scale,  # noqa: F401
     active_cell_warnings,
+    cellid_form_complaints,
     cellwise_options,
     coupled_mesh_complaints,
     disv_pin,  # noqa: F401
@@ -5068,10 +5070,12 @@ class ModelSpec:
             against, all listed at once and grouped by what each is about -- the
             mesh (DISV against the context grid, a grid pin, a move stamp), the
             context's domain shape, a cellid no cell answers to (negative, or past
-            the grid), a cell the DISV has removed, a lake connection the DISV
-            contradicts -- each group under its own heading and advice; and for a
-            package ref with no ``build_context`` on a model without a deferred
-            ``grid``.
+            the grid), a cell the discretization has removed, a lake connection it
+            contradicts -- each group under its own heading and advice, read on a
+            DIS, DISV or DISU through its own cellid form (ledger 469); before
+            FloPy builds a package whose cellids are not that form (a DISV pair on a
+            DIS); and for a package ref with no ``build_context`` on a model without
+            a deferred ``grid``.
         KeyError
             For a ref whose key is not in the build context's library -- which
             includes every ref when ``build_context`` is ``None`` and the model
@@ -5097,11 +5101,24 @@ class ModelSpec:
         model = builder(simulation, modelname=self.name, **self.options)
         model.myflopy_context = context
         packages = _anchored_packages(self.resolved_packages(build_context), build_context)
-        built_packages = {
-            package.name: built
-            for package in packages
-            if (built := package.build(model)) is not None
-        }
+        built_packages = {}
+        for package in packages:
+            # A cellid of another form than the built discretization's -- a DISV pair on
+            # a DIS, a DIS triple on a DISV -- is refused BEFORE FloPy sees it: FloPy
+            # stopped on a shorter one with `IndexError: tuple index out of range` and
+            # wrote only the leading parts of a longer one, which MF6 then ran (ledger
+            # 469).
+            wrong = cellid_form_complaints(model, [package])
+            if wrong:
+                built_grid = _built_grid(model)
+                raise ValueError(
+                    _build_refusal(
+                        self.name, {"cellid": wrong}, built_grid.name if built_grid else "DISV"
+                    )
+                )
+            built = package.build(model)
+            if built is not None:
+                built_packages[package.name] = built
         # RE-READ the context: a lazy DISV resolves the layer stack against the grid
         # and publishes the domain and surfaces it produced. `context` above is the
         # DECLARED one, and passing it on from here condemns a correct lazy build --
@@ -5134,7 +5151,8 @@ class ModelSpec:
         complaints["mesh"] += moved_package_complaints(live)
         # One paragraph per kind of complaint, each saying what it is about: a negative
         # cellid or a removed cell is not "resolved on another mesh" (ledger 427).
-        refusal = _build_refusal(self.name, complaints)
+        built_grid = _built_grid(model)
+        refusal = _build_refusal(self.name, complaints, built_grid.name if built_grid else "DISV")
         if refusal is not None:
             raise ValueError(refusal)
         # A face MF6 cannot compute once the file is written: zero length, or both cell

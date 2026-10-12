@@ -5145,6 +5145,9 @@
     "_ArealBuilder.with_updates": [
       "updates:VAR_KEYWORD=<required>"
     ],
+    "_BuiltGrid.layer_cell": [
+      "cellid:POSITIONAL_OR_KEYWORD=<required>"
+    ],
     "_FocusedModelDiff.cells": [
       "package:POSITIONAL_OR_KEYWORD=<required>",
       "kwargs:VAR_KEYWORD=<required>"

@@ -50,7 +50,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.pest.summary`
 - `myflopy.modflow.mf6.simulation`
 - `myflopy.modflow.mf6.simulation.runtime`
-- `myflopy.modflow.mf6.surface_water_validation`
 - `myflopy.modflow.mp3du`
 - `myflopy.modflow.usg._io`
 - `myflopy.modflow.utils`
@@ -88,6 +87,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.parallel`
 - `myflopy.modflow.mf6.simulation.discretization`
 - `myflopy.modflow.mf6.simulation.packages`
+- `myflopy.modflow.mf6.surface_water_validation`
 - `myflopy.modflow.mp3du.legacy_prt`
 - `myflopy.modflow.mp3du.particles`
 - `myflopy.modflow.usg.cln`

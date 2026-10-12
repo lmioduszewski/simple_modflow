@@ -573,7 +573,20 @@ tables (`model.<pkg>.inputs`), the SFR/LAK tables, the diff's value tier, the UZ
 `model.hfb.results.q`), the legacy `model.inputs.uzf`/`.rch` helpers, the parallel
 splitter's mover groups and the region registry all read through it;
 `split_cellid_columns` used to read a DIS cellid's ROW as its cell, and the HFB table
-its COLUMN.
+its COLUMN. An SFR reach connected to no cell (MF6 `NONE`) keeps its row with a
+missing `layer`/`cell` (pandas' nullable `Int64`).
+
+**The BUILD reads the same rule** (ledger 469). `ModelSpec.build`'s range,
+removed-cell, observation and LAK-connection checks read the built DIS, DISV or DISU
+through it -- they read a DISV alone, so on a DIS or DISU a cellid past the grid or on a
+removed cell built clean -- and a cellid of ANOTHER discretization's form (a DISV pair
+on a DIS, a DIS triple on a DISV) is refused before FloPy sees it: FloPy stopped on a
+short one with `IndexError` and wrote only the leading parts of a long one, which MF6
+ran. Every LAK package is checked, a hand-written one included.
+`validate_surface_water_configuration` reads each grid's own cellid. A lazy `mf.rch` /
+`mf.evt` / `mf.rch.array` / `mf.evt.array` / `mf.uzf` resolves on a DIS (its records
+written `(layer, row, col)`); on a DISU it is refused, as is a lazy `.gpkg` or
+`mf.Polygons` recipe on anything but a DISV -- give those records directly.
 
 **The project's libraries.** `project.packages` / `.grids` / `.simulations` are
 `dict` **subclasses** — every dict operation works unchanged, and each also

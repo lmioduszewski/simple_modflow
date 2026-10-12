@@ -69,6 +69,7 @@ from myflopy.grid_identity import (
     GRID_PIN_OPTIONS,
     PIN_VOIDED,
     SOURCE_SHA,
+    _built_grid,
     disv_pin,
     pin_metadata,
     source_fingerprint,
@@ -741,6 +742,32 @@ def _lazy_resolution_context(
 
     context = getattr(model, "myflopy_context", None)
     grid = getattr(context, "grid", None)
+    discretization = _built_discretization(model)
+    kind = str(getattr(discretization, "package_type", None) or "disv")
+    if kind != "disv":
+        # A DIS or DISU (ledger 469): the cells these builders write are the
+        # views' `(layer, cell)` -- what the DOMAIN numbers -- so a `.gpkg` or polygon
+        # recipe, which resolves against a context GRID of Voronoi cells, cannot reach
+        # one, and a DISU has no columns for 'top_active' to read.
+        form = {"dis": "(layer, row, col)", "disu": "(node,)"}.get(kind, kind)
+        if needs_grid:
+            raise ValueError(
+                f"Package {spec_name!r} was declared without `context=`, so it resolves its "
+                "features at build against the model's context GRID -- Voronoi cells, "
+                f"numbered (layer, cell) on a DISV -- and this model's discretization is a "
+                f"{kind.upper()}, whose cellids are {form}. Give the package's records "
+                f"directly in that form (`stress_period_data=` or `.flopy(...)`), or build "
+                "the model on a DISV."
+            )
+        if kind == "disu":
+            raise ValueError(
+                f"Package {spec_name!r} resolves its cells at build from the model's "
+                "domain -- each column's top active layer -- and this model's "
+                "discretization is a DISU, whose nodes have no columns to read that from. "
+                "Give its records directly on (node,) cellids (`stress_period_data=` or "
+                "`.flopy(...)`), or build the model on a DIS or DISV."
+            )
+
     if grid is None and needs_grid:
         raise ValueError(
             f"Package {spec_name!r} was declared without `context=`, so its grid has to "
@@ -750,15 +777,19 @@ def _lazy_resolution_context(
             "`context=` to the helper to resolve it eagerly."
         )
 
-    discretization = _built_discretization(model)
     if discretization is None:
         raise ValueError(
             f"Package {spec_name!r} resolves its cells against the model's grid at BUILD "
             "time, so the discretization has to be declared BEFORE it. Move `mf.disv(...)` "
             "ahead of it in `packages=[...]`."
         )
-
-    ncpl = getattr(getattr(discretization, "ncpl", None), "get_data", lambda: None)()
+    if kind == "dis":
+        # The builders number cells as the views do, row-major (ledger 419); the
+        # records they write are put back on (layer, row, col) by `_on_model_cellids`.
+        built = _built_grid(model)
+        ncpl = None if built is None else built.numbering.ncpl
+    else:
+        ncpl = getattr(getattr(discretization, "ncpl", None), "get_data", lambda: None)()
     if ncpl is not None and grid is not None and int(ncpl) != int(grid.ncpl):
         raise ValueError(
             f"Package {spec_name!r} resolves against this model's grid "
@@ -779,6 +810,9 @@ def _lazy_resolution_context(
         # where it runs normally on the wrong boundary.
         idomain = getattr(discretization, "idomain", None)
         domain = idomain.get_data() if idomain is not None else None
+    if kind == "dis" and domain is not None and ncpl and np.size(domain) % int(ncpl) == 0:
+        # (nlay, nrow, ncol) -> (nlay, ncpl), row-major: the views' numbering.
+        domain = np.asarray(domain).reshape(-1, int(ncpl))
 
     if (
         domain is None
@@ -819,6 +853,41 @@ def _lazy_resolution_context(
             surfaces = {"top": top.array, "botm": botm.array}
 
     return _replace(context, domain=domain, surfaces=surfaces)
+
+
+def _on_model_cellids(model, spec):
+    """``spec`` with its ``(layer, cell)`` cellids written in the model's own form.
+
+    The areal and UZF builders number a cell as the model's views do (ledger 419); on a
+    DIS that is ``row * ncol + col``, and FloPy wants ``(layer, row, col)`` -- so a lazy
+    ``mf.rch``/``mf.evt``/``mf.uzf`` on a DIS refused at build on a domain it could not
+    shape, naming a reshape the caller cannot make (ledger 469). The list form's
+    ``stress_period_data`` and UZF's ``packagedata`` cellid are rewritten through
+    :meth:`CellNumbering.cellid`; on any other discretization ``spec`` is returned as is.
+    An array form needs nothing: FloPy shapes a flat ``(nrow * ncol,)`` array itself.
+    """
+
+    built = _built_grid(model)
+    if built is None or built.name != "DIS":
+        return spec
+    numbering = built.numbering
+
+    def moved(record):
+        record = list(record)
+        record[0] = numbering.cellid(*record[0])
+        return record
+
+    options = dict(spec.options)
+    if "stress_period_data" in options:
+        options["stress_period_data"] = {
+            period: [moved(record) for record in records]
+            for period, records in options["stress_period_data"].items()
+        }
+    if "packagedata" in options:
+        options["packagedata"] = [
+            [row[0], numbering.cellid(*row[1]), *row[2:]] for row in options["packagedata"]
+        ]
+    return _replace(spec, options=options)
 
 
 def _build_lazy_list_bc(package_class, model, *, _spec, stress_period_data, **options):
@@ -1016,9 +1085,12 @@ def _build_lazy_areal(package_class, model, *, _spec, **kwargs):
     recipe = {key: value for key, value in kwargs.items() if key in _AREAL_RECIPE_KEYS}
     options = {key: value for key, value in kwargs.items() if key not in _AREAL_RECIPE_KEYS}
     context = _lazy_resolution_context(model, _spec.name, needs_grid=False)
-    eager = _AREAL_BUILDERS[package_class](
-        context=context, name=_spec.name, options=options, **recipe
-    ).build()
+    eager = _on_model_cellids(
+        model,
+        _AREAL_BUILDERS[package_class](
+            context=context, name=_spec.name, options=options, **recipe
+        ).build(),
+    )
     if GRID_PIN not in (eager.metadata or {}):
         # `_ArealBuilder.build` pins through `pin_metadata`, which fingerprints
         # `context.grid` -- and a model declared with no context has none. The built
@@ -1078,9 +1150,9 @@ def _build_lazy_uzf(model, *, _spec, **kwargs):
     context = _lazy_resolution_context(
         model, _spec.name, needs_grid=False, domain_only=True
     )
-    eager = UZFBuilder(
-        context=context, name=_spec.name, options=options, **recipe
-    ).build()
+    eager = _on_model_cellids(
+        model, UZFBuilder(context=context, name=_spec.name, options=options, **recipe).build()
+    )
     if GRID_PIN not in (eager.metadata or {}):
         # `UZFBuilder.build` pins through `pin_metadata`, which fingerprints
         # `context.grid` -- and a model declared with no context has none, in which case

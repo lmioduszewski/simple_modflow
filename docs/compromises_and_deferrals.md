@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 468 entries (473 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 469 entries (474 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 469 | The build-side cellid checks read a DIS `(layer, row, col)` and a DISU `(node,)` through `CellNumbering`, a... | 2026-10-11 |
 | 468 | `mf.sfr`/`mf.lak` write no empty period block | 2026-10-11 |
 | 467 | A USG export combines several records one period gives one cell into one feature, by kind | 2026-10-11 |
 | 466 | A legacy `Boundaries(crs=)` naming another CRS than its grid's is refused, and a `GeoPackageSource` follows... | 2026-10-11 |
@@ -18284,8 +18285,11 @@ same day, which is the useful part of the result.
       ft3/d, through a barrier passing 8.5e-5), the legacy `model.inputs.uzf`/`.rch`/
       `DrnInput` helpers, and the parallel splitter's mover groups (they kept COLUMNS
       together on DIS).
-      Not routed: the BUILD-side builders (`areal`, `uzf`, `sfr`, `lakes`,
-      `surface_water_validation`, `grid_identity`), which write DISV cellids, and
+      Not routed: ~~the BUILD-side builders (`areal`, `uzf`, `sfr`, `lakes`,
+      `surface_water_validation`, `grid_identity`), which write DISV cellids, and~~
+      (routed by ledger 469: the build checks, the LAK connection check and
+      `surface_water_validation` read the rule; the areal/UZF builders keep the views'
+      `(layer, cell)` and a lazy one is written back on a DIS's `(layer, row, col)`)
       `components._grid_ncpl_array`, a grid fingerprint that must not move; and ~~the DRN
       zone OBSERVATION route, which is DISV-only at both ends -- `to_flopy_obs` writes a
       `(layer, cell)` cellid, and `_shared._declared_features` compares a declared cellid
@@ -19467,4 +19471,28 @@ same day, which is the useful part of the result.
       saved moves. NOT changed: MVR, where an empty block turns the movers OFF.
       Same pass: a package artifact restored with no period data (`perioddata` None,
       which FloPy returns for `{}`) raised in `project/components.py`; it reads none.
+
+469. **The build-side cellid checks read a DIS `(layer, row, col)` and a DISU `(node,)` through `CellNumbering`, and a cellid of another discretization's form is refused before FloPy (2026-10-11).**
+      The range, removed-cell, observation and LAK-connection checks in `ModelSpec.build`
+      read a DISV package alone, so on a DIS or DISU a cellid past the grid or on a removed
+      cell built clean; FloPy stopped on a cellid SHORTER than the grid's with
+      `IndexError`, and wrote only the leading parts of a LONGER one, which MF6 then ran --
+      a DISV CHD typed `(0, 1, 2)` as `(0, 1)`, a DISU one typed `(3, 5)` as node 3
+      (`docs/reproducers/build_cellids_dis_disu.py`). Chosen: ONE reading of the built
+      discretization, `grid_identity._built_grid` (the ledger-419 numbering from the
+      PACKAGE's dimensions, its arrays as `(nlay, ncpl)`), behind every check; a wrong
+      FORM refused per package before FloPy builds it. **Widened on purpose:** the LAK
+      check now covers every LAK package, a hand-written one included (with no rules:
+      removed cells, which FloPy refuses at construction, and HORIZONTAL faces outside
+      their cell, which MF6 refuses -- measured on a DIS), so it refuses nothing MF6 runs.
+      The areal/UZF builders keep numbering cells as the views do; a LAZY `mf.rch`/
+      `mf.evt`/`mf.uzf` (list form) is written back on `(layer, row, col)` at the one
+      boundary, `package_api._on_model_cellids`, and the array forms need nothing (FloPy
+      shapes a flat array). **Refused rather than guessed:** a lazy areal/UZF package on a
+      DISU (its nodes have no columns for `top_active`), and a lazy `.gpkg`/`mf.Polygons`
+      recipe on a DIS or DISU (it resolves against a Voronoi context grid); each names the
+      direct records. `sfr`/`lakes` builders resolve on a DISV context grid by construction
+      and were not changed. `grid_identity` now imports `package_explorer_utils`, which
+      moved 56 modules up one import layer. Not done: the DRN zone observation route
+      (ledger 419's "Not routed" list) is still DISV-only at both ends.
 

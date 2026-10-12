@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 
 logger = get_logger(__name__)
 
@@ -337,7 +338,11 @@ def _model_nlay(model: SimulationBase) -> int | None:
 
 
 def _cell_top_bottom(model: SimulationBase, layer: int, cell: int) -> tuple[float | None, float | None]:
-    """Return the top and bottom elevation for one zero-based cellid."""
+    """The top and bottom elevation of one ``(layer, cell)`` -- the views' numbering.
+
+    ``cell`` is the in-layer index :func:`_validate_zero_based_cellid` returns: a DIS
+    cell row-major, a DISU node (its own top and bottom, one "layer", ledger 419).
+    """
 
     vor = getattr(model, "vor", None)
     if vor is not None and getattr(vor, "gdf_topbtm", None) is not None:
@@ -364,6 +369,11 @@ def _cell_top_bottom(model: SimulationBase, layer: int, cell: int) -> tuple[floa
     top = getattr(grid, "top", None)
     botm = getattr(grid, "botm", None)
     try:
+        if getattr(grid, "grid_type", None) == "unstructured":
+            # A DISU node carries its own top and bottom; FloPy keeps them per node.
+            cell_top = None if top is None else float(np.asarray(top, dtype=float).reshape(-1)[cell])
+            cell_botm = None if botm is None else float(np.asarray(botm, dtype=float).reshape(-1)[cell])
+            return cell_top, cell_botm
         if top is not None:
             top_arr = np.asarray(top, dtype=float).reshape(-1)
             cell_top = float(top_arr[cell] if layer == 0 else np.asarray(botm, dtype=float)[layer - 1].reshape(-1)[cell])
@@ -394,29 +404,38 @@ def _validate_zero_based_cellid(
     code_prefix: str,
     context: dict[str, Any],
 ) -> tuple[int | None, int | None]:
-    """Validate a zero-based MF6 cellid tuple and return layer/cell when valid."""
+    """Validate a zero-based MF6 cellid and return the ``(layer, cell)`` it names.
 
-    if not isinstance(cellid, tuple) or len(cellid) != 2:
+    Read through the model grid's :func:`cell_numbering` (ledger 419) when the model has
+    one: a DIS ``(layer, row, col)``, a DISV ``(layer, cell)`` and a DISU ``(node,)``
+    are each the grid's own form, and the pair returned is the views' -- a DIS cell
+    row-major, a DISU node in "layer" 0. Every non-pair was refused as malformed before
+    (ledger 469). With no grid, a ``(layer, cell)`` pair is expected, as before.
+    """
+
+    numbering = cell_numbering(model) if has_cell_numbering(model) else None
+    length = numbering.length if numbering is not None else 2
+    form = numbering.form if numbering is not None else "(layer, cell)"
+    if not isinstance(cellid, tuple) or len(cellid) != length:
         report.add_error(
             f"{code_prefix}_cellid_shape",
-            "Cell ids must be zero-based `(layer, cell)` tuples.",
+            f"Cell ids must be zero-based `{form}` tuples.",
             cellid=cellid,
             **context,
         )
         return None, None
 
-    layer = _coerce_int(cellid[0])
-    cell = _coerce_int(cellid[1])
-    if layer is None or cell is None:
+    parts = [_coerce_int(part) for part in cellid]
+    if any(part is None for part in parts):
         report.add_error(
             f"{code_prefix}_cellid_type",
-            "Cell ids must contain integer-like zero-based layer and cell values.",
+            f"Cell ids must contain integer-like zero-based `{form}` values.",
             cellid=cellid,
             **context,
         )
         return None, None
 
-    if layer < 0 or cell < 0:
+    if min(parts) < 0:
         report.add_error(
             f"{code_prefix}_cellid_negative",
             "Cell ids must stay zero-based and non-negative.",
@@ -425,6 +444,30 @@ def _validate_zero_based_cellid(
         )
         return None, None
 
+    if numbering is not None:
+        try:
+            return numbering.layer_cell(tuple(parts))
+        except ValueError:
+            nlay = numbering.nlay
+            if numbering.kind != "unstructured" and parts[0] >= nlay:
+                report.add_error(
+                    f"{code_prefix}_layer_range",
+                    "Layer index is outside the model layer range.",
+                    cellid=cellid,
+                    nlay=nlay,
+                    **context,
+                )
+            else:
+                report.add_error(
+                    f"{code_prefix}_cell_range",
+                    "Cell index is outside the model grid range.",
+                    cellid=cellid,
+                    ncpl=numbering.ncpl,
+                    **context,
+                )
+            return None, None
+
+    layer, cell = parts
     nlay = _model_nlay(model)
     ncpl = _model_ncpl(model)
     if nlay is not None and layer >= nlay:

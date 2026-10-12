@@ -333,17 +333,19 @@ def test_a_barrier_touching_a_removed_cell_is_not_this_guards_to_refuse():
     construction ("Cellid (0, 5) is outside of the active model grid"), so this is pinned
     on the rule, with the package TYPE deciding: the same records as a CHD are refused."""
 
-    from myflopy.grid_identity import _inactive_cellid_complaints
+    from myflopy.grid_identity import _BuiltGrid, _inactive_cellid_complaints
+    from myflopy.modflow.mf6.package_explorer_utils import CellNumbering
 
     idomain = np.ones((2, 16), dtype=int)
     idomain[0, 5] = 0
+    built = _BuiltGrid("DISV", None, CellNumbering("vertex", nlay=2, ncpl=16), idomain)
     spec = mf.hfb.flopy(stress_period_data={0: [[(0, 4), (0, 5), 1e-3]]})
 
     def model(kind):
         return SimpleNamespace(packagelist=[SimpleNamespace(name=[spec.name], package_type=kind)])
 
-    assert _inactive_cellid_complaints(model("hfb"), [spec], idomain, {}) == []
-    [complaint] = _inactive_cellid_complaints(model("chd"), [spec], idomain, {})
+    assert _inactive_cellid_complaints(model("hfb"), [spec], built, {}) == []
+    [complaint] = _inactive_cellid_complaints(model("chd"), [spec], built, {})
     assert "(0, 5)" in complaint
 
 
