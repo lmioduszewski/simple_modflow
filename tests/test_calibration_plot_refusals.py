@@ -159,3 +159,12 @@ def test_a_bound_conc_targets_pictures_are_titled_for_concentration():
     assert plots.timeseries().layout.yaxis.title.text == "Concentration"
     with pytest.raises(TypeError, match="ax"):
         plots.obs_vs_sim(ax=object())
+
+
+def test_calibration_plots_read_the_backend_through_the_one_resolver():
+    """``"go"``/``"sns"`` were this module's own aliases (ledger 480)."""
+
+    table = _TWO_WELLS
+    assert CalibrationPlot.from_obs_vs_sim(table, backend=" Interactive ").data
+    with pytest.raises(ValueError, match="backend must be"):
+        CalibrationPlot.from_obs_vs_sim(table, backend="go")

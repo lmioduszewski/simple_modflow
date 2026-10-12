@@ -28,6 +28,7 @@ import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cached_property
+from numbers import Integral
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +44,7 @@ from myflopy.modflow.mf6.grid.voronoi import model_grid_view
 from myflopy.modflow.mf6.package_plotting import (
     _red_white_blue_diverging_colorscale,
     _symmetric_color_limit,
+    normalize_backend,
 )
 from myflopy.modflow.mf6.pest.forward_run import read_target_table
 from myflopy.modflow.utils.datatypes.choros import mpl_colormap_for
@@ -50,6 +52,7 @@ from myflopy.modflow.utils.datatypes.hover import (
     parameter_field_hover,
     residual_hover,
 )
+from myflopy.modflow.utils.validators import whole_number
 from myflopy.viz import log_decade_colorbar
 
 # Plot colors come from the shared palette (one findable place: myflopy.viz).
@@ -74,12 +77,40 @@ logger = get_logger(__name__)
 def _normalize_backend(backend: str) -> str:
     """Map friendly backend names to ``"plotly"`` or ``"matplotlib"``."""
 
-    value = str(backend).strip().lower()
-    if value in ("plotly", "go"):
-        return "plotly"
-    if value in ("matplotlib", "mpl", "seaborn", "sns"):
-        return "matplotlib"
-    raise ValueError(f"backend must be 'plotly' or 'matplotlib', got {backend!r}.")
+    # The one resolver (``package_plotting.normalize_backend``): this kept its own
+    # alias list -- "go"/"sns" in, "interactive"/"static" out -- until ledger
+    # 480. Surrounding spaces are stripped first, as they always were here.
+    return "matplotlib" if normalize_backend(str(backend).strip()) == "mpl" else "plotly"
+
+
+def _which_ensemble(which) -> str:
+    """``"prior"`` or ``"posterior"`` (any case); anything else raises (ledger 480).
+
+    ``parameters_at_bounds`` read the prior for ANY value but ``"posterior"`` -- a typo
+    or ``"Posterior"`` included -- and ``plot_field`` raised "Unknown stat" for one.
+    """
+
+    side = str(which).strip().lower()
+    if side not in ("prior", "posterior"):
+        raise ValueError(f"which={which!r} is not an ensemble; use 'prior' or 'posterior'.")
+    return side
+
+
+def _histogram_bars(fig, values, edges, *, density: bool, name: str, color: str) -> None:
+    """Draw ``values`` binned on ``edges`` as bars on a Plotly ``fig``.
+
+    The bins are numpy's, so the Plotly figure takes whatever ``bins=`` numpy takes
+    -- a count, a rule name, explicit (even unequal) edges -- exactly as the
+    Matplotlib branch does. ``xbins`` divided the range by ``bins``, so a rule name
+    raised ``TypeError`` and explicit edges drew a meaningless width (ledger
+    480).
+    """
+
+    counts, _ = np.histogram(values, bins=edges, density=density)
+    fig.add_bar(
+        x=(edges[:-1] + edges[1:]) / 2.0, y=counts, width=np.diff(edges), name=name,
+        marker_color=color, opacity=0.6,
+    )
 
 
 def _log_decade_colorbar(low: float, high: float, *, unit: str = "") -> dict:
@@ -374,20 +405,17 @@ class IesForecast:
             the pooled range of the prior and posterior samples, so the two are
             binned identically; each is normalized to a probability density. A
             positive integer: ``0`` and a float (``20.0`` included) raise from
-            :func:`numpy.histogram_bin_edges`. The Matplotlib branch also takes
-            anything else that function takes -- a rule name such as ``"auto"``,
-            or explicit bin edges -- but the Plotly branch divides the range by
-            ``bins``, so a rule name raises ``TypeError`` there and explicit edges
-            are accepted and give a meaningless bin width.
+            :func:`numpy.histogram_bin_edges`. Both branches also take anything
+            else that function takes -- a rule name such as ``"auto"``, or
+            explicit bin edges (the Plotly branch refused a rule name and drew
+            edges with a meaningless width until ledger 480).
         title : str, optional
             The figure title. Default ``None``: ``"Forecast: <name>"``.
         backend : str, default 'plotly'
-            ``"plotly"`` (or ``"go"``) returns an interactive :class:`viz.Fig`;
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
+            ``"plotly"`` (or ``"interactive"``) returns an interactive :class:`viz.Fig`;
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) a static
             :class:`matplotlib.figure.Figure`. Case and surrounding spaces are
-            ignored; anything else raises ``ValueError``. This module's own
-            resolver: ``"interactive"``/``"static"``, which the map verbs accept,
-            raise here.
+            ignored; anything else raises ``ValueError``.
 
         Returns
         -------
@@ -415,12 +443,8 @@ class IesForecast:
             return fig
 
         fig = viz.Fig()
-        fig.add_histogram(x=prior, xbins=dict(start=edges[0], end=edges[-1],
-                          size=(edges[-1] - edges[0]) / bins), name="prior",
-                          marker_color=_PRIOR_COLOR, histnorm="probability density")
-        fig.add_histogram(x=posterior, xbins=dict(start=edges[0], end=edges[-1],
-                          size=(edges[-1] - edges[0]) / bins), name="posterior",
-                          marker_color=_POST_COLOR, histnorm="probability density")
+        _histogram_bars(fig, prior, edges, density=True, name="prior", color=_PRIOR_COLOR)
+        _histogram_bars(fig, posterior, edges, density=True, name="posterior", color=_POST_COLOR)
         fig.update_layout(barmode="overlay", title=title or f"Forecast: {self.name}",
                           xaxis_title="forecast value", yaxis_title="probability density",
                           dragmode="pan")
@@ -678,8 +702,8 @@ class IesResults:
             instead of the 'actual' phi (:attr:`phi`, against the observed values,
             ``<case>.phi.actual.csv``). The title says which.
         backend : str, default 'plotly'
-            ``"plotly"`` (or ``"go"``) returns an interactive :class:`viz.Fig`;
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
+            ``"plotly"`` (or ``"interactive"``) returns an interactive :class:`viz.Fig`;
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) a static
             :class:`matplotlib.figure.Figure`. Case and surrounding spaces are
             ignored; anything else raises ``ValueError``.
 
@@ -948,16 +972,17 @@ class IesResults:
 
         Parameters
         ----------
-        name : str
+        name : str or int
             A forecast observation name from :attr:`forecast_names`: matched
             exactly first, then as a case-insensitive SUBSTRING of those names,
             which must pick out exactly one (``"fore_1"`` finds
             ``"oname:fore1_otype:lst_usecol:fore_1_per:0"``). No match raises
             ``KeyError`` listing the forecasts, two or more raise ``KeyError``
-            naming them, and anything but a string -- the target object or spec
-            that was passed to ``cal.forecast(...)`` included -- raises
-            ``TypeError``. Only names registered as forecasts are searched; a
-            history-matched observation is not one.
+            naming them. An integer is a POSITION in :attr:`forecast_names`
+            (ledger 480; out of range raises ``IndexError``). Anything else
+            -- the target object or spec that was passed to ``cal.forecast(...)``
+            included -- raises ``TypeError``. Only names registered as forecasts
+            are searched; a history-matched observation is not one.
 
         Returns
         -------
@@ -978,6 +1003,12 @@ class IesResults:
         """Resolve a forecast selector (exact name or index) to a full observation name."""
 
         names = self.forecast_names
+        if isinstance(name, Integral) and not isinstance(name, bool):
+            if not -len(names) <= int(name) < len(names):
+                raise IndexError(
+                    f"forecast {name} is out of range: this run has {len(names)} forecasts."
+                )
+            return names[int(name)]
         if isinstance(name, str):
             if name in names:
                 return name
@@ -989,7 +1020,7 @@ class IesResults:
             raise KeyError(f"Ambiguous forecast {name!r}; matches {matches}.")
         raise TypeError(
             "forecast() expects a forecast observation name (a string from "
-            "`forecast_names`)."
+            "`forecast_names`) or its position in that list."
         )
 
     def forecasts(self) -> pd.DataFrame:
@@ -1034,14 +1065,13 @@ class IesResults:
             ``log10(phi)`` of both iterations, shared by the two histograms.
             Realizations whose phi is not finite (failed runs) are dropped first,
             and none left raises ``ValueError``. A positive integer: ``0`` and a
-            float raise from :func:`numpy.histogram_bin_edges`. The Matplotlib
-            branch also takes a rule name (``"auto"``) or explicit edges in
-            ``log10(phi)``; the Plotly branch divides the range by ``bins``, so a
-            rule name raises ``TypeError`` there and explicit edges are accepted
-            and give a meaningless bin width.
+            float raise from :func:`numpy.histogram_bin_edges`. Both branches
+            also take a rule name (``"auto"``) or explicit edges in
+            ``log10(phi)`` (the Plotly branch refused a rule name until ledger
+            480).
         backend : str, default 'plotly'
-            ``"plotly"`` (or ``"go"``) returns an interactive :class:`viz.Fig`;
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
+            ``"plotly"`` (or ``"interactive"``) returns an interactive :class:`viz.Fig`;
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) a static
             :class:`matplotlib.figure.Figure`. Case and surrounding spaces are
             ignored; anything else raises ``ValueError``.
 
@@ -1079,12 +1109,9 @@ class IesResults:
             sns.despine(fig)
             return fig
 
-        size = (edges[-1] - edges[0]) / bins
         fig = viz.Fig()
-        fig.add_histogram(x=prior, xbins=dict(start=edges[0], end=edges[-1], size=size),
-                          name="prior", marker_color=_PRIOR_COLOR)
-        fig.add_histogram(x=posterior, xbins=dict(start=edges[0], end=edges[-1], size=size),
-                          name="posterior", marker_color=_POST_COLOR)
+        _histogram_bars(fig, prior, edges, density=False, name="prior", color=_PRIOR_COLOR)
+        _histogram_bars(fig, posterior, edges, density=False, name="posterior", color=_POST_COLOR)
         fig.update_layout(barmode="overlay", title=title, dragmode="pan",
                           xaxis_title="log10(phi)", yaxis_title="realizations")
         return fig
@@ -1100,11 +1127,10 @@ class IesResults:
         ----------
         which : str, default 'posterior'
             Which parameter ensemble to average: ``"posterior"`` reads
-            :attr:`posterior_parameters` (the highest iteration on disk); ANY
-            other value reads :attr:`prior_parameters`. ``"prior"`` is the
-            intended other spelling, but the value is not checked -- a typo, or
-            ``"Posterior"`` (the comparison is case-sensitive), reads the prior
-            without a word.
+            :attr:`posterior_parameters` (the highest iteration on disk),
+            ``"prior"`` :attr:`prior_parameters`; any case. Anything else raises
+            ``ValueError`` -- until ledger 480 it read the prior without a
+            word.
         tol : float, default 0.01
             How close to a bound counts as "at" it, as a fraction of the
             parameter's bound range: a parameter whose ensemble mean sits at or
@@ -1123,7 +1149,8 @@ class IesResults:
             first. Only parameters in both the ensemble and the control file count.
         """
 
-        ensemble = (self.posterior_parameters if which == "posterior" else self.prior_parameters)._df
+        side = _which_ensemble(which)
+        ensemble = (self.posterior_parameters if side == "posterior" else self.prior_parameters)._df
         par = self.pst.parameter_data.loc[[c for c in ensemble.columns if c in self.pst.parameter_data.index]]
         means = ensemble[par.index].mean()
         lower = par["parlbnd"].astype(float)
@@ -1183,14 +1210,15 @@ class IesResults:
 
         Parameters
         ----------
-        forecast : str, optional
+        forecast : str or int, optional
             The observation to correlate every parameter against, across the
             POSTERIOR realizations (each paired by realization label, so a
-            realization present in only one ensemble drops out). Named EXACTLY
-            as a column of the posterior observation ensemble -- pyEMU's
-            lower-case full name, not the substring :meth:`forecast` accepts --
-            and any observation of the run will do, a history-matched one
-            included; a name not there raises ``ValueError`` listing
+            realization present in only one ensemble drops out). Any observation
+            of the run by its full name (a column of the posterior observation
+            ensemble, a history-matched one included), or a FORECAST as
+            :meth:`forecast` reads it -- a case-insensitive substring picking out
+            one, or a position (ledger 480; it took the exact full name
+            only). A name matching neither raises ``KeyError`` listing
             :attr:`forecast_names`. Adds the ``forecast_corr`` column, and the
             table is then sorted by it. Default ``None``: the ``learned`` column
             only.
@@ -1274,16 +1302,19 @@ class IesResults:
             "forecast_corr" if forecast is not None else "learned", ascending=False
         )
 
+    def _correlation_target(self, forecast) -> str:
+        """An observation's full name: any column given exactly, else a forecast as
+        :meth:`forecast` reads it -- the one resolver (it took the full name only
+        until ledger 480)."""
+
+        if isinstance(forecast, str) and forecast in self.posterior._df.columns:
+            return forecast
+        return self._resolve_forecast_name(forecast)
+
     def _forecast_realizations(self, forecast: str, index) -> pd.Series:
         """One forecast's posterior realizations, aligned to a parameter index."""
 
-        ensemble = self.posterior._df
-        if forecast not in ensemble.columns:
-            available = sorted(self.forecast_names)
-            raise ValueError(
-                f"No forecast named {forecast!r} in this run. Available: {available}."
-            )
-        values = ensemble[forecast].astype(float)
+        values = self.posterior._df[self._correlation_target(forecast)].astype(float)
         # Parameter and observation ensembles share realization labels, but a
         # realization that failed appears in one and not the other; aligning on
         # the index rather than on position keeps them paired.
@@ -1312,21 +1343,20 @@ class IesResults:
 
         Parameters
         ----------
-        forecast : str, optional
-            An observation name, spelled EXACTLY as :meth:`sensitivity` takes it
-            (its full lower-case name): the bars are each parameter group's mean
-            absolute correlation with it. Default ``None``: the bars are each
-            group's uncertainty reduction (``learned``).
+        forecast : str or int, optional
+            An observation, read as :meth:`sensitivity` reads it (any full name,
+            or a forecast's substring or position): the bars are each parameter
+            group's mean absolute correlation with it. Default
+            ``None``: the bars are each group's uncertainty reduction
+            (``learned``).
         top : int, default 15
-            Keep the strongest ``top`` groups, in the table's order. Passed
-            through ``int()``, so a float is truncated; a negative count keeps
-            all but the last that many. A count that keeps no group -- ``0``, or
-            a negative one reaching the number of groups -- raises
-            ``ValueError`` (``cannot convert float NaN to integer``: the noise
-            floor is read off the empty table).
+            Keep the strongest ``top`` groups, in the table's order: a whole
+            number of at least 1. Anything else raises -- ``0`` raised pandas'
+            ``cannot convert float NaN to integer`` and ``2.5`` was truncated
+            until ledger 480.
         backend : str, default 'plotly'
-            ``"plotly"`` (or ``"go"``) returns an interactive :class:`viz.Fig`;
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
+            ``"plotly"`` (or ``"interactive"``) returns an interactive :class:`viz.Fig`;
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) a static
             :class:`matplotlib.figure.Figure`. Case and surrounding spaces are
             ignored; anything else raises ``ValueError``. Both draw the
             ``1/sqrt(n_reals)`` noise floor as a dashed line.
@@ -1345,7 +1375,12 @@ class IesResults:
                 "there is nothing to score."
             )
         column = "forecast_corr" if forecast is not None else "learned"
-        table = table.head(int(top))
+        top = whole_number(top, what="group count")
+        if top < 1:
+            raise ValueError(f"top={top} keeps no parameter group; pass 1 or more.")
+        if forecast is not None:
+            forecast = self._correlation_target(forecast)
+        table = table.head(top)
         groups = table.index.tolist()
         values = table[column].to_numpy(dtype=float)
         noise = 1.0 / np.sqrt(max(int(table["n_reals"].max()), 1))
@@ -1411,8 +1446,8 @@ class IesResults:
             fraction of the bound range (``log10`` for log-transformed
             parameters), that counts as "at" the bound.
         backend : str, default 'plotly'
-            ``"plotly"`` (or ``"go"``) returns an interactive :class:`viz.Fig`;
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
+            ``"plotly"`` (or ``"interactive"``) returns an interactive :class:`viz.Fig`;
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) a static
             :class:`matplotlib.figure.Figure`. Case and surrounding spaces are
             ignored; anything else raises ``ValueError``.
 
@@ -1453,14 +1488,13 @@ class IesResults:
 
         Parameters
         ----------
-        realization : str, default 'base'
+        realization : str or int, default 'base'
             The label of a POSTERIOR realization (a row of :attr:`posterior`),
-            matched exactly, type included: labels are text (``"base"``,
-            ``"3"``) when the ensemble file holds a ``base`` row and integers
-            when it does not. A label not there -- a typo, or ``"3"`` on a run
-            with no ``base`` realization -- is NOT refused: the contributions
-            are then those of the ensemble's column MEAN, and nothing in the
-            result says so.
+            compared as TEXT, so ``"3"`` and ``3`` are one label whichever the
+            ensemble file uses. A label not there -- a typo, or ``"base"`` on a
+            run with no ``base`` realization -- raises ``KeyError`` listing some
+            labels; until ledger 480 it scored the ensemble's column MEAN
+            in silence.
 
         Returns
         -------
@@ -1471,11 +1505,7 @@ class IesResults:
 
         obs = self.pst.observation_data
         obs = obs.loc[obs["weight"].astype(float) > 0]
-        ensemble = self.posterior._df
-        if realization in ensemble.index:
-            simulated = ensemble.loc[realization]
-        else:
-            simulated = ensemble.mean()
+        simulated = self._posterior_row(realization)
         names = [name for name in obs.index if name in simulated.index]
         obs = obs.loc[names]
         residual = obs["weight"].astype(float) * (simulated[names].astype(float) - obs["obsval"].astype(float))
@@ -1504,22 +1534,21 @@ class IesResults:
 
         Parameters
         ----------
-        realization : str, default 'base'
+        realization : str or int, default 'base'
             Passed to :meth:`phi_contributions`: the posterior realization to
-            score. A label not in the posterior ensemble scores the ensemble
-            MEAN instead, and the title does not say so.
+            score; one not in the posterior ensemble raises ``KeyError``.
         kind : str, default 'bar'
-            ``"pie"`` (any case) draws a pie of the shares; EVERY other value
-            draws horizontal bars -- ``"bar"`` is the intended spelling, and a
-            typo is not refused.
+            ``"bar"`` draws horizontal bars, ``"pie"`` a pie of the shares; any
+            case. Anything else raises ``ValueError`` (a typo drew bars until
+            ledger 480).
         max_groups : int, default 20
             The most groups shown, largest contributors first
             (:meth:`pandas.Series.head`): a float raises ``TypeError``, and a
             negative count keeps all but the last that many. On a pie the rest
             are left out, not pooled, so the shares are of the groups shown.
         backend : str, default 'plotly'
-            ``"plotly"`` (or ``"go"``) returns an interactive :class:`viz.Fig`;
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
+            ``"plotly"`` (or ``"interactive"``) returns an interactive :class:`viz.Fig`;
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) a static
             :class:`matplotlib.figure.Figure`. Case and surrounding spaces are
             ignored; anything else raises ``ValueError``.
 
@@ -1529,6 +1558,9 @@ class IesResults:
             The phi contribution of each observation group shown.
         """
 
+        kind = str(kind).strip().lower()
+        if kind not in ("bar", "pie"):
+            raise ValueError(f"kind={kind!r} is not a phi-contribution plot; use 'bar' or 'pie'.")
         contributions = self.phi_contributions(realization=realization).head(max_groups)
         labels = [str(name) for name in contributions.index]
         values = contributions.to_numpy(dtype=float)
@@ -1580,10 +1612,9 @@ class IesResults:
             ``1.0`` uses the full min-max range; ``0.95`` uses the 2.5-97.5
             percentile band (more robust to a few extreme realizations); ``0``
             collapses it to the median, so every observation not exactly on it
-            is in conflict. Above ``1`` or below ``-1`` raises ``ValueError``
-            (pandas' quantile range). A value from ``-1`` up to ``0`` is not
-            refused: it swaps the band's ends, and every observation then reads
-            in conflict.
+            is in conflict. Outside ``[0, 1]`` raises ``ValueError`` (a value from
+            ``-1`` up to ``0`` swapped the band's ends, so every observation read
+            in conflict, until ledger 480).
 
         Returns
         -------
@@ -1593,6 +1624,11 @@ class IesResults:
             ``in_conflict``.
         """
 
+        if not 0.0 <= float(coverage) <= 1.0:
+            raise ValueError(
+                f"coverage={coverage!r} is the central FRACTION of the prior "
+                "ensemble treated as reachable; it lies in [0, 1]."
+            )
         obs = self.pst.observation_data
         obs = obs.loc[obs["weight"].astype(float) > 0]
         prior = self.prior._df
@@ -1754,8 +1790,8 @@ class IesResults:
             ensemble counted as reachable, ``1.0`` its full min-max range and
             ``0.95`` the 2.5-97.5 percentile band. Above ``1`` raises.
         backend : str, default 'plotly'
-            ``"plotly"`` (or ``"go"``) returns an interactive :class:`viz.Fig`;
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
+            ``"plotly"`` (or ``"interactive"``) returns an interactive :class:`viz.Fig`;
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) a static
             :class:`matplotlib.figure.Figure`. Case and surrounding spaces are
             ignored; anything else raises ``ValueError``.
 
@@ -1942,7 +1978,7 @@ class IesResults:
         return frame.sort_values("cell").reset_index(drop=True)
 
     def _field_choro(self, target: str, *, stat: str, which: str, layer: int,
-                     **choropleth_kwargs):
+                     title: str | None = None, **choropleth_kwargs):
         """Build one field map as a ``Choro``, with its heading and resolved kwargs.
 
         The seam :meth:`plot_field` and :meth:`plot_field_mosaic` share: a mosaic
@@ -1952,6 +1988,7 @@ class IesResults:
         policy keys actually took effect after ``setdefault``.
         """
 
+        which = _which_ensemble(which)
         frame = self.field(target, layer=layer)
         column = {
             "mean": f"{which}_mean",
@@ -2010,7 +2047,7 @@ class IesResults:
             is_prior = stat_key in ("mean", "std") and which == "prior"
             iteration = self.prior_iteration if is_prior else self.posterior_iteration
             context = f"iteration {iteration}, {n_prior if is_prior else n_post} realizations"
-        heading = f"{label} — {context}"
+        heading = f"{label} — {context}" if title is None else str(title)
 
         # setdefault, never direct kwargs: these names now REACH Choro, so an
         # explicit plot_field(..., colorscale=..., logscale=False) must override
@@ -2042,7 +2079,8 @@ class IesResults:
         return choro, heading, choropleth_kwargs
 
     def plot_field(self, target: str, *, stat: str = "mean", which: str = "posterior",
-                   layer: int = 0, backend: str = "plotly", **choropleth_kwargs):
+                   layer: int = 0, backend: str = "plotly", title: str | None = None,
+                   **choropleth_kwargs):
         """Map a captured parameter field on the model grid (a choropleth of its cells).
 
         This answers "property patterns -- plausible or laughable?": it shows the
@@ -2072,22 +2110,26 @@ class IesResults:
             ``"prior"`` or ``"posterior"``: whose ensemble ``stat`` in
             {``"mean"``, ``"std"``} summarizes. Ignored by the others: ``change``
             and ``reduction`` are already prior-to-posterior comparisons, and
-            ``base`` is a single posterior realization, so any value passes with
-            them. With ``mean``/``std`` it is lower case only -- it names a
-            column, so ``"Posterior"`` (or a typo) raises ``ValueError`` under
-            the misleading heading "Unknown stat".
+            ``base`` is a single posterior realization, so it changes nothing
+            with them. Any case; anything else raises ``ValueError`` naming the
+            two (``"Posterior"`` raised "Unknown stat" until ledger 480).
         layer : int, default 0
             The zero-based model layer to map: which cells :meth:`field` reads,
             and the layer the choropleth is built on. See :meth:`field` for the
             layers a capture offers.
         backend : str, default 'plotly'
-            ``"plotly"`` (or ``"go"``) returns the interactive figure
+            ``"plotly"`` (or ``"interactive"``) returns the interactive figure
             (``Choro.fig``, a :class:`viz.Fig`);
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) a static
             :class:`matplotlib.figure.Figure` of the model cells
             (``Choro.plot_mpl``), with the same colours, limits and log-decade
             labels. Case and surrounding spaces are ignored; anything else raises
             ``ValueError``.
+        title : str, optional
+            The figure heading, on both backends and in the hover. Default
+            ``None``: ``"<target> <stat> (<which>) — iteration <n>, <count>
+            realizations"``. Until ledger 480 it was not a parameter, so it
+            reached the trace (Plotly refused it) or was ignored (Matplotlib).
         **choropleth_kwargs
             Forwarded to the choropleth builder
             (``grid.plotting._choropleth_factory``, then ``Choro``): its named
@@ -2099,9 +2141,7 @@ class IesResults:
             colour policy and hover this method would set; ``logscale=False`` also
             drops the policy's decade colorbar. ``custom_zs`` is set here and
             raises ``TypeError`` when passed (``layer=`` is this method's own
-            parameter, above, so it never reaches the tail). ``title`` is not a map
-            option: Plotly refuses it as a trace property (``ValueError``) and the
-            Matplotlib branch ignores it -- the heading is always this method's.
+            parameter, above, so it never reaches the tail).
 
         See Also
         --------
@@ -2109,7 +2149,7 @@ class IesResults:
         """
 
         choro, heading, resolved = self._field_choro(
-            target, stat=stat, which=which, layer=layer, **choropleth_kwargs
+            target, stat=stat, which=which, layer=layer, title=title, **choropleth_kwargs
         )
         if _normalize_backend(backend) == "matplotlib":
             # No cmap=: plot_mpl builds it from the policy colorscale (stops and
@@ -2146,10 +2186,9 @@ class IesResults:
         which : sequence of str, default ('prior', 'posterior')
             The ensembles to compose, one panel each and in this order:
             ``"prior"`` and/or ``"posterior"``, any case, a repeat allowed. Fewer
-            than two raises ``ValueError``. It must be a SEQUENCE: a bare string
-            is iterated character by character (``"prior"`` is five panels named
-            ``p``, ``r``, ...), which -- like any other unknown entry -- raises
-            ``ValueError`` under the misleading heading "Unknown stat".
+            than two raises ``ValueError``, and an unknown entry ``ValueError``
+            naming the two. A bare string raises ``TypeError`` (it was iterated
+            character by character until ledger 480).
         stat : str, default 'mean'
             ``"mean"`` or ``"std"`` (any case) -- the only stats that HAVE a prior
             and a posterior form. ``"change"`` and ``"reduction"`` are already
@@ -2173,9 +2212,9 @@ class IesResults:
             ``True`` with a LIST ``extent`` of different windows raises
             ``ValueError``.
         backend : str, default 'plotly'
-            ``"plotly"`` (or ``"go"``; case and surrounding spaces ignored) only
+            ``"plotly"`` (or ``"interactive"``; case and surrounding spaces ignored) only
             -- ``viz.mosaic`` composes Plotly subplots. A static spelling
-            (``"matplotlib"``, ``"mpl"``, ``"seaborn"``, ``"sns"``) raises
+            (``"matplotlib"``, ``"mpl"``, ``"static"``) raises
             ``ValueError`` naming :meth:`plot_field`, which draws one static
             panel; anything else raises ``ValueError`` naming the two backends.
         **choropleth_kwargs
@@ -2214,7 +2253,12 @@ class IesResults:
                 "posterior comparisons, and 'base' is one posterior "
                 f"realization. Use plot_field(..., stat={stat!r})."
             )
-        sides = [str(side).lower() for side in which]
+        if isinstance(which, str):
+            raise TypeError(
+                f"which={which!r} is one ensemble; a mosaic composes several -- "
+                "pass a sequence, e.g. which=('prior', 'posterior')."
+            )
+        sides = [_which_ensemble(side) for side in which]
         if len(sides) < 2:
             raise ValueError(
                 "A mosaic needs at least two panels, e.g. "
@@ -2277,12 +2321,33 @@ class IesResults:
     }
 
     def _simulated_realization(self, realization: str) -> pd.Series:
-        """One realization's simulated values, falling back to the ensemble mean."""
+        """One realization's simulated values (an absent label raises, ledger 480)."""
+
+        return self._posterior_row(realization)
+
+    def _posterior_row(self, realization) -> pd.Series:
+        """The posterior ensemble's row ``realization``, its label compared as text.
+
+        The one realization lookup: ``phi_contributions``, ``obs_residuals`` and the
+        residual map each fell back to the ensemble MEAN for a label not there,
+        saying nothing (ledger 480).
+        """
 
         ensemble = self.posterior._df
-        if realization in ensemble.index:
-            return ensemble.loc[realization]
-        return ensemble.mean()
+        by_text = {str(label): label for label in ensemble.index}
+        key = str(realization)
+        if key not in by_text:
+            shown = list(by_text)[:8]
+            more = " ..." if len(by_text) > 8 else ""
+            hint = (
+                " This run has no 'base' realization: pass one of its labels, or "
+                "best(criterion='min_phi')."
+                if key == "base" else ""
+            )
+            raise KeyError(
+                f"No posterior realization {realization!r}; it has {shown}{more}.{hint}"
+            )
+        return ensemble.loc[by_text[key]]
 
     def _observation_locations(self) -> pd.DataFrame:
         """Grid locations for every observation set that recorded one.
@@ -2478,11 +2543,9 @@ class IesResults:
         ----------
         realization : str, default 'base'
             Which posterior realization to score (default ``"base"``, the
-            minimum-error-variance one), by its exact label -- text when the
-            ensemble file holds a ``base`` row, integers when it does not. A
-            label that is absent is NOT refused: the frame then scores the
-            ensemble's column MEAN, exactly as :meth:`phi_contributions` does,
-            and nothing in the frame says so.
+            minimum-error-variance one), its label compared as text, as
+            :meth:`phi_contributions` reads it; an absent label raises
+            ``KeyError`` (it scored the ensemble MEAN until ledger 480).
         prefix : str or iterable of str, optional
             One observation-set prefix (as given to ``cal.observe``), or several,
             to restrict the frame to; matched case-insensitively. A prefix that
@@ -2564,10 +2627,8 @@ class IesResults:
         Parameters
         ----------
         realization : str, default 'base'
-            Passed to :meth:`obs_residuals`: the posterior realization to score,
-            by its exact label. An absent label scores the ensemble MEAN instead,
-            which the default heading says (``"ensemble mean"``) and the frame
-            does not.
+            Passed to :meth:`obs_residuals`: the posterior realization to score;
+            an absent label raises ``KeyError``.
         layer : int, default 0
             The zero-based layer the cell choropleth is built for (``Choro``'s
             ``layer``). Nothing is FILTERED by it: head targets
@@ -2577,9 +2638,9 @@ class IesResults:
             zone lies in. A point target's hover names its layer; read it there
             rather than off the map.
         backend : str, default 'plotly'
-            ``"plotly"`` (or ``"go"``) returns the interactive figure
+            ``"plotly"`` (or ``"interactive"``) returns the interactive figure
             (``Choro.fig``, a :class:`viz.Fig`) with the point targets as map
-            markers; ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) a
+            markers; ``"matplotlib"`` (or ``"mpl"``, ``"static"``) a
             static :class:`matplotlib.figure.Figure` in MODEL coordinates with
             the points scattered over the cells. Case and surrounding spaces are
             ignored; anything else raises ``ValueError``.
@@ -2600,12 +2661,11 @@ class IesResults:
             Plotly validates when the figure is built. ``colorscale``, ``zmin``,
             ``zmax``, ``zmid``, ``custom_hover``, ``hover_spec``,
             ``hover_heads``, ``hover_ks`` -- and ``showscale`` when no zone is
-            drawn -- override what this method sets for the CELLS; ``custom_zs``
-            raises ``TypeError`` (``layer=`` is this method's own parameter, so
-            it never reaches the tail). The point markers are not a
-            choropleth and keep the default diverging scale and symmetric limit
-            whatever is passed here, so overriding the cells' scale puts points
-            and zones on two different ones.
+            drawn -- override what this method sets for the CELLS, and the point
+            markers take the same ``colorscale``/``zmin``/``zmax`` (they kept the
+            default scale until ledger 480); ``custom_zs`` raises
+            ``TypeError`` (``layer=`` is this method's own parameter, so it never
+            reaches the tail).
 
         See Also
         --------
@@ -2682,12 +2742,9 @@ class IesResults:
             for name in ("residual", "measured", "simulated", "weight")
         }
 
-        used = (
-            realization if realization in self.posterior._df.index else "ensemble mean"
-        )
         heading = title or (
             f"residuals (simulated − measured) — iteration "
-            f"{self.posterior_iteration}, {used}, {len(frame)} locations"
+            f"{self.posterior_iteration}, {realization}, {len(frame)} locations"
         )
 
         choropleth_kwargs.setdefault("custom_hover", payload)
@@ -2709,6 +2766,11 @@ class IesResults:
             model_grid_view(self.model), custom_zs=list(zone_values), layer=layer,
             **choropleth_kwargs
         )
+        # The markers take the scale the CELLS resolved -- a caller's colorscale/
+        # zmin/zmax included -- so a point and the zone under it read alike (they
+        # kept the default scale until ledger 480).
+        colorscale = choropleth_kwargs["colorscale"]
+        low, high = choropleth_kwargs["zmin"], choropleth_kwargs["zmax"]
 
         if _normalize_backend(backend) == "matplotlib":
             # Always a colorbar here, even with no zones and an all-NaN cell
@@ -2725,7 +2787,7 @@ class IesResults:
                     points["x"].to_numpy(dtype=float),
                     points["y"].to_numpy(dtype=float),
                     c=points["residual"].to_numpy(dtype=float),
-                    cmap=mpl_colormap_for(colorscale), vmin=-half, vmax=half,
+                    cmap=mpl_colormap_for(colorscale), vmin=low, vmax=high,
                     s=45, edgecolor="black", linewidth=0.5, zorder=5,
                 )
             return figure
@@ -2738,7 +2800,7 @@ class IesResults:
                 lon=lon, lat=lat, mode="markers", name="observations",
                 marker={
                     "color": points["residual"].to_numpy(dtype=float),
-                    "colorscale": colorscale, "cmin": -half, "cmax": half,
+                    "colorscale": colorscale, "cmin": low, "cmax": high,
                     "size": 11, "opacity": 0.95,
                     # Exactly one scale bar on the figure: the cells' when there
                     # are zones, the markers' when there are not.
@@ -2773,8 +2835,9 @@ class IesResults:
             realization in the LAST row of the 'actual' phi file; this is
             tempting but discouraged (it tends to be over-fit and noisy), so
             prefer ``"base"`` unless you have a reason. Any case. A run with no
-            ``base`` realization answers ``"base"`` with the ``"min_phi"`` choice
-            instead, without saying so. Anything else raises ``ValueError``.
+            ``base`` realization raises ``ValueError`` naming ``"min_phi"`` (it
+            answered with the ``"min_phi"`` choice in silence until ledger
+            480). Anything else raises ``ValueError``.
 
         Returns
         -------
@@ -2788,7 +2851,11 @@ class IesResults:
         if criterion == "base":
             if "base" in realization_cols:
                 return "base"
-            criterion = "min_phi"  # fall through when no base realization exists
+            raise ValueError(
+                "This run has no 'base' realization (PESTPP-IES writes one unless "
+                "ies_include_base is off); pass criterion='min_phi' for the lowest-"
+                "phi realization instead."
+            )
         if criterion == "min_phi":
             final = phi.iloc[-1]
             candidates = {col: float(final[col]) for col in realization_cols}

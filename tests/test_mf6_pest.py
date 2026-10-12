@@ -2307,15 +2307,19 @@ def test_a_residual_is_simulated_minus_measured_not_the_other_way(tmp_path):
     assert over["residual"] == pytest.approx(2.0)
 
 
-def test_residuals_fall_back_to_the_ensemble_mean_when_base_is_absent(tmp_path):
-    """Mirrors phi_contributions: an unknown realization label is not an error."""
+def test_an_absent_realization_is_refused_not_averaged(tmp_path):
+    """It scored the ensemble MEAN in silence, in phi_contributions too (ledger 480)."""
 
     results = _stub_ies_results(tmp_path)
     base = results.obs_residuals(realization="base")
-    mean = results.obs_residuals(realization="nope")
-
-    # The stub's second realization is +0.5 everywhere, so the mean sits halfway.
-    assert mean.loc[0, "residual"] == pytest.approx(base.loc[0, "residual"] + 0.25)
+    labels = [str(label) for label in results.posterior._df.index]
+    other = next(label for label in labels if label != "base")
+    shifted = results.obs_residuals(realization=other)
+    # The stub's second realization is +0.5 everywhere.
+    assert shifted.loc[0, "residual"] == pytest.approx(base.loc[0, "residual"] + 0.5)
+    for score in (results.obs_residuals, results.phi_contributions, results.plot_obs_residuals):
+        with pytest.raises(KeyError, match="No posterior realization 'nope'"):
+            score(realization="nope")
 
 
 def test_drn_zones_color_the_cells_they_cover(tmp_path):
@@ -3135,3 +3139,107 @@ def test_an_explicit_review_model_beats_the_run_default(tmp_path, monkeypatch):
 
     assert opened["model"] is chosen
     assert resolved == []
+
+
+# --- IesResults refuses what it cannot do (ledger 480) ----------------------
+
+
+def _stub_review(*, with_base=True):
+    """A review stand-in for the selectors: phi, parameters, forecasts."""
+
+    from myflopy.modflow.mf6.pest.ies import IesResults
+
+    labels = ["base", "0", "1"] if with_base else ["0", "1"]
+    phi = pd.DataFrame(
+        [[0, 0, 0, 0, 0, 0, *[5.0, 9.0, 7.0][-len(labels):]],
+         [1, 0, 0, 0, 0, 0, *[2.0, 4.0, 1.0][-len(labels):]]],
+        columns=["iteration", "total_runs", "mean", "standard_deviation", "min", "max", *labels],
+    )
+    parameters = pd.DataFrame({"p1": [1.0, 1.0, 1.0][-len(labels):]}, index=labels)
+    parameter_data = pd.DataFrame(
+        {"parnme": ["p1"], "pargp": ["g"], "partrans": ["none"],
+         "parlbnd": [1.0], "parubnd": [10.0]}
+    ).set_index("parnme")
+    observation_data = pd.DataFrame(
+        {"obsnme": ["fore_x"], "obsval": [3.0], "weight": [0.0], "obgnme": ["f"]}
+    ).set_index("obsnme")
+    ensemble = pd.DataFrame({"fore_x": [1.0, 2.0, 3.0][-len(labels):]}, index=labels)
+
+    class _Stub(IesResults):
+        def __init__(self):
+            self.pst = SimpleNamespace(parameter_data=parameter_data,
+                                       observation_data=observation_data)
+
+        phi = property(lambda self: phi)
+        prior_parameters = property(lambda self: SimpleNamespace(_df=parameters))
+        posterior_parameters = property(lambda self: SimpleNamespace(_df=parameters * 1.0))
+        prior = property(lambda self: SimpleNamespace(_df=ensemble))
+        posterior = property(lambda self: SimpleNamespace(_df=ensemble))
+        forecast_names = property(lambda self: ["fore_x"])
+
+    return _Stub()
+
+
+def test_best_refuses_base_on_a_run_without_one():
+    assert _stub_review().best() == "base"
+    with pytest.raises(ValueError, match="no 'base' realization"):
+        _stub_review(with_base=False).best()
+    assert _stub_review(with_base=False).best(criterion="min_phi") == "1"
+
+
+def test_which_is_an_ensemble_any_case_and_nothing_else():
+    review = _stub_review()
+    assert review.parameters_at_bounds(which="Prior").equals(review.parameters_at_bounds(which="prior"))
+    with pytest.raises(ValueError, match="is not an ensemble"):
+        review.parameters_at_bounds(which="posterir")
+
+
+def test_the_selectors_refuse_what_they_cannot_draw():
+    review = _stub_review()
+    with pytest.raises(ValueError, match="'bar' or 'pie'"):
+        review.plot_phi_contributions(kind="pi")
+    for coverage in (-0.5, 1.5):
+        with pytest.raises(ValueError, match="lies in \\[0, 1\\]"):
+            review.conflict(coverage=coverage)
+    assert review.forecast(0).name == review.forecast("FORE").name == "fore_x"
+    with pytest.raises(IndexError, match="out of range"):
+        review.forecast(3)
+
+
+def test_a_forecast_histogram_takes_numpys_bins_on_plotly():
+    from myflopy.modflow.mf6.pest.ies import IesForecast
+
+    forecast = IesForecast(name="f", prior=np.arange(10.0), posterior=np.arange(5.0, 9.0))
+    auto = forecast.plot(bins="auto")
+    assert [trace.type for trace in auto.data] == ["bar", "bar"]
+    uneven = forecast.plot(bins=[0.0, 1.0, 9.0])
+    assert list(uneven.data[0].width) == [1.0, 8.0]
+    # density: each histogram integrates to one, as on matplotlib
+    assert float(np.sum(np.asarray(uneven.data[0].y) * np.asarray(uneven.data[0].width))) == pytest.approx(1.0)
+
+
+def test_the_review_reads_backends_through_the_one_resolver():
+    from myflopy.modflow.mf6.pest.ies import _normalize_backend
+
+    assert _normalize_backend("interactive") == "plotly"
+    assert _normalize_backend(" Static ") == "matplotlib"
+    with pytest.raises(ValueError):
+        _normalize_backend("sns")
+
+
+def test_residual_markers_take_the_cells_scale(tmp_path):
+    figure = _stub_ies_results(tmp_path, heads=True, zones=True).plot_obs_residuals(
+        colorscale="Viridis", zmin=-5.0, zmax=5.0)
+    marker = figure.data[-1].marker
+    assert (marker.cmin, marker.cmax) == (-5.0, 5.0)
+    assert marker.colorscale == figure.data[0].colorscale
+
+
+def test_plot_field_which_any_case_title_and_a_mosaic_of_one_string(tmp_path):
+    review = _stub_ies_with_capture(tmp_path, prior_sds=(1.0, 1.0), posterior_sds=(0.5, 0.5))
+    figure = review.plot_field("k", stat="mean", which="Posterior", title="T")
+    assert figure.layout.title.text == "T"
+    with pytest.raises(ValueError, match="is not an ensemble"):
+        review.plot_field("k", stat="mean", which="posterir")
+    with pytest.raises(TypeError, match="is one ensemble"):
+        review.plot_field_mosaic("k", which="prior")

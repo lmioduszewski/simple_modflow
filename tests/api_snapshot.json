@@ -1581,6 +1581,7 @@
       "which:KEYWORD_ONLY='posterior'",
       "layer:KEYWORD_ONLY=0",
       "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None",
       "choropleth_kwargs:VAR_KEYWORD=<required>"
     ],
     "IesResults.plot_field_mosaic": [

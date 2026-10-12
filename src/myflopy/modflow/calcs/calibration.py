@@ -18,6 +18,7 @@ from pandas import IndexSlice as idxx
 from myflopy import viz as f
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.headsplus import _is_sentinel
+from myflopy.modflow.mf6.package_plotting import normalize_backend
 
 logger = get_logger(__name__)
 
@@ -269,12 +270,10 @@ _MPL_TARGET = "crimson"
 def _normalize_backend(backend: str) -> str:
     """Map friendly backend names to ``"plotly"`` or ``"matplotlib"``."""
 
-    value = str(backend).strip().lower()
-    if value in ("plotly", "go"):
-        return "plotly"
-    if value in ("matplotlib", "mpl", "seaborn", "sns"):
-        return "matplotlib"
-    raise ValueError(f"backend must be 'plotly' or 'matplotlib', got {backend!r}.")
+    # The one resolver (``package_plotting.normalize_backend``): this kept its own
+    # alias list -- "go"/"sns" in, "interactive"/"static" out -- until ledger
+    # 480. Surrounding spaces are stripped first, as they always were here.
+    return "matplotlib" if normalize_backend(str(backend).strip()) == "mpl" else "plotly"
 
 
 def _mpl_axes(**kwargs):
@@ -513,8 +512,8 @@ class CalibrationPlot(f.Fig):
             decimals on Plotly (:meth:`add_stats`), to 3 significant figures on
             Matplotlib. Nothing is added when no row has both values.
         backend : str, default "plotly"
-            ``"plotly"`` (or ``"go"``) returns this interactive Plotly figure.
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) returns a
+            ``"plotly"`` (or ``"interactive"``) returns this interactive Plotly figure.
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) returns a
             static ``matplotlib.figure.Figure`` in seaborn's whitegrid style.
             Case and surrounding spaces are ignored, and any other value raises
             ``ValueError``.
@@ -704,8 +703,8 @@ class CalibrationPlot(f.Fig):
             Figure title. The default ``None`` (or ``""``) is the location's
             name as the earliest matching row (in ``time`` order) spells it.
         backend : str, default "plotly"
-            ``"plotly"`` (or ``"go"``) returns this interactive Plotly figure.
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) returns a
+            ``"plotly"`` (or ``"interactive"``) returns this interactive Plotly figure.
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) returns a
             static ``matplotlib.figure.Figure`` in seaborn's whitegrid style.
             Case and surrounding spaces are ignored, and any other value raises
             ``ValueError``.
@@ -855,8 +854,8 @@ class CalibrationPlot(f.Fig):
         yaxis_title : str, default "Mean absolute error"
             Y-axis title.
         backend : str, default "plotly"
-            ``"plotly"`` (or ``"go"``) returns this interactive Plotly figure.
-            ``"matplotlib"`` (or ``"mpl"``, ``"seaborn"``, ``"sns"``) returns a
+            ``"plotly"`` (or ``"interactive"``) returns this interactive Plotly figure.
+            ``"matplotlib"`` (or ``"mpl"``, ``"static"``) returns a
             static ``matplotlib.figure.Figure`` in seaborn's whitegrid style.
             Case and surrounding spaces are ignored, and any other value raises
             ``ValueError``.

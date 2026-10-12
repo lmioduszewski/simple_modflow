@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 479 entries (484 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 480 entries (485 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 480 | The IES review refuses a selector it cannot honour, and reads backends through the one resolver | 2026-10-11 |
 | 479 | A PRT map's tail cannot reach its own options; `stat`, `layer`, `group` are checked | 2026-10-11 |
 | 478 | A typed index is a whole number: `validators.whole_number`, one rule | 2026-10-11 |
 | 477 | Calibration plots draw what the table holds; a target family writes its own observation type | 2026-10-11 |
@@ -18706,7 +18707,7 @@ same day, which is the useful part of the result.
       accept any `kind` (`"bogus"` is written) and the bound default `kind="HEAD"` is
       passed for a `ConcTargets`, which a GWT OBS file refuses~~ (fixed by ledger
       477).
-      *PEST review and PRT* (R): `IesResults.plot_sensitivity(top=0)` raises `cannot
+      *PEST review and PRT* (R): ~~`IesResults.plot_sensitivity(top=0)` raises `cannot
       convert float NaN to integer`; `forecast(name)` takes a str only;
       `parameters_at_bounds(which=)` reads the prior for anything but `"posterior"`;
       `realization=` and `best("base")` fall back silently; Plotly `bins=` refuses a rule
@@ -18717,7 +18718,7 @@ same day, which is the useful part of the result.
       coverage in [-1, 0); `plot_phi_contributions(kind=)` accepts typos;
       `ies._normalize_backend` is a second backend resolver (accepts `"go"`/`"sns"`,
       refuses `"interactive"`/`"static"`); `sensitivity(forecast=)` needs the exact
-      name. ~~The PRT `travel_time`/`endpoints`/`capture` `.map(**kwargs)` tails reach a
+      name~~ (fixed by ledger 480). ~~The PRT `travel_time`/`endpoints`/`capture` `.map(**kwargs)` tails reach a
       private signature: `fill_value=` paints unreached cells (documented as blank) and
       `value_column=`/`hover_spec=` raise "multiple values"; `PRTCaptureView.map(group=)`
       ignores `ncols`/`sync_views`/`title`; `PRTPathlineView.get(group=)` matches the
@@ -19693,3 +19694,26 @@ same day, which is the useful part of the result.
       **Not done:** naming the PRT maps' parameters (ledger 8.8's rule) so the tails
       enter `test_noun_signatures`; that is the noun conversion with spliced docstrings,
       larger than this batch. Revert check: `tests/test_prt_maps.py` (4 new tests).
+
+480. **The IES review refuses a selector it cannot honour, and reads backends through the one resolver (2026-10-11).**
+      Ledger 436's review defects, decided. **Behaviour change: an absent realization
+      RAISES** (`KeyError` listing labels) where `phi_contributions`, `obs_residuals` and
+      the residual map scored the ensemble MEAN in silence -- one lookup,
+      `_posterior_row`, comparing labels as TEXT so `3` and `"3"` are one label. The
+      default `realization="base"` therefore raises on a run with no `base` (PESTPP-IES
+      writes one unless `ies_include_base` is off), as does `best()`, which answered
+      `min_phi` in silence; the message names `criterion="min_phi"`. `which=` is
+      `prior`/`posterior` in any case and nothing else (`parameters_at_bounds` read the
+      prior for a typo); a bare-string mosaic `which` raises. `kind=` is `bar`/`pie`,
+      `coverage` lies in [0, 1], `top` is a whole count >= 1. `forecast()` also takes a
+      POSITION, and `sensitivity(forecast=)` takes any full observation name or a
+      forecast as `forecast()` reads it (it needed the exact name). The Plotly histograms
+      draw numpy's bins as bars, so a rule name or uneven edges work on both backends;
+      the residual markers take the cells' resolved `colorscale`/`zmin`/`zmax`;
+      `plot_field(title=)` is a named parameter. **Behaviour change: `"go"`/`"seaborn"`/
+      `"sns"` are refused** -- `ies._normalize_backend` and `calibration._normalize_backend`
+      now call `package_plotting.normalize_backend` (stripping spaces first, as they did),
+      which takes `"interactive"`/`"static"`; no caller in the tree used the dropped
+      aliases. Revert check: 8 tests in `tests/test_mf6_pest.py`, 2 in
+      `tests/test_ies_sensitivity.py`, `tests/test_calibration_plot_refusals.py::
+      test_calibration_plots_read_the_backend_through_the_one_resolver`.

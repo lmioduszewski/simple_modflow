@@ -119,7 +119,11 @@ def test_a_forecast_ranks_the_parameters_that_drive_it():
     assert table.loc["ga", "forecast_corr"] == pytest.approx(1.0, abs=1e-9)
     assert abs(table.loc["gb", "forecast_corr"]) < 0.5
 
-    with pytest.raises(ValueError, match="No forecast named"):
+    # One forecast resolver (ledger 480): a substring or a position finds it,
+    # and a name matching nothing is refused listing the forecasts.
+    assert results.sensitivity(forecast="PRE").equals(table)
+    assert results.sensitivity(forecast=0).equals(table)
+    with pytest.raises(KeyError, match="No forecast matching 'nope'"):
         results.sensitivity(forecast="nope")
 
 
@@ -218,3 +222,15 @@ def test_plot_sensitivity_supports_both_backends():
 
     static = results.plot_sensitivity(backend="matplotlib")
     assert static.axes, "matplotlib backend returned no axes"
+
+
+def test_plot_sensitivity_top_is_a_whole_count_of_at_least_one():
+    """``top=0`` raised pandas' ``cannot convert float NaN to integer`` and ``2.5`` was
+    truncated (ledger 480)."""
+
+    results = _stub_sensitivity_results()
+    with pytest.raises(ValueError, match="top=0 keeps no parameter group"):
+        results.plot_sensitivity(top=0)
+    with pytest.raises(TypeError, match="whole number"):
+        results.plot_sensitivity(top=2.5)
+    assert len(results.plot_sensitivity(top=1).data[0].y) == 1

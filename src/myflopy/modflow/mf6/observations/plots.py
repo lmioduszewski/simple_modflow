@@ -55,9 +55,9 @@ class BoundNamedSeriesTargetPlots:
             bound model's "Model" series. Default ``None`` draws the bound model
             alone. Its comparison raises as the bound model's does.
         backend : str, optional
-            ``"plotly"`` (default; also ``"go"``) returns a
+            ``"plotly"`` (default; also ``"interactive"``) returns a
             :class:`~myflopy.modflow.calcs.calibration.CalibrationPlot`;
-            ``"matplotlib"`` (also ``"mpl"``, ``"seaborn"``, ``"sns"``) a static
+            ``"matplotlib"`` (also ``"mpl"``, ``"static"``) a static
             ``matplotlib.figure.Figure``. Case and surrounding space are
             ignored; anything else raises ``ValueError``, after the comparisons
             have run.
@@ -104,8 +104,8 @@ class BoundNamedSeriesTargetPlots:
             drawn as a "Baseline" line (the wrapped set's ``compare(baseline)``).
             Default ``None`` draws the bound model alone.
         backend : str, optional
-            ``"plotly"`` (default; also ``"go"``) or ``"matplotlib"`` (also
-            ``"mpl"``, ``"seaborn"``, ``"sns"``), as in :meth:`obs_vs_sim`;
+            ``"plotly"`` (default; also ``"interactive"``) or ``"matplotlib"`` (also
+            ``"mpl"``, ``"static"``), as in :meth:`obs_vs_sim`;
             anything else raises ``ValueError``.
 
         Returns
@@ -144,8 +144,8 @@ class BoundNamedSeriesTargetPlots:
             as "Baseline MAE" (the wrapped set's ``compare(baseline)``). Default
             ``None`` draws the bound model alone.
         backend : str, optional
-            ``"plotly"`` (default; also ``"go"``) or ``"matplotlib"`` (also
-            ``"mpl"``, ``"seaborn"``, ``"sns"``), as in :meth:`obs_vs_sim`;
+            ``"plotly"`` (default; also ``"interactive"``) or ``"matplotlib"`` (also
+            ``"mpl"``, ``"static"``), as in :meth:`obs_vs_sim`;
             anything else raises ``ValueError``.
 
         Returns
