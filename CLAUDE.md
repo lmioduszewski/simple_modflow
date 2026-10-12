@@ -591,14 +591,18 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**6696 passed / 4 skipped**, 2026-10-11, the backlog's second round --
-  ledgers 412-446: what round 1 found and left, the docstring guard over the read-grammar
-  views, the executed examples/notebooks of `tests/test_examples_run.py`, and the user's
-  two calls on ledgers 377/411): serial (`-n0`) **10m27s** and `-n 10` **2m16s**, both in a
-  checkout outside `.claude` with a RELATIVE `PYTHONPATH=src`, the parallel one starting at
-  a load average of ~1.0 and the serial one at ~13.5 as a parallel run ended. One earlier
-  `-n 10` of the same tree, also at ~1.1, took 3m57s -- unexplained, not reproduced; the
-  slowest tests are the PEST++ end-to-end runs (18-26 s each). Before it, 5972 passed /
+- Full suite (**7374 passed / 4 skipped**, 2026-10-11, the backlog's third round --
+  ledgers 447-488: the read views' defects the docstring pass found -- a period read no
+  longer mutates a package, `per=N` reads the block MF6 has in force, SFR q per reach,
+  diffs by package TYPE and the mover records -- plus PEST on DISU and one unit table per
+  dimension): `-n 10` **2m26s** at a load average of ~4.5 (2m35s again at ~2.9) and
+  serial (`-n0`) **16m25s**, NOT a quiet clock -- it started at ~13.4 as the parallel run
+  ended, with a game client running on the machine; the slowest tests are still the
+  PEST++ end-to-end runs (25-26 s at `-n 10`), and no new single test dominates. Before
+  it, 6696 passed / 4 skipped (ledgers 412-446, the second round, the docstring guard over
+  the read-grammar views and the executed examples of `tests/test_examples_run.py`):
+  serial 10m27s and `-n 10` 2m16s, at ~13.5 and ~1.0 (one earlier `-n 10` of that tree
+  took 3m57s, unexplained). Before it, 5972 passed /
   4 skipped (ledgers 362-411, the six PEST leftovers and the docstring pass's 68 code
   defects): serial 9m09s and `-n 10` 2m11s, at ~11.9 and ~1.7. Before that, 5583 passed / 4 skipped
   (2026-10-02, the PEST-build series, ledgers 356-361 -- the build reads the run only,
