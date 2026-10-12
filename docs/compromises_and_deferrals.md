@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 550 entries (555 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 551 entries (556 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 551 | A polygon given `default=` competes with it for the part of each cell it does not cover | 2026-10-12 |
 | 550 | A DRN/RIV zone given as a `cells` list with no `layer` reads EVERY layer of those columns, like a drawn zone | 2026-10-12 |
 | 549 | `periods=` groups a target's per-period files into parameter sets; `"month"` by each transient period's mid... | 2026-10-12 |
 | 548 | `sto.ss` and `sto.sy` are array targets, refused where they cannot act | 2026-10-12 |
@@ -12428,7 +12429,12 @@ same day, which is the useful part of the result.
       **An uncovered cell is REFUSED without ``default=``.** ``k_array`` cannot make that
       mistake because its ``defaults`` is required; here it is optional, and an unfilled
       cell is a NaN that MF6 answers with a NaN budget under normal termination -- ledger
-      247's failure exactly.
+      247's failure exactly. ~~``default=`` fills only a cell no polygon reaches; a partly
+      covered cell takes the polygon(s) covering it.~~ (**CHANGED by ledger
+      551**, the user's call: with ``default=`` the uncovered PART of each
+      cell competes as the default -- under ``majority`` a polygon takes a cell only when
+      it covers more of it than that part, under ``mean`` the part is averaged in at the
+      default. Without ``default=`` the rule above is unchanged.)
       **Two things the slot accepted and could not use are now refused at the
       DECLARATION**, which the user asked for as part of this: ``mf.npf(k=<Surface>)``
       was accepted and died at BUILD inside FloPy with an ``MFDataException`` naming
@@ -20890,15 +20896,18 @@ same day, which is the useful part of the result.
       slot; a recipe in `icelltype`/`iconvert`/`irch`/`ievt` (integer flags, as 299).
       This also closes two accepted-then-`MFDataException` inputs measured at HEAD:
       `mf.npf(k=[mf.Polygons(...), 1.0])` and `mf.rch.array(recharge=mf.Polygons(...))`.
-      **Kept, not changed (`needs_decision`):** under `rule="majority"` the uncovered
+      ~~**Kept, not changed (`needs_decision`):** under `rule="majority"` the uncovered
       rest of a cell is not a competitor, so a multiplier polygon multiplies EVERY cell
       it overlaps at all -- `default=` fills only cells no polygon reaches (299's
-      contract). Measured, a pit covering 40% x 50% of a square footprint: 11 cells
+      contract).~~ Measured, a pit covering 40% x 50% of a square footprint: 11 cells
       multiplied on a 6x6 mesh where 6 are more than half inside (1.87x the pit's
-      area), 23 vs 15 on 10x10, 76 vs 64 on 20x20. `rule="centroid"` multiplies the
+      area), 23 vs 15 on 10x10, 76 vs 64 on 20x20. ~~`rule="centroid"` multiplies the
       cells whose centre is inside (`docs/reproducers/polygon_multiplier_reach.py`).
       Letting `default=` compete as the uncovered
-      fraction's vote would change existing `Polygons` maps with `default=`.
+      fraction's vote would change existing `Polygons` maps with `default=`.~~
+      (**CHANGED by ledger 551**, the user's call: `default=` now competes
+      as the uncovered part's vote, so the multiplier takes the 6, 15 and 64 cells more
+      than half inside -- no `rule="centroid"` needed; the reproducer prints both.)
       **Not built:** a recipe for an integer flag, so an explicit per-column `irch`
       ARRAY beside a recharge recipe still reads `unverifiable` on a move (measured;
       `"top_active"` or one integer reads `rebuilt`); `ArrayProduct` division or sums.
@@ -21093,3 +21102,34 @@ same day, which is the useful part of the result.
       after a clean build (the IES review's parse likewise). Fixed in the ONE reader,
       `forward_run.read_target_table` (`TARGET_TEXT_COLUMNS`), not in the writer pyEMU
       copies into `forward_run.py`, so a template built before reads it too.
+
+551. **A polygon given `default=` competes with it for the part of each cell it does not cover (2026-10-12).**
+      The user's answer A. Under `mf.Polygons` `rule="majority"` the uncovered part of a
+      cell votes for `default`: a polygon takes the cell only when it covers MORE of it
+      than that part (and than any other polygon), so `Polygons("pit.gpkg", value=0.1,
+      default=1.0)` multiplies exactly the cells it covers more than half of; under
+      `rule="mean"` the part is averaged in at the default, by area; `centroid` is
+      unchanged. ONE rule, `grid/geometry.polygon_cell_values(default=)`, so the column
+      form, `value=` and every `RasterValues * Polygons` product inherit it. Measured
+      (`docs/reproducers/polygon_multiplier_reach.py`): the 40% x 50% pit multiplies 6 /
+      15 / 64 cells on 6x6 / 10x10 / 20x20 meshes, 0.99x / 0.87x / 0.99x its area, where
+      the old rule multiplied 11 / 23 / 76 (1.87x / 1.50x / 1.22x).
+      **Chosen:** a tie with the uncovered part goes to the DEFAULT (a polygon at
+      exactly half holds no majority), judged to 1e-9 of the cell's area because the
+      overlay rounds: a half cut through a cell's centre at 13 or 73 degrees came back
+      1.4e-14 / 2.8e-14 OVER half, which a bare `>` hands to the polygon. Two polygons
+      tying still go to the lower row. A remainder under that 1e-9 is rounding and
+      counts as NONE, so a map that tiles the grid paints BIT FOR BIT what it painted
+      before -- the 19-contact sweep, every rule, asserted (ledger 299's majority /
+      centroid / mean measurements therefore stand). The remainder is cell area minus
+      the UNION of the cell's pieces, so overlapping polygons do not cover a cell twice.
+      A feature that reaches the grid but so takes no cell is WARNED by name (logger +
+      `warnings.warn`, ledger 288); without `default=` a feature outvoted by a NEIGHBOUR
+      is still silent, as it always was.
+      **Behaviour change:** an existing column or value map passing `default=` writes a
+      different array at every partly covered cell (`majority`: the default where the
+      polygons cover half or less; `mean`: a blend). Without `default=` nothing moves.
+      **The digest does not see it:** the recipe is unchanged, so a stored `Polygons`
+      package digests as before and `runs.drift()` reads it `unchanged` while a rebuild
+      writes the new array. A run's frozen snapshot keeps the arrays it built, so a
+      reopened run reproduces its old self; a re-prepared one takes the new rule.

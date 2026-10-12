@@ -1681,10 +1681,17 @@ numbers; `Polygons(value=0.1, default=1.0)` is a constant multiplier (exactly on
 a raster on NO cell raises even with `default=`. An `ndarray` factor is refused (it is
 what makes a package unsaveable; `with_grid(remap=True)` is that route). **`mf.Raster`
 (a `Surface`) stays refused in an array slot** -- it is an elevation with length units.
-**Trap:** under `rule="majority"` a multiplier polygon multiplies EVERY cell it overlaps
-(the uncovered rest is not a competitor; `default=` fills only unreached cells) -- 11
-cells against 6 more than half inside on a 6x6 mesh; `rule="centroid"` takes the cells
-whose centre is inside. Whether `default=` should compete is an open user decision.
+**`default=` COMPETES for the part of each cell no polygon covers** (ledger
+551, the user's call): under `majority` a polygon takes a cell only when it
+covers more of it than that remainder (a tie, to 1e-9 of the cell, leaves the default),
+so `Polygons(value=0.1, default=1.0)` multiplies the cells it covers MORE than half of --
+6 on a 6x6 mesh where it touches 11, which the old rule all multiplied; under `mean` the
+remainder is averaged in at the default. Without `default=` nothing changes. A map that
+TILES the grid paints bit for bit what it painted before (the 19-contact sweep, asserted:
+a remainder under 1e-9 of the cell is rounding and counts as none); the remainder is
+measured against the UNION of a cell's pieces, so overlapping polygons are not counted
+twice. The recipe did not change, so a stored package's DIGEST did not move while its
+resolved array did -- `runs.drift()` cannot see it; a frozen run keeps its old arrays.
 `ArrayProduct` is NOT a `_SPEC_TOKEN` object: `specs.py` handles it by type so its
 factors are walked as SOURCES (bundler, anchor, `source_paths`, digest) with no wiring.
 A recipe lives in `inputs` ONLY: `PackageSpec` refuses one in `options`, so

@@ -920,14 +920,15 @@ class Polygons(DataSourceSpec):
         naming the file's columns. Give exactly one of ``column`` and ``value``:
         both, or neither, raises ``ValueError`` here.
     value : float, optional
-        One number painted into every cell the polygons reach, in place of a
+        One number painted into every cell the polygons take, in place of a
         column -- for a constant factor that is not worth adding to the file, most
         often a MULTIPLIER in a product: ``mf.RasterValues("k33_3.tif") *
         mf.Polygons("pit.gpkg", value=0.1, default=1.0)`` is the raster times 0.1
-        inside the polygons and times 1.0 outside (ledger 541). The
-        ``rule`` still decides which cells the polygons reach. Must be a finite real
-        number (``bool`` refused), else ``ValueError`` here. Exactly one of
-        ``column`` and ``value``.
+        in the cells the polygons cover MORE than half of and times 1.0 in the rest
+        (ledger 541; ledger 551) -- the ``rule`` and ``default`` decide
+        which cells the polygons take. Must be a finite real number (``bool``
+        refused), else ``ValueError`` here. Exactly one of ``column`` and
+        ``value``.
     layer : str, optional
         Layer/table name inside a multi-layer file. ``None`` (the default) reads the
         file's first layer, which is right for a single-layer one.
@@ -941,7 +942,9 @@ class Polygons(DataSourceSpec):
         has, which is the arithmetic-versus-harmonic problem in miniature.
         ``mean`` is the area-weighted mean, right for a genuinely continuous field.
         ``centroid`` matches :func:`~myflopy.modflow.mf6.grid.geometry.centroid_zones`
-        and :meth:`myflopy.pest.ZoneSpec.from_polygons`.
+        and :meth:`myflopy.pest.ZoneSpec.from_polygons`. With ``default`` given, the
+        part of a cell no polygon covers competes under ``majority`` and is averaged
+        in under ``mean`` -- see ``default``.
 
         The fork is ``mean`` against the other two, and it is not subtle. On a 64-cell
         grid with ONE contact, ``mean`` wrote 12 distinct conductivities where the map
@@ -952,9 +955,24 @@ class Polygons(DataSourceSpec):
         whose bulk fall on opposite sides of the contact. Which is why this is NAMED
         rather than inherited.
     default : float, optional
-        Value for a cell no polygon reaches. Without it, an unreached cell is REFUSED
-        naming the count: an unfilled cell is a NaN, and MF6 answers a NaN budget while
-        reporting normal termination (ledger 247).
+        Value for the ground no polygon covers. ``None`` (the default): a cell no
+        polygon reaches is REFUSED at build naming the count -- an unfilled cell is a
+        NaN, and MF6 answers a NaN budget while reporting normal termination (ledger
+        247) -- and a PARTLY covered cell takes the polygon(s) covering it, the
+        uncovered rest of it no competitor.
+
+        Given, it fills every cell no polygon reaches AND the uncovered part of each
+        cell competes as the default (ledger 551, the user's call):
+        under ``majority`` a polygon takes a cell only when it covers MORE of it than
+        the part no polygon covers (and than any other polygon), so a lone polygon --
+        a multiplier -- takes exactly the cells it covers more than half of; a tie
+        with the uncovered part (to 1e-9 of the cell's area) leaves the default,
+        while a tie between two polygons still goes to the earlier feature. Under
+        ``mean`` the uncovered part is averaged in AT the default, by area.
+        ``centroid`` is unchanged: a cell whose centre is in no polygon reads the
+        default. A map that tiles the grid paints exactly what it painted without
+        ``default``, and a feature that reaches the grid but so takes no cell is
+        WARNED by name at build.
     layer_field : str, optional
         Column naming the MODEL layer a feature paints, ``layer_base``-based. ``None``
         (the default) makes the map areal, broadcast to EVERY layer -- which is what a
@@ -1402,8 +1420,9 @@ class ArrayProduct:
 
     What ``recipe * factor`` builds: ``mf.RasterValues("k33_3.tif") *
     mf.Polygons("pit.gpkg", value=0.1, default=1.0)`` is the raster's K33, times 0.1
-    inside the pit polygons and unchanged outside -- a polygon MULTIPLIER without a
-    hand-edited copy of the raster (ledger 541). Every factor is resolved
+    in the cells the pit polygons cover more than half of and unchanged elsewhere -- a
+    polygon MULTIPLIER without a hand-edited copy of the raster (ledger 541; the
+    reach is ledger 551's, see :class:`Polygons` ``default``). Every factor is resolved
     on the grid the build supplies and the results multiplied, so the product moves,
     saves, digests and bundles exactly as its factors do.
 

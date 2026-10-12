@@ -1057,7 +1057,17 @@ def centroid_zones(polys, zones) -> np.ndarray:
     return rows
 
 
-def polygon_cell_values(cell_polys, zones, values, *, rule: str = "majority"):
+#: How close, as a fraction of the cell's area, the uncovered part of a cell and a
+#: polygon must be to count as a TIE under ``polygon_cell_values(default=)`` -- and
+#: below which an uncovered remainder is rounding, not ground. Overlay areas carry
+#: ~1e-13 relative error, so an exact half or a cell tiled to its edge must not be
+#: decided by the last bit (ledger 551).
+_UNCOVERED_TIE = 1e-9
+
+
+def polygon_cell_values(
+    cell_polys, zones, values, *, rule: str = "majority", default=None, painters: bool = False
+):
     """Per-cell values painted from a polygon map; ``(values, reached)``.
 
     The three polygon-to-cell rules in one place, because they DISAGREE and the
@@ -1075,6 +1085,23 @@ def polygon_cell_values(cell_polys, zones, values, *, rule: str = "majority"):
     area-weighted mean, right for a continuous field. ``centroid`` defers to
     :func:`centroid_zones` -- the same rule, not a second implementation of it.
 
+    **``default`` makes the UNCOVERED part of a cell a competitor** (ledger
+    551, the user's call). Under ``majority`` the part of a cell no polygon
+    covers votes for ``default``: a polygon takes the cell only when it covers MORE of
+    it than that remainder does (and than any other polygon), so a lone polygon takes
+    exactly the cells it covers more than half of. A tie with the remainder -- equal
+    to within ``_UNCOVERED_TIE`` of the cell's area -- leaves the default, because a polygon at
+    exactly half holds no majority; a tie between two polygons still goes to the lower
+    row. Under ``mean`` the remainder is averaged in at ``default``, by area. Without
+    ``default`` the remainder is not a competitor (a partly covered cell takes the
+    polygon(s) covering it) and a cell no polygon reaches is ``NaN``: what an unreached
+    cell MEANS is then the caller's, and filling it here would hide it. ``centroid``
+    is unchanged by it -- a centre is inside a polygon or it is not -- except that the
+    cells holding no centre read ``default``. The remainder is measured against the
+    UNION of a cell's pieces, so overlapping polygons are not counted twice, and a
+    remainder below ``_UNCOVERED_TIE`` of the cell is rounding and counts as none, so a
+    map that tiles the grid paints exactly what it painted without ``default``.
+
     **The overlay, not** :func:`cell_shares`. That function normalizes by the whole
     FEATURE (share of the polygon falling in each cell, which is what ``mf.Spread``
     needs to divide a total) and applies a sliver rule doing it. Filling an array needs
@@ -1083,29 +1110,42 @@ def polygon_cell_values(cell_polys, zones, values, *, rule: str = "majority"):
     cell. ``gpd.overlay`` conserves to 5.6e-16 where ``cell_shares`` loses pieces at
     scale (ledger 298).
 
-    Ties go to the LOWEST row of ``zones``, matching :func:`centroid_zones`, so two
-    polygons sharing an edge resolve the same way under every rule. Returns ``NaN`` and
-    ``False`` for a cell no polygon reaches: what an unreached cell MEANS is the
-    caller's, and filling it here would hide it.
+    Ties between polygons go to the LOWEST row of ``zones``, matching
+    :func:`centroid_zones`, so two polygons sharing an edge resolve the same way under
+    every rule.
 
     ``cell_polys`` is the grid's cell frame (``vor.gdf_vorPolys``); the answer is
     positional over its rows. ``zones`` is a GeoDataFrame, GeoSeries or sequence of
     geometries in the grid's CRS, and ``values`` the number each carries, positionally.
+    ``default`` is a float or ``None``. ``reached`` is ``True`` where a polygon decides
+    (``majority``/``centroid``) or contributes to (``mean``) the cell's value, so a cell
+    the remainder wins reads ``False`` beside its ``default``. ``painters=True`` adds a
+    third result: a boolean per ROW of ``zones``, ``True`` for a polygon that decides
+    or contributes to at least one cell -- a polygon on the grid that paints nothing is
+    one every cell it touches outvoted.
     """
 
     import geopandas as gpd
 
     numbers = np.asarray(values, dtype=float)
-    painted = np.full(len(cell_polys), np.nan, dtype=float)
+    fill = np.nan if default is None else float(default)
+    painted = np.full(len(cell_polys), fill, dtype=float)
     reached = np.zeros(len(cell_polys), dtype=bool)
+    painting = np.zeros(numbers.size, dtype=bool)
+
+    def answer():
+        return (painted, reached, painting) if painters else (painted, reached)
+
     if numbers.size == 0 or len(cell_polys) == 0:
-        return painted, reached
+        return answer()
 
     if rule == "centroid":
         rows = centroid_zones(cell_polys, zones)
         found = rows >= 0
         painted[found] = numbers[rows[found]]
-        return painted, found
+        reached = found
+        painting[np.unique(rows[found])] = True
+        return answer()
 
     if rule not in ("majority", "mean"):
         raise ValueError(
@@ -1126,11 +1166,17 @@ def polygon_cell_values(cell_polys, zones, values, *, rule: str = "majority"):
     )
     pieces = gpd.overlay(cells, zone_frame, how="intersection", keep_geom_type=True)
     if pieces.empty:
-        return painted, reached
+        return answer()
 
     cell_index = pieces["_cell"].to_numpy()
     zone_index = pieces["_zone"].to_numpy()
     area = pieces.geometry.area.to_numpy()
+
+    uncovered = np.zeros(len(cells), dtype=float)
+    cell_area = np.zeros(len(cells), dtype=float)
+    if default is not None:
+        cell_area = cells.geometry.area.to_numpy()
+        uncovered = _uncovered_area(pieces, cell_index, area, cell_area)
 
     if rule == "mean":
         weight = np.bincount(cell_index, weights=area, minlength=len(cells))
@@ -1138,8 +1184,14 @@ def polygon_cell_values(cell_polys, zones, values, *, rule: str = "majority"):
             cell_index, weights=area * numbers[zone_index], minlength=len(cells)
         )
         reached = weight > 0
+        if default is not None:
+            # The remainder is averaged in AT the default, by area. Zero for a covered
+            # cell (`_uncovered_area` drops rounding), so a tiling map is untouched.
+            weight = weight + uncovered
+            total = total + uncovered * fill
         painted[reached] = total[reached] / weight[reached]
-        return painted, reached
+        painting[np.unique(zone_index[area > 0])] = True
+        return answer()
 
     # Majority: per cell, the largest intersection, ties to the lowest zone row.
     #
@@ -1158,9 +1210,45 @@ def polygon_cell_values(cell_polys, zones, values, *, rule: str = "majority"):
     leading[0] = True
     leading[1:] = ordered[1:] != ordered[:-1]
     winners = order[leading]
+    if default is not None:
+        # The remainder is one more competitor and wins a tie: a polygon must cover
+        # MORE of the cell than the part nothing covers (ledger 551).
+        won = cell_index[winners]
+        margin = area[winners] - uncovered[won]
+        winners = winners[margin > _UNCOVERED_TIE * cell_area[won]]
     painted[cell_index[winners]] = numbers[zone_index[winners]]
     reached[cell_index[winners]] = True
-    return painted, reached
+    painting[np.unique(zone_index[winners])] = True
+    return answer()
+
+
+def _uncovered_area(pieces, cell_index, area, cell_area) -> np.ndarray:
+    """Per cell, the area no polygon covers -- zero where that is rounding.
+
+    Measured against the UNION of a cell's pieces, so two overlapping polygons do not
+    cover a cell twice; a cell holding one piece (most of them) skips the union. A
+    remainder below ``_UNCOVERED_TIE`` of the cell's area is overlay rounding on a
+    cell its polygons tile, and is returned as exactly zero.
+    """
+
+    covered = np.bincount(cell_index, weights=area, minlength=cell_area.size)
+    counts = np.bincount(cell_index, minlength=cell_area.size)
+    several = counts[cell_index] > 1
+    if several.any():
+        shapes = pieces.geometry.to_numpy()[several]
+        owners = cell_index[several]
+        order = np.argsort(owners, kind="stable")
+        owners, shapes = owners[order], shapes[order]
+        cuts = np.flatnonzero(np.diff(owners)) + 1
+        for group, shared in zip(np.split(shapes, cuts), np.split(owners, cuts), strict=True):
+            covered[shared[0]] = shp.union_all(group).area
+    remainder = np.clip(cell_area - covered, 0.0, None)
+    remainder[remainder <= _UNCOVERED_TIE * cell_area] = 0.0
+    # A cell no polygon touches is entirely uncovered; it never reaches the vote, but
+    # say so rather than leave a zero that reads as "covered".
+    untouched = counts == 0
+    remainder[untouched] = cell_area[untouched]
+    return remainder
 
 
 def cell_shares(polys, geometry, *, usable=None) -> list[tuple[int, float]]:

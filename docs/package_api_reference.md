@@ -1261,7 +1261,7 @@ so one declaration builds on two meshes, `move_report` reads it `rebuilt`, and
 | `column` | attribute holding the value. A NULL is REFUSED naming the feature |
 | `value` | one number for every polygon, in place of `column` (exactly one of the two) -- for a constant MULTIPLIER, below |
 | `rule` | `"majority"` (default), `"mean"`, `"centroid"` — see below |
-| `default` | value for a cell no polygon reaches. Without it, REFUSED |
+| `default` | value for the ground no polygon covers. Without it, a cell no polygon reaches is REFUSED and a partly covered cell takes its polygon(s). Given, it fills those cells AND the uncovered part of every cell competes as the default -- see below |
 | `layer` | layer/table name inside a multi-layer file |
 | `layer_field` | column naming the model layer, numbered from `layer_base`. Omitted, the map is areal and applies to every layer. A value below `layer_base`, past the last layer, fractional or NULL is REFUSED naming the feature |
 
@@ -1271,6 +1271,15 @@ cell whichever polygon covers most of it and so writes only values the map conta
 one contact it wrote 12 distinct conductivities where the map holds 2, and its
 area-integral ran 0–60% from `majority`'s across 19 contact positions. `centroid`
 matches `ZoneSpec.from_polygons`; it differs from `majority` on at most one cell in 64.
+
+**With `default=` the uncovered part of a cell is a competitor** (ledger
+551). Under `majority` it votes for the default: a polygon takes a cell
+only when it covers more of it than the part no polygon covers (and than any other
+polygon) -- a lone polygon exactly the cells it covers more than half of -- and a tie
+with that part (to 1e-9 of the cell) leaves the default. Under `mean` it is averaged in
+at the default, by area. `centroid` is unchanged. A map tiling the grid paints what it
+painted without `default=`; a feature on the grid that so takes no cell is warned by
+name. Without `default=` nothing competes: a partly covered cell takes its polygon(s).
 
 `icelltype` and `iconvert` are **refused** — integer flags, and every rule returns a
 float. So is a `Surface` or `LayerStack` in any array slot: those describe an elevation
@@ -1309,9 +1318,11 @@ arrays in the run.
 **`*` builds an `ArrayProduct`** of `RasterValues`, `Polygons` and numbers, resolved
 cell by cell. An `ndarray` factor is refused (it names cells by position --
 `with_grid(remap=True)` is that route), and so is a `Surface`. Under the default
-`rule="majority"` a multiplier polygon multiplies every cell it OVERLAPS at all -- the
-uncovered rest of a cell is not a competitor, and `default=` fills only cells no polygon
-reaches; `rule="centroid"` multiplies the cells whose centre is inside. A recipe in
+`rule="majority"` a multiplier polygon given `default=1.0` multiplies the cells it
+covers MORE than half of -- the uncovered part of each cell competes as the default
+(ledger 551; measured, a pit over 40% x 50% of a 6x6 mesh: 6 cells, where
+the old rule multiplied all 11 it touched). `rule="centroid"` multiplies the cells
+whose centre is inside; `rule="mean"` blends a partly covered cell by area. A recipe in
 `rch.array`/`evt.array` needs `context=` omitted. Integer flags (`icelltype`,
 `iconvert`, `irch`, `ievt`) refuse a recipe.
 It reads its source's `gaps=`/`snap_within=` exactly as the `.gpkg` forms do -- a missed

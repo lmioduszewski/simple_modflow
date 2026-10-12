@@ -703,3 +703,219 @@ def test_a_polygon_map_multiplies_into_a_product(meshes, geology, tmp_path):
     built = _model(small, mf.npf(k=product), tmp_path, "product")
     k = built.simulation.get_model("m").get_package("npf").k.get_data()
     assert set(np.unique(k)) == {2.0, 200.0}
+
+
+# ----------------------------------------------- default= competes for the uncovered part
+
+
+def _square_cells(n=1, size=10.0):
+    """``n`` x 1 unit squares of side ``size``: cell areas the overlay gets exactly."""
+
+    return gpd.GeoDataFrame(
+        {"_": list(range(n))},
+        geometry=[box(i * size, 0, (i + 1) * size, size) for i in range(n)],
+        crs="EPSG:2927",
+    )
+
+
+def _zones(*geometries, values=None):
+    values = list(values) if values is not None else [0.1] * len(geometries)
+    return gpd.GeoDataFrame({"k": values}, geometry=list(geometries), crs="EPSG:2927")
+
+
+def test_a_lone_polygon_takes_only_the_cells_it_covers_more_than_half_of():
+    """With ``default=`` the uncovered remainder votes for the default (ledger 551).
+
+    Cells covered 30%, 49%, 51% and 100%. Without a default every touched cell takes
+    the polygon (the remainder is no competitor); with one, only the 51% and 100% cells.
+    """
+
+    cells = _square_cells(4)
+    zones = _zones(
+        box(7, 0, 10, 10).union(box(10, 0, 14.9, 10)).union(box(20, 0, 25.1, 10))
+        .union(box(30, 0, 40, 10)),
+    )
+    values = zones["k"].to_numpy()
+
+    bare, bare_reached = polygon_cell_values(cells, zones, values, rule="majority")
+    assert bare.tolist() == [0.1, 0.1, 0.1, 0.1] and bare_reached.all()
+
+    painted, reached = polygon_cell_values(cells, zones, values, rule="majority", default=1.0)
+    assert painted.tolist() == [1.0, 1.0, 0.1, 0.1]
+    assert reached.tolist() == [False, False, True, True]
+
+
+def test_a_tie_with_the_uncovered_half_leaves_the_default():
+    """Exactly half, axis-aligned AND at an angle (where the overlay rounds): default.
+
+    A polygon at half holds no majority. The halves cut through the cell's centre at 13
+    and 73 degrees come back from the overlay 1.4e-14 and 2.8e-14 OVER half (asserted),
+    which a bare ``>`` would hand to the polygon by the last bit; one a millionth of the
+    cell over half takes the cell.
+    """
+
+    from shapely import affinity
+
+    cells = _square_cells(4)
+    halves = [box(0, 0, 5, 10)] + [
+        affinity.rotate(box(-20, -20, 5, 30), degrees, origin=(5, 5)).intersection(
+            box(0, 0, 10, 10)
+        ).buffer(0)
+        for degrees in (13, 73)
+    ]
+    halves = [affinity.translate(half, xoff=10 * index) for index, half in enumerate(halves)]
+    just_over = box(30, 0, 35.0001, 10)
+    zones = _zones(*halves, just_over)
+    rounded = np.array(
+        [cells.geometry.iloc[i].intersection(zones.geometry.iloc[i]).area - 50.0 for i in (1, 2)]
+    )
+    assert (rounded > 0).all(), f"the angled halves no longer round over half: {rounded}"
+
+    painted, reached = polygon_cell_values(
+        cells, zones, [0.1, 0.2, 0.3, 0.4], rule="majority", default=1.0,
+    )
+    assert painted.tolist() == [1.0, 1.0, 1.0, 0.4]
+    assert reached.tolist() == [False, False, False, True]
+
+
+def test_several_polygons_and_the_remainder_vote_together():
+    """Plurality over every polygon AND the remainder; two polygons still tie to the lower row.
+
+    Cell 0: A 40%, B 20%, nothing 40% -> A ties the remainder -> default.
+    Cell 1: A 45%, B 20%, nothing 35% -> A, though it covers less than half.
+    Cell 2: A 50%, B 50% -> the lower row, A (no remainder to compete).
+    """
+
+    cells = _square_cells(3)
+    zone_a = box(0, 0, 4, 10).union(box(10, 0, 14.5, 10)).union(box(20, 0, 25, 10))
+    zone_b = box(4, 0, 6, 10).union(box(14.5, 0, 16.5, 10)).union(box(25, 0, 30, 10))
+    painted, _ = polygon_cell_values(
+        cells, _zones(zone_a, zone_b, values=[2.0, 3.0]), [2.0, 3.0],
+        rule="majority", default=1.0,
+    )
+    assert painted.tolist() == [1.0, 2.0, 2.0]
+
+
+def test_overlapping_polygons_do_not_cover_a_cell_twice():
+    """The remainder is measured against the UNION of a cell's pieces.
+
+    Two copies of one polygon over 40% of the cell leave 60% uncovered, so the default
+    wins. Summing piece areas would call 80% covered and give the cell to the polygon.
+    """
+
+    cells = _square_cells(1)
+    twice = box(0, 0, 4, 10)
+    painted, reached = polygon_cell_values(
+        cells, _zones(twice, twice), [0.1, 0.1], rule="majority", default=1.0
+    )
+    assert painted.tolist() == [1.0] and not reached.any()
+
+
+def test_mean_averages_the_remainder_in_at_the_default():
+    """30% at 10.0 beside 70% uncovered at default 0.0 is 3.0; without a default, 10.0."""
+
+    cells = _square_cells(1)
+    zones = _zones(box(0, 0, 3, 10), values=[10.0])
+    blended, reached = polygon_cell_values(cells, zones, [10.0], rule="mean", default=0.0)
+    assert blended[0] == pytest.approx(3.0, rel=1e-12) and reached.all()
+    bare, _ = polygon_cell_values(cells, zones, [10.0], rule="mean")
+    assert bare[0] == 10.0
+
+
+def test_without_a_default_a_partly_covered_cell_still_takes_its_polygon():
+    """The rule changes only when ``default=`` is given; a cell no polygon reaches is NaN."""
+
+    cells = _square_cells(2)
+    zones = _zones(box(0, 0, 2, 10), values=[7.0])
+    for rule in ("majority", "mean"):
+        painted, reached = polygon_cell_values(cells, zones, [7.0], rule=rule)
+        assert painted[0] == 7.0 and reached[0]
+        assert np.isnan(painted[1]) and not reached[1]
+
+
+def test_a_map_tiling_the_grid_is_unchanged_by_a_default(meshes, tmp_path):
+    """19 contact positions, every rule: ``default=`` changes NOTHING where nothing is uncovered.
+
+    The two units tile the footprint, so every cell's remainder is overlay rounding
+    (dropped below ``_UNCOVERED_TIE``) -- the values are equal BIT FOR BIT to the
+    no-default answer, ``mean`` included, where a rounding remainder averaged in would
+    move the last digits.
+    """
+
+    small, _ = meshes
+    cells = small.gdf_vorPolys
+    for index, split in enumerate(np.linspace(0.05, 0.95, 19)):
+        path = _write(
+            tmp_path / f"t{index}.gpkg", small,
+            values=((0.0, float(split), 1.0), (float(split), 1.0, 100.0)),
+        )
+        zones = gpd.read_file(path, layer="geology")
+        values = zones["k"].to_numpy()
+        for rule in POLYGON_RULES:
+            bare, bare_reached = polygon_cell_values(cells, zones, values, rule=rule)
+            given, given_reached = polygon_cell_values(
+                cells, zones, values, rule=rule, default=-5.0
+            )
+            assert np.array_equal(bare, given), (split, rule)
+            assert np.array_equal(bare_reached, given_reached), (split, rule)
+
+
+def test_a_feature_that_paints_no_cell_under_a_default_is_warned_by_name(meshes, tmp_path):
+    """A polygon smaller than half of every cell it touches is on the grid and paints nothing.
+
+    With ``default=`` that is the rule working, and silent; the build says so through
+    ``warnings.warn`` (ledger 288) naming the feature, so a multiplier that vanished on
+    a coarse mesh is not found by its absence. The big unit beside it paints and is not
+    named.
+    """
+
+    small, _ = meshes
+    cells = small.gdf_vorPolys
+    first = cells.geometry.iloc[14]
+    cx, cy = first.centroid.x, first.centroid.y
+    xmin, ymin, xmax, ymax = cells.total_bounds
+    frame = gpd.GeoDataFrame(
+        {"name": ["speck", "west"], "k": [0.1, 0.2]},
+        geometry=[box(cx - 5, cy - 5, cx + 5, cy + 5),
+                  box(xmin, ymin, xmin + 0.3 * (xmax - xmin), ymax)],
+        crs=small.crs,
+    )
+    path = tmp_path / "speck.gpkg"
+    frame.to_file(path, layer="geology", driver="GPKG")
+
+    recipe = Polygons(path=path, column="k", layer="geology", default=1.0)
+    with pytest.warns(UserWarning, match=r"1 of 2 features .* set no cell of k .*'speck'") as caught:
+        array = array_from_polygons(recipe, small, nlay=1, parameter="k")
+    assert not any("'west'" in str(one.message) for one in caught)
+    assert 0.1 not in array and 0.2 in array
+
+    # Without `default=` nothing competes, so the speck paints its cell and nothing warns.
+    import warnings
+
+    bare = Polygons(path=path, column="k", layer="geology", default=None)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ValueError, match="reached by no polygon"):
+            array_from_polygons(bare, small, nlay=1, parameter="k")
+
+
+def test_a_layered_map_competes_per_layer(meshes, tmp_path):
+    """Each layer's features compete with what THAT layer's features leave uncovered."""
+
+    small, _ = meshes
+    cells = small.gdf_vorPolys
+    xmin, ymin, xmax, ymax = cells.total_bounds
+    pit = box(xmin, ymin, xmin + 0.4 * (xmax - xmin), ymin + 0.5 * (ymax - ymin))
+    frame = gpd.GeoDataFrame(
+        {"name": ["pit"], "k": [0.1], "lay": [2]}, geometry=[pit], crs=small.crs
+    )
+    path = tmp_path / "layered.gpkg"
+    frame.to_file(path, layer="geology", driver="GPKG")
+    array = array_from_polygons(
+        Polygons(path=path, column="k", layer="geology", layer_field="lay", default=1.0),
+        small, nlay=2, parameter="k",
+    )
+    share = np.array([cell.intersection(pit).area / cell.area for cell in cells.geometry])
+    assert np.array_equal(array[0], np.ones(small.ncpl))
+    assert np.array_equal(array[1], np.where(share > 0.5, 0.1, 1.0))
+    assert (share > 0).sum() > (share > 0.5).sum()

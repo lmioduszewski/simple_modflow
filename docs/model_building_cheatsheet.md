@@ -1251,8 +1251,12 @@ mf.rch.array(recharge={0: mf.RasterValues(rasters / "recharge_01.tif"), ...})
 ```
 
 A cell off the raster is refused unless `gaps="nearest"` or `default=` says what it
-means. A multiplier polygon multiplies every cell it overlaps under the default
-`rule="majority"`; pass `rule="centroid"` for the cells whose centre is inside.
+means. With `default=` given, the part of a cell the polygon does not cover competes
+as the default, so under the default `rule="majority"` a multiplier polygon multiplies
+the cells it covers MORE than half of (ledger 551); `rule="centroid"`
+takes the cells whose centre is inside, and `rule="mean"` blends a partly covered
+cell's factor with the default by area. A polygon too small to hold half of any cell
+it touches multiplies nothing, and the build warns naming it.
 
 ### Three spellings for every list BC
 
@@ -1517,7 +1521,11 @@ geology map — measured on a 64-cell grid with one contact it wrote 12 distinct
 conductivities where the map holds 2. `rule="centroid"` matches `ZoneSpec.from_polygons`.
 
 **A cell no polygon reaches is REFUSED unless you pass `default=`.** An unfilled cell
-is a NaN, and MF6 answers a NaN budget while reporting normal termination.
+is a NaN, and MF6 answers a NaN budget while reporting normal termination. With
+`default=` the part of every cell no polygon covers also COMPETES as the default
+(ledger 551): under `majority` a polygon takes a cell only when it covers
+more of it than that uncovered part does (a tie leaves the default), under `mean` the
+uncovered part is averaged in at the default. A map that tiles the grid is unaffected.
 
 For a BOUNDARY condition — a conductance, a stage, an invert — this is the wrong tool:
 `mf.drn.gpkg(...)` and its six siblings already read a polygon's attribute columns and

@@ -135,14 +135,16 @@ def test_a_per_layer_list_puts_each_raster_in_its_own_layer(meshes, tmp_path):
 
 
 def test_a_polygon_multiplier_in_one_layer_is_the_hand_computed_product(meshes, k_tif, tmp_path):
-    """``raster * Polygons(value=0.1, default=1.0)``: 0.1 where the pit reaches, one layer.
+    """``raster * Polygons(value=0.1, default=1.0)``: 0.1 where the pit has the MAJORITY.
 
-    The expectation is computed independently: the raster sample times 0.1 in every
-    cell the pit OVERLAPS AT ALL, 1.0 elsewhere. That is ``majority`` with one polygon
-    -- the uncovered rest of a cell is not a competitor, and ``default`` fills only a
-    cell no polygon reaches (ledger 299's contract, unchanged; ledger 541
-    records that a multiplier therefore reaches 11 cells here where 6 are more than
-    half inside, and ``rule="centroid"`` gives those 6).
+    The expectation is computed independently, from each cell's own intersection with
+    the pit: with ``default=`` the part of a cell the pit does not cover competes as the
+    default (ledger 551), so under ``majority`` the raster is multiplied by
+    0.1 exactly in the cells MORE than half inside, under ``mean`` by the area blend
+    ``0.1 * share + 1.0 * (1 - share)``, and under ``centroid`` in the cells whose centre
+    is inside. Before, ``majority`` multiplied every cell the pit OVERLAPS at all (11
+    here where 6 are more than half inside, ledger 541) -- the ``touched`` count, which
+    this asserts is larger, so a revert to the old rule fails here by name.
     """
 
     small, _ = meshes
@@ -153,9 +155,12 @@ def test_a_polygon_multiplier_in_one_layer_is_the_hand_computed_product(meshes, 
 
     sampled = mf.Surface.raster(k_tif).values(small)
     cells = small.gdf_vorPolys.geometry
-    inside = np.array([cell.intersection(pit_box).area > 1e-9 * cell.area for cell in cells])
+    share = np.array([cell.intersection(pit_box).area / cell.area for cell in cells])
+    touched = share > 1e-9
+    majority = share > 0.5
     centred = np.array([pit_box.contains(cell.centroid) for cell in cells])
-    assert 0 < centred.sum() < inside.sum() < small.ncpl
+    assert 0 < majority.sum() < touched.sum() < small.ncpl
+    assert (0 < share[touched & ~majority]).all() and (share[touched & ~majority] < 0.5).all()
 
     k33 = _built_array(
         small,
@@ -163,7 +168,7 @@ def test_a_polygon_multiplier_in_one_layer_is_the_hand_computed_product(meshes, 
         tmp_path, "pit", attribute="k33", nlay=2,
     )
     assert np.allclose(k33[0], 2.0)
-    assert np.array_equal(k33[1], sampled * np.where(inside, 0.1, 1.0))
+    assert np.array_equal(k33[1], sampled * np.where(majority, 0.1, 1.0))
 
     by_centre = _built_array(
         small,
@@ -172,6 +177,15 @@ def test_a_polygon_multiplier_in_one_layer_is_the_hand_computed_product(meshes, 
         tmp_path, "pit_centre", attribute="k33",
     )
     assert np.array_equal(by_centre[0], sampled * np.where(centred, 0.1, 1.0))
+
+    blended = _built_array(
+        small,
+        mf.npf(k=1.0, k33=mf.RasterValues(k_tif)
+               * mf.Polygons(pit, value=0.1, default=1.0, rule="mean")),
+        tmp_path, "pit_mean", attribute="k33",
+    )
+    covered = np.where(share > 1 - 1e-9, 1.0, np.where(share < 1e-9, 0.0, share))
+    assert np.allclose(blended[0], sampled * (0.1 * covered + 1.0 * (1 - covered)), rtol=1e-12)
 
 
 def test_a_product_with_a_number_scales_every_cell(meshes, k_tif, tmp_path):
@@ -703,3 +717,48 @@ def test_nearest_on_a_raster_blank_over_the_grid_names_the_raster(meshes, tmp_pa
     with pytest.raises(ValueError, match="no valued cell") as caught:
         grid_surfaces.get_raster_vals_at_centroids(small, [blank], ["v"], gaps="nearest")
     assert "blank.tif" in str(caught.value)
+
+
+@pytest.mark.slow
+def test_mf6_reads_a_polygon_multiplier_only_where_the_pit_has_the_majority(meshes, k_tif, tmp_path):
+    """A real MF6 run of ``raster * Polygons(value=0.1, default=1.0)`` (ledger 551).
+
+    MF6 echoes the K it READ through NPF's ``EXPORT_ARRAY_ASCII``; that array is the
+    raster times 0.1 exactly in the cells the pit covers more than half of and the
+    raster elsewhere -- not in every cell the pit touches -- and the run terminates
+    normally with finite heads.
+    """
+
+    small, _ = meshes
+    xmin, ymin, xmax, ymax = small.gdf_vorPolys.total_bounds
+    pit_box = box(xmin, ymin, xmin + 0.4 * (xmax - xmin), ymin + 0.5 * (ymax - ymin))
+    pit = tmp_path / "pit.gpkg"
+    gpd.GeoDataFrame({"name": ["pit"]}, geometry=[pit_box], crs=small.crs).to_file(pit)
+    share = np.array([cell.intersection(pit_box).area / cell.area
+                      for cell in small.gdf_vorPolys.geometry])
+    assert (share > 0).sum() > (share > 0.5).sum() > 0
+
+    built = mf.simulation(
+        mf.gwf("m", context=ModelContext(grid=small), packages=[
+            mf.disv(_stack()),
+            mf.npf(k=mf.RasterValues(k_tif) * mf.Polygons(pit, value=0.1, default=1.0),
+                   icelltype=0, export_array_ascii=True),
+            mf.ic(strt=90.0),
+            mf.chd(stress_period_data={0: [((0, 0), 90.0), ((0, small.ncpl - 1), 80.0)]}),
+            mf.oc(head_filerecord="m.hds", saverecord=[("HEAD", "ALL")]),
+        ]),
+        name="s", packages=[mf.tdis(nper=1)],
+    ).build(tmp_path / "run")
+    simulation = built.simulation
+    simulation.write_simulation(silent=True)
+    success, report = simulation.run_simulation(silent=True)
+    assert success, "\n".join(report[-20:])
+
+    exported = tmp_path / "run" / "m-npf.k.l1.txt"   # MF6's own echo, not FloPy's input
+    read_by_mf6 = np.loadtxt(exported).ravel()
+    expected = mf.Surface.raster(k_tif).values(small) * np.where(share > 0.5, 0.1, 1.0)
+    assert read_by_mf6 == pytest.approx(expected, rel=1e-6)
+    head_file = flopy.utils.HeadFile(str(tmp_path / "run" / "m.hds"))
+    heads = head_file.get_data()
+    head_file.close()
+    assert np.isfinite(heads).all()
