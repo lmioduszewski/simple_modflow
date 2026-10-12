@@ -20442,7 +20442,10 @@ same day, which is the useful part of the result.
       style not in `constant/zone/grid/pilotpoints` -- pyEMU's `"pp"`/`"pilot_points"`
       reached pyEMU's structured-grid pilot points and died on DISV with `'VertexGrid'
       object has no attribute 'delr'` (finding params-12), so they name
-      `"pilotpoints"` rather than being mapped to it; `layers=` on a list target;
+      `"pilotpoints"` rather than being mapped to it; `"pilotpoints"` on a LIST target,
+      which went to pyEMU's own pilot points and died inside `get_tpl_or_ins_df`
+      ("unrecognized 'typ'") on DIS and DISV alike after the whole staging (measured
+      in the review), naming `"grid"`; `layers=` on a list target;
       `additive=True` and `**extra` on array-target pilot points; `temporal=` (nothing
       reads it; round 2 replaces it); `correlation=` on constant/zone;
       `anisotropy`/`bearing`/`nugget` without `correlation=`, and `bearing` with

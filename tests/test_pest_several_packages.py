@@ -330,6 +330,9 @@ def test_bounds_that_exclude_the_starting_value_are_refused(kwargs, start):
     ({"target": "k", "style": "pp"}, r"'pp' is not one of.*myflopy's is style='pilotpoints'"),
     ({"target": "k", "style": "pilot_points"}, r"style='pilotpoints'"),
     ({"target": "k", "style": "kl"}, r"style='kl' is not one of"),
+    # Review of R1-params: pyEMU's own pilot points reject a list file on every grid.
+    ({"target": "ghb.cond", "style": "pilotpoints"}, r"pilotpoints' on list target.*'grid'"),
+    ({"target": "recharge", "style": "PilotPoints"}, r"pilotpoints' on list target"),
 ])
 def test_an_argument_that_cannot_act_is_refused(kwargs, message):
     """params-10 and params-12: each of these was accepted and did nothing (or reached
@@ -436,3 +439,41 @@ def test_a_correlated_grid_block_above_the_limit_is_refused(runs, tmp_path, monk
     uncorrelated = _cal(runs, tmp_path, name="u")
     uncorrelated.parameterize("k", style="grid", layers=[0])
     _build(uncorrelated, "u")
+
+
+# -- review of R1-params ------------------------------------------------------------
+
+
+def test_a_rebuild_keeps_the_river_bottom_moving_with_its_stage(runs, tmp_path):
+    """The files whose forward run carries rbot were remembered on the project ACROSS
+    builds, so a second ``build()`` -- a re-run notebook cell, an observation added --
+    skipped every one: its template moved the stage alone and the declared depth
+    changed in every realization. Each build makes its own forward run."""
+
+    cal = _cal(runs, tmp_path)
+    cal.parameterize("riv.stage", package="crisp")
+    _build(cal)
+    pst = _build(cal)
+    assert "carry_river_bottom(" in (cal.template_workspace / "forward_run.py").read_text()
+    worker = _forward_run(cal, pst, tmp_path, {"rivstage_crisp": -1.0})
+    rows = _records(worker / "m.crisp_stress_period_data_1.txt")
+    assert np.allclose(rows.iloc[:, 2], [values[0] - 1.0 for values in CRISP.values()])
+    assert np.allclose(rows.iloc[:, 4], [values[2] - 1.0 for values in CRISP.values()])
+
+
+def test_numpy_layers_and_correlation_reach_the_metadata_as_python_numbers(runs, tmp_path):
+    """``layers=np.arange(2)`` and ``correlation=np.int64(30)`` built every parameter and
+    then crashed writing the metadata: JSON refuses ``numpy.int64``."""
+
+    cal = _cal(runs, tmp_path)
+    spec = cal.parameterize("k", style="grid", layers=np.arange(2), correlation=np.int64(30))
+    assert all(type(layer) is int for layer in spec.layers) and spec.layers == (0, 1)
+    assert type(spec.correlation) is float
+    assert np_mod.NativeParameterSpec(target="k", layers=np.int64(1)).layers == (1,)
+    _build(cal)
+    metadata = json.loads((cal.template_workspace / "myflopy_pest_metadata.json").read_text())
+    (record,) = metadata["parameters"]
+    assert record["layers"] == [0, 1] and record["correlation"] == 30.0
+    for layers in ([1.5], [-1], [True], ["0"], []):
+        with pytest.raises(ValueError, match="layers="):
+            np_mod.NativeParameterSpec(target="k", layers=layers)

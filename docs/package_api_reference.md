@@ -311,7 +311,8 @@ offset in model units, `bounds=(-2, 2)` by default, a multiplier refused; any bo
 excluding the starting value (0 for an offset, 1 for a multiplier or pilot point) are
 refused; `riv.stage` moves each record's `rbot` with its stage (ledgers
 518, 519). An argument that cannot act -- `layers=` on a list
-target, `correlation=` on constant/zone, a style but the four -- raises (ledger
+target, `correlation=` on constant/zone, a style but the four, `"pilotpoints"` on a
+list target -- raises (ledger
 520).
 
 Transport properties are `parameterize` targets too: `cal.parameterize("porosity")`

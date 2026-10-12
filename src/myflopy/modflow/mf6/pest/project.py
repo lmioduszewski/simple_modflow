@@ -697,6 +697,11 @@ class PestProject:
         self._pilot_point_frames: dict[str, list] = {}
         self._capture_field_specs: dict[str, dict] = {}
         self._prepared_observations: list[dict] = []
+        # The RIV files whose forward run carries rbot with a `riv.stage` offset, in
+        # the build under way: emptied at each build, which makes a new template and
+        # forward run -- kept across builds, a rebuild skipped every file and the
+        # second template moved the stage alone (`_carry_river_bottom`).
+        self._carried_river_files: set[str] = set()
         # The simulation LOADED from the build's staging copy of the run, while
         # `build()` runs; every recipe that reads a package's array reads it here,
         # never off `self.model` (ledger 356).
@@ -800,7 +805,10 @@ class PestProject:
             ``"pilot_points"``, ...), which reached pyEMU's structured-grid pilot
             points and died on a DISV grid, name ``"pilotpoints"`` (ledger
             520). It reaches pyEMU as ``par_type``, except
-            ``"pilotpoints"`` on an array target, which myflopy builds itself.
+            ``"pilotpoints"`` on an array target, which myflopy builds itself;
+            ``"pilotpoints"`` on a LIST target raises ``ValueError`` here (pyEMU's
+            own pilot points reject a list file on every grid) -- use ``"grid"``,
+            whose ``correlation=`` correlates the records.
             ``"grid"`` on
             *array* targets (K, K33) builds one multiplier per Voronoi/DISV
             cell, and an independent set per layer file, located through the
@@ -861,11 +869,13 @@ class PestProject:
             parameter and warns. A length that is not one label per cell raises
             ``ValueError`` at build. Default ``None`` passes no zones.
             Array-target pilot points ignore it.
-        layers : iterable of int or None, optional
+        layers : int or iterable of int or None, optional
             For multi-layer *array* targets, restrict the parameter to these
             zero-based model layers (e.g. ``layers=[0, 1]`` for the unconfined
-            aquifers); other layers keep their input value. ``None`` (default)
-            covers all layers. Given for a LIST target it raises ``ValueError``
+            aquifers; a bare ``2`` is one layer, and numpy integers are taken as
+            ``int``); other layers keep their input value. ``None`` (default)
+            covers all layers. A value that is not a whole number at or above 0,
+            or an empty list, raises ``ValueError`` here. Given for a LIST target it raises ``ValueError``
             here, naming ``zones=``: a list target scales every record of its
             package's files. :meth:`build` raises ``ValueError`` when no requested
             layer has its own file, or the target is written as one whole-grid
@@ -1006,7 +1016,7 @@ class PestProject:
             transform=transform,
             additive=additive,
             zones=zones,
-            layers=tuple(layers) if layers is not None else None,
+            layers=layers,
             package=package,
             pp_space=pp_space,
             pp_points=pp_points,
@@ -1787,7 +1797,7 @@ class PestProject:
             "additive": bool(spec.additive),
             "layers": list(spec.layers) if spec.layers is not None else None,
             "zones": zones,
-            "correlation": spec.correlation,
+            "correlation": float(spec.correlation) if spec.correlation is not None else None,
             "files": [
                 {"filename": target.filename, "package": target.package,
                  "layer": target.layer, "period": target.period}
@@ -2252,6 +2262,7 @@ class PestProject:
             self._stage_model()
             self._build_pstfrom(staging)
             self._prepare_observation_specs()
+            self._carried_river_files = set()
             with self._quiet_pyemu_context():
                 for spec in self._native_parameter_specs:
                     if spec.recipe.family == "array" and spec.style == "pilotpoints":

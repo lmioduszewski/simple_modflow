@@ -337,6 +337,49 @@ def checked_package_argument(package) -> str | tuple[str, ...] | None:
     return cleaned
 
 
+def checked_layers(layers) -> tuple[int, ...]:
+    """``layers=`` as :class:`NativeParameterSpec` holds it: a tuple of Python ``int``.
+
+    A numpy integer -- ``layers=np.arange(3)`` -- is carried as ``int``: the build's
+    metadata is JSON, which refuses ``numpy.int64``, so it crashed the build after
+    every parameter was registered.
+
+    Parameters
+    ----------
+    layers : int or iterable of int
+        Zero-based layers; one layer may be given bare. A whole-number float
+        (``2.0``) is that layer.
+
+    Returns
+    -------
+    tuple of int
+        The layers, in the order given.
+
+    Raises
+    ------
+    ValueError
+        When a value is not a whole number at or above 0, or the iterable is empty.
+    """
+
+    values = [layers] if np.ndim(layers) == 0 else list(np.asarray(layers, dtype=object).ravel())
+    checked = []
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = float("nan")
+        if isinstance(value, (bool, np.bool_, str, bytes)) or not np.isfinite(number) or number < 0 \
+                or number != int(number):
+            raise ValueError(
+                f"layers={layers!r}: each layer is a zero-based whole number, and {value!r} "
+                "is not."
+            )
+        checked.append(int(number))
+    if not checked:
+        raise ValueError(f"layers={layers!r} names no layer; pass None for every layer.")
+    return tuple(checked)
+
+
 @dataclass
 class NativeParameterSpec:
     """A declarative, pyEMU-bound parameter request.
@@ -354,7 +397,9 @@ class NativeParameterSpec:
         (one per list entry / cell) or ``"pilotpoints"``, any case. ``None`` (default)
         uses the recipe default, ``"constant"``. Anything else raises ``ValueError``
         naming the four -- pyEMU's own pilot-point spellings (``"pp"``,
-        ``"pilot_points"``, ...) name ``"pilotpoints"`` (ledger 520).
+        ``"pilot_points"``, ...) name ``"pilotpoints"`` -- and so does
+        ``"pilotpoints"`` on a LIST target, which no engine here builds (ledger
+        520).
     bounds : tuple of (float, float) or None, optional
         ``(lower, upper)`` of the adjustable multiplier (factors) or additive offset
         (model units). ``None`` (default) is :data:`MULTIPLIER_BOUNDS`
@@ -380,9 +425,10 @@ class NativeParameterSpec:
     zones : ZoneSpec or array_like of int or None, optional
         Zone labels for ``style="zone"`` (and to mask cells); see
         :meth:`PestProject.parameterize`. Default ``None``.
-    layers : tuple of int or None, optional
-        Zero-based layers an ARRAY target is restricted to. Default ``None``: every
-        layer. Given for a LIST target it raises ``ValueError``, naming ``zones=``.
+    layers : int or iterable of int or None, optional
+        Zero-based layers an ARRAY target is restricted to, held as a tuple of
+        ``int`` (:func:`checked_layers`, which refuses anything else). Default
+        ``None``: every layer. Given for a LIST target it raises ``ValueError``, naming ``zones=``.
     package : str or tuple of str or None, optional
         Which package(s) of the target's TYPE are scaled, by NAME
         (:func:`checked_package_argument`). ``None`` (default): the model's only
@@ -472,6 +518,10 @@ class NativeParameterSpec:
         recipe = self.recipe
         self.style = _checked_style(self.style if self.style is not None else recipe.default_style)
         self.package = checked_package_argument(self.package)
+        if self.layers is not None:
+            self.layers = checked_layers(self.layers)
+        if self.correlation is not None:
+            self.correlation = float(self.correlation)
         if self.additive is None:
             self.additive = recipe.elevation
         elif not self.additive and recipe.elevation:
@@ -483,6 +533,14 @@ class NativeParameterSpec:
                 "ledger 518)."
             )
         self.additive = bool(self.additive)
+        if self.style == "pilotpoints" and recipe.family == "list":
+            raise ValueError(
+                f"style='pilotpoints' on list target {recipe.canonical!r}: myflopy's pilot "
+                "points interpolate onto an ARRAY, and pyEMU's own reject a list file "
+                "(\"unrecognized 'typ' ... not 'pilotpoints'\") on every grid, so it cannot "
+                "act. Use style='grid' (one parameter per record; correlation= correlates "
+                "them), 'zone' or 'constant' (ledger 520)."
+            )
         pilot_array = self.style == "pilotpoints" and recipe.family == "array"
         if pilot_array and self.additive:
             raise ValueError(
@@ -1303,6 +1361,7 @@ def _carry_river_bottom(project, spec: NativeParameterSpec, grid_type: str) -> N
 
     _index, stage_col = list_columns(spec.recipe, grid_type)
     _index, rbot_col = list_columns(spec.recipe, grid_type, field="rbot")
+    # Emptied by each `PestProject.build`: the set belongs to ONE template's forward run.
     carried = project.__dict__.setdefault("_carried_river_files", set())
     helper = str(Path(__file__).with_name("forward_run.py"))
     for target in spec.resolved_targets:

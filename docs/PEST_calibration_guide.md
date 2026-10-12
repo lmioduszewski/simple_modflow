@@ -91,7 +91,8 @@ refused at build.
 `layers=` on a list target (use `zones=`), `correlation=` on `constant`/`zone`, a
 variogram shape (`anisotropy`/`bearing`/`nugget`) without `correlation=`,
 `temporal=`, and any style but `constant`/`zone`/`grid`/`pilotpoints` -- pyEMU's own
-`"pp"` names `"pilotpoints"`. A parameter name used twice is refused too: give each
+`"pp"` names `"pilotpoints"` -- and `"pilotpoints"` on a list target (pilot points
+interpolate onto an array; use `"grid"` with `correlation=`). A parameter name used twice is refused too: give each
 stacked call its own `name=`.
 
 **Zones** are per-cell integer labels; `style="zone"` gives one adjustable multiplier
