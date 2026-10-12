@@ -585,11 +585,16 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**5972 passed / 4 skipped**, 2026-10-11, the backlog round -- ledgers
-  362-411, the six PEST leftovers and the docstring pass's 68 code defects): serial
-  (`-n0`) **9m09s** and `-n 10` **2m11s**, both in a checkout outside `.claude` with a
-  RELATIVE `PYTHONPATH=src`, the parallel one starting at a load average of ~1.7 and the
-  serial one at ~11.9 as the parallel run ended. Before it, 5583 passed / 4 skipped
+- Full suite (**6696 passed / 4 skipped**, 2026-10-11, the backlog's second round --
+  ledgers 412-446: what round 1 found and left, the docstring guard over the read-grammar
+  views, the executed examples/notebooks of `tests/test_examples_run.py`, and the user's
+  two calls on ledgers 377/411): serial (`-n0`) **10m27s** and `-n 10` **2m16s**, both in a
+  checkout outside `.claude` with a RELATIVE `PYTHONPATH=src`, the parallel one starting at
+  a load average of ~1.0 and the serial one at ~13.5 as a parallel run ended. One earlier
+  `-n 10` of the same tree, also at ~1.1, took 3m57s -- unexplained, not reproduced; the
+  slowest tests are the PEST++ end-to-end runs (18-26 s each). Before it, 5972 passed /
+  4 skipped (ledgers 362-411, the six PEST leftovers and the docstring pass's 68 code
+  defects): serial 9m09s and `-n 10` 2m11s, at ~11.9 and ~1.7. Before that, 5583 passed / 4 skipped
   (2026-10-02, the PEST-build series, ledgers 356-361 -- the build reads the run only,
   observation groups, a build deletes its workspace only when a build wrote it, and a
   parallel run its master and workers only when they are copies of its template): serial
