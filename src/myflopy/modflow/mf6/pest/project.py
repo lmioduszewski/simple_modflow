@@ -60,6 +60,7 @@ from myflopy.modflow.mf6.pest.pilot_points import (
     register_pilot_point_parameters,
 )
 from myflopy.modflow.mf6.pest.run_state import (
+    RESUME_RECORD,
     RUN_LOCK,
     archive_for_resume,
     ensemble_file,
@@ -403,6 +404,26 @@ def _scan_simulation_inputs(
         for token in _MF6_OUTPUT_REFERENCE.findall(text):
             _record_output(_mf6_field(token), f"FILEOUT in {relative}{named_by}")
     return list(found), outside, list(written), written_outside
+
+
+def _record_control_file(archive: Path, noptmax: int, options: dict) -> None:
+    """Add to ``archive``'s resume record what the run's control file said before the restart.
+
+    ``noptmax`` is the run's TOTAL iterations and ``options`` maps each restart option
+    to its value then (``None`` when unset); :meth:`PestProject._restore_resumed_control_file`
+    writes them back (review of ledger 533).
+    """
+
+    path = archive / RESUME_RECORD
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["control_file"] = {
+        "noptmax": int(noptmax),
+        "options": {
+            key: (None if value is None else value if isinstance(value, (bool, int, float)) else str(value))
+            for key, value in options.items()
+        },
+    }
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
 
 
 def build_forward_run_command(template_workspace: Path, interpreter: str) -> str:
@@ -2530,8 +2551,8 @@ class PestProject:
         The directory a run writes into holds that run's outputs only (ledger
         507). A serial run first deletes from the template every output
         an earlier run of this calibration left there (each iteration's ensembles
-        and ``.base.par``, the phi files, the noise ensemble -- except a file a
-        PEST++ option names), so a rerun with fewer iterations, or a :meth:`prior`
+        and ``.base.par``, the phi files, the noise ensemble, a :meth:`resume_ies`
+        archive -- except a file a PEST++ option names), so a rerun with fewer iterations, or a :meth:`prior`
         after a run, is not reviewed with the earlier run's last iteration as its
         posterior; it says so with a ``UserWarning`` (ledger 532). A
         parallel run's master is copied from the template with those outputs left
@@ -2841,8 +2862,11 @@ class PestProject:
         the Marquardt lambda the run's ``.rec`` shows in force for the next iteration,
         and ``NOPTMAX`` the iterations left; then -- when PESTPP-IES returns, finished
         or not -- moves the archived iterations ``0..n`` back, renumbers the resumed
-        ones after them and joins the phi files (``total_runs`` continues). The archive
-        keeps the interrupted run's ``.rec`` and ``.log``. Measured on the canonical
+        ones after them, joins the phi files (``total_runs`` continues) and puts the
+        control file back as the run was launched: ``NOPTMAX`` its TOTAL iterations, the
+        restart options as they were -- so a run interrupted again reads as interrupted
+        and resumes to the same total. The archive keeps the interrupted run's ``.rec``
+        and ``.log``. Measured on the canonical
         testing model, 6 realizations, killed after iteration 1 of 3
         (``docs/reproducers/ies_resume_interrupted_run.py``): the resumed iteration 2
         read phi 1.71477 against the uninterrupted run's 1.71448 -- 1.65128 without the
@@ -2851,7 +2875,10 @@ class PestProject:
         ``.rec``.
 
         A resume killed too hard for that clean-up to run leaves the archive
-        unspliced; the next :meth:`resume_ies` splices it first.
+        unspliced; the next :meth:`resume_ies` splices it first, and puts the control
+        file back, before it reads what the run was launched for. A later serial
+        :meth:`run_ies`/:meth:`prior` in the template deletes the archives with the
+        earlier run's other outputs, so no resume splices them into a new run.
 
         Parameters
         ----------
@@ -2941,6 +2968,7 @@ class PestProject:
         pending = pending_resume(directory, case)
         if pending is not None:
             joined = splice_resumed_run(directory, case, pending)
+            self._restore_resumed_control_file(directory, pending)
             message = (
                 f"resume_ies(): joined the iterations a previous resume left unjoined in "
                 f"{pending} back into {directory} (it was stopped before it could): "
@@ -2992,6 +3020,15 @@ class PestProject:
             )
 
         archive = archive_for_resume(directory, case, last)
+        # What the run's control file said before the restart rewrites it, put back after
+        # the splice (and by the next resume after a hard kill), so the directory reads as
+        # ONE run launched for `total` iterations: left as the restart wrote it, NOPTMAX
+        # was the iterations LEFT, and a run interrupted again read as finished and its
+        # default resume was refused (review of ledger 533).
+        _record_control_file(archive, total, {
+            key: run_pst.pestpp_options.get(key)
+            for key in (*self._RESUME_OPTIONS, "ies_initial_lambda")
+        })
         options = {
             "ies_par_en": ensemble_file(archive, f"{case}.0.par", binary_first=binary),
             "ies_restart_par_en": ensemble_file(archive, f"{case}.{last}.par", binary_first=binary),
@@ -3030,7 +3067,39 @@ class PestProject:
                 self._run_serial(pyemu, exe_name, exe_dir, f"{case}.pst", method="resume_ies")
         finally:
             splice_resumed_run(directory, case, archive)
+            self._restore_resumed_control_file(directory, archive)
         return self._review(directory)
+
+    def _restore_resumed_control_file(self, directory: Path, archive: Path) -> None:
+        """Put back what :meth:`resume_ies` changed in the run's control file (review of ledger 533).
+
+        ``NOPTMAX`` becomes the run's TOTAL iterations and the restart options
+        (``ies_par_en``, ``ies_restart_par_en``, ``ies_restart_obs_en``, ``ies_obs_en``,
+        ``ies_initial_lambda``) what they were before the restart, as
+        :func:`_record_control_file` recorded them in ``archive`` -- so the joined
+        directory reads as one run launched for that many iterations. Nothing is done
+        for an archive that recorded none.
+        """
+
+        try:
+            record = json.loads((archive / RESUME_RECORD).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # No record, or not JSON: nothing recorded to put back.
+            return
+        control = record.get("control_file") if isinstance(record, dict) else None
+        if not isinstance(control, dict):
+            return
+        pyemu = self.pyemu or _import_pyemu()
+        path = directory / f"{self.name}.pst"
+        with self._quiet_pyemu_context():
+            run_pst = pyemu.Pst(str(path))
+            run_pst.control_data.noptmax = int(control["noptmax"])
+            for key, value in control.get("options", {}).items():
+                if value is None:
+                    run_pst.pestpp_options.pop(key, None)
+                else:
+                    run_pst.pestpp_options[key] = value
+            run_pst.write(str(path), version=2)
 
     def _review(self, directory: Path):
         """The :class:`~myflopy.modflow.mf6.pest.ies.IesResults` of the run in ``directory``, case ``name``."""
@@ -3599,6 +3668,7 @@ class PestProject:
         """Delete an earlier PESTPP-IES run's outputs of this case from ``directory``.
 
         Every file :func:`~myflopy.modflow.mf6.pest.runs.pestpp_ies_outputs` lists,
+        and every ``<name>.resumed_from_<n>/`` archive a :meth:`resume_ies` made,
         except one a PEST++ option of this run names (``ies_par_en=<name>.0.par.csv``
         reuses an earlier prior from the template itself), which PESTPP-IES reads
         before it writes (ledger 507). With ``announce`` the deletion is said through
@@ -3618,6 +3688,15 @@ class PestProject:
                 continue
             path.unlink()
             removed.append(path.name)
+        # And what a resume_ies of an earlier run left: its archive of that run's
+        # .rec/.log -- or, when that resume was killed before it could join it back,
+        # the earlier run's iterations, which the next resume_ies would splice into
+        # THIS run (review of ledger 533). A parallel master is copied from
+        # the template, so it would carry them too.
+        for archive in sorted(directory.glob(f"{self.name}.resumed_from_*")):
+            if archive.is_dir() and (archive / RESUME_RECORD).is_file():
+                shutil.rmtree(archive)
+                removed.append(archive.name + "/")
         if not removed:
             return
         shown = ", ".join(removed[:8]) + (" ..." if len(removed) > 8 else "")

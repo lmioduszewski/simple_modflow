@@ -613,8 +613,11 @@ run's `.rec` shows in force, without which the resumed run takes another path (m
 the canonical testing model: the resumed iteration 2 read phi 1.715 against the
 uninterrupted run's 1.714, and 1.651 without the lambda). The run's earlier outputs are moved
 to `<name>.resumed_from_<n>/` while it goes and joined back after, the resumed
-iterations renumbered after them, so the directory holds one run of iterations `0..N`
-and reviews like any other; the archive keeps the interrupted run's `.rec` and `.log`.
+iterations renumbered after them, and the run's control file is put back as it was
+launched (`NOPTMAX` the run's total), so the directory holds one run of iterations `0..N`
+and reviews like any other -- interrupted again, it resumes again to the same total. The
+archive keeps the interrupted run's `.rec` and `.log`; a later serial run in the template
+deletes it with the other earlier outputs.
 The resumed run's workers are made from the template, so a template rebuilt with other
 parameters or observations is refused. A SERIAL run (`resume_ies()` with no `workers`)
 resumes only while its template has not been rebuilt: `build()` deletes the template and

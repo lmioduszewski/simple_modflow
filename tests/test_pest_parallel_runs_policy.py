@@ -556,6 +556,104 @@ def test_resume_starts_from_the_lambda_the_run_had_reached(cal, monkeypatch):
     assert int(cal.pst.control_data.noptmax) == 4, "cal.pst is not the resumed run's"
 
 
+def _resume_stub(cal, monkeypatch):
+    """PESTPP-IES stubbed: records each launch's NOPTMAX; the SECOND launch (the first
+    resume) writes its restated iteration 0 and one iteration, then stops -- interrupted
+    again."""
+
+    launched = []
+
+    def run(command, cwd=None):
+        launched.append(int(pyemu.Pst(str(Path(cwd) / "cal.pst")).control_data.noptmax))
+        if len(launched) == 2:
+            _results(Path(cwd), "cal", iterations=(0, 1))
+
+    monkeypatch.setattr(cal.pyemu.os_utils, "run", run)
+    return launched
+
+
+def test_a_resume_interrupted_again_resumes_to_the_runs_own_total(cal, monkeypatch):
+    """The restart rewrites the run's control file with NOPTMAX the iterations LEFT; left
+    so, a run of 4 cut after 1, resumed and cut again after 2 read as FINISHED -- the
+    relaunch refusal said so and offered no resume -- and ``resume_ies()`` asked for 3 in
+    all, then refused (review of ledger 533)."""
+
+    launched = _resume_stub(cal, monkeypatch)
+    template = cal.template_workspace
+    cal.run_ies(reals=3, iterations=4)
+    _results(template, "cal", iterations=(0, 1))
+    cal.resume_ies()
+    run_pst = pyemu.Pst(str(template / "cal.pst"))
+    assert int(run_pst.control_data.noptmax) == 4
+    for key in ("ies_par_en", "ies_restart_par_en", "ies_restart_obs_en", "ies_obs_en",
+                "ies_initial_lambda"):
+        assert key not in run_pst.pestpp_options, key
+
+    cal.resume_ies()
+    assert launched == [4, 3, 2]
+
+
+def test_a_resume_killed_before_it_joined_is_joined_with_the_runs_total(cal, monkeypatch):
+    """A hard kill skips the ``finally``: the next resume joins the archive AND puts the
+    control file back before reading how many iterations the run was launched for."""
+
+    import myflopy.modflow.mf6.pest.project as project
+
+    launched = _resume_stub(cal, monkeypatch)
+    template = cal.template_workspace
+    cal.run_ies(reals=3, iterations=4)
+    _results(template, "cal", iterations=(0, 1))
+    with monkeypatch.context() as killed:
+        killed.setattr(project, "splice_resumed_run", lambda *args: None)
+        killed.setattr(project.PestProject, "_restore_resumed_control_file", lambda *args: None)
+        cal.resume_ies()
+    assert pending_resume(template, "cal") is not None
+
+    with pytest.warns(UserWarning, match=r"joined the iterations a previous resume left unjoined"):
+        cal.resume_ies()
+    assert launched == [4, 3, 2]
+
+
+def test_a_splice_stopped_part_way_is_finished_by_the_next(tmp_path, monkeypatch):
+    """Run again after it stopped, a splice took the interrupted run's iterations, moved
+    back by then, for the resumed run's: it deleted iteration 0 and renumbered the rest."""
+
+    import myflopy.modflow.mf6.pest.run_state as run_state
+
+    case, run = "cal", tmp_path / "master"
+    _results(run, case, iterations=(0, 1, 2))
+    archive = archive_for_resume(run, case, 2)
+    _results(run, case, iterations=(0, 1, 2))   # the resumed run: 0 restates iteration 2
+
+    def stopped(*args):
+        raise OSError("stopped part-way")
+
+    with monkeypatch.context() as broken:
+        broken.setattr(run_state, "_join_phi", stopped)
+        with pytest.raises(OSError, match="stopped part-way"):
+            splice_resumed_run(run, case, archive)
+    assert pending_resume(run, case) == archive
+
+    assert splice_resumed_run(run, case, archive) == [0, 1, 2, 3, 4]
+    for n, x in ((0, 0.0), (1, 1.0), (2, 2.0), (3, 1.0), (4, 2.0)):
+        assert pd.read_csv(run / f"{case}.{n}.par.csv", index_col=0)["x"].iloc[0] == x, n
+    assert _phi_rows(run / f"{case}.phi.actual.csv")["mean"].tolist() == [10.0, 9.0, 8.0, 9.0, 8.0]
+
+
+def test_a_serial_run_deletes_an_earlier_resumes_archive(cal, monkeypatch):
+    """A resume killed before it joined leaves the earlier run's iterations in an archive;
+    a later serial run must not leave it for the next resume to splice into ITS run."""
+
+    monkeypatch.setattr(cal.pyemu.os_utils, "run", lambda command, cwd=None: None)
+    template = cal.template_workspace
+    _results(template, "cal", iterations=(0, 1))
+    archive = archive_for_resume(template, "cal", 1)
+    with pytest.warns(UserWarning, match=r"cal\.resumed_from_1/"):
+        cal.run_ies(reals=3)
+    assert not archive.exists()
+    assert pending_resume(template, "cal") is None
+
+
 # -- resume: real PESTPP-IES -----------------------------------------------------------
 
 

@@ -599,7 +599,10 @@ def splice_resumed_run(directory, case: str, archive) -> list[int]:
     the final ``.base.par``/``.base.rei`` are the resumed run's when it wrote them, else
     the archived ones come back. What stays in the archive -- the interrupted run's
     ``.rec``/``.log``, and any file of an iteration past ``n`` it had begun -- is kept,
-    with its record marked spliced. Safe to call on a resume that wrote nothing.
+    with its record marked spliced. Safe to call on a resume that wrote nothing, and
+    again after a splice stopped part-way: the record says when the renumbering is
+    done, so a second call never takes the interrupted run's iterations, moved back by
+    then, for the resumed run's.
 
     Parameters
     ----------
@@ -621,13 +624,20 @@ def splice_resumed_run(directory, case: str, archive) -> list[int]:
     record = json.loads(record_path.read_text(encoding="utf-8"))
     n = int(record["from_iteration"])
 
-    resumed = _iteration_files(directory, case)
-    for path in resumed.pop(0, []):
-        path.unlink()
-    for k in sorted(resumed, reverse=True):   # descending: n + k never lands on a k' > k
-        for path in resumed[k]:
-            rest = path.name[len(f"{case}.{k}.") :]
-            path.rename(directory / f"{case}.{n + k}.{rest}")
+    # Once only: a splice stopped part-way (a phi file it cannot read, a hard kill) and
+    # run again would otherwise take the interrupted run's own iterations, moved back by
+    # then, for the resumed run's -- deleting its iteration 0 and renumbering the rest
+    # (review of ledger 533). The record says the renumbering is done.
+    if not record.get("renumbered"):
+        resumed = _iteration_files(directory, case)
+        for path in resumed.pop(0, []):
+            path.unlink()
+        for k in sorted(resumed, reverse=True):   # descending: n + k never lands on a k' > k
+            for path in resumed[k]:
+                rest = path.name[len(f"{case}.{k}.") :]
+                path.rename(directory / f"{case}.{n + k}.{rest}")
+        record["renumbered"] = True
+        record_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     for k, paths in _iteration_files(archive, case).items():
         if k <= n:
             for path in paths:
@@ -635,7 +645,9 @@ def splice_resumed_run(directory, case: str, archive) -> list[int]:
 
     for archived in sorted(archive.glob(f"{case}.phi.*.csv")):
         resumed_phi = directory / archived.name
-        _join_phi(archived, resumed_phi, resumed_phi, n)
+        joining = resumed_phi.with_name(resumed_phi.name + ".joining")
+        _join_phi(archived, resumed_phi, joining, n)
+        os.replace(joining, resumed_phi)   # never a half-written phi file
         archived.unlink()
     for archived in pestpp_ies_outputs(archive, case):
         if re.fullmatch(re.escape(case) + r"\.\d+\..+", archived.name):

@@ -20711,7 +20711,15 @@ same day, which is the useful part of the result.
       `cal.pst`. PESTPP-IES numbers the restart from 0, so the outputs are archived to
       `<name>.resumed_from_<n>/` and spliced back in a `finally` (resumed `k >= 1` ->
       `n + k`, its iteration 0 dropped, phi files joined, `total_runs` continued); an
-      archive a hard kill left unspliced is spliced by the next resume. **A separate verb,
+      archive a hard kill left unspliced is spliced by the next resume. After the splice
+      the run's control file is put back as launched -- `NOPTMAX` the TOTAL, the restart
+      options as they were (recorded in the archive, so a hard kill's next resume restores
+      them too): left as the restart wrote it, a run of 3 cut after 1, resumed and cut
+      again after 2 read as FINISHED and its default resume was refused (measured, real
+      PESTPP-IES, 2 workers). The splice records when its renumbering is done, so one
+      stopped part-way and run again does not renumber the restored iterations; a serial
+      `run_ies`/`prior` deletes `<name>.resumed_from_*` archives with the template's other
+      earlier outputs, so an unspliced one is never spliced into a NEW run. **A separate verb,
       not `run_ies(restart=True)`:** `reals`/`iterations` default to 50/3 there, which
       would silently disagree with the run being resumed; the resume reads the run's own.
       **The lambda is carried because it was measured to matter:** on the canonical
