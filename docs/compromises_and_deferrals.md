@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 465 entries (470 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 466 entries (471 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 466 | A legacy `Boundaries(crs=)` naming another CRS than its grid's is refused, and a `GeoPackageSource` follows... | 2026-10-11 |
 | 465 | A one-value noun refuses a per-layer field's options, and a heads option on a map with no heads raises at t... | 2026-10-11 |
 | 464 | A cross-section's axes and a transport profile read the model's own unit and field | 2026-10-11 |
 | 463 | A layer stack's section and thickness map do what their arguments say | 2026-10-11 |
@@ -18513,9 +18514,10 @@ same day, which is the useful part of the result.
      sets (they were reprojected to the OLD label) -- a subclass's too, named in
      `_CRS_DERIVED` (`RechargeFromShp`/`GHBFromVector` `cell_ids`; review); a
      `boundary_dict` a builder already
-     assembled is NOT dropped -- it is a build's output, rebuilt by building again. An
+     assembled is NOT dropped -- it is a build's output, rebuilt by building again. ~~An
      explicit `Boundaries(crs=)` other than the grid's is still accepted and reprojects
-     the source away from the grid's frame -- not touched here.
+     the source away from the grid's frame -- not touched here.~~ Refused since ledger
+     466, which also makes `GeoPackageSource.gdf` follow a relabel.
 
 432. **A discretization's `length_units` is checked on every edit route, and the DIS builders write MF6's word for any spelling a spec already holds (2026-10-11).**
       Ledger 404's check ran only in `mf.dis`/`mf.disv`/`mf.disu`, so `with_options`,
@@ -19421,3 +19423,17 @@ same day, which is the useful part of the result.
       (8 cases), `test_a_bare_grid_map_refuses_a_heads_option_at_the_call`,
       `tests/test_hfb.py::test_both_barrier_maps_refuse_a_heads_option_at_the_call`,
       `tests/test_hover_integration.py::test_mosaic_hover_sugar_threads_through_without_leaking`.
+
+466. **A legacy `Boundaries(crs=)` naming another CRS than its grid's is refused, and a `GeoPackageSource` follows a relabel of its grid (2026-10-11).**
+      `Boundaries(crs=X)` reprojected the source to X and intersected it against cells in
+      the grid's CRS, and `budget_obs_df` passed its polygons' OWN CRS there, so polygons
+      stored in another CRS than the grid's summed no flow. **Judgment call:** REFUSE a
+      `crs=` that names another CRS than the grid declares (another spelling of the
+      grid's own is accepted), at construction and on any read after a relabel makes the
+      two differ, naming "leave crs= out" and `grid.crs = ...` -- rather than reproject to
+      the grid's and ignore the argument, which would leave a parameter that cannot act.
+      A `VoronoiGridPlus` always declares a CRS, so `crs=` acts only with no grid.
+      `budget_obs_df` passes none. `GeoPackageSource.gdf` keeps the layer as READ and
+      reprojects it to the grid's CRS as it is at each access, from the file's own frame
+      (not a round trip of the previous label); a frame set from outside is taken to be
+      in the grid's CRS when first read, as `Boundaries` takes one.

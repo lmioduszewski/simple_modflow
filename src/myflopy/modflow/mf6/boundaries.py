@@ -17,6 +17,7 @@ import pandas as pd
 import shapely as shp
 
 from myflopy._logging import get_logger
+from myflopy.areas import _same_crs
 from myflopy.modflow.mf6.boundary_support import filter_inactive_cells
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 
@@ -67,9 +68,15 @@ class Boundaries:
         uid
             Unique-id field in the geometry attributes.
         crs
-            EPSG code or CRS string the geometry source is reprojected to. Default
-            None: the grid's ``crs``, read LIVE, so relabelling the grid after this
-            object is built reaches it (ledger 431).
+            EPSG code or CRS string the geometry source is reprojected to when there
+            is no grid CRS to follow (no ``vor``; a ``VoronoiGridPlus`` always declares
+            one). The source is intersected against the grid's cells, which are in the
+            grid's CRS, so it is reprojected to THAT, and a ``crs`` naming another
+            raises ``ValueError`` -- here, and on any later read once a relabel makes
+            the two differ; it moved the source out of the cells' frame (ledger
+            466). Another spelling of the grid's own CRS (``2927`` for
+            ``"EPSG:2927"``) is accepted. Default None: the grid's ``crs``, read LIVE,
+            so relabelling the grid after this object is built reaches it (ledger 431).
         bound_type
             Short identifier such as ``"drn"`` or ``"rch"``.
         idomain, idomain_path
@@ -103,6 +110,7 @@ class Boundaries:
         self.limit_to_k33 = True
         self.limit_to_k33_by = 0.1
         self.verbose = False
+        self.crs  # a `crs=` naming another CRS than the grid's is refused here
 
     #: The lazy caches computed in :attr:`crs`: the source frame and every cell set,
     #: area or value derived from it. A relabel of the grid drops them all (ledger
@@ -121,16 +129,34 @@ class Boundaries:
 
     @property
     def crs(self):
-        """The CRS the geometry source is reprojected to: the ``crs`` given, else the grid's.
+        """The CRS the geometry source is reprojected to: the grid's, else the ``crs`` given.
 
         The grid's is read live, so a grid relabelled after this object was built
         is followed -- and every frame and cell set cached LAZILY from the source is
         dropped then, because they were reprojected to the OLD label (ledger
         431). A :attr:`boundary_dict` a builder already assembled is not: it is
         an explicit build's output, so rebuild it after relabelling the grid.
+
+        Raises
+        ------
+        ValueError
+            The ``crs`` given names another CRS than the grid declares: the source
+            would be reprojected away from the frame of the cells it is intersected
+            against (ledger 466).
         """
 
-        return self._crs if self._crs is not None else getattr(self.vor, "crs", None)
+        grid_crs = getattr(self.vor, "crs", None)
+        if self._crs is None:
+            return grid_crs
+        if grid_crs is not None and not _same_crs(self._crs, grid_crs):
+            raise ValueError(
+                f"{type(self).__name__}(crs={self._crs!r}) names another CRS than its "
+                f"grid's, {str(grid_crs)!r}. The source is intersected against the "
+                "grid's cells, which are in the grid's CRS, so it is reprojected to the "
+                "grid's: leave crs= out. If the grid's label is the wrong one, relabel "
+                f"it with grid.crs = {self._crs!r}."
+            )
+        return self._crs
 
     def _follow_the_grid_crs(self):
         """Drop every cache built in another CRS than :attr:`crs` now names."""

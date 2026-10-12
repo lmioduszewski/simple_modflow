@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 
 import geopandas as gpd
+import pandas as pd
 import pytest
 
 from myflopy.modflow.mf6.boundaries import Boundaries
@@ -126,3 +127,73 @@ def test_a_legacy_builders_own_cell_sets_follow_a_relabel_of_its_grid(tmp_path, 
         assert line.crs == "EPSG:2926"
     assert boundary.intersections.loc["z"] == []
     assert boundary.cell_ids == {"z": []}
+
+
+def test_a_legacy_boundary_refuses_a_crs_other_than_its_grids(tmp_path):
+    """``Boundaries(crs=X)`` reprojected the source to X and intersected it against
+    cells in the grid's CRS -- two frames, so a source over cell 5 found no cell
+    (ledger 466). Another spelling of the grid's own CRS is accepted."""
+
+    grid = square_grid()
+    source = tmp_path / "drain.gpkg"
+    gpd.GeoDataFrame(
+        {"uid": ["d"]}, geometry=[grid.gdf_vorPolys.geometry.iloc[5]], crs="EPSG:2927"
+    ).to_file(source)
+    with pytest.raises(ValueError, match=r"Boundaries\(crs='EPSG:2926'\).*leave crs= out"):
+        Boundaries(vor=grid, shp_gpkg=source, uid="uid", crs="EPSG:2926")
+    assert 5 in Boundaries(vor=grid, shp_gpkg=source, uid="uid", crs=2927).intersections.loc["d"]
+
+    # A relabel that makes the two differ is refused on the next read, not followed.
+    boundary = Boundaries(vor=grid, shp_gpkg=source, uid="uid", crs=2927)
+    grid.crs = "EPSG:2926"
+    with pytest.raises(ValueError, match=r"grid.crs = 2927"):
+        boundary.intersections
+
+
+def test_budget_polygons_in_another_crs_find_their_cells(canonical_run, tmp_path):
+    """``budget_obs_df`` passed the polygons' OWN CRS as ``Boundaries(crs=)``, so
+    polygons stored in another CRS than the grid's were intersected in their own
+    frame against cells in the grid's, and summed no flow (ledger 466)."""
+
+    from myflopy.modflow.mf6.budget_tables import budget_obs_df
+
+    model = canonical_run
+    budget = model.bud("chd")
+    cells = model.vor.gdf_vorPolys
+    zone = cells.geometry.loc[sorted(set(budget.df.index.get_level_values(0)))[:3]].union_all()
+    frames = {}
+    for crs in (cells.crs, "EPSG:4326"):
+        path = tmp_path / f"zone_{str(crs).replace(':', '_')}.gpkg"
+        gpd.GeoDataFrame({"name": ["zone"]}, geometry=[zone], crs=cells.crs).to_crs(crs).to_file(path)
+        frames[crs] = budget_obs_df(budget, model=model, shp_gpkg=path)
+    grid_frame, other = frames[cells.crs], frames["EPSG:4326"]
+    assert grid_frame["zone"].abs().sum() > 0
+    pd.testing.assert_frame_equal(grid_frame, other)
+
+
+def test_a_geopackage_source_follows_a_relabel_of_its_grid(tmp_path):
+    """``GeoPackageSource.gdf`` cached the layer reprojected to the grid's CRS at its
+    first read, so a grid relabelled afterwards kept resolving the layer in the OLD
+    frame (ledger 466). It is reprojected from the file's own frame now."""
+
+    from myflopy.geopackage import GeoPackageSource
+    from myflopy.specs import ModelContext
+
+    grid = square_grid()
+    path = tmp_path / "drain.gpkg"
+    drawn = gpd.GeoDataFrame(
+        {"name": ["d"]}, geometry=[grid.gdf_vorPolys.geometry.iloc[5].centroid], crs="EPSG:2927"
+    )
+    drawn.to_file(path)
+    source = GeoPackageSource(path, ModelContext(grid=grid), nper=1, layer_field=None)
+    first = source.gdf
+    assert first.crs == "EPSG:2927" and source.gdf is first
+
+    grid.crs = "EPSG:2926"
+    moved = source.gdf
+    assert moved.crs == "EPSG:2926"
+    expected = drawn.to_crs("EPSG:2926").geometry.iloc[0]
+    assert moved.geometry.iloc[0].distance(expected) < 1e-6
+    # Back to the first label: the file's own frame again, not a round trip of the second.
+    grid.crs = "EPSG:2927"
+    assert source.gdf.geometry.iloc[0].equals_exact(drawn.geometry.iloc[0], 1e-9)

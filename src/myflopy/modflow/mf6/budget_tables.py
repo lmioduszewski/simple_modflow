@@ -197,8 +197,10 @@ def budget_obs_df(
 
     pkg_cells = df.loc[idxx[:, per0], :].index.get_level_values(0).to_list()
     b_obs = read_shp_gpkg(shp_gpkg)
-    crs = b_obs.crs.to_epsg()
-    b_obs["cells"] = Boundaries(model, model.vor, shp_gpkg=shp_gpkg, crs=crs).intersections
+    # The polygons are intersected in the GRID's CRS. Passing their own CRS as `crs=`
+    # reprojected them to themselves and intersected them against cells in another
+    # frame (ledger 466).
+    b_obs["cells"] = Boundaries(model, model.vor, shp_gpkg=shp_gpkg).intersections
 
     def drop_non_pkg_cells(cells):
         """Keep only the cells that belong to this package's cells."""

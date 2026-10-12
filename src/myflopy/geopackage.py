@@ -22,6 +22,7 @@ from myflopy.advanced import (
     riv_spec,
     wel_spec,
 )
+from myflopy.areas import _same_crs
 from myflopy.modflow.mf6.boundary_support import bottom_clearance, river_pair_lift
 from myflopy.modflow.mf6.grid.geometry import (
     _extent,  # noqa: F401 -- re-exported: callers and tests import it from here
@@ -1242,6 +1243,11 @@ class GeoPackageSource:
     snap_within: float | None = None
     min_above_bottom: float | None = None
     _gdf: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False)
+    #: The CRS ``_gdf`` was aligned to, and the layer as read from the file. A grid
+    #: relabelled after the first read is followed from the file's own frame rather
+    #: than left on the old label (ledger 466).
+    _gdf_crs: Any = field(default=None, init=False, repr=False)
+    _raw: gpd.GeoDataFrame | None = field(default=None, init=False, repr=False)
     _edge_cells: dict[int, set[int]] = field(default_factory=dict, init=False, repr=False)
     _source_crs: Any = field(default=None, init=False, repr=False)
     #: What became of the features on the last build, for the metadata stamp.
@@ -1276,16 +1282,35 @@ class GeoPackageSource:
 
     @property
     def gdf(self) -> gpd.GeoDataFrame:
-        """Read and align the GeoPackage layer with the model grid CRS."""
+        """The GeoPackage layer, reprojected to the model grid's CRS as it is NOW.
 
+        Read once and cached; the grid's CRS is read on every access, so a grid
+        relabelled after the first read gets the layer reprojected to its new label
+        from the file's own frame -- it stayed on the old one (ledger 466). The
+        same object comes back while the grid's CRS is unchanged.
+        """
+
+        grid_crs = getattr(self.grid, "crs", None)
+        if self._gdf is not None and self._gdf_crs is None:
+            # A frame set from outside (`source._gdf = frame`) is taken to be in the
+            # grid's CRS when it is first read, as `Boundaries` takes one (ledger 431).
+            self._gdf_crs = grid_crs
+        if self._gdf is not None and not _same_crs(self._gdf_crs, grid_crs):
+            logger.debug("grid relabelled %s -> %s; reprojecting the GeoPackage layer",
+                         self._gdf_crs, grid_crs)
+            if self._raw is None:  # set from outside: it is all there is to move
+                self._raw = self._gdf
+            self._gdf = None
         if self._gdf is None:
-            kwargs = {} if self.layer is None else {"layer": self.layer}
-            gdf = gpd.read_file(self.path, **kwargs)
-            self._source_crs = gdf.crs
-            grid_crs = getattr(self.grid, "crs", None)
-            if grid_crs is not None and gdf.crs is not None and gdf.crs != grid_crs:
+            if self._raw is None:
+                kwargs = {} if self.layer is None else {"layer": self.layer}
+                self._raw = gpd.read_file(self.path, **kwargs)
+                self._source_crs = self._raw.crs
+            gdf = self._raw
+            if grid_crs is not None and gdf.crs is not None and not _same_crs(gdf.crs, grid_crs):
                 gdf = gdf.to_crs(grid_crs)
             self._gdf = gdf
+            self._gdf_crs = grid_crs
         return self._gdf
 
     def _active(self, layer: int, cell: int) -> bool:

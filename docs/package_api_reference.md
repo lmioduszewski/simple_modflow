@@ -529,8 +529,10 @@ release-group boundnames; without them it names the fix and offers
   caches, never reprojects (ledger 368). A frame stored as `grid.gdf_vorPolys` or
   `grid.gdf_topbtm` must be in the grid's CRS -- one with none takes its label, one in
   another is refused naming `grid.crs = ...` and `frame.to_crs(grid.crs)` -- and so is
-  `get_gdf_vorPolys(crs=other)`; a heads reader's `.crs` and a legacy `Boundaries`'
-  read the grid's live, so a relabel reaches them (ledger 431).
+  `get_gdf_vorPolys(crs=other)`; a heads reader's `.crs`, a legacy `Boundaries`' and a
+  `GeoPackageSource`'s layer follow the grid's live, so a relabel reaches them (ledger
+  431, ledger 466), and `Boundaries(crs=)` naming another CRS than the grid's is
+  refused (ledger 466).
 
 ### Specs & lifecycle
 
