@@ -1064,3 +1064,43 @@ def test_a_pathline_mosaic_deals_a_list_of_extents_to_its_panels(prt_run):
     figure = prt_run.pathlines.mosaic(extent=boxes)
     # Framed apart: the first panel on the west half, the second on its grid.
     assert figure.layout.map.center.lon < figure.layout.map2.center.lon
+
+
+def test_a_map_tail_cannot_reach_the_cell_maps_own_options(two_group_run):
+    """``fill_value=0`` painted every unreached cell; ``value_column=``/``hover_spec=``
+    died with "multiple values" (ledger 479)."""
+
+    for name, value in (("fill_value", 0.0), ("value_column", "travel_time"), ("hover_spec", None)):
+        for view in (two_group_run.travel_time, two_group_run.endpoints):
+            with pytest.raises(TypeError, match="sets .* itself from the run's particles"):
+                view.map(layer=0, **{name: value})
+        with pytest.raises(TypeError, match="sets .* itself"):
+            two_group_run.capture.map(group="WEST", layer=0, **{name: value})
+
+
+def test_a_layer_is_a_whole_number_and_a_stat_is_named(two_group_run):
+    view = two_group_run.travel_time
+    with pytest.raises(TypeError, match="A layer is a whole number, not 1.7"):
+        view.get(layer=1.7)
+    with pytest.raises(TypeError, match="A layer is a whole number"):
+        view.map(layer=0.5)
+    with pytest.raises(TypeError, match="A layer is a whole number"):
+        two_group_run.pathlines.get(layer=1.7)
+    assert view.get(layer=1.0)["travel_time"].tolist() == [1000.0]
+    with pytest.raises(ValueError, match="stat='medain' is not one of"):
+        view.get(stat="medain")
+
+
+def test_capture_map_of_one_group_refuses_the_mosaics_options(two_group_run):
+    view = two_group_run.capture
+    for option in ({"ncols": 3}, {"title": "T"}, {"sync_views": False}):
+        with pytest.raises(TypeError, match="shape the per-group MOSAIC"):
+            view.map(group="WEST", layer=0, **option)
+    assert view.map(layer=0, ncols=1, title="T").layout.title.text == "T"
+
+
+def test_pathline_group_is_matched_as_mf6_wrote_it_and_refused_when_absent(prt_run):
+    view = prt_run.pathlines
+    assert view.get(group="west_wells").equals(view.get(group="WEST_WELLS"))
+    with pytest.raises(KeyError, match="no release group 'north_wells'"):
+        view.get(group="north_wells")

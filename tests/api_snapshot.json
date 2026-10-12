@@ -2582,7 +2582,7 @@
       "group:KEYWORD_ONLY=None",
       "layer:KEYWORD_ONLY=None",
       "colorscale:KEYWORD_ONLY=None",
-      "ncols:KEYWORD_ONLY=2",
+      "ncols:KEYWORD_ONLY=None",
       "sync_views:KEYWORD_ONLY=None",
       "backend:KEYWORD_ONLY='plotly'",
       "title:KEYWORD_ONLY=None",

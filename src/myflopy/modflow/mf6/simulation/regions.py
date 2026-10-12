@@ -18,6 +18,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     has_cell_numbering,
 )
 from myflopy.modflow.mf6.period_end import last_saved_step
+from myflopy.modflow.utils.validators import whole_number
 
 
 @dataclass(slots=True)
@@ -113,7 +114,7 @@ def normalize_region_inputs(
             if len(cellid) == 0:
                 continue
             if len(cellid) == 1:
-                cells.append(int(cellid[0]))
+                cells.append(whole_number(cellid[0], what="cell"))
                 continue
             if len(cellid) != expected:
                 bare = "an in-layer cell number" if expected > 1 else "a bare node number"
@@ -128,12 +129,25 @@ def normalize_region_inputs(
             found_layer, found_cell = numbering.layer_cell(cellid)
             derived_layers.append(found_layer)
             cells.append(found_cell)
+        elif isinstance(cellid, (list, np.ndarray)):
+            raise TypeError(
+                f"Region cellid {cellid!r} is a {type(cellid).__name__}; a cellid with "
+                "a layer is a TUPLE, and a bare cell number an int."
+            )
         else:
-            cells.append(int(cellid))
+            # A whole number only: int() truncated 5.7 to cell 5 and read "5"
+            # (ledger 478).
+            cells.append(whole_number(cellid, what="cell"))
 
+    if layer is not None:
+        # A layer is a whole number too: 1.7 was stored as given (ledger 478).
+        if isinstance(layer, (list, tuple, np.ndarray)):
+            layer = [whole_number(value, what="layer") for value in layer]
+        else:
+            layer = whole_number(layer, what="layer")
     if numbering is not None:
         numbering.check(cells=cells)
-        given = [] if layer is None else ([layer] if isinstance(layer, (int, np.integer)) else layer)
+        given = [] if layer is None else ([layer] if isinstance(layer, int) else layer)
         numbering.check(layers=given)
 
     unique_cells = sorted(set(cells))
@@ -187,19 +201,17 @@ class RegionRegistry:
 
         The object is stored as given, not copied, so a later edit to its ``cells``
         shows through every lookup and every group naming it. Nothing here checks
-        it -- not its type, not its cells against the model's grid, not its
+        it beyond its type -- not its cells against the model's grid, not its
         ``layer`` -- which is what :meth:`add_from_cells` and
         :meth:`add_from_geometry` do on the way to calling this.
 
         Parameters
         ----------
         region : ModelRegion
-            The region, registered under ``region.name``. Any object carrying a
-            ``name`` is accepted, but reading it back reads its region fields: a
-            :class:`RegionGroup` passed here registers as a region, and
-            :meth:`resolve_cells` on it then raises ``AttributeError`` (no
-            ``cells``), as do :meth:`region_summary` and :meth:`summary` from then
-            on (no ``package``). A group is :meth:`add_group`'s.
+            The region, registered under ``region.name``. Anything else -- a
+            :class:`RegionGroup` included, which is :meth:`add_group`'s -- raises
+            ``TypeError`` (a group registered here broke :meth:`region_summary` and
+            :meth:`summary` until ledger 478).
         overwrite : bool, optional
             Default ``False`` raises ``ValueError`` when a region of that name is
             registered; ``True`` replaces it, and every group naming it resolves to
@@ -216,6 +228,12 @@ class RegionRegistry:
             If ``region.name`` is a group's name, or an existing region's without
             ``overwrite=True``.
         """
+        if not isinstance(region, ModelRegion):
+            hint = " A group is add_group's." if isinstance(region, RegionGroup) else ""
+            raise TypeError(
+                f"RegionRegistry.add registers a ModelRegion, not a {type(region).__name__} "
+                f"(ledger 478).{hint}"
+            )
         if region.name in self._groups:
             raise ValueError(f"Cannot add region {region.name!r}; a group with that name already exists")
         if not overwrite and region.name in self._regions:
@@ -541,9 +559,11 @@ class RegionRegistry:
             ``layer`` is given; a registry bound to no model, or a model with no
             discretization package, knows no grid, reads a longer tuple as
             ``(layer, cell)`` and checks nothing. Anything that is not a tuple
-            goes through ``int()``: a float is TRUNCATED in silence (``5.7`` is
-            cell 5) and a numeric string read (``"5"``), while a list ``[0, 5]``
-            or an array row raises ``TypeError`` -- a cellid must be a TUPLE.
+            must be a WHOLE NUMBER -- an integer, or an integral float such as
+            ``5.0`` -- and anything else raises ``TypeError``: ``int()`` truncated
+            ``5.7`` to cell 5 and read ``"5"`` in silence until ledger 478. A
+            list ``[0, 5]`` or an array row raises ``TypeError`` -- a cellid with a
+            layer must be a TUPLE.
             The region stores the sorted unique in-layer cell
             numbers, which is what :meth:`resolve_cells` returns and
             ``model.region_heads`` matches against the heads table's ``cell``
@@ -553,7 +573,8 @@ class RegionRegistry:
             keeps only those layers when called without its own ``layer``. Nothing
             else reads it -- ``map(select=name)`` draws the region's cells on
             whatever layer the map shows. A layer off the model's grid raises
-            ``ValueError`` (on DISU the only layer is 0; ledger 419). Default
+            ``ValueError`` (on DISU the only layer is 0; ledger 419), and one that
+            is not a whole number ``TypeError`` (ledger 478). Default
             ``None`` takes the layers the
             tuple ``cellids`` name (one as an ``int``, several as a sorted list),
             else leaves the region layer-free. A value given here WINS over those
@@ -718,8 +739,8 @@ class RegionRegistry:
         ----------
         name : str
             A region or group name; a group is resolved through its members,
-            recursively. An unknown name raises ``KeyError`` (its message says
-            "Group", whichever was meant); a cycle raises ``ValueError``.
+            recursively. An unknown name raises ``KeyError`` saying it is neither
+            (it said "Group" until ledger 478); a cycle raises ``ValueError``.
 
         Returns
         -------
@@ -773,6 +794,9 @@ class RegionRegistry:
                 resolved_cells.add(cell)
                 trace.setdefault(cell, set()).add(region.name)
             return
+        if name not in self._groups:
+            # Not "Group ... does not exist": the name may have meant a region.
+            raise KeyError(f"{name!r} is neither a region nor a group of this model")
 
         group = self.get_group(name)
         if group.name in stack:

@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 477 entries (482 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 479 entries (484 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 479 | A PRT map's tail cannot reach its own options; `stat`, `layer`, `group` are checked | 2026-10-11 |
+| 478 | A typed index is a whole number: `validators.whole_number`, one rule | 2026-10-11 |
 | 477 | Calibration plots draw what the table holds; a target family writes its own observation type | 2026-10-11 |
 | 476 | Observation-area budgets, head observation points and named registries answer by the shared rules or refuse | 2026-10-11 |
 | 475 | A LAK/SFR input field's series combines a lake's records by the field's kind, through `input_field_agg` | 2026-10-11 |
@@ -18692,10 +18694,11 @@ same day, which is the useful part of the result.
       `cells`/`values("lak"|"sfr")` raise a bare `AttributeError`; `PackageDiff.values`
       never validates `model_name`, and several `get`/`summary` check it only when there
       are rows; an explicit `layer=` overrides the layers tuple cellids name; `tags="abc"`
-      splits into characters. *Regions* (R): `add_from_cells`/`model.add_region` pass a
+      splits into characters. *Regions* (R): ~~`add_from_cells`/`model.add_region` pass a
       non-tuple cellid through `int()` (5.7 is cell 5, `"5"` accepted);
       `RegionRegistry.add` takes any object, and a `RegionGroup` breaks
-      `region_summary()`/`summary()`; `resolve_cells("unknown")` says "Group".
+      `region_summary()`/`summary()`; `resolve_cells("unknown")` says "Group"~~ (fixed
+      by ledger 478).
       *Observation targets* (R): ~~`HeadTargets.plots.obs_vs_sim(ax=)`/`timeseries(ax=)`
       ignore `ax`; `timeseries(name)` draws a well screened in two layers as one line
       zig-zagging between them (and its period sort is not stable); a bound `ConcTargets`'
@@ -18714,13 +18717,14 @@ same day, which is the useful part of the result.
       coverage in [-1, 0); `plot_phi_contributions(kind=)` accepts typos;
       `ies._normalize_backend` is a second backend resolver (accepts `"go"`/`"sns"`,
       refuses `"interactive"`/`"static"`); `sensitivity(forecast=)` needs the exact
-      name. The PRT `travel_time`/`endpoints`/`capture` `.map(**kwargs)` tails reach a
+      name. ~~The PRT `travel_time`/`endpoints`/`capture` `.map(**kwargs)` tails reach a
       private signature: `fill_value=` paints unreached cells (documented as blank) and
       `value_column=`/`hover_spec=` raise "multiple values"; `PRTCaptureView.map(group=)`
       ignores `ncols`/`sync_views`/`title`; `PRTPathlineView.get(group=)` matches the
       upper-cased boundname exactly with no refusal; an unknown travel-time `stat` raises
-      a pandas `AttributeError`; `layer=1.7` is truncated to 1; and the PRT tails escape
-      `test_noun_signatures`.
+      a pandas `AttributeError`; `layer=1.7` is truncated to 1~~ (fixed by ledger
+      479); and the PRT tails escape `test_noun_signatures` (still open: ledger
+      479).
       *Docs*: ~~`stack.plot.map()`'s generated `Returns` says `Choro`; it returns a
       `LayerThicknessMap`~~ (fixed by ledger 463: the method states its own).
 
@@ -19661,3 +19665,31 @@ same day, which is the useful part of the result.
       own type (`HEAD`, `CONCENTRATION` on `ConcTargets`); any other raises, as ledger 344
       made it for LAK/SFR/DRN. A bound `ConcTargets`' pictures are titled for
       concentration. Revert check: `tests/test_calibration_plot_refusals.py` (10).
+
+478. **A typed index is a whole number: `validators.whole_number`, one rule (2026-10-11).**
+      `int()` was the rule for a cell or layer a caller types, and it truncates (`5.7`
+      was region cell 5, `layer=1.7` PRT layer 1) and reads a numeric string (`"5"`),
+      in silence. `whole_number` (import layer 0) takes a Python or numpy integer and an
+      INTEGRAL float (`5.0` -- what a pandas column holding a NaN makes of integers, so
+      refusing it would refuse the common case) and raises `TypeError` for everything
+      else, `bool` included. Used by `RegionRegistry.add_from_cells` (cells, one-item
+      tuples, `layer=`) and the PRT views (ledger 479); the many other `int(layer)`
+      sites in `src/` were NOT swept -- route each through it when touched.
+      `RegionRegistry.add` takes a `ModelRegion` only (a `RegionGroup` registered there
+      broke `summary()`), and an unknown name in `resolve_cells` says it is neither a
+      region nor a group. Revert check: `tests/test_region_cell_numbers.py` (8 of 10).
+
+479. **A PRT map's tail cannot reach its own options; `stat`, `layer`, `group` are checked (2026-10-11).**
+      `_PRTDerivedView._cell_map` took the caller's `**kwargs` beside its own keyword
+      parameters, so `fill_value=0` painted every cell no particle reached (documented
+      as blank) and `value_column=`/`hover_spec=` died with "multiple values". The tail
+      now arrives as a dict and the options the map sets itself are refused by name;
+      `fill_value` is no longer a parameter (an unreached cell is always blank). `stat=`
+      is one of nine named statistics (pandas raised its own error), `layer=` a whole
+      number (ledger 478), `capture.map(group=)` refuses the mosaic-only
+      `ncols`/`sync_views`/`title` (`ncols` defaults to `None`, meaning 2, so a given
+      one can be told apart), and `pathlines.get(group=)` matches the group as MF6 wrote
+      it -- upper-cased -- and raises `KeyError` for one the run lacks, as `map` does.
+      **Not done:** naming the PRT maps' parameters (ledger 8.8's rule) so the tails
+      enter `test_noun_signatures`; that is the noun conversion with spliced docstrings,
+      larger than this batch. Revert check: `tests/test_prt_maps.py` (4 new tests).

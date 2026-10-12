@@ -52,6 +52,7 @@ from myflopy.modflow.utils.datatypes.hover import (
     pathline_hover,
     result_hover,
 )
+from myflopy.modflow.utils.validators import whole_number
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.prt import PRTRunResults
@@ -188,9 +189,34 @@ def particle_endpoint_table(pathlines: pd.DataFrame, *, ncpl: int) -> pd.DataFra
     )
 
 
+#: The options a PRT cell map sets itself; a caller's ``**kwargs`` naming one is refused.
+_PRT_MAP_RESERVED = frozenset({
+    "fill_value", "value_column", "hover_spec", "type", "custom_zs", "custom_hover",
+    "hover_heads", "hover_ks",
+})
+
+#: The travel-time statistics a PRT view takes (``stat=``).
+_PRT_STATS = ("median", "mean", "min", "max", "sum", "std", "count", "first", "last")
+
+
+def _prt_layer(layer) -> int:
+    """A PRT view's ``layer=``, a whole number (``int()`` truncated 1.7 to 1)."""
+
+    return whole_number(layer, what="layer")
+
+
+def _prt_stat(stat) -> str:
+    """A PRT view's ``stat=``, one of :data:`_PRT_STATS` (pandas raised its own error)."""
+
+    if stat not in _PRT_STATS:
+        raise ValueError(f"stat={stat!r} is not one of {list(_PRT_STATS)}.")
+    return str(stat)
+
+
 def _aggregate_endpoints(frame: pd.DataFrame, keys: Sequence[str], stat: str) -> pd.DataFrame:
     """Collapse endpoint rows onto ``keys`` with travel-time stats and a particle count."""
 
+    stat = _prt_stat(stat)
     columns = ["travel_time", "particle_count", "min_time", "max_time", "release_groups"]
     if frame.empty:
         return pd.DataFrame(columns=[*keys, *columns])
@@ -247,14 +273,14 @@ class _PRTDerivedView(SpatialView):
 
         frame = particle_endpoint_table(self.results.track_records, ncpl=self._ncpl)
         if layer is not None and not frame.empty:
-            frame = frame.loc[frame["layer"] == int(layer)]
+            frame = frame.loc[frame["layer"] == _prt_layer(layer)]
         return frame
 
     # -- SpatialView hooks -------------------------------------------------
     def _spatial_map(self, *, per, layer, model=None, **kwargs):
         """Facet panels by layer only -- these maps integrate over the whole run."""
 
-        return self.map(layer=int(layer), **kwargs)
+        return self.map(layer=_prt_layer(layer), **kwargs)
 
     def _spatial_periods(self) -> list[int]:
         """PRT maps have no period axis (one time-integrated panel)."""
@@ -302,16 +328,28 @@ class _PRTDerivedView(SpatialView):
         hover_spec,
         colorscale: str | None = None,
         logscale: bool = False,
-        fill_value: float = float("nan"),
         backend: str = "plotly",
-        **kwargs,
+        options: dict | None = None,
     ):
         """Render one pre-aggregated per-cell frame through the house choropleth path.
 
         ``logscale`` transforms the mapped values only -- the hover keeps the real
         travel times/counts, so a log-scaled map is still readable in real units.
+        ``options`` is the caller's ``**kwargs`` tail, passed as a DICT so that it
+        cannot reach this method's own parameters: through ``**kwargs`` it did, and
+        ``fill_value=0`` painted every cell no particle reached while
+        ``value_column=``/``hover_spec=`` died with "multiple values" (ledger
+        479). Cells no particle reached are always blank.
         """
 
+        kwargs = dict(options or {})
+        reserved = sorted(set(kwargs) & _PRT_MAP_RESERVED)
+        if reserved:
+            raise TypeError(
+                f"A PRT map sets {reserved} itself from the run's particles, so it takes "
+                "none of them (a HoverSpec goes in hover=; a cell no particle reached is "
+                "blank)."
+            )
         # ``per``/``agg`` are set below; without this guard they would either
         # collide inside cor() with an opaque "multiple values" TypeError or be
         # swallowed by its **kwargs, silently ignoring what the caller asked for.
@@ -331,13 +369,13 @@ class _PRTDerivedView(SpatialView):
             value_column=value_column,
             per=None,
             layer=layer,
-            fill_value=fill_value,
+            fill_value=float("nan"),
             agg="first",  # the frame is already one row per cell
         )
-        kwargs.setdefault("hover_spec", hover_spec)
         choro = self.model.plot.map(
             per=0,
-            layer=0 if layer is None else int(layer),
+            layer=0 if layer is None else _prt_layer(layer),
+            hover_spec=hover_spec,
             type="custom",
             custom_zs=values,
             custom_hover=hover,
@@ -388,14 +426,15 @@ class PRTTravelTimeView(_PRTDerivedView):
             model's TDIS time unit) of the particles that ended in each cell: the
             name of a pandas groupby aggregation -- ``"median"``, ``"mean"``,
             ``"min"``, ``"max"``, ``"sum"``, ``"std"`` (NaN for a cell holding one
-            particle), ``"count"``, ``"first"``, ``"last"``. An unknown name raises
-            pandas' ``AttributeError`` (it is not checked here, so a run with no
-            endpoints returns its empty frame whatever it is).
+            particle), ``"count"``, ``"first"``, ``"last"``. Any other raises
+            ``ValueError`` naming them (pandas raised its own ``AttributeError``
+            until ledger 479), an empty run included.
         layer : int, optional
-            Keep only the particles that ended in this zero-based layer (passed
-            through ``int()``, so a float is truncated). A layer no particle ended
-            in -- the model's own or not -- returns an empty frame. Default
-            ``None`` keeps every layer, one row per ``(layer, cell)``.
+            Keep only the particles that ended in this zero-based layer, a whole
+            number (``1.7`` raises ``TypeError``; ``int()`` truncated it to 1 until
+            ledger 479). A layer no particle ended in -- the model's own or
+            not -- returns an empty frame. Default ``None`` keeps every layer, one
+            row per ``(layer, cell)``.
 
         Returns
         -------
@@ -435,9 +474,8 @@ class PRTTravelTimeView(_PRTDerivedView):
         ----------
         stat : str, default 'median'
             The statistic of the travel times of the particles ending in each
-            cell, as :meth:`get` takes it (a pandas groupby aggregation name; an
-            unknown one raises pandas' ``AttributeError``). It also names the
-            hover's title and value row.
+            cell, as :meth:`get` takes it (one of its nine names; another raises
+            ``ValueError``). It also names the hover's title and value row.
         layer : int, optional
             The zero-based layer whose endpoints to map, and the layer the base
             map is drawn for; outside the model's layers raises ``ValueError``.
@@ -474,8 +512,9 @@ class PRTTravelTimeView(_PRTDerivedView):
             ``ValueError``). ``per=`` and ``agg=`` raise ``TypeError`` naming
             ``layer=``/``stat=``, and the options this method sets itself
             (``type``, ``custom_zs``, ``custom_hover``, ``hover_heads``,
-            ``hover_ks``, and the legacy ``hover_spec`` -- pass ``hover=``) raise
-            ``TypeError``.
+            ``hover_ks``, the legacy ``hover_spec`` -- pass ``hover=`` -- and
+            ``value_column``/``fill_value``) raise ``TypeError`` (ledger 479:
+            ``fill_value`` painted every cell no particle reached).
 
         Returns
         -------
@@ -508,7 +547,7 @@ class PRTTravelTimeView(_PRTDerivedView):
             colorscale=colorscale,
             logscale=logscale,
             backend=backend,
-            **kwargs,
+            options=kwargs,
         )
 
     def plot(self, *, backend: str = "plotly", title: str | None = None):
@@ -606,17 +645,18 @@ class PRTPathlineView(_PRTDerivedView):
         Parameters
         ----------
         group : str, optional
-            Keep the records of one release group, matched EXACTLY against the
-            ``release_group`` column -- the PRP boundname as MF6 writes it back,
-            UPPER-cased (``group="west_wells"`` at release reads ``"WEST_WELLS"``
-            here; :meth:`groups` lists them). Unlike :meth:`map`, a group with no
-            records is not refused: the frame is simply empty. Default ``None``
-            keeps every group.
+            Keep the records of one release group, matched case-insensitively
+            against the ``release_group`` column -- the PRP boundname as MF6 writes
+            it back, UPPER-cased, so ``group="west_wells"`` at release is
+            ``"west_wells"`` here too (ledger 479; it had to be typed
+            upper-case). A group the run does not have raises ``KeyError``
+            listing :meth:`groups`, as :meth:`map` does. Default ``None`` keeps
+            every group.
         layer : int, optional
-            Keep only the records in this zero-based layer (passed through
-            ``int()``). It filters *records*, not particles: a particle that
-            crosses layers contributes only the vertices inside the requested
-            layer. Default ``None`` keeps every layer.
+            Keep only the records in this zero-based layer, a whole number
+            (``1.7`` raises ``TypeError``). It filters *records*, not particles: a
+            particle that crosses layers contributes only the vertices inside the
+            requested layer. Default ``None`` keeps every layer.
 
         Returns
         -------
@@ -627,10 +667,20 @@ class PRTPathlineView(_PRTDerivedView):
         """
 
         frame = pathline_cell_table(self.results.track_records, ncpl=self._ncpl)
-        if group is not None and not frame.empty:
-            frame = frame.loc[frame["release_group"] == str(group)]
+        if group is not None:
+            # MF6 writes a boundname back UPPER-cased, so the group a release named
+            # ``west_wells`` is ``WEST_WELLS`` here: match it that way, and refuse a
+            # group the run does not have rather than return nothing (ledger 479).
+            wanted = str(group).strip().upper()
+            available = self.groups()
+            if wanted not in available:
+                raise KeyError(
+                    f"This run has no release group {group!r}; it has "
+                    f"{available or 'none (release with group=... to name them)'}."
+                )
+            frame = frame.loc[frame["release_group"].astype(str).str.upper() == wanted]
         if layer is not None and not frame.empty:
-            frame = frame.loc[frame["layer"] == int(layer)]
+            frame = frame.loc[frame["layer"] == _prt_layer(layer)]
         return frame.reset_index(drop=True)
 
     def summary(self) -> pd.DataFrame:
@@ -1132,7 +1182,7 @@ class PRTPathlineView(_PRTDerivedView):
                 )
             choro, borrowed = base, True
         elif base is None or base == "heads":
-            layer_index = 0 if layer is None else int(layer)
+            layer_index = 0 if layer is None else _prt_layer(layer)
             if base is None:
                 clashes = sorted(base_options.keys() & _BLANK_BASE_KWARGS)
                 if clashes:
@@ -1380,9 +1430,9 @@ class PRTEndpointsView(_PRTDerivedView):
         Parameters
         ----------
         layer : int, optional
-            Keep only the particles that ended in this zero-based layer (passed
-            through ``int()``); a layer no particle ended in returns an empty
-            frame. Default ``None`` keeps every layer.
+            Keep only the particles that ended in this zero-based layer, a whole
+            number (``1.7`` raises ``TypeError``); a layer no particle ended in
+            returns an empty frame. Default ``None`` keeps every layer.
 
         Returns
         -------
@@ -1441,8 +1491,9 @@ class PRTEndpointsView(_PRTDerivedView):
             ``ValueError``). ``per=`` and ``agg=`` raise ``TypeError`` (the map is
             time-integrated and already one row per cell), and the options this
             method sets itself (``type``, ``custom_zs``, ``custom_hover``,
-            ``hover_heads``, ``hover_ks``, and the legacy ``hover_spec`` -- pass
-            ``hover=``) raise ``TypeError``.
+            ``hover_heads``, ``hover_ks``, the legacy ``hover_spec`` -- pass
+            ``hover=`` -- and ``value_column``/``fill_value``) raise ``TypeError``
+            (ledger 479).
 
         Returns
         -------
@@ -1475,7 +1526,7 @@ class PRTEndpointsView(_PRTDerivedView):
             colorscale=colorscale,
             logscale=logscale,
             backend=backend,
-            **kwargs,
+            options=kwargs,
         )
 
     def plot(self, *, top: int = 20, backend: str = "plotly", title: str | None = None):
@@ -1575,9 +1626,9 @@ class PRTCaptureView(_PRTDerivedView):
             ``"release_group"`` on a run with no boundnames raises ``ValueError``
             naming both fixes.
         layer : int, optional
-            Keep only the particles that ended in this zero-based layer (passed
-            through ``int()``); a layer no particle ended in returns an empty
-            frame. Default ``None`` keeps every layer.
+            Keep only the particles that ended in this zero-based layer, a whole
+            number (``1.7`` raises ``TypeError``); a layer no particle ended in
+            returns an empty frame. Default ``None`` keeps every layer.
 
         Returns
         -------
@@ -1627,7 +1678,7 @@ class PRTCaptureView(_PRTDerivedView):
         group: str | None = None,
         layer: int | None = None,
         colorscale: str | None = None,
-        ncols: int = 2,
+        ncols: int | None = None,
         sync_views: bool | None = None,
         backend: str = "plotly",
         title: str | None = None,
@@ -1662,14 +1713,15 @@ class PRTCaptureView(_PRTDerivedView):
         colorscale : str or list of (float, str), optional
             Any Plotly colorscale name or explicit stops, for every panel. Default
             ``None``: ``"earth"`` (:data:`PRT_COLORSCALE`).
-        ncols : int, default 2
-            Mosaic only: panels per row, passed through ``int()`` and capped at
-            the number of groups. Ignored -- not refused -- with ``group=``.
+        ncols : int, optional
+            Mosaic only: panels per row, capped at the number of groups. Default
+            ``None``: 2. With ``group=`` it raises ``TypeError`` (it was ignored
+            until ledger 479).
         sync_views : bool, optional
             Mosaic only: whether the panels pan and zoom together (``None``, the
             default, links panels that open on one window; ``False`` leaves each
             independent; ``True`` with a list ``extent`` of different windows
-            raises). Ignored -- not refused -- with ``group=``.
+            raises). Given with ``group=`` it raises ``TypeError``.
         backend : str, default 'plotly'
             With ``group=``: ``"plotly"`` (or ``"interactive"``) returns the
             ``Choro``, ``"mpl"`` (or ``"matplotlib"``, ``"static"``) a static
@@ -1678,8 +1730,8 @@ class PRTCaptureView(_PRTDerivedView):
             value raises ``ValueError``.
         title : str, optional
             Mosaic only: the overall title, default ``"Capture zones by release
-            group"`` (or ``by release point``). Ignored -- not refused, and no
-            title is set -- with ``group=``.
+            group"`` (or ``by release point``). Given with ``group=`` it raises
+            ``TypeError``: a single map takes no title.
         **kwargs
             Passed to every panel's map, as on :meth:`PRTEndpointsView.map`:
             ``logscale``, the other options of :meth:`model.plot.map
@@ -1690,7 +1742,7 @@ class PRTCaptureView(_PRTDerivedView):
             composer, one window for every panel or a list with one per panel.
             ``per=``/``agg=`` and the options this method sets itself (``type``,
             ``custom_zs``, ``custom_hover``, ``hover_heads``, ``hover_ks``,
-            ``hover_spec``) raise ``TypeError``.
+            ``hover_spec``, ``value_column``, ``fill_value``) raise ``TypeError``.
 
         Returns
         -------
@@ -1701,6 +1753,15 @@ class PRTCaptureView(_PRTDerivedView):
         frame = self._grouped_endpoints(by, layer)
         labels = sorted({str(value) for value in frame["group"]}) if not frame.empty else []
         if group is not None:
+            mosaic_only = [
+                name for name, value in (("ncols", ncols), ("sync_views", sync_views), ("title", title))
+                if value is not None
+            ]
+            if mosaic_only:
+                raise TypeError(
+                    f"{mosaic_only} shape the per-group MOSAIC, and group={group!r} draws "
+                    "one map; drop them, or drop group= for the mosaic (ledger 479)."
+                )
             return self._group_map(
                 frame,
                 group=str(group),
@@ -1728,7 +1789,7 @@ class PRTCaptureView(_PRTDerivedView):
             raise ValueError("This PRT run has no particle endpoints to map.")
         return viz.mosaic(
             panels,
-            ncols=int(ncols),
+            ncols=2 if ncols is None else whole_number(ncols, what="column count"),
             title=title or f"Capture zones by {by.replace('_', ' ')}",
             sync_views=sync_views,
             extent=extent,
@@ -1762,8 +1823,9 @@ class PRTCaptureView(_PRTDerivedView):
             layer=layer,
             hover_spec=hover,
             colorscale=colorscale,
+            logscale=kwargs.pop("logscale", False),
             backend=backend,
-            **kwargs,
+            options=kwargs,
         )
 
     def _spatial_map(self, *, per, layer, model=None, **kwargs):
@@ -1778,7 +1840,7 @@ class PRTCaptureView(_PRTDerivedView):
                     "per-group mosaic."
                 )
             kwargs["group"] = available[0]
-        return self.map(layer=int(layer), **kwargs)
+        return self.map(layer=_prt_layer(layer), **kwargs)
 
     def plot(self, *, by: str = "release_group", backend: str = "plotly", title: str | None = None):
         """Bar figure of how many particles each release group contributed.
