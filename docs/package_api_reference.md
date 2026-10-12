@@ -878,7 +878,11 @@ serve several grids). Every simulated row no target measures stays at weight 0 w
 run's value (a forecast set's other periods too), so nothing unmeasured is
 history-matched. A set given no values registers: observed, it only captures; forecast,
 it forecasts every row. The head and concentration tables are written by ONE writer for
-the base run and every forward run, and two sets under one prefix are refused. A PEST
+the base run and every forward run, from the file the model's OC declares (`HEAD
+FILEOUT`/`CONCENTRATION FILEOUT`, read by `output_files._declared_output_path`; it was
+`<model>.hds`/`.ucn` whatever the OC said, ledger 505), and two sets under one
+prefix are refused. So is a weighted target whose cell in the base run's table holds no
+finite number (ledger 506). A PEST
 template built before this bakes the old forward run and must be rebuilt.
 
 **A target's `group` label is its PEST observation group** (ledger 358). A head,

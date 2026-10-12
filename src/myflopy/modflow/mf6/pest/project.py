@@ -1809,7 +1809,9 @@ class PestProject:
                     f"model_name='{self.model.name}', "
                     f"mapping_csv='{head_config['mapping_csv']}', "
                     f"output_csv='{head_config['output_csv']}', "
-                    f"perlen={perlen!r})",
+                    f"perlen={perlen!r}, "
+                    # The file the OC declares (ledger 505).
+                    f"head_file={head_config.get('head_file')!r})",
                     is_pre_cmd=False,
                 )
                 continue
@@ -1821,7 +1823,8 @@ class PestProject:
                     f"model_name='{conc_config['model_name']}', "
                     f"mapping_csv='{conc_config['mapping_csv']}', "
                     f"output_csv='{conc_config['output_csv']}', "
-                    f"perlen={perlen!r})",
+                    f"perlen={perlen!r}, "
+                    f"conc_file={conc_config.get('conc_file')!r})",
                     is_pre_cmd=False,
                 )
                 continue

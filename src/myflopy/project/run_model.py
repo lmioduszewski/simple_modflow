@@ -14,6 +14,7 @@ from myflopy._defaults import DEFAULT_CRS
 from myflopy.modflow.mf6.grid.domain import idomain_from_flopy
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus, grid_view_from_modelgrid
 from myflopy.modflow.mf6.lak_implicit import keep_implicit, warn_if_implicit_unsupported
+from myflopy.modflow.mf6.output_files import _declared_output_path, _model_dir
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, _package_type_name
 from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy.modflow.mf6.simulation.regions import RegionRegistry
@@ -24,20 +25,6 @@ def _progress(verbosity_level: int, message: str):
 
     if verbosity_level > 0:
         print(f"[LoadedMf6Run] {message}")
-
-
-def _model_dir(workspace: Path, model_name: str) -> Path:
-    """The directory holding ``model_name``'s package files.
-
-    A simulation with SEVERAL models gives each one its own subdirectory
-    (``model_rel_path``; see ``workspace._materialize_models``), so a coupled
-    GWF+GWT/GWE/PRT run keeps nothing but ``mfsim.nam`` at the top. Single-model
-    runs stay flat. Callers that glob for ``<model>.<suffix>`` must look here, not
-    in the workspace root, or they silently discover no packages at all.
-    """
-
-    candidate = workspace / model_name
-    return candidate if candidate.is_dir() else workspace
 
 
 def _declared_models(workspace: Path) -> list[tuple[str, str]]:
@@ -281,63 +268,6 @@ def _grid_package_path(workspace: Path, model_name: str, grid_type: str) -> Path
         return None
     path = _model_dir(workspace, model_name) / f"{model_name}.{grid_type}"
     return path if path.exists() else None
-
-
-_OC_FILEOUT_SUFFIXES = {"budget": "cbc", "head": "hds"}
-
-
-def _declared_output_path(workspace: Path, model_name: str, kind: str) -> Path:
-    """The ``BUDGET``/``HEAD`` output path the model's OC file actually declares.
-
-    Falls back to ``<model_name>.cbc`` / ``.hds`` when the OC file cannot be read
-    or names no such record.
-
-    A caller that ASSUMES the fallback is wrong whenever the modeller named the
-    file themselves: an OC saying ``BUDGET FILEOUT tentrails.cbb`` left every
-    cell-budget surface -- ``model.bud(pkg)``, ``model.budget.<term>``,
-    ``packages.<pkg>.results.q``, HFB flow -- raising ``FileNotFoundError`` for a
-    ``.cbc`` that MF6 never wrote (ledger 301). Parsed from the files rather than
-    from the loaded OC package because ``_ensure_packages_loaded`` triggers a
-    FULL FloPy load, which is the cost this accessor exists to avoid.
-    """
-
-    suffix = _OC_FILEOUT_SUFFIXES[kind]
-    model_dir = _model_dir(workspace, model_name)
-    fallback = workspace / f"{model_name}.{suffix}"
-
-    name_file = model_dir / f"{model_name}.nam"
-    oc_file = None
-    if name_file.is_file():
-        for line in name_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-            fields = line.split("#", 1)[0].split()
-            if len(fields) >= 2 and fields[0].upper().startswith("OC"):
-                oc_file = model_dir / fields[1]
-                break
-    if oc_file is None or not oc_file.is_file():
-        return fallback
-
-    declared = None
-    for line in oc_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-        fields = line.split("#", 1)[0].split()
-        if (
-            len(fields) >= 3
-            and fields[0].upper() == kind.upper()
-            and fields[1].upper() == "FILEOUT"
-        ):
-            declared = fields[2].strip("'\"")
-            break
-    if declared is None:
-        return fallback
-
-    # MF6 resolves a package's FILEOUT relative to the simulation directory, but
-    # a multi-model run keeps each model's files in its own subdirectory. Take
-    # whichever of the two actually exists, and the model dir when neither does
-    # (so the error names where the run would have written it).
-    candidates = [model_dir / declared, workspace / declared]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return candidates[0]
 
 
 def _file_sha256(path: Path) -> str:

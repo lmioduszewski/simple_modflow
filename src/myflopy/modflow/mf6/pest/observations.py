@@ -50,6 +50,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _period_key_hints,
     _shown,
 )
+from myflopy.modflow.mf6.output_files import _declared_output_path
 from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.forward_run import (
     _write_conc_target_csv,
@@ -449,6 +450,9 @@ def _prepared_item(
         "shape": (int(len(simulated)), int(len(simulated.columns) - 1)),
         "values_path": values_path,
         "value_label": value_label,
+        # The base run's value in each cell of the table, for the check that a
+        # WEIGHTED observation starts from a number (ledger 506).
+        "base_values": simulated.iloc[:, 1:].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float),
     }
 
 
@@ -555,6 +559,33 @@ def _prepare_named_series_observations(
     }
 
 
+def _declared_field_file(project, *, model_name: str, kind: str) -> str:
+    """The head or concentration file the model's OC declares, relative to the run directory.
+
+    Read by the one rule the run's own readers use (``output_files._declared_output_path``,
+    ledger 301). The writers hard-coded ``<model>.hds``/``.ucn``: an OC naming its
+    file otherwise failed every realization, and the build read a STALE
+    ``<model>.hds`` a previous run had left in the run directory (ledger 505).
+    """
+
+    workspace = Path(project.model.workspace)
+    return _declared_output_path(workspace, model_name, kind).relative_to(workspace).as_posix()
+
+
+def _absent_field_file(error, *, owner: str, prefix: str, model_name: str, field_file: dict) -> ValueError:
+    """The refusal for a build whose OC-declared head or concentration file is not in the run."""
+
+    (keyword, name), = field_file.items()
+    kind, word = {"head_file": ("head", "HEAD"), "conc_file": ("concentration", "CONCENTRATION")}[keyword]
+    return ValueError(
+        f"{_caller(owner, prefix)}: model {model_name!r} writes its {kind} to {name!r} -- what "
+        f"its OC declares ({word} FILEOUT), or <model>.{Path(name).suffix.lstrip('.')} when it "
+        f"names none -- and the run directory holds no such file ({error}). Run the model "
+        "with that output control before building; the build reads only the file the OC "
+        "declares, never another left in the directory (ledger 505)."
+    )
+
+
 def _one_writer_table(
     project,
     spec,
@@ -564,6 +595,7 @@ def _one_writer_table(
     mapping: pd.DataFrame,
     mapping_path: Path,
     simulated_path: Path,
+    field_file: dict[str, str],
 ) -> pd.DataFrame:
     """The base copy of a head or concentration table, written by the forward run's own writer.
 
@@ -571,17 +603,26 @@ def _one_writer_table(
     it reads after the base copy's header, so the two must list the same columns in
     the same order. Writing both with one function makes that true by construction;
     a ``simulated_values`` table the caller supplies cannot be, so the header check
-    after it refuses one in any other order.
+    after it refuses one in any other order. ``field_file`` is the writer's keyword
+    for the OC-declared file (``{"head_file": "renamed.hds"}``), which the forward
+    run is given too.
     """
 
     if spec.simulated_values is None:
-        writer(
-            model_name,
-            mapping_path,
-            simulated_path,
-            perlen=period_lengths(project.model),
-            sim_ws=Path(project.model.workspace),
-        )
+        try:
+            writer(
+                model_name,
+                mapping_path,
+                simulated_path,
+                perlen=period_lengths(project.model),
+                sim_ws=Path(project.model.workspace),
+                **field_file,
+            )
+        except FileNotFoundError as error:
+            raise _absent_field_file(
+                error, owner=type(spec.targets).__name__, prefix=spec.prefix,
+                model_name=model_name, field_file=field_file,
+            ) from error
         simulated = pd.read_csv(simulated_path)
     else:
         simulated = (
@@ -691,6 +732,12 @@ def _prepare_point_observations(
     """Heads or concentrations: map, base table (one writer), locations, targets."""
 
     owner = type(spec.targets).__name__
+    field_kind = {"head_targets": "head", "conc_targets": "concentration"}[kind]
+    field_file = {
+        {"head": "head_file", "concentration": "conc_file"}[field_kind]: _declared_field_file(
+            project, model_name=model_name, kind=field_kind
+        )
+    }
     labels = spec.targets.observation_labels(project.model)
     mapping = labels.loc[:, ["obsname", "name", "layer", "cell"]]
     mapping_path = project.template_workspace / f"{spec.prefix}_{mapping_name}"
@@ -704,6 +751,7 @@ def _prepare_point_observations(
         mapping=mapping,
         mapping_path=mapping_path,
         simulated_path=simulated_path,
+        field_file=field_file,
     )
     _register_table(project, simulated, simulated_path, prefix=spec.prefix)
 
@@ -747,6 +795,7 @@ def _prepare_point_observations(
     }
     item["mapping_csv"] = mapping_path.name
     item["output_csv"] = simulated_path.name
+    item["field_file"] = field_file
     return item
 
 
@@ -793,6 +842,8 @@ def prepare_head_target_observations(project, spec: HeadTargetObservationSpec):
     item["forward_run_config"] = {
         "mapping_csv": item.pop("mapping_csv"),
         "output_csv": item.pop("output_csv"),
+        # The OC's HEAD FILEOUT, relative to the run (ledger 505).
+        "head_file": item.pop("field_file").get("head_file"),
     }
     return item
 
@@ -840,6 +891,8 @@ def prepare_conc_observations(project, spec: ConcObservationSpec):
         "model_name": transport_name,
         "mapping_csv": item.pop("mapping_csv"),
         "output_csv": item.pop("output_csv"),
+        # The transport OC's CONCENTRATION FILEOUT, relative to the run (ledger 505).
+        "conc_file": item.pop("field_file").get("conc_file"),
     }
     return item
 
@@ -1223,6 +1276,42 @@ def assign_observation_groups(obs: pd.DataFrame, prepared: list[dict]) -> None:
         obs.loc[valued["obsnme"], "obgnme"] = valued["obgnme"].to_numpy(dtype=object)
 
 
+def _refuse_weighted_rows_with_no_base_value(item: dict, valued: pd.DataFrame) -> None:
+    """Refuse a positively weighted observation whose BASE run value is not a finite number.
+
+    The base table is where PEST's instruction file reads every realization, and a
+    cell the base run left empty -- a DRN zone with no drain in a period on the
+    budget route, a supplied ``simulated_values`` table with a gap -- is empty in
+    every realization written the same way, so PEST++ fails the run on reading it
+    (``docs/reproducers/pest_no_value_fields.py``). The build accepted it and the
+    first IES run failed (ledger 506). A weight-0 row is left alone: it is
+    never history-matched. MF6's no-value numbers (``|value| >= 1e29``) ARE finite
+    and are not refused here.
+    """
+
+    base = item.get("base_values")
+    if base is None or valued.empty:
+        return
+    weights = valued["weight"].fillna(1.0).to_numpy(dtype=float)
+    rows = valued["row"].to_numpy(dtype=int)
+    cols = valued["col"].to_numpy(dtype=int)
+    empty = (weights > 0) & ~np.isfinite(base[rows, cols])
+    if not empty.any():
+        return
+    listing = [
+        f"{_shown(target.name)} at time {_shown(target.time)} (period {int(target.per)}, "
+        f"observation {target.obsnme})"
+        for target in valued.loc[empty].itertuples(index=False)
+    ]
+    raise ValueError(
+        f"{_caller(item['owner'], item['prefix'])}: {len(listing)} weighted target(s) read a "
+        "cell the base run's simulated table holds no number in, so every realization "
+        f"would hand PEST++ an empty field there and fail: {_listed(listing)}. Find why "
+        "the model writes nothing there (a zone with no drain in that period, a gap in a "
+        "supplied simulated table), or give the target weight 0."
+    )
+
+
 def finalize_observations(project, prepared: list[dict]):
     """Give each set's observations their targets' values, weights and groups; every other row weight 0.
 
@@ -1257,8 +1346,10 @@ def finalize_observations(project, prepared: list[dict]):
     ------
     ValueError
         When an instruction file does not line up with its table, or names an
-        observation the control file does not hold; or when a group label cannot
-        be a PEST group (:func:`assign_observation_groups`).
+        observation the control file does not hold; when a positively weighted
+        target reads a cell the base run left without a finite number (ledger
+        506); or when a group label cannot be a PEST group
+        (:func:`assign_observation_groups`).
     """
 
     obs = project.pst.observation_data
@@ -1293,6 +1384,7 @@ def finalize_observations(project, prepared: list[dict]):
                 )
             obs.loc[valued["obsnme"], "obsval"] = valued["value"].to_numpy(dtype=float)
             obs.loc[valued["obsnme"], "weight"] = valued["weight"].fillna(1.0).to_numpy(dtype=float)
+            _refuse_weighted_rows_with_no_base_value(item, valued)
     assign_observation_groups(obs, prepared)
     for item in prepared:
         if item.get("values_path") is not None:

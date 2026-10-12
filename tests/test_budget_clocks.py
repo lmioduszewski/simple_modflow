@@ -25,7 +25,7 @@ from flopy.utils import CellBudgetFile
 
 import myflopy as mf
 from myflopy.modflow.mf6.budget_tables import package_output_df
-from myflopy.project.run_model import _declared_output_path
+from myflopy.modflow.mf6.output_files import _declared_output_path
 
 
 def _build_and_run(workspace, name, saverecord, *, nstp, perlen, budget_suffix="cbb"):

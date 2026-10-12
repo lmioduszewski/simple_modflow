@@ -103,7 +103,7 @@ def apply_pilotpoints_to_array(parameter_csv, points_meta_csv, cells_meta_csv, a
     np.savetxt(array_file, arr.reshape(-1, 1), fmt="%.10E")
 
 
-def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim_ws="."):
+def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim_ws=".", head_file=None):
     """Write simulated heads at each stress period's END for named target locations.
 
     Post-model command in the native forward run, and the ONE writer of this file:
@@ -126,7 +126,7 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     ----------
     model_name : str
         The flow model's name; its head file is ``<model_name>.hds`` in
-        ``sim_ws``.
+        ``sim_ws`` unless ``head_file`` names it.
     mapping_csv : str or pathlib.Path
         The target map the build wrote: ``obsname``/``name``, ``layer``, ``cell``.
         Its row order IS the column order written, and its labels are read as
@@ -145,11 +145,20 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     sim_ws : str or pathlib.Path, default "."
         The directory holding the head file: the forward run's working
         directory, or the model workspace when the build writes the base copy.
+    head_file : str or None, optional
+        The head file, relative to ``sim_ws``: the one the model's OC declares
+        (``HEAD FILEOUT``), which the build resolves and records (ledger
+        505). Default ``None`` -- what a forward run generated before
+        then passes -- reads ``<model_name>.hds``, which is wrong whenever the
+        OC named the file otherwise: every realization failed, and the build
+        could read a STALE ``<model_name>.hds`` left in the run directory.
 
     Raises
     ------
     ValueError
         With ``perlen``, when a period the head file saved lacks its final step.
+    FileNotFoundError
+        When the head file is not in ``sim_ws`` (from FloPy).
     """
 
     # Imported here, not hoisted: pyEMU copies only this function's source.
@@ -165,10 +174,12 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     # the target map, the targets and the base table's header say 007 and NA
     # (ledger 341). ``read_target_table`` is the one rule for that read.
     mapping = read_target_table(mapping_csv)
-    hds = flopy.utils.HeadFile(str(Path(sim_ws) / f"{model_name}.hds"))
+    # The file the OC declares, which the build recorded (ledger 505).
+    head_name = str(head_file) if head_file else f"{model_name}.hds"
+    hds = flopy.utils.HeadFile(str(Path(sim_ws) / head_name))
     try:
         ends = period_end_steps(
-            saved_steps(hds), perlen=perlen, file=f"{model_name}.hds", saves="HEAD"
+            saved_steps(hds), perlen=perlen, file=head_name, saves="HEAD"
         )
         rows = []
         for per, kstpkper in ends.items():
@@ -188,7 +199,7 @@ def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
         hds.close()
 
 
-def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim_ws="."):
+def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim_ws=".", conc_file=None):
     """Write simulated concentrations at each stress period's END for named target locations.
 
     The concentration twin of ``_write_head_target_csv``, and deliberately the
@@ -204,8 +215,8 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     Parameters
     ----------
     model_name : str
-        The TRANSPORT model's name -- the ``.ucn`` sits beside the flow model's
-        ``.hds`` in ``sim_ws`` because the simulation is flat.
+        The TRANSPORT model's name: its concentration file is
+        ``<model_name>.ucn`` in ``sim_ws`` unless ``conc_file`` names it.
     mapping_csv : str or pathlib.Path
         The target map the build wrote: ``obsname``/``name``, ``layer``, ``cell``.
         Its row order IS the column order written, and its labels are read as
@@ -219,14 +230,22 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
         ``_write_head_target_csv``). ``None`` takes each period's last saved step
         unchecked.
     sim_ws : str or pathlib.Path, default "."
-        The directory holding the ``.ucn``: the forward run's working directory,
-        or the model workspace when the build writes the base copy.
+        The simulation directory: the forward run's working directory, or the
+        model workspace when the build writes the base copy.
+    conc_file : str or None, optional
+        The concentration file, relative to ``sim_ws``: the one the transport
+        model's OC declares (``CONCENTRATION FILEOUT``), which the build
+        resolves and records (ledger 505) -- in the model's own
+        subdirectory when the simulation keeps one per model. Default ``None``
+        -- a forward run generated before then -- reads ``<model_name>.ucn``.
 
     Raises
     ------
     ValueError
         With ``perlen``, when a period the concentration file saved lacks its
         final step.
+    FileNotFoundError
+        When the concentration file is not in ``sim_ws`` (from FloPy).
     """
 
     # Imported here, not hoisted: pyEMU copies only this function's source.
@@ -242,12 +261,12 @@ def _write_conc_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim
     # the target map, the targets and the base table's header say 007 and NA
     # (ledger 341). ``read_target_table`` is the one rule for that read.
     mapping = read_target_table(mapping_csv)
-    ucn = flopy.utils.HeadFile(
-        str(Path(sim_ws) / f"{model_name}.ucn"), text="concentration"
-    )
+    # The file the OC declares, which the build recorded (ledger 505).
+    conc_name = str(conc_file) if conc_file else f"{model_name}.ucn"
+    ucn = flopy.utils.HeadFile(str(Path(sim_ws) / conc_name), text="concentration")
     try:
         ends = period_end_steps(
-            saved_steps(ucn), perlen=perlen, file=f"{model_name}.ucn", saves="CONCENTRATION"
+            saved_steps(ucn), perlen=perlen, file=conc_name, saves="CONCENTRATION"
         )
         rows = []
         for per, kstpkper in ends.items():

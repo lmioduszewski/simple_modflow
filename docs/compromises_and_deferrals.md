@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 504 entries (509 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 506 entries (511 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 506 | The PEST build refuses a positively weighted target whose cell in the base run's simulated table holds no f... | 2026-10-12 |
+| 505 | The PEST head and concentration writers read the file the model's OC declares, and the build refuses one th... | 2026-10-12 |
 | 504 | A reading's own weight is honoured: a `weight` column in a LONG values table beats the location's weight, w... | 2026-10-12 |
 | 503 | A lake or reach target's id is checked against its package, and a boundname is accepted | 2026-10-12 |
 | 502 | A head or concentration target name given twice in ONE layer is refused, naming it | 2026-10-12 |
@@ -20179,3 +20181,33 @@ same day, which is the useful part of the result.
       refused, because refusing them would break tables that carry notes or units.
       **Not done:** a standard-deviation column in place of a weight, and a set
       `weight` on `DrnFlowObservationSpec`, whose zones already carry one.
+
+505. **The PEST head and concentration writers read the file the model's OC declares, and the build refuses one that is absent rather than read another (2026-10-12).**
+      `_write_head_target_csv`/`_write_conc_target_csv` opened `<model>.hds`/`.ucn`, the
+      trap ledger 301 records for the budget file. Measured on a toy with `HEAD FILEOUT
+      renamed.hds` and an old `m.hds` from a previous run in the run directory: the
+      build took the STALE file's heads as the base run, and every realization failed
+      with `FileNotFoundError`, because the template holds inputs only. The build now
+      resolves the file with the run's own rule, `_declared_output_path`. That function
+      moved, with `_model_dir`, from `project/run_model.py` (import layer 10) to the new
+      `modflow/mf6/output_files.py` (layer 0), so the layer-8 PEST build can import it;
+      it also reads a GWT OC's `CONCENTRATION FILEOUT` now. The build records the path
+      relative to the run (a per-model subdirectory included) and passes it to every
+      forward run as `head_file=`/`conc_file=`. An absent declared file is refused,
+      naming it, and never falls back. **Kept:** a forward run generated before this
+      passes neither and still reads `<model>.hds`, so a template built on a renamed
+      head file must be rebuilt.
+
+506. **The PEST build refuses a positively weighted target whose cell in the base run's simulated table holds no finite number (2026-10-12).**
+      Ledger 340 refuses a target VALUE that is not finite, and nothing checked the
+      SIMULATED side. A cell the base run left empty is empty in every realization
+      written the same way, and PEST++ fails a run on an empty field
+      (`docs/reproducers/pest_no_value_fields.py`). So the build succeeded and the first
+      IES run failed: a DRN zone with no drain in a period on the budget route
+      (flows-2), or a gap in a supplied `simulated_values` table. The check runs in
+      `finalize_observations` against the base table's own cells. **Judgment calls:**
+      a weight-0 row there is left alone, because it is never history-matched. MF6's
+      no-value numbers (`|value| >= 1e29`: an inactive lake written 1e30, a dry SFR
+      reach's -1e30 under ledger 353) are finite and are NOT refused. Refusing a target
+      because the uncalibrated model is dry there would block a calibration meant to
+      wet it.

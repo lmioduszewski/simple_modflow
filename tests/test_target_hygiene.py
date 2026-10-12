@@ -15,15 +15,22 @@ What each test pins, in the order the defects were found:
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 import pytest
 
 import myflopy as mf
-from myflopy.modflow.mf6.pest.specs import LakeStageObservationSpec, SfrFlowObservationSpec
+from myflopy.modflow.mf6.pest.specs import (
+    HeadTargetObservationSpec,
+    LakeStageObservationSpec,
+    SfrFlowObservationSpec,
+)
 from tests.test_pest_handed_targets import (
     NPER,
     NSTP,
@@ -347,3 +354,71 @@ def test_a_weight_that_is_not_a_number_from_0_or_sits_in_a_wide_table_is_refused
                                          r"per-reading weight"):
         mf.LakeStageTargets(locations={"pond": 0},
                             values=pd.DataFrame({"time": [0], "pond": [99.0], "weight": [2.0]}))
+
+
+# -- ledger 505: the head file the OC declares --------------------------
+
+
+def _renamed_head_run(root, *, chd, head_file):
+    """A one-layer run on the toy's grid whose OC writes its heads to ``head_file``."""
+
+    grid, props, edge = _grid_and_edges()
+    model = mf.gwf("m", grid=grid, packages=[
+        _disv(grid, props), mf.npf(k=10.0, icelltype=0), mf.ic(strt=90.0),
+        mf.sto(ss=1e-3, sy=0.2, iconvert=0, transient={0: True}),
+        mf.chd(stress_period_data={0: [[(0, int(c)), chd] for c in edge]}),
+        mf.oc(head_filerecord=head_file, budget_filerecord="m.cbc",
+              saverecord=[("HEAD", "LAST"), ("BUDGET", "LAST")]),
+    ])
+    return _run(root, mf.simulation(model, name="s", packages=[
+        mf.tdis(nper=NPER, perioddata=[(PERLEN, NSTP, 1.0)] * NPER)])).model()
+
+
+def test_the_head_writers_read_the_file_the_oc_declares_and_never_a_stale_one(tmp_path):
+    """The writers opened `<model>.hds`. With `HEAD FILEOUT renamed.hds` and an old
+    `m.hds` left in the run directory, the build took the STALE file's heads as the
+    base run and every realization then failed (the template holds no m.hds)."""
+
+    stale = _renamed_head_run(tmp_path / "old", chd=50.0, head_file="m.hds")
+    model = _renamed_head_run(tmp_path / "new", chd=102.0, head_file="renamed.hds")
+    workspace = Path(model.workspace)
+    shutil.copy(Path(stale.workspace) / "m.hds", workspace / "m.hds")
+    heads = _head_targets([("W", 22)], pd.DataFrame({"time": [0, 1, 2], "W": [99.0, 99.5, 100.0]}))
+    expected = heads.simulated_heads(_renamed_head_run(tmp_path / "check", chd=102.0, head_file="m.hds"))
+
+    cal, _pst = _build(model, tmp_path / "pest", observe=(heads,))
+    table = cal.template_workspace / "hds_simulated_heads.csv"
+    base = pd.read_csv(table)
+    np.testing.assert_allclose(base["W"], expected["W"].astype(float), rtol=1e-10)
+    table.unlink()
+    subprocess.run([sys.executable, "forward_run.py"], cwd=cal.template_workspace, check=True,
+                   capture_output=True, text=True)
+    pd.testing.assert_frame_equal(pd.read_csv(table), base)
+
+    (workspace / "renamed.hds").unlink()
+    with pytest.raises(ValueError, match=(
+            r"model 'm' writes its head to 'renamed\.hds' -- what its OC declares \(HEAD "
+            r"FILEOUT\).*holds no such file")):
+        _build(model, tmp_path / "pest2", observe=(heads,))
+
+
+# -- ledger 506: a weighted target needs a base value -------------------
+
+
+def test_a_weighted_target_on_a_cell_the_base_run_left_empty_is_refused(toy, tmp_path):
+    """The build accepted an empty base cell under a weighted target; PEST++ then failed
+    every realization on reading it. A weight-0 row there is left alone."""
+
+    heads = _head_targets([("W", 22)], pd.DataFrame({"time": [0, 1], "W": [99.0, 99.5]}))
+    table = pd.DataFrame({"per": [0, 1, 2], "W": [100.0, np.nan, 100.0]})
+    spec = HeadTargetObservationSpec(targets=heads, simulated_values=table)
+    with pytest.raises(ValueError, match=(
+            r"HeadTargets \(PEST build, prefix 'hds'\): 1 weighted target\(s\) read a cell the "
+            r"base run's simulated table holds no number in.*'W' at time 1 \(period 1, ")):
+        _build(toy, tmp_path / "pest", observe=(spec,))
+    unweighted = _head_targets([("W", 22)], pd.DataFrame({"time": [0, 1], "W": [99.0, 99.5]}),
+                               ).locations_gdf.assign(weight=0.0)
+    quiet = mf.HeadTargets(locations=unweighted, values=pd.DataFrame({"time": [0, 1], "W": [99.0, 99.5]}))
+    _cal, pst = _build(toy, tmp_path / "pest2",
+                       observe=(HeadTargetObservationSpec(targets=quiet, simulated_values=table),))
+    assert (pst.observation_data["weight"] == 0).all()

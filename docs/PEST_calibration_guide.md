@@ -195,7 +195,12 @@ target in one period, a value that is not a number, and a target at a period (or
 name) the simulated table does not hold. `compare()` and `stats()` refuse the same keys
 on every route, the file routes included (ledger 500: there a period past the
 run's last read `NaN`, and `stats()` left it out in silence). A blank value is
-unmeasured. Every simulated row no target measures stays in the control file
+unmeasured. The base run's heads and concentrations are read from the file the model's OC
+declares (`HEAD FILEOUT`/`CONCENTRATION FILEOUT`, ledger 505), as every forward
+run's are; a declared file missing from the run directory is refused rather than another
+read in its place. A weighted target whose cell in the base run's table holds no number
+is refused too (ledger 506): every realization would hand PEST++ the same empty
+field. Every simulated row no target measures stays in the control file
 at weight 0, holding the base run's own value: reported in every ensemble, never
 history-matched. (Until then each such row carried weight 1, pulling the calibration
 back toward the uncalibrated model at every period nobody measured.)
