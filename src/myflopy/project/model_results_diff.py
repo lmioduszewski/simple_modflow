@@ -1043,15 +1043,20 @@ class StageResultDiff(_ResultDiffBase, DiffSpatialView):
         return pd.DataFrame(rows, columns=columns)
 
 
+def _option_set(package, option: str) -> bool:
+    """Whether a FloPy package's keyword ``option`` (``mover``) is set."""
+
+    value = getattr(package, option, None)
+    value = value.get_data() if hasattr(value, "get_data") else value
+    return bool(value)
+
+
 def _declares_mover(model, package_type: str) -> bool:
     """Whether ``model`` carries a package of TYPE ``package_type`` declaring ``MOVER``."""
 
-    for package in model_packages_of_type(model, package_type):
-        option = getattr(package, "mover", None)
-        value = option.get_data() if hasattr(option, "get_data") else option
-        if value:
-            return True
-    return False
+    return any(
+        _option_set(package, "mover") for package in model_packages_of_type(model, package_type)
+    )
 
 
 class MvrResultDiff(_ResultDiffBase):
@@ -1089,7 +1094,7 @@ class MvrResultDiff(_ResultDiffBase):
     _FEATURE_TABLES = {"sfr": ("reach", "sfr"), "lak": ("lake", "lak")}
     _DIRECTIONS = (("from_mvr", "FROM-MVR"), ("to_mvr", "TO-MVR"))
     _COLUMNS = [
-        "model", "package", "direction", "value", "n",
+        "model", "package", "direction", "value", "n", "n_one_sided",
         "max_abs_diff", "mean_abs_diff", "rmse", "argmax_cell", "argmax_feature",
         "within_tolerance",
     ]
@@ -1124,19 +1129,25 @@ class MvrResultDiff(_ResultDiffBase):
         return name, direction
 
     def _without_budget_file(self, package: str) -> list[str]:
-        """The members whose ``package`` (SFR/LAK) declares no budget file, so its mover terms are unwritten."""
+        """The members whose ``package`` (SFR/LAK) moves water but declares no budget file.
+
+        Only a package declaring ``MOVER`` counts: one that does not moves nothing,
+        which :meth:`_paired` reads as 0.0 wherever its budget file is.
+        """
 
         missing = []
         for name, model in self.group.models.items():
             for flopy_package in model_packages_of_type(model, package):
+                if not _option_set(flopy_package, "mover"):
+                    continue
                 record = getattr(flopy_package, "budget_filerecord", None)
                 value = record.get_data() if hasattr(record, "get_data") else record
                 if value is None or len(value) == 0:
                     missing.append(f"{name!r} ({flopy_package.package_name})")
         return missing
 
-    def _feature_compare(self, package: str, term: str, *, per=None) -> pd.DataFrame:
-        """One SFR/LAK mover term from each member's package budget file, paired by period and feature."""
+    def _feature_rows(self, package: str, term: str) -> pd.DataFrame:
+        """Every member's rows of one SFR/LAK mover term, from its package budget file."""
 
         builder = {"sfr": build_sfr_budget_term_table, "lak": build_lak_budget_term_table}[package]
         unreadable = self._without_budget_file(package)
@@ -1148,7 +1159,7 @@ class MvrResultDiff(_ResultDiffBase):
             )
         frames = []
         for name, model in self.group.models.items():
-            if not model_packages_of_type(model, package):
+            if not _declares_mover(model, package):
                 continue
             frame = builder(model, term=term)
             if frame.empty:
@@ -1156,21 +1167,45 @@ class MvrResultDiff(_ResultDiffBase):
             frame = frame.copy()
             frame["model"] = name
             frames.append(frame)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    def _paired(self, package: str, data: pd.DataFrame) -> pd.DataFrame:
+        """Pair each member's period-end mover rows with the reference's, keeping one-sided rows.
+
+        An OUTER join on the integer and text identity (records sharing all of it pair
+        in file order, one to one, ledger 472's rule). A side whose model declares
+        ``MOVER`` on no package of the type moved nothing, so its missing ``q`` is
+        0.0 -- exact, since MF6 then writes no mover record anywhere; a row missing
+        from a side that DOES declare it stays ``NaN`` (a one-sided row,
+        :meth:`summary`'s ``n_one_sided``). Until ledger 488 the join was
+        inner, so a member that moved nothing dropped every reference row and the
+        diff read empty.
+        """
+
+        reference = self.group.reference
+        data = data.drop(columns=["kstpkper"], errors="ignore")
+        keys = _stable_compare_keys(data, ["q"])
+        data = data.assign(_record=data.groupby(["model", *keys], sort=False).cumcount())
+        on = [*keys, "_record"]
+        ref = data[data["model"] == reference][[*on, "q"]].rename(columns={"q": "reference_q"})
+        reference_moves = _declares_mover(self.group.models[reference], package)
+        frames = []
+        for name in self._targets():
+            member = data[data["model"] == name][[*on, "q"]]
+            pair = member.merge(ref, on=on, how="outer", sort=False)
+            if not _declares_mover(self.group.models[name], package):
+                pair["q"] = pair["q"].fillna(0.0)
+            if not reference_moves:
+                pair["reference_q"] = pair["reference_q"].fillna(0.0)
+            pair["model"] = name
+            frames.append(pair)
         if not frames:
             return pd.DataFrame()
-        data = _reduce_to_period_end(pd.concat(frames, ignore_index=True))
-        if per is not None:
-            data = data[data["per"] == int(per)]
-        key_columns = _stable_compare_keys(data, ["q"])
-        reference = self.group.reference
-        ref = data[data["model"] == reference][[*key_columns, "q"]].rename(
-            columns={"q": "reference_q"}
-        )
-        comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
+        comp = pd.concat(frames, ignore_index=True)
         comp["reference_model"] = reference
         comp["q_diff"] = comp["q"].astype(float) - comp["reference_q"].astype(float)
-        ordered = ["model", "reference_model", *key_columns, "q", "reference_q", "q_diff"]
-        return comp[ordered].reset_index(drop=True)
+        ordered = ["model", "reference_model", *keys, "q", "reference_q", "q_diff"]
+        return comp[ordered].sort_values(["model", "per"], kind="stable").reset_index(drop=True)
 
     def get(
         self,
@@ -1188,9 +1223,15 @@ class MvrResultDiff(_ResultDiffBase):
         stress period (``period_end.at_last_saved_steps``, ledger 348) and paired
         with the reference's on its integer and text identity (the period, and the
         cell and package NAME for a boundary; the reach or lake for SFR and LAK)
-        by an inner join. ``q`` is MF6's own number in model volume per time:
-        NEGATIVE for water a package hands the mover, POSITIVE for water it takes.
-        A member that does not carry the package type contributes no rows.
+        by an OUTER join; records sharing all of it pair in file order. ``q`` is
+        MF6's own number in model volume per time: NEGATIVE for water a package
+        hands the mover, POSITIVE for water it takes. A model that declares
+        ``MOVER`` on no package of the type -- or carries none -- moved nothing,
+        so its side of every row is 0.0 (MF6 writes no mover record for it); a
+        row missing from a model that does declare it is ``NaN`` on that side,
+        and so is its ``q_diff`` (:meth:`summary` counts it in ``n_one_sided``).
+        Until ledger 488 the join was inner, so a run with the mover taken
+        away read as an empty table.
 
         Parameters
         ----------
@@ -1199,8 +1240,9 @@ class MvrResultDiff(_ResultDiffBase):
             ``"sfr"`` or ``"lak"`` -- every package of the type is read, each row
             naming its own (``pname``) for a boundary; SFR and LAK read the
             model's ONE package of the type and raise ``SeveralPackagesError``
-            with several, and ``ValueError`` when a member's package declares no
-            budget file (``budget_filerecord``), the only place MF6 writes them.
+            with several, and ``ValueError`` when a member's package declares
+            ``MOVER`` but no budget file (``budget_filerecord``), the only place
+            MF6 writes them (one declaring no ``MOVER`` reads 0.0, as above).
             ``"uzf"`` raises ``ValueError`` (its own budget file is not read), as
             does any other name.
         direction : str, default "to_mvr"
@@ -1235,8 +1277,9 @@ class MvrResultDiff(_ResultDiffBase):
             ``node``, ``node2``, ``layer``, ``cell``, ``package``, ``pname``,
             ``per``; SFR's ``package``, ``term``, ``per``, ``reach``, ``layer``,
             ``cell``, ``node``, ``node2``; LAK's the same with ``lake`` and no
-            cell), ``q``, ``reference_q`` and ``q_diff`` (model minus reference).
-            Empty, with no columns, when no member wrote the term.
+            cell), ``q``, ``reference_q`` and ``q_diff`` (model minus reference;
+            ``NaN`` on a one-sided row). Empty, with no columns, when no member
+            wrote the term.
         """
 
         package, direction = self._checked(package, direction)
@@ -1248,14 +1291,17 @@ class MvrResultDiff(_ResultDiffBase):
                     f"{self._FEATURE_TABLES[package][0]}, not a cell: layer= and cells= "
                     "select a boundary package's cells only."
                 )
-            frame = self._feature_compare(package, term, per=per)
+            data = self._feature_rows(package, term)
         else:
-            accessor = GroupCellPackageResults(
+            data = GroupCellPackageResults(
                 self.group, package, budget_text=f"{package.upper()}-TO-MVR", value_name="q"
-            )
-            frame = CellBudgetResultDiff(self._diff, accessor).get(
-                per=per, layer=layer, cells=cells
-            )
+            ).get(layer=layer, cells=cells)
+        if data.empty:
+            return pd.DataFrame()
+        data = _reduce_to_period_end(data)
+        if per is not None:
+            data = data[data["per"] == int(per)]
+        frame = self._paired(package, data)
         if model_name is not None and not frame.empty:
             frame = frame[frame["model"].isin(self._targets(model_name))]
         return frame.reset_index(drop=True)
@@ -1267,10 +1313,13 @@ class MvrResultDiff(_ResultDiffBase):
 
         Reads :meth:`get` for every package type some member declares ``MOVER``
         on -- DRN, GHB, RIV and WEL in the direction they have (``"to_mvr"``),
-        SFR and LAK in both -- and leaves out a pair no member wrote a row for. A
+        SFR and LAK in both -- and leaves out a pair no member wrote a row for.
+        The statistics run over the rows both models have a number for (a model
+        moving nothing has 0.0, :meth:`get`); ``n_one_sided`` counts the rest, and
+        any one-sided row makes ``within_tolerance`` False. A
         member's UZF declaring ``MOVER`` is NOT read (:meth:`get`), nor an SFR or
-        LAK some member gives no budget file: each is warned about, by
-        ``warnings.warn`` and the log, and left out.
+        LAK some member declares ``MOVER`` on with no budget file: each is warned
+        about, by ``warnings.warn`` and the log, and left out.
 
         Parameters
         ----------
@@ -1289,12 +1338,13 @@ class MvrResultDiff(_ResultDiffBase):
         Returns
         -------
         pandas.DataFrame
-            ``model``, ``package``, ``direction``, ``value`` (``"q"``), ``n``,
-            ``max_abs_diff``, ``mean_abs_diff``, ``rmse``, ``argmax_cell`` (the
-            in-layer cell of the largest ``|q_diff|`` for a boundary package, else
-            ``-1``), ``argmax_feature`` (its reach or lake for SFR/LAK, else
-            ``-1``) and ``within_tolerance``; one row per model, package and
-            direction with rows. Empty when no member moves water.
+            ``model``, ``package``, ``direction``, ``value`` (``"q"``), ``n``
+            (rows both models have a number for), ``n_one_sided``,
+            ``max_abs_diff``, ``mean_abs_diff``, ``rmse`` (``NaN`` when ``n`` is
+            0), ``argmax_cell`` (the in-layer cell of the largest ``|q_diff|`` for
+            a boundary package, else ``-1``), ``argmax_feature`` (its reach or lake
+            for SFR/LAK, else ``-1``) and ``within_tolerance``; one row per model,
+            package and direction with rows. Empty when no member moves water.
         """
 
         models = list(self.group.models.values())
@@ -1330,10 +1380,15 @@ class MvrResultDiff(_ResultDiffBase):
                 if data.empty:
                     continue
                 for name, sub in data.groupby("model"):
-                    diff = sub["q_diff"].to_numpy(dtype=float)
-                    reference = sub["reference_q"].to_numpy(dtype=float)
+                    paired = np.isfinite(sub["q"].to_numpy(dtype=float)) & np.isfinite(
+                        sub["reference_q"].to_numpy(dtype=float)
+                    )
+                    one_sided = int((~paired).sum())
+                    compared = sub.loc[paired]
+                    diff = compared["q_diff"].to_numpy(dtype=float)
+                    reference = compared["reference_q"].to_numpy(dtype=float)
                     abs_diff = np.abs(diff)
-                    imax = int(np.argmax(abs_diff))
+                    imax = int(np.argmax(abs_diff)) if abs_diff.size else 0
                     rows.append(
                         {
                             "model": name,
@@ -1341,17 +1396,23 @@ class MvrResultDiff(_ResultDiffBase):
                             "direction": direction,
                             "value": "q",
                             "n": int(abs_diff.size),
-                            "max_abs_diff": float(abs_diff.max()),
-                            "mean_abs_diff": float(abs_diff.mean()),
-                            "rmse": float(np.sqrt(np.mean(diff**2))),
+                            "n_one_sided": one_sided,
+                            "max_abs_diff": float(abs_diff.max()) if abs_diff.size else np.nan,
+                            "mean_abs_diff": float(abs_diff.mean()) if abs_diff.size else np.nan,
+                            "rmse": float(np.sqrt(np.mean(diff**2))) if diff.size else np.nan,
                             "argmax_cell": (
-                                int(sub["cell"].iloc[imax]) if feature is None else -1
+                                int(compared["cell"].iloc[imax])
+                                if feature is None and abs_diff.size
+                                else -1
                             ),
                             "argmax_feature": (
-                                -1 if feature is None else int(sub[feature].iloc[imax])
+                                int(compared[feature].iloc[imax])
+                                if feature is not None and abs_diff.size
+                                else -1
                             ),
                             "within_tolerance": bool(
-                                np.all(_within_tolerance(diff, reference, atol, rtol))
+                                one_sided == 0
+                                and np.all(_within_tolerance(diff, reference, atol, rtol))
                             ),
                         }
                     )

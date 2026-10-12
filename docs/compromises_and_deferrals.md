@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 487 entries (492 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 488 entries (493 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 488 | A run with no mover moved 0.0, and a mover row only one run has is counted, not dropped | 2026-10-11 |
 | 487 | A diff's LAK/SFR stage maps, plots and composes: each feature's Δstage painted on the reference's cells | 2026-10-11 |
 | 486 | The mover diff reads each package's mover term where MF6 writes it, and leaves UZF's unread | 2026-10-11 |
 | 485 | Group and diff exchange and budget comparisons pair each member's period end, a LAK connection by what it I... | 2026-10-11 |
@@ -19845,3 +19846,17 @@ same day, which is the useful part of the result.
       no feature sits on, as every sibling compare map has. Kept rather than unlisting
       `"stage"`: the single-model and group stage nouns map, and a noun answers the
       same verbs at every tier.
+
+488. **A run with no mover moved 0.0, and a mover row only one run has is counted, not dropped (2026-10-11).**
+      The mover diff of ledger 486 paired members by an INNER join, so the scenario
+      that takes the mover away -- the reference's drains handing 36.8 to a stream, the
+      other run's declaring no `MOVER` -- dropped every reference row: `get()` and
+      `summary()` came back empty, the old silence in a new place. **Judgment calls:** a
+      model that declares `MOVER` on no package of the type (or carries none) has 0.0 on
+      its side of every row, because MF6 then writes no mover record and moves nothing --
+      exact, not a fill; a row missing from a model that DOES declare it (a drain moved to
+      another cell) stays `NaN` and is counted in a new `summary()` column `n_one_sided`
+      that fails `within_tolerance`, the heads and stage rule (ledger 484, ledger 329). The
+      refusal of an SFR/LAK with no budget file applies only to one declaring `MOVER`:
+      one that does not has no mover term to write. Measured in
+      `tests/test_diff_reads_what_mf6_wrote.py` on real MF6 runs, against FloPy's own read.

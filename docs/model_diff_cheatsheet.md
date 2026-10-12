@@ -128,7 +128,10 @@ diff.packages.mvr.results.summary()        # per package type + direction that d
 diff.packages.mvr.results.get(package="drn")                        # DRN-TO-MVR, per cell (GWF budget)
 diff.packages.mvr.results.get(package="lak", direction="from_mvr")  # LAK FROM-MVR, per lake (its own budget)
 # a DRN/GHB/RIV/WEL only provides ("to_mvr"); SFR/LAK also receive ("from_mvr");
-# UZF's mover terms live in its own budget file and are refused, not read
+# UZF's mover terms live in its own budget file and are refused, not read.
+# A run whose packages of the type declare no MOVER moved nothing: its side reads
+# 0.0, so taking the mover away is a difference; a row only one MOVER run has is
+# NaN and counted in summary()'s n_one_sided (fails within_tolerance)
 
 # spatial Δ maps (per-cell flux difference choropleth, per model):
 # all diff maps use the diverging red/white/blue scale (negative = red,

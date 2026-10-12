@@ -129,8 +129,12 @@ def named(tmp_path_factory):
     return {"a": _named(root / "a", 10.0), "b": _named(root / "b", 30.0)}
 
 
-def _movers(workspace, drn_a_cond, *, sfr_budget=True):
-    """The 3 x 3 model of two drains and a well moving water into one SFR reach."""
+def _movers(workspace, drn_a_cond, *, sfr_budget=True, mover=True, drn_a_cell=(0, 1, 2)):
+    """The 3 x 3 model of two drains and a well moving water into one SFR reach.
+
+    ``mover=False`` is the same model with no MVR package and no package declaring
+    ``MOVER`` (and, with ``sfr_budget=False``, no SFR budget file): it moves nothing.
+    """
 
     sim = flopy.mf6.MFSimulation(sim_name="mv", sim_ws=str(workspace), exe_name="mf6",
                                  verbosity_level=0)
@@ -142,24 +146,25 @@ def _movers(workspace, drn_a_cond, *, sfr_budget=True):
     flopy.mf6.ModflowGwfnpf(gwf, k=10.0)
     flopy.mf6.ModflowGwfic(gwf, strt=9.0)
     flopy.mf6.ModflowGwfchd(gwf, stress_period_data=[[(0, r, 0), 9.0] for r in range(3)])
-    flopy.mf6.ModflowGwfdrn(gwf, mover=True, pname="drn_a",
-                            stress_period_data=[[(0, 1, 2), 5.0, drn_a_cond]])
-    flopy.mf6.ModflowGwfdrn(gwf, mover=True, pname="drn_b", filename="mv_b.drn",
+    flopy.mf6.ModflowGwfdrn(gwf, mover=mover, pname="drn_a",
+                            stress_period_data=[[drn_a_cell, 5.0, drn_a_cond]])
+    flopy.mf6.ModflowGwfdrn(gwf, mover=mover, pname="drn_b", filename="mv_b.drn",
                             stress_period_data=[[(0, 0, 2), 5.0, 10.0]])
-    flopy.mf6.ModflowGwfwel(gwf, mover=True, pname="wel",
+    flopy.mf6.ModflowGwfwel(gwf, mover=mover, pname="wel",
                             stress_period_data=[[(0, 2, 2), -1.0]])
     flopy.mf6.ModflowGwfsfr(
-        gwf, mover=True, pname="sfr", nreaches=1,
+        gwf, mover=mover, pname="sfr", nreaches=1,
         budget_filerecord="mv.sfr.bud" if sfr_budget else None,
         packagedata=[[0, (0, 1, 1), 10.0, 1.0, 0.001, 8.0, 1.0, 0.0, 0.03, 0, 1.0, 0]],
         connectiondata=[[0]], perioddata=[[0, "INFLOW", 0.0]],
     )
-    flopy.mf6.ModflowGwfmvr(
-        gwf, maxmvr=3, maxpackages=4, packages=[["drn_a"], ["drn_b"], ["wel"], ["sfr"]],
-        perioddata={0: [["drn_a", 0, "sfr", 0, "FACTOR", 1.0],
-                        ["drn_b", 0, "sfr", 0, "FACTOR", 1.0],
-                        ["wel", 0, "sfr", 0, "FACTOR", 1.0]]},
-    )
+    if mover:
+        flopy.mf6.ModflowGwfmvr(
+            gwf, maxmvr=3, maxpackages=4, packages=[["drn_a"], ["drn_b"], ["wel"], ["sfr"]],
+            perioddata={0: [["drn_a", 0, "sfr", 0, "FACTOR", 1.0],
+                            ["drn_b", 0, "sfr", 0, "FACTOR", 1.0],
+                            ["wel", 0, "sfr", 0, "FACTOR", 1.0]]},
+        )
     flopy.mf6.ModflowGwfoc(gwf, budget_filerecord="mv.cbc", head_filerecord="mv.hds",
                            saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")])
     return _write_run(sim, workspace)
@@ -181,11 +186,13 @@ def _moved(path, text):
 def movers(tmp_path_factory):
     root = tmp_path_factory.mktemp("diff_movers")
     runs = {"a": _movers(root / "a", 10.0), "b": _movers(root / "b", 30.0),
-            "unwritten": _movers(root / "unwritten", 30.0, sfr_budget=False)}
-    for name in ("a", "b", "unwritten"):
+            "unwritten": _movers(root / "unwritten", 30.0, sfr_budget=False),
+            "none": _movers(root / "none", 10.0, mover=False, sfr_budget=False),
+            "moved_drain": _movers(root / "moved_drain", 10.0, drn_a_cell=(0, 2, 1))}
+    for name in ("a", "b", "unwritten", "moved_drain", "none"):
         held = {raw.decode().strip() for raw in flopy.utils.CellBudgetFile(
             str(root / name / "mv.cbc"), precision="auto").recordarray["text"]}
-        assert {"DRN-TO-MVR", "WEL-TO-MVR"} <= held
+        assert ({"DRN-TO-MVR", "WEL-TO-MVR"} <= held) is (name != "none")
         assert not {"FROM-MVR", "TO-MVR"} & held
     runs["moved"] = {name: _moved(root / name / "mv.cbc", "DRN-TO-MVR") for name in ("a", "b")}
     runs["received"] = {name: _moved(root / name / "mv.sfr.bud", "FROM-MVR")
@@ -451,3 +458,46 @@ def test_group_budget_pairs_two_packages_on_one_cell_in_file_order(tmp_path):
     for row, pname in zip(compared.itertuples(), ("D1", "D2"), strict=True):
         assert row.reference_q == pytest.approx(by_package["a"][pname])
         assert row.q == pytest.approx(by_package["b"][pname])
+
+
+def test_a_member_that_moves_nothing_reads_zero_not_nothing(movers):
+    """A run with no mover moved 0.0, which is a difference (ledger 488).
+
+    The inner join dropped every reference row against it, so the scenario that
+    takes the mover away read as an empty table and an empty summary.
+    """
+
+    mvr = mf.ModelGroup({"a": movers["a"], "none": movers["none"]},
+                        reference="a").diff().packages.mvr.results
+    drn = mvr.get(package="drn").set_index("pname")
+    assert set(drn.index) == {"DRN_A", "DRN_B"}
+    for pname in ("DRN_A", "DRN_B"):
+        assert drn.loc[pname, "q"] == 0.0
+        assert drn.loc[pname, "reference_q"] == pytest.approx(movers["moved"]["a"][pname])
+    # the stream receives nothing there, and its missing budget file is no refusal:
+    # an SFR that declares no MOVER has no mover term to write
+    sfr = mvr.get(package="sfr", direction="from_mvr")
+    assert sfr["q"].tolist() == [0.0]
+    assert sfr["reference_q"].iloc[0] == pytest.approx(movers["received"]["a"]["SFR"])
+
+    summary = mvr.summary().set_index(["package", "direction"])
+    assert summary.loc[("drn", "to_mvr"), "n"] == 2
+    assert summary.loc[("drn", "to_mvr"), "n_one_sided"] == 0
+    assert not bool(summary.loc[("drn", "to_mvr"), "within_tolerance"])
+
+    reverse = mf.ModelGroup({"none": movers["none"], "a": movers["a"]},
+                            reference="none").diff().packages.mvr.results
+    assert reverse.get(package="drn")["reference_q"].tolist() == [0.0, 0.0]
+
+
+def test_a_mover_row_only_one_member_has_is_counted(movers):
+    """Both runs move water, but ``drn_a`` sits on another cell in one: no number pairs them."""
+
+    mvr = mf.ModelGroup({"a": movers["a"], "m": movers["moved_drain"]},
+                        reference="a").diff().packages.mvr.results
+    drn = mvr.get(package="drn")
+    assert len(drn) == 3                      # drn_b paired, drn_a once on each side
+    assert drn["q_diff"].isna().sum() == 2
+    row = mvr.summary().set_index(["package", "direction"]).loc[("drn", "to_mvr")]
+    assert (row["n"], row["n_one_sided"]) == (1, 2)
+    assert not bool(row["within_tolerance"])
