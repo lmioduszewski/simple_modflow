@@ -86,6 +86,67 @@ def test_an_observation_on_a_removed_dis_cell_is_refused(tmp_path):
         _build(tmp_path, "dis", chd, idomain=idomain)
 
 
+@pytest.mark.parametrize(("kind", "form"), [("dis", r"\(layer, row, col\)"), ("disu", r"\(node,\)")])
+def test_an_observation_cellid_of_another_form_is_refused(tmp_path, kind, form):
+    """``DrnFlowTargets.to_flopy_obs(None)`` -- the DRN declared before any model exists
+    -- writes DISV's ``(layer, cell)``, and an OBS cellid's form was checked nowhere: on
+    a DIS it built clean and MF6 stopped; on a DISU it built clean and MF6 RAN, reading
+    ``(1, 6)`` as node 2 -- the observation reported 3e30 for a drain at node 18, under
+    Normal termination (ledger 490). Refused at build, naming the package, the
+    record, the grid's form and the spelling that writes it."""
+
+    observations = mf.DrnFlowTargets(
+        locations=[{"name": "seep", "layer": 1, "cells": [6]}]
+    ).to_flopy_obs(None, csv_name="seep.csv")
+    drain = (1, 1, 2) if kind == "dis" else (18,)
+    drn = mf.drn(stress_period_data={0: [[drain, 2.0, 5.0]]}, observations=observations)
+    corner = (0, 0, 0) if kind == "dis" else (0,)
+    with pytest.raises(ValueError, match=(
+        rf"the observations of package 'drn' hold 1 cellid\(s\) that are not this "
+        rf"{kind.upper()}'s {form}: 'seep_c6' at \(1, 6\).*"
+        r"targets\.attach_flopy_obs\(run\.model\(\)\)"
+    )):
+        _build(tmp_path, kind, _chd(corner), drn)
+
+
+@pytest.mark.parametrize("kind", ["dis", "disu"])
+def test_the_spelling_the_refusal_names_observes_the_drain(tmp_path, kind):
+    """``attach_flopy_obs(run.model())`` writes the grid's own cellid: the observation
+    reads the drain's flow in the budget file (real MF6 run)."""
+
+    drain, pair = ((1, 1, 2), (1, 6)) if kind == "dis" else ((18,), (0, 18))
+    corner = (0, 0, 0) if kind == "dis" else (0,)
+    model = mf.gwf("m", packages=[
+        _discretization(kind), mf.npf(k=1.0), mf.ic(strt=8.5),
+        mf.oc(budget_filerecord="m.cbc", saverecord=[("BUDGET", "ALL")]),
+        _chd(corner), mf.drn(stress_period_data={0: [[drain, 2.0, 5.0]]}),
+    ])
+    run = mf.Project(tmp_path / "p", name="p").prepare_run("r", mf.simulation(model, name="s"))
+    zone = [{"name": "seep", "layer": pair[0], "cells": [pair[1]]}]
+    mf.DrnFlowTargets(locations=zone).attach_flopy_obs(run.model())
+    success, report = run.execute()
+    assert success, report[-10:]
+    observed = mf.DrnFlowTargets(locations=zone).simulated_series(run.model())["seep"]
+    budget = mf.DrnFlowTargets(
+        locations=[{**zone[0], "name": "basin"}]).simulated_series(run.model())["basin"]
+    assert (budget < 0).all()
+    np.testing.assert_allclose(observed.to_numpy(), budget.to_numpy(), rtol=1e-10)
+
+
+def test_an_observation_cellid_in_the_grids_form_builds(tmp_path):
+    """The same DRN observed through ``to_flopy_obs`` given a model on the DIS, and a
+    LAK observation typed as a one-part tuple -- a lake number, no cell -- beside it."""
+
+    drn = mf.drn(stress_period_data={0: [[(1, 1, 2), 2.0, 5.0]]},
+                 observations={"seep.csv": [("seep_c6", "DRN", (1, 1, 2))]})
+    lak = mf.lak.flopy(nlakes=1, packagedata=[[0, 9.0, 1]], perioddata={},
+                       connectiondata=[[0, 0, (0, 0, 2), "VERTICAL", 0.1, 5.0, 5.0, 0.0, 0.0]],
+                       observations={"l.csv": [("s", "stage", (0,))]})
+    run = _build(tmp_path, "dis", _chd((1, 0, 0)), drn, lak)
+    gwf = run.simulation.get_model("m")
+    assert {p.package_type for p in gwf.packagelist} >= {"drn", "lak", "obs"}
+
+
 def _lak(connection):
     return mf.lak.flopy(nlakes=1, packagedata=[[0, 9.0, 1]], perioddata={},
                         connectiondata=[[0, 0, *connection]])

@@ -1420,8 +1420,6 @@ def _inactive_cellid_complaints(model, packages, built, dug, built_packages=None
     of another form or off the grid is left to the form and range checks.
     """
 
-    import numpy as np
-
     idomain = built.idomain
     complaints: list[str] = []
     types = _flopy_types(model)
@@ -1462,38 +1460,13 @@ def _inactive_cellid_complaints(model, packages, built, dug, built_packages=None
                 f"{_dug_note(pairs, idomain, dug, stale=not typed, lazy=lazy)}. {advice}"
             )
 
-    for package in getattr(model, "packagelist", ()) or ():
-        if getattr(package, "package_type", None) != "obs":
-            continue
-        try:
-            blocks = package.continuous.get_data() or {}
-        except AttributeError as error:
-            logger.debug("an OBS package carried no continuous block; not checked: %s", error)
-            continue
-        removed = []
-        for records in blocks.values():
-            for record in records if records is not None else ():
-                for field in ("id", "id2"):
-                    value = record[field] if field in (record.dtype.names or ()) else None
-                    if not (
-                        isinstance(value, tuple)
-                        and all(
-                            isinstance(part, (int, np.integer)) and not isinstance(part, bool)
-                            for part in value
-                        )
-                    ):
-                        continue
-                    cellid = tuple(int(part) for part in value)
-                    pair = built.layer_cell(cellid)
-                    if pair is not None and idomain[pair] <= 0:
-                        removed.append((str(record["obsname"]), cellid, pair))
+    for owner, cellids in _observation_cellids(model):
+        removed = [
+            (name, cellid, pair)
+            for name, cellid in cellids
+            if (pair := built.layer_cell(cellid)) is not None and idomain[pair] <= 0
+        ]
         if removed:
-            parent = getattr(package, "parent_file", None)
-            owner = (
-                f"the observations of package {_flopy_name(parent)!r}"
-                if parent is not None and getattr(parent, "package_type", None) != "obs"
-                else f"observation file {getattr(package, 'filename', None) or _flopy_name(package)!r}"
-            )
             complaints.append(
                 f"{owner} name {len(removed)} cell(s) the built {built.name} has REMOVED "
                 "(idomain <= 0), which MF6 cannot read (a head observation there stops it "
@@ -1501,6 +1474,110 @@ def _inactive_cellid_complaints(model, packages, built, dug, built_packages=None
                 + _listing(f"{name!r} at {cellid}" for name, cellid, _pair in removed)
                 + _dug_note([pair for _name, _cellid, pair in removed], idomain, dug)
                 + ". Observe an active cell -- in a dug column, the one under the bed"
+            )
+    return complaints
+
+
+#: The owners whose OBS records name a CELL by cellid in ``id`` (and ``id2``): the
+#: model's own OBS (``head``, ``drawdown``, ``flow-ja-face``, ``concentration``,
+#: ``temperature``) and the list boundaries. An advanced package's (LAK, SFR, MAW,
+#: UZF) ``id`` is a feature number, which a caller may type as a one-part tuple and
+#: which is no cell.
+_CELLID_OBSERVATION_OWNERS = _LIST_BC_TYPES | {"model"}
+
+
+def _observation_cellids(model):
+    """``(owner, [(obsname, cellid), ...])`` for each built OBS package whose records name cells.
+
+    Read off the FloPy OBS packages ``model`` built -- a package's ``observations=``
+    and a model-level ``ModflowUtlobs`` alike -- keeping each record's ``id``/``id2``
+    that is a tuple of ints, as FloPy holds it. ``owner`` names the package the
+    observations belong to (or the observation file, for the model's own). Only the
+    owners of :data:`_CELLID_OBSERVATION_OWNERS` are read.
+    """
+
+    import numpy as np
+
+    for package in getattr(model, "packagelist", ()) or ():
+        if getattr(package, "package_type", None) != "obs":
+            continue
+        parent = getattr(package, "parent_file", None)
+        kind = (
+            "model"
+            if parent is None or getattr(parent, "package_type", None) in (None, "obs")
+            else str(parent.package_type)
+        )
+        if kind not in _CELLID_OBSERVATION_OWNERS:
+            continue
+        try:
+            blocks = package.continuous.get_data() or {}
+        except AttributeError as error:
+            logger.debug("an OBS package carried no continuous block; not checked: %s", error)
+            continue
+        cellids = []
+        for records in blocks.values():
+            for record in records if records is not None else ():
+                for field in ("id", "id2"):
+                    value = record[field] if field in (record.dtype.names or ()) else None
+                    if isinstance(value, tuple) and value and all(
+                        isinstance(part, (int, np.integer)) and not isinstance(part, bool)
+                        for part in value
+                    ):
+                        cellids.append(
+                            (str(record["obsname"]), tuple(int(part) for part in value))
+                        )
+        if cellids:
+            owner = (
+                f"the observations of package {_flopy_name(parent)!r}"
+                if kind != "model"
+                else f"observation file {getattr(package, 'filename', None) or _flopy_name(package)!r}"
+            )
+            yield owner, cellids
+
+
+def observation_cellid_form_complaints(model) -> list[str]:
+    """Each OBS package naming a cell in another form than the built discretization's.
+
+    The OBS-record twin of :func:`cellid_form_complaints` (ledger 490): a head
+    observation, or a list boundary's, names its cell in the grid's own form --
+    ``(layer, row, col)`` on a DIS, ``(layer, cell)`` on a DISV, ``(node,)`` on a
+    DISU -- and FloPy writes whatever tuple it is given. A DISV pair on a DIS built
+    clean and MF6 stopped; on a DISU it built clean and MF6 RAN, reading ``(1, 6)`` as
+    node 2 -- a drain-flow observation reported 3e30 for a drain at another node,
+    under Normal termination. ``DrnFlowTargets.to_flopy_obs(None)`` writes that pair,
+    having no grid to read.
+
+    Parameters
+    ----------
+    model : flopy.mf6.MFModel
+        The model being built; its discretization and packages must already be
+        built, or there is nothing to compare and the answer is empty.
+
+    Returns
+    -------
+    list of str
+        One complaint per OBS package holding a cellid of another length, naming its
+        owner, the records and the grid's form; empty when every cellid has the
+        grid's form.
+    """
+
+    built = _built_grid(model)
+    if built is None:
+        return []
+    numbering = built.numbering
+    complaints = []
+    for owner, cellids in _observation_cellids(model):
+        wrong = [(name, cellid) for name, cellid in cellids if len(cellid) != numbering.length]
+        if wrong:
+            complaints.append(
+                f"{owner} hold {len(wrong)} cellid(s) that are not this {built.name}'s "
+                f"{numbering.form}: "
+                + _listing(f"{name!r} at {cellid}" for name, cellid in wrong)
+                + ". An observation names its cell in the grid's own form, and "
+                "DrnFlowTargets.to_flopy_obs(None), with no model to read, writes DISV's "
+                "(layer, cell): declare the package without observations= and attach "
+                "them to the built model -- targets.attach_flopy_obs(run.model()), "
+                "which writes this form -- or write each cellid in this form"
             )
     return complaints
 
@@ -2774,6 +2851,7 @@ def _discretization_complaint_families(
     built = _built_grid(model)
     if built is not None:
         complaints["cellid"] += cellid_form_complaints(model, packages)
+        complaints["cellid"] += observation_cellid_form_complaints(model)
         for package in packages:
             stale = sorted(
                 {
@@ -2934,6 +3012,7 @@ __all__ = [
     "implicit_solver_complaints",
     "lak_build_warnings",
     "cellid_form_complaints",
+    "observation_cellid_form_complaints",
     "lak_geometry_complaints",
     "pin_metadata",
 ]

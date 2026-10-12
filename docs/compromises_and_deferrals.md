@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 489 entries (494 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 490 entries (495 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 490 | A build refuses an OBS cellid of another form than its discretization's, and... | 2026-10-11 |
 | 489 | A variogram's `nugget=` reaches the prior PESTPP-IES receives: the structure is scaled to a sill of 1 befor... | 2026-10-11 |
 | 488 | A run with no mover moved 0.0, and a mover row only one run has is counted, not dropped | 2026-10-11 |
 | 487 | A diff's LAK/SFR stage maps, plots and composes: each feature's Δstage painted on the reference's cells | 2026-10-11 |
@@ -19272,7 +19273,9 @@ same day, which is the useful part of the result.
       grid's own form was refused as "declared for" another cell. `CellNumbering.cellid`
       is the inverse of `layer_cell`. **Judgment call: `to_flopy_obs(None)` still writes
       DISV's `(layer, cell)`** -- with no model there is no grid to read, and that form is
-      what a DRN declared for a myflopy (DISV) model before it exists needs. A declared
+      what a DRN declared for a myflopy (DISV) model before it exists needs. (Since ledger
+      490 a DIS or DISU build REFUSES that pair, where it built and MF6 read it as
+      other cells.) A declared
       cellid off the grid names nothing (reads as "declared for nothing the package has").
       **`HeadTargets.to_flopy_obs`/`attach_flopy_obs` too** (review; `ConcTargets`
       inherits it): it wrote `(layer, cell)` on every grid, which MF6 refused on DIS and
@@ -19885,3 +19888,24 @@ same day, which is the useful part of the result.
       `docs/reproducers/prior_nugget.py`; tests:
       `tests/test_pilot_point_prior.py::test_the_nugget_reaches_the_prior_pestpp_ies_receives`,
       `::test_a_nugget_that_is_not_a_variance_is_refused`.
+
+490. **A build refuses an OBS cellid of another form than its discretization's, and `DrnFlowTargets.to_flopy_obs(None)` stays DISV's pair (2026-10-11).**
+      An OBS record's cellid was checked for a removed cell only: a DISV `(layer, cell)`
+      on a DIS built and MF6 stopped; on a DISU it built and MF6 RAN, reading `(1, 6)` as
+      node 2 -- a drain-flow observation of a drain at node 18 reported 3e30, Normal
+      termination. `grid_identity.observation_cellid_form_complaints` reads every built
+      OBS package whose owner names CELLS (the model's own and the list boundaries,
+      `_CELLID_OBSERVATION_OWNERS`; a LAK/SFR/MAW/UZF `id` is a feature number, which a
+      caller may type `(0,)`) and joins the build's `cellid` family; the removed-cell check
+      reads the same records (`_observation_cellids`), so it no longer reads a lake's
+      `(0,)` as node 0 on a DISU. **Judgment call: refuse, not resolve at build.**
+      `to_flopy_obs(None)` keeps writing DISV's pair (the declare-before-model route on
+      DISV): resolving it at build would need its records MARKED as views-numbered, since
+      a typed pair on a DIS is refused by ledger 469 rather than converted, and a marker
+      surviving `to_dict`, the digest and the frozen snapshot was out of proportion. The
+      refusal names the route that works on DIS/DISU, `targets.attach_flopy_obs(run.model())`
+      before `run.execute()` (measured: the observation equals the drain's budget flow).
+      Not done: an OBS cellid OFF the grid is not refused at build -- MF6 stops on it.
+      Tests: `tests/test_build_cellids_dis_disu.py::test_an_observation_cellid_of_another_form_is_refused`,
+      `::test_the_spelling_the_refusal_names_observes_the_drain`,
+      `::test_an_observation_cellid_in_the_grids_form_builds`.

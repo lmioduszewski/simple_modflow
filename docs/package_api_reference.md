@@ -895,7 +895,12 @@ pyEMU locates a node by its centre, a head target is in layer 0 (a deeper node b
 DISU's stacked nodes; use `zone`, `pilotpoints` or `constant`). A DRN zone's
 observations are written and read in the grid's own cellid on DIS and DISU, and a head
 or concentration target's `to_flopy_obs`/`attach_flopy_obs` write it too (ledger
-455). **`run_ies`/`prior` hand PEST++ an absolute `PYTHONPATH`** (ledger
+455). `DrnFlowTargets.to_flopy_obs(None)` -- a DRN declared before its model exists --
+writes DISV's `(layer, cell)`, having no grid to read, and a build REFUSES an OBS cellid
+of another form than the discretization's (ledger 490; on a DISU MF6 read the pair as
+another node, under Normal termination): on DIS or DISU, declare the DRN without
+`observations=` and `targets.attach_flopy_obs(run.model())` before `run.execute()`.
+**`run_ies`/`prior` hand PEST++ an absolute `PYTHONPATH`** (ledger
 454), so a notebook started under `PYTHONPATH=src` runs its own myflopy in the
 forward run; a relative entry the process has `chdir`ed away from is refused. **A build deletes the template and its staging
 directory only when each is absent, empty, or one a build wrote** (ledger 360: marked by

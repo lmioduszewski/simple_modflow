@@ -1259,7 +1259,10 @@ class DrnFlowTargets:
             written in. ``None`` works when every zone gives explicit ``cells``
             -- as when the records go into the ``observations=`` of the DRN being
             declared, before any model exists -- and writes DISV's ``(layer,
-            cell)``.
+            cell)``, having no grid to read: a DIS or DISU model's build refuses
+            that form, naming the package (ledger 490), so there declare the
+            DRN without ``observations=`` and call :meth:`attach_flopy_obs` with
+            the built model (``run.model()``) before running it.
         csv_name : str, optional
             The CSV file MF6 writes these observations to -- the dict's one key.
             Default ``"drn_flow_targets.csv"``. Any name: :meth:`simulated_series`
