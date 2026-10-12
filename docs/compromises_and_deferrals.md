@@ -18899,23 +18899,34 @@ same day, which is the useful part of the result.
      the limit, so pinning them must update this entry.
 
 444. **Examples, reproducers and notebooks the library broke are EXECUTED by a test, and the rest were run once and listed (2026-10-11).**
-      Four had stopped at HEAD while every test passed, because the suite read their
-      source or nothing: `examples/mf6/contours_to_model.py` (the cheatsheet's runnable
+      Every `examples/**/*.py`, `docs/reproducers/*.py` and notebook under `examples/`
+      was run at HEAD (copies, in scratch). Ten had stopped while every test passed,
+      because the suite read their source or nothing; each was moved to the current
+      spelling, not the library back: `contours_to_model.py` (the cheatsheet's runnable
       form) read `vor.gdf_topbtm["top"]` where `LayerStack`'s `attach=True` publishes
-      integer columns; `layer_management_workflow.ipynb` built a `Contours` with no
-      region; `docs/reproducers/top_active_passthrough.py` declared ledger 319's OLD
-      `irch` through myflopy, which ledger 321's build guard refuses; and
-      `obs_route_declared_identity.py` read `model.outputs.lak` on a two-LAK model,
-      which ledger 352 refuses. Each was moved to the current spelling. The top-active
-      reproducer keeps its "before" by writing the old `irch` into the LAZY run's files
-      with FloPy and running MF6 on them (207.98 of 360 ft3/d applied, as ledger 319
-      measured), and prints the build's refusal, which names the same 152.017 lost.
-      `tests/test_examples_run.py` runs all four -- the scripts in a subprocess
-      (marked slow; the cheatsheet example skips without GRASS) -- and each of its
-      four tests fails on revert. NOT done: a test executing EVERY example and notebook. The
-      sweep that found these took ~25 minutes of MF6/PEST++ and several notebooks
-      need data outside the repository; a per-commit run of it would double the suite.
-      The archive notebooks (`examples/mf6/notebooks/archive/`) were NOT ported: they
-      record the retired `build_pst` slice (`mf.DRNFromVector`, `mf.open_pest_run` are
-      gone) or read Cumberland data; their README said they "still run" and now says
-      they do not.
+      integer columns; `top_active_passthrough.py` declared ledger 319's OLD `irch`,
+      which ledger 321 refuses at build -- it now prints that refusal and keeps its
+      "before" by writing the old `irch` into the LAZY run's files with FloPy (207.98 of
+      360 ft3/d applied, as 319 measured); `obs_route_declared_identity.py` read
+      `model.outputs.lak` on two LAK packages (ledger 352); `pest_template_holds_inputs_only.py`
+      lifted a fixed list of names out of `pest/project.py` and now follows what
+      `_simulation_input_files` uses; six notebooks (a region-less `Contours`, a mangled
+      line, a stale variable, the head table's removed `geometry` column, the removed
+      `build_simple_model`, and FloPy 3.10's `model.gwf.plot()` failing on an SFR period
+      with no settings -- replaced by `model.plot.map(select=)`). Two variant-workflow
+      scripts refused a second run and pass `overwrite=True` as their siblings do.
+      `tests/test_examples_run.py` executes those ten (scripts in a subprocess, notebooks
+      cell by cell; slow; the cheatsheet example skips without GRASS) and each test
+      fails on revert. NOT done: executing EVERY example in the suite -- the sweep took
+      ~40 minutes of MF6/PEST++ (`canonical_03` 405 s, `canonical_07` 494 s,
+      `pest_observation_groups` past 600 s under load; it passes run alone) and would
+      multiply the suite. Not run, needing
+      what is not here: data under `~/mf6/Cumberland general`, a Windows path or
+      `/home/lukem/models` (the five Ten Trails/USG notebooks, the two `cumberland_*`
+      notebooks, `canonical_model_template`, `master_large_model_visualization_prt_workflow`,
+      `cumberland_forward_mp3du.py`, the two `examples/mf6/archive` scripts),
+      `demo_ies_uncertainty` (an ensemble run ahead of time), and
+      `import_existing_runs_workflow.py` (needs `--archive-root`). The archive notebooks
+      were NOT ported: they record the retired `build_pst` slice (`mf.DRNFromVector`,
+      `mf.open_pest_run` are gone); their README said they "still run" and now says
+      they do not. `scratch.ipynb` is a scratchpad and was left as it is.

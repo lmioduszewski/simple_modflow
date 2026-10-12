@@ -53,17 +53,34 @@ from pathlib import Path
 
 #: This checkout's PEST project module, whose input-file rule sorts both columns.
 _PROJECT = Path(__file__).resolve().parents[2] / "src/myflopy/modflow/mf6/pest/project.py"
-_RULE = {"_NAME_FILE_BLOCKS", "_MF6_FILE_TYPE", "_MF6_FIELD", "_MF6_INPUT_REFERENCE",
-         "_mf6_field", "_mf6_text", "_simulation_input_files"}
 
 
 def _input_rule():
-    """``_simulation_input_files`` as this checkout defines it, whatever is imported."""
+    """``_simulation_input_files`` as this checkout defines it, whatever is imported.
+
+    The module's top-level functions and constants are taken by NAME from what
+    ``_simulation_input_files`` reaches -- followed through every name each one uses --
+    so a helper split out of it is carried along (a fixed list of names stopped this
+    script when ``_scan_simulation_inputs`` was split out, ledger 444).
+    """
 
     tree = ast.parse(_PROJECT.read_text(encoding="utf-8"))
-    nodes = [node for node in tree.body
-             if (isinstance(node, ast.FunctionDef) and node.name in _RULE)
-             or (isinstance(node, ast.Assign) and {getattr(t, "id", None) for t in node.targets} & _RULE)]
+    defined = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef):
+            defined[node.name] = node
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    defined[target.id] = node
+    wanted, pending = set(), ["_simulation_input_files"]
+    while pending:
+        name = pending.pop()
+        if name in wanted or name not in defined:
+            continue
+        wanted.add(name)
+        pending.extend(n.id for n in ast.walk(defined[name]) if isinstance(n, ast.Name))
+    nodes = [node for node in tree.body if any(defined.get(n) is node for n in wanted)]
     namespace = {"re": re, "os": os, "Path": Path}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(_PROJECT), "exec"), namespace)
     return namespace["_simulation_input_files"]

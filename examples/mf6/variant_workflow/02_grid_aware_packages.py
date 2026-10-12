@@ -77,8 +77,8 @@ def model(name: str, ncol: int) -> mf.SimulationSpec:
 project = mf.Project(HERE / "runs" / "grid_aware_demo", name="grid_aware_demo")
 
 # Same npf "recipe", two meshes. K is recomputed for each -- nothing pickled.
-coarse = project.run("coarse", model("coarse", ncol=10))
-fine = project.run("fine", model("fine", ncol=40))
+coarse = project.run("coarse", model("coarse", ncol=10), overwrite=True)
+fine = project.run("fine", model("fine", ncol=40), overwrite=True)
 
 
 def ncells(run):

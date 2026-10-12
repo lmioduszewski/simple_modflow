@@ -84,8 +84,8 @@ sloped = mf.LayerSurfaces(
 )
 
 project = mf.Project(HERE / "runs" / "surfaces_demo", name="surfaces_demo")
-flat_run = project.run("flat_layers", flow_model("flat_layers", vor, flat))
-sloped_run = project.run("sloped_layers", flow_model("sloped_layers", vor, sloped))
+flat_run = project.run("flat_layers", flow_model("flat_layers", vor, flat), overwrite=True)
+sloped_run = project.run("sloped_layers", flow_model("sloped_layers", vor, sloped), overwrite=True)
 
 
 def layer1_botm(run):
