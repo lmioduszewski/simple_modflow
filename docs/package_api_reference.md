@@ -885,7 +885,8 @@ group was one well. The PEST guide shows the groups with PEST++'s phi-factor fil
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
 `mf.LakeStageTargets`, `mf.DrnFlowTargets`. Calibration: `model.pest(name,
 start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(...)` /
-`cal.forecast(...)` / `cal.build(...)` / `cal.run_ies(...)`; discovery via
+`cal.forecast(...)` / `cal.build(...)` / `cal.run_ies(...)` (`observe`/`forecast` take a
+set registered on the model too, `cal.observe(model.targets.heads)`); discovery via
 `model.pest_runs` or `run.pest_runs`. **`model.pest(...)` is the front door** — it
 fills `start_datetime` from TDIS and puts the run where `pest_runs` will find it.
 `mf.PestProject(...)` can be constructed directly, but that is the advanced path.

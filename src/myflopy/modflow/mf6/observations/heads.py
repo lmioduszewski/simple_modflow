@@ -885,7 +885,10 @@ class HeadTargets:
         pandas.DataFrame
             One row per target row: the target's columns plus ``per``,
             ``cell``, ``sim_head``, ``residual`` (simulated minus target) and
-            ``abs_residual``.
+            ``abs_residual``. ``x``/``y`` are the matched cell's or point's, in
+            the GRID's frame, for a target given as a point and one given as a
+            cell alike (a point target returned ``x_x``/``y_x``, its own CRS,
+            beside ``x_y``/``y_y``, and no ``x``).
 
         Raises
         ------
@@ -927,8 +930,12 @@ class HeadTargets:
                 )
         else:
             matches = self.match_to_model(model).loc[:, ["name", "name_key", "layer", "cell", "x", "y"]]
+            # The matched x/y -- in the GRID's frame -- win, as on the cell branch:
+            # both sides carried x/y, so pandas returned x_x/y_x (the targets' own
+            # CRS) beside x_y/y_y and no `x` at all.
             merged = (
-                targets.merge(matches, on=["name", "name_key", "layer"], how="left")
+                targets.drop(columns=["x", "y"], errors="ignore")
+                .merge(matches, on=["name", "name_key", "layer"], how="left")
                 .merge(sim, on=["per", "layer", "cell"], how="left")
             )
         merged["residual"] = merged["sim_head"] - merged["head_target"]

@@ -15,6 +15,40 @@ from myflopy.modflow.mf6.observations.sfr import (
     SfrStageTargets,
 )
 
+#: The model-bound helpers ``model.targets.<name>`` hands back; each holds its bare
+#: target set as ``.targets``.
+BOUND_TARGET_TYPES = (
+    BoundHeadTargets,
+    BoundLakeStageTargets,
+    BoundSfrStageTargets,
+    BoundSfrFlowTargets,
+    BoundDrnFlowTargets,
+)
+
+
+def bare_targets(value):
+    """The bare target set behind a model-bound helper; anything else unchanged.
+
+    The ONE unwrapping of ``model.targets.<name>``: the registry stores the bare set,
+    and ``cal.observe``/``cal.forecast`` take either -- they raised ``TypeError`` on
+    a bound set, which is what ``model.targets.heads`` returns.
+
+    Parameters
+    ----------
+    value : object
+        A bound helper (``BoundHeadTargets``, ...), a bare target set, or anything
+        else, which is returned as it is for the caller to judge.
+
+    Returns
+    -------
+    object
+        ``value.targets`` for a bound helper, else ``value``.
+    """
+
+    if isinstance(value, BOUND_TARGET_TYPES):
+        return value.targets
+    return value
+
 
 class TargetRegistry:
     """Lightweight model-bound registry for reusable calibration targets."""
@@ -45,17 +79,7 @@ class TargetRegistry:
     def _coerce_target(self, value):
         """Unwrap a bound helper back to its bare target, validating the type (raises otherwise)."""
 
-        if isinstance(
-            value,
-            (
-                BoundHeadTargets,
-                BoundLakeStageTargets,
-                BoundSfrStageTargets,
-                BoundSfrFlowTargets,
-                BoundDrnFlowTargets,
-            ),
-        ):
-            return value.targets
+        value = bare_targets(value)
         if isinstance(value, (HeadTargets, ConcTargets, LakeStageTargets, SfrStageTargets, SfrFlowTargets, DrnFlowTargets)):
             return value
         raise TypeError(

@@ -141,3 +141,35 @@ def test_a_name_repeated_in_one_layer_is_refused_and_in_two_layers_is_two_screen
                                                  "layer": [0, 0, 0]}).assign(layer=[0, 1, 0]),
                          values=values)
     assert sorted(two.locations_gdf["layer"]) == [0, 0, 1]
+
+
+# -- small ones: bound sets observed, compare()'s x/y ----------------------------
+
+
+def test_a_target_set_read_back_from_the_model_is_observed_and_forecast(toy, tmp_path):
+    """cal.observe(model.targets.heads) raised TypeError: the bound helper was not unwrapped."""
+
+    toy.targets.heads = _head_targets([("W", 22)], pd.DataFrame({"time": [0], "W": [95.0]}))
+    try:
+        cal = toy.pest("bound", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+        spec = cal.observe(toy.targets.heads)
+        assert spec.targets is toy.targets.heads.targets
+        assert cal.forecast(toy.targets.heads).targets is toy.targets.heads.targets
+    finally:
+        del toy.targets["heads"]
+
+
+def test_compare_of_point_targets_returns_x_and_y_in_the_grids_frame(toy):
+    """A point-located set returned x_x/y_x (its own CRS) and x_y/y_y, and no `x`."""
+
+    import geopandas as gpd
+
+    centres = toy.vor.gdf_vorPolys.geometry.centroid
+    points = gpd.GeoDataFrame({"name": ["A", "B"], "layer": [0, 0]},
+                              geometry=[centres.iloc[5], centres.iloc[22]],
+                              crs=toy.vor.gdf_vorPolys.crs)
+    frame = mf.HeadTargets(locations=points, values=pd.DataFrame({"time": [0], "A": [95.0], "B": [97.0]})).compare(toy)
+    assert {"x", "y"} <= set(frame.columns)
+    assert not {"x_x", "y_x", "x_y", "y_y"} & set(frame.columns)
+    assert frame.set_index("name")["x"].round(6).to_dict() == {
+        "A": round(centres.iloc[5].x, 6), "B": round(centres.iloc[22].x, 6)}
