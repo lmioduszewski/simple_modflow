@@ -107,7 +107,7 @@ def named(tmp_path_factory):
     return {"a": _named(root / "a", 10.0), "b": _named(root / "b", 30.0)}
 
 
-def _movers(workspace, drn_a_cond):
+def _movers(workspace, drn_a_cond, *, sfr_budget=True):
     """The 3 x 3 model of two drains and a well moving water into one SFR reach."""
 
     sim = flopy.mf6.MFSimulation(sim_name="mv", sim_ws=str(workspace), exe_name="mf6",
@@ -127,7 +127,8 @@ def _movers(workspace, drn_a_cond):
     flopy.mf6.ModflowGwfwel(gwf, mover=True, pname="wel",
                             stress_period_data=[[(0, 2, 2), -1.0]])
     flopy.mf6.ModflowGwfsfr(
-        gwf, mover=True, pname="sfr", nreaches=1, budget_filerecord="mv.sfr.bud",
+        gwf, mover=True, pname="sfr", nreaches=1,
+        budget_filerecord="mv.sfr.bud" if sfr_budget else None,
         packagedata=[[0, (0, 1, 1), 10.0, 1.0, 0.001, 8.0, 1.0, 0.0, 0.03, 0, 1.0, 0]],
         connectiondata=[[0]], perioddata=[[0, "INFLOW", 0.0]],
     )
@@ -157,8 +158,9 @@ def _moved(path, text):
 @pytest.fixture(scope="module")
 def movers(tmp_path_factory):
     root = tmp_path_factory.mktemp("diff_movers")
-    runs = {"a": _movers(root / "a", 10.0), "b": _movers(root / "b", 30.0)}
-    for name in runs:
+    runs = {"a": _movers(root / "a", 10.0), "b": _movers(root / "b", 30.0),
+            "unwritten": _movers(root / "unwritten", 30.0, sfr_budget=False)}
+    for name in ("a", "b", "unwritten"):
         held = {raw.decode().strip() for raw in flopy.utils.CellBudgetFile(
             str(root / name / "mv.cbc"), precision="auto").recordarray["text"]}
         assert {"DRN-TO-MVR", "WEL-TO-MVR"} <= held
@@ -405,3 +407,13 @@ def test_a_stage_diff_is_mapped_on_the_reference_features_cells(steps, package, 
     assert stage.plot() is not None
     assert stage.mosaic() is not None
     assert stage.map(per=3, backend="mpl") is not None
+
+
+def test_a_receiver_with_no_budget_file_is_refused_not_read_as_nothing(movers):
+    group = mf.ModelGroup({"a": movers["a"], "c": movers["unwritten"]}, reference="a")
+    mvr = group.diff().packages.mvr.results
+    with pytest.raises(ValueError, match="'c' \\(sfr\\).*budget_filerecord="):
+        mvr.get(package="sfr", direction="from_mvr")
+    with pytest.warns(UserWarning, match="leaves out SFR's mover terms"):
+        summary = mvr.summary()
+    assert set(summary["package"]) == {"drn", "wel"}

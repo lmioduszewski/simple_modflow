@@ -29,7 +29,8 @@ WHAT IT MEASURES
      as now.
   3. ``npf.transmissivity_max.get(per=...)`` ignores ``per``.
   4. ``model.hds.long()``/``wide()`` accept only ``values="elev"`` (``"head"`` raises)
-     and keep MF6's no-value sentinels where ``get()`` masks them.
+     and kept MF6's no-value sentinels where ``get()`` masks them -- they mask them
+     too since ledger 484, printed as now (``NaN`` beside ``get()``'s).
   5. ``model.hds.get_obs_cells(crs=...)`` returned the same cells whatever ``crs`` named,
      a points file with no CRS raised, and a polygon over several cells got the first
      of them; ``get_obs_heads`` read the constructor's ``obs_path`` when given a ``str``

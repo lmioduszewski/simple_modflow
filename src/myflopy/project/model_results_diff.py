@@ -1123,10 +1123,29 @@ class MvrResultDiff(_ResultDiffBase):
             )
         return name, direction
 
+    def _without_budget_file(self, package: str) -> list[str]:
+        """The members whose ``package`` (SFR/LAK) declares no budget file, so its mover terms are unwritten."""
+
+        missing = []
+        for name, model in self.group.models.items():
+            for flopy_package in model_packages_of_type(model, package):
+                record = getattr(flopy_package, "budget_filerecord", None)
+                value = record.get_data() if hasattr(record, "get_data") else record
+                if value is None or len(value) == 0:
+                    missing.append(f"{name!r} ({flopy_package.package_name})")
+        return missing
+
     def _feature_compare(self, package: str, term: str, *, per=None) -> pd.DataFrame:
         """One SFR/LAK mover term from each member's package budget file, paired by period and feature."""
 
         builder = {"sfr": build_sfr_budget_term_table, "lak": build_lak_budget_term_table}[package]
+        unreadable = self._without_budget_file(package)
+        if unreadable:
+            raise ValueError(
+                f"{package.upper()} writes its {term} only to its own budget file, and "
+                f"{unreadable} declare(s) none: give the package budget_filerecord= "
+                f"(BUDGET FILEOUT) and run it again."
+            )
         frames = []
         for name, model in self.group.models.items():
             if not model_packages_of_type(model, package):
@@ -1180,8 +1199,10 @@ class MvrResultDiff(_ResultDiffBase):
             ``"sfr"`` or ``"lak"`` -- every package of the type is read, each row
             naming its own (``pname``) for a boundary; SFR and LAK read the
             model's ONE package of the type and raise ``SeveralPackagesError``
-            with several. ``"uzf"`` raises ``ValueError`` (its own budget file is
-            not read), as does any other name.
+            with several, and ``ValueError`` when a member's package declares no
+            budget file (``budget_filerecord``), the only place MF6 writes them.
+            ``"uzf"`` raises ``ValueError`` (its own budget file is not read), as
+            does any other name.
         direction : str, default "to_mvr"
             ``"to_mvr"``, the water the package hands the mover (DRN/GHB/RIV/WEL:
             ``<TYPE>-TO-MVR`` in the groundwater budget file; SFR/LAK: ``TO-MVR``
@@ -1247,8 +1268,9 @@ class MvrResultDiff(_ResultDiffBase):
         Reads :meth:`get` for every package type some member declares ``MOVER``
         on -- DRN, GHB, RIV and WEL in the direction they have (``"to_mvr"``),
         SFR and LAK in both -- and leaves out a pair no member wrote a row for. A
-        member's UZF declaring ``MOVER`` is NOT read (:meth:`get`): it is warned
-        about, by ``warnings.warn`` and the log, and left out.
+        member's UZF declaring ``MOVER`` is NOT read (:meth:`get`), nor an SFR or
+        LAK some member gives no budget file: each is warned about, by
+        ``warnings.warn`` and the log, and left out.
 
         Parameters
         ----------
@@ -1286,6 +1308,18 @@ class MvrResultDiff(_ResultDiffBase):
         rows = []
         for package in self._MOVER_PACKAGES:
             if package == "uzf" or not any(_declares_mover(model, package) for model in models):
+                continue
+            unreadable = (
+                self._without_budget_file(package) if package in self._FEATURE_TABLES else []
+            )
+            if unreadable:
+                message = (
+                    f"diff.packages.mvr.results.summary() leaves out {package.upper()}'s mover "
+                    f"terms: {', '.join(unreadable)} declare(s) no budget file, the only "
+                    "place MF6 writes them."
+                )
+                warnings.warn(message, UserWarning, stacklevel=2)
+                logger.warning(message)
                 continue
             directions = (
                 self._DIRECTIONS if package in self._FEATURE_TABLES else (("to_mvr", "TO-MVR"),)

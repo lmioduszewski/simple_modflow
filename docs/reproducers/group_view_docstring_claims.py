@@ -29,18 +29,22 @@ temporary directory, removed at the end, by default). About 40 s.
   on that block), no LAK, SFR or UZF.
 
 WHAT IT MEASURES
-  1. ``lak.results.q.compare()`` and ``group.bud(...).compare()`` pair members on the
-     EXACT ``kstpkper``: at nstp 1 against 2 they diff the reference's period end
-     against the other member's FIRST step, and LAK's also keys on the wetted
-     ``FLOW-AREA`` and drops rows where it differs. ``sfr.results.q.compare()`` and
-     ``lak.results.q.compare_map()`` reduce each member to its own period end first.
+  1. ``lak.results.q.compare()`` and ``group.bud(...).compare()`` paired members on
+     the EXACT ``kstpkper``: at nstp 1 against 2 they diffed the reference's period
+     end against the other member's FIRST step, and LAK's also keyed on the wetted
+     ``FLOW-AREA`` and dropped rows where it differed. Fixed by ledger 485: both
+     reduce each member to its own period end, as ``sfr.results.q.compare()`` and
+     ``lak.results.q.compare_map()`` did, and LAK pairs a connection by its identity.
+     Printed as now, beside how far b's first step sits from its period end (the size
+     of the old error).
   2. On a cell holding two records, the group inputs ``map()`` ADDED ``bhead`` (12.0
      where the single-model map draws 6.0), ``compare()`` cross-paired the records
      (four rows) and ``compare_map()`` drew 4.0 for a change of 1.0 -- through the
      public ``group.diff()`` route too. Fixed by ledger 472, and printed as now:
      6.0, two rows, 1.0.
-  3. ``group.hds.compare()`` differences MF6's -1e30 at a cell dry in one member only,
-     and ``compare_map()``'s default colour range becomes plus/minus 1e30.
+  3. ``group.hds.compare()`` differenced MF6's -1e30 at a cell dry in one member only,
+     and ``compare_map()``'s default colour range became plus/minus 1e30. Fixed by
+     ledger 484: such a cell is ``NaN``, a gap; printed as now.
   4. A member with no LAK or UZF package ends the group LAK and UZF views with
      ``AttributeError``; the inputs, cell-result, SFR and surface-water views leave it
      out.
@@ -75,7 +79,6 @@ from shapely.geometry import box
 
 import myflopy as mf
 from myflopy.modflow.mf6.canonical_example import CanonicalModelConfig, build_canonical_model
-from myflopy.project.group._shared import _reduce_to_period_end, _stable_compare_keys
 
 
 def _attempt(label, call):
@@ -135,17 +138,11 @@ def section_1(canon, canon_plus):
     compared = lak.compare()
     print(f"    lak compare(): {len(compared)} rows of a's {len(lak.get(model_name='a'))};"
           f" b's steps used: {sorted(set(compared.kstpkper))}")
-    data = _reduce_to_period_end(lak.get())
-    keys = _stable_compare_keys(data, ["q_lake", "q_per_area"])
-    reference = data[data.model == "a"][keys + ["q_lake"]].rename(columns={"q_lake": "ref"})
-    at_end = data[data.model == "b"].merge(reference, on=keys)
-    paired = compared.merge(
-        at_end[["per", "iconn", "lake", "q_lake"]].rename(columns={"q_lake": "b_end"}),
-        on=["per", "iconn", "lake"],
-    )
-    print(f"    period-end alignment pairs {len(at_end)} rows; on the rows compare() kept,"
-          f" b's first step differs from its period end by up to"
-          f" {np.nanmax(np.abs(paired.q_lake - paired.b_end)):.2f} ft3/d")
+    rows = lak.get(model_name="b")
+    first = rows[rows.kstpkper.map(lambda kk: kk[0] == 0)].set_index(["per", "lake", "iconn"])
+    end = rows[rows.kstpkper.map(lambda kk: kk[0] == 1)].set_index(["per", "lake", "iconn"])
+    print(f"    b's first step differs from its period end by up to"
+          f" {np.nanmax(np.abs(first.q_lake - end.q_lake)):.2f} ft3/d (what pairing it cost)")
     budget = group.bud("ghb").compare()
     print(f"    bud('ghb').compare(): b's steps used: {sorted(set(budget.kstpkper))[:3]}...")
     sfr = group.packages.sfr.results.q.compare()
@@ -204,7 +201,9 @@ def section_3(root: Path):
 
     group = mf.ModelGroup({"wet": member("wet", False), "dry": member("dry", True)},
                           reference="wet")
-    print(f"    max |diff| in group.hds.compare(): {group.hds.compare()['diff'].abs().max():.3g}")
+    compared = group.hds.compare()
+    print(f"    group.hds.compare(): max |diff| {compared['diff'].abs().max():.3g},"
+          f" {int(compared['diff'].isna().sum())} cells with no value in one member")
     trace = group.hds.compare_map(model_name="dry").fig.data[0]
     print(f"    compare_map colour range: {trace.zmin:.3g} .. {trace.zmax:.3g}")
 

@@ -14,37 +14,39 @@ toy run twice: CHD on the west column, two drains (``drn_a`` at cell (0, 1, 2),
 ``drn_b`` at (0, 0, 2)) and a pumping well at (0, 2, 2), all three moving their water
 by MVR into a one-reach SFR; the second run has ``drn_a``'s conductance 30 for 10.
 
-WHAT IT MEASURES
-  1. MVR. ``diff.packages.mvr.results`` reads records named exactly ``FROM-MVR`` /
+WHAT IT MEASURES (items 1-4 and 6 were fixed on 2026-10-11 and print what is true now;
+item 5 was fixed by ledger 471)
+  1. MVR. ``diff.packages.mvr.results`` read records named exactly ``FROM-MVR`` /
      ``TO-MVR`` from the GROUNDWATER budget file. MF6 names a drain's and a well's
      mover term ``DRN-TO-MVR`` / ``WEL-TO-MVR`` there, and writes SFR's and LAK's
      ``FROM-MVR``/``TO-MVR`` into their own package budget files -- so every
-     ``get(package=, direction=)`` and ``summary()`` is empty although the drains
+     ``get(package=, direction=)`` and ``summary()`` was empty although the drains
      moved 69.5 and 122.8 volume units per day in the two runs (``drn_a`` 35.0
-     against 91.3 of it) and the canonical model's SFR reach 55 feeds its lake.
-  2. Heads. ``diff.hds`` reads each member's raw ``all_heads``: MF6's dry sentinel
+     against 91.3 of it) and the canonical model's SFR reach 55 feeds its lake. Fixed
+     by ledger 486: each is read where MF6 writes it.
+  2. Heads. ``diff.hds`` read each member's raw ``all_heads``: MF6's dry sentinel
      (-1e30, ledger 315) put in ONE cell of ``b`` -- a stand-in for a cell that dried,
-     since the diff reads the table as it is -- makes ``summary()`` read
-     ``max_abs_diff`` 1e30, ``mean_abs_diff`` ~9.4e25 and ``rmse`` ~9.7e27.
-  3. LAK exchange. ``diff.packages.lak.results.q`` is joined on ``kstpkper``, not
-     reduced to each member's period end: at ``per=1`` the ``nstp=2`` run is read at
+     since the diff reads the table as it is -- made ``summary()`` read
+     ``max_abs_diff`` 1e30, ``mean_abs_diff`` ~9.4e25 and ``rmse`` ~9.7e27. Fixed by
+     ledger 484: the cell is a gap, counted in ``n_one_sided``.
+  3. LAK exchange. ``diff.packages.lak.results.q`` was joined on ``kstpkper``, not
+     reduced to each member's period end: at ``per=1`` the ``nstp=2`` run was read at
      ``(0, 1)``, the FIRST step of period 1, against the reference's only step. GHB's
-     ``q`` is reduced (the comparison carries no ``kstpkper``). The LAK join also
-     keys on MF6's wetted ``FLOW-AREA``: a connection dry on one side only has no
-     partner, and 2 of the 72 connections drop out at period 3 between ``a`` and
-     ``c``.
-  4. Budget. ``diff.bud`` differences every numeric column of FloPy's incremental
+     ``q`` was reduced. The LAK join also keyed on MF6's wetted ``FLOW-AREA``: 2 of
+     the 72 connections dropped out at period 3 between ``a`` and ``c``. Fixed by
+     ledger 485.
+  4. Budget. ``diff.bud`` differenced every numeric column of FloPy's incremental
      listing budget, including ``time_step``, ``stress_period`` and ``tslen``: between
-     ``a`` and ``c`` ``tslen`` reads -50% and ``time_step`` out of tolerance.
-  5. Saturation. ``diff.packages.uzf.results.sat`` raises ``ValueError``: NPF's
+     ``a`` and ``c`` ``tslen`` read -50% and ``time_step`` out of tolerance. Fixed by
+     ledger 485: they label the rows and are not terms.
+  5. Saturation. ``diff.packages.uzf.results.sat`` raised ``ValueError``: NPF's
      ``DATA-SAT`` record carries an always-zero ``q`` beside ``SAT``, and the table
-     read renames ``q`` to ``sat`` next to the ``sat`` already there.
+     read renamed ``q`` to ``sat`` next to the ``sat`` already there (ledger 471).
   6. Package names. A 3 x 3 toy run twice, with a DRN named ``seeps`` (two records
      on one cell, conductances 10/20 against 30/60) and a GHB named ``lake_edge``:
-     ``diff.package_names`` lists only ``chd`` and ``connection_package_names``
-     ``lak``, because both find a package by its NAME prefix, so ``report()`` reads
-     "identical to reference"; ``packages.drn.inputs.summary()`` counts 4 changed
-     value rows for the one cell.
+     ``diff.package_names`` listed only ``chd`` and ``connection_package_names``
+     ``lak``, because both found a package by its NAME prefix, so ``report()`` read
+     "identical to reference". Found by TYPE since 2026-10-11.
 """
 
 from __future__ import annotations
@@ -95,7 +97,7 @@ def _mover_toy(name, drn_a_cond):
     flopy.mf6.ModflowGwfwel(gwf, mover=True, pname="wel",
                             stress_period_data=[[(0, 2, 2), -1.0]])
     flopy.mf6.ModflowGwfsfr(
-        gwf, mover=True, pname="sfr", nreaches=1,
+        gwf, mover=True, pname="sfr", nreaches=1, budget_filerecord="mv.sfr.bud",
         packagedata=[[0, (0, 1, 1), 10.0, 1.0, 0.001, 8.0, 1.0, 0.0, 0.03, 0, 1.0, 0]],
         connectiondata=[[0]], perioddata=[[0, "INFLOW", 0.0]],
     )
@@ -131,10 +133,10 @@ def part_1_mover():
     print("  groundwater budget records:", _records(second / "mv.cbc"))
     a, b = mf.load_mf6_run(first), mf.load_mf6_run(second)
     mvr = mf.ModelGroup({"a": a, "b": b}, reference="a").diff().packages.mvr.results
-    for package in ("drn", "wel", "sfr"):
-        for direction in ("from_mvr", "to_mvr"):
-            rows = len(mvr.get(package=package, direction=direction))
-            print(f"  mvr.get(package={package!r}, direction={direction!r}): {rows} rows")
+    for package, direction in (("drn", "to_mvr"), ("wel", "to_mvr"), ("sfr", "from_mvr")):
+        rows = mvr.get(package=package, direction=direction)
+        print(f"  mvr.get(package={package!r}, direction={direction!r}): {len(rows)} rows,"
+              f" q_diff {rows['q_diff'].round(3).tolist()}")
     print("  mvr.summary():", len(mvr.summary()), "rows")
     for run, model in (("a", a), ("b", b)):
         moved = build_budget_result_table(model, budget_text="DRN-TO-MVR", package_name="drn")
@@ -167,8 +169,8 @@ def part_2_to_4(a, b, c):
             return table
 
     summary = mf.ModelGroup({"a": a, "b": Dried(b)}, reference="a").diff().hds.summary()
-    print(summary[["model", "max_abs_diff", "mean_abs_diff", "rmse", "within_tolerance"]]
-          .to_string(index=False))
+    print(summary[["model", "n", "n_one_sided", "max_abs_diff", "mean_abs_diff", "rmse",
+                   "within_tolerance"]].to_string(index=False))
 
     diff = mf.ModelGroup({"a": a, "c": c}, reference="a").diff()
     print("PART 3 -- LAK exchange at nstp=2 against nstp=1, per=1")
@@ -181,8 +183,8 @@ def part_2_to_4(a, b, c):
 
     print("PART 4 -- FloPy's bookkeeping columns as budget terms")
     budget = diff.bud.summary()
-    print(budget[budget["term"].isin(["stress_period", "time_step", "tslen"])]
-          .to_string(index=False))
+    print("  bookkeeping columns among the terms:",
+          sorted(set(budget["term"]) & {"stress_period", "time_step", "tslen"}))
 
     print("PART 5 -- diff.packages.uzf.results.sat")
     try:
@@ -193,7 +195,7 @@ def part_2_to_4(a, b, c):
 
 
 def part_6_package_names():
-    print("PART 6 -- packages found by NAME")
+    print("PART 6 -- packages named otherwise than their type")
 
     def toy(name, cond):
         ws = WORK / name

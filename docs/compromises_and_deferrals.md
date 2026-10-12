@@ -19819,7 +19819,9 @@ same day, which is the useful part of the result.
       end, a boundary per cell and `pname`, SFR/LAK per reach/lake. **Judgment calls:**
       `direction` defaults to `"to_mvr"` (it was `"from_mvr"`, which no boundary
       package has; every mover package provides); a boundary package's `"from_mvr"` is
-      REFUSED naming `"to_mvr"`, as are `layer=`/`cells=` on SFR/LAK. `summary()` reads
+      REFUSED naming `"to_mvr"`, as are `layer=`/`cells=` on SFR/LAK, and an SFR/LAK
+      declaring no budget file -- the only place MF6 writes those terms, so reading it as
+      "no rows" would be the old silence; `summary()` warns and leaves it out. `summary()` reads
       only the types some member declares `MOVER` on, instead of probing all seven and
       swallowing four exception types. **Not built:** UZF -- its `REJ-INF-TO-MVR` and
       `FROM-MVR` live in UZF's own budget file, which myflopy has no reader for, and its
