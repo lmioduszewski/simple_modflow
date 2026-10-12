@@ -37,6 +37,7 @@ from myflopy._length_units import (
 )
 from myflopy._logging import get_logger
 from myflopy._time_units import check_model_time_units, check_tdis_time_units
+from myflopy.areas import _same_crs
 
 # Re-exported so no caller changed when these moved out (ledger 264). Each name is
 # marked unused-import-exempt individually: ruff cannot tell a re-export from a stray
@@ -3853,8 +3854,6 @@ def _check_grid_identity(
     Called by :meth:`GridSpec.voronoi` and again at resolve, where a spec built
     directly or loaded from a saved project arrives.
     """
-
-    from myflopy.areas import _same_crs
 
     crs_given = [
         (label, value)
