@@ -3577,7 +3577,8 @@
     ],
     "SfrFlowObservationSpec": [
       "targets:POSITIONAL_OR_KEYWORD=<required>",
-      "prefix:POSITIONAL_OR_KEYWORD='sfr_flow'"
+      "prefix:POSITIONAL_OR_KEYWORD='sfr_flow'",
+      "weight:POSITIONAL_OR_KEYWORD=None"
     ],
     "SfrFlowTargets": [
       "locations:POSITIONAL_OR_KEYWORD=None",
@@ -3657,7 +3658,8 @@
     ],
     "SfrStageObservationSpec": [
       "targets:POSITIONAL_OR_KEYWORD=<required>",
-      "prefix:POSITIONAL_OR_KEYWORD='sfr_stage'"
+      "prefix:POSITIONAL_OR_KEYWORD='sfr_stage'",
+      "weight:POSITIONAL_OR_KEYWORD=None"
     ],
     "SfrStageTargets": [
       "locations:POSITIONAL_OR_KEYWORD=None",
