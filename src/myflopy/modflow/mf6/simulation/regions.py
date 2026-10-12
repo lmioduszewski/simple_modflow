@@ -12,6 +12,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.grid.geometry import selected_cells
 from myflopy.modflow.mf6.grid.selection import get_vor_cells_as_series
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.package_explorer_utils import (
     CellNumbering,
     cell_numbering,
@@ -875,12 +876,20 @@ def filter_region_heads(
     -------
     geopandas.GeoDataFrame
         The kept rows of ``all_heads`` with each cell's polygon and a ``region``
-        column.
+        column. A cell MF6 wrote as dry (-1e30) or inactive (+1e30) reads
+        ``NaN``, its row kept (ledger 495): those numbers are not heads, and
+        a mean over the region skips them.
     """
     node = model.regions.get(name)
     resolved_cells = model.regions.resolve_cells(name)
     heads = model.all_heads.reset_index()
     heads = heads.loc[heads["cell"].isin(resolved_cells)].copy()
+    # MF6's no-value numbers -- +1e30 inactive, -1e30 DRY -- are NaN, the row kept,
+    # by the head file's one rule (`headsplus._is_sentinel`, ledger 315): a region
+    # mean averaged the 1e30 in (ledger 495).
+    for column in heads.columns.difference(["kstpkper", "layer", "cell"]):
+        values = pd.to_numeric(heads[column], errors="coerce")
+        heads[column] = values.mask(_is_sentinel(values))
 
     target_layer = layer if layer is not None else getattr(node, "layer", None)
     if target_layer is not None:

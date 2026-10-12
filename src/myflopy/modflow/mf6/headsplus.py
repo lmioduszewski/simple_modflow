@@ -199,8 +199,11 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
 
         The file's own numbers, MODFLOW's no-value sentinels (+1e30 inactive, -1e30
         dry) included: every view of it -- :meth:`get`, :meth:`long`, :meth:`wide`,
-        :meth:`array`, the maps and the group and diff tiers -- reads them as
-        ``NaN`` (ledger 315).
+        :meth:`array`, :meth:`get_obs_heads`, ``model.region_heads``, the maps,
+        the sections and the group and diff tiers -- reads them as ``NaN``
+        (ledger 315; the last two readers since ledger 495). A calibration
+        TARGET is not a view: what a head target hands PEST keeps the number
+        (ledgers 351, 355).
         """
 
         if self._value_table is None:
@@ -1165,9 +1168,11 @@ class HeadsPlus(DependentVariableFile):
     ):
         """Compatibility wrapper for the dedicated observation-head helper.
 
-        Every SAVED time step in every layer, as the file holds it: no period-end
-        selection and no masking of MODFLOW's +1e30/-1e30 sentinels
-        (:meth:`get` does both).
+        Every SAVED time step in every layer: no period-end selection
+        (:meth:`get` makes one). MODFLOW's no-value sentinels (+1e30 inactive,
+        -1e30 dry) read ``NaN``, as in :meth:`long` (ledger 315); they were the
+        file's numbers until ledger 495, so a residual against a dry cell
+        read 1e30.
 
         Parameters
         ----------
@@ -1196,7 +1201,8 @@ class HeadsPlus(DependentVariableFile):
         Returns
         -------
         pandas.DataFrame
-            The heads, in the model's length units.
+            The heads, in the model's length units; ``NaN`` where the cell holds
+            no head.
         """
 
         return _get_obs_heads(

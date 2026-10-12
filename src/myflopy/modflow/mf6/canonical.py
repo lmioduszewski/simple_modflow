@@ -9,6 +9,7 @@ from scipy.spatial import Voronoi
 from shapely.geometry import Polygon, box
 
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.period_end import last_saved_step
 
 CANONICAL_TARGET_NAMES = frozenset(
@@ -244,7 +245,7 @@ def canonical_head_signals(model) -> dict[str, object]:
     frames = np.stack(
         [np.asarray(reader.get_data(kstpkper=key), dtype=float) for key in reader.get_kstpkper()]
     ).reshape(-1, int(model.gwf.modelgrid.nlay), int(model.gwf.modelgrid.ncpl))
-    valid = np.isfinite(frames) & (np.abs(frames) < 1.0e29)
+    valid = np.isfinite(frames) & ~_is_sentinel(frames)
     frames = np.where(valid, frames, np.nan)
     temporal_change = frames - frames[0]
     return {

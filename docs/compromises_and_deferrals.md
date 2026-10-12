@@ -33,11 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 495 entries (500 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 496 entries (501 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
 | 497 | The group and diff LAK exchange compare pairs a connection by where it sits, not by `iconn` | 2026-10-11 |
+| 495 | Every head reader masks MF6's no-value numbers through `headsplus._is_sentinel`, and a calibration target s... | 2026-10-11 |
 | 494 | A USG export changes only the values whose copies differ, and a RIV warns only on differing `rbot`s | 2026-10-11 |
 | 493 | A USG export weights a shared cell's DRN/GHB/RIV elevations by conductance | 2026-10-11 |
 | 492 | A package artifact keeps an EMPTY period block, and the restored package runs as the original did | 2026-10-11 |
@@ -19995,6 +19996,23 @@ same day, which is the useful part of the result.
       (h = 6.0: 250.0 both; `docs/reproducers/usg_export_shared_cell_elevation.py`). The
       warning, `cells_inexact` and the manifest note now count a DRN's differing `elev`,
       a RIV's differing `rbot` and a CHD's differing head.
+
+495. **Every head reader masks MF6's no-value numbers through `headsplus._is_sentinel`, and a calibration target still does not (2026-10-11).**
+      `model.region_heads` and `model.hds.get_obs_heads` returned MF6's -1e30 (dry) and
+      +1e30 (inactive) as heads, while the `all_values` docstring said every view read
+      them as `NaN`: on a 1 x 5 row with four cells dry, a region's mean was about
+      -8e29. Both mask now, the row kept, `region_heads` in `filter_region_heads` and
+      `get_obs_heads` by reading `hds.long()` (its module sits below `headsplus` in the
+      import layers). The interactive slider and the canonical signal summary used their
+      own copy of the test; they call the helper now. **Deliberately unchanged:** a
+      calibration TARGET (`HeadTargets.simulated_heads`/`compare()`, the PEST forward
+      run) is not a view and keeps the number, by ledgers 351 and 355; the legacy
+      cross-section path (`plot_model_cross_section(kstpkper=)`) needs no mask, because
+      FloPy's `plot_surface` masks the model's `hnoflo`/`hdry` itself; and
+      `ParallelModelWorkflow`'s split-versus-source check keeps its own copy of
+      `>= 1e29`, because importing `headsplus` there would move the module up an import
+      layer for a test that already does the right thing. `get_obs_heads` feeds the legacy
+      calibration class, so a residual against a dry cell is now `NaN`, not 1e30.
 
 497. **The group and diff LAK exchange compare pairs a connection by where it sits, not by `iconn` (2026-10-11).**
       MF6 numbers a lake's connections by their position in its list. A footprint one cell

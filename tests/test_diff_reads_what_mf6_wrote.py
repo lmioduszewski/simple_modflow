@@ -304,6 +304,30 @@ def test_a_group_compare_and_its_map_leave_a_dry_cell_blank(toys):
     assert np.nanmax(np.abs(drawn)) < 1.0
 
 
+def test_a_region_reads_a_dry_cell_as_nan_and_its_mean_skips_it(toys):
+    """``model.region_heads`` read ``all_heads`` raw: four rows of -1e30, and a
+    region mean of -8e29 (ledger 495)."""
+
+    model = toys["dry"]
+    model.regions.add_from_cells("row", cellids=[0, 1, 2, 3, 4], overwrite=True)
+    heads = model.region_heads("row", per=0)
+    assert len(heads) == 5
+    assert heads["elev"].isna().sum() == 4
+    assert heads["elev"].mean() == pytest.approx(float(heads["elev"].dropna().iloc[0]))
+    assert abs(heads["elev"].mean()) < 10.0
+
+
+def test_obs_heads_read_a_dry_cell_as_nan(toys):
+    """``hds.get_obs_heads`` read ``all_heads`` raw; it reads the masked series now
+    (ledger 495)."""
+
+    wide = toys["dry"].hds.get_obs_heads(locs=[0, 4])
+    assert wide.shape == (1, 2)
+    assert np.isfinite(wide[0]).all() and wide[4].isna().all()
+    long = toys["dry"].hds.get_obs_heads(locs=[0, 4], long_format=True)
+    assert long["elev"].isna().sum() == 1
+
+
 def test_a_long_and_wide_read_a_dry_cell_as_nan(toys):
     hds = toys["dry"].hds
     assert hds.all_values["elev"].min() == -1e30     # the file's own numbers

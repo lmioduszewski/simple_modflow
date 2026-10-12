@@ -71,7 +71,10 @@ Anything new that draws an interpolated surface draws that, never `.surface`.
 **A cell with no value is `|value| >= 1e29`, of EITHER sign** (ledger 315). MF6
 writes +1e30 for an inactive cell and -1e30 for a DRY one, and no real head comes
 near either, so the test is the magnitude: `headsplus._is_sentinel`, which
-`get()`, `array()`, `to_xugrid()` and the head surface share. A cutoff on one side
+`get()`, `array()`, `to_xugrid()`, the head surface, `model.region_heads` and
+`hds.get_obs_heads` share (the last two read the raw numbers until ledger 495; a
+region mean averaged them in). A calibration TARGET is not a view and keeps them
+(ledgers 351, 355). A cutoff on one side
 keeps the other. The surface cut at `> 10_000`, which kept a dry cell as a sample
 (a crater to -1e30 under every interpolator) and erased real heads above 10,000 ft.
 Anything new that reads the dependent-variable table masks through that helper; a

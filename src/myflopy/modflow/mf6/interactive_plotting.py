@@ -24,6 +24,7 @@ import pandas as pd
 from flopy.plot import PlotMapView
 
 from myflopy._optional import require
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.cross_section_plotting import (
     ModelCrossSectionStyle,
     plot_model_cross_section,
@@ -620,10 +621,14 @@ def _head_frame(model: SimulationBase, value, resolved_kstpkpers):
 
 
 def _clean_head_values(values):
-    """Mask non-finite and MODFLOW dry/no-data sentinels (``|value| >= 1e29``) in a head array."""
+    """Mask non-finite and MODFLOW dry/no-data sentinels (``|value| >= 1e29``) in a head array.
+
+    The sentinel test is the head file's one rule, ``headsplus._is_sentinel``
+    (ledger 315).
+    """
 
     array = np.asarray(values, dtype=float)
-    return np.ma.masked_where(~np.isfinite(array) | (np.abs(array) >= 1.0e29), array)
+    return np.ma.masked_where(~np.isfinite(array) | _is_sentinel(array), array)
 
 
 def _shared_head_limits(
@@ -640,7 +645,7 @@ def _shared_head_limits(
         frame = np.asarray(_head_frame(model, value, resolved_kstpkpers), dtype=float)
         for layer in layers:
             layer_values = frame if frame.ndim == 1 else frame[layer]
-            valid = layer_values[np.isfinite(layer_values) & (np.abs(layer_values) < 1.0e29)]
+            valid = layer_values[np.isfinite(layer_values) & ~_is_sentinel(layer_values)]
             if valid.size:
                 minimum = min(minimum, float(valid.min()))
                 maximum = max(maximum, float(valid.max()))

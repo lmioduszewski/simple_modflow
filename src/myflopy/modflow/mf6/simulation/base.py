@@ -1923,7 +1923,9 @@ class SimulationBase:
         geopandas.GeoDataFrame
             One row per kept ``(kstpkper, layer, cell)``, with the head column, the
             cell ``geometry`` in the grid's CRS, and a ``region`` column holding
-            ``name``.
+            ``name``. A cell MF6 wrote as dry (-1e30) or inactive (+1e30) reads
+            ``NaN``, its row kept, by the head file's rule (ledger 315); it read
+            the number until ledger 495, so a region mean averaged it in.
         """
 
         return filter_region_heads(

@@ -106,6 +106,13 @@ def get_obs_heads(
     long_format
         If ``True``, return a long/tidy dataframe indexed by location, layer,
         and stress period.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Every saved time step, every layer. A cell MF6 wrote as dry (-1e30) or
+        inactive (+1e30) reads ``NaN`` (ledger 495), as in
+        :meth:`HeadsPlus.long`.
     """
 
     if isinstance(locs, (str, os.PathLike)):
@@ -130,10 +137,12 @@ def get_obs_heads(
     named_cells = dict(heads.obs)
 
     obs_cells = sorted(set(named_cells.values()))
-    obs_heads = heads.all_heads.loc[idxx[:, :, obs_cells], :].reset_index().pivot(
+    # `long()`, not `all_heads`: the masked series (`headsplus._is_sentinel`, ledger
+    # 315), so a dry (-1e30) or inactive (+1e30) cell reads NaN (ledger 495).
+    obs_heads = heads.long().loc[idxx[:, :, obs_cells]].reset_index().pivot(
         index=["layer", "kstpkper"],
         columns="cell",
-        values="elev",
+        values=heads.store_column,
     )
     obs_heads = pd.DataFrame(
         {name: obs_heads[cell] for name, cell in sort_dict_by_keys(named_cells).items()},
