@@ -64,10 +64,10 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
             every member. A name that is not in the group matches nothing and
             returns an empty frame.
         per : int or None, optional
-            Keep one stress period, zero-based. The table holds the PERIODDATA
-            blocks the UZF file writes: a period with no block of its own -- which
-            MF6 runs on the last block before it -- has no rows. Default ``None``:
-            every written block.
+            One stress period, zero-based: what each member's UZF holds in it --
+            each object's row from the last block at or before ``per`` that lists
+            it -- as the single-model ``model.uzf.inputs.<field>.get(per=)`` reads
+            it (ledger 449). Default ``None``: every block as written.
         layer : int or list of int or None, optional
             Keep the UZF objects in these zero-based layers (an int, list or
             tuple; a NumPy array raises ``TypeError``). Default ``None``: every
@@ -87,7 +87,7 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
 
         frames = []
         for current_model_name, model in self.group.models.items():
-            frame = build_uzf_field_input_table(model, self.field_name)
+            frame = build_uzf_field_input_table(model, self.field_name, per=per)
             frame["model"] = current_model_name
             frames.append(frame)
 
@@ -127,8 +127,8 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
             Default ``None``: every non-reference member. The reference's own
             name, or a name not in the group, returns an empty frame.
         per : int or None, optional
-            Compare one stress period's written block, zero-based (see
-            :meth:`get`). Default ``None``: every written block.
+            Compare what UZF holds in one stress period, zero-based (see
+            :meth:`get`). Default ``None``: every block as written.
         layer : int or list of int or None, optional
             Compare only the UZF objects in these zero-based layers. Default
             ``None``: every layer.
@@ -253,9 +253,9 @@ class GroupUzfFieldAccessor(_GroupSpatialView):
             ``botm`` or ``idomain`` refuses too), grid type and ``ncpl``, or
             ``ValueError``.
         per : int, default 0
-            The stress period whose written block is compared, zero-based (see
-            :meth:`get`). A period with no rows draws every cell at
-            ``fill_value``.
+            The stress period whose UZF settings in force are compared,
+            zero-based (see :meth:`get`). A period with no rows draws every cell
+            at ``fill_value``.
         layer : int, default 0
             The zero-based layer whose UZF objects are drawn.
         multiplier : float, default 1.0

@@ -1073,6 +1073,12 @@ declared first, and the build refuses a barrier ahead of it, or cellids of the w
 shape, naming the spelling (FloPy reports both only when writing). The geometry verbs
 (`.line`, `.gpkg`, `.enclose`) need a Voronoi grid on the context, so they are DISV.
 
+Reading them back: `model.hfb.get(per=N)` / `.segments(per=N)` / `.map(per=N)` are the
+barriers MF6 has IN FORCE in period N -- an HFB block replaces every barrier before
+it, a period with no block of its own reuses the last one, an empty block removes
+them all -- and `model.hfb.results.q.get()` lists each step's own barriers that way;
+no `per` lists every block as written (ledger 449).
+
 ### Importing an existing MODFLOW-USG model
 
 | call | returns | notes |
@@ -1254,6 +1260,15 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
 **List BCs** (`chd/ghb/drn/riv/wel/rch/evt`):
 - `inputs.<field>` — the record fields above (e.g. `riv.inputs.stage`,
   `evt.inputs.rate`, `rch.inputs.recharge`) — each a spatial field noun.
+  `per=N` (on `get`, `map`, and the group's `group.packages.<pkg>.inputs`) is the
+  block MF6 RUNS in period N: the last one at or before N, so a package written once,
+  in period 0, reads the same at every `per`; an EMPTY block reads no records; an
+  array-form RCH/EVT takes each array from the last block that set it. UZF's
+  `inputs.<field>.get(per=N)` follows UZF's own rule -- a block sets only the objects
+  it lists -- so each object comes from the last block that lists it. No `per` lists
+  the blocks as WRITTEN, each row under its own period. Reading never changes the
+  package (ledger 449: it used to add an empty block, which MF6 runs as "no
+  records from here on").
 - `results.q` — the groundwater exchange (spatial). The `.get()` column names its
   reference frame: **`q_gwf`** (aquifer `.cbc` record; negative = the feature gains).
   Every package of the type, each row's `pname` naming its own (ledger 352).

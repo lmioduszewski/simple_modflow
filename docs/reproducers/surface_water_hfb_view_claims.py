@@ -38,10 +38,12 @@ WHAT IT MEASURES
   9. ``exchange_intensity`` is length²/time on an SFR cell and length/time on a LAK
      cell.
  10. The HFB maps colour their backdrop by CELL NUMBER; the results map does not colour
-     a barrier by its flow; ``inputs.map(per=None)`` draws every block; ``segments(per)``
-     reads the block DECLARED in a period, not the one in force; ``results.q.get()``
-     lists every block's barriers at every step; ``results.q.map`` with a ``per`` and a
-     ``kstpkper`` that disagree raises ``KeyError: 'layer'``.
+     a barrier by its flow; ``inputs.map(per=None)`` draws every block. Fixed by ledger
+     449, and printed here as now: ``segments(per)`` reads the block in force (it
+     read the block DECLARED in a period), ``results.q.get()`` lists each step's own
+     barriers (it listed every block's at every step), and ``results.q.map`` with a
+     ``per`` and a ``kstpkper`` that disagree raises ``ValueError`` naming both (it
+     raised ``KeyError: 'layer'``).
  11. ``model.lak.results.q``'s ``flow_area`` is MODFLOW 6's wetted ``FLOW-AREA`` (a
      vertical connection reads its cell's whole area or 0.0), not the connection
      table's ``connection_area``; a package budget's ``FLOW-JA-FACE`` is written from

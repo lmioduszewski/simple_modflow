@@ -17,7 +17,11 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _get_package_explorer_cache,
     _normalize_iterable_filter,
     cell_numbering,
+    checked_period,
+    feature_records_in_force,
+    period_block_in_force,
     split_cellid_columns,
+    written_period_blocks,
 )
 from myflopy.modflow.mf6.package_registry import (
     model_packages_of_type,
@@ -65,6 +69,17 @@ def build_cell_package_input_table(
         Live or file-backed model object.
     package_name
         MF6 package name such as ``"rch"``, ``"chd"``, ``"drn"``, or ``"ghb"``.
+    per : int or None, optional
+        Zero-based stress period: the records MF6 RUNS in it -- the last block at
+        or before ``per``, none under an empty block; for an array-form package
+        each array from the last block that set it -- each row stamped ``per``.
+        Read without changing the package (ledger 449). A non-integer raises
+        ``TypeError``, a period outside ``0 .. nper - 1`` ``IndexError``. Default
+        ``None``: every block as written, each row's ``per`` its own block.
+    layer : int or iterable of int or None, optional
+        Keep these zero-based layers. Default ``None``: every layer.
+    cells : iterable of int or None, optional
+        Keep these zero-based in-layer cell numbers. Default ``None``: every cell.
 
     Returns
     -------
@@ -142,10 +157,20 @@ def _one_package_table(model, package, package_name, *, per, layer_values, cell_
             cell_values=cell_values,
         )
     else:
+        # Never `get_data(key=per)`: FloPy CREATES the block it is asked about,
+        # and writes it as an empty PERIOD block that switches the package off
+        # (ledger 449). `per=N` reads the block MF6 RUNS in period N -- the
+        # last one at or before it -- stamped `per=N`; no `per` lists the blocks
+        # as written, each under its own period.
+        records = package.stress_period_data
         if per is not None:
-            period_items = [(int(per), package.stress_period_data.get_data(key=int(per)))]
+            _block, data = period_block_in_force(records, per)
+            period_items = [] if data is None else [(int(per), data)]
         else:
-            period_items = package.stress_period_data.get_data().items()
+            period_items = [
+                (period, data) for period, data in written_period_blocks(records).items()
+                if data is not None
+            ]
         frames: list[pd.DataFrame] = []
         # A DIS cellid is (layer, row, col): the model's own numbering reads it
         # (ledger 419).
@@ -205,20 +230,34 @@ def _array_package_input_table(
     if not fields:
         return pd.DataFrame(columns=["model", "package", "per", "layer", "cell"])
 
-    periods: dict[int, dict[str, np.ndarray]] = {}
+    by_field: dict[str, dict[int, np.ndarray]] = {}
     for field, entry in fields.items():
         data = entry.get_data()
         if not isinstance(data, dict):
             data = {0: data}
-        for period, values in data.items():
-            if values is None:
-                continue
-            periods.setdefault(int(period), {})[field] = np.asarray(values).ravel()
+        by_field[field] = {
+            int(period): np.asarray(values).ravel()
+            for period, values in data.items() if values is not None
+        }
+
+    periods: dict[int, dict[str, np.ndarray]] = {}
+    if per is None:
+        # The blocks as written: each period lists the arrays its own block sets.
+        for field, blocks in by_field.items():
+            for period, values in blocks.items():
+                periods.setdefault(period, {})[field] = values
+    else:
+        # The arrays MF6 holds in period `per`: each one from the last block at or
+        # before it that sets it -- an array a block leaves out keeps its value
+        # (ledger 449).
+        period = checked_period(next(iter(fields.values())), per)
+        for field, blocks in by_field.items():
+            earlier = [key for key in blocks if key <= period]
+            if earlier:
+                periods.setdefault(period, {})[field] = blocks[max(earlier)]
 
     frames: list[pd.DataFrame] = []
     for period in sorted(periods):
-        if per is not None and int(period) != int(per):
-            continue
         columns = periods[period]
         length = max(len(v) for v in columns.values())
         frame = pd.DataFrame({name: np.resize(values, length) for name, values in columns.items()})
@@ -270,6 +309,15 @@ def build_uzf_field_input_table(
         Live or file-backed model object.
     field_name
         Perioddata field name such as ``"finf"``.
+    per : int or None, optional
+        Zero-based stress period: what UZF holds in it -- each object's row from
+        the last block at or before ``per`` that lists it (a UZF block sets only
+        the objects it lists), stamped ``per``; read without changing the package
+        (ledger 449). Default ``None``: every block as written.
+    layer : int or iterable of int or None, optional
+        Keep the objects in these zero-based layers. Default ``None``: every layer.
+    cells : iterable of int or None, optional
+        Keep the objects on these zero-based in-layer cells. Default ``None``.
     package : str or None, optional
         The UZF package's NAME, any case. Default ``None``: the model's only UZF
         package -- several raise ``SeveralPackagesError`` naming them, because
@@ -296,10 +344,14 @@ def build_uzf_field_input_table(
     layer_lookup = ifno_to_cellid["layer"].to_numpy()
     cell_lookup = ifno_to_cellid["cellid"].to_numpy()
     frames: list[pd.DataFrame] = []
+    # Never `get_data(key=per)`, which adds the block it asks about (ledger
+    # 449). `per=N` reads what UZF holds in period N: each object's row in
+    # the last block at or before N that lists it.
     if per is not None:
-        period_items = [(int(per), uzf.perioddata.get_data(key=int(per)))]
+        data = feature_records_in_force(uzf.perioddata, per, id_field="ifno")
+        period_items = [] if data is None else [(int(per), data)]
     else:
-        period_items = uzf.perioddata.get_data().items()
+        period_items = written_period_blocks(uzf.perioddata).items()
     for period, data in period_items:
         if data is None or len(data) == 0:
             continue
@@ -393,7 +445,7 @@ def build_uzf_field_input_wide_table(
         return pd.DataFrame(columns=["ifno", "layer", "cell"])
 
     wide = base.set_index("ifno").copy()
-    period_items = uzf.perioddata.get_data().items()
+    period_items = written_period_blocks(uzf.perioddata).items()
     for period, data in period_items:
         if data is None or len(data) == 0:
             continue

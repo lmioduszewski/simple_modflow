@@ -12,7 +12,11 @@ import pandas as pd
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 from myflopy._logging import get_logger
-from myflopy.modflow.mf6.package_explorer_utils import cell_numbering
+from myflopy.modflow.mf6.package_explorer_utils import (
+    cell_numbering,
+    period_block_in_force,
+    written_period_blocks,
+)
 from myflopy.modflow.mf6.package_inputs import (
     CellPackageInputsExplorer,
     StaticArrayFieldExplorer,
@@ -308,17 +312,20 @@ class HfbResultsExplorer:
     def get(self, *, kstpkper=None, per: int | None = None) -> pd.DataFrame:
         """Return the simulated flow across every barrier, per time step.
 
-        Every barrier of EVERY period's block is listed at every step, whichever
-        block is in force then: a model whose period-3 block replaces its period-0
-        barriers still lists the period-0 faces from period 3 on, carrying the
-        flow of faces that are no longer barriers.
+        Each step lists the barriers in force in its period -- the last HFB block
+        at or before it (:meth:`HfbPackageExplorer.get`'s ``per``), none under an
+        empty block -- so a model whose period-3 block replaces its period-0
+        barriers lists the period-0 faces until period 3 and the new ones from
+        there on (ledger 449).
 
         Parameters
         ----------
         kstpkper : tuple, optional
-            One ``(kstp, kper)``. All saved steps by default.
+            One ``(kstp, kper)``, zero-based. All saved steps by default.
         per : int, optional
-            Restrict to one stress period.
+            Restrict to the saved steps of one zero-based stress period. Given
+            with ``kstpkper`` the two must name the same period: a ``per`` that
+            disagrees with ``kstpkper``'s raises ``ValueError`` naming both.
 
         Returns
         -------
@@ -328,11 +335,16 @@ class HfbResultsExplorer:
             name states: positive is flow FROM ``cell1`` INTO ``cell2``.
         """
 
-        barriers = HfbPackageExplorer(self.model).get()
-        if barriers.empty:
-            return pd.DataFrame(
-                columns=["kstp", "per", "layer", "cell1", "cell2", "hydchr", "q_cell1_to_cell2"]
+        columns = ["kstp", "per", "layer", "cell1", "cell2", "hydchr", "q_cell1_to_cell2"]
+        if kstpkper is not None and per is not None and int(kstpkper[1]) != int(per):
+            raise ValueError(
+                f"kstpkper={tuple(kstpkper)!r} is in period {int(kstpkper[1])} and "
+                f"per={per!r} names another; pass one of them"
             )
+        inputs = HfbPackageExplorer(self.model)
+        if inputs.get().empty:
+            return pd.DataFrame(columns=columns)
+        in_force: dict[int, pd.DataFrame] = {}
 
         ia, ja = self._connectivity()
         offset = 1 if ja.min() == 1 else 0
@@ -348,7 +360,10 @@ class HfbResultsExplorer:
             if not records:
                 continue
             flows = np.ravel(records[0])
-            for barrier in barriers.itertuples():
+            period = int(step[1])
+            if period not in in_force:
+                in_force[period] = inputs.get(per=period)
+            for barrier in in_force[period].itertuples():
                 node_a = barrier.layer * ncpl + barrier.cell1
                 node_b = barrier.layer * ncpl + barrier.cell2
                 lo, hi = int(ia[node_a]) - offset, int(ia[node_a + 1]) - offset
@@ -366,7 +381,7 @@ class HfbResultsExplorer:
                         "q_cell1_to_cell2": float(flows[position]) if position is not None else np.nan,
                     }
                 )
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows, columns=columns)
 
     def summary(self, **kwargs) -> pd.DataFrame:
         """One row per time step: how much water crossed the barriers, and the extremes.
@@ -474,10 +489,9 @@ class HfbResultsExplorer:
             periods each hold one time step has ``kstp == 0`` throughout.
         per : int, optional
             Stress period to read, zero-based, at its last saved step. Given with
-            ``kstpkper`` it FILTERS that step: the same period draws it, a
-            different one leaves nothing and raises ``KeyError: 'layer'`` from the
-            empty table. Every barrier of every period's block is drawn,
-            whichever block is in force at that step.
+            ``kstpkper`` the two must name the same period; one that disagrees
+            raises ``ValueError`` naming both. The barriers drawn are those in
+            force at that step (:meth:`get`; ledger 449).
         layer : int, default 0
             Zero-based layer. A barrier sits in one layer, so this selects which
             set of faces is drawn; barriers in other layers are not shown.
@@ -797,7 +811,7 @@ class HfbPackageExplorer:
 
         return self
 
-    def get(self) -> pd.DataFrame:
+    def get(self, *, per: int | None = None) -> pd.DataFrame:
         """Return one row per barrier: period, layer, the two cells, and ``hydchr``.
 
         Each record's two cellids are read by the one cellid rule
@@ -806,16 +820,35 @@ class HfbPackageExplorer:
         ``(layer, row, col)``, the node of a DISU ``(node,)`` (layer 0) -- and a
         cellid off the grid raises ``ValueError``.
 
+        Parameters
+        ----------
+        per : int or None, optional
+            Zero-based stress period: the barriers MODFLOW 6 has IN FORCE then.
+            An HFB ``PERIOD`` block replaces every barrier before it and a period
+            with no block of its own reuses the last block before it, so this is
+            the last block at or before ``per`` -- none before the first block or
+            under an EMPTY block -- each row stamped ``per`` (ledger 449).
+            Reading it never changes the package. A non-integer raises
+            ``TypeError``, a period outside ``0 .. nper - 1`` ``IndexError``.
+            Default ``None``: every block as WRITTEN, each row's ``per`` the
+            period of its own block, so a barrier declared in two blocks is listed
+            once per block.
+
         Returns
         -------
         pandas.DataFrame
             ``per``, ``layer``, ``cell1``, ``cell2``, ``hydchr`` -- plus
             ``length``, the shared face's own length, which is what MODFLOW 6
-            multiplies ``hydchr`` by to get the barrier's conductance.
+            multiplies ``hydchr`` by to get the barrier's conductance -- and
+            ``vertical`` (the two cells in different layers).
         """
 
         package = self.model.package(self.package_name)
-        data = package.stress_period_data.get_data()
+        if per is None:
+            data = written_period_blocks(package.stress_period_data)
+        else:
+            _block, records = period_block_in_force(package.stress_period_data, per)
+            data = {int(per): records}
         grid = getattr(self.model, "vor", None)
 
         # The cell the model's own grid numbers: a DIS barrier's LAST item is its
@@ -883,12 +916,11 @@ class HfbPackageExplorer:
         Parameters
         ----------
         per : int or None, optional
-            Zero-based stress period whose OWN block to return -- compared with the
-            ``per`` column of :meth:`get`, the period each block was DECLARED in,
-            so a period with no block of its own returns nothing although MODFLOW 6
-            still applies the last block before it. ``None`` (default) returns
-            every block's barriers, a barrier declared in two blocks once per
-            block.
+            Zero-based stress period: the barriers MODFLOW 6 has in force then --
+            the last block at or before ``per``, none under an empty block --
+            exactly :meth:`get`'s ``per`` (ledger 449). ``None`` (default)
+            returns every block's barriers as written, a barrier declared in two
+            blocks once per block.
 
         Returns
         -------
@@ -900,9 +932,7 @@ class HfbPackageExplorer:
         import geopandas as gpd
 
         grid = self.model.vor
-        table = self.get()
-        if per is not None:
-            table = table[table["per"] == int(per)]
+        table = self.get(per=per)
         rows, geoms = [], []
         for record in table.itertuples():
             if record.vertical:
@@ -988,9 +1018,9 @@ class HfbPackageExplorer:
             array of length ``vor.ncpl``. With none, the cells are coloured by
             their cell number, not left plain.
         per : int, optional
-            The zero-based stress period whose OWN block of barriers to draw
-            (:meth:`segments`): a period with no block of its own draws none,
-            although MODFLOW 6 still applies the last block before it. ``None``
+            The zero-based stress period whose barriers to draw: those MODFLOW 6
+            has in force then (:meth:`segments` -- the last block at or before
+            ``per``, none under an empty block; ledger 449). ``None``
             (default) draws every block's barriers together -- not the first
             block's -- so a model that redefines its barriers draws both sets.
         layer : int, default 0

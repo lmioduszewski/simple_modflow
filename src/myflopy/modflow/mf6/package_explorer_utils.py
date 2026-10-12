@@ -517,6 +517,239 @@ def _filter_normalized_table(
     return selected.reset_index(drop=True)
 
 
+def _stress_period_count(dataset) -> int | None:
+    """The simulation's ``nper``, as the FloPy dataset's own TDIS states it.
+
+    ``None`` when the dataset cannot say (a test double, a package detached from a
+    simulation): the period is then not range-checked.
+    """
+
+    try:
+        model_dim = dataset.data_dimensions.package_dim.model_dim[0]
+        return int(model_dim.simulation_time.get_num_stress_periods())
+    except (AttributeError, IndexError, TypeError, ValueError, MFDataException, FlopyException):
+        logger.debug("the dataset states no stress-period count; per is not range-checked")
+        return None
+
+
+def period_number(per) -> int:
+    """``per`` as a Python ``int`` stress period, or ``TypeError`` naming it.
+
+    The type half of :func:`checked_period`, for a caller that must refuse a
+    mistyped period BEFORE a ``PACKAGE_TABLE_UNAVAILABLE`` handler (which catches
+    ``TypeError``) could read it as a missing package -- the group tier.
+
+    Parameters
+    ----------
+    per : int
+        Zero-based stress period: a Python or NumPy integer, or a float holding a
+        whole number. ``bool``, any other float, a string and ``None`` raise
+        ``TypeError``. The range is not checked here.
+
+    Returns
+    -------
+    int
+        ``per`` as a Python ``int``.
+    """
+
+    if isinstance(per, bool) or not isinstance(per, (int, np.integer, float, np.floating)):
+        raise TypeError(f"per must be a zero-based stress period (an int), not {per!r}")
+    if not float(per).is_integer():
+        raise TypeError(f"per must be a whole stress period number, not {per!r}")
+    return int(per)
+
+
+def checked_period(dataset, per) -> int:
+    """``per`` as a zero-based stress period of ``dataset``'s simulation, or refused.
+
+    Parameters
+    ----------
+    dataset : flopy.mf6.data.mfdata.MFTransientData
+        The FloPy transient dataset ``per`` indexes (``stress_period_data``,
+        ``perioddata`` or one array of an array-form package); its simulation's
+        TDIS supplies ``nper``.
+    per : int
+        Zero-based stress period. A Python or NumPy integer, or a float that is a
+        whole number; ``bool``, any other float and a string raise ``TypeError``.
+
+    Returns
+    -------
+    int
+        ``per`` as a Python ``int``.
+
+    Raises
+    ------
+    TypeError
+        ``per`` is not an integer.
+    IndexError
+        ``per`` is negative, or not below the simulation's ``nper`` (when the
+        dataset states one). ``IndexError`` rather than ``ValueError`` on purpose:
+        the group and diff tiers read a ``ValueError`` from a table builder as "this
+        member does not carry the package" (``PACKAGE_TABLE_UNAVAILABLE``), which
+        would turn a mistyped period into a silently empty table.
+    """
+
+    period = period_number(per)
+    nper = _stress_period_count(dataset)
+    if period < 0 or (nper is not None and period >= nper):
+        bound = "" if nper is None else f" (nper={nper}: periods 0 to {nper - 1})"
+        raise IndexError(f"per={per!r} is not a stress period of this simulation{bound}")
+    return period
+
+
+def written_period_blocks(dataset) -> dict[int, object | None]:
+    """Every PERIOD block a FloPy transient dataset writes, read without changing it.
+
+    The one reader of a package's period blocks for the read views (ledger
+    449). FloPy's ``get_data(key=N)`` -- and ``has_data(key=N)`` -- CREATE the
+    storage for a period they are asked about, and FloPy writes that storage as an
+    EMPTY ``PERIOD`` block, which MF6 reads as "no records from here on": a view that
+    read GHB at a period with no block of its own turned 84 records into 0 from that
+    period on, under Normal termination. This asks only for keys already stored.
+
+    Parameters
+    ----------
+    dataset : flopy.mf6.data.mfdata.MFTransientData or None
+        A transient list or array dataset -- a list package's
+        ``stress_period_data``, an advanced package's ``perioddata``, one array of
+        an array-form package. ``None`` gives ``{}``.
+
+    Returns
+    -------
+    dict of int to object or None
+        ``{period: data}`` in period order, one entry per block the package file
+        writes: the records (a recarray or DataFrame) or array FloPy stores there,
+        or ``None`` for an EMPTY block -- one FloPy marks empty (``empty_keys``,
+        what ``{N: []}`` declares and a file's ``BEGIN PERIOD N`` / ``END PERIOD``
+        loads as) or whose storage holds nothing.
+    """
+
+    if dataset is None:
+        return {}
+    return {key: _block_data(dataset, key, stored) for key, stored in _written_block_keys(dataset)}
+
+
+def period_block_in_force(dataset, per) -> tuple[int | None, object | None]:
+    """The block MODFLOW 6 runs a list package's period ``per`` on, without changing it.
+
+    MF6's rule for a list boundary package (CHD, DRN, GHB, RIV, WEL, list RCH/EVT)
+    and for HFB: a ``PERIOD`` block replaces every record before it, and a period
+    with no block of its own reuses the last block before it -- so a package written
+    once, in period 0, runs those records in every period, and an EMPTY block
+    switches the package off until the next block (ledger 449). Read through
+    :func:`written_period_blocks`, so asking never adds a block.
+
+    Parameters
+    ----------
+    dataset : flopy.mf6.data.mfdata.MFTransientData
+        The package's ``stress_period_data`` (or any transient dataset whose blocks
+        replace one another).
+    per : int
+        Zero-based stress period, checked by :func:`checked_period`: a non-integer
+        raises ``TypeError``, a period outside ``0 .. nper - 1`` ``IndexError``.
+
+    Returns
+    -------
+    tuple of (int or None, object or None)
+        The period of the block in force and its data; ``(None, None)`` before the
+        first block, and ``(block, None)`` when the block in force is empty -- MF6
+        applies no records in either case.
+    """
+
+    period = checked_period(dataset, per)
+    in_force = [(key, stored) for key, stored in _written_block_keys(dataset) if key <= period]
+    if not in_force:
+        return None, None
+    block, stored = in_force[-1]
+    return block, _block_data(dataset, block, stored)
+
+
+def feature_records_in_force(dataset, per, *, id_field: str) -> pd.DataFrame | None:
+    """The settings MODFLOW 6 holds for each feature of an advanced package at ``per``.
+
+    UZF's rule (``gwf-uzf.f90``'s ``uzf_rp``), unlike a list package's: a ``PERIOD``
+    block sets the values of the features it LISTS and leaves every other feature at
+    what an earlier block set, so the settings in force are, feature by feature, its
+    row in the last block at or before ``per`` that lists it. An empty block changes
+    nothing. Read through :func:`written_period_blocks`, so asking never adds a block
+    (ledger 449).
+
+    Parameters
+    ----------
+    dataset : flopy.mf6.data.mfdata.MFTransientData
+        The package's ``perioddata``.
+    per : int
+        Zero-based stress period, checked by :func:`checked_period` (``TypeError``
+        for a non-integer, ``IndexError`` outside ``0 .. nper - 1``).
+    id_field : str
+        The record field naming the feature -- ``"ifno"`` for UZF.
+
+    Returns
+    -------
+    pandas.DataFrame or None
+        One row per feature some block at or before ``per`` lists -- the record's
+        own fields as FloPy stores them -- ordered by ``id_field``; ``None`` when
+        no such block lists any.
+    """
+
+    period = checked_period(dataset, per)
+    frames = []
+    for key, stored in _written_block_keys(dataset):
+        if key > period:
+            break
+        data = _block_data(dataset, key, stored)
+        if data is None:
+            continue
+        frame = pd.DataFrame(data)
+        if id_field not in frame.columns:
+            raise KeyError(f"the period records carry no {id_field!r} field")
+        frames.append(frame)
+    if not frames:
+        return None
+    combined = pd.concat(frames, ignore_index=True)
+    # A later block's row for a feature replaces an earlier one; the rest stand.
+    latest = combined.drop_duplicates(subset=id_field, keep="last")
+    return latest.sort_values(id_field, kind="stable").reset_index(drop=True)
+
+
+def _written_block_keys(dataset) -> list[tuple[int, bool]]:
+    """``(period, stored)`` for every block ``dataset`` writes, in period order.
+
+    A block is a key FloPy STORES or one it marks EMPTY (``empty_keys``); both are
+    read off the dataset's own bookkeeping, never through ``get_data(key=)``.
+    """
+
+    stored = {
+        int(key) for key in (dataset.get_active_key_dict() if hasattr(dataset, "get_active_key_dict") else {})
+        if isinstance(key, (int, np.integer))
+    }
+    empty = {
+        int(key) for key, flag in (getattr(dataset, "empty_keys", None) or {}).items()
+        if flag and isinstance(key, (int, np.integer))
+    }
+    return [(key, key in stored) for key in sorted(stored | empty)]
+
+
+def _block_data(dataset, key: int, stored: bool):
+    """The data FloPy stores for an EXISTING block ``key``; ``None`` when it holds none.
+
+    ``get_data(key=)`` adds no storage for a key already stored, which is the only
+    key this is asked about.
+    """
+
+    if not stored:
+        return None
+    data = dataset.get_data(key=key)
+    if data is None:
+        return None
+    if isinstance(data, pd.DataFrame):
+        return None if data.empty else data
+    try:
+        return None if len(data) == 0 else data
+    except TypeError:  # a 0-d array or a scalar constant: a value, not a record list
+        return data
+
+
 def _aggregate_hover_strings(series: pd.Series) -> str:
     """Aggregate a cell's non-numeric values into a concise hover string."""
 

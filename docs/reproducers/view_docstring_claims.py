@@ -18,11 +18,11 @@ every package), built and run once; a second, unrun copy is edited in memory whe
 measurement needs a package written differently.
 
 WHAT IT MEASURES
-  1. An input table holds the PERIOD BLOCKS written: with GHB's periods 1-5 removed (MF6
-     runs period 0's records in all six), ``ghb.inputs.get(per=3)`` has no rows and
-     ``ghb.inputs.cond.map(per=3)`` colours no cell -- and the read ADDS an empty block 3
-     to the package: written and run, that model has no GHB records from period 3 on,
-     where the same model written without the read has 84 in every period.
+  1. With GHB's periods 1-5 removed (MF6 runs period 0's records in all six),
+     ``ghb.inputs.get(per=3)`` had no rows, ``ghb.inputs.cond.map(per=3)`` coloured no
+     cell, and the read ADDED an empty block 3, so the model written afterwards had no
+     GHB records from period 3 on against 84. Fixed by ledger 449 and printed here
+     as now: 84 rows at ``per=3``, no block added, 84 records in every period.
   2. A record noun's ``**trace_kwargs`` tail carries the per-layer names the noun does
      not name to ``model.plot.map``, unrefused: ``show_mounding=True`` keeps every colour
      and changes every tooltip, on five nouns.

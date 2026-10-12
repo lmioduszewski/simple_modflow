@@ -95,18 +95,18 @@ class CellPackageInputsExplorer(FieldMappable):
         Parameters
         ----------
         per : int, optional
-            Zero-based stress period. Only the package's own PERIOD block
-            numbered ``per`` is read: MF6 applies the last block to every later
-            period that has none of its own, but such a period returns NO rows
-            here (measured: a GHB written once, in period 0, gives an empty table
-            at ``per=3``; ledger 441). A period past ``nper`` returns no rows
-            either. On a LIST package such a read also ADDS an empty block
-            numbered ``per`` to the FloPy package (FloPy's ``get_data(key=)``
-            creates it), so a model written afterwards carries an empty PERIOD
-            block there and MF6 applies NO records from that period on (measured:
-            that GHB, read at ``per=3`` and rewritten, ran with 0 records in
-            periods 3-5 against 84; ledger 441). Default ``None``: every
-            block, each row's ``per`` the block it came from.
+            Zero-based stress period: the records MF6 RUNS in it. A block replaces
+            every record before it and a period with no block of its own reuses
+            the last block before it, so this reads the last block at or before
+            ``per`` -- a GHB written once, in period 0, gives its records at every
+            ``per`` -- and none under an EMPTY block, each row stamped ``per``. An
+            array-form RCH/EVT takes each array from the last block that set it.
+            Reading never changes the package (it used to ADD an empty block
+            ``per``, which MF6 then ran as "no records from here on"; ledger
+            449). A non-integer raises ``TypeError``, a period outside
+            ``0 .. nper - 1`` ``IndexError``. Default ``None``: every block as
+            WRITTEN, each row's ``per`` the block it came from (an empty block
+            gives no row).
         layer : int or iterable of int, optional
             Zero-based layer(s) to keep. Default ``None``: every layer.
         cells : int or iterable of int, optional
@@ -219,14 +219,10 @@ class CellPackageInputFieldExplorer(SpatialView):
         Parameters
         ----------
         per : int, optional
-            Zero-based stress period. Only the package's own PERIOD block
-            numbered ``per`` is read: MF6 applies the last block to every later
-            period that has none of its own, but such a period returns NO rows
-            here (measured: a GHB written once, in period 0, gives an empty table
-            at ``per=3``), and on a list package the read ADDS an empty block
-            ``per`` to the FloPy package, which MF6 then reads as "no records
-            from here on" once the model is written (see the package's
-            ``inputs.get``; ledger 441). Default ``None``: every block.
+            Zero-based stress period: the records MF6 runs in it -- the last block
+            at or before ``per``, none under an empty block -- as the package's
+            ``inputs.get`` reads it (ledger 449). Default ``None``: every
+            block as written.
         layer : int or iterable of int, optional
             Zero-based layer(s) to keep. Default ``None``: every layer.
         cells : int or iterable of int, optional
@@ -325,14 +321,11 @@ class CellPackageInputFieldExplorer(SpatialView):
         Parameters
         ----------
         per : int, default 0
-            Stress period to read, zero-based. A package whose records do not
-            change with time has them all under period 0. Only the package's own
-            PERIOD block numbered ``per`` is read, so a period MF6 fills from an
-            earlier block draws as having no records -- every cell
-            ``fill_value`` (measured: a GHB written once, at ``per=3``) -- and on a
-            list package the read ADDS an empty block ``per`` to the FloPy
-            package, which MF6 reads as "no records from here on" once the model
-            is written (see the package's ``inputs.get``; ledger 441).
+            Stress period to read, zero-based: the records MF6 runs in it -- the
+            last block at or before ``per``, so a package written once, in period
+            0, draws the same at every ``per`` -- as the package's ``inputs.get``
+            reads it (ledger 449). Under an empty block every cell is
+            ``fill_value``.
         layer : int, default 0
             Zero-based layer. Records in other layers are not drawn; pass the
             layer the boundary actually sits in, which
@@ -625,13 +618,15 @@ class UzfFieldInputsExplorer(SpatialView):
         Parameters
         ----------
         per : int, optional
-            Zero-based stress period. Only the UZF package's own PERIOD block
-            numbered ``per`` is read: a period MF6 fills from an earlier block,
-            or one past ``nper``, returns no rows -- and the read ADDS an empty
-            block ``per`` to the FloPy package (FloPy's ``get_data(key=)`` creates
-            it), which a later write puts in the file as an empty PERIOD block
-            (measured: ``per=99`` left a block 99 behind; ledger 441).
-            Default ``None``: every block.
+            Zero-based stress period: what UZF HOLDS in it. A UZF PERIOD block sets
+            only the objects it lists and leaves the rest as an earlier block set
+            them (MF6's ``uzf_rp``, measured through MF6), so each object's row
+            comes from the last block at or before ``per`` that lists it, stamped
+            ``per``; an empty block changes nothing. Reading never changes the
+            package (it used to ADD an empty block ``per``; ledger 449). A
+            non-integer raises ``TypeError``, a period outside ``0 .. nper - 1``
+            ``IndexError``. Default ``None``: every block as WRITTEN, one row per
+            object a block lists.
         layer : int or iterable of int, optional
             Zero-based layer(s) of the UZF object's cell to keep. Default
             ``None``: every layer.
@@ -768,11 +763,12 @@ class UzfFieldInputsExplorer(SpatialView):
         Parameters
         ----------
         per : int, default 0
-            Stress period to read, zero-based. UZF perioddata is genuinely
-            time-varying -- an infiltration series is the usual reason the
-            package exists -- so this is the selector you will reach for most.
-            ``.wide()`` shows one column per period if you are not sure which one
-            you want.
+            Stress period to read, zero-based: what UZF holds in it, each object
+            from the last block at or before ``per`` that lists it (:meth:`get`;
+            ledger 449). UZF perioddata is genuinely time-varying -- an
+            infiltration series is the usual reason the package exists -- so this
+            is the selector you will reach for most. ``.wide()`` shows one column
+            per WRITTEN block if you are not sure which one you want.
         layer : int, default 0
             Zero-based layer. UZF objects below this layer are not drawn; layer 0
             holds the land-surface objects that receive ``finf``, which is why it

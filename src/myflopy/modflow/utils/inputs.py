@@ -8,7 +8,12 @@ if TYPE_CHECKING:
 import pandas as pd
 
 from myflopy._logging import get_logger
-from myflopy.modflow.mf6.package_explorer_utils import cell_numbering
+from myflopy.modflow.mf6.package_explorer_utils import (
+    cell_numbering,
+    feature_records_in_force,
+    period_block_in_force,
+    written_period_blocks,
+)
 from myflopy.modflow.mf6.package_plotting import (
     _apply_backend,
     refuse_noun_parameters,
@@ -45,6 +50,21 @@ def _legacy_list_package(model: SimulationBase, package_type: str):
         f"and this legacy helper reads ONE. model.{package_type}.inputs reads every one, each "
         "row tagged with its package's name (pname)."
     )
+
+
+def _records_in_force(package, per, *, empty_columns=("cellid",)) -> pd.DataFrame:
+    """The records MF6 runs a list package's period ``per`` on, as a DataFrame.
+
+    Through :func:`period_block_in_force`, the one non-mutating reader (ledger
+    449): ``stress_period_data.data[per]`` raised ``KeyError`` for a period
+    with no block of its own, which MF6 runs on the last block before it. No
+    records in force gives an empty frame with ``empty_columns``.
+    """
+
+    _block, records = period_block_in_force(package.stress_period_data, per)
+    if records is None:
+        return pd.DataFrame(columns=list(empty_columns))
+    return pd.DataFrame(records)
 
 
 def _cell_numbers(model: SimulationBase, cellids: pd.Series):
@@ -106,12 +126,14 @@ class UzfInput:
         Parameters
         ----------
         per : int or str, default 0
-            Zero-based stress period: the key of the UZF package's own PERIOD
-            block. A Python ``int`` only -- a numpy integer matches neither branch
-            and raises ``UnboundLocalError`` -- and a period with no block of its
-            own (MF6 reuses the previous one there) raises ``KeyError``. The
-            string ``"all"``, any case, returns every block instead, one column
-            per period; any other string raises ``ValueError``.
+            Zero-based stress period (a Python or NumPy integer): the ``finf``
+            UZF holds then -- each object's value from the last PERIOD block at or
+            before ``per`` that lists it, which is MF6's rule (a block sets only
+            the objects it lists; ledger 449). Reading it never changes the
+            package. A period outside ``0 .. nper - 1`` raises ``IndexError``. The
+            string ``"all"``, any case, returns every block AS WRITTEN instead,
+            one column per block's period; any other string raises
+            ``ValueError``.
         multiplier : float, default 360
             Multiplies every value, the zero-filled cells included. ``12 * 30``
             turns ft/day into inches per 30-day month in a feet-and-days model;
@@ -139,7 +161,9 @@ class UzfInput:
         if isinstance(per, str):
             if per.lower() == 'all':
                 dfs = []
-                for k, v in uzf.perioddata.data.items():
+                for k, v in written_period_blocks(uzf.perioddata).items():
+                    if v is None:
+                        continue
                     df = pd.DataFrame(v).loc[:, ['ifno', 'finf']]
                     df.columns = ['ifno', k]
                     df = df.set_index('ifno')
@@ -149,8 +173,12 @@ class UzfInput:
             else:
                 raise ValueError(f'Invalid period value: {per}. "all" is only accepted for this argument.')
 
-        elif isinstance(per, int):
-            perioddata = pd.DataFrame(uzf.perioddata.data[per]).loc[:, ['ifno', 'finf']]
+        else:
+            in_force = feature_records_in_force(uzf.perioddata, per, id_field="ifno")
+            perioddata = (
+                pd.DataFrame(columns=['ifno', 'finf']) if in_force is None
+                else pd.DataFrame(in_force).loc[:, ['ifno', 'finf']]
+            )
 
         # create 'cell' column - converts ifno to cellid
         perioddata['cell'] = perioddata.ifno.map(cell_of_ifno)
@@ -485,22 +513,23 @@ class RchInput:
         Parameters
         ----------
         per : int, optional
-            Zero-based stress period: the key of the package's own PERIOD block
-            in FloPy's ``stress_period_data.data``. A period with no block of its
-            own (MF6 reuses the previous one there) raises ``KeyError``, and so
-            does a string, whatever the annotation says. Default ``None``:
+            Zero-based stress period: the records MF6 runs then -- the last PERIOD
+            block at or before ``per``, none before the first block or under an
+            empty one (ledger 449). Reading it never changes the package. A
+            string raises ``TypeError``, whatever the annotation says, and a
+            period outside ``0 .. nper - 1`` ``IndexError``. Default ``None``:
             ``self.per``, which starts at 0.
         """
 
         per = self.per if per is None else per
-        df = pd.DataFrame(_legacy_list_package(self.model, "rch").stress_period_data.data[per])
+        df = _records_in_force(_legacy_list_package(self.model, "rch"), per)
         df['cellid'] = _cell_numbers(self.model, df['cellid'])
         df = df.set_index('cellid')
         return df
 
     def map(
             self,
-            per: tuple = None,
+            per: int | None = None,
             multiplier: float | int = 1
     ):
         """Plot the recharge choropleth for one period (filling zero-recharge cells).
@@ -514,11 +543,10 @@ class RchInput:
 
         Parameters
         ----------
-        per : int
-            Zero-based stress period: the key of the package's own PERIOD block.
-            Required in practice: the default ``None`` is no block key and raises
-            ``KeyError`` (:meth:`df` falls back to ``self.per``; this does not),
-            as does a period with no block of its own.
+        per : int, optional
+            Zero-based stress period: the records MF6 runs then, as :meth:`df`
+            reads them (the last block at or before ``per``; ledger 449).
+            Default ``None``: ``self.per``, as :meth:`df`.
         multiplier : float or int, default 1
             Multiplies every column of the record table before drawing -- the
             coloured ``recharge`` and the hover's columns alike, zero-filled
@@ -530,7 +558,10 @@ class RchInput:
         model = self.model
         vor = model.vor
 
-        df = pd.DataFrame(_legacy_list_package(model, "rch").stress_period_data.data[per])
+        df = _records_in_force(
+            _legacy_list_package(model, "rch"), self.per if per is None else per,
+            empty_columns=("cellid", "recharge"),
+        )
         df['cellid'] = _cell_numbers(model, df['cellid'])
         df = df.set_index('cellid')
         c_hov = df.reindex(list(range(vor.ncpl)), fill_value=0)  # insert missing cell nums
@@ -551,14 +582,24 @@ class DrnInput:
 
     def map(
             self,
-            per: tuple = None,
+            per: int | None = None,
     ):
-        """Highlight the DRN cells on the grid for one stress period."""
+        """Highlight the DRN cells on the grid for one stress period.
+
+        Parameters
+        ----------
+        per : int
+            Zero-based stress period: the drains MF6 runs then -- the last PERIOD
+            block at or before ``per``, none before the first block or under an
+            empty one (ledger 449). Reading it never changes the package.
+            Required: the default ``None`` raises ``TypeError``, as does a
+            non-integer; a period outside ``0 .. nper - 1`` raises
+            ``IndexError``.
+        """
 
         model = self.model
         vor = model.vor
 
-        drn_cells = _cell_numbers(
-            model, pd.DataFrame(_legacy_list_package(model, "drn").stress_period_data.data[per])['cellid']
-        ).tolist()
+        records = _records_in_force(_legacy_list_package(model, "drn"), per)
+        drn_cells = _cell_numbers(model, records['cellid']).tolist() if len(records) else []
         return vor.plot.map(select=drn_cells)

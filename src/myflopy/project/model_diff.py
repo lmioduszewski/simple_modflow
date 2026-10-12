@@ -37,6 +37,7 @@ from myflopy.modflow.mf6.package_explorer import (
     get_default_package_value_column,
     get_package_input_field_names,
 )
+from myflopy.modflow.mf6.package_explorer_utils import period_number
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.mf6.package_tables import (
     PACKAGE_TABLE_UNAVAILABLE,
@@ -126,8 +127,12 @@ def _package_keys(model, package_name: str, *, per=None, layer=None):
     every cell the package applies to (optionally filtered by ``per``/``layer``).
     A package that is absent, empty, or unreadable yields an empty set; the
     ``present`` flag distinguishes "attached but no cells" from "not attached".
+    ``per`` reads the records MF6 runs in that period; a mistyped one is refused
+    HERE, before the handler below would read its ``TypeError`` as "no package"
+    (ledger 449).
     """
 
+    per = None if per is None else period_number(per)
     try:
         table = build_cell_package_input_table(model, package_name, per=per, layer=layer)
     except PACKAGE_TABLE_UNAVAILABLE:
@@ -269,8 +274,8 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
             :meth:`summary` raise.
         **kwargs
             Forwarded to the group compare: ``per`` (int, a zero-based stress
-            period: the cells that period's own block declares, so a period with
-            no block of its own -- MF6 reuses the previous one -- has none),
+            period: the records MF6 runs in it, the last block at or before it;
+            ledger 449),
             ``layer`` (int or sequence of int, zero-based) and ``cells`` (int or
             sequence of int, zero-based in-layer), combined with AND; default
             ``None`` keeps everything. Anything else raises ``TypeError``. The
@@ -318,9 +323,9 @@ class PackageDiff(LeafFieldSugar, DiffSpatialView):
             every non-reference model. A name not in the group raises ``KeyError``;
             the reference's raises ``ValueError``.
         per : int or None, optional
-            Keep one zero-based stress period: the cells that period's own block
-            declares, so a period with no block of its own (MF6 reuses the previous
-            one) holds none in either model. Default ``None`` uses every period.
+            Keep one zero-based stress period: the cells MF6 runs in it in each
+            model -- the last block at or before ``per``, none under an empty
+            block (ledger 449). Default ``None`` uses every block as written.
         layer : int or sequence of int or None, optional
             Keep these zero-based layers. Default ``None`` keeps every layer.
         include_shared : bool, optional

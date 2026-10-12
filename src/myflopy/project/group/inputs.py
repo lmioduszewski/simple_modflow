@@ -18,6 +18,7 @@ from myflopy.modflow.mf6.package_explorer import (
     get_default_package_value_column,
     get_package_input_field_names,
 )
+from myflopy.modflow.mf6.package_explorer_utils import period_number
 from myflopy.modflow.mf6.package_tables import PACKAGE_TABLE_UNAVAILABLE
 from myflopy.modflow.utils.datatypes.hover import cell_input_hover, compare_hover
 from myflopy.project.group._shared import (
@@ -151,11 +152,13 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             every member. A name that is not in the group matches nothing and
             returns an empty frame.
         per : int or None, optional
-            Keep one stress period, zero-based. The table holds the period BLOCKS
-            the package file writes: a period with no block of its own -- which
-            MF6 runs on the last block before it -- has no rows, here as on the
-            single-model ``model.<pkg>.inputs.get(per=)``. Default ``None``: every
-            written block.
+            One stress period, zero-based: each member's records MF6 RUNS in it --
+            the last block at or before ``per``, none under an empty block -- as
+            the single-model ``model.<pkg>.inputs.get(per=)`` reads them (ledger
+            449). A non-integer raises ``TypeError`` (refused before a
+            member is read, so it is never mistaken for a missing package); a
+            period past a member's ``nper`` raises ``IndexError``. Default
+            ``None``: every block as written, each row's ``per`` its block.
         layer : int or list of int or None, optional
             Keep the rows in these zero-based layers (an int, list or tuple; a
             NumPy array raises ``TypeError``). Default ``None``: every layer.
@@ -172,6 +175,9 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             ``model``. Empty when no member carries the package.
         """
 
+        # Refused HERE, before the per-member handler below reads a TypeError as
+        # "this member carries no package" (ledger 449).
+        per = None if per is None else period_number(per)
         frames = []
         for current_model_name, model in self.group.models.items():
             # A group member that does not carry this package is skipped, NOT an
@@ -181,7 +187,7 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             # the comparison for every other member -- reporting models with
             # genuinely different values as identical to the reference.
             try:
-                frame = build_cell_package_input_table(model, self.package_name)
+                frame = build_cell_package_input_table(model, self.package_name, per=per)
             except PACKAGE_TABLE_UNAVAILABLE:
                 logger.debug(
                     "%s carries no readable %s; leaving it out of the group table",
@@ -220,9 +226,8 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             Summarize one member, by its name in the group. Default ``None``:
             every member. A name that is not in the group returns an empty frame.
         per : int or None, optional
-            Count only one stress period's written block, zero-based (see
-            :meth:`get`; a period with no block of its own counts nothing).
-            Default ``None``: every written block.
+            Count only the records in force in one stress period, zero-based (see
+            :meth:`get`). Default ``None``: every block as written.
         layer : int or list of int or None, optional
             Count only the rows in these zero-based layers. Default ``None``:
             every layer.
@@ -279,8 +284,8 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             Default ``None``: every non-reference member. The reference's own
             name, or a name not in the group, returns an empty frame.
         per : int or None, optional
-            Compare one stress period's written block, zero-based (see
-            :meth:`get`). Default ``None``: every written block.
+            Compare the records in force in one stress period, zero-based (see
+            :meth:`get`). Default ``None``: every block as written.
         layer : int or list of int or None, optional
             Compare only the rows in these zero-based layers. Default ``None``:
             every layer.
@@ -412,8 +417,8 @@ class GroupPackageInputs(LeafFieldSugar, _GroupSpatialView):
             ``botm`` or ``idomain`` refuses too), grid type and ``ncpl``, or
             ``ValueError``.
         per : int, default 0
-            The stress period whose written block is compared, zero-based (see
-            :meth:`get`). A period with no rows draws every cell at
+            The stress period whose records in force are compared, zero-based
+            (see :meth:`get`). A period with no rows draws every cell at
             ``fill_value``.
         layer : int, default 0
             The zero-based layer whose rows are drawn.

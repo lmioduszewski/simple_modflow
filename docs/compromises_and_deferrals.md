@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 448 entries (453 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 449 entries (454 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 449 | An input view reads a period through one non-mutating reader, and `per=N` is the block MODFLOW 6 has in force | 2026-10-11 |
 | 448 | A map refuses a `layer=` its model's views do not number: one layer on a DISU | 2026-10-11 |
 | 447 | A run's and a spec's MF6 executable is stored as text: a `str` as given, an `os.PathLike` through... | 2026-10-11 |
 | 446 | An explicit `trigger_sep` never thins a `"floor"` unit at or above its own minimum | 2026-10-11 |
@@ -18748,9 +18749,10 @@ same day, which is the useful part of the result.
       pass: each reads the reference model's own units); `group.hds.get` raises an opaque `TypeError` on a
       tuple `layer` or a bare-int `cells`, which its siblings accept; `compare_map`
       refuses a member whose discretization file differs in `botm` alone ("require the
-      same grid"); and an input table holds the period BLOCKS written, so a CHD declared
+      same grid"); and ~~an input table holds the period BLOCKS written, so a CHD declared
       in period 0 reads 0 rows at `per=1`, single-model and group alike, while MF6 runs it
-      in every period. **Two `sat` columns:** `group.packages.uzf.results.sat` (and
+      in every period~~ (fixed by ledger 449: `per=N` reads the block MF6 has in force,
+      single-model and group alike). **Two `sat` columns:** `group.packages.uzf.results.sat` (and
       `model.uzf.results.sat`) read NPF's `DATA-SAT`, whose table holds the record's flow
       (0.0) renamed `sat` beside the saturation, so `compare()`/`compare_map()` raise
       `ValueError` and `map()` `AttributeError`. One docstring was simply wrong and is
@@ -18770,12 +18772,14 @@ same day, which is the useful part of the result.
       columns are tripled there (-1480.68 for -493.56). A LAK results row's `flow_area`
       is MF6's own wetted `FLOW-AREA` -- a vertical connection's whole cell area or 0.0 --
       not the `connection_area` formula `build_lak_budget_result_table`'s docstring
-      (`package_budget.py`, not this pass's file) still states. `model.hfb.results.q.get()` lists
+      (`package_budget.py`, not this pass's file) still states. ~~`model.hfb.results.q.get()` lists
       every period block's barriers at every step whichever block is in force (MF6
       REPLACES a period's barriers with a later block's: after a period-3 block of 3 faces
       the 55 period-0 rows carry 21,809 ft3/d of open-face flow), and `hfb.inputs.map()` /
       `segments(per=)` read the block DECLARED in a period -- `per=1` draws nothing while
-      period 0's barriers are in force, and `per=None` draws every block. **Lies the prose
+      period 0's barriers are in force~~ (fixed by ledger 449: each step lists the
+      barriers in force in its period, and `get`/`segments`/`map(per=)` read the block in
+      force), and `per=None` draws every block. **Lies the prose
       told, corrected:** the HFB maps paint their backdrop by CELL NUMBER (not "plain"),
       and the results map does not colour a barrier by its flow (Plotly's trace cycle; all
       black on mpl); a record map's `multiplier` acts AFTER `agg` and scales the
@@ -18790,8 +18794,9 @@ same day, which is the useful part of the result.
       reach-number order, not a channel distance on a branched network;
       `model.lak.connections.map(per=)` raises a `TypeError` naming `ModelPlots.map`
       while the entry spliced from `plot.map` documents `per` (the `record` keep set in
-      `plot._inherit_noun_docs`, not fixed here); `hfb.results.q.map` with a `per` and a
-      `kstpkper` that disagree raises `KeyError: 'layer'`; an unknown map trace property
+      `plot._inherit_noun_docs`, not fixed here); ~~`hfb.results.q.map` with a `per` and a
+      `kstpkper` that disagree raises `KeyError: 'layer'`~~ (refused naming both since
+      ledger 449, and an empty selection draws the grid); an unknown map trace property
       is ignored under `backend="mpl"`; `model.budget["model"]`/`["types"]` return
       namespace attributes and an unknown term raises `AttributeError`, not `KeyError`.
       The SFR/LAK q maps' `agg` stays "accepted and not used". **Judgment call:** a noun
@@ -18805,7 +18810,7 @@ same day, which is the useful part of the result.
       `modflow/utils/inputs.py`, `project/model_config.py`, `library.py` and
       `modflow/mf6/observations/registry.py` (instructed: document the truth, do not change
       code) turned these up, each measured in `docs/reproducers/view_docstring_claims.py`;
-      each docstring now says what the code does. **Silent wrong answers:** an input table
+      each docstring now says what the code does. **Silent wrong answers:** ~~an input table
       holds the period BLOCKS written, so `ghb.inputs.get(per=3)` and
       `ghb.inputs.cond.map(per=3)` read no records for a GHB written once, in period 0,
       while MF6 runs it in every period (UZF's `inputs.<field>` likewise; ledger 439
@@ -18813,7 +18818,8 @@ same day, which is the useful part of the result.
       (FloPy's `get_data(key=)` creates the storage it is asked for), so a model written
       afterwards carries an empty PERIOD block and MF6 applies no GHB from period 3 on
       (measured through MF6: 84 records -> 0 in periods 3-5, Normal termination; a view
-      changed the model). `ModelConfig.model_options` reports `newtonoptions="NEWTON"` for
+      changed the model)~~ (fixed by ledger 449: one non-mutating reader, and `per=N`
+      reads the block MF6 has in force). `ModelConfig.model_options` reports `newtonoptions="NEWTON"` for
       a model holding an EMPTY `newtonoptions` (`""`/`[]`), which FloPy writes as no option,
       so a rebuild from it turns NEWTON on. `model.bud(pkg).plot_budget_obs` does not
       reproject its area polygons to the grid's CRS (an EPSG:4326 file reads 0.0 for every
@@ -18836,10 +18842,11 @@ same day, which is the useful part of the result.
       not `"head"`); `LakBudget`/`SFRBudget.get(return_df=)`, which only the literal `False`
       changes. **Loud failures:** `model.outputs.sfr.bud.plot_flows()` raises
       `KeyError: 'rno'` on every model (FloPy 3.10 names the column `ifno`);
-      `model.inputs.rch.map()`'s default `per=None` raises `KeyError`, and a float
+      ~~`model.inputs.rch.map()`'s default `per=None` raises `KeyError`~~ (reads
+      `self.per`, as `df()` does, since ledger 449), and a float
       `multiplier` raises `TypeError` on a package carrying boundnames; `inputs.uzf.finf`
-      raises `UnboundLocalError` for a NumPy integer `per` and `ValueError` for two UZF
-      objects under one cell; `plot_budget_obs` raises on a multi-part area polygon in a
+      ~~raises `UnboundLocalError` for a NumPy integer `per`~~ (reads one since ledger
+      449) and raises `ValueError` for two UZF objects under one cell; `plot_budget_obs` raises on a multi-part area polygon in a
       `.gpkg` (a `.shp`'s is read whole and works), on a file with no CRS and on a `str`
       path; a second `get_obs_heads` on one reader raises "No observation path found";
       `AoiLibrary.setdefault(1, ...)` stores `'1'` and then raises `TypeError`;
@@ -19048,3 +19055,34 @@ same day, which is the useful part of the result.
       `modelgrid.nlay`. Not changed: `model.hds.get(layer=1)` and
       `q.get(layer=1)` on a DISU still FILTER to zero rows, and `model.hds.array(layer=1)`
       raises numpy's `IndexError` -- a `get` is a filter, and the array reader is not a map.
+
+449. **An input view reads a period through one non-mutating reader, and `per=N` is the block MODFLOW 6 has in force (2026-10-11).**
+      FloPy's `get_data(key=N)` and `has_data(key=N)` CREATE the storage they are asked
+      about, which FloPy writes as an empty `PERIOD` block: reading GHB at a period with
+      no block of its own and rewriting the model ran 84 records -> 0 from there on, under
+      Normal termination (ledger 441). Every read view now goes through
+      `package_explorer_utils.written_period_blocks` / `period_block_in_force` /
+      `feature_records_in_force`, which read FloPy's own key bookkeeping
+      (`get_active_key_dict`, `empty_keys`) and fetch only keys already stored. **The rule,
+      measured through MF6** (`docs/reproducers/period_block_in_force.py`): a list package's
+      or HFB's block REPLACES every record before it, a period with no block reuses the last
+      one, and an EMPTY block runs none; an array-form RCH/EVT keeps each array from the
+      last block that set it; a UZF block sets only the objects it LISTS (`uzf_rp`), so each
+      object comes from the last block listing it. `per=N` reads that, every row stamped
+      `per=N`, at every tier (single model, group, diff, the legacy `model.inputs`
+      helpers, `model.hfb.get/segments/map`), and `hfb.results.q` lists each step's own
+      barriers. **Judgment call: `per=None` stays the blocks as WRITTEN**, each row under
+      its own block -- not expanded to every period, which would multiply a package written
+      once by `nper` and change every summary and `wide()` that reads the whole table; so
+      the per-period series and `uzf...wide()` still show one point per written block.
+      **A period outside `0 .. nper - 1` raises `IndexError`, not `ValueError`**, because
+      the group and diff tiers read a `ValueError` (and a `TypeError`) from a table builder
+      as "this member carries no package" (`PACKAGE_TABLE_UNAVAILABLE`); those tiers check
+      the TYPE (`period_number`) before their handler, so a mistyped `per` is refused rather
+      than read as an empty table. `hfb.results.q` given a `per` and a `kstpkper` naming
+      different periods now raises `ValueError` naming both, where it drew from an empty,
+      column-less frame (`KeyError: 'layer'`). **Not done (measured, another reader):** a
+      package ARTIFACT (`project.components._extract_stress_period_data`) captures
+      `stress_period_data.get_data()`, which leaves out an EMPTY block -- `{0: [...], 2: []}`
+      is captured as `{'0': [...]}` -- so a package switched off by one is restored running
+      the block before it.

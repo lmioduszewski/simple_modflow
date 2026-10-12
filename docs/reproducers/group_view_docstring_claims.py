@@ -43,9 +43,9 @@ WHAT IT MEASURES
   4. A member with no LAK or UZF package ends the group LAK and UZF views with
      ``AttributeError``; the inputs, cell-result, SFR and surface-water views leave it
      out.
-  5. An input table holds the period BLOCKS written: CHD declared in period 0 only has
-     no rows at ``per=1``, single-model and group alike, while the budget holds the
-     same cells in every period.
+  5. CHD declared in period 0 only: the budget holds the same cells in every period.
+     The input table had no rows at ``per=1`` (single-model and group alike) until
+     ledger 449; it now reads the block MF6 has in force, so the counts agree.
   6. ``values=`` in a ``compare_map`` tail REPLACES the drawn differences.
   7. ``lak.connections.map``'s ``multiplier`` acts AFTER ``agg`` and scales the filled
      cells too.
