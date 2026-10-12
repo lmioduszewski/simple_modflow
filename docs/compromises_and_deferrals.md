@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 490 entries (495 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 491 entries (496 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 491 | A Voronoi grid has one CRS and one name: two different spellings of either are refused, at... | 2026-10-11 |
 | 490 | A build refuses an OBS cellid of another form than its discretization's, and... | 2026-10-11 |
 | 489 | A variogram's `nugget=` reaches the prior PESTPP-IES receives: the structure is scaled to a sill of 1 befor... | 2026-10-11 |
 | 488 | A run with no mover moved 0.0, and a mover row only one run has is counted, not dropped | 2026-10-11 |
@@ -19912,3 +19913,18 @@ same day, which is the useful part of the result.
       Tests: `tests/test_build_cellids_dis_disu.py::test_an_observation_cellid_of_another_form_is_refused`,
       `::test_the_spelling_the_refusal_names_observes_the_drain`,
       `::test_an_observation_cellid_in_the_grids_form_builds`.
+
+491. **A Voronoi grid has one CRS and one name: two different spellings of either are refused, at `GridSpec.voronoi` and at resolve (2026-10-11).**
+      The resolver reprojected every source to `crs=` and labelled the grid
+      `voronoi_options.setdefault("crs", ...)`, so `crs="EPSG:2927",
+      voronoi_options={"crs": "EPSG:32610"}` built State Plane coordinates labelled UTM
+      (measured: x = 1,016,206.9 under an EPSG:32610 label); `options["crs"]` beside
+      `crs=` was ignored; `voronoi_options["name"]` renamed the grid away from the spec.
+      `specs._check_grid_identity` refuses two DIFFERENT CRSs among `crs=`/`options`/
+      `voronoi_options` (compared as CRSs: `2927` equals `"EPSG:2927"`), and an
+      `options`/`voronoi_options` `"name"` differing from `name=`. **Judgment call:**
+      `name=` defaults to `"grid"`, so a spec giving ONLY `voronoi_options={"name":
+      "site"}` is refused too -- the default cannot be told from a typed `"grid"`, and
+      `name=` is the one spelling. A CRS given only in `options`/`voronoi_options` still
+      labels without reprojecting, as documented. Tests:
+      `tests/test_gridspec_fail_fast.py` (declaration and resolve cases fail on revert).

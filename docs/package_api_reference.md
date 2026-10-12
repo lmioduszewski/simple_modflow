@@ -515,7 +515,12 @@ release-group boundnames; without them it names the fix and offers
   `idomain=` -- here, in `options`/`voronoi_options`, or on `mf.VoronoiGridPlus` --
   raises naming `mf.ModelContext(domain=...)`, the one route for it (it was dropped
   in silence; ledger 388). `crs=None` is refused at construction (ledger
-  389); leave `crs=` out for the default `"EPSG:2927"`.
+  389); leave `crs=` out for the default `"EPSG:2927"`. A grid has ONE CRS and ONE
+  name: `crs=`, `options["crs"]` and `voronoi_options["crs"]` naming different CRSs,
+  or an `options`/`voronoi_options` `"name"` differing from `name=`, raise naming both,
+  at the call and when a saved spec resolves -- `crs="EPSG:2927",
+  voronoi_options={"crs": "EPSG:32610"}` reprojected every source to 2927 and labelled
+  the grid 32610 (ledger 491).
   Full table + traps in `docs/model_building_cheatsheet.md`.
 - `GridSpec.resolve(project_root=, workspace=, build=, return_triangle=)` — turns a
   grid *recipe* into a grid *object*. `project_root` anchors relative source paths;

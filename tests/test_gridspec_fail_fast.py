@@ -302,3 +302,69 @@ def test_min_angle_and_angle_keywords_together_are_refused(tmp_path):
 def test_a_removed_key_is_explained_beside_another_unknown_key(tmp_path):
     with pytest.raises(TypeError, match=r"'max_optimization_points' was removed \(ledger 410\)"):
         _voronoi(tmp_path, mesh_options={"abc": 1, "max_optimization_points": 10})
+
+
+# --- One CRS and one name per grid (ledger 491) ------------------------ #
+#
+# The resolver reprojected every source to crs= and labelled the grid from
+# voronoi_options["crs"]: crs="EPSG:2927", voronoi_options={"crs": "EPSG:32610"}
+# built 2927 coordinates labelled 32610 (measured), with no word.
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"crs": "EPSG:2927", "voronoi_options": {"crs": "EPSG:32610"}},
+         r"crs='EPSG:2927' and voronoi_options\['crs'\]='EPSG:32610' name two CRSs"),
+        ({"crs": "EPSG:2927", "options": {"crs": "EPSG:32610"}},
+         r"crs='EPSG:2927' and options\['crs'\]='EPSG:32610' name two CRSs"),
+        ({"options": {"crs": 2927}, "voronoi_options": {"crs": "EPSG:32610"}},
+         r"options\['crs'\]=2927 and voronoi_options\['crs'\]='EPSG:32610'"),
+        ({"name": "a", "voronoi_options": {"name": "b"}},
+         r"name='a' and voronoi_options\['name'\]='b' name one grid twice"),
+        ({"name": "a", "options": {"name": "b"}},
+         r"name='a' and options\['name'\]='b' name one grid twice"),
+    ],
+)
+def test_two_crss_or_two_names_for_one_grid_are_refused_at_declaration(tmp_path, kwargs, match):
+    with pytest.raises(TypeError, match=match):
+        GridSpec.voronoi(boundary=_boundary(tmp_path), boundary_max_area=1000.0, **kwargs)
+
+
+def test_one_crs_or_name_given_twice_passes(tmp_path):
+    spec = GridSpec.voronoi(
+        name="g", boundary=_boundary(tmp_path), boundary_max_area=1000.0, crs=2927,
+        options={"crs": "EPSG:2927"}, voronoi_options={"crs": "epsg:2927", "name": "g"},
+    )
+    assert spec.resolve(workspace=tmp_path / "ws", build=False) is not None
+
+
+@pytest.mark.parametrize(
+    "payload, match",
+    [
+        ({"crs": "EPSG:32610"}, r"GridSpec 'g': crs='EPSG:2927' and voronoi_options\['crs'\]='EPSG:32610'"),
+        ({"name": "other"}, r"GridSpec 'g': name='g' and voronoi_options\['name'\]='other'"),
+    ],
+)
+def test_a_saved_spec_naming_two_crss_or_names_is_refused_at_resolve(tmp_path, payload, match):
+    good = GridSpec.voronoi(name="g", boundary=_boundary(tmp_path), crs="EPSG:2927", boundary_max_area=1000.0)
+    saved = good.to_dict()
+    saved["voronoi_options"] = {**saved.get("voronoi_options", {}), **payload}
+    spec = GridSpec.from_dict(saved)
+    with pytest.raises(TypeError, match=match):
+        spec.resolve(workspace=tmp_path / "ws", build=False)
+
+
+def test_the_built_grid_is_labelled_with_the_crs_its_sources_were_reprojected_to(tmp_path):
+    path = tmp_path / "utm.gpkg"
+    gpd.GeoDataFrame(
+        {"n": [1]}, geometry=[shp.box(500_000, 5_200_000, 500_300, 5_200_300)], crs="EPSG:32610"
+    ).to_file(path)
+    vor = GridSpec.voronoi(
+        boundary=ShapeSource(path), crs="EPSG:2927", boundary_max_area=5000.0,
+        voronoi_options={"crs": 2927},
+    ).resolve(workspace=tmp_path / "ws")
+    from pyproj import CRS
+
+    assert CRS.from_user_input(vor.crs).equals(CRS.from_user_input("EPSG:2927"))
+    # WA State Plane South, not UTM zone 10 metres.
+    assert vor.gdf_vorPolys.total_bounds[0] == pytest.approx(1_016_206.93, abs=1.0)

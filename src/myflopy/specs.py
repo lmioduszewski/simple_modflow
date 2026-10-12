@@ -2641,9 +2641,10 @@ class GridSpec:
     crs : str or int, optional
         ``"voronoi"`` route: the CRS every source is reprojected to and the
         grid is built in. When ``None`` no source is reprojected, and the grid
-        takes ``options["crs"]``, else ``"EPSG:2927"``. The ``"python"`` route
-        only stores it, for the builder to read as ``spec.crs``. Default
-        ``None``.
+        takes ``voronoi_options["crs"]``, else ``options["crs"]``, else
+        ``"EPSG:2927"``; two of the three naming different CRSs raise
+        ``TypeError`` at resolve (ledger 491). The ``"python"`` route only
+        stores it, for the builder to read as ``spec.crs``. Default ``None``.
     engine : str, optional
         ``"voronoi"`` route: the meshing engine. Only
         ``"triangle_voronoi_plus"`` (:meth:`voronoi`'s default) resolves;
@@ -3058,7 +3059,11 @@ class GridSpec:
         boundary : DataSourceSpec
             The model-domain polygon source (required).
         name : str, default "grid"
-            Grid name.
+            Grid name -- the spec's, and the built grid's. An ``options`` or
+            ``voronoi_options`` ``"name"`` key that differs raises ``TypeError``
+            naming both, here and at :meth:`resolve`: the grid it built was named
+            after the key while the spec kept this one (ledger 491). The
+            same name given there too passes.
         refinement : DataSourceSpec, optional
             **One** polygon source. Every polygon in it becomes its own region
             with its own target cell area -- so "several refinement areas" means
@@ -3093,10 +3098,15 @@ class GridSpec:
             sizes: a point contributes no cell-area target and no region. A
             non-point geometry contributes its ``representative_point()``.
         crs : str or int, optional
-            Target CRS for the grid: every source is reprojected to it. Without
-            it no source is reprojected; ``options["crs"]`` then only labels the
-            grid, and with neither the grid is built as ``"EPSG:2927"`` (see
-            :meth:`resolve`, Notes).
+            Target CRS for the grid: every source is reprojected to it, and the
+            built grid is labelled with it. Without it no source is reprojected;
+            ``options["crs"]`` (or ``voronoi_options["crs"]``) then only labels
+            the grid, and with none the grid is built as ``"EPSG:2927"`` (see
+            :meth:`resolve`, Notes). Two of the three naming DIFFERENT CRSs raise
+            ``TypeError`` naming both, here and at :meth:`resolve` -- with
+            ``voronoi_options["crs"]`` the grid held ``crs=`` coordinates labelled
+            as the other CRS, in silence (ledger 491); one CRS spelled twice
+            (``2927`` and ``"EPSG:2927"``) passes.
         engine : str, default "triangle_voronoi_plus"
             Meshing engine identifier. It is the only one :meth:`resolve`
             supports; any other value raises ``NotImplementedError`` there.
@@ -3139,8 +3149,10 @@ class GridSpec:
         voronoi_options : dict, optional
             Keyword arguments for ``VoronoiGridPlus(tri, ...)`` --
             ``idomain_path``, ``rasters``, ``qhull_options``, ``tessellation``,
-            ``name``. A key also given through ``**engine_options`` takes that
-            value. An ``"idomain"`` key raises ``TypeError``, as below.
+            ``name``, ``crs``. A key also given through ``**engine_options`` takes
+            that value. An ``"idomain"`` key raises ``TypeError``, as below; so do
+            a ``"crs"`` that differs from ``crs=``/``options["crs"]`` and a
+            ``"name"`` that differs from ``name=`` (ledger 491).
         **engine_options
             Stage options routed by name -- ``min_angle``, ``maximum_area``,
             ``profile``, ``idomain_path``, ``optimize`` and friends.
@@ -3359,6 +3371,10 @@ class GridSpec:
                 )
         _check_grid_option_keys(
             merged_options, merged_mesh_options, where="GridSpec.voronoi()"
+        )
+        _check_grid_identity(
+            name=name, crs=crs, options=merged_options,
+            voronoi_options=merged_voronoi_options, where="GridSpec.voronoi()",
         )
         return cls(
             name=name,
@@ -3812,6 +3828,68 @@ def _check_grid_option_places(places: list[tuple[str, dict[str, Any]]], *, where
             f"{where}: {named} are spellings of ONE option ({group[0]!r}); one "
             "silently replaced the other. Give one."
         )
+
+
+def _check_grid_identity(
+    *,
+    name: str,
+    crs: str | int | None,
+    options: dict[str, Any],
+    voronoi_options: dict[str, Any],
+    where: str,
+) -> None:
+    """Refuse two different CRSs, or two different names, for one Voronoi grid.
+
+    A grid's CRS can be spelled three ways -- ``crs=``, ``options["crs"]`` and
+    ``voronoi_options["crs"]`` -- and so can its name (``name=``,
+    ``options["name"]``, ``voronoi_options["name"]``). The resolver reprojects
+    every source to ``crs=`` but LABELLED the grid from ``voronoi_options["crs"]``
+    when it was there, so ``crs="EPSG:2927", voronoi_options={"crs":
+    "EPSG:32610"}`` built a grid in 2927 coordinates labelled 32610, and
+    ``options["crs"]`` beside ``crs=`` was ignored; ``voronoi_options["name"]``
+    renamed the built grid away from the spec's ``name=``. Two DIFFERENT values
+    are refused naming both (ledger 491, the two-spellings rule of ledger
+    417); one value given twice -- ``2927`` and ``"EPSG:2927"`` included -- passes.
+    Called by :meth:`GridSpec.voronoi` and again at resolve, where a spec built
+    directly or loaded from a saved project arrives.
+    """
+
+    from myflopy.areas import _same_crs
+
+    crs_given = [
+        (label, value)
+        for label, value in (
+            ("crs", crs),
+            ("options['crs']", options.get("crs")),
+            ("voronoi_options['crs']", voronoi_options.get("crs")),
+        )
+        if value is not None
+    ]
+    for label, value in crs_given[1:]:
+        first_label, first = crs_given[0]
+        if not _same_crs(first, value):
+            raise TypeError(
+                f"{where}: {first_label}={first!r} and {label}={value!r} name two CRSs "
+                "for one grid. Every source is reprojected to crs= while "
+                "voronoi_options['crs'] (else options['crs']) labels the built grid, "
+                "so the grid would hold coordinates in one CRS labelled as another "
+                "(or one of them was ignored). Give the grid's CRS once, as crs=."
+            )
+    names_given = [
+        (label, value)
+        for label, value in (
+            ("options['name']", options.get("name")),
+            ("voronoi_options['name']", voronoi_options.get("name")),
+        )
+        if value is not None
+    ]
+    for label, value in names_given:
+        if str(value) != str(name):
+            raise TypeError(
+                f"{where}: name={name!r} and {label}={value!r} name one grid twice; "
+                f"the spec would be {name!r} and the grid it builds {value!r}. Give "
+                "the name once, as name=."
+            )
 
 
 def _grid_source(value: Any, argument: str) -> DataSourceSpec:

@@ -28,6 +28,7 @@ from myflopy.specs import (
     _GRID_TRIANGLE_OPTION_KEYS,
     _GRID_VORONOI_ROUTED_KEYS,
     GridSpec,
+    _check_grid_identity,
     _check_grid_option_keys,
     _check_grid_option_places,
 )
@@ -555,6 +556,10 @@ def _resolve_voronoi(
     _check_grid_option_places(
         [("options", options), ("triangle_options", dict(spec.triangle_options))],
         where=f"GridSpec {spec.name!r}",
+    )
+    _check_grid_identity(
+        name=spec.name, crs=spec.crs, options=options,
+        voronoi_options=dict(spec.voronoi_options), where=f"GridSpec {spec.name!r}",
     )
     triangle_options = _triangle_options(spec, options)
     model_ws = workspace or _option(
