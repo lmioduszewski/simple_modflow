@@ -41,7 +41,9 @@ the cell centres, which is exact -- use it when the raster's resolution matters.
 
 from __future__ import annotations
 
+import functools
 import json
+import operator
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -442,18 +444,33 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
             [p for p in range(int(model.nper)) if p not in set(switched_off)]
         )
         partial = int((points["periods"] != everywhere).sum())
-        # Several records on one cell in one period are ONE feature (ledger 467).
+        # Several records on one cell in one period are ONE feature (ledger 467), a
+        # DRN/GHB/RIV elevation weighted by conductance (ledger 493).
         combined = int(points.attrs.get("records_combined", 0))
-        disagreeing = int(points.attrs.get("cells_disagreeing", 0))
+        inexact = int(points.attrs.get("cells_inexact", 0))
+        unweighted = int(points.attrs.get("cells_unweighted", 0))
         if combined:
+            weighted = ftype in _WEIGHTED_BY
             manifest.notes.append(
                 f"{ftype}: {combined} record(s) shared a cell with another record of the "
                 "same period and were combined into its feature -- conductance and rate "
-                "summed, an elevation or head the mean"
+                "summed, "
                 + (
-                    f"; on {disagreeing} cell(s) the copies' elevations differ, so the "
-                    "feature is not the boundary MF6 applied there"
-                    if disagreeing else ""
+                    "an elevation the conductance-weighted mean"
+                    if weighted else "a head the mean"
+                )
+                + (
+                    f"; on {inexact} cell(s) the copies' elevations differ, so the feature "
+                    + (
+                        "is MF6's boundary only while the head is not between them"
+                        if weighted else "is not the boundary MF6 applied there"
+                    )
+                    if inexact else ""
+                )
+                + (
+                    f"; on {unweighted} cell(s) the copies' conductances total zero, so "
+                    "the elevation is their plain mean"
+                    if unweighted else ""
                 )
                 + "."
             )
@@ -560,40 +577,99 @@ def _value_kind(ftype: str, column: str) -> str:
     return spec.kind
 
 
+#: The conductance column a head-dependent boundary's elevations are weighted by when
+#: several records one period gives one cell become one feature (ledger 493).
+_WEIGHTED_BY = {"DRN": "cond", "GHB": "cond", "RIV": "cond"}
+
+#: Head-dependent boundaries whose conductance-weighted record is MF6's boundary for
+#: EVERY head. GHB is linear in the head, so it always is; a DRN switches off below its
+#: elevation and a RIV's leakage stops growing below its ``rbot``, so theirs is exact
+#: only while the head is not BETWEEN two copies' elevations (ledger 493).
+_WEIGHTED_EXACT = {"GHB"}
+
+
 def _combine_records(frame, ftype: str, columns: list[str]):
     """One row per ``(period, layer, cell)``: several records on one cell combined by KIND.
 
     MF6 applies every record a period gives one cell -- two drains, two wells -- and
     the export writes one feature per cell, so they are combined by what each value
     IS (:func:`~myflopy.modflow.mf6.package_registry.agg_for_kind`, ledger 297): a
-    conductance or a rate ADDS, an elevation or a head is the MEAN. ``_bc_frames``
-    read such a cell's values as a Series and stopped on ``float()`` (ledger 467).
+    conductance or a rate ADDS. An elevation of a DRN, GHB or RIV -- ``elev``,
+    ``bhead``, ``stage``, ``rbot`` -- is the CONDUCTANCE-WEIGHTED mean of its copies
+    (ledger 493), the one record whose flow is the copies' summed flow: always for
+    GHB, and for a DRN or RIV while the head is not between two copies' elevations
+    (measured through MF6, ``docs/reproducers/usg_export_shared_cell_elevation.py``:
+    ``elev 7.5 / cond 100`` plus ``7.0 / 50`` at head 8.0 drain 100.0, the weighted
+    record 100.0, the plain mean 112.5). A cell whose copies' conductances total zero
+    takes the plain mean. Any other elevation or head (CHD) is the plain MEAN.
+    ``_bc_frames`` read such a cell's values as a Series and stopped on ``float()``
+    (ledger 467).
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        :meth:`UsgModel.boundary_frame` rows: ``period``, ``layer``, ``cell`` and the
+        package's value columns.
+    ftype : str
+        The USG package, ``"CHD"``, ``"DRN"``, ``"GHB"``, ``"RIV"`` or ``"WEL"``.
+    columns : list of str
+        The value columns to combine (USG names, ``_BC_VALUES``).
 
     Returns
     -------
     tuple
-        ``(frame, disagreeing)``: the combined frame (its ``attrs`` kept), and the
+        ``(frame, inexact, unweighted)``: the combined frame (its ``attrs`` kept); the
         ``(period, layer, cell, column)`` of every non-extensive value whose copies on
-        one cell DIFFER, where the mean is not the boundary MF6 applied.
+        one cell DIFFER where the combined record is not MF6's boundary at every head
+        (a CHD's mean; a DRN's or RIV's weighted elevation, exact only while the head
+        is outside the copies' range); and the ``(period, layer, cell)`` of every cell
+        whose copies DIFFER and whose conductances total zero, which took the plain
+        mean.
     """
 
     keys = ["period", "layer", "cell"]
     if not frame.duplicated(keys).any():
-        return frame, []
+        return frame, [], []
     rules = {column: agg_for_kind(_value_kind(ftype, column)) for column in columns}
     grouped = frame.groupby(keys, sort=False)
-    disagreeing = [
-        (int(period), int(layer), int(cell), column)
+    spread = {
+        column: (grouped[column].max() - grouped[column].min())
         for column, rule in rules.items()
         if rule != "sum"
-        for (period, layer, cell), spread in (grouped[column].max() - grouped[column].min()).items()
-        if spread > 0
-    ]
+    }
     others = {column: "first" for column in frame.columns if column not in keys and column not in rules}
-    combined = grouped.agg({**rules, **others}).reset_index()[list(frame.columns)]
+    combined = grouped.agg({**rules, **others})
+    weight = _WEIGHTED_BY.get(ftype)
+    unweighted: list[tuple[int, int, int]] = []
+    if weight is not None and weight in frame.columns and spread:
+        total = grouped[weight].sum()
+        nonzero = total != 0
+        by_cell = [frame[key] for key in keys]
+        for column in spread:
+            weighted = (frame[column] * frame[weight]).groupby(by_cell, sort=False).sum()
+            combined[column] = (weighted / total.where(nonzero)).where(nonzero, combined[column])
+        differs = functools.reduce(operator.or_, (values > 0 for values in spread.values()))
+        unweighted = [
+            (int(period), int(layer), int(cell))
+            for (period, layer, cell), flag in (differs & ~nonzero).items()
+            if flag
+        ]
+    # A combined record that is not MF6's boundary at every head: a CHD's mean, and a
+    # DRN's or RIV's weighted elevation (exact only while the head is outside the
+    # copies' range). Copies whose conductances total zero carry no flow either way.
+    exact = ftype in _WEIGHTED_EXACT and weight is not None
+    skipped = set(unweighted)
+    inexact = [
+        (int(period), int(layer), int(cell), column)
+        for column, by_cell_spread in spread.items()
+        if not exact
+        for (period, layer, cell), value in by_cell_spread.items()
+        if value > 0 and (int(period), int(layer), int(cell)) not in skipped
+    ]
+    combined = combined.reset_index()[list(frame.columns)]
     combined = type(frame)(combined, geometry="geometry", crs=frame.crs) if "geometry" in frame else combined
     combined.attrs = dict(frame.attrs)
-    return combined, disagreeing
+    return combined, inexact, unweighted
 
 
 def _bc_frames(model: UsgModel, ftype: str, crs: str):
@@ -612,10 +688,13 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
     period of its cycle carries it, NaN where the cell has no record in force.
 
     Several records one period gives one cell are combined first, by kind
-    (:func:`_combine_records`): MF6 applies each, and a feature is one per cell. Both
-    frames' ``attrs`` say how many records were combined (``records_combined``) and on
-    how many cells the copies' elevations differ (``cells_disagreeing``), which also
-    warns.
+    (:func:`_combine_records`): MF6 applies each, and a feature is one per cell -- its
+    conductance or rate the sum, a DRN/GHB/RIV elevation the conductance-weighted mean
+    (ledger 493). Both frames' ``attrs`` say how many records were combined
+    (``records_combined``), on how many cells the combined record is not MF6's boundary
+    at every head (``cells_inexact``: differing copies of a CHD head, or of a DRN/RIV
+    elevation), and on how many differing copies' conductances total zero, so the
+    elevation is their plain mean (``cells_unweighted``); each of the last two warns.
 
     The chains come from face adjacency (see :func:`_adjacency`), so a corner-only
     contact starts a new chain rather than extending one through the corner.
@@ -629,15 +708,32 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
     polys = model.grid.gdf_vorPolys
     columns = [c for c in _BC_VALUES.get(ftype, ()) if c in frame.columns]
     rows_before = len(frame)
-    frame, disagreeing = _combine_records(frame, ftype, columns)
-    if disagreeing:
-        cells = sorted({(layer + 1, cell) for _period, layer, cell, _column in disagreeing})
+    frame, inexact, unweighted = _combine_records(frame, ftype, columns)
+    if inexact:
+        cells = sorted({(layer + 1, cell) for _period, layer, cell, _column in inexact})
+        rule = (
+            "its elevation the conductance-weighted mean, which is MF6's boundary while "
+            "the head is not between the copies' elevations and not while it is"
+            if ftype in _WEIGHTED_BY
+            else "its head the MEAN, which is not the same boundary there"
+        )
         message = (
             f"{ftype}: {len(cells)} cell(s) hold several records in one period whose "
-            f"{', '.join(sorted({column for *_, column in disagreeing}))} values differ -- "
+            f"{', '.join(sorted({column for *_, column in inexact}))} values differ -- "
             f"(layer, cell) {cells[:5]}{' ...' if len(cells) > 5 else ''}. MF6 applies each "
             "record; the export writes ONE feature per cell, its conductance or rate the "
-            "sum and its elevation the MEAN, which is not the same boundary there."
+            f"sum and {rule} (ledger 493)."
+        )
+        logger.warning(message)
+        warnings.warn(message, UserWarning, stacklevel=stacklevel_outside_package())
+    if unweighted:
+        cells = sorted({(layer + 1, cell) for _period, layer, cell in unweighted})
+        message = (
+            f"{ftype}: {len(cells)} cell(s) hold several records in one period whose "
+            f"conductances total zero, so their differing elevations could not be "
+            f"weighted by conductance and the feature takes their plain MEAN -- (layer, "
+            f"cell) {cells[:5]}{' ...' if len(cells) > 5 else ''}. With no conductance it "
+            "moves no water either way (ledger 493)."
         )
         logger.warning(message)
         warnings.warn(message, UserWarning, stacklevel=stacklevel_outside_package())
@@ -711,7 +807,8 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
     out_points, out_lines = out_points.to_crs(crs), out_lines.to_crs(crs)
     combined = {
         "records_combined": rows_before - len(frame),
-        "cells_disagreeing": len({(layer, cell) for _p, layer, cell, _c in disagreeing}),
+        "cells_inexact": len({(layer, cell) for _p, layer, cell, _c in inexact}),
+        "cells_unweighted": len({(layer, cell) for _p, layer, cell in unweighted}),
     }
     out_points.attrs.update(combined)
     out_lines.attrs.update(combined)

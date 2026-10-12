@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 492 entries (497 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 493 entries (498 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 493 | A USG export weights a shared cell's DRN/GHB/RIV elevations by conductance | 2026-10-11 |
 | 492 | A package artifact keeps an EMPTY period block, and the restored package runs as the original did | 2026-10-11 |
 | 491 | A Voronoi grid has one CRS and one name: two different spellings of either are refused, at... | 2026-10-11 |
 | 490 | A build refuses an OBS cellid of another form than its discretization's, and... | 2026-10-11 |
@@ -19510,14 +19511,17 @@ same day, which is the useful part of the result.
       `_bc_frames` read such a cell's values as a Series and stopped on `float()`, and
       `_attach_cycle`'s lookup kept the LAST copy. They combine first now, through
       `agg_for_kind` (ledger 297): conductance and rate add, an elevation or head is the
-      MEAN. **Judgment call, left open:** for two drains on one cell the
+      MEAN. ~~**Judgment call, left open:** for two drains on one cell the
       CONDUCTANCE-weighted elevation is exact while both drain, and the plain mean is
       not -- measured by hand, `elev 7.5 / cond 100` plus `7.0 / 50` at head 8.0: MF6
       100.0, mean (7.25 x 150) 112.5, weighted (7.333 x 150) 100.0; at head 7.2 MF6 10.0
       and both combinations 0. The mean was chosen because it is the library's one rule
       for records on a cell (the input tables and maps use it); where the copies differ
       the export WARNS naming the cells and the manifest counts them
-      (`records_combined`), so the case is never silent.
+      (`records_combined`), so the case is never silent.~~ (decided by the user,
+      ledger 493: a DRN/GHB/RIV elevation is the CONDUCTANCE-weighted mean -- RIV's
+      stage and rbot both -- measured through MF6; a zero total conductance takes the
+      plain mean and warns; a CHD head stays the mean.)
 
 468. **`mf.sfr`/`mf.lak` write no empty period block (2026-10-11).**
       `SFRBuilder.perioddata` and `LAKBuilder.perioddata` gave every period an entry,
@@ -19945,3 +19949,21 @@ same day, which is the useful part of the result.
       restore already read both as none). Test:
       `tests/test_package_artifact_round_trip.py::test_an_empty_period_block_is_captured_and_restored_and_mf6_runs_it_the_same`
       (real MF6 runs; the budgets are identical per period, period 2 differing on revert).
+
+493. **A USG export weights a shared cell's DRN/GHB/RIV elevations by conductance (2026-10-11).**
+      The user's call on ledger 467's open question. Several records one period gives one
+      cell become one feature whose conductance is their sum and whose elevation --
+      `elev`, `bhead`, `stage` and `rbot` alike -- is `sum(C_i x e_i) / sum(C_i)`, the one
+      record that moves what the copies move. Measured through MF6
+      (`docs/reproducers/usg_export_shared_cell_elevation.py`): exact at every head for GHB
+      (linear in the head), and for DRN/RIV while the head is not BETWEEN two copies'
+      elevations -- DRN `7.5/100 + 7.0/50` at h = 8.0: -100.0 both, the old mean -112.5;
+      RIV at h = 8.5: 25.0 both, the mean 0.0; between (DRN h = 7.2: -10.0 against 0.0;
+      RIV h = 7.2: 190.0 against 200.0) no single record is. **Chosen:** a DRN/RIV cell
+      whose copies differ still WARNS (`cells_inexact`), a GHB one does not; copies whose
+      conductances total zero take the plain mean and warn (`cells_unweighted`) -- they
+      move no water either way; a CHD head stays the mean. The `cells_disagreeing` attr
+      became those two counts. `agg_for_kind` is unchanged: the input tables and maps
+      still average elevations (ledger 297) -- this is the export's rule for writing ONE
+      record in place of several. Tests: `tests/test_usg_export_periods.py`, the
+      `test_the_exported_record_moves_what_mf6_s_two_records_move` cases on real MF6.

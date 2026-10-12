@@ -129,29 +129,68 @@ def test_the_manifest_counts_features_in_force_in_only_some_periods(tmp_path):
                "is (0-1)" in note for note in manifest.notes)
 
 
-def _two_drains_on_one_cell(second_elevation):
+def _two_records_on_one_cell(ftype, first, second):
+    """Records ``first`` and ``second`` on cell 0 (one-based node 1), one more on cell 1."""
+
     grid = square_grid()
     model = usg_model(grid, [0, 1])
-    model.boundaries = {"DRN": PeriodRecords(
-        ftype="DRN",
-        periods={0: np.array([[1, 7.5, 100.0], [1, second_elevation, 50.0], [2, 7.5, 100.0]])},
+    model.boundaries = {ftype: PeriodRecords(
+        ftype=ftype, periods={0: np.array([[1, *first], [1, *second], [2, *first]])},
     )}
     return model
 
 
+def _two_drains_on_one_cell(second_elevation, second_conductance=50.0):
+    return _two_records_on_one_cell("DRN", (7.5, 100.0), (second_elevation, second_conductance))
+
+
 def test_two_records_on_one_cell_are_one_feature_combined_by_kind():
     """Two drains on one cell in one period -- MF6 applies both -- stopped the export
-    on ``float()`` of a Series (ledger 467). Conductance adds; the elevation is
-    the mean, and a warning names the cell whose copies differ."""
+    on ``float()`` of a Series (ledger 467). Conductance adds; the elevation is the
+    CONDUCTANCE-weighted mean (ledger 493): 7.5 x 100 + 7.0 x 50 over 150 is
+    7.333, where the plain mean 7.25 drained 112.5 for MF6's 100.0. A warning names the
+    cell, because the weighted drain is MF6's only while the head is not between."""
 
-    with pytest.warns(UserWarning, match=r"DRN: 1 cell\(s\) .*elev values differ .*\[\(1, 0\)\]"):
+    with pytest.warns(UserWarning, match=r"DRN: 1 cell\(s\) .*elev values differ .*\[\(1, 0\)\].*conductance-weighted"):
         points, lines = _bc_frames(_two_drains_on_one_cell(7.0), "DRN", CRS)
     table = points.set_index("old_cell")
     assert sorted(table.index) == [0, 1]
-    assert table.loc[0, "conductance"] == 150.0 and table.loc[0, "elevation"] == 7.25
+    assert table.loc[0, "conductance"] == 150.0
+    assert table.loc[0, "elevation"] == pytest.approx((7.5 * 100.0 + 7.0 * 50.0) / 150.0)
     assert table.loc[1, "conductance"] == 100.0 and table.loc[1, "elevation"] == 7.5
     assert lines.set_index("old_cell").loc[0, "conductance"] == 150.0
-    assert points.attrs == {"records_combined": 1, "cells_disagreeing": 1}
+    assert points.attrs == {"records_combined": 1, "cells_inexact": 1, "cells_unweighted": 0}
+
+
+def test_a_ghb_s_weighted_head_is_exact_so_nothing_warns(recwarn):
+    """GHB is linear in the head, so the conductance-weighted head is MF6's boundary at
+    every head: the cell is combined and not counted as inexact."""
+
+    points, _ = _bc_frames(_two_records_on_one_cell("GHB", (9.0, 100.0), (6.0, 50.0)), "GHB", CRS)
+    assert not [w for w in recwarn if "several records" in str(w.message)]
+    row = points.set_index("old_cell").loc[0]
+    assert row["conductance"] == 150.0 and row["head"] == pytest.approx(8.0)
+    assert points.attrs == {"records_combined": 1, "cells_inexact": 0, "cells_unweighted": 0}
+
+
+def test_a_river_s_stage_and_rbot_are_both_weighted_by_conductance():
+    with pytest.warns(UserWarning, match=r"RIV: 1 cell\(s\) .*rbot, stage values differ"):
+        points, _ = _bc_frames(
+            _two_records_on_one_cell("RIV", (9.0, 100.0, 7.5), (8.0, 50.0, 7.0)), "RIV", CRS
+        )
+    row = points.set_index("old_cell").loc[0]
+    assert row["conductance"] == 150.0
+    assert row["stage"] == pytest.approx((9.0 * 100.0 + 8.0 * 50.0) / 150.0)
+    assert row["rbot"] == pytest.approx((7.5 * 100.0 + 7.0 * 50.0) / 150.0)
+
+
+def test_copies_whose_conductances_total_zero_take_the_plain_mean_and_say_so():
+    model = _two_records_on_one_cell("DRN", (7.5, 0.0), (7.0, 0.0))
+    with pytest.warns(UserWarning, match=r"conductances total zero.*plain MEAN.*\[\(1, 0\)\]"):
+        points, _ = _bc_frames(model, "DRN", CRS)
+    row = points.set_index("old_cell").loc[0]
+    assert row["conductance"] == 0.0 and row["elevation"] == 7.25
+    assert points.attrs == {"records_combined": 1, "cells_inexact": 0, "cells_unweighted": 1}
 
 
 def test_copies_that_agree_combine_without_a_warning(tmp_path, recwarn):
@@ -159,6 +198,65 @@ def test_copies_that_agree_combine_without_a_warning(tmp_path, recwarn):
     _export_boundaries(_two_drains_on_one_cell(7.5), tmp_path, CRS, manifest)
     assert not [w for w in recwarn if "several records" in str(w.message)]
     assert manifest.layers["boundaries.gpkg:drn"]["records_combined"] == 1
-    assert any("1 record(s) shared a cell" in note for note in manifest.notes)
+    assert any("1 record(s) shared a cell" in note and "conductance-weighted" in note
+               for note in manifest.notes)
     written = gpd.read_file(tmp_path / "boundaries.gpkg", layer="drn").set_index("old_cell")
     assert written.loc[0, "conductance"] == 150.0 and written.loc[0, "elevation"] == 7.5
+
+
+# --- The exported one-record cell is MF6's two-record cell (ledger 493) --- #
+
+def _mf6_flow(workspace, package, records, hold):
+    """MF6's flow through ``package``'s ``records`` on one cell whose head a GHB of
+    huge conductance holds at ``hold``."""
+
+    import flopy
+
+    sim = flopy.mf6.MFSimulation(sim_name="s", sim_ws=str(workspace), exe_name="mf6")
+    flopy.mf6.ModflowTdis(sim, nper=1, perioddata=[(1.0, 1, 1.0)])
+    flopy.mf6.ModflowIms(sim, complexity="SIMPLE", inner_dvclose=1e-10, outer_dvclose=1e-10)
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="m", save_flows=True)
+    flopy.mf6.ModflowGwfdis(gwf, nlay=1, nrow=1, ncol=1, delr=10.0, delc=10.0, top=20.0, botm=0.0)
+    flopy.mf6.ModflowGwfic(gwf, strt=hold)
+    flopy.mf6.ModflowGwfnpf(gwf, k=1.0)
+    flopy.mf6.ModflowGwfghb(gwf, stress_period_data={0: [[(0, 0, 0), hold, 1e9]]}, pname="hold")
+    constructor = getattr(flopy.mf6, f"ModflowGwf{package}")
+    constructor(gwf, stress_period_data={0: [[(0, 0, 0), *r] for r in records]}, pname="bc",
+                filename=f"m.bc.{package}")
+    flopy.mf6.ModflowGwfoc(gwf, budget_filerecord="m.cbc", saverecord=[("BUDGET", "ALL")])
+    sim.write_simulation(silent=True)
+    ok, _ = sim.run_simulation(silent=True)
+    assert ok
+    budget = flopy.utils.CellBudgetFile(str(workspace / "m.cbc"))
+    records_of = [r for r in budget.get_data(text=package.upper())]
+    # The holding GHB is the first GHB record; the boundary under test is the last.
+    return float(records_of[-1]["q"].sum())
+
+
+@pytest.mark.skipif(__import__("shutil").which("mf6") is None, reason="needs mf6 on PATH")
+@pytest.mark.parametrize(
+    "ftype, first, second, hold, column_order",
+    [
+        ("DRN", (7.5, 100.0), (7.0, 50.0), 8.0, ("elevation", "conductance")),
+        ("GHB", (9.0, 100.0), (6.0, 50.0), 7.0, ("head", "conductance")),
+        ("RIV", (9.0, 100.0, 7.5), (8.0, 50.0, 7.0), 8.5, ("stage", "conductance", "rbot")),
+        ("RIV", (9.0, 100.0, 7.5), (8.0, 50.0, 7.0), 6.0, ("stage", "conductance", "rbot")),
+    ],
+)
+def test_the_exported_record_moves_what_mf6_s_two_records_move(tmp_path, ftype, first, second, hold, column_order):
+    """Measured through MF6 at heads where both copies act: the one exported record's
+    flow is the two records' flow. The plain mean it replaced drained 112.5 for 100.0
+    (DRN) and leaked 0.0 for 25.0 (RIV at head 8.5)."""
+
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        points, _ = _bc_frames(_two_records_on_one_cell(ftype, first, second), ftype, CRS)
+    row = points.set_index("old_cell").loc[0]
+    exported = [tuple(float(row[c]) for c in column_order)]
+    package = ftype.lower()
+    two = _mf6_flow(tmp_path / "two", package, [first, second], hold)
+    one = _mf6_flow(tmp_path / "one", package, exported, hold)
+    assert abs(two) > 1.0
+    assert one == pytest.approx(two, rel=1e-6)

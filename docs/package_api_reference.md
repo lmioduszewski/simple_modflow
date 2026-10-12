@@ -1247,10 +1247,16 @@ single number for a bed that varies and `mf.lak` then rejects the cells it misse
   `empty_periods`, `reused_periods`) tell a switch-off from a reuse.
 - **Several records on one cell in one period are ONE feature** (ledger 467) --
   MF6 applies each (two drains on a cell), and the export writes a feature per cell, so
-  they combine by what each value IS (`agg_for_kind`): conductance and rate add, an
-  elevation or head is the mean. The manifest counts them as `records_combined`, and a
-  cell whose copies' elevations DIFFER is warned about by name, because one drain at the
-  mean elevation is not the two MF6 applied. It used to stop the export.
+  they combine by what each value IS (`agg_for_kind`): conductance and rate add. A
+  DRN/GHB/RIV elevation (`elevation`, `head`, `stage` and `rbot`) is the
+  CONDUCTANCE-WEIGHTED mean of its copies (ledger 493), the one record that moves
+  what the copies move: at every head for GHB, and for DRN/RIV while the head is not
+  between two copies' elevations (`elev 7.5 / cond 100` + `7.0 / 50` at head 8.0: MF6
+  drains 100.0, the weighted record 100.0, the plain mean 112.5 --
+  `docs/reproducers/usg_export_shared_cell_elevation.py`). Copies whose conductances
+  total zero take the plain mean, and a CHD head is the mean. The manifest counts the
+  records as `records_combined`; a DRN/RIV/CHD cell whose copies DIFFER, and a
+  zero-conductance cell, are warned about by name. It used to stop the export.
 
 What CLN cannot supply is written as a documented default rather than omitted, so a
 missing column never becomes a silent zero: SFR's `rbth` and `man` (CLN routes with a pipe
