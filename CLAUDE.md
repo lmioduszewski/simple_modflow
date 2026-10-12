@@ -1813,7 +1813,9 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   value (0 for an offset, 1 for a multiplier and every pilot point) are refused
   (ledger 518); `riv.stage` moves RBOT with STAGE (ledger 519).
   An argument that cannot act is refused (`layers=` on a list target, `temporal=`,
-  `correlation=` on constant/zone, a style other than the four). Styles: `constant`, `zone`, `grid` (one
+  `correlation=` on constant/zone, `pp_spacing`/`pp_points`/`pp_nearest` on any style
+  but array pilot points, a style other than the four; ledger 520), and so is a
+  `name=` another call holds (523). Styles: `constant`, `zone`, `grid` (one
   geostat-correlated multiplier per Voronoi cell + correlated prior), and `pilotpoints`
   (a `pp_spacing=` net in MODEL LENGTH UNITS or explicit `pp_points` — `pilot_points.py`;
   pyEMU's own pilot points are unusable on unstructured grids). **Pilot points MULTIPLY
@@ -1843,7 +1845,8 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   model and write it into the run directory (every input rewritten, 22 files added on
   the test toy; 18 storage entries of the object changed). Everything the build reads off
   a FloPy model goes through ONE helper, `native_parameters.staged_model` -- the recipe
-  arrays, the pilot points' base array and cell centres, the default spatial reference;
+  arrays, the pilot points' cell centres (their base is the template's own array file,
+  ledger 525), the default spatial reference;
   do not read `project.model.gwf` there. **The run's FILES win over the object**: the base
   observations come from its OUTPUT files, so an in-memory edit after the run is not in
   the template, and a model never written is REFUSED (no `mfsim.nam`). Two old-build

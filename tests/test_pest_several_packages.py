@@ -299,7 +299,8 @@ def test_an_elevation_is_an_additive_offset_and_never_a_multiplier(target):
 @pytest.mark.parametrize("kwargs, start", [
     ({"target": "drn.elev", "bounds": (0.5, 2.0)}, "0"),
     ({"target": "k", "bounds": (2.0, 5.0)}, "1"),
-    ({"target": "k", "style": "pilotpoints", "bounds": (2.0, 5.0)}, "1"),
+    # A valid pilot-point declaration, so the bounds are what refuses it.
+    ({"target": "k", "style": "pilotpoints", "pp_spacing": 100.0, "bounds": (2.0, 5.0)}, "1"),
     ({"target": "ghb.bhead", "bounds": (-3.0, -1.0)}, "0"),
 ])
 def test_bounds_that_exclude_the_starting_value_are_refused(kwargs, start):
@@ -317,8 +318,10 @@ def test_bounds_that_exclude_the_starting_value_are_refused(kwargs, start):
 
 @pytest.mark.parametrize("kwargs, message", [
     ({"target": "ghb.cond", "layers": (2,)}, r"layers= on list target 'ghb.cond'.*zones="),
-    ({"target": "k", "style": "pilotpoints", "additive": True}, r"pilot points MULTIPLY"),
-    ({"target": "k", "style": "pilotpoints", "extra": {"initial_value": 2.0}},
+    ({"target": "k", "style": "pilotpoints", "pp_spacing": 100.0, "additive": True},
+     r"pilot points MULTIPLY"),
+    ({"target": "k", "style": "pilotpoints", "pp_spacing": 100.0,
+      "extra": {"initial_value": 2.0}},
      r"\['initial_value'\].*never call"),
     ({"target": "k", "temporal": 30.0}, r"temporal=30.0: nothing reads"),
     ({"target": "k", "style": "constant", "correlation": 500.0}, r"constant parameter has nothing"),
@@ -340,6 +343,25 @@ def test_an_argument_that_cannot_act_is_refused(kwargs, message):
 
     with pytest.raises(ValueError, match=message):
         np_mod.NativeParameterSpec(**kwargs)
+
+
+@pytest.mark.parametrize("target, kwargs, given", [
+    ("k", {"style": "grid", "pp_spacing": 100.0}, "pp_spacing"),
+    ("k", {"style": "zone", "zones": np.ones(2 * NCPL, dtype=int), "pp_points": [(5.0, 5.0)]},
+     "pp_points"),
+    ("k", {"style": "constant", "pp_nearest": 4}, "pp_nearest"),
+    ("ghb.cond", {"style": "grid", "pp_spacing": 100.0, "pp_nearest": 4},
+     "pp_spacing, pp_nearest"),
+])
+def test_pilot_point_arguments_on_another_style_are_refused_at_parameterize(
+        runs, tmp_path, target, kwargs, given):
+    """Integration of R1-pilot with R1-params: ledger 520's rule for an argument that
+    cannot act reaches the pilot-point arguments (ledger 527); nothing is recorded."""
+
+    cal = _cal(runs, tmp_path)
+    with pytest.raises(ValueError, match=rf"{given} place and interpolate pilot points"):
+        cal.parameterize(target, **kwargs)
+    assert cal._native_parameter_specs == []
 
 
 def test_a_repeated_parameter_name_is_refused(runs, tmp_path):

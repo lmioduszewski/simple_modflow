@@ -58,7 +58,9 @@ cal.parameterize("porosity", style="constant", bounds=(0.5, 2), physical=(0.05, 
 cal.parameterize("uzf.vks", style="grid", correlation=400, bounds=(0.2, 5))
 
 # zones: one multiplier per label, from a raster, a polygon layer, or an array
-cal.parameterize("k", style="zone", zones=mf.ZoneSpec.from_raster("hsu.tif", model))
+# (a second "k" parameter needs its own name: a repeated one is refused, ledger 523)
+cal.parameterize("k", style="zone", zones=mf.ZoneSpec.from_raster("hsu.tif", model),
+                 name="kz")
 
 # elevations are OFFSETS in model units; bounds default to (-2, 2)
 cal.parameterize("drn.elev")
@@ -198,8 +200,10 @@ print(cal.settings())    # after build(): the point count of every set
   No point outside the polygon moves a cell inside it, so the cut's contrast in the
   base field survives at multiplier 1.
 - **Names.** A set is `<name>l<layer>` -- `<name>l<layer>z<zone>` with zones -- and its
-  points `...pp0000`, lower-cased as PEST reads them. Two calls on one layer need two
-  names (refused otherwise); calls on different layers may share one.
+  points `...pp0000`, lower-cased as PEST reads them. Every call needs its own name --
+  `parameterize()` refuses a repeated one (any case, ledger 523), on one layer or two --
+  so pilot points declared one layer per call take a name each. The build metadata's
+  `parameters` record names the same sets as `pilot_point_sets.json`.
 - **Refused at build**: an explicit point in no cell, in a cell labelled `<= 0`, or given
   twice; a zone `> 0` no explicit point lies in; zones labelling nothing; `physical=`
   limits on one cell -- of its pilot-point sets, or of them and a multiplier on the same

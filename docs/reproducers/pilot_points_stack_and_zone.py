@@ -23,7 +23,9 @@ layers), four head targets. Layer 0's K file, written / base:
   A. ``k`` constant on layer 0 at x2, plus pilot points on layer 0, every point 1.0.
   B. two pilot-point calls on layer 0 (``ka`` every point 2.0, ``kb`` every point 1.5).
   C. ``zones=`` west half 1, east half 0, every pilot point 2.0.
-  D. two calls under the default name, ``layers=[0]`` and ``layers=[1]``.
+  D. two calls under the default name, ``layers=[0]`` and ``layers=[1]``. Since R1-params
+     (ledger 523) ``parameterize`` refuses the second call's repeated name, so "after"
+     is that refusal; R1-pilot alone (09f3a1b9) kept both sets, ``kl0, kl1``.
   E. ``k`` constant on layer 0 at 1.0 with ``physical=`` capped at 1.2x the layer's
      largest K, plus pilot points on layer 0 with no ``physical=``, every point 5.0
      (ledger 528; "before" there is the R1-pilot commit 09f3a1b9, the parent
@@ -36,7 +38,7 @@ MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, 2026-10-12; "before" is claude/pestprep 3
      (before: the LAST set alone -- each set rebuilt the file from the base)
   C  east (zone 0) cells moved, of 221              221             0
      west (zone 1) written / base                   2.000000        2.000000
-  D  pilot-point groups in the control file         kl1             kl0, kl1
+  D  pilot-point groups in the control file         kl1             refused at the call
   E  largest written / the constant's cap           4.166667        1.000000
 """
 
@@ -149,13 +151,18 @@ def main():
 
         cal = demo.model.pest("d", workspace=root / "d", start_datetime="2024-01-01")
         cal.parameterize("k", style="pilotpoints", layers=[0], **_spacing(6), **bounds)
-        cal.parameterize("k", style="pilotpoints", layers=[1], **_spacing(3), **bounds)
-        cal.observe(demo.head_targets)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            cal.build("d.pst", noptmax=0)
-        groups = sorted(set(cal.pst.parameter_data["pargp"]))
-        print(f"D  two calls under one name on layers 0 and 1: groups {groups}")
+        try:
+            cal.parameterize("k", style="pilotpoints", layers=[1], **_spacing(3), **bounds)
+        except ValueError as error:  # ledger 523: a repeated name is refused at the call
+            print(f"D  two calls under one name on layers 0 and 1: refused at the call "
+                  f"({str(error).split('.')[0]})")
+        else:
+            cal.observe(demo.head_targets)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                cal.build("d.pst", noptmax=0)
+            groups = sorted(set(cal.pst.parameter_data["pargp"]))
+            print(f"D  two calls under one name on layers 0 and 1: groups {groups}")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

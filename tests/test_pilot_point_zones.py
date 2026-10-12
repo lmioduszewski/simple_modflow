@@ -258,27 +258,48 @@ def test_set_names_carry_layer_and_zone_and_unzoned_names_are_unchanged(demo, tm
     assert "kzl1z3" in str(cal.settings())
 
 
-def test_two_calls_on_separate_layers_keep_both_sets_under_one_name(demo, tmp_path):
-    """The natural per-layer spelling, default name both times: both sets are in the
-    control file. The second call used to drop the first set's parameters while its
-    forward-run command kept applying them at 1.0."""
+def test_two_calls_on_separate_layers_keep_both_sets(demo, tmp_path):
+    """The per-layer spelling, one call per layer, each with its own name: both sets
+    are in the control file. A second call under the first's name used to drop the
+    first set's parameters while its forward-run command kept applying them at 1.0;
+    ``parameterize`` refuses a repeated name now (ledger 523)."""
 
     cal = _build(demo, tmp_path, [
-        (("k",), dict(style="pilotpoints", layers=[0], pp_spacing=SPACING, bounds=(0.1, 10.0))),
-        (("k",), dict(style="pilotpoints", layers=[1], pp_spacing=SPACING / 2,
+        (("k",), dict(style="pilotpoints", layers=[0], name="ka", pp_spacing=SPACING,
+                      bounds=(0.1, 10.0))),
+        (("k",), dict(style="pilotpoints", layers=[1], name="kb", pp_spacing=SPACING / 2,
                       bounds=(0.1, 10.0))),
     ])
     groups = cal.pst.parameter_data["pargp"].value_counts()
-    assert {"kl0", "kl1"} <= set(groups.index)
-    assert groups["kl1"] > groups["kl0"]
+    assert {"kal0", "kbl1"} <= set(groups.index)
+    assert groups["kbl1"] > groups["kal0"]
 
 
-def test_two_sets_under_one_name_on_one_layer_are_refused(demo, tmp_path):
-    with pytest.raises(ValueError, match="Two pilot-point sets are named 'kl0'"):
-        _build(demo, tmp_path, [
-            (("k",), dict(style="pilotpoints", layers=[0], pp_spacing=SPACING)),
-            (("k",), dict(style="pilotpoints", layers=[0], pp_spacing=SPACING / 2)),
-        ])
+def test_two_calls_under_one_name_are_refused_at_the_call(demo, tmp_path):
+    """On one layer or on two: the name keys the sets, the groups and the metadata
+    (ledger 523)."""
+
+    for layers in ([0], [1]):
+        cal = demo.model.pest("one", workspace=tmp_path / "one", start_datetime="2024-01-01")
+        cal.parameterize("k", style="pilotpoints", layers=[0], pp_spacing=SPACING)
+        with pytest.raises(ValueError, match="'k' is already declared"):
+            cal.parameterize("k", style="pilotpoints", layers=layers, pp_spacing=SPACING / 2)
+
+
+def test_two_sets_of_one_name_reaching_the_build_are_refused(demo, tmp_path):
+    """The build's own guard, for specs that reach it without ``parameterize``."""
+
+    from myflopy.modflow.mf6.pest.native_parameters import NativeParameterSpec
+
+    cal = demo.model.pest("raw", workspace=tmp_path / "raw", start_datetime="2024-01-01")
+    cal.parameterize("k", style="pilotpoints", layers=[0], pp_spacing=SPACING)
+    cal._native_parameter_specs.append(
+        NativeParameterSpec(target="k", style="pilotpoints", layers=[0], pp_spacing=SPACING / 2))
+    cal.observe(demo.head_targets)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        with pytest.raises(ValueError, match="Two pilot-point sets are named 'kl0'"):
+            cal.build("raw.pst", noptmax=0)
 
 
 # --- (c) interpolation and its factors --------------------------------------------------
@@ -557,3 +578,31 @@ def test_the_manifest_names_each_set_for_a_write_back(demo, tmp_path):
     for key in ("parameter_csv", "points_csv", "factors", "template"):
         assert Path(cal.template_workspace / record[key]).is_file(), key
     assert record["array_file"] == f"{demo.model.name}.npf_k_layer1.txt"
+
+
+def test_the_build_metadata_names_the_same_sets_as_the_manifest(demo, tmp_path):
+    """Integration of R1-pilot with R1-params: the build metadata's ``parameters``
+    record (ledger 524) and the template's ``pilot_point_sets.json`` (ledger 525) are
+    the two things a write-back reads, so they name the same sets, groups, templates,
+    files, layers and zones. The record read a table the pilot-point engine no longer
+    fills, and every pilot-point build crashed writing its metadata."""
+
+    zones = _west_east(demo, west=2, east=3)
+    cal = _build(demo, tmp_path, [(("k",), dict(
+        style="pilotpoints", layers=[0, 1], name="kp", pp_spacing=SPACING, zones=zones))])
+    manifest = json.loads((cal.template_workspace / PILOT_POINT_MANIFEST).read_text())
+    metadata = json.loads((cal.template_workspace / "myflopy_pest_metadata.json").read_text())
+    (record,) = metadata["parameters"]
+    sets = {item["name"]: item for item in manifest["sets"]}
+    assert sorted(sets) == ["kpl0z2", "kpl0z3", "kpl1z2", "kpl1z3"]
+    assert [item["name"] for item in record["pilot_points"]] == list(sets)
+    for item in record["pilot_points"]:
+        assert item["pargp"] == item["name"]
+        for key in ("template", "array_file", "layer", "zone"):
+            assert item[key] == sets[item["name"]][key], key
+    assert sorted(record["pargps"]) == sorted(sets)
+    assert sorted(record["pargps"]) == sorted(set(cal.pst.parameter_data["pargp"]))
+    assert record["zones"] == [2, 3] and record["layers"] == [0, 1]
+    assert [item["filename"] for item in record["files"]] == sorted(
+        {item["array_file"] for item in manifest["sets"]})
+    assert [item["layer"] for item in record["files"]] == [0, 1]

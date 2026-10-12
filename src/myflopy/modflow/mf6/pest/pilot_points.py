@@ -21,7 +21,8 @@ with constant/zone/grid multipliers and with each other (ledger 525).
 The sets, their files and the base each file starts from are listed in
 :data:`PILOT_POINT_MANIFEST` in the template.
 
-Exposed through the one unified API::
+Exposed through the one unified API -- three alternatives (several calls on one
+project each need their own ``name=``, ledger 523)::
 
     cal.parameterize("k", style="pilotpoints", pp_spacing=1500.0, correlation=3000.0,
                      layers=[0, 1], bounds=(0.05, 20), physical=(1e-3, 300))
@@ -339,8 +340,9 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
     ------
     ValueError
         When ``zones=`` labels no cell above zero; when an array file does not hold
-        one value per cell of the grid; when two sets take one name (two calls on
-        one layer under one ``name=``); or what :func:`place_pilot_points` refuses.
+        one value per cell of the grid; when two sets take one name (which
+        :meth:`PestProject.parameterize` already prevents by refusing a repeated
+        ``name=``, ledger 523); or what :func:`place_pilot_points` refuses.
     """
 
     # FloPy's own records of the staged model, by package TYPE, narrowed to
@@ -360,6 +362,9 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
         labels = np.asarray(
             resolve_zone_array(spec.zones, family="array", model=project.model)
         ).reshape(-1)
+        # The labels the zone array holds, as `style="zone"` records them for the
+        # build's metadata; the sets are the labels above 0.
+        spec.resolved_zone_labels = sorted(int(label) for label in np.unique(labels))
         if not (labels > 0).any():
             raise ValueError(
                 f"zones= labels no cell above 0 for {spec.recipe.canonical!r} pilot points "

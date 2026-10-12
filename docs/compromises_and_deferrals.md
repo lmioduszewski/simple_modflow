@@ -20459,9 +20459,9 @@ same day, which is the useful part of the result.
       `additive=True` and `**extra` on array-target pilot points; `temporal=` (nothing
       reads it; round 2 replaces it); `correlation=` on constant/zone;
       `anisotropy`/`bearing`/`nugget` without `correlation=`, and `bearing` with
-      `anisotropy=1.0`. **Not done here:** `zones=` on array pilot points (the pilot
-      lane makes it act) and `pp_space`/`pp_points` on other styles (the pilot lane
-      owns those arguments).
+      `anisotropy=1.0`. `zones=` on array pilot points was left to the pilot lane,
+      which makes it act, and the pilot-point arguments too: `pp_spacing`/`pp_points`/
+      `pp_nearest` on any other style are refused by this rule (ledger 527).
 
 521. **A multi-layer `style="grid"` group is named by its ZERO-BASED layer (2026-10-12).**
       Groups were numbered by file position from 1 (`kl1` = the first selected layer)
@@ -20492,8 +20492,10 @@ same day, which is the useful part of the result.
       filled, and nothing read it (finding build-6). Each record holds the name,
       target, family, package type, `package=`, the packages scaled, style,
       transform, bounds, physical, additive, layers, zone LABELS, correlation, every
-      file with its package/layer/period, the parameter groups, and a pilot-point
-      set's group and template -- what item 14's write-back reads. The dead
+      file with its package/layer/period, the parameter groups, and each pilot-point
+      set by the name the template's `pilot_point_sets.json` gives it (its group,
+      template, array file, layer and zone; the manifest holds its points, factors and
+      limits, ledger 525) -- what item 14's write-back reads. The dead
       `_parameter_specs`, `_prepared_parameters`, `_parameter_frames`,
       `_registered_geostructs` and `_forward_run_config` were removed. **Not
       recorded:** the zone ARRAY itself and the pilot points' coordinates, which live
@@ -20549,9 +20551,11 @@ same day, which is the useful part of the result.
       separate calls with masked `zones=` and distinct names (one spelling; rejected:
       dict-valued arguments keyed by zone). Names `<name>l<layer>` /
       `<name>l<layer>z<zone>`, lower-cased (an upper-case `name=` died with a KeyError).
-      Two calls on one layer under one name are refused; on different layers they keep
-      both sets (the second used to drop the first from the .pst while its command kept
-      applying it at 1.0). Explicit points are located with `cell_shares` and refused off
+      Two calls under one name are refused at `parameterize()` (ledger 523), on one
+      layer or two -- the second used to drop the first from the .pst while its command
+      kept applying it at 1.0 -- and the build refuses two sets of one name that reach
+      it anyway; one call per layer, each with its own name, keeps every set. Explicit
+      points are located with `cell_shares` and refused off
       the grid, in a cell labelled `<= 0`, or given twice; a zone `> 0` holding no
       explicit point is refused. **Not done:** inactive cells excluded as net candidates;
       per-layer zone maps in one call (the shared `resolve_zone_array` refusal stands).

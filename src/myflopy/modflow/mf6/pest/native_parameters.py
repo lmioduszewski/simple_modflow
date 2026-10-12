@@ -389,7 +389,9 @@ class NativeParameterSpec:
     """A declarative, pyEMU-bound parameter request.
 
     Built by :meth:`PestProject.parameterize`, whose docstring is the reference for
-    every field; constructing one directly runs the same checks.
+    every field; constructing one directly runs the same checks, bar the two that
+    need the project -- a ``name`` already declared (ledger 523) and a ``package``
+    the model's packages refuse.
 
     Parameters
     ----------
@@ -415,7 +417,9 @@ class NativeParameterSpec:
         518).
     physical : tuple of (float, float) or None, optional
         ``(ult_lbound, ult_ubound)`` -- hard limits on the *final* model value after
-        all multipliers are applied. Default ``None``: unclamped.
+        all multipliers are applied, pilot points included: their step clamps a
+        covered cell to the tightest limits of its sets and of the pyEMU multipliers
+        on its file (ledger 528). Default ``None``: unclamped.
     transform : str, optional
         ``"log"`` (default) or ``"none"`` (pyEMU also takes ``"fixed"``). Forced to
         ``"none"`` for an additive offset (:attr:`resolved_transform`).
@@ -479,7 +483,8 @@ class NativeParameterSpec:
     name : str or None, optional
         Parameter group / name base. Default ``None``: the canonical target with
         dots removed, plus ``_<package>`` when ``package`` is given
-        (``"rivcond_crisp"``).
+        (``"rivcond_crisp"``). Pilot-point sets are named ``<name>l<layer>`` /
+        ``<name>l<layer>z<zone>``, lower-cased.
     capture : bool, optional
         Also record the resolved per-cell field as zero-weight observations, for
         ``IesResults.plot_field`` / ``IesResults.field``. Default ``False``.
@@ -504,7 +509,8 @@ class NativeParameterSpec:
         period, from FloPy's own records.
     resolved_zone_labels : list of int or None
         Filled by :meth:`PestProject.build` when ``zones`` is given: the distinct
-        labels of the zone array pyEMU received.
+        labels of the zone array it resolved (pyEMU's ``zone_array``; for array
+        pilot points, the array whose labels ``> 0`` became sets).
     """
 
     target: str

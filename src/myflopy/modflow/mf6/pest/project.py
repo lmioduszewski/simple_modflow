@@ -749,13 +749,15 @@ class PestProject:
 
         Each call expands, at :meth:`build` time, into the correct
         ``pyemu.utils.PstFrom.add_parameters`` invocation against the external
-        MODFLOW input file(s) for ``target``. Call it once per property you want
-        to adjust; call it multiple times for the same target to stack styles
-        (e.g. a broad ``"constant"`` plus a fine ``"grid"``, or a ``"constant"``
-        plus ``"pilotpoints"``): every multiplier on a cell multiplies, pilot
-        points included -- they are applied after pyEMU's multipliers, onto the
-        file pyEMU wrote, so a constant x2 under pilot points at 1.0 writes 2x
-        the base (ledger 525).
+        MODFLOW input file(s) for ``target`` -- except array-target pilot points,
+        which myflopy builds itself (:mod:`~myflopy.modflow.mf6.pest.pilot_points`).
+        Call it once per property you want to adjust; call it multiple times for
+        the same target to stack styles (e.g. a broad ``"constant"`` plus a fine
+        ``"grid"``, or a ``"constant"`` plus ``"pilotpoints"``), each call under
+        its own ``name=`` (a repeated name is refused, ledger 523): every
+        multiplier on a cell multiplies, pilot points included -- they are
+        applied after pyEMU's multipliers, onto the file pyEMU wrote, so a
+        constant x2 under pilot points at 1.0 writes 2x the base (ledger 525).
 
         Parameters
         ----------
@@ -807,7 +809,8 @@ class PestProject:
             - ``"constant"`` -- a single multiplier for the whole target;
             - ``"zone"`` -- one multiplier per ``zones`` value (pass ``zones=``);
             - ``"grid"`` -- one multiplier per list entry / cell;
-            - ``"pilotpoints"`` -- geostatistical pilot points.
+            - ``"pilotpoints"`` -- pilot points interpolated to the cells (ARRAY
+              targets only).
 
             ``None`` uses the recipe default (``"constant"`` for every target).
             The value is lower-cased; anything but these four raises
@@ -885,7 +888,7 @@ class PestProject:
             parameter. With any style, an array target leaves cells labelled
             ``<= 0`` unparameterized; a list target makes zone ``0`` a real
             parameter and warns. A length that is not one label per cell raises
-            ``ValueError`` at build. Default ``None`` passes no zones.
+            ``ValueError`` at build.
             With array-target ``"pilotpoints"`` each label ``> 0`` gets its own
             pilot-point set on each selected layer -- its own net (or the
             explicit points inside it), interpolated onto its own cells only, so
@@ -895,7 +898,7 @@ class PestProject:
             label ``> 0`` no explicit point lies in, and labels that are all
             ``<= 0`` raise ``ValueError`` at build. Different settings per zone
             are separate calls, each with a masked ``zones=`` and its own
-            ``name=``.
+            ``name=``. Default ``None`` passes no zones.
         layers : int or iterable of int or None, optional
             For multi-layer *array* targets, restrict the parameter to these
             zero-based model layers (e.g. ``layers=[0, 1]`` for the unconfined
@@ -929,7 +932,8 @@ class PestProject:
             returned spec (``pilot_point_sets``) and in :meth:`settings`.
             Default ``None``. Array-target pilot points take exactly one of it
             and ``pp_points`` -- neither, or both, raises ``ValueError`` here --
-            and any other style refuses it. It replaced ``pp_space`` (multiples
+            and any other style raises ``ValueError`` here: it cannot act
+            (ledger 520's rule). It replaced ``pp_space`` (multiples
             of the median cell width), which laid 4,501 points per layer on a
             refined 20,323-cell mesh (ledger 527).
         pp_points : geopandas.GeoDataFrame or array_like or None, optional
@@ -938,15 +942,16 @@ class PestProject:
             pairs (anything reshapable to ``(n, 2)``), in the model grid's own
             coordinates -- a GeoDataFrame's CRS is not read or reprojected. Each
             point takes the zone of the cell it lies in; a point in no cell, or
-            given twice, raises ``ValueError`` at :meth:`build`. Default ``None``;
-            refused beside ``pp_spacing`` and on any other style.
+            given twice, raises ``ValueError`` at :meth:`build`. Default ``None``.
+            Beside ``pp_spacing``, or with any other style, it raises
+            ``ValueError`` here.
         pp_nearest : int, optional
             How many of its set's nearest pilot points each cell is interpolated
             from, by inverse distance squared (all of them when the set has
             fewer); a whole number, 1 or more. Default ``8`` (ledger
             526). A cell whose centre is a point takes that point's
-            value. A value other than ``8`` is refused on any style but
-            array-target ``"pilotpoints"``.
+            value. A value other than ``8`` raises ``ValueError`` here with any
+            style but array-target ``"pilotpoints"``.
         correlation : float or None, optional
             Variogram range (model length units) of an exponential variogram
             (see :class:`~myflopy.modflow.mf6.pest.specs.ExpGeoStruct`). With
@@ -1051,6 +1056,8 @@ class PestProject:
         >>> cal.parameterize("drn.elev", bounds=(-2, 2))   # additive offsets, in ft
         >>> cal.parameterize("riv.cond", package="crisp", bounds=(0.1, 10))
         >>> cal.parameterize("riv.stage", package=("riv", "crisp"))  # one shared offset
+        >>> cal.parameterize("k", style="pilotpoints", name="kpp", pp_spacing=1500.0,
+        ...                  zones=units, physical=(1e-3, 300))  # stacks on the constant
         """
 
         nugget = checked_nugget(nugget)
@@ -1811,9 +1818,10 @@ class PestProject:
         model without this object (ledger 524): the target, the packages
         and files it scales (with each file's package, layer and period, from FloPy's
         records), the style, transform, bounds, physical limits and whether it is an
-        offset, the layers and zone labels, its parameter groups, and a pilot-point
-        set's tables. ``parameter_sets`` was written before from a list nothing
-        filled, so it was always empty.
+        offset, the layers and zone labels, its parameter groups, and each of its
+        pilot-point sets by the name the template's ``pilot_point_sets.json`` gives it
+        (with its group, template, array file, layer and zone). ``parameter_sets`` was
+        written before from a list nothing filled, so it was always empty.
         """
 
         frame = self._native_parameter_frames.get(spec.name)
@@ -1821,12 +1829,24 @@ class PestProject:
             sorted({str(group) for group in frame["pargp"]})
             if frame is not None and "pargp" in getattr(frame, "columns", ()) else []
         )
+        # One entry per pilot-point set of this call, as the template's
+        # pilot_point_sets.json names it (its record there carries the points,
+        # factors and limits a write-back rebuilds the field from; ledger 525).
         pilot_points = []
-        for pp_frame, tpl_path in self._pilot_point_frames.get(spec.name, []):
-            group = str(pp_frame["pargp"].iloc[0]) if len(pp_frame) else None
-            pilot_points.append({"pargp": group, "template": Path(tpl_path).name})
-            if group is not None and group not in groups:
-                groups.append(group)
+        for item in self._pilot_point_sets:
+            if item["spec"] is not spec:
+                continue
+            record = item["record"]
+            pilot_points.append({
+                "name": record["name"],
+                "pargp": record["name"],
+                "template": record["template"],
+                "array_file": record["array_file"],
+                "layer": record["layer"],
+                "zone": record["zone"],
+            })
+            if record["name"] not in groups:
+                groups.append(record["name"])
         zones = getattr(spec, "resolved_zone_labels", None)
         return {
             "name": spec.name,
