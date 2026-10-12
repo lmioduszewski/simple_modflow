@@ -19188,4 +19188,8 @@ same day, which is the useful part of the result.
       DISV's `(layer, cell)`** -- with no model there is no grid to read, and that form is
       what a DRN declared for a myflopy (DISV) model before it exists needs. A declared
       cellid off the grid names nothing (reads as "declared for nothing the package has").
-      Test: `tests/test_drn_zone_obs_on_dis_and_disu.py` (4, real MF6 runs).
+      **`HeadTargets.to_flopy_obs`/`attach_flopy_obs` too** (review; `ConcTargets`
+      inherits it): it wrote `(layer, cell)` on every grid, which MF6 refused on DIS and
+      read on DISU as node `layer + 1` -- a target at node 6 observed node 1 (100.0 ft
+      for 93.35), Normal termination.
+      Tests: `tests/test_drn_zone_obs_on_dis_and_disu.py` (6, real MF6 runs).

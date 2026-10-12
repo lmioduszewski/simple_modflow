@@ -864,7 +864,8 @@ where MF6 takes K33 from K -- naming the target and the package. **An unstructur
 pyEMU locates a node by its centre, a head target is in layer 0 (a deeper node by its
 `cell`), and a correlated `style="grid"` is refused when nodes share a centre (a layered
 DISU's stacked nodes; use `zone`, `pilotpoints` or `constant`). A DRN zone's
-observations are written and read in the grid's own cellid on DIS and DISU (ledger
+observations are written and read in the grid's own cellid on DIS and DISU, and a head
+or concentration target's `to_flopy_obs`/`attach_flopy_obs` write it too (ledger
 455). **`run_ies`/`prior` hand PEST++ an absolute `PYTHONPATH`** (ledger
 454), so a notebook started under `PYTHONPATH=src` runs its own myflopy in the
 forward run; a relative entry the process has `chdir`ed away from is refused. **A build deletes the template and its staging

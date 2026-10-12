@@ -980,7 +980,7 @@ class HeadTargets:
         *,
         csv_name: str = "head_targets.csv",
         kind: str = "HEAD",
-    ) -> dict[str, list[tuple[str, str, tuple[int, int]]]]:
+    ) -> dict[str, list[tuple[str, str, tuple[int, ...]]]]:
         """Return a FloPy ``continuous`` dict for MF6 head observations.
 
         Parameters
@@ -1001,15 +1001,27 @@ class HeadTargets:
         Returns
         -------
         dict of str to list of tuple
-            ``{csv_name: [(obsname, kind, (layer, cell)), ...]}``, the cell id
-            zero-based (FloPy writes it one-based), ``obsname`` the label from
-            :meth:`observation_labels`. The shape ``ModflowUtlobs(continuous=)``
-            and a package's ``observations=`` take.
+            ``{csv_name: [(obsname, kind, cellid), ...]}``, the cellid zero-based
+            (FloPy writes it one-based) in the model's own form --
+            ``(layer, row, col)`` on DIS, ``(layer, cell)`` on DISV, ``(node,)``
+            on DISU (``CellNumbering.cellid``, ledger 455) -- and
+            ``(layer, cell)`` when ``model`` has no discretization to read;
+            ``obsname`` the label from :meth:`observation_labels`. The shape
+            ``ModflowUtlobs(continuous=)`` and a package's ``observations=`` take.
         """
 
         matches = self.observation_labels(model)
+        # The cellid the model's own OBS reads (ledger 455): `(layer, cell)` was
+        # written on every grid, which MF6 refuses on DIS and reads on DISU as node
+        # `layer + 1` -- a target at node 6 observed node 1, in silence.
+        numbering = cell_numbering(model) if has_cell_numbering(model) else None
         records = [
-            (str(row.obsname), str(kind).upper(), (int(row.layer), int(row.cell)))
+            (
+                str(row.obsname),
+                str(kind).upper(),
+                (int(row.layer), int(row.cell)) if numbering is None
+                else numbering.cellid(row.layer, row.cell),
+            )
             for row in matches.itertuples(index=False)
         ]
         return {str(csv_name): records}
@@ -1300,8 +1312,9 @@ class BoundHeadTargets:
         Returns
         -------
         dict of str to list of tuple
-            ``{csv_name: [(obsname, kind, (layer, cell)), ...]}``, the cell id
-            zero-based, as :meth:`HeadTargets.to_flopy_obs` returns it.
+            ``{csv_name: [(obsname, kind, cellid), ...]}``, the cellid zero-based
+            in the bound model's own form, as :meth:`HeadTargets.to_flopy_obs`
+            returns it.
         """
 
         return self.targets.to_flopy_obs(self.model, csv_name=csv_name, kind=kind)

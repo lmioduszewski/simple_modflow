@@ -1,5 +1,5 @@
 """A DRN zone's observation route on a structured (DIS) and an unstructured (DISU) model
-(ledger 455).
+(ledger 455), and a head target's OBS records beside it.
 
 Both ends assumed DISV: ``DrnFlowTargets.to_flopy_obs`` wrote every record's cellid as
 ``(layer, cell)``, which MF6 reads as layer/row on DIS and has no form for on DISU, and
@@ -17,6 +17,7 @@ top layer, two drains at 90 ft, observed by the OBS package the library writes.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
 import myflopy as mf
@@ -91,3 +92,51 @@ def test_the_observation_route_reads_the_zone_its_package_declares(run):
     flow = budget.simulated_series(model)["basin"].to_numpy()
     assert (flow < 0).all()
     np.testing.assert_allclose(observed.simulated_series(model)["seep"], flow, rtol=1e-10)
+
+
+@pytest.mark.parametrize("kind", ["dis", "disu"])
+def test_a_head_targets_obs_records_observe_its_own_cell(kind, tmp_path):
+    """``HeadTargets.to_flopy_obs`` wrote ``(layer, cell)`` on every grid too (ledger
+    455, review): MF6 refused it on DIS, and on DISU read it as node ``layer + 1``
+    -- a target at node 18 observed MF6 node 1 (a CHD cell), under Normal termination. Written in the
+    grid's own cellid, the OBS file's head is the head file's at the target's cell."""
+
+    sim = flopy.mf6.MFSimulation("s", sim_ws=str(tmp_path), exe_name="mf6")
+    flopy.mf6.ModflowTdis(sim, nper=1, perioddata=[(1.0, 1, 1.0)])
+    flopy.mf6.ModflowIms(sim)
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="m")
+    if kind == "dis":
+        flopy.mf6.ModflowGwfdis(gwf, nlay=NLAY, nrow=NROW, ncol=NCOL, delr=10.0, delc=10.0,
+                                top=100.0, botm=[50.0, 0.0])
+        chd = [[(0, row, 0), 100.0] for row in range(NROW)] + [
+            [(0, row, NCOL - 1), 90.0] for row in range(NROW)]
+        layer, cell, expected = 1, 6, (1, 1, 2)
+    else:
+        flopy.mf6.ModflowGwfdisu(gwf, **get_disu_kwargs(
+            NLAY, NROW, NCOL, np.full(NCOL, 10.0), np.full(NROW, 10.0), 100.0, [50.0, 0.0],
+            return_vertices=True))
+        chd = [[(row * NCOL,), 100.0] for row in range(NROW)] + [
+            [(row * NCOL + NCOL - 1,), 90.0] for row in range(NROW)]
+        layer, cell, expected = 0, NROW * NCOL + 6, (NROW * NCOL + 6,)
+    flopy.mf6.ModflowGwfnpf(gwf, k=1.0, icelltype=0)
+    flopy.mf6.ModflowGwfic(gwf, strt=95.0)
+    flopy.mf6.ModflowGwfchd(gwf, stress_period_data=chd)
+    flopy.mf6.ModflowGwfoc(gwf, head_filerecord="m.hds", saverecord=[("HEAD", "ALL")])
+    sim.write_simulation(silent=True)
+    assert sim.run_simulation(silent=True)[0]
+
+    model = mf.load_mf6_run(tmp_path)
+    targets = mf.HeadTargets(
+        locations=pd.DataFrame({"name": ["V"], "layer": [layer], "cell": [cell]}),
+        values=pd.DataFrame({"time": [0], "V": [93.0]}))
+    assert targets.to_flopy_obs(model)["head_targets.csv"] == [("V", "HEAD", expected)]
+    targets.attach_flopy_obs(model)
+    model.gwf.simulation.write_simulation(silent=True)
+    success, report = model.gwf.simulation.run_simulation(silent=True)
+    assert success, "\n".join(report[-20:])
+
+    heads = flopy.utils.HeadFile(str(tmp_path / "m.hds")).get_data()
+    truth = float(heads[expected] if kind == "dis" else heads.reshape(-1)[expected[0]])
+    observed = pd.read_csv(tmp_path / "head_targets.csv")["V"].to_numpy()
+    assert not np.isclose(truth, 100.0)  # node 1, which the old record observed
+    np.testing.assert_allclose(observed, [truth], rtol=1e-10)
