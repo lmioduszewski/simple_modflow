@@ -37,8 +37,10 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_term_filter,
     cell_index_column,
     cell_numbering,
+    check_view_layers,
     has_cell_numbering,
     split_cellid_columns,
+    views_ncpl,
     views_nlay,
 )
 from myflopy.modflow.mf6.package_inputs import (
@@ -157,6 +159,8 @@ __all__ = [
     "has_cell_numbering",
     "split_cellid_columns",
     "views_nlay",
+    "views_ncpl",
+    "check_view_layers",
     "_normalize_term_filter",
     "_normalize_connection_type_filter",
     "_normalize_surface_water_include",
