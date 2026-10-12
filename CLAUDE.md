@@ -1295,7 +1295,12 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   0.1), never deepened. `within` is read, covered and sampled through the SAME helpers
   as `mf.lak` (`geometry.read_footprints`/`footprint_cells`, `surfaces.sample_bed`), so
   record cells == lake cells; `LakeTableBuilder(footprint=)` reads through
-  `read_footprints` too, reprojected to the RASTER's CRS (ledger 318). The result carries `excavations` (`mf.ExcavationRecord`),
+  `read_footprints` too, reprojected to the RASTER's CRS (ledger 318). **A lake with NO
+  bathymetry takes `bottom=mf.Basin(lakes, depth, water_surface=)`** (ledger
+  554): 0 at the shore, `depth` at the pole of inaccessibility, `"bowl"` by
+  default (1.5x a `"cone"`'s volume -- the user's call), each cell the AREA MEAN of the
+  profile (a centroid read missed the volume by 10%), NaN off the footprint; the
+  excavation footprint and `Surface.basin` share ONE reader (`_coerce_footprint`). The result carries `excavations` (`mf.ExcavationRecord`),
   `ground`, `excavated`, `absorbed`; `attach=True` publishes `grid.excavations`, which
   the `gdf_topbtm` SETTER clears. `stack.to_disv` is now `build().to_disv()` (0 digests
   moved, 12 stacks). **An excavated stack SAVES** (ledger 323): excavations ride in the

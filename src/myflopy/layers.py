@@ -49,10 +49,11 @@ from myflopy.surfaces import (
     ExcavationRecord,
     LayerSurfaces,
     Surface,
+    _carries_propagate,
+    _coerce_footprint,
     _content_keyed,
     _depends_on_previous,
     _excavate_layers,
-    _read_excavation_file,
     _refuse_overlapping_excavations,
     _resolve_excavation,
 )
@@ -75,6 +76,8 @@ Min = Surface.minimum
 Max = Surface.maximum
 Clamp = Surface.clamp
 Where = Surface.where
+# An assumed lakebed from a footprint, a depth and a water surface (no bathymetry).
+Basin = Surface.basin
 
 _UNSET = object()
 
@@ -720,16 +723,6 @@ def _refuse_declaration(excavation: _Excavation, *, taken, reserved) -> None:
         )
 
 
-def _looks_positional(value) -> bool:
-    """Whether ``value`` reads as cell numbers or a boolean mask rather than a place."""
-
-    if isinstance(value, (range, np.ndarray)):
-        return True
-    if isinstance(value, (list, tuple)) and value:
-        return all(isinstance(item, (numbers.Integral, bool, np.bool_)) for item in value)
-    return False
-
-
 def _propagates_inside_algebra(surface) -> bool:
     """Whether a ``fill="propagate"`` source sits INSIDE a composite, at any depth.
 
@@ -741,12 +734,7 @@ def _propagates_inside_algebra(surface) -> bool:
     off the excavated top (measured: 14 of 27 cells 2.0 ft apart).
     """
 
-    def carries(node) -> bool:
-        return node.fill == "propagate" or any(
-            carries(op) for op in node.operands if op is not None
-        )
-
-    return any(carries(op) for op in surface.operands if op is not None)
+    return any(_carries_propagate(op) for op in surface.operands if op is not None)
 
 
 def _declare_excavation(
@@ -760,45 +748,9 @@ def _declare_excavation(
     :func:`_refuse_declaration`, which ``LayerStack.from_dict`` runs too.
     """
 
-    import geopandas as gpd
-
     min_remnant, layer = _checked_scalars(min_remnant, layer)
 
-    zone = area = frame = None
-    if isinstance(within, (str, Path)):
-        path = Path(within)
-        if not path.exists():
-            raise FileNotFoundError(f"excavate(within=) names a file that does not exist: {path}")
-        zone = path.resolve()
-        # Read NOW, so a line, a zero-area feature or a missing layer refuses at the
-        # call rather than at build; the read is repeated at build, which is what a
-        # file edited in between gets.
-        frame = _read_excavation_file(zone, layer=layer)
-    else:
-        if isinstance(within, Area):
-            area = within
-        elif isinstance(within, (gpd.GeoDataFrame, gpd.GeoSeries)) or hasattr(within, "geom_type"):
-            area = Area.coerce(within)
-        elif _looks_positional(within):
-            raise TypeError(
-                "excavate(within=) takes the footprint's POLYGONS -- a vector path, an "
-                "mf.Area, a GeoDataFrame/GeoSeries or a shapely polygon -- not cell "
-                "numbers or a boolean mask: those name cells by position on one mesh and "
-                "would dig different cells after `with_grid`."
-            )
-        else:
-            raise TypeError(
-                f"excavate(within=) got a {type(within).__name__}; pass a vector path, "
-                "an mf.Area, a GeoDataFrame/GeoSeries or a shapely polygon."
-            )
-        geometry = area.geometry
-        if geometry.geom_type not in ("Polygon", "MultiPolygon") or not geometry.area > 0:
-            raise ValueError(
-                f"excavate(within=) must be polygonal with area; got a "
-                f"{geometry.geom_type} of area {geometry.area:g}. A pond covers cells by "
-                "AREA -- a line or point would dig the cells along it by length, which "
-                "mf.lak refuses."
-            )
+    zone, area, frame = _coerce_footprint(within, layer=layer, verb="excavate", noun="excavation")
 
     column = surface = None
     if isinstance(bottom, Surface):
@@ -1646,7 +1598,8 @@ class LayerBuildResult:
         bottom : Surface, float, str or pathlib.Path
             The floor, an ABSOLUTE elevation in this result's ``length_units``: a
             :class:`~myflopy.surfaces.Surface` (``mf.Raster``, ``mf.Contours``,
-            ``mf.Flat``, algebra on an absolute one), any real number (numpy scalars
+            ``mf.Flat``, algebra on an absolute one, or ``mf.Basin`` -- an assumed
+            lakebed from the footprint, a depth and a water surface), any real number (numpy scalars
             included), a raster path, or -- with a file ``within`` -- the name of a
             column of its attribute table giving each feature a flat floor. Sampled
             area-weighted onto the cells, with this result's ``ground`` (or ``top``)
@@ -4421,7 +4374,9 @@ class LayerStack:
 
             * A :class:`~myflopy.surfaces.Surface` or alias -- ``mf.Contours``,
               ``mf.Raster``, ``mf.Flat``, algebra on an absolute surface
-              (``ground - 9``). ``units=`` on it is converted to the stack's
+              (``ground - 9``), or ``mf.Basin`` -- an ASSUMED bed for a lake with no
+              bathymetry, from its footprint, a depth and its water surface (give it
+              the same footprint as ``within``). ``units=`` on it is converted to the stack's
               ``length_units``, as a unit bottom is. A BARE ``fill="propagate"``
               source takes the ground where it has no data, so those cells are
               not cut (algebra over one is refused, below).
@@ -5223,4 +5178,5 @@ __all__ = [
     "Max",
     "Clamp",
     "Where",
+    "Basin",
 ]

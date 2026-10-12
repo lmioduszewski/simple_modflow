@@ -14,6 +14,8 @@ layer-elevation lookups, ``mf.disv``) keep working unchanged.
 
 from __future__ import annotations
 
+import numbers
+import types
 import warnings
 from collections.abc import Sequence
 from dataclasses import MISSING, dataclass, field, fields
@@ -33,7 +35,10 @@ from myflopy._length_units import (
 from myflopy._logging import get_logger
 from myflopy.areas import Area
 from myflopy.modflow.mf6.grid.geometry import (
+    BASIN_SHAPES,
     _per_contact,
+    basin_depths,
+    basin_radius,
     centroid_zones,
     footprint_cells,
     geometry_first,
@@ -41,7 +46,8 @@ from myflopy.modflow.mf6.grid.geometry import (
     reconcile_surfaces,
     refuse_footprint_misses,
 )
-from myflopy.modflow.mf6.grid.surfaces import get_raster_vals_at_centroids
+from myflopy.modflow.mf6.grid.surfaces import _area_weighted_sample, get_raster_vals_at_centroids
+from myflopy.modflow.utils.datatypes.readers import _vector_layer_name
 
 _logger = get_logger(__name__)
 
@@ -134,6 +140,290 @@ def _content_keyed(payload: dict[str, Any], source_shas: dict) -> dict[str, Any]
     return payload
 
 
+def _carries_propagate(node) -> bool:
+    """Whether ``node``, or any surface under it, reads ``fill="propagate"``.
+
+    The one walk behind two refusals: ``LayerStack.excavate``'s (a propagate source
+    INSIDE algebra makes the stack and ``mf.lak`` measure different beds) and
+    :meth:`Surface.basin`'s (its water surface may carry none at all).
+    """
+
+    return node.fill == "propagate" or any(
+        _carries_propagate(op) for op in node.operands if op is not None
+    )
+
+
+def _looks_positional(value) -> bool:
+    """Whether ``value`` reads as cell numbers or a boolean mask rather than a place."""
+
+    if isinstance(value, (range, np.ndarray)):
+        return True
+    if isinstance(value, (list, tuple)) and value:
+        return all(isinstance(item, (numbers.Integral, bool, np.bool_)) for item in value)
+    return False
+
+
+def _read_footprint_file(path, *, layer=None, crs=None, noun: str = "excavation"):
+    """Read a footprint FILE through the lake's reader, labelled for messages.
+
+    One feature is labelled with the file's stem, as ``mf.lak`` labels it. Several are
+    labelled ``"row <i>"`` -- the zero-based row of the layer read -- because the
+    reader's own fallback, ``"<noun>_<i>"``, is the shape of a default excavation
+    NAME, so "'excavation_1' (outside the grid)" read as another excavation missing.
+    Shared by an excavation's footprint and a basin's (:meth:`Surface.basin`).
+    """
+
+    frame = read_footprints(path, layer=layer, crs=crs, noun=noun)
+    if len(frame) > 1:
+        frame.index = [f"row {i}" for i in range(len(frame))]
+    return frame
+
+
+def _coerce_footprint(within, *, layer, verb: str, noun: str):
+    """``within`` as ``(zone, area, frame)``: a resolved file with its features, or an inline Area.
+
+    The one reading of a footprint argument behind ``LayerStack.excavate(within=)`` and
+    :meth:`Surface.basin`, so the two take the same spellings and refuse the same ones.
+    A path must exist, is RESOLVED (ledger 293's two-bases trap) and is read NOW, so a
+    line, a zero-area feature or a missing layer refuses at the call; ``frame`` is that
+    read (``None`` for an inline footprint). An ``mf.Area`` is kept; a GeoDataFrame,
+    GeoSeries or geometry is coerced to one; cell numbers or a mask are refused, since
+    they name cells by position on one mesh.
+    """
+
+    zone = area = frame = None
+    if isinstance(within, (str, Path)):
+        path = Path(within)
+        if not path.exists():
+            raise FileNotFoundError(f"{verb}(within=) names a file that does not exist: {path}")
+        zone = path.resolve()
+        frame = _read_footprint_file(zone, layer=layer, noun=noun)
+        return zone, area, frame
+    if isinstance(within, Area):
+        area = within
+    elif isinstance(within, (gpd.GeoDataFrame, gpd.GeoSeries)) or hasattr(within, "geom_type"):
+        area = Area.coerce(within)
+    elif _looks_positional(within):
+        raise TypeError(
+            f"{verb}(within=) takes the footprint's POLYGONS -- a vector path, an "
+            "mf.Area, a GeoDataFrame/GeoSeries or a shapely polygon -- not cell "
+            "numbers or a boolean mask: those name cells by position on one mesh and "
+            "would dig different cells after `with_grid`."
+        )
+    else:
+        raise TypeError(
+            f"{verb}(within=) got a {type(within).__name__}; pass a vector path, "
+            "an mf.Area, a GeoDataFrame/GeoSeries or a shapely polygon."
+        )
+    geometry = area.geometry
+    if geometry.geom_type not in ("Polygon", "MultiPolygon") or not geometry.area > 0:
+        raise ValueError(
+            f"{verb}(within=) must be polygonal with area; got a "
+            f"{geometry.geom_type} of area {geometry.area:g}. A pond covers cells by "
+            "AREA -- a line or point would dig the cells along it by length, which "
+            "mf.lak refuses."
+        )
+    return zone, area, frame
+
+
+def _footprint_frame(zone, area, *, layer, crs, name: str, noun: str):
+    """The footprint as a frame in ``crs``: the file's features, or the Area's PARTS.
+
+    An inline :class:`~myflopy.areas.Area` gives one feature per part, labelled
+    ``name`` (one part) or ``"<name> part <i>"``; a file is read through
+    :func:`_read_footprint_file`. Shared by an excavation and a basin at sampling time.
+    """
+
+    if area is not None:
+        parts = [part for part in shp.get_parts(area.geometry) if not part.is_empty]
+        labels = [name] if len(parts) == 1 else [f"{name} part {i}" for i in range(len(parts))]
+        frame = gpd.GeoDataFrame({"_part": labels}, geometry=parts, crs=area.crs)
+        return read_footprints(frame, crs=crs, id_field="_part", noun=noun)
+    return _read_footprint_file(zone, layer=layer, crs=crs, noun=noun)
+
+
+def _basin_number(value, *, label: str, column: str, what: str) -> float:
+    """A basin's per-feature column value as a float, or a refusal naming the feature (ledger 247)."""
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = float("nan")
+    if not np.isfinite(number):
+        raise ValueError(
+            f"basin: feature {label!r} has {column}={value!r}, which is not a number -- a "
+            f"NULL {what} is not a {what}; fill it or drop the feature."
+        )
+    return number
+
+
+def _refuse_basin(surface) -> None:
+    """Every refusal of a ``kind="basin"`` surface that reads no file.
+
+    Run by ``Surface.__post_init__``, so :meth:`Surface.basin`, :meth:`Surface.from_dict`
+    (a hand-written ``SimulationSpec.from_yaml`` payload) and a raw ``Surface(...)``
+    refuse the same things.
+    """
+
+    if surface.shape not in BASIN_SHAPES:
+        raise ValueError(
+            f"Surface.basin(shape=) must be one of {list(BASIN_SHAPES)}, not {surface.shape!r}: "
+            "'bowl' is a paraboloid (mean depth = depth / 2), 'cone' is linear (mean "
+            "depth = depth / 3)."
+        )
+    if surface.units is not None:
+        raise ValueError(
+            f"units={surface.units!r} on a basin: its depth is a distance in model length "
+            "units, and its water surface converts itself -- declare units= on the "
+            "water_surface (e.g. mf.Raster(dem, units='meters'))."
+        )
+    if (surface.value is None) == (surface.depth_column is None):
+        raise ValueError("a basin takes its depth once: a number (value) or a column (depth_column).")
+    if surface.value is not None:
+        depth = float(surface.value)
+        if not (np.isfinite(depth) and depth > 0.0):
+            raise ValueError(
+                f"Surface.basin(depth=) must be a positive, finite length, not {surface.value!r}."
+            )
+    if (len(surface.operands) == 1) == (surface.surface_column is not None) or len(surface.operands) > 1:
+        raise ValueError(
+            "a basin takes its water surface once: one surface (operands) or a column "
+            "(surface_column)."
+        )
+    if isinstance(surface.zone, Area):
+        from_file = False
+    elif isinstance(surface.zone, (str, Path)):
+        from_file = True
+    else:
+        raise TypeError(
+            f"a basin's footprint (zone) is a vector path or an mf.Area, not a "
+            f"{type(surface.zone).__name__}."
+        )
+    if not from_file:
+        for name, value in (
+            ("layer", surface.zone_layer),
+            ("depth", surface.depth_column),
+            ("water_surface", surface.surface_column),
+        ):
+            if value is not None:
+                raise ValueError(
+                    f"Surface.basin({name}={value!r}) names "
+                    + ("a layer of" if name == "layer" else "a column of")
+                    + " the footprint FILE, and within= is not one -- an mf.Area or a "
+                    "geometry has no layers and no attribute table. Pass the path."
+                )
+    if surface.operands:
+        water = surface.operands[0]
+        if _depends_on_previous(water):
+            raise ValueError(
+                f"Surface.basin(water_surface=) got a {water.kind!r} surface, which is "
+                "measured from the surface ABOVE it. A basin's bed is measured from it, "
+                "and the stack would take it from the ground while mf.lak takes it from "
+                "the excavated top -- a different bed. Give the water surface as an "
+                "absolute elevation: a number, a raster, or a column of the footprint."
+            )
+        if _carries_propagate(water):
+            raise ValueError(
+                "Surface.basin(water_surface=) carries a fill='propagate' source, which "
+                "reads the surface ABOVE where it has no data -- the ground in the stack, "
+                "the excavated bed in mf.lak. Fill the raster's gaps over the lake, or "
+                "give the water surface as a number or a column."
+            )
+
+
+def _basin_column_refusal(argument: str, value, zone, frame) -> str:
+    """The refusal text for a ``str`` argument of :meth:`Surface.basin` that names no column."""
+
+    if frame is None:
+        return (
+            f"Surface.basin({argument}={value!r}) names no column: a column needs within= "
+            "to be a FILE with an attribute table -- an mf.Area or a geometry has none."
+        )
+    names = ", ".join(str(c) for c in frame.columns if c not in ("geometry", "_source_name"))
+    return f"Surface.basin({argument}={value!r}) is not a column of {zone.name} ({names})."
+
+
+def _refuse_overlapping_basins(frame, *, name: str) -> None:
+    """Refuse two features of one basin footprint that overlap by area, naming them.
+
+    Each feature is profiled from its own shore, so where two overlap a point would
+    sit at two depths -- the deeper is no more right than the sum.
+    """
+
+    geometries = list(frame.geometry)
+    tree = shp.STRtree(geometries)
+    left, right = tree.query(geometries, predicate="intersects")
+    pairs = [
+        (frame.index[i], frame.index[j])
+        for i, j in zip(left, right, strict=True)
+        if i < j and geometries[i].intersection(geometries[j]).area > 1e-9 * min(
+            geometries[i].area, geometries[j].area
+        )
+    ]
+    if pairs:
+        shown = ", ".join(f"{a!r} and {b!r}" for a, b in pairs[:10])
+        raise ValueError(
+            f"basin {name!r}: features of its footprint overlap ({shown}). Each lake is "
+            "profiled from its own shoreline, so an overlap has two depths; dissolve them "
+            "into one feature or clip them apart."
+        )
+
+
+#: The most lattice points one basin feature is sampled on (see `_basin_cell_depths`).
+_BASIN_MAX_PIXELS = 2_000_000
+
+
+def _basin_cell_depths(cells, parts, *, shape: str, crs, label: str) -> np.ndarray:
+    """The area-mean depth of each of ``cells`` (a slice of ``gdf_vorPolys``) under one feature.
+
+    The profile is evaluated on a lattice over the cells' bounds -- the pixel the
+    smaller of a hundredth of the feature's largest inscribed radius and a third of its
+    smallest cell's width (each cell then holds at least ~9 pixels), measured to keep
+    the lake's volume within 0.06% (ledger 554) -- and averaged per cell by the
+    ONE area sampler, :func:`~myflopy.modflow.mf6.grid.surfaces._area_weighted_sample`,
+    with depth 0 outside the lake. A lattice past ``_BASIN_MAX_PIXELS`` is coarsened to
+    fit and says so at INFO.
+    """
+
+    from rasterio.io import MemoryFile
+    from rasterio.transform import from_origin
+
+    radius = max(basin_radius(part) for part, _depth in parts)
+    width = float(np.sqrt(cells.area.to_numpy()).min())
+    pixel = min(radius / 100.0, width / 3.0)
+    xmin, ymin, xmax, ymax = (float(v) for v in cells.total_bounds)
+    count = np.ceil((xmax - xmin) / pixel) * np.ceil((ymax - ymin) / pixel)
+    if count > _BASIN_MAX_PIXELS:
+        coarser = pixel * float(np.sqrt(count / _BASIN_MAX_PIXELS))
+        _logger.info(
+            "basin %s: sampling its depth on %.3g-unit pixels rather than %.3g, to keep "
+            "the lattice under %d points", label, coarser, pixel, _BASIN_MAX_PIXELS,
+        )
+        pixel = coarser
+    nx = max(int(np.ceil((xmax - xmin) / pixel)), 1)
+    ny = max(int(np.ceil((ymax - ymin) / pixel)), 1)
+    xs = xmin + pixel * (np.arange(nx) + 0.5)
+    ys = ymax - pixel * (np.arange(ny) + 0.5)
+    grid_x, grid_y = np.meshgrid(xs, ys)
+    depth = basin_depths(grid_x.ravel(), grid_y.ravel(), parts, shape=shape).reshape(ny, nx)
+    centres = np.array([geometry.centroid.coords[0] for geometry in cells.geometry])
+    profile = dict(
+        driver="GTiff", height=ny, width=nx, count=1, dtype="float64",
+        transform=from_origin(xmin, ymax, pixel, pixel), crs=crs,
+    )
+    with MemoryFile() as memory:
+        with memory.open(**profile) as sink:
+            sink.write(depth, 1)
+        with memory.open() as source, warnings.catch_warnings():
+            # The lattice is drawn in the grid's own frame, so there is nothing to
+            # reproject; on a grid with no CRS the sampler would say it is missing one.
+            warnings.filterwarnings("ignore", message="CRS missing")
+            return _area_weighted_sample(
+                types.SimpleNamespace(gdf_vorPolys=cells), source, crs,
+                centres[:, 0], centres[:, 1], f"basin {label}",
+            )
+
+
 #: Surface kinds whose content is per-cell arrays, so they cannot ride in a spec
 #: (ledger 193 refused inlining arrays; ledger 269 names them here).
 _UNSERIALIZABLE_SURFACES = frozenset({"array", "points"})
@@ -145,7 +435,8 @@ class Surface:
 
     Build one with a constructor rather than the raw fields: :meth:`raster`,
     :meth:`flat`, :meth:`offset_below`, :meth:`constant_thickness`,
-    :meth:`from_contours`, or :meth:`from_points` -- or combine surfaces with
+    :meth:`from_contours`, :meth:`from_points`, or :meth:`basin` (an assumed lakebed)
+    -- or combine surfaces with
     :meth:`minimum`, :meth:`maximum`, :meth:`clamp`, :meth:`where`, :meth:`isopach`,
     :meth:`shift`, :meth:`toward` and their fluent forms. Frozen: a constructor or an
     operation returns a NEW surface. Declaring one samples nothing; :meth:`values`
@@ -156,14 +447,15 @@ class Surface:
     kind : str
         What the surface is, and so which other fields it reads: ``"flat"``,
         ``"raster"``, ``"contours"``, ``"points"``, ``"array"``, ``"offset_below"``,
-        ``"constant_thickness"``, or one of the algebra kinds ``"min"``, ``"max"``,
-        ``"clamp"``, ``"where"``, ``"isopach"``, ``"shift"``, ``"toward"``. Not
-        validated when set: an unknown kind raises ``TypeError`` when the surface is
-        sampled.
+        ``"constant_thickness"``, ``"basin"``, or one of the algebra kinds ``"min"``,
+        ``"max"``, ``"clamp"``, ``"where"``, ``"isopach"``, ``"shift"``, ``"toward"``.
+        Not validated when set, bar ``"basin"`` (checked as :meth:`basin` checks its
+        arguments): an unknown kind raises ``TypeError`` when the surface is sampled.
     value : float, optional
         The number the kind needs: the elevation of a ``"flat"`` surface, the distance
         below the surface above for ``"offset_below"``/``"constant_thickness"``, the
-        vertical displacement of a ``"shift"``, the fraction of a ``"toward"``.
+        vertical displacement of a ``"shift"``, the fraction of a ``"toward"``, the
+        maximum depth of a ``"basin"`` (``None`` when ``depth_column`` gives it).
         Unused by the other kinds.
     path : pathlib.Path, optional
         The raster file of a ``"raster"`` surface (set by :meth:`raster`).
@@ -221,14 +513,26 @@ class Surface:
         The surfaces an algebra kind combines: two or more for ``"min"``/``"max"``;
         ``(surface, lower, upper)`` with ``None`` for an absent bound for ``"clamp"``;
         ``(inside, outside)`` for ``"where"``; one for ``"isopach"``, ``"shift"`` and
-        ``"toward"``. Empty for every other kind.
-    zone : shapely geometry, str or pathlib.Path, optional
-        The zone of a ``"where"`` surface (see :meth:`where`).
+        ``"toward"``, and a ``"basin"``'s water surface (empty when
+        ``surface_column`` gives it). Empty for every other kind.
+    zone : shapely geometry, str, pathlib.Path or mf.Area, optional
+        The zone of a ``"where"`` surface (see :meth:`where`), or a ``"basin"``'s
+        footprint: its resolved vector file, or an inline :class:`~myflopy.areas.Area`.
     source_shas : dict, optional
         ``{field name: 16-character content hash}`` for the files this surface reads,
         stamped when it becomes part of a LAZY package (``mf.disv`` on a gridless
         stack, a lazy ``mf.evt``); empty otherwise. The digest reads it in place of the
         paths (:meth:`digest_payload`).
+    depth_column : str, optional
+        A ``"basin"``'s footprint column giving each feature its maximum depth (model
+        length units), in place of ``value``.
+    surface_column : str, optional
+        A ``"basin"``'s footprint column giving each feature a flat water surface, in
+        place of an operand.
+    shape : {'bowl', 'cone'}, optional
+        A ``"basin"``'s profile (see :meth:`basin`); ``None`` for every other kind.
+    zone_layer : str, optional
+        The layer of a ``"basin"``'s footprint file, by name; ``None`` reads the first.
     """
 
     kind: str
@@ -270,6 +574,9 @@ class Surface:
                 continue
             if item.name == "operands":
                 payload[item.name] = [operand.to_dict() for operand in value]
+            elif isinstance(value, Area):
+                # A basin's inline footprint: WKT + CRS, as an excavation's `area` is.
+                payload[item.name] = value.to_dict()
             elif isinstance(value, Path):
                 payload[item.name] = value.as_posix()
             else:
@@ -311,8 +618,12 @@ class Surface:
             A payload as :meth:`to_dict` writes it: field name to value, with
             ``"kind"`` required and every omitted field taking its default. The path
             fields (``path``, ``contours``, ``region_raster``, ``region_vector``,
-            ``out``) are revived as :class:`~pathlib.Path` and each ``operands`` entry
-            is rebuilt recursively.
+            ``out``, and a basin's ``zone``) are revived as :class:`~pathlib.Path`, an
+            inline footprint written by :class:`~myflopy.areas.Area`'s ``to_dict`` as an
+            ``Area``, and each ``operands`` entry is rebuilt recursively. A ``"basin"``
+            payload is checked as :meth:`basin` checks its arguments, short of reading
+            the footprint file (whose path may be project-relative until the build
+            anchors it).
 
         Returns
         -------
@@ -321,7 +632,12 @@ class Surface:
         Raises
         ------
         ValueError
-            ``data`` holds a key that is not a :class:`Surface` field.
+            ``data`` holds a key that is not a :class:`Surface` field, or a
+            ``"basin"`` payload :meth:`basin` would refuse (an unknown shape, a depth
+            that is not positive, a water surface measured from the surface above or
+            carrying ``fill="propagate"``, a layer or column with an inline footprint).
+        TypeError
+            A ``"basin"`` payload whose ``zone`` is neither a path nor an Area.
         """
 
         known = {item.name for item in fields(cls)}
@@ -334,6 +650,10 @@ class Surface:
                 values[name] = Path(values[name])
         if "operands" in values:
             values["operands"] = tuple(cls.from_dict(item) for item in values["operands"])
+        if isinstance(values.get("zone"), dict):
+            values["zone"] = Area.from_dict(values["zone"])
+        elif values.get("kind") == "basin" and isinstance(values.get("zone"), str):
+            values["zone"] = Path(values["zone"])
         return cls(**values)
 
     value: float | None = None
@@ -373,6 +693,21 @@ class Surface:
     #: most expensive. It is the DIGEST's stand-in for the path (:meth:`digest_payload`)
     #: -- see ledger 293's second pass.
     source_shas: dict = field(default_factory=dict)
+    # assumed-bathymetry (``kind="basin"``) parameters, set by :meth:`basin`
+    #: The footprint column giving each feature its maximum depth.
+    depth_column: str | None = None
+    #: The footprint column giving each feature its water-surface elevation.
+    surface_column: str | None = None
+    #: The bed's profile, one of ``BASIN_SHAPES``.
+    shape: str | None = None
+    #: The vector layer of a basin's footprint file, by name.
+    zone_layer: str | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse a basin no grid could sample (:func:`_refuse_basin`); nothing else is checked."""
+
+        if self.kind == "basin":
+            _refuse_basin(self)
 
     @classmethod
     def raster(
@@ -995,6 +1330,213 @@ class Surface:
             )
         return cls(kind="toward", value=fraction, operands=(target,))
 
+    @classmethod
+    def basin(
+        cls,
+        within,
+        depth,
+        *,
+        water_surface,
+        shape: str = "bowl",
+        layer: str | None = None,
+    ) -> Surface:
+        """An assumed lakebed: a lake's water surface less a depth that grows from its shore.
+
+        For a lake with no bathymetry survey. Each footprint part is given a profile
+        that is 0 at its shoreline and the full ``depth`` at its pole of
+        inaccessibility -- the centre of the largest circle inside it, at radius
+        ``R``: at distance ``d`` inside the shore the lake is
+        ``depth * f(min(d / R, 1))`` deep, ``f(s) = s * (2 - s)`` for a ``"bowl"`` and
+        ``f(s) = s`` for a ``"cone"``. The bed is ``water_surface`` less that depth.
+        On a circle the bowl is a paraboloid of revolution whose mean depth is
+        ``depth / 2`` and the cone's is ``depth / 3``, so at one maximum depth the
+        bowl holds 1.5x the water (``docs/reproducers/basin_volume.py``). The profile
+        is a property of the polygon alone, so the same declaration gives the same bed
+        on any mesh.
+
+        A cell the footprint COVERS (the lake's own cell rule,
+        :func:`~myflopy.modflow.mf6.grid.geometry.footprint_cells`) reads the AREA
+        MEAN of the depth over the whole cell -- 0 where the cell is outside the
+        lake -- so the lake's volume, the sum of cell area times depth, is the
+        profile's on every mesh (within 0.06% measured, where a centroid sample
+        missed it by 10% at 200 ft cells on a 300 ft lake); a consequence is that no
+        cell reaches ``depth`` itself. Every other cell is ``NaN``: ``mf.lak`` reads a lake neighbour with
+        no bed as the model top, as it does for a clipped bathymetry raster.
+
+        It is an ABSOLUTE surface: pass it as ``stack.excavate(bottom=...)`` (with the
+        same footprint as ``within=``) and declare the lake with ``mf.lak(lakes=...)``,
+        which takes its bed from the excavation's record, or pass it to
+        ``mf.lak(lake_bottom=...)`` directly. It saves in a spec like a raster
+        surface: a footprint FILE rides under ``zone`` (so a bundled project carries
+        it and ``runs.drift()`` sees it edited), an inline footprint as WKT + CRS.
+
+        Parameters
+        ----------
+        within : str, pathlib.Path, mf.Area, geopandas.GeoDataFrame, geopandas.GeoSeries or shapely geometry
+            The lake outline(s), polygonal with area. A path is RESOLVED and read now
+            (with ``layer``) -- a missing file or layer, a line, a point or a
+            zero-area feature raises here -- and read again when the surface is
+            sampled, reprojected to the grid's CRS; each FEATURE is one lake, and each
+            polygon part of it is profiled on its own radius. An ``mf.Area`` is kept
+            inline; a frame, series or geometry is coerced to one (one with no CRS is
+            in the grid's frame). Cell numbers or a mask raise ``TypeError``: they
+            name cells on one mesh.
+        depth : float or str
+            The MAXIMUM depth, in model length units, reached at each part's pole of
+            inaccessibility: a positive number for every lake, or the name of a column
+            of the footprint FILE giving each feature its own (a NULL, non-numeric,
+            zero or negative value raises naming the feature). A column needs
+            ``within`` to be a file.
+        water_surface : float, str, pathlib.Path or Surface
+            The elevation the depth is measured down from -- over a natural lake, the
+            lidar ground surface IS the water surface. A number (model units); a
+            :class:`Surface` (``mf.Raster(dem)``, algebra; declare ``units=`` on it
+            when it is not in model units); a raster path (``str`` or
+            :class:`~pathlib.Path`, read as :meth:`raster`); or the name of a column
+            of the footprint file giving each lake one flat stage (a NULL or
+            non-numeric value raises naming the feature). A ``str`` is a column
+            first, then a raster file; neither raises ``ValueError``. Sampled with the
+            stack's own method and ``length_units``. A surface measured from the one
+            above it (``offset_below``, ``isopach``, ...) or carrying a
+            ``fill="propagate"`` source anywhere raises ``ValueError``.
+        shape : {'bowl', 'cone'}, default 'bowl'
+            The profile: ``"bowl"`` (paraboloid, mean depth ``depth / 2`` on a
+            circle) or ``"cone"`` (linear, mean depth ``depth / 3``). Anything else
+            raises ``ValueError`` listing both.
+        layer : str, optional
+            The layer of the footprint FILE to read, by name; ``None`` (the default)
+            reads the first. An integer raises ``TypeError`` (in a layer stack it would
+            read as a MODEL layer), and ``layer`` with an inline footprint raises
+            ``ValueError``.
+
+        Returns
+        -------
+        Surface
+            A ``kind="basin"`` surface.
+
+        Raises
+        ------
+        ValueError
+            An unknown ``shape``; a ``depth`` that is not a positive finite number or
+            a column of the file; a column (``depth`` or ``water_surface``) or
+            ``layer`` with an inline footprint; a NULL, non-numeric or non-positive
+            column value, naming the feature; a relative or ``fill="propagate"``
+            water surface; a non-polygonal or zero-area footprint. When the surface
+            is SAMPLED: features covering no cell (all of them -- some only warn, by
+            name, ledger 211), two features overlapping, a column no longer in the
+            file, or two features giving one cell different water surfaces.
+        TypeError
+            ``within``, ``depth`` or ``water_surface`` of another type (a ``bool``
+            included), or an integer ``layer``.
+        FileNotFoundError
+            ``within`` or a ``water_surface`` path that does not exist.
+
+        See Also
+        --------
+        myflopy.layers.LayerStack.excavate : Cut the stack to the bed.
+        myflopy.modflow.mf6.grid.geometry.basin_depths : The profile itself.
+
+        Examples
+        --------
+        >>> import numpy as np, shapely
+        >>> import myflopy as mf
+        >>> from myflopy.modflow.mf6.canonical import irregular_voronoi_grid
+        >>> vor = irregular_voronoi_grid(nrow=10, ncol=10, cell_size=20.0)
+        >>> x0, y0, x1, y1 = vor.gdf_vorPolys.total_bounds
+        >>> lake = mf.Area(shapely.Point((x0 + x1) / 2, (y0 + y1) / 2).buffer(60.0, 64))
+        >>> bed = mf.Basin(lake, 8.0, water_surface=100.0)
+        >>> values = bed.values(vor)
+        >>> bool(np.isnan(values).any()), bool((values[np.isfinite(values)] < 100.0).all())
+        (True, True)
+        >>> bed.to_dict()["shape"]
+        'bowl'
+        """
+
+        if layer is not None:
+            layer = _vector_layer_name(
+                layer, of="within", model_layer="not chosen by a basin, which is one surface"
+            )
+        zone, area, frame = _coerce_footprint(
+            within, layer=layer, verb="Surface.basin", noun="basin"
+        )
+        if layer is not None and frame is None:
+            raise ValueError(
+                f"Surface.basin(layer={layer!r}) names a layer of the footprint FILE, and "
+                "within= is not one -- an mf.Area or a geometry has no layers. Pass the path."
+            )
+
+        def column_of(value) -> str | None:
+            """``value`` when it names a column of the footprint file, else None."""
+
+            if frame is not None and value in frame.columns and value not in ("geometry", "_source_name"):
+                return value
+            return None
+
+        depth_value = depth_column = None
+        if isinstance(depth, (bool, np.bool_)):
+            raise TypeError("Surface.basin(depth=) is a length, not a bool.")
+        if isinstance(depth, numbers.Real):
+            depth_value = float(depth)
+        elif isinstance(depth, str):
+            depth_column = column_of(str(depth))
+            if depth_column is None:
+                raise ValueError(_basin_column_refusal("depth", depth, zone, frame))
+            for label, value in zip(frame.index, frame[depth_column], strict=True):
+                number = _basin_number(value, label=str(label), column=depth_column, what="depth")
+                if not number > 0.0:
+                    raise ValueError(
+                        f"basin: feature {label!r} has {depth_column}={value!r}; a depth "
+                        "must be positive."
+                    )
+        else:
+            raise TypeError(
+                f"Surface.basin(depth=) got a {type(depth).__name__}; pass a positive "
+                "number (model length units) or the name of a column of the footprint file."
+            )
+
+        operands: tuple = ()
+        surface_column = None
+        if isinstance(water_surface, Surface):
+            operands = (water_surface,)
+        elif isinstance(water_surface, (bool, np.bool_)):
+            raise TypeError("Surface.basin(water_surface=) is an elevation, not a bool.")
+        elif isinstance(water_surface, numbers.Real):
+            operands = (Surface.flat(float(water_surface)),)
+        elif isinstance(water_surface, str):
+            surface_column = column_of(str(water_surface))
+            if surface_column is not None:
+                for label, value in zip(frame.index, frame[surface_column], strict=True):
+                    _basin_number(value, label=str(label), column=surface_column, what="water surface")
+            elif Path(water_surface).is_file():
+                operands = (Surface.raster(Path(water_surface)),)
+            else:
+                raise ValueError(
+                    _basin_column_refusal("water_surface", water_surface, zone, frame)
+                    + " Nor is it an existing raster file."
+                )
+        elif isinstance(water_surface, Path):
+            if not water_surface.is_file():
+                raise FileNotFoundError(
+                    f"Surface.basin(water_surface=) names a raster that does not exist: {water_surface}"
+                )
+            operands = (Surface.raster(water_surface),)
+        else:
+            raise TypeError(
+                f"Surface.basin(water_surface=) got a {type(water_surface).__name__}; pass "
+                "a number, a Surface (mf.Raster, ...), a raster path, or the name of a "
+                "column of the footprint file."
+            )
+        return cls(
+            kind="basin",
+            value=depth_value,
+            depth_column=depth_column,
+            operands=operands,
+            surface_column=surface_column,
+            zone=zone if zone is not None else area,
+            zone_layer=layer,
+            shape=shape,
+        )
+
     # -- fluent surface algebra ------------------------------------------- #
     # Read base-surface-first, left to right: ``Raster(bedrock).capped_at(ground - 5)``.
     # These are thin wrappers over the constructors above (same engine), so
@@ -1232,6 +1774,89 @@ class Surface:
             return self._derived_raster().ensure(refresh=refresh, warn=warn)
         raise TypeError(f"Surface kind '{self.kind}' has no raster/constant source.")
 
+    def _basin_label(self) -> str:
+        """What a basin is called in messages: its file's stem, its Area's name, or ``"basin"``."""
+
+        if isinstance(self.zone, Area):
+            return self.zone.name or "basin"
+        return Path(self.zone).stem
+
+    def _basin_values(self, vor, sample) -> np.ndarray:
+        """Sample a ``kind="basin"`` surface: water surface less the cell-mean depth.
+
+        ``sample`` samples an operand with the caller's arguments (:meth:`values`'
+        ``_op``). See :meth:`basin` for the rule; NaN off the footprint's cells.
+        """
+
+        polys = vor.gdf_vorPolys
+        grid_crs = getattr(vor, "crs", None)
+        name = self._basin_label()
+        frame = _footprint_frame(
+            None if isinstance(self.zone, Area) else Path(self.zone),
+            self.zone if isinstance(self.zone, Area) else None,
+            layer=self.zone_layer, crs=grid_crs, name=name, noun="basin",
+        )
+        for column in (self.depth_column, self.surface_column):
+            if column is not None and column not in frame:
+                raise ValueError(
+                    f"basin {name!r}: {column!r} is no longer a column of its footprint file."
+                )
+        per_feature = footprint_cells(polys, frame.geometry)
+        refuse_footprint_misses(
+            polys, frame, per_feature,
+            noun=f"features of basin '{name}'",
+            consequence=", so they carry no bed",
+            partial="warn",
+            source_crs=frame.attrs.get("source_crs"),
+            grid_crs=grid_crs,
+        )
+        _refuse_overlapping_basins(frame, name=name)
+        ncpl = len(polys)
+        depth_mean = np.zeros(ncpl, dtype=float)
+        water = np.full(ncpl, np.nan, dtype=float)
+        claimed: dict[int, float] = {}
+        conflicts = []
+        for label, geometry, found, row in zip(
+            frame.index, frame.geometry, per_feature, range(len(frame)), strict=True
+        ):
+            if not found:
+                continue
+            if self.depth_column is None:
+                depth = float(self.value)
+            else:
+                value = frame[self.depth_column].iloc[row]
+                depth = _basin_number(value, label=str(label), column=self.depth_column, what="depth")
+                if not depth > 0.0:
+                    raise ValueError(
+                        f"basin {name!r}: feature {label!r} has {self.depth_column}={value!r}; "
+                        "a depth must be positive."
+                    )
+            parts = [(part, depth) for part in shp.get_parts(geometry) if part.area > 0.0]
+            depth_mean[found] += _basin_cell_depths(
+                polys.loc[found], parts, shape=self.shape, crs=grid_crs, label=f"{name}/{label}"
+            )
+            if self.surface_column is not None:
+                value = frame[self.surface_column].iloc[row]
+                stage = _basin_number(value, label=str(label), column=self.surface_column, what="water surface")
+                for cell in found:
+                    if cell in claimed and claimed[cell] != stage:
+                        conflicts.append((cell, claimed[cell], stage))
+                    claimed[cell] = stage
+                water[found] = stage
+        if conflicts:
+            shown = ", ".join(f"cell {c} ({a:g} vs {b:g})" for c, a, b in conflicts[:10])
+            raise ValueError(
+                f"basin {name!r}: two features give one cell different "
+                f"{self.surface_column} water surfaces: {shown}. A cell has one bed; move "
+                "the lakes apart or give them one water surface."
+            )
+        cells = sorted({cell for found in per_feature for cell in found})
+        if self.surface_column is None:
+            water = sample(self.operands[0])
+        bed = np.full(ncpl, np.nan, dtype=float)
+        bed[cells] = water[cells] - depth_mean[cells]
+        return bed
+
     def values(
         self,
         vor,
@@ -1370,6 +1995,9 @@ class Surface:
         if self.kind == "where":
             inside, outside = self.operands
             return np.where(_cells_in_zone(vor, self.zone), _op(inside), _op(outside))
+
+        if self.kind == "basin":
+            return self._basin_values(vor, _op)
 
         if self.kind == "isopach":
             if previous is None:
@@ -1690,21 +2318,6 @@ def _feature_floor(value, *, name: str, label: str, column: str) -> float:
     return number
 
 
-def _read_excavation_file(path, *, layer=None, crs=None):
-    """Read an excavation's footprint FILE through the lake's reader, labelled for messages.
-
-    One feature is labelled with the file's stem, as ``mf.lak`` labels it. Several are
-    labelled ``"row <i>"`` -- the zero-based row of the layer read -- because the
-    reader's own fallback, ``"excavation_<i>"``, is the shape of a default excavation
-    NAME, so "'excavation_1' (outside the grid)" read as another excavation missing.
-    """
-
-    frame = read_footprints(path, layer=layer, crs=crs, noun="excavation")
-    if len(frame) > 1:
-        frame.index = [f"row {i}" for i in range(len(frame))]
-    return frame
-
-
 def _resolve_excavation(
     *,
     name: str,
@@ -1731,13 +2344,11 @@ def _resolve_excavation(
 
     polys = grid.gdf_vorPolys
     grid_crs = getattr(grid, "crs", None)
-    if isinstance(within, Area):
-        parts = [part for part in shp.get_parts(within.geometry) if not part.is_empty]
-        labels = [name] if len(parts) == 1 else [f"{name} part {i}" for i in range(len(parts))]
-        frame = gpd.GeoDataFrame({"_part": labels}, geometry=parts, crs=within.crs)
-        footprints = read_footprints(frame, crs=grid_crs, id_field="_part", noun="excavation")
-    else:
-        footprints = _read_excavation_file(within, layer=layer, crs=grid_crs)
+    footprints = _footprint_frame(
+        None if isinstance(within, Area) else within,
+        within if isinstance(within, Area) else None,
+        layer=layer, crs=grid_crs, name=name, noun="excavation",
+    )
     per_feature = footprint_cells(polys, footprints.geometry)
     refuse_footprint_misses(
         polys,

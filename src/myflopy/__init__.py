@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource, Spread
     from myflopy.layers import (
         Array,
+        Basin,
         Clamp,
         Contours,
         Flat,
@@ -347,6 +348,8 @@ _EXPORTS = {
     "Max": ("myflopy.layers", "Max"),
     "Clamp": ("myflopy.layers", "Clamp"),
     "Where": ("myflopy.layers", "Where"),
+    # An assumed lakebed for a lake with no bathymetry (`Surface.basin`).
+    "Basin": ("myflopy.layers", "Basin"),
     "modflow_surfaces": ("myflopy.layers", "modflow_surfaces"),
     "ProjectLayout": ("myflopy.workspace", "ProjectLayout"),
     "ModelView": ("myflopy.workspace", "ModelView"),

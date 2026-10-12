@@ -559,6 +559,26 @@ release-group boundnames; without them it names the fix and offers
   `mf.lak` reads the records (ledger 325): a lake whose cells ARE an excavation's is
   written by the excavated rule -- floor at the bed, walls into the neighbours' cells --
   and `lake_bottom` defaults from the record.
+- `mf.Basin(within, depth, *, water_surface, shape="bowl", layer=None)` (=
+  `Surface.basin`) — an ASSUMED lakebed for a lake with no bathymetry (ledger
+  554): `water_surface` less a depth that is 0 at each footprint part's
+  shoreline and `depth` at its pole of inaccessibility (radius `R`), `depth * f(min(d /
+  R, 1))` with `f(s) = s * (2 - s)` for `"bowl"` (paraboloid, mean depth `depth / 2`) or
+  `f(s) = s` for `"cone"` (mean `depth / 3`) -- 1.5x apart in volume. `within` is a
+  vector path (resolved and read at the call, `layer=` by name) or an `mf.Area`
+  (frames and geometries are coerced to one); `depth` a positive number or a column of
+  the file (per lake); `water_surface` a number, a Surface (the lidar ground over a
+  natural lake IS its water surface), a raster path or a column (one flat stage per
+  lake). Each cell the footprint covers (`mf.lak`'s cell rule) reads the AREA MEAN of
+  the depth over the whole cell -- the lake's volume holds within 0.06% on any mesh,
+  and no cell reaches `depth` -- and every other cell is NaN (`mf.lak` reads such a
+  neighbour as the model top). Pass it to `stack.excavate(bottom=..., within=<the same
+  footprint>)` and let `mf.lak` take the bed from the record, or to
+  `mf.lak(lake_bottom=)` directly. It saves (the file under `"zone"`, an Area inline),
+  digests by the file's content, and refuses a relative or `fill="propagate"` water
+  surface, `units=` on itself (put it on the water surface), a NULL or non-positive
+  depth (naming the feature), and at sampling two overlapping features or a footprint
+  on no cell. `docs/reproducers/basin_volume.py` measures it, MF6 run included.
 - `mf.Toward(target, fraction)` — the contact a share of the way from the surface
   above down to `target`; the primitive `split=` is built on.
 - `mf.CellSurfaceOffset("model_top"|"cell_top"|"cell_bottom", offset=, minimum=)`. The

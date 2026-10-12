@@ -1860,6 +1860,129 @@ def refuse_footprint_misses(
     return [label for label, _geometry in missing]
 
 
+#: The lakebed shapes :func:`basin_depths` draws, keyed by name: the depth at a point
+#: is ``depth * f(s)``, where ``s`` is the point's distance to the shoreline over the
+#: part's inscribed radius, clipped to 1. ``"bowl"`` is a paraboloid of revolution on a
+#: circle (``f = s * (2 - s)``, mean depth ``depth / 2``) and ``"cone"`` is linear
+#: (``f = s``, mean depth ``depth / 3``) -- 1.5x apart in volume at one ``depth``
+#: (ledger 554). ``"bowl"`` first: it is ``Surface.basin``'s default (the
+#: user's call, decisions Q6).
+BASIN_SHAPES = ("bowl", "cone")
+
+
+def _basin_profile(s: np.ndarray, shape: str) -> np.ndarray:
+    """The fraction of the maximum depth at normalized distance ``s`` from the shore."""
+
+    if shape == "bowl":
+        return s * (2.0 - s)
+    if shape == "cone":
+        return s
+    raise ValueError(f"shape must be one of {list(BASIN_SHAPES)}, not {shape!r}.")
+
+
+def basin_radius(part) -> float:
+    """The radius of the largest circle inside one polygon: its pole of inaccessibility.
+
+    The distance from :func:`shapely.ops.polylabel`'s point to the polygon's boundary
+    (its holes included), found to a ten-thousandth of the polygon's square-root area.
+    It is the distance at which :func:`basin_depths` reaches its full depth, and it is
+    a property of the polygon alone, so the bed it normalizes is the same on every mesh.
+
+    Parameters
+    ----------
+    part : shapely.Polygon
+        One polygon with area (a part of a lake's footprint), in any frame.
+
+    Returns
+    -------
+    float
+        The inscribed radius, in the polygon's coordinate units; greater than 0.
+
+    Raises
+    ------
+    ValueError
+        ``part`` has no area.
+
+    Examples
+    --------
+    >>> import shapely
+    >>> from myflopy.modflow.mf6.grid.geometry import basin_radius
+    >>> round(basin_radius(shapely.box(0, 0, 100, 40)), 3)
+    20.0
+    """
+
+    from shapely.ops import polylabel
+
+    area = float(part.area)
+    if not area > 0.0:
+        raise ValueError("a basin's footprint part has no area, so it has no inscribed radius.")
+    label = polylabel(part, tolerance=np.sqrt(area) * 1e-4)
+    return float(part.boundary.distance(label))
+
+
+def basin_depths(xs, ys, parts, *, shape: str = "bowl") -> np.ndarray:
+    """An assumed lake depth at each point, from the shoreline alone.
+
+    For each polygon PART with maximum depth ``D``, a point inside it at distance
+    ``d`` from the part's boundary (islands included) is ``D * f(min(d / R, 1))``
+    deep, where ``R`` is the part's inscribed radius (:func:`basin_radius`) and ``f``
+    the shape (:data:`BASIN_SHAPES`). On a circle that is a cone or a paraboloid of
+    revolution; on a non-convex lake the deepest line follows its medial axis. A point
+    in no part is 0 deep, and one in two overlapping parts takes the deeper.
+
+    Parameters
+    ----------
+    xs, ys : array_like of float
+        The points, in the parts' own frame (one ``x`` per ``y``).
+    parts : iterable of (shapely.Polygon, float)
+        Each footprint part with its maximum depth -- a positive length, in the same
+        vertical units as the result. A MultiPolygon is NOT split here: pass its parts.
+    shape : {'bowl', 'cone'}, default 'bowl'
+        The profile: ``"bowl"`` (``f = s * (2 - s)``, mean depth ``D / 2`` on a circle)
+        or ``"cone"`` (``f = s``, mean ``D / 3``).
+
+    Returns
+    -------
+    numpy.ndarray of float, shape (len(xs),)
+        The depth at each point, ``>= 0``.
+
+    Raises
+    ------
+    ValueError
+        An unknown ``shape``; a part with no area; ``xs`` and ``ys`` of different
+        lengths.
+
+    Examples
+    --------
+    >>> import shapely
+    >>> from myflopy.modflow.mf6.grid.geometry import basin_depths
+    >>> disk = shapely.Point(0, 0).buffer(100.0, 256)
+    >>> basin_depths([0.0, 50.0, 200.0], [0.0, 0.0, 0.0], [(disk, 20.0)]).round(2).tolist()
+    [20.0, 15.0, 0.0]
+    >>> basin_depths([50.0], [0.0], [(disk, 20.0)], shape="cone").round(2).tolist()
+    [10.0]
+    """
+
+    if shape not in BASIN_SHAPES:
+        raise ValueError(f"shape must be one of {list(BASIN_SHAPES)}, not {shape!r}.")
+    xs = np.asarray(xs, dtype=float).ravel()
+    ys = np.asarray(ys, dtype=float).ravel()
+    if xs.shape != ys.shape:
+        raise ValueError(f"{xs.size} x values for {ys.size} y values.")
+    depths = np.zeros(xs.size, dtype=float)
+    for part, depth in parts:
+        radius = basin_radius(part)
+        inside = np.flatnonzero(shp.contains_xy(part, xs, ys))
+        if not inside.size:
+            continue
+        boundary = part.boundary
+        shp.prepare(boundary)
+        distance = shp.distance(boundary, shp.points(xs[inside], ys[inside]))
+        s = np.clip(distance / radius, 0.0, 1.0)
+        depths[inside] = np.maximum(depths[inside], float(depth) * _basin_profile(s, shape))
+    return depths
+
+
 def reconcile_surfaces(vor, df: pd.DataFrame = None, min_sep=0.1, trigger_sep=1, which='bottom'):
     """Adjust stacked surface elevations to preserve layer ordering.
 

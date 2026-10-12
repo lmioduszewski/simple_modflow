@@ -246,6 +246,7 @@ toggling `progress` leaves `cache_status()` at `fresh`.
 | `mf.Points(xs, ys, zs, method="linear")` | scattered control points — **the GRASS-free fallback** |
 | `Array(values)` | one value per cell, already computed (`from myflopy.layers import Array`) |
 | `mf.Surface.from_array(values)` | same, via the atom class |
+| `mf.Basin(lakes, depth, water_surface=..., shape="bowl")` | an ASSUMED lakebed where no bathymetry exists: the water surface less a depth that is 0 at the shore and `depth` at the lake's centre -- see "A lake with no bathymetry" below |
 
 #### If your DEM was clipped but not labelled
 
@@ -1030,6 +1031,29 @@ lake's volume from its cells' tops, and after the cut those tops ARE the bed: on
 pond MF6's own curve came within 1% of the contour table from 530 to 533 ft (-3.1% at
 527, +1.3% at 536), where the un-excavated geometry held half the storage (ledger 327).
 Keep `LakeTableBuilder` for sub-cell bathymetry or a rim above the stages you reach.
+
+**A lake with no bathymetry** -- a kettle the lidar only sees the water surface of --
+gets an ASSUMED bed from `mf.Basin` (ledger 554). Over a natural lake the
+ground raster IS the water surface, so measure the depth down from it:
+
+```python
+bed = mf.Basin("lakes.gpkg", "max_depth", water_surface=ground)   # depth from a column, per lake
+pond = stack.excavate(bottom=bed, within="lakes.gpkg").build(vor, attach=True)
+lak = mf.lak(context=ctx, nper=nper, lakes="lakes.gpkg", lake_id_field="name",
+             starting_stage=..., bed_leakance=..., unexcavated="raise")   # bed from the record
+```
+
+Each lake is 0 deep at its shore and `max_depth` at its pole of inaccessibility (the
+centre of the largest circle inside it), shaped `"bowl"` (the default, a paraboloid:
+mean depth = max / 2) or `"cone"` (mean = max / 3) -- the bowl holds **1.5x** the water
+at one maximum depth, and that volume is the lake's storage, so choose with the stage
+response in mind. Each covered cell reads the AREA MEAN of the profile over the whole
+cell, which keeps the lake's volume within 0.06% on any mesh where a centroid read
+missed it by 10% on 200 ft cells; so no cell reaches `max_depth` itself
+(`docs/reproducers/basin_volume.py`). `depth` and `water_surface` also take a number,
+and `water_surface` a raster path, a Surface (with its own `units=`) or a column giving
+each lake a flat stage. It saves like any other surface (the footprint file under
+`zone`), so a lazy `mf.disv` carrying it is bundled, hashed and drift-checked.
 
 **No stack?** A DISV built from a loaded run's arrays has no `LayerStack` to call
 `.excavate` on. Put the arrays in a `LayerBuildResult` and cut that --

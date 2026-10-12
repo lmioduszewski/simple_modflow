@@ -75,6 +75,13 @@
     "AverageYear.tdis": [
       "options:VAR_KEYWORD=<required>"
     ],
+    "Basin": [
+      "within:POSITIONAL_OR_KEYWORD=<required>",
+      "depth:POSITIONAL_OR_KEYWORD=<required>",
+      "water_surface:KEYWORD_ONLY=<required>",
+      "shape:KEYWORD_ONLY='bowl'",
+      "layer:KEYWORD_ONLY=None"
+    ],
     "BoundDrnFlowTargets.attach_flopy_obs": [
       "pname:KEYWORD_ONLY='drn_flow_obs'",
       "filename:KEYWORD_ONLY='drn_flow_targets.obs'",
@@ -4416,7 +4423,11 @@
       "array:POSITIONAL_OR_KEYWORD=None",
       "operands:POSITIONAL_OR_KEYWORD=()",
       "zone:POSITIONAL_OR_KEYWORD=None",
-      "source_shas:POSITIONAL_OR_KEYWORD=<factory>"
+      "source_shas:POSITIONAL_OR_KEYWORD=<factory>",
+      "depth_column:POSITIONAL_OR_KEYWORD=None",
+      "surface_column:POSITIONAL_OR_KEYWORD=None",
+      "shape:POSITIONAL_OR_KEYWORD=None",
+      "zone_layer:POSITIONAL_OR_KEYWORD=None"
     ],
     "Surface.above": [
       "distance:POSITIONAL_OR_KEYWORD=<required>"
@@ -7168,6 +7179,7 @@
       "array",
       "clip",
       "contours",
+      "depth_column",
       "epsg",
       "fill",
       "grass_kwargs",
@@ -7182,11 +7194,14 @@
       "region_raster",
       "region_vector",
       "resolution",
+      "shape",
       "source_shas",
+      "surface_column",
       "units",
       "value",
       "z",
-      "zone"
+      "zone",
+      "zone_layer"
     ],
     "advanced.__all__": [
       "chd_spec",
@@ -7280,6 +7295,7 @@
       "Array",
       "ArrayProduct",
       "AverageYear",
+      "Basin",
       "BoundarySource",
       "BuiltModel",
       "BuiltSimulation",

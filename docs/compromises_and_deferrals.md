@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 553 entries (558 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 554 entries (559 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 554 | `mf.Basin` gives a lake an ASSUMED bed where no bathymetry exists | 2026-10-12 |
 | 553 | The majority vote is by VALUE: a unit's features are united before values compete, and a polygon carrying t... | 2026-10-12 |
 | 552 | The uncovered part of a cell competes against a VALUE's cover, not one feature's | 2026-10-12 |
 | 551 | A polygon given `default=` competes with it for the part of each cell it does not cover | 2026-10-12 |
@@ -21203,3 +21204,34 @@ same day, which is the useful part of the result.
       bit; only the default's vote carries a tolerance. A default-valued polygon in a
       cell the default wins reads `reached` and paints (it is part of the winning vote),
       so it is never warned as painting nothing.
+
+554. **`mf.Basin` gives a lake an ASSUMED bed where no bathymetry exists (2026-10-12).**
+      `Surface.basin(within, depth, *, water_surface, shape="bowl")` (`mf.Basin`): the
+      water surface less a depth that is 0 at each footprint part's shoreline and `depth`
+      at its pole of inaccessibility. **Default `"bowl"`** (a paraboloid, mean depth
+      `depth / 2`) over `"cone"` (mean `depth / 3`) -- the user's call (decisions Q6);
+      the two differ by 1.5x in the lake's volume, so in its stage response.
+      **A cell reads the AREA MEAN of the profile over the whole cell**, 0 outside the
+      lake, not its centroid value: on a 300 ft circle the area mean held the volume
+      within 0.06% on 200/100/50/25 ft meshes where the centroid missed it by +10.0%,
+      +2.1%, 0.0%, +0.1% (`docs/reproducers/basin_volume.py`). Consequence, stated: no
+      cell reaches `depth` (16.9 of 20 ft at 200 ft cells). The mean goes through the
+      ONE area sampler, on an in-memory lattice whose pixel is the smaller of R/100 and a
+      third of the smallest covered cell's width (measured within 0.1% across that
+      sweep), capped at 2 million points per feature, coarsened and logged at INFO past it.
+      **The profile is normalized per PART by its own inscribed radius** (`polylabel`),
+      a property of the polygon, so a move keeps the bed; NOT by the deepest cell on
+      the mesh. Cells off the footprint are NaN, which `mf.lak` already reads as the
+      model top for a neighbour.
+      **The water surface may not depend on the surface above, nor carry
+      `fill="propagate"` ANYWHERE** -- stricter than `excavate`, which accepts a bare
+      propagate source: a basin is measured down FROM its water surface, and a
+      propagate gap would read the ground in the stack and the excavated bed in
+      `mf.lak`. Two features of one footprint overlapping by area are refused at
+      sampling (each is profiled from its own shore). The excavation's footprint
+      reading is now the same helper (`surfaces._coerce_footprint`), so the two take
+      and refuse the same spellings.
+      **Not built:** a stage-volume `LakeTableBuilder` from the basin (ledger 327: after
+      the cut a table is optional); shapes beyond the two (a mean-depth-ratio
+      parameter); a basin from an inline bare shapely geometry kept as such (it is
+      coerced to an `mf.Area`, which serializes; `Surface.where`'s bare zone still does not).
