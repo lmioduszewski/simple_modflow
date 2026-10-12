@@ -24,6 +24,10 @@ layers), four head targets. Layer 0's K file, written / base:
   B. two pilot-point calls on layer 0 (``ka`` every point 2.0, ``kb`` every point 1.5).
   C. ``zones=`` west half 1, east half 0, every pilot point 2.0.
   D. two calls under the default name, ``layers=[0]`` and ``layers=[1]``.
+  E. ``k`` constant on layer 0 at 1.0 with ``physical=`` capped at 1.2x the layer's
+     largest K, plus pilot points on layer 0 with no ``physical=``, every point 5.0
+     (ledger 528; "before" there is the R1-pilot commit 09f3a1b9, the parent
+     having no stacking at all).
 
 MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, 2026-10-12; "before" is claude/pestprep 3a2d6f9)
                                                     before          after
@@ -33,6 +37,7 @@ MEASURED (mf6 6.8.0.dev0, pyEMU 1.4.0, 2026-10-12; "before" is claude/pestprep 3
   C  east (zone 0) cells moved, of 221              221             0
      west (zone 1) written / base                   2.000000        2.000000
   D  pilot-point groups in the control file         kl1             kl0, kl1
+  E  largest written / the constant's cap           4.166667        1.000000
 """
 
 from __future__ import annotations
@@ -131,6 +136,16 @@ def main():
         moved = int((~np.isclose(ratio[zones == 0], 1.0, rtol=1e-9)).sum())
         print(f"C  zones= west 1 / east 0, points at 2.0: {moved} of {int((zones == 0).sum())} "
               f"east cells moved; west written/base {np.median(ratio[zones == 1]):.6f}")
+
+        cap = 1.2 * float(np.asarray(demo.model.gwf.npf.k.get_data(), dtype=float)[0].max())
+        _, ratio = _case(demo, root, "e", [
+            dict(style="constant", layers=[0], name="kc", bounds=(0.1, 10.0),
+                 physical=(1e-6, cap)),
+            dict(style="pilotpoints", layers=[0], name="kp", **_spacing(6), **bounds),
+        ], {"kpl0": 5.0})
+        base0 = np.asarray(demo.model.gwf.npf.k.get_data(), dtype=float)[0]
+        print(f"E  constant capped by physical=, pilot points at 5.0: largest written / cap "
+              f"{(ratio * base0).max() / cap:.6f}")
 
         cal = demo.model.pest("d", workspace=root / "d", start_datetime="2024-01-01")
         cal.parameterize("k", style="pilotpoints", layers=[0], **_spacing(6), **bounds)

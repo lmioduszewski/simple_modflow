@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 527 entries (532 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 528 entries (533 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 528 | A covered cell is clamped to the pyEMU multipliers' `physical=` on its file too | 2026-10-12 |
 | 527 | `pp_spacing=` in model length units replaces `pp_space`, with no alias and no default; `zones=` is honoured... | 2026-10-12 |
 | 526 | Pilot points interpolate in log10 space from the 8 nearest points of their set, through weights stored at b... | 2026-10-12 |
 | 525 | Pilot points multiply the array file as pyEMU left it: one forward-run command per file, product stacking | 2026-10-12 |
@@ -20515,6 +20516,8 @@ same day, which is the useful part of the result.
       clamped to the tightest `physical=` of its covering sets, after pyEMU clamped its own
       product with its ult bounds -- so a value clamped in between differs from
       clamp(org x every factor); two covering sets whose limits share no value are refused.
+      **Amended by ledger 528**: the clamp also takes the tightest `physical=`
+      of the pyEMU multipliers on the file.
       A template built before this keeps its own baked copy of the old function.
 
 526. **Pilot points interpolate in log10 space from the 8 nearest points of their set, through weights stored at build (2026-10-12).**
@@ -20552,3 +20555,14 @@ same day, which is the useful part of the result.
       the grid, in a cell labelled `<= 0`, or given twice; a zone `> 0` holding no
       explicit point is refused. **Not done:** inactive cells excluded as net candidates;
       per-layer zone maps in one call (the shared `resolve_zone_array` refusal stands).
+
+528. **A covered cell is clamped to the pyEMU multipliers' `physical=` on its file too (2026-10-12).**
+      The pilot step multiplies AFTER pyEMU clamped its own product, so a constant with
+      `physical=(1e-6, 215.06)` under pilot points with none, every point at 5.0, wrote
+      896.08 -- the documented "hard limits on the final value" did not hold. **Chosen:**
+      the file's manifest entry carries the tightest `physical=` of the pyEMU multipliers
+      on that file, and every cell a pilot-point set covers is clamped to it as well as to
+      its sets' limits; limits that share no value are refused at build. Cells no set
+      covers keep pyEMU's output untouched (pyEMU already clamped them). Rejected: clamping
+      the whole file to every pilot set's limits -- a zoned set's `physical=` would reach
+      cells outside its zone.

@@ -178,7 +178,9 @@ print(cal.settings())    # after build(): the point count of every set
   zone or grid multiplier and any number of pilot-point sets on one layer all reach
   MF6 as a product. Until ledger 525 a pilot-point set rebuilt the layer from
   the build-time base and erased them all (`docs/reproducers/pilot_points_stack_and_zone.py`).
-  A covered cell is clamped to the tightest `physical=` of the sets covering it.
+  A covered cell is clamped to the tightest `physical=` of the sets covering it and of
+  the pyEMU multipliers on its file, so a constant's `physical=` still holds under pilot
+  points (ledger 528).
 - **Zones.** `zones=` gives each label `> 0` its own set on each layer: its own net (or
   the explicit points inside it), interpolated onto its own cells only, with its own
   prior covariance; cells labelled `<= 0` keep their value. Different spacing, bounds
@@ -199,8 +201,9 @@ print(cal.settings())    # after build(): the point count of every set
   points `...pp0000`, lower-cased as PEST reads them. Two calls on one layer need two
   names (refused otherwise); calls on different layers may share one.
 - **Refused at build**: an explicit point in no cell, in a cell labelled `<= 0`, or given
-  twice; a zone `> 0` no explicit point lies in; zones labelling nothing; two sets on one
-  cell whose `physical=` limits share no value.
+  twice; a zone `> 0` no explicit point lies in; zones labelling nothing; `physical=`
+  limits on one cell -- of its pilot-point sets, or of them and a multiplier on the same
+  file -- that share no value.
 - **What a write-back reads.** `pilot_point_sets.json` in the template lists every set
   (layer, zone, its value, points and factor files, interpolation, limits) and, per
   array file, whether the forward run starts from pyEMU's output or from the captured

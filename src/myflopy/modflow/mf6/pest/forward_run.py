@@ -61,7 +61,8 @@ def apply_pilotpoints_to_array(array_file, manifest="pilot_point_sets.json"):
     stored (``factors``: per covered cell, its nearest points and their
     inverse-distance-squared weights) -- ``10 ** sum(weight * log10(value))`` for a
     log-transformed parameter, ``sum(weight * value)`` otherwise. A covered cell is
-    then clamped to the tightest of its sets' ``physical=`` limits; a cell no set
+    then clamped to the tightest of its sets' ``physical=`` limits and the file
+    entry's (the pyEMU multipliers' on it, ledger 528); a cell no set
     covers keeps the value it started from. The file is rewritten in the layout it
     was read in (ledger 525).
 
@@ -83,8 +84,9 @@ def apply_pilotpoints_to_array(array_file, manifest="pilot_point_sets.json"):
     manifest : str, optional
         The build's pilot-point manifest, ``pilot_point_sets.json`` (the default),
         naming each set's ``parameter_csv``, ``points_csv``, ``factors``,
-        ``interpolation`` and limits and, per file, ``base_from_file`` and
-        ``base_file``.
+        ``interpolation`` and limits and, per file, ``base_from_file``,
+        ``base_file`` and the pyEMU multipliers' ``lower_limit``/``upper_limit``
+        (``None`` for none).
 
     Raises
     ------
@@ -144,6 +146,12 @@ def apply_pilotpoints_to_array(array_file, manifest="pilot_point_sets.json"):
             lower[cells] = np.maximum(lower[cells], record["lower_limit"])
         if record["upper_limit"] is not None:
             upper[cells] = np.minimum(upper[cells], record["upper_limit"])
+    # The pyEMU multipliers' physical= on this file: pyEMU clamped its own product,
+    # and a pilot factor must not carry a cell back past it (ledger 528).
+    if entry.get("lower_limit") is not None:
+        lower = np.maximum(lower, entry["lower_limit"])
+    if entry.get("upper_limit") is not None:
+        upper = np.minimum(upper, entry["upper_limit"])
     result = values * factor
     result[covered] = np.clip(result[covered], lower[covered], upper[covered])
     np.savetxt(array_file, result.reshape(start.shape), fmt="%.10E")

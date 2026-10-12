@@ -457,12 +457,39 @@ def _pyemu_model_files(pf) -> set[str]:
     return {Path(str(name)).name for name in relations["model_file"]}
 
 
-def _refuse_limits_that_exclude_each_other(array_file: str, records: list[dict], template: Path):
-    """Refuse two sets covering one cell whose ``physical=`` ranges share no value."""
+def _pyemu_limits(project, array_file: str) -> tuple[float | None, float | None]:
+    """The tightest ``physical=`` of every pyEMU multiplier on ``array_file``.
+
+    pyEMU clamps its own product to its ``ult_lbound``/``ult_ubound`` before the
+    pilot-point step multiplies the file again, so a pilot-point factor above 1 would
+    carry a cell past a constant's ``physical=`` unless the step clamps to it too
+    (ledger 528). ``(None, None)`` when no such multiplier declares one.
+    """
+
+    lower = upper = None
+    for spec in project._native_parameter_specs:
+        if (spec.style == "pilotpoints" or spec.physical is None
+                or spec.recipe.family != "array"
+                or array_file not in {str(name) for name in spec.resolved_files}):
+            continue
+        low, high = float(spec.physical[0]), float(spec.physical[1])
+        lower = low if lower is None else max(lower, low)
+        upper = high if upper is None else min(upper, high)
+    return lower, upper
+
+
+def _refuse_limits_that_exclude_each_other(array_file: str, records: list[dict], template: Path,
+                                           file_limits=(None, None)):
+    """Refuse a covered cell whose ``physical=`` ranges -- every covering set's and
+    the file's pyEMU multipliers' (``file_limits``) -- share no value."""
 
     covered = {record["name"]: np.load(template / record["factors"])["cells"] for record in records}
     size = 1 + max(int(cells.max()) for cells in covered.values())
     lower, upper = np.full(size, -np.inf), np.full(size, np.inf)
+    if file_limits[0] is not None:
+        lower[:] = file_limits[0]
+    if file_limits[1] is not None:
+        upper[:] = file_limits[1]
     for record in records:
         cells = covered[record["name"]]
         if record["lower_limit"] is not None:
@@ -473,10 +500,12 @@ def _refuse_limits_that_exclude_each_other(array_file: str, records: list[dict],
     if clash.size:
         cell = int(clash[0])
         names = [record["name"] for record in records if cell in set(covered[record["name"]].tolist())]
+        also = ("" if file_limits == (None, None) else
+                f", with the physical= {file_limits} of the pyEMU multipliers on the file,")
         raise ValueError(
             f"Pilot-point sets {names} all cover cell {cell} of {array_file}, and their "
-            f"physical= limits share no value (at least {lower[cell]:g}, at most "
-            f"{upper[cell]:g}); a cell is clamped to every covering set's limits at once."
+            f"physical= limits{also} share no value (at least {lower[cell]:g}, at most "
+            f"{upper[cell]:g}); a cell is clamped to every covering limit at once."
         )
 
 
@@ -491,7 +520,10 @@ def emit_pilot_point_commands(project) -> None:
     ``org/`` copy (``base_from_file``); any other is rebuilt from
     ``<file>.pp_base``, the file as it stood at build, copied here. Either way a
     worker directory reused across realizations gets the same file every run
-    (ledger 525).
+    (ledger 525). The file's entry also carries the tightest
+    ``physical=`` of the pyEMU multipliers on it (``lower_limit``/``upper_limit``),
+    which the forward run clamps every covered cell to as well, so a pilot-point
+    factor cannot carry a cell past a constant's limits (ledger 528).
 
     Parameters
     ----------
@@ -502,7 +534,8 @@ def emit_pilot_point_commands(project) -> None:
     Raises
     ------
     ValueError
-        When two sets covering one cell have ``physical=`` limits that share no value.
+        When the ``physical=`` limits covering one cell -- its pilot-point sets' and
+        the pyEMU multipliers' on its file -- share no value.
     """
 
     sets = [item["record"] for item in project._pilot_point_sets]
@@ -516,14 +549,17 @@ def emit_pilot_point_commands(project) -> None:
     helper = str(Path(__file__).with_name("forward_run.py"))
     files = []
     for array_file, records in by_file.items():
-        _refuse_limits_that_exclude_each_other(array_file, records, template)
         from_file = array_file in managed
+        limits = _pyemu_limits(project, array_file) if from_file else (None, None)
+        _refuse_limits_that_exclude_each_other(array_file, records, template, limits)
         base_file = None
         if not from_file:
             base_file = f"{array_file}.pp_base"
             shutil.copyfile(template / array_file, template / base_file)
         files.append({"array_file": array_file, "base_from_file": from_file,
-                      "base_file": base_file, "sets": [record["name"] for record in records]})
+                      "base_file": base_file, "lower_limit": limits[0],
+                      "upper_limit": limits[1],
+                      "sets": [record["name"] for record in records]})
         project.pf.add_py_function(
             helper,
             f"apply_pilotpoints_to_array(array_file={array_file!r}, "

@@ -852,10 +852,12 @@ class PestProject:
         physical : tuple of (float, float) or None, optional
             ``(ult_lbound, ult_ubound)`` -- hard limits clamped onto the *final*
             model value after all multipliers are applied (pyEMU's
-            ``ult_lbound``/``ult_ubound``; the pilot-point step clamps each cell
-            it covers to the tightest limits of the pilot-point sets covering it,
-            after pyEMU has clamped its own product, and refuses at
-            :meth:`build` two covering sets whose limits share no value).
+            ``ult_lbound``/``ult_ubound``; the pilot-point step, which multiplies
+            after pyEMU has clamped its own product, clamps each cell it covers
+            to the tightest limits of the pilot-point sets covering it AND of the
+            pyEMU multipliers on its file, so a constant's limits hold under pilot
+            points, and refuses at :meth:`build` covering limits that share no
+            value -- ledger 528).
             Strongly recommended
             for multipliers so calibration cannot push K (etc.) to nonphysical
             values. ``None`` (default) leaves the input unclamped.

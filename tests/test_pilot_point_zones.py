@@ -421,6 +421,39 @@ def test_a_covered_cell_is_clamped_to_the_tightest_covering_limits(demo, tmp_pat
     assert np.allclose(written[zones == 0], 5.0 * base[zones == 0], rtol=1e-8)
 
 
+def test_a_constant_s_physical_limit_holds_under_pilot_points(demo, tmp_path, monkeypatch):
+    """A constant capped by ``physical=`` and pilot points with none, every point at 5.0:
+    no cell of the file passes the constant's cap. pyEMU clamps its own product, and the
+    pilot step multiplied it again after that, so the file read 896.08 against a cap of
+    215.06 (ledger 528)."""
+
+    base = _base_k(demo)
+    cap = 1.2 * float(base.max())
+    cal = _build(demo, tmp_path, [
+        (("k",), dict(style="constant", layers=[0], name="kc", bounds=(0.1, 10.0),
+                      physical=(1e-6, cap))),
+        (("k",), dict(style="pilotpoints", layers=[0], name="kp", pp_spacing=SPACING,
+                      bounds=(0.1, 10.0))),
+    ])
+    manifest = json.loads((cal.template_workspace / PILOT_POINT_MANIFEST).read_text())
+    assert [(e["lower_limit"], e["upper_limit"]) for e in manifest["files"]] == [(1e-6, cap)]
+    _set_values(cal, {"kpl0": 5.0})
+    _pre_commands(cal, monkeypatch)
+    written = _written(cal, demo)
+    assert written.max() <= cap * (1 + 1e-9)
+    below = 5.0 * base < cap
+    assert below.any() and np.allclose(written[below], 5.0 * base[below], rtol=1e-8)
+
+
+def test_a_pilot_limit_sharing_no_value_with_a_constant_s_is_refused(demo, tmp_path):
+    with pytest.raises(ValueError, match="pyEMU multipliers on the file"):
+        _build(demo, tmp_path, [
+            (("k",), dict(style="constant", layers=[0], name="kc", physical=(1e-6, 5.0))),
+            (("k",), dict(style="pilotpoints", layers=[0], name="kp", pp_spacing=SPACING,
+                          physical=(10.0, 20.0))),
+        ])
+
+
 # --- (d) refusals ----------------------------------------------------------------------
 
 

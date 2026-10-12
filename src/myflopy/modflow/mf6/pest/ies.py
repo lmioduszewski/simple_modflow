@@ -1997,9 +1997,9 @@ class IesResults:
             line>``, so the position is ``i * <values per line> + j``, and the
             values per line are read from the names themselves: one per line on
             DISV, and on DIS either a grid ROW (``ncol``, as the build writes an
-            array a ``grid``/``zone``/``constant`` parameter scales) or one (a
-            pilot-point array, which its interpolation writes back one value per
-            line). Reading ``i`` alone put a DIS row's values on cell ``row``; the
+            array any parameter scales -- a pilot-point array too since ledger
+            525) or one (a pilot-point array of a template built
+            before it, whose interpolation wrote one value per line). Reading ``i`` alone put a DIS row's values on cell ``row``; the
             grid's ``ncol`` put a pilot-point layer's 30 values on cells 0..174
             (ledger 420).
             """
