@@ -468,3 +468,88 @@ def test_real_choro_overlays_survive_composition(canonical_run):
     fig = viz.mosaic([("heads", choro)])
     assert len(fig.data) == 1 + len(overlays)
     assert sum(trace.type == "choroplethmap" for trace in fig.data) == 1
+
+
+# --- the composers forward their own selectors, by kind (ledger 461) ---------
+class _RecordMapHost(SpatialView):
+    """A single-model noun whose map names ``agg`` -- a record noun's shape."""
+
+    value_name = "q"
+
+    def __init__(self):
+        self.calls = []
+
+    def get(self):
+        return pd.DataFrame({"per": [0], "layer": [0], "cell": [0], "q": [1.0]})
+
+    def map(self, *, per=0, layer=0, agg="sum", **trace_kwargs):
+        self.calls.append({"per": per, "layer": layer, "agg": agg, **trace_kwargs})
+        return _FakeChoro([1.0])
+
+
+class _FieldMapHost(_RecordMapHost):
+    """A noun whose map has no ``agg`` (heads, a static array)."""
+
+    def map(self, *, per=0, layer=0, **trace_kwargs):
+        self.calls.append({"per": per, "layer": layer, **trace_kwargs})
+        return _FakeChoro([1.0])
+
+
+@pytest.mark.parametrize("verb", ["mosaic", "animate"])
+def test_a_map_composer_hands_agg_to_every_panel(verb):
+    """``q.mosaic(agg='count')`` drew the sum: the composer named ``agg`` and
+    read it for ``kind='plot'`` only."""
+
+    host = _RecordMapHost()
+    getattr(host, verb)(agg="count", layer=0, per=[0])
+    assert host.calls and all(call["agg"] == "count" for call in host.calls)
+
+
+@pytest.mark.parametrize("verb", ["mosaic", "animate"])
+def test_a_map_composer_refuses_agg_its_panels_cannot_take(verb):
+    host = _FieldMapHost()
+    with pytest.raises(TypeError, match="map has no agg"):
+        getattr(host, verb)(agg="count")
+    assert host.calls == []
+
+
+@pytest.mark.parametrize("verb", ["mosaic", "animate"])
+def test_a_map_composer_refuses_cells(verb):
+    host = _RecordMapHost()
+    with pytest.raises(TypeError, match="select="):
+        getattr(host, verb)(cells=[0])
+
+
+@pytest.mark.parametrize("verb", ["mosaic", "animate"])
+def test_a_series_composer_refuses_a_keyword_it_does_not_read(verb):
+    """Its ``**kwargs`` tail used to take anything and draw."""
+
+    host = _FakeSeriesHost(_series_frame(), models=["a", "b"])
+    with pytest.raises(TypeError, match="not_a_parameter"):
+        getattr(host, verb)(kind="plot", not_a_parameter=1)
+
+
+@pytest.mark.slow
+def test_a_record_mosaic_draws_what_its_map_draws_under_agg(canonical_run):
+    q = canonical_run.drn.results.q
+
+    def z(picture):
+        return np.asarray(getattr(picture, "fig", picture).data[0].z, dtype=float)
+
+    counted = z(q.mosaic(agg="count", layer=[0]))
+    assert np.allclose(counted, z(q.map(layer=0, agg="count")), equal_nan=True)
+    assert not np.allclose(counted, z(q.mosaic(agg="sum", layer=[0])), equal_nan=True)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("verb", ["mosaic", "animate"])
+def test_a_section_composer_takes_its_path_as_cells(canonical_run, verb):
+    """The composer's own ``cells`` captured the path, so the section got no
+    line and failed with ``object of type 'NoneType' has no len()`` -- while the
+    ``TypeError`` for a stray keyword listed ``cells`` as accepted."""
+
+    hds = canonical_run.hds
+    figure = getattr(hds, verb)(kind="section", cells=[0, 1, 2], per=[0, 1])
+    assert len(figure.data) > 0
+    with pytest.raises(TypeError, match="no agg"):
+        getattr(hds, verb)(kind="section", cells=[0, 1, 2], agg="sum")

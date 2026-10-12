@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 460 entries (465 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 461 entries (466 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 461 | A composer's own `cells`/`agg` and its `kind="plot"` tail act or raise, by kind | 2026-10-11 |
 | 460 | A reproducer or example script removes the scratch directory it makes, and a run that leaves anything in it... | 2026-10-11 |
 | 459 | The legacy `DisuGrid` reads `gdf_topbtm` by position and refuses to pick one of several bottoms | 2026-10-11 |
 | 458 | One grid option spelt two ways in two places is refused; one key in two places keeps its documented precedence | 2026-10-11 |
@@ -18618,8 +18619,9 @@ same day, which is the useful part of the result.
       *Plot views* (`docs/reproducers/view_plot_docstring_claims.py` items 10-15, R): an
       input field's `plot()` -- single-model, group and diff -- takes `agg="sum"`, so
       `model.drn.inputs.elev.plot()` draws 1598.13 per period for drains averaging
-      133.18 (ledger 297 not applied to series); `mosaic(kind="section", <typo>=)`'s
-      `TypeError` offers `cells`, which the composer captures; `stack.plot.section(
+      133.18 (ledger 297 not applied to series); ~~`mosaic(kind="section", <typo>=)`'s
+      `TypeError` offers `cells`, which the composer captures~~ (fixed by ledger
+      461: `cells` reaches the section); `stack.plot.section(
       legend="bottom")` draws at the upper right (`legend` is read for truth only);
       `plot.grid(backend="mpl")` and `GridMesh.plot_mpl()` draw onto pyplot's CURRENT
       figure; the interpolated profile reads `<name>.hds` whatever the model's kind
@@ -18710,11 +18712,13 @@ same day, which is the useful part of the result.
 438. **Defects the lane-D docstring pass found and documented rather than fixed (2026-10-11).**
       Writing the missing entries in the seven view/plot files (instructed: document the
       truth, do not change code) turned these up, each measured; each docstring now says
-      what the code does. **Silent drops:** `SpatialView.mosaic`/`.animate` ignore their
+      what the code does. **Silent drops:** ~~`SpatialView.mosaic`/`.animate` ignore their
       `**kwargs` on `kind="plot"`, ignore the named `cells`/`agg` on `kind="map"`
       (`model.drn.results.q.mosaic(agg="count")` draws the sum, where `.map(agg="count")`
       draws counts), and cannot pass `cells` to `kind="section"` (the named parameter
-      captures it; the section fails with `object of type 'NoneType' has no len()`);
+      captures it; the section fails with `object of type 'NoneType' has no len()`)~~
+      (fixed by ledger 461: `kind="plot"` refuses its tail, a map panel takes
+      `agg` or refuses it and refuses `cells`, and a section takes `cells` as its path);
       `SpatialView.plot` -- and the composers through `_series_selection` -- ignore
       `layer=`/`cells=` on a table without that column; `SliderAnimation.show` ignores
       its `*args`/`**kwargs`; `LayerSection.draw(color_by=...)` is not checked as the
@@ -19307,3 +19311,16 @@ same day, which is the useful part of the result.
       reads `/home/lukem/models` and is not executed).
       Revert check: dropping the `atexit` line from `top_active_passthrough.py` or
       `contours_to_model.py` fails both the static case and the executed one.
+
+461. **A composer's own `cells`/`agg` and its `kind="plot"` tail act or raise, by kind (2026-10-11).**
+      `mosaic`/`animate` dropped `**kwargs` on `kind="plot"`, `agg`/`cells` on
+      `kind="map"` (`q.mosaic(agg="count")` drew the sum), and captured the `cells` a
+      `kind="section"` panel needed as its path (ledger 438). Chosen: `cells` is a
+      series panel's lines or a section's path, and is REFUSED on a map -- no map takes
+      it, and highlighting is `select=`; `agg` is FORWARDED to each map panel, refused
+      when the panel's `map` names none (a single model's noun is judged by its own
+      signature, since its tail is Plotly's) and forwarded when a group or diff
+      `_spatial_map` only passes a tail on, so that case is decided further down; it is
+      refused on a section. `kind="plot"` takes no tail. Revert check:
+      `tests/test_view_grammar_composers.py` -- the `agg`, `cells`, series-keyword and
+      section-path tests (11 cases).

@@ -719,6 +719,38 @@ def refuse_panel_drawing_options(kind: str, verb: str, options: dict) -> None:
     )
 
 
+#: What a ``kind="plot"`` composer reads: the series panels take nothing else,
+#: so any other keyword is refused rather than dropped (ledger 461).
+SERIES_COMPOSER_PARAMS = {
+    "mosaic": ("kind", "by", "per", "layer", "model", "cells", "agg", "ncols", "title",
+               "backend"),
+    "animate": ("kind", "over", "per", "layer", "model", "cells", "agg", "title",
+                "backend"),
+}
+
+
+def refuse_series_composer_options(where: str, verb: str, unexpected: dict) -> None:
+    """Raise a ``TypeError`` naming every keyword a ``kind="plot"`` composer did not take.
+
+    The series panels read only :data:`SERIES_COMPOSER_PARAMS`; the composer's
+    ``**kwargs`` tail used to swallow anything else and draw (ledger 461).
+    """
+
+    if not unexpected:
+        return
+    import difflib
+
+    accepted = SERIES_COMPOSER_PARAMS[verb]
+    described = []
+    for name in sorted(unexpected):
+        near = difflib.get_close_matches(name, list(accepted), n=1)
+        described.append(f"{name!r}" + (f" (did you mean {near[0]!r}?)" if near else ""))
+    raise TypeError(
+        f"{where} got unexpected keyword argument(s) {', '.join(described)}: its series "
+        f"panels take only {', '.join(accepted)}."
+    )
+
+
 #: Reachable on a noun but measured NOT to act, so deliberately not offered:
 #:   `hover_fields` -- the noun sets `hover_spec`, which supersedes it.
 #:   `zoom` -- inert under the default `fit_bounds=True`, which replaces it with
@@ -1946,6 +1978,74 @@ class SpatialView:
 
         return last_saved_steps(model.kstpkper).get(int(period))
 
+    # -- the composers' own selectors, by kind (ledger 461) ------------
+    def _panel_map_names_agg(self) -> bool | None:
+        """Whether this surface's panel builder takes ``agg``: ``None`` when it cannot tell.
+
+        A single model's noun builds each panel with its own ``map``, which either
+        NAMES ``agg`` (a record noun) or hands its tail to Plotly as trace
+        properties, which have no ``agg``. A group or a diff overrides
+        :meth:`_spatial_map`; when that names ``agg`` it takes it, and when it only
+        forwards a tail the answer lies further down, so it is forwarded.
+        """
+
+        if type(self)._spatial_map is SpatialView._spatial_map:
+            return "agg" in inspect.signature(self.map).parameters
+        parameters = inspect.signature(self._spatial_map).parameters
+        if "agg" in parameters:
+            return True
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+            return None
+        return False
+
+    def _map_composer_options(self, where: str, cells, agg) -> dict:
+        """``cells``/``agg`` as a ``kind="map"`` composer forwards them to each panel.
+
+        ``agg`` reaches every panel whose ``map`` takes one -- a record noun's
+        combines a cell's records by it -- and is refused where the panel has
+        none. ``cells`` is refused: no map takes it (the highlight is ``select=``).
+        Both were dropped in silence until ledger 461, so
+        ``q.mosaic(agg="count")`` drew the sum.
+        """
+
+        if cells is not None:
+            raise TypeError(
+                f"{where} draws every cell of each panel, so it takes no cells=: "
+                "cells= picks a series panel's lines (kind='plot') or a section's "
+                "path (kind='section'). To highlight cells on a map, pass select=."
+            )
+        if agg is None:
+            return {}
+        if self._panel_map_names_agg() is False:
+            raise TypeError(
+                f"{where} got agg={agg!r}, but this noun's map has no agg: each "
+                "panel draws one value per cell. agg= reduces a series panel "
+                "(kind='plot') here."
+            )
+        return {"agg": agg}
+
+    def _section_composer_options(self, where: str, cells, agg, kwargs: dict) -> dict:
+        """The line-profile options a ``kind="section"`` composer hands each panel.
+
+        ``cells`` is the section's path, as it is on :meth:`section` -- the
+        composer's own named ``cells`` used to capture it, so the panel got no
+        line (ledger 461). ``agg`` has nothing to reduce on a profile and is
+        refused; any other keyword is checked by :func:`refuse_section_arguments`.
+        """
+
+        if agg is not None:
+            raise TypeError(
+                f"{where} draws a line profile, which has no agg= to reduce by; "
+                "agg= reduces a series panel (kind='plot') or a record map "
+                "(kind='map')."
+            )
+        refuse_section_arguments(
+            where,
+            {k: v for k, v in kwargs.items() if k not in COMPOSER_SECTION_OPTIONS},
+            COMPOSER_SECTION_OPTIONS,
+        )
+        return kwargs if cells is None else {**kwargs, "cells": cells}
+
     def mosaic(
         self,
         *,
@@ -2025,18 +2125,18 @@ class SpatialView:
             The model faceted over (``by='model'``), or held constant otherwise.
             Groups and diffs only.
         cells : int or sequence of int, optional
-            Restrict series panels to these cells (zero-based, within a layer),
-            one line per cell. Read by ``kind='plot'`` only, and IGNORED by the
-            other kinds with nothing said: it does not reach a map, nor a
-            section's path -- ``mosaic(kind='section', cells=...)`` draws no line
-            and fails inside the section (``TypeError``); give the section a
-            ``line``.
+            ``kind='plot'``: restrict the series panels to these cells (zero-based,
+            within a layer), one line per cell. ``kind='section'``: each panel's
+            path as cell numbers, as :meth:`section` takes it (give it or
+            ``line``). ``kind='map'`` takes none -- a map draws every cell, and
+            the highlight is ``select=`` -- and raises ``TypeError``.
         agg : str, optional
-            How several rows per period are reduced for a series panel
-            (``'sum'``/``'mean'``/...). Read by ``kind='plot'`` only. IGNORED by
-            ``kind='map'`` with nothing said, although a record noun's ``map`` has
-            an ``agg`` of its own: ``mosaic(agg='count')`` draws what ``map()``
-            draws by default (the sum, on a flux).
+            ``kind='plot'``: how several rows per period are reduced for a series
+            panel (``'sum'``/``'mean'``/...). ``kind='map'``: handed to every
+            panel's map, which combines a cell's records by it (a record noun's
+            ``agg``) -- on a noun whose map has no ``agg`` (heads, a static
+            array) it raises ``TypeError``. ``kind='section'`` has nothing to
+            reduce and raises ``TypeError``.
         ncols : int, default 3
             Grid width; rows grow as needed.
         title : str, optional
@@ -2069,8 +2169,9 @@ class SpatialView:
             :meth:`section`) -- and any other keyword raises ``TypeError``: a
             cross-section argument (``fill``, ``layers``, ...) naming
             ``model.plot.section(fill=...)``, ``kstpkper`` naming ``per=``, and
-            anything else listing the names accepted. ``'plot'``: IGNORED, with
-            nothing said -- the series panels read none of them.
+            anything else listing the names accepted. ``'plot'``: none -- the
+            series panels read only the parameters named above, so any keyword
+            raises ``TypeError`` listing them.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -2217,12 +2318,14 @@ class SpatialView:
             else None
         )
         kind_key = str(kind).lower()
+        where = f"{self._noun_path()}.mosaic(kind={kind_key!r})"
         if kind_key == "map":
             axis = (by or self._spatial_default_facet()).lower()
             fixed_per = self._single_period(per)
             panels = self._facet_panels(
                 axis, per=fixed_per, layer=layer, model=model, extents=extents,
-                **panel_options, **kwargs,
+                **panel_options, **self._map_composer_options(where, cells, agg),
+                **kwargs,
             )
             heading = title or f"{self._spatial_value_label()} by {axis}"
             if self._normalize_backend(backend) == "plotly":
@@ -2234,6 +2337,7 @@ class SpatialView:
             panel_options["extent"] = extents
         refuse_panel_drawing_options(kind_key, "mosaic", panel_options)
         if kind_key == "plot":
+            refuse_series_composer_options(where, "mosaic", kwargs)
             return self._plot_mosaic(
                 by=by,
                 per=per,
@@ -2246,11 +2350,6 @@ class SpatialView:
                 title=title,
             )
         if kind_key == "section":
-            refuse_section_arguments(
-                f"{self._noun_path()}.mosaic(kind='section')",
-                {k: v for k, v in kwargs.items() if k not in COMPOSER_SECTION_OPTIONS},
-                COMPOSER_SECTION_OPTIONS,
-            )
             return self._xs_mosaic(
                 by=by,
                 per=per,
@@ -2259,7 +2358,7 @@ class SpatialView:
                 backend=backend,
                 ncols=ncols,
                 title=title,
-                **kwargs,
+                **self._section_composer_options(where, cells, agg, kwargs),
             )
         raise ValueError(f"kind must be 'map', 'plot', or 'section', got {kind!r}.")
 
@@ -2583,17 +2682,17 @@ class SpatialView:
             The models swept (``over='model'``), or the one held constant
             otherwise. Groups and diffs only.
         cells : int or sequence of int, optional
-            Restrict series frames to these cells (zero-based, within a layer),
-            one line per cell. Read by ``kind='plot'`` only, and IGNORED by the
-            other kinds with nothing said: it does not reach a map, nor a
-            section's path -- ``animate(kind='section', cells=...)`` draws no line
-            and fails inside the section (``TypeError``); give the section a
-            ``line``.
+            ``kind='plot'``: restrict the series frames to these cells (zero-based,
+            within a layer), one line per cell. ``kind='section'``: each frame's
+            path as cell numbers, as :meth:`section` takes it (give it or
+            ``line``). ``kind='map'`` takes none -- a map draws every cell, and
+            the highlight is ``select=`` -- and raises ``TypeError``.
         agg : str, optional
-            How several rows per period are reduced for a series frame. Read by
-            ``kind='plot'`` only. IGNORED by ``kind='map'`` with nothing said,
-            although a record noun's ``map`` has an ``agg`` of its own: each frame
-            draws what ``map()`` draws by default.
+            ``kind='plot'``: how several rows per period are reduced for a series
+            frame. ``kind='map'``: handed to every frame's map, which combines a
+            cell's records by it (a record noun's ``agg``) -- on a noun whose map
+            has no ``agg`` (heads, a static array) it raises ``TypeError``.
+            ``kind='section'`` has nothing to reduce and raises ``TypeError``.
         title : str, optional
             Figure title. Defaults to a label naming the field and the axis.
         backend : {'plotly', 'mpl'}, default 'plotly'
@@ -2616,8 +2715,9 @@ class SpatialView:
             :meth:`section`) -- and any other keyword raises ``TypeError``: a
             cross-section argument (``fill``, ``layers``, ...) naming
             ``model.plot.section(fill=...)``, ``kstpkper`` naming ``per=``, and
-            anything else listing the names accepted. ``'plot'``: IGNORED, with
-            nothing said -- the series frames read none of them.
+            anything else listing the names accepted. ``'plot'``: none -- the
+            series frames read only the parameters named above, so any keyword
+            raises ``TypeError`` listing them.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         zmin, zmax : float, optional
@@ -2761,10 +2861,12 @@ class SpatialView:
                 "extent; a list of them is for a mosaic's panels."
             )
         kind_key = str(kind).lower()
+        where = f"{self._noun_path()}.animate(kind={kind_key!r})"
         if kind_key == "map":
             axis = str(over or "period").lower()
             frames = self._frame_panels(
-                axis, per=per, layer=layer, model=model, **panel_options, **kwargs
+                axis, per=per, layer=layer, model=model, **panel_options,
+                **self._map_composer_options(where, cells, agg), **kwargs,
             )
             heading = title or f"{self._spatial_value_label()} over {axis}"
             if self._normalize_backend(backend) == "plotly":
@@ -2772,6 +2874,7 @@ class SpatialView:
             return self._mpl_animation(frames, title=heading)
         refuse_panel_drawing_options(kind_key, "animate", panel_options)
         if kind_key == "plot":
+            refuse_series_composer_options(where, "animate", kwargs)
             return self._plot_animation(
                 over=over,
                 per=per,
@@ -2783,11 +2886,6 @@ class SpatialView:
                 title=title,
             )
         if kind_key == "section":
-            refuse_section_arguments(
-                f"{self._noun_path()}.animate(kind='section')",
-                {k: v for k, v in kwargs.items() if k not in COMPOSER_SECTION_OPTIONS},
-                COMPOSER_SECTION_OPTIONS,
-            )
             return self._xs_animation(
                 over=over,
                 per=per,
@@ -2795,7 +2893,7 @@ class SpatialView:
                 model=model,
                 backend=backend,
                 title=title,
-                **kwargs,
+                **self._section_composer_options(where, cells, agg, kwargs),
             )
         raise ValueError(f"kind must be 'map', 'plot', or 'section', got {kind!r}.")
 

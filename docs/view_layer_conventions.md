@@ -429,6 +429,13 @@ ignored**, on `kind="plot"` / `kind="section"`, which draw no choropleth — the
 `**kwargs` tail still rides to the section branch, which has drawing options of
 its own.
 
+The composer's OWN selectors follow the same rule, by kind (ledger 461):
+`cells` is a series panel's lines (`kind="plot"`) or a section's path
+(`kind="section"`) and is refused on a map, whose highlight is `select=`; `agg`
+reaches every map panel whose `map` names one (a record noun's) and is refused
+where the panel has none and on a section; and `kind="plot"` takes no tail at all.
+Each was dropped in silence before -- `q.mosaic(agg="count")` drew the sum.
+
 Why this rotted: `tests/test_noun_signatures.py` discovers its subjects by
 looking for a body that mentions `plot.map(` or `_choropleth_factory`. A
 composer's body mentions neither — it goes through `_facet_panels` — so while
