@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from myflopy.modflow.mf6.hydraulics import model_transmissivity
 from myflopy.modflow.mf6.package_explorer_utils import (
     _filter_normalized_table,
+    views_nlay,
 )
 from myflopy.modflow.mf6.package_plotting import (
     FieldMappable,
@@ -1252,9 +1253,9 @@ class StaticArrayFieldExplorer(SpatialView):
         values = getattr(data, "array", None)
         if values is None:
             values = getattr(data, "data", data)
-        nlay = int(
-            getattr(self.model.gwf.modelgrid, "nlay", getattr(self.model, "nlay", 1))
-        )
+        # The views' layers, not FloPy's: on a DISU FloPy infers two from IHC and
+        # the node array was broadcast onto both, inventing a layer 1 (ledger 448).
+        nlay = views_nlay(self.model.gwf)
         ncpl = int(self.model.vor.ncpl)
         return _as_layer_cell_property(values, nlay=nlay, ncpl=ncpl, label=self.label)
 
@@ -1753,9 +1754,9 @@ class TransmissivityMaxExplorer(StaticArrayFieldExplorer):
         return self._result().transmissivity
 
     def _spatial_layers(self) -> list[int]:
-        """Every grid layer (the base asks ``get()``, which would compute them all)."""
+        """Every layer the views number (the base asks ``get()``, which would compute them all)."""
 
-        return list(range(int(self.model.gwf.modelgrid.nlay)))
+        return list(range(views_nlay(self.model.gwf)))
 
     def _times(self, per):
         """``[(per, kstpkper)]`` this table covers: one untimed entry for the maximum."""
@@ -1949,10 +1950,9 @@ class TransmissivityExplorer(TransmissivityMaxExplorer):
         """Saturated transmissivity at ``kstpkper`` (the last saved time by default)."""
 
         key = kstpkper if kstpkper is not None else self._saved_times()[-1]
-        nlay = int(self.model.gwf.modelgrid.nlay)
         heads = np.vstack([
             self.model.hds.array(layer=layer, kstpkper=key, masked=False)
-            for layer in range(nlay)
+            for layer in range(views_nlay(self.model.gwf))
         ])
         return model_transmissivity(self.model, heads=heads)
 

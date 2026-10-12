@@ -19023,7 +19023,8 @@ same day, which is the useful part of the result.
       and handed to FloPy as `exe_name`, which runs nothing. `executable=None` on the
       REOPEN paths keeps its documented meaning, "the recorded one". Not changed: a
       `run.executable = Path(...)` assignment after construction (the field is not a
-      property) is not normalized.
+      property) is not normalized. The result is always a PLAIN `str`: a `numpy.str_`
+      passed `isinstance` as itself and `to_yaml` refused it (ledger 265's class).
 
 448. **A map refuses a `layer=` its model's views do not number: one layer on a DISU (2026-10-11).**
       `Choro.nlay` read FloPy's `modelgrid.nlay`, which FloPy INFERS from a DISU's `IHC`
@@ -19036,6 +19037,14 @@ same day, which is the useful part of the result.
       unchanged. The heads hover's per-layer rows loop over the same count, and looping
       over FloPy's two made EVERY heads map of a DISU -- `model.plot.map()`,
       `model.hds.map()`, layer 0 included -- raise `KeyError: 1` at `.fig`; they draw
-      now, with one layer in the hover. Not changed: `model.hds.get(layer=1)` and
+      now, with one layer in the hover. **One rule for the count,
+      `package_explorer_utils.views_nlay`** (the review's addition): the per-node INPUT
+      arrays (`npf.k`, `ic.strt`, ... -- `StaticArrayFieldExplorer`) were broadcast onto
+      FloPy's two layers, so `npf.k.get()` held 48 rows with a layer 1 copying layer 0,
+      and once the map refused layer 1 the DEFAULT `npf.k.mosaic()` raised on that
+      phantom panel; the transmissivity nouns and `SpatialView`'s fallback layer list
+      read FloPy's count too. They read `views_nlay` now. Not audited on DISU: the
+      section/profile readers, PEST zones and pilot points, which still read
+      `modelgrid.nlay`. Not changed: `model.hds.get(layer=1)` and
       `q.get(layer=1)` on a DISU still FILTER to zero rows, and `model.hds.array(layer=1)`
       raises numpy's `IndexError` -- a `get` is a filter, and the array reader is not a map.

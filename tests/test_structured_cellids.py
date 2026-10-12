@@ -299,6 +299,29 @@ def test_a_disu_map_refuses_a_layer_its_views_do_not_number(runs):
     assert model.chd.results.q.map(layer=0, backend="mpl") is not None
 
 
+def test_a_disu_input_array_view_numbers_one_layer(runs):
+    """A DISU's per-node input arrays are ONE layer in every view (ledger 448).
+
+    ``StaticArrayFieldExplorer`` broadcast the 24-node ``k``/``strt`` onto FloPy's
+    two IHC-inferred layers, so ``npf.k.get()`` held 48 rows -- a layer 1 copying
+    layer 0 -- and once the map refused ``layer=1`` (ledger 448) the DEFAULT
+    ``npf.k.mosaic()`` / ``ic.strt.mosaic()`` raised on the phantom panel. The
+    transmissivity nouns read FloPy's two layers too: their ``get()`` and
+    ``mosaic()`` died with numpy's ``IndexError``.
+    """
+
+    model = mf.load_mf6_run(runs.disu)
+    nodes = int(model.modelgrid.nnodes)
+    for view in (model.npf.k, model.ic.strt, model.npf.transmissivity,
+                 model.npf.transmissivity_max):
+        frame = view.get()
+        assert len(frame) == nodes
+        assert set(frame["layer"]) == {0}
+        assert view._spatial_layers() == [0]
+        assert view.mosaic() is not None
+    assert len(model.npf.k.get(layer=1)) == 0
+
+
 def test_a_dis_region_refuses_a_layer_or_cell_off_the_grid(runs):
     model = mf.load_mf6_run(runs.base)
     with pytest.raises(ValueError, match=r"off the grid.*layers 0\.\.1"):

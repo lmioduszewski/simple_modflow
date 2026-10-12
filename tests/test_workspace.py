@@ -776,6 +776,18 @@ def test_a_path_executable_is_stored_as_its_text_on_every_route(tmp_path):
     json.dumps(spec.to_dict())
 
 
+def test_a_numpy_string_executable_is_stored_as_a_plain_str(tmp_path):
+    """``numpy.str_`` IS a ``str``, so ``isinstance`` let it through as itself, and
+    PyYAML -- which dispatches on the exact type -- refused it in ``to_yaml``
+    (ledger 447; the numpy-at-the-boundary class, ledger 265)."""
+
+    name = np.str_("mf6")
+    spec = mf.SimulationSpec("s", models=_tiny_flow_spec().models, executable=name)
+    run = mf.Run(name="r", workspace=tmp_path, executable=name)
+    assert type(spec.executable) is str and type(run.executable) is str
+    assert "executable: mf6" in spec.to_yaml()
+
+
 @pytest.mark.parametrize("bad", [None, 5, b"mf6"])
 def test_an_executable_that_names_no_file_is_refused(tmp_path, bad):
     """A run or spec stores its executable as text, so anything that is not a

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     pass
 from myflopy.modflow.mf6.package_explorer_utils import (
     _aggregate_hover_strings,
+    views_nlay,
 )
 from myflopy.modflow.mf6.period_end import (
     at_last_saved_step,
@@ -1351,7 +1352,7 @@ class SpatialView:
             present = sorted({int(value) for value in frame["layer"].dropna().tolist()})
             if present:
                 return present
-        return list(range(int(self._spatial_reference_model().gwf.modelgrid.nlay)))
+        return list(range(views_nlay(self._spatial_reference_model().gwf)))
 
     def _spatial_periods(self) -> list[int]:
         """Stress periods present in the data (``[0]`` when there is no period axis)."""

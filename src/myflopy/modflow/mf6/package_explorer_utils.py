@@ -295,6 +295,35 @@ def has_cell_numbering(source) -> bool:
     return source is not None and getattr(_model_grid(source), "grid_type", None) in CELLID_FORMS
 
 
+def views_nlay(source) -> int:
+    """How many layers ``source``'s views number: the grid's, and ONE on a DISU.
+
+    The one rule every per-layer view reads its layer count by (ledger
+    448): :attr:`CellNumbering.nlay` when the grid is
+    typed, else FloPy's ``modelgrid.nlay``. FloPy INFERS a DISU's layering from
+    ``IHC`` (two on a 2-layer fixture), while MF6 writes its heads as one record
+    of nodes and every table keys a node as ``(0, node)`` -- so a view counting
+    FloPy's layers invents a layer 1 that duplicates layer 0.
+
+    Parameters
+    ----------
+    source : object
+        A model (anything with a ``modelgrid``, such as a FloPy GWF model or a
+        myflopy model's ``gwf``) or a FloPy grid. A source whose grid has no
+        ``grid_type`` (a test double, a model with no discretization) falls back
+        to its ``nlay``.
+
+    Returns
+    -------
+    int
+        The layer count: ``nlay`` on DIS and DISV, ``1`` on DISU.
+    """
+
+    if has_cell_numbering(source):
+        return int(cell_numbering(source).nlay)
+    return int(_model_grid(source).nlay)
+
+
 def cell_numbering(source) -> CellNumbering:
     """The :class:`CellNumbering` of a model or of a FloPy model grid.
 
@@ -658,6 +687,7 @@ __all__ = [
     "CellNumbering",
     "cell_numbering",
     "has_cell_numbering",
+    "views_nlay",
     "split_cellid_columns",
     "_normalize_term_filter",
     "_normalize_connection_type_filter",

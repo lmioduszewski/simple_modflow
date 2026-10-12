@@ -5585,16 +5585,20 @@ def _bicgstab_for_implicit_lakes(solvers, simulation) -> list:
 def executable_name(value: Any, *, where: str) -> str:
     """The MF6 executable as a ``str``: ONE rule wherever one is stored (ledger 447).
 
-    A ``str`` is kept as given and an ``os.PathLike`` is read through
+    A ``str`` is kept as its text and an ``os.PathLike`` is read through
     ``os.fspath``, so ``Path(shutil.which("mf6"))`` is stored as its text. A run
     manifest and :meth:`SimulationSpec.to_dict` write JSON, which refuses a
     ``Path`` -- stored as-is it failed only later, writing the manifest. Anything
     else (``None`` included, and a ``bytes`` path) is refused, naming ``where``.
+    The result is always a plain ``str``: a ``numpy.str_`` (a ``str`` subclass, an
+    element of a numpy string array) passes ``isinstance``, and PyYAML, which
+    dispatches on the exact type, refused it in :meth:`SimulationSpec.to_yaml`.
 
     Parameters
     ----------
     value : str or os.PathLike
-        The executable as the caller gave it. A ``str`` is returned unchanged; an
+        The executable as the caller gave it. A ``str`` (or ``str`` subclass such
+        as ``numpy.str_``) is returned as a plain ``str`` of the same text; an
         ``os.PathLike`` whose ``os.fspath`` is a ``str`` returns that text.
         Anything else raises ``TypeError``.
     where : str
@@ -5607,11 +5611,11 @@ def executable_name(value: Any, *, where: str) -> str:
     """
 
     if isinstance(value, str):
-        return value
+        return str(value)
     if isinstance(value, os.PathLike):
         name = os.fspath(value)
         if isinstance(name, str):
-            return name
+            return str(name)
     raise TypeError(
         f"executable= ({where}) takes the MF6 executable's name or path as a str "
         f"or os.PathLike (e.g. 'mf6' or Path('/opt/mf6/bin/mf6')), not {value!r}."

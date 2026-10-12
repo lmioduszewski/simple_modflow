@@ -28,7 +28,7 @@ from myflopy._warnings import stacklevel_outside_package
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.hydraulics import flow_model, model_transmissivity, unit_labels
-from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
+from myflopy.modflow.mf6.package_explorer_utils import views_nlay
 from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.extent import Extent, resolve_extent
@@ -834,16 +834,13 @@ class Choro(Picture):
     def nlay(self):
         """Layers the bound model's VIEWS number: the grid's, and one on a DISU.
 
-        Read through ``CellNumbering`` (ledger 419), the rule every table and the
+        Read through ``views_nlay`` -- ``CellNumbering`` (ledger 419), the rule every table and the
         heads reader key cells by: MF6 writes a DISU model's heads as ONE record of
         nodes, so ``layer=1`` names nothing there even when FloPy infers two layers
         from ``IHC`` -- it was accepted and painted every node (ledger 448).
         """
 
-        gwf = self._inputs.gwf
-        if has_cell_numbering(gwf):
-            return cell_numbering(gwf).nlay
-        return gwf.modelgrid.nlay
+        return views_nlay(self._inputs.gwf)
 
     @property
     def number_style(self) -> str:
