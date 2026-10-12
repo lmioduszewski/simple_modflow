@@ -29,7 +29,7 @@ from myflopy.project.group._shared import (
     _stable_compare_keys,
 )
 from myflopy.project.group.results import GroupCellPackageResults, GroupCellPackageResultsNamespace
-from myflopy.project.group.spatial import _GroupSpatialView
+from myflopy.project.group.spatial import _GroupStageView
 
 if TYPE_CHECKING:
     from myflopy.project.group.core import ModelGroup
@@ -389,7 +389,7 @@ class GroupSfrBudgetResults(GroupCellPackageResults):
             **kwargs,
         )
 
-class GroupSfrStageResults(_GroupSpatialView):
+class GroupSfrStageResults(_GroupStageView):
     """Grouped accessor for SFR reach stages and stage comparisons.
 
     Mirrors :class:`GroupLakStageResults` for streams (keyed by ``reach``),
@@ -401,6 +401,9 @@ class GroupSfrStageResults(_GroupSpatialView):
         """Bind the grouped SFR reach stage-results accessor to ``group``."""
 
         self.group = group
+
+    _stage_entity = "reach"
+    _stage_table = staticmethod(build_sfr_stage_result_table)
 
     def _spatial_value_label(self) -> str:
         """The mapped quantity's label -- reach stage."""

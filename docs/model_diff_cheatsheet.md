@@ -138,6 +138,8 @@ diff.packages.sfr.results.q.map("F9_maxflow")     # Δ stream leakage (interacti
 diff.packages.lak.results.q.map("F9_maxflow")     # Δ lake exchange
 diff.packages.ghb.results.map("F9_maxflow")       # Δ GHB leakage (also drn/chd/wel/rch)
 diff.packages.uzf.results.gwrch.map("F9_maxflow") # Δ UZF recharge
+diff.packages.lak.results.stage.map("F9_maxflow", per=3)  # Δ lake stage on the reference's lake cells
+diff.packages.sfr.results.map(field="stage", per=3)        # Δ reach stage on its cells (blank where dry)
 
 # UNIFIED GRAMMAR -- every leaf (single-model / group / diff, inputs & results)
 # has the same verbs: get/summary + map/plot + mosaic/animate, all with backend=

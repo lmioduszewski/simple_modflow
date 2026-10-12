@@ -846,12 +846,16 @@ class UzfResultsDiffNamespace(FieldMappable):
         return CellBudgetResultDiff(self._diff, self._uzf_results().sat)
 
 
-class StageResultDiff(_ResultDiffBase):
+class StageResultDiff(_ResultDiffBase, DiffSpatialView):
     """Stage-difference results (LAK lakes or SFR reaches) vs the reference.
 
     Wraps a grouped stage accessor keyed by a feature id (``lake`` or ``reach``)
     and adds per-model Δstage stats, the worst feature/period, and a
-    within-tolerance flag.
+    within-tolerance flag, plus the delta ``map`` / ``plot`` / ``mosaic`` /
+    ``animate`` grammar its siblings have: a map paints each feature's Δstage on
+    the reference model's cells it sits on (the group's ``compare_map``). It had
+    no verb but ``get``/``summary`` until ledger 487, while its namespace
+    listed ``"stage"`` as a mappable field.
     """
 
     def __init__(self, diff, accessor, *, entity: str):
@@ -905,6 +909,38 @@ class StageResultDiff(_ResultDiffBase):
 
     # A stage series over stress periods; alias reads naturally for timeseries use.
     timeseries = get
+
+    # -- spatial-view hooks (Δstage maps) -------------------------------------
+    def _spatial_map(self, *, per=0, layer=0, model=None, **kwargs):
+        """Δstage choropleth for one compared model (the group's ``compare_map``)."""
+
+        return self._accessor.compare_map(model_name=model, per=per, layer=layer, **kwargs)
+
+    def _spatial_models(self):
+        """The non-reference model names -- one Δstage panel each."""
+
+        return self._targets()
+
+    def _spatial_reference_model(self):
+        """The reference model whose grid/layers frame the Δstage maps."""
+
+        return self.group.models[self.group.reference]
+
+    def _spatial_value_label(self):
+        """The mapped quantity's label."""
+
+        return "stage"
+
+    # -- series hooks: plot() draws Δstage by period, one line per feature ----
+    def _series_value_column(self, frame) -> str:
+        """The column ``plot()`` draws: the aligned ``stage_diff``."""
+
+        return "stage_diff"
+
+    def _series_default_agg(self) -> str:
+        """Combine rows within a line by mean: a stage is an elevation, never summed."""
+
+        return "mean"
 
     def summary(
         self,

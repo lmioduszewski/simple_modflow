@@ -41,7 +41,7 @@ from myflopy.project.group._shared import (
     _resolve_group_compare_target,
 )
 from myflopy.project.group.results import GroupCellPackageResults, GroupCellPackageResultsNamespace
-from myflopy.project.group.spatial import _GroupSpatialView
+from myflopy.project.group.spatial import _GroupStageView
 
 if TYPE_CHECKING:
     from myflopy.project.group.core import ModelGroup
@@ -514,7 +514,7 @@ class GroupLakOutputs:
         return pd.concat(rows, ignore_index=True)[["model", "kstpkper", "lake", "stage"]]
 
 
-class GroupLakStageResults(_GroupSpatialView):
+class GroupLakStageResults(_GroupStageView):
     """Grouped accessor for lake stages and stage comparisons.
 
     Inherits the :class:`SpatialView` grammar (``map``/``mosaic``/``animate``)
@@ -527,6 +527,9 @@ class GroupLakStageResults(_GroupSpatialView):
         """Bind the grouped lake stage-results accessor to ``group``."""
 
         self.group = group
+
+    _stage_entity = "lake"
+    _stage_table = staticmethod(build_lak_stage_result_table)
 
     def _spatial_value_label(self) -> str:
         """The mapped quantity's label -- lake stage."""

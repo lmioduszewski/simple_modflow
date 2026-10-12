@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 486 entries (491 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 487 entries (492 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 487 | A diff's LAK/SFR stage maps, plots and composes: each feature's Δstage painted on the reference's cells | 2026-10-11 |
 | 486 | The mover diff reads each package's mover term where MF6 writes it, and leaves UZF's unread | 2026-10-11 |
 | 485 | Group and diff exchange and budget comparisons pair each member's period end, a LAK connection by what it I... | 2026-10-11 |
 | 484 | A dry or inactive cell is a gap at the group and diff tiers, and `hds.long()`/`wide()` read it as `NaN` | 2026-10-11 |
@@ -18688,16 +18689,20 @@ same day, which is the useful part of the result.
       `tif_path=None` (C); `Choro.add_overlay` after `.fig` never reaches that figure
       (C); `InterpolatedSurface.save_raster` ignores `polygon_clip`/`buffer` when the
       clipped image, transform and meta are passed (C)~~ (fixed by ledger 481).
-      *Diff tier* (`docs/reproducers/diff_results_tier.py`, R): the MVR diff reads
+      *Diff tier* (`docs/reproducers/diff_results_tier.py`, R): ~~the MVR diff reads
       `FROM-MVR`/`TO-MVR` from the GWF budget, where MF6 writes `DRN-TO-MVR`/
       `WEL-TO-MVR`, so it is always empty (and `docs/model_diff_cheatsheet.md`'s "empty
-      if no mover" is false); `diff.hds/conc/temp` difference MF6's 1e30; the LAK q diff
+      if no mover" is false)~~ (fixed by ledger 486); ~~`diff.hds/conc/temp`
+      difference MF6's 1e30~~ (fixed by ledger 484); ~~the LAK q diff
       joins on exact `kstpkper` and on wetted `FLOW-AREA` (2 of 72 connections dropped
-      at period 3); `diff.bud` differences `time_step`/`stress_period`/`tslen`;
+      at period 3); `diff.bud` differences `time_step`/`stress_period`/`tslen`~~ (fixed
+      by ledger 485);
       `diff.packages.uzf.results.sat` raises `ValueError` (two `sat` columns, ledger
-      439); `ModelDiff.package_names`/`connection_package_names` find a package
+      439); ~~`ModelDiff.package_names`/`connection_package_names` find a package
       by NAME prefix, not TYPE (a DRN named `seeps` is never compared and `report()` says
-      "identical"); `ModelDiff.package(name)` answers the namespace's own attributes;
+      "identical"); `ModelDiff.package(name)` answers the namespace's own attributes~~
+      (fixed 2026-10-11: found by TYPE through `model_packages_of_type`, and
+      `package()` answers package types only);
       `ConfigDiff.settings(section=<typo>)` returns an empty frame; the focused
       `cells`/`values("lak"|"sfr")` raise a bare `AttributeError`; `PackageDiff.values`
       never validates `model_name`, and several `get`/`summary` check it only when there
@@ -18772,8 +18777,9 @@ same day, which is the useful part of the result.
       ~~`FieldMappable.section` raises `NotImplementedError` for every field of every
       namespace that has it (50 of 50 on the canonical model, 14 of 14 on a group of it)~~
       (fixed by ledger 462: only a dependent-variable noun offers `section`);
-      a diff's LAK/SFR `results` list `'stage'` as a field whose node has no verbs, so
-      `map(field="stage")` raises `AttributeError`; ~~`StackPlots.map(layer=0)`
+      ~~a diff's LAK/SFR `results` list `'stage'` as a field whose node has no verbs, so
+      `map(field="stage")` raises `AttributeError`~~ (fixed by ledger 487: the stage
+      diff maps, plots and composes); ~~`StackPlots.map(layer=0)`
       raised `ValueError: list.index(x): x not in list` while its docstring promised an
       index (it now says name only)~~ (fixed by ledger 463: an index is taken);
       ~~`XSection.plot_mpl` labels the y axis
@@ -19821,3 +19827,17 @@ same day, which is the useful part of the result.
       and `summary()` warns when a member's UZF declares `MOVER`. The MVR package's own
       `MOVER-FLOW` budget (one record per provider/receiver pair) is not read either: it
       exists only when MVR declares `BUDGET FILEOUT`, which `mf.mvr` does not by default.
+
+487. **A diff's LAK/SFR stage maps, plots and composes: each feature's Δstage painted on the reference's cells (2026-10-11).**
+      `diff.packages.lak|sfr.results` listed `"stage"` as a mappable field while
+      `StageResultDiff` had only `get`/`summary`, so `map(field="stage")` raised
+      `AttributeError`. It is a `DiffSpatialView` now, drawing through a `compare_map`
+      the two group stage views share (`group/spatial._GroupStageView`). **Judgment
+      calls:** a feature's Δstage is painted on the cells the REFERENCE model connects it
+      to in `layer` (as the single-model stage map paints a stage), never the compared
+      model's -- a lake whose cells moved is the inputs diff's question; several
+      features on one cell AVERAGE (`agg="mean"`, a stage is an elevation, ledger 297);
+      a feature dry in either model leaves its cells blank; `fill_value=0.0` for cells
+      no feature sits on, as every sibling compare map has. Kept rather than unlisting
+      `"stage"`: the single-model and group stage nouns map, and a noun answers the
+      same verbs at every tier.

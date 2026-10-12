@@ -374,3 +374,34 @@ def test_mover_summary_says_it_leaves_out_a_uzf_mover(movers, monkeypatch):
                         reference="a").diff().packages.mvr.results
     with pytest.warns(UserWarning, match="leaves out UZF's mover terms"):
         mvr.summary()
+
+
+# -- (e) a stage diff answers the verbs its namespace lists ---------------------------
+
+
+@pytest.mark.parametrize("package, entity", [("lak", "lake"), ("sfr", "reach")])
+def test_a_stage_diff_is_mapped_on_the_reference_features_cells(steps, package, entity):
+    from myflopy.modflow.mf6.package_budget import (
+        build_lak_stage_result_table,
+        build_sfr_stage_result_table,
+    )
+
+    diff = mf.ModelGroup({"one": steps["one"], "two": steps["two"]}, reference="one").diff()
+    results = getattr(diff.packages, package).results
+    assert "stage" in results.field_names()
+    stage = results.stage
+    compared = stage.get(per=3).set_index(entity)["stage_diff"]
+    table = {"lak": build_lak_stage_result_table,
+             "sfr": build_sfr_stage_result_table}[package](steps["one"])
+    cells = table.loc[table["layer"] == 0, [entity, "cell"]].drop_duplicates()
+    expected = cells.assign(diff=cells[entity].map(compared)).groupby("cell")["diff"].mean()
+
+    drawn = np.asarray(results.map(field="stage", per=3, layer=0).fig.data[0].z, dtype=float)
+    assert np.allclose(drawn[expected.index.to_numpy()], expected.to_numpy(), equal_nan=True)
+    others = np.setdiff1d(np.arange(drawn.size), expected.index.to_numpy())
+    assert np.all(drawn[others] == 0.0)
+    assert np.abs(expected).max() > 0
+
+    assert stage.plot() is not None
+    assert stage.mosaic() is not None
+    assert stage.map(per=3, backend="mpl") is not None

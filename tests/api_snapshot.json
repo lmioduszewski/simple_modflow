@@ -5179,6 +5179,16 @@
       "layer:KEYWORD_ONLY=None",
       "cells:KEYWORD_ONLY=None"
     ],
+    "_GroupStageView.compare_map": [
+      "model_name:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=0",
+      "layer:KEYWORD_ONLY=0",
+      "multiplier:KEYWORD_ONLY=1.0",
+      "fill_value:KEYWORD_ONLY=0.0",
+      "agg:KEYWORD_ONLY='mean'",
+      "colorscale:KEYWORD_ONLY=None",
+      "kwargs:VAR_KEYWORD=<required>"
+    ],
     "_PRTDerivedView.animate": [
       "args:VAR_POSITIONAL=<required>",
       "kwargs:VAR_KEYWORD=<required>"

@@ -76,6 +76,143 @@ class _GroupSpatialView(SpatialView):
         return name
 
 
+class _GroupStageView(_GroupSpatialView):
+    """A grouped STAGE accessor (LAK lakes, SFR reaches): the stage diff map.
+
+    :class:`~myflopy.project.group.lak.GroupLakStageResults` and
+    :class:`~myflopy.project.group.sfr.GroupSfrStageResults` set the two attributes
+    below and keep their own ``get``/``compare``; :meth:`compare_map` is theirs in
+    common, and ``diff.packages.<lak|sfr>.results.stage.map`` draws through it
+    (ledger 487).
+    """
+
+    #: the feature column of the stage table: ``"lake"`` or ``"reach"``
+    _stage_entity: str = "lake"
+
+    @staticmethod
+    def _stage_table(model):  # pragma: no cover - overridden
+        """One member's stage table: a row per connected cell per saved step."""
+
+        raise NotImplementedError
+
+    def compare_map(
+        self,
+        *,
+        model_name: str | None = None,
+        per: int = 0,
+        layer: int = 0,
+        multiplier: float = 1.0,
+        fill_value: float = 0.0,
+        agg: str = "mean",
+        colorscale: str | None = None,
+        **kwargs,
+    ):
+        """Diverging choropleth of the stage difference (member minus reference).
+
+        Each feature's ``stage_diff`` from :meth:`compare` -- each member at its own
+        last saved step of ``per`` -- painted on the cells the REFERENCE model
+        connects that lake (or holds that reach) to in ``layer``, as the
+        single-model stage map paints a stage. A feature with no stage in either
+        member (dry or inactive, ledgers 329 and 353) leaves its cells blank.
+
+        Parameters
+        ----------
+        model_name : str or None, optional
+            The non-reference member to compare. Default ``None`` takes the
+            group's one non-reference member and raises ``ValueError`` when there
+            are several; the reference itself raises ``ValueError`` and a name not
+            in the group ``KeyError``. The member must have the reference's
+            discretization FILE content, grid type and ``ncpl``, or
+            ``ValueError``.
+        per : int, default 0
+            The stress period drawn, zero-based -- each member's own last saved
+            step of it. A period with no stage draws every cell at
+            ``fill_value``.
+        layer : int, default 0
+            The zero-based layer whose connected cells are drawn; a feature with
+            no cell in it is not drawn.
+        multiplier : float, default 1.0
+            Scales every drawn difference before ``agg`` -- a unit conversion --
+            and never the ``fill_value`` cells.
+        fill_value : float, default 0.0
+            The value of a cell no feature of the reference sits on in ``layer``.
+            ``float("nan")`` leaves those cells blank.
+        agg : str, default "mean"
+            How the differences of several features on one cell combine (two
+            lakes connected to a cell, two reaches in one), as any pandas
+            aggregation name. A stage is an elevation, so the default averages
+            (``package_registry.agg_for_kind``, ledger 297).
+        colorscale : str or list or None, optional
+            Any Plotly colorscale name or explicit stops. Default ``None``: the
+            group diff scale -- red where the member's stage is lower, white at
+            zero, blue where it is higher.
+        **kwargs
+            Forwarded to the reference model's ``model.plot.map(...)``: its named
+            drawing options (``contours``, ``select``, ``features``, ``extent``,
+            ``backend``, ...) and its Plotly trace tail. ``zmin``/``zmax`` default
+            to plus/minus the largest absolute value drawn, ``zmid`` to 0 and
+            ``hover_spec`` to the comparison hover in the reference model's length
+            unit; passing them overrides those. The names this method fills itself
+            (``type``, ``custom_zs``, ``custom_hover``, ``hover_heads``,
+            ``hover_ks``) raise ``TypeError``.
+
+        Returns
+        -------
+        Choro or matplotlib.figure.Figure
+            The map picture, or a bare Matplotlib figure with ``backend="mpl"``.
+        """
+
+        target_name = _resolve_group_compare_target(self.group, model_name)
+        _ensure_group_map_compatible(self.group, target_name)
+        reference_model = self.group.models[self.group.reference]
+        entity = self._stage_entity
+        compared = self.compare(model_name=target_name, per=int(per))
+        cells = self._stage_table(reference_model)
+        cells = cells.loc[cells["layer"] == int(layer), [entity, "layer", "cell"]]
+        cells = cells.drop_duplicates().astype({entity: "int64"})
+        rows = compared.astype({entity: "int64"}).merge(cells, on=entity, how="inner")
+        values, hover, absmax = build_group_input_compare_map_payload(
+            rows,
+            ncpl=reference_model.vor.ncpl,
+            value_column="stage",
+            diff_column="stage_diff",
+            model_name=target_name,
+            reference_model=self.group.reference,
+            per=per,
+            layer=layer,
+            multiplier=multiplier,
+            fill_value=fill_value,
+            agg=agg,
+        )
+        kwargs.setdefault("zmin", -absmax if absmax > 0 else None)
+        kwargs.setdefault("zmax", absmax if absmax > 0 else None)
+        kwargs.setdefault("zmid", 0.0)
+        length = unit_labels(reference_model)[0]
+        kwargs.setdefault(
+            "hover_spec",
+            compare_hover(
+                "stage",
+                "stage_diff",
+                title=f"Δ {entity} stage vs reference",
+                units={} if length is None else {
+                    "stage": length, "reference_stage": length, "stage_diff": length,
+                },
+                labels={"stage_diff": "Δ stage"},
+            ),
+        )
+        return reference_model.plot.map(
+            per=per,
+            layer=layer,
+            type="custom",
+            custom_zs=values,
+            custom_hover=hover,
+            hover_heads=False,
+            hover_ks=False,
+            colorscale=colorscale or get_default_group_compare_colorscale(),
+            **kwargs,
+        )
+
+
 class _GroupFieldView(LineProfileView, _GroupSpatialView):
     """A grouped DEPENDENT-VARIABLE accessor, for one field kind.
 
