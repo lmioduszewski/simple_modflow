@@ -39,6 +39,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.grid.mesh_quality` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.grid.seed_optimization`
 - `myflopy.modflow.mf6.observations.plots` *(deferred imports: 3)*
+- `myflopy.modflow.mf6.output_files`
 - `myflopy.modflow.mf6.package_explorer_utils`
 - `myflopy.modflow.mf6.package_registry`
 - `myflopy.modflow.mf6.paths`
