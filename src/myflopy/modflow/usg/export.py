@@ -581,11 +581,14 @@ def _value_kind(ftype: str, column: str) -> str:
 #: several records one period gives one cell become one feature (ledger 493).
 _WEIGHTED_BY = {"DRN": "cond", "GHB": "cond", "RIV": "cond"}
 
-#: Head-dependent boundaries whose conductance-weighted record is MF6's boundary for
-#: EVERY head. GHB is linear in the head, so it always is; a DRN switches off below its
-#: elevation and a RIV's leakage stops growing below its ``rbot``, so theirs is exact
-#: only while the head is not BETWEEN two copies' elevations (ledger 493).
-_WEIGHTED_EXACT = {"GHB"}
+#: The elevations whose DIFFERING copies leave the conductance-weighted record short of
+#: MF6's boundary at some head. GHB is linear in the head, so its weighted record is
+#: exact at every head; a DRN switches off below its ``elev``, so differing ``elev``s
+#: are exact only while the head is not between them; a RIV's leakage stops growing
+#: below its ``rbot``, so differing ``rbot``s are -- while copies differing in ``stage``
+#: alone are exact at every head, ``sum C_i (s_i - max(h, r)) = C (s_w - max(h, r))``
+#: (ledger 493, ledger 494).
+_INEXACT_WHEN_DIFFERENT = {"DRN": {"elev"}, "GHB": set(), "RIV": {"rbot"}}
 
 
 def _combine_records(frame, ftype: str, columns: list[str]):
@@ -600,8 +603,11 @@ def _combine_records(frame, ftype: str, columns: list[str]):
     GHB, and for a DRN or RIV while the head is not between two copies' elevations
     (measured through MF6, ``docs/reproducers/usg_export_shared_cell_elevation.py``:
     ``elev 7.5 / cond 100`` plus ``7.0 / 50`` at head 8.0 drain 100.0, the weighted
-    record 100.0, the plain mean 112.5). A cell whose copies' conductances total zero
-    takes the plain mean. Any other elevation or head (CHD) is the plain MEAN.
+    record 100.0, the plain mean 112.5) -- for a RIV, while it is not between two
+    copies' ``rbot``s, since copies differing in ``stage`` alone are exact at every
+    head. A cell whose copies' conductances total zero takes the plain mean. Any other
+    elevation or head (CHD) is the plain MEAN. A value whose copies AGREE, and a cell
+    holding one record, keep the value exactly (ledger 494).
     ``_bc_frames`` read such a cell's values as a Series and stopped on ``float()``
     (ledger 467).
 
@@ -621,8 +627,9 @@ def _combine_records(frame, ftype: str, columns: list[str]):
         ``(frame, inexact, unweighted)``: the combined frame (its ``attrs`` kept); the
         ``(period, layer, cell, column)`` of every non-extensive value whose copies on
         one cell DIFFER where the combined record is not MF6's boundary at every head
-        (a CHD's mean; a DRN's or RIV's weighted elevation, exact only while the head
-        is outside the copies' range); and the ``(period, layer, cell)`` of every cell
+        (a CHD's mean; a DRN's weighted ``elev`` and a RIV's weighted ``rbot``, exact
+        only while the head is outside the copies' range); and the ``(period, layer,
+        cell)`` of every cell
         whose copies DIFFER and whose conductances total zero, which took the plain
         mean.
     """
@@ -639,30 +646,38 @@ def _combine_records(frame, ftype: str, columns: list[str]):
     }
     others = {column: "first" for column in frame.columns if column not in keys and column not in rules}
     combined = grouped.agg({**rules, **others})
+    # Copies that AGREE keep their value exactly -- and so does a cell with ONE record:
+    # a weighted mean or a mean of equal values can come back an ulp away from it
+    # (ledger 494).
+    for column, by_cell_spread in spread.items():
+        combined[column] = combined[column].where(by_cell_spread > 0, grouped[column].first())
     weight = _WEIGHTED_BY.get(ftype)
     unweighted: list[tuple[int, int, int]] = []
     if weight is not None and weight in frame.columns and spread:
         total = grouped[weight].sum()
         nonzero = total != 0
         by_cell = [frame[key] for key in keys]
-        for column in spread:
+        for column, by_cell_spread in spread.items():
+            use = nonzero & (by_cell_spread > 0)
             weighted = (frame[column] * frame[weight]).groupby(by_cell, sort=False).sum()
-            combined[column] = (weighted / total.where(nonzero)).where(nonzero, combined[column])
+            combined[column] = (weighted / total.where(use)).where(use, combined[column])
         differs = functools.reduce(operator.or_, (values > 0 for values in spread.values()))
         unweighted = [
             (int(period), int(layer), int(cell))
             for (period, layer, cell), flag in (differs & ~nonzero).items()
             if flag
         ]
-    # A combined record that is not MF6's boundary at every head: a CHD's mean, and a
-    # DRN's or RIV's weighted elevation (exact only while the head is outside the
+    # A combined record that is not MF6's boundary at every head: a CHD's mean, a DRN's
+    # weighted elev and a RIV's weighted rbot (exact only while the head is outside the
     # copies' range). Copies whose conductances total zero carry no flow either way.
-    exact = ftype in _WEIGHTED_EXACT and weight is not None
+    inexact_columns = (
+        _INEXACT_WHEN_DIFFERENT.get(ftype, set()) if weight is not None else set(spread)
+    )
     skipped = set(unweighted)
     inexact = [
         (int(period), int(layer), int(cell), column)
         for column, by_cell_spread in spread.items()
-        if not exact
+        if column in inexact_columns
         for (period, layer, cell), value in by_cell_spread.items()
         if value > 0 and (int(period), int(layer), int(cell)) not in skipped
     ]
@@ -692,8 +707,8 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
     conductance or rate the sum, a DRN/GHB/RIV elevation the conductance-weighted mean
     (ledger 493). Both frames' ``attrs`` say how many records were combined
     (``records_combined``), on how many cells the combined record is not MF6's boundary
-    at every head (``cells_inexact``: differing copies of a CHD head, or of a DRN/RIV
-    elevation), and on how many differing copies' conductances total zero, so the
+    at every head (``cells_inexact``: differing copies of a CHD head, a DRN ``elev``
+    or a RIV ``rbot``), and on how many differing copies' conductances total zero, so the
     elevation is their plain mean (``cells_unweighted``); each of the last two warns.
 
     The chains come from face adjacency (see :func:`_adjacency`), so a corner-only

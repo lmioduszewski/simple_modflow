@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 493 entries (498 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 494 entries (499 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 494 | A USG export changes only the values whose copies differ, and a RIV warns only on differing `rbot`s | 2026-10-11 |
 | 493 | A USG export weights a shared cell's DRN/GHB/RIV elevations by conductance | 2026-10-11 |
 | 492 | A package artifact keeps an EMPTY period block, and the restored package runs as the original did | 2026-10-11 |
 | 491 | A Voronoi grid has one CRS and one name: two different spellings of either are refused, at... | 2026-10-11 |
@@ -19950,7 +19951,13 @@ same day, which is the useful part of the result.
       the advanced packages' `perioddata` (UZF, LAK, SFR, MVR) go through the same
       reader -- an empty MVR block turns every mover off, as a list package's does -- so
       a package with no period blocks now captures `{}` where it captured `None` (the
-      restore already read both as none). Test:
+      restore already read both as none). **Not done (loud, measured):** restoring a
+      list BC onto a model opened with `mf.load_mf6_run` writes no DIMENSIONS block --
+      FloPy's lazy load turns `auto_set_sizes` off, so it computes no `maxbound` -- and
+      MF6 stops on *Required block "DIMENSIONS" not found*; and `remove_package` on such
+      a model leaves the old entry in the name file. Setting `maxbound` alone would turn
+      the loud failure into a package applied TWICE, so both wait for one fix. A
+      prepared run restores correctly. Test:
       `tests/test_package_artifact_round_trip.py::test_an_empty_period_block_is_captured_and_restored_and_mf6_runs_it_the_same`
       (real MF6 runs; the budgets are identical per period, period 2 differing on revert).
 
@@ -19963,11 +19970,24 @@ same day, which is the useful part of the result.
       (linear in the head), and for DRN/RIV while the head is not BETWEEN two copies'
       elevations -- DRN `7.5/100 + 7.0/50` at h = 8.0: -100.0 both, the old mean -112.5;
       RIV at h = 8.5: 25.0 both, the mean 0.0; between (DRN h = 7.2: -10.0 against 0.0;
-      RIV h = 7.2: 190.0 against 200.0) no single record is. **Chosen:** a DRN/RIV cell
-      whose copies differ still WARNS (`cells_inexact`), a GHB one does not; copies whose
+      RIV h = 7.2: 190.0 against 200.0) no single record is. **Chosen:** a DRN cell
+      whose `elev` copies differ, or a RIV cell whose `rbot` copies differ, still WARNS
+      (`cells_inexact`; ledger 494), a GHB one does not; copies whose
       conductances total zero take the plain mean and warn (`cells_unweighted`) -- they
       move no water either way; a CHD head stays the mean. The `cells_disagreeing` attr
       became those two counts. `agg_for_kind` is unchanged: the input tables and maps
       still average elevations (ledger 297) -- this is the export's rule for writing ONE
       record in place of several. Tests: `tests/test_usg_export_periods.py`, the
       `test_the_exported_record_moves_what_mf6_s_two_records_move` cases on real MF6.
+
+494. **A USG export changes only the values whose copies differ, and a RIV warns only on differing `rbot`s (2026-10-11).**
+      Review of ledger 493. The weighting ran over EVERY cell of a package with any
+      shared cell, so a lone drain's `7.1` at conductance 0.7 was written
+      `7.1000000000000005`; a value whose copies agree, and a cell holding one record,
+      now keep the value to the bit. And a RIV cell whose copies differ in `stage` alone
+      was warned about as inexact, while `sum C_i (s_i - max(h, r))` is
+      `C (s_w - max(h, r))` whenever they share their `rbot` -- exact at every head,
+      measured through MF6 between the stages (h = 8.5: 25.0 both) and below the bed
+      (h = 6.0: 250.0 both; `docs/reproducers/usg_export_shared_cell_elevation.py`). The
+      warning, `cells_inexact` and the manifest note now count a DRN's differing `elev`,
+      a RIV's differing `rbot` and a CHD's differing head.

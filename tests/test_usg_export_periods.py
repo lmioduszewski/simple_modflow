@@ -174,7 +174,9 @@ def test_a_ghb_s_weighted_head_is_exact_so_nothing_warns(recwarn):
 
 
 def test_a_river_s_stage_and_rbot_are_both_weighted_by_conductance():
-    with pytest.warns(UserWarning, match=r"RIV: 1 cell\(s\) .*rbot, stage values differ"):
+    # Only the differing rbot warns: copies differing in stage alone are exact at every
+    # head (ledger 494).
+    with pytest.warns(UserWarning, match=r"RIV: 1 cell\(s\) .*whose rbot values differ"):
         points, _ = _bc_frames(
             _two_records_on_one_cell("RIV", (9.0, 100.0, 7.5), (8.0, 50.0, 7.0)), "RIV", CRS
         )
@@ -182,6 +184,40 @@ def test_a_river_s_stage_and_rbot_are_both_weighted_by_conductance():
     assert row["conductance"] == 150.0
     assert row["stage"] == pytest.approx((9.0 * 100.0 + 8.0 * 50.0) / 150.0)
     assert row["rbot"] == pytest.approx((7.5 * 100.0 + 7.0 * 50.0) / 150.0)
+
+
+def test_river_copies_differing_in_stage_alone_are_exact_so_nothing_warns(recwarn):
+    """``sum C_i (s_i - max(h, r))`` is ``C (s_w - max(h, r))`` when the copies share
+    their rbot, so the weighted record is MF6's at every head -- measured below at a head
+    between the two stages and one below the bed (Review of S1, ledger 494)."""
+
+    points, _ = _bc_frames(_two_records_on_one_cell("RIV", (9.0, 100.0, 7.0), (8.0, 50.0, 7.0)), "RIV", CRS)
+    assert not [w for w in recwarn if "several records" in str(w.message)]
+    assert points.attrs == {"records_combined": 1, "cells_inexact": 0, "cells_unweighted": 0}
+
+
+def test_a_value_no_copy_disagrees_with_is_written_exactly():
+    """The weighting touches only the cells whose copies DIFFER: a cell holding one
+    record, and copies that agree, keep their value to the bit. Weighting every cell
+    wrote 7.1 x 0.7 / 0.7 = 7.1000000000000005 for a lone drain's 7.1 (Review of S1,
+    ledger 494)."""
+
+    grid = square_grid()
+    model = usg_model(grid, [0, 1])
+    model.boundaries = {"DRN": PeriodRecords(ftype="DRN", periods={0: np.array([
+        [1, 7.5, 100.0], [1, 7.0, 50.0],   # cell 0: copies that differ, weighted
+        [2, 7.1, 0.7],                     # cell 1: one record
+        [3, 7.1, 0.3], [3, 7.1, 1.1],      # cell 2: copies that agree
+    ])})}
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        points, _ = _bc_frames(model, "DRN", CRS)
+    table = points.set_index("old_cell")
+    assert table.loc[1, "elevation"] == 7.1
+    assert table.loc[2, "elevation"] == 7.1
+    assert table.loc[0, "elevation"] == pytest.approx(22.0 / 3.0)
 
 
 def test_copies_whose_conductances_total_zero_take_the_plain_mean_and_say_so():
@@ -241,6 +277,10 @@ def _mf6_flow(workspace, package, records, hold):
         ("GHB", (9.0, 100.0), (6.0, 50.0), 7.0, ("head", "conductance")),
         ("RIV", (9.0, 100.0, 7.5), (8.0, 50.0, 7.0), 8.5, ("stage", "conductance", "rbot")),
         ("RIV", (9.0, 100.0, 7.5), (8.0, 50.0, 7.0), 6.0, ("stage", "conductance", "rbot")),
+        # One rbot, two stages: exact between the stages and below the bed alike
+        # (ledger 494).
+        ("RIV", (9.0, 100.0, 7.0), (8.0, 50.0, 7.0), 8.5, ("stage", "conductance", "rbot")),
+        ("RIV", (9.0, 100.0, 7.0), (8.0, 50.0, 7.0), 6.0, ("stage", "conductance", "rbot")),
     ],
 )
 def test_the_exported_record_moves_what_mf6_s_two_records_move(tmp_path, ftype, first, second, hold, column_order):

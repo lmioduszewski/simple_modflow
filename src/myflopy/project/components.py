@@ -768,7 +768,10 @@ def apply_package_artifact(model, artifact: PackageArtifact, *, validate: bool =
         if package_type == "evt":
             values["nseg"] = artifact.package_data.get("nseg", 1)
         # maxbound is deliberately NOT set: FloPy computes it from
-        # stress_period_data at write time (see advanced.py's *_spec factories).
+        # stress_period_data at write time (see advanced.py's *_spec factories) --
+        # except on a model opened with mf.load_mf6_run, whose lazy load turns
+        # auto_set_sizes off, so MF6 stops on a missing DIMENSIONS block (loud; ledger
+        # 492 says why it is not set here).
         package = constructor(model.gwf, **values)
     elif artifact.package_type == "ic":
         package = flopy.mf6.modflow.mfgwfic.ModflowGwfic(

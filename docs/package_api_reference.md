@@ -1255,8 +1255,10 @@ single number for a bed that varies and `mf.lak` then rejects the cells it misse
   drains 100.0, the weighted record 100.0, the plain mean 112.5 --
   `docs/reproducers/usg_export_shared_cell_elevation.py`). Copies whose conductances
   total zero take the plain mean, and a CHD head is the mean. The manifest counts the
-  records as `records_combined`; a DRN/RIV/CHD cell whose copies DIFFER, and a
-  zero-conductance cell, are warned about by name. It used to stop the export.
+  records as `records_combined`; a cell whose DRN `elevation`, RIV `rbot` or CHD head
+  copies DIFFER, and a zero-conductance cell, are warned about by name (a RIV whose
+  copies differ in `stage` alone is exact at every head, ledger 494). A value
+  whose copies agree, and a lone record, are written exactly. It used to stop the export.
 
 What CLN cannot supply is written as a documented default rather than omitted, so a
 missing column never becomes a silent zero: SFR's `rbth` and `man` (CLN routes with a pipe

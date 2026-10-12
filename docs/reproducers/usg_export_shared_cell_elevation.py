@@ -24,6 +24,10 @@ WHAT IT MEASURES
   * RIV ``stage 9.0, cond 100, rbot 7.5`` + ``8.0, 50, 7.0``: exact above both rbots
     (h = 8.5: 25.0 / 25.0 / 0.0) and below both (h = 6.0: 200.0 / 200.0 / 187.5), not
     between (h = 7.2: 190.0 / 200.0 / 187.5).
+  * RIV ``stage 9.0, cond 100, rbot 7.0`` + ``8.0, 50, 7.0`` -- one rbot, two stages:
+    exact at every head, between the stages (h = 8.5: 25.0 / 25.0) and below the bed
+    (h = 6.0: 250.0 / 250.0), so the export does not warn about it (Review of S1,
+    ledger 494).
 """
 
 from __future__ import annotations
@@ -78,11 +82,12 @@ def main(root: Path) -> None:
         ("DRN", [(7.5, 100.0), (7.0, 50.0)], (8.0, 7.2)),
         ("GHB", [(9.0, 100.0), (6.0, 50.0)], (7.0, 10.0)),
         ("RIV", [(9.0, 100.0, 7.5), (8.0, 50.0, 7.0)], (8.5, 6.0, 7.2)),
+        ("RIV", [(9.0, 100.0, 7.0), (8.0, 50.0, 7.0)], (8.5, 6.0)),
     ]
-    for package, records, heads in cases:
+    for number, (package, records, heads) in enumerate(cases):
         for hold in heads:
             flows = {
-                label: flow(root / f"{package}_{hold}_{label}", package, recs, hold)
+                label: flow(root / f"{number}_{package}_{hold}_{label}", package, recs, hold)
                 for label, recs in (
                     ("two records", records),
                     ("exported (weighted)", one_record(package, records, "weighted")),
