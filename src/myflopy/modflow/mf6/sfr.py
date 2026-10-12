@@ -289,9 +289,11 @@ class SFRBuilder:
         end and another stream for ``connection_mode="automatic"`` to connect
         them. Default ``None``: 5% of the square root of the median cell area,
         and never below 1e-9. Unused by the other modes.
-    reverse_streams : sequence of str, optional
+    reverse_streams : str or sequence of str, optional
         Stream ids whose line is reversed when the stream table is built, for
-        lines digitized mouth-first. Ids are compared as strings. Default ``()``.
+        lines digitized mouth-first. Ids are compared as strings. A single string is
+        ONE id: ``"main"`` reverses stream ``main`` (it was iterated character by
+        character). Default ``()``.
     reach_layer : int, float, str or Mapping[str, int], optional
         Zero-based layer each reach sits in. A number is every reach's layer; a
         mapping is ``{stream_id: layer}`` (a stream missing from it raises
@@ -460,7 +462,7 @@ class SFRBuilder:
     connections: tuple[StreamConnection, ...] = ()
     diversions: tuple[StreamDiversion, ...] = ()
     connection_tolerance: float | None = None
-    reverse_streams: tuple[str, ...] = ()
+    reverse_streams: str | tuple[str, ...] = ()
     reach_layer: int | float | str | Mapping[str, int] = "top_active"
     width: Any = 10.0
     gradient: Any = 0.001
@@ -497,7 +499,12 @@ class SFRBuilder:
             raise ValueError("connection_mode must be 'automatic', 'nodes', or 'explicit'.")
         object.__setattr__(self, "connections", tuple(self.connections))
         object.__setattr__(self, "diversions", tuple(self.diversions))
-        object.__setattr__(self, "reverse_streams", tuple(str(value) for value in self.reverse_streams))
+        # A bare string is ONE id, as at `usg.to_mf6(include=)` (ledger 429): iterated, "main"
+        # reversed streams "m", "a", "i" and "n" -- none of them, in silence.
+        reverse = (
+            (self.reverse_streams,) if isinstance(self.reverse_streams, str) else self.reverse_streams
+        )
+        object.__setattr__(self, "reverse_streams", tuple(str(value) for value in reverse))
 
     def with_updates(self, **updates: Any) -> SFRBuilder:
         """Return a changed builder without modifying the original.

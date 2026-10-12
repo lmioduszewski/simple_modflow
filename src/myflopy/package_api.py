@@ -6207,7 +6207,7 @@ class _SFRPackage:
         connections: tuple[StreamConnection, ...] = (),
         diversions: tuple[StreamDiversion, ...] = (),
         connection_tolerance: float | None = None,
-        reverse_streams: tuple[str, ...] = (),
+        reverse_streams: str | tuple[str, ...] = (),
         reach_layer: int | float | str | Mapping[str, int] = "top_active",
         width: Any = 10.0,
         gradient: Any = 0.001,
@@ -6366,11 +6366,10 @@ class _SFRPackage:
             another stream for ``connection_mode="automatic"`` to connect them.
             Default ``None``: 5% of the square root of the median cell area, and
             never below 1e-9. Unused by the other modes.
-        reverse_streams : sequence of str, optional
+        reverse_streams : str or sequence of str, optional
             Ids of streams whose line is reversed as the stream table is built, for
-            lines digitized mouth-first; compared as strings. A bare string is
-            iterated character by character, so give even one id as a tuple,
-            ``("main",)``. Default ``()``.
+            lines digitized mouth-first; compared as strings. A single string is ONE
+            id: ``"main"`` reverses stream ``main``. Default ``()``.
         reach_layer : int, float, str or Mapping[str, int], optional
             Zero-based layer each reach sits in. A number is every reach's layer; a
             mapping is ``{stream_id: layer}``, where a stream missing from it raises
