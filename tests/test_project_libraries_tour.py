@@ -88,6 +88,24 @@ def test_the_tour_teaches_the_distinctions_that_cost_the_most(tmp_path, monkeypa
     assert "calibration excluded" in repr(project.runs)
 
 
+def test_the_tour_draws_the_worker_layout_a_parallel_run_makes():
+    """Section 8 fakes a calibration tree, and its workers sit where a parallel run
+    puts them: ``<master>.workers/worker_<n>`` (ledger 532), no longer beside the
+    master. A tree drawn in the old layout would still be counted as one calibration
+    -- the ``.pest`` ancestor catches it either way -- so only this test sees it go
+    stale and show a reader folders a run no longer makes."""
+
+    from myflopy.modflow.mf6.pest.run_state import worker_root
+
+    source = "\n".join(_code_cells())
+    master = "cal_ies_master"
+
+    assert f"'{master}'" in source
+    for n in (0, 1):
+        assert f"'{(worker_root(Path(master)) / f'worker_{n}').as_posix()}'" in source
+    assert "'worker_0'" not in source
+
+
 def test_the_tour_leaves_nothing_behind():
     """It builds in a temp directory, so running it does not litter the repo."""
 
