@@ -53,7 +53,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.surface_water_validation`
 - `myflopy.modflow.mp3du`
 - `myflopy.modflow.usg._io`
-- `myflopy.modflow.usg.export`
 - `myflopy.modflow.utils`
 - `myflopy.modflow.utils.animations`
 - `myflopy.modflow.utils.datatypes`
@@ -92,6 +91,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mp3du.legacy_prt`
 - `myflopy.modflow.mp3du.particles`
 - `myflopy.modflow.usg.cln`
+- `myflopy.modflow.usg.export`
 - `myflopy.modflow.usg.packages`
 - `myflopy.modflow.utils.contour_interp`
 - `myflopy.modflow.utils.datatypes.datalists`

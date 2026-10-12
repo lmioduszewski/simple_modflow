@@ -125,7 +125,7 @@
  "myflopy.modflow.usg._io": 0,
  "myflopy.modflow.usg.cln": 1,
  "myflopy.modflow.usg.convert": 7,
- "myflopy.modflow.usg.export": 0,
+ "myflopy.modflow.usg.export": 1,
  "myflopy.modflow.usg.model": 2,
  "myflopy.modflow.usg.packages": 1,
  "myflopy.modflow.usg.reader": 3,

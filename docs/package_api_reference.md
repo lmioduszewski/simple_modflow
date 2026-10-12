@@ -1219,6 +1219,12 @@ single number for a bed that varies and `mf.lak` then rejects the cells it misse
   `usg.boundary_frame(ftype)` still has rows
   only for periods that define records; its `attrs` (`defined_periods`,
   `empty_periods`, `reused_periods`) tell a switch-off from a reuse.
+- **Several records on one cell in one period are ONE feature** (ledger 467) --
+  MF6 applies each (two drains on a cell), and the export writes a feature per cell, so
+  they combine by what each value IS (`agg_for_kind`): conductance and rate add, an
+  elevation or head is the mean. The manifest counts them as `records_combined`, and a
+  cell whose copies' elevations DIFFER is warned about by name, because one drain at the
+  mean elevation is not the two MF6 applied. It used to stop the export.
 
 What CLN cannot supply is written as a documented default rather than omitted, so a
 missing column never becomes a silent zero: SFR's `rbth` and `man` (CLN routes with a pipe

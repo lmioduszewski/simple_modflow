@@ -42,6 +42,7 @@ the cell centres, which is exact -- use it when the raster's resolution matters.
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -49,6 +50,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from myflopy._logging import get_logger
+from myflopy._warnings import stacklevel_outside_package
+from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, agg_for_kind
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from myflopy.modflow.usg.model import UsgModel
@@ -439,6 +442,21 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
             [p for p in range(int(model.nper)) if p not in set(switched_off)]
         )
         partial = int((points["periods"] != everywhere).sum())
+        # Several records on one cell in one period are ONE feature (ledger 467).
+        combined = int(points.attrs.get("records_combined", 0))
+        disagreeing = int(points.attrs.get("cells_disagreeing", 0))
+        if combined:
+            manifest.notes.append(
+                f"{ftype}: {combined} record(s) shared a cell with another record of the "
+                "same period and were combined into its feature -- conductance and rate "
+                "summed, an elevation or head the mean"
+                + (
+                    f"; on {disagreeing} cell(s) the copies' elevations differ, so the "
+                    "feature is not the boundary MF6 applied there"
+                    if disagreeing else ""
+                )
+                + "."
+            )
         if partial:
             manifest.notes.append(
                 f"{ftype}: {partial} of {len(points)} feature(s) are in force in only some "
@@ -456,6 +474,7 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
             "period_base": 0,
             "switched_off_periods": switched_off,
             "features_in_some_periods": partial,
+            "records_combined": combined,
             "geometry": "Point",
         }
         lines.to_file(path, layer=f"{package}_lines", driver="GPKG")
@@ -486,6 +505,7 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
             "cells_alone_on_a_chain": alone,
             "switched_off_periods": switched_off,
             "features_in_some_periods": partial,
+            "records_combined": combined,
             "what": f"{ftype} as lines -- BUILD FROM THIS, continuous cell coverage",
             "consumed_by": (
                 f"mf.{package}.gpkg(path, layer='{package}_lines', context=ctx, nper=nper, "
@@ -525,6 +545,57 @@ def _export_boundaries(model: UsgModel, directory: Path, crs: str, manifest: Exp
     logger.debug("boundaries.gpkg: %d BC package(s) + source_cells + domain", written)
 
 
+def _value_kind(ftype: str, column: str) -> str:
+    """What a USG list-BC value column IS -- ``"extensive"``, ``"elevation"`` -- per the registry.
+
+    Read off the package registry's :class:`FieldSpec` for the MF6 package, by the USG
+    name (``elev``, ``cond``, ``bhead``, ``stage``, ``rbot``, ``q``), else by its
+    canonical one (CHD's ``shead`` and ``ehead`` are both its ``head``).
+    """
+
+    inputs = _PACKAGE_EXPLORER_SPECS[ftype.lower()].inputs
+    spec = inputs.get(column) or inputs.get(_CANONICAL.get(column, column))
+    if spec is None and ftype == "CHD":
+        spec = inputs["head"]
+    return spec.kind
+
+
+def _combine_records(frame, ftype: str, columns: list[str]):
+    """One row per ``(period, layer, cell)``: several records on one cell combined by KIND.
+
+    MF6 applies every record a period gives one cell -- two drains, two wells -- and
+    the export writes one feature per cell, so they are combined by what each value
+    IS (:func:`~myflopy.modflow.mf6.package_registry.agg_for_kind`, ledger 297): a
+    conductance or a rate ADDS, an elevation or a head is the MEAN. ``_bc_frames``
+    read such a cell's values as a Series and stopped on ``float()`` (ledger 467).
+
+    Returns
+    -------
+    tuple
+        ``(frame, disagreeing)``: the combined frame (its ``attrs`` kept), and the
+        ``(period, layer, cell, column)`` of every non-extensive value whose copies on
+        one cell DIFFER, where the mean is not the boundary MF6 applied.
+    """
+
+    keys = ["period", "layer", "cell"]
+    if not frame.duplicated(keys).any():
+        return frame, []
+    rules = {column: agg_for_kind(_value_kind(ftype, column)) for column in columns}
+    grouped = frame.groupby(keys, sort=False)
+    disagreeing = [
+        (int(period), int(layer), int(cell), column)
+        for column, rule in rules.items()
+        if rule != "sum"
+        for (period, layer, cell), spread in (grouped[column].max() - grouped[column].min()).items()
+        if spread > 0
+    ]
+    others = {column: "first" for column in frame.columns if column not in keys and column not in rules}
+    combined = grouped.agg({**rules, **others}).reset_index()[list(frame.columns)]
+    combined = type(frame)(combined, geometry="geometry", crs=frame.crs) if "geometry" in frame else combined
+    combined.attrs = dict(frame.attrs)
+    return combined, disagreeing
+
+
 def _bc_frames(model: UsgModel, ftype: str, crs: str):
     """One list BC as ``(points, lines)``, carrying the package registry's field names.
 
@@ -540,6 +611,12 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
     When the first value column moves in time, one ``<column>_mNN`` column per model
     period of its cycle carries it, NaN where the cell has no record in force.
 
+    Several records one period gives one cell are combined first, by kind
+    (:func:`_combine_records`): MF6 applies each, and a feature is one per cell. Both
+    frames' ``attrs`` say how many records were combined (``records_combined``) and on
+    how many cells the copies' elevations differ (``cells_disagreeing``), which also
+    warns.
+
     The chains come from face adjacency (see :func:`_adjacency`), so a corner-only
     contact starts a new chain rather than extending one through the corner.
     """
@@ -551,6 +628,19 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
         return None, None
     polys = model.grid.gdf_vorPolys
     columns = [c for c in _BC_VALUES.get(ftype, ()) if c in frame.columns]
+    rows_before = len(frame)
+    frame, disagreeing = _combine_records(frame, ftype, columns)
+    if disagreeing:
+        cells = sorted({(layer + 1, cell) for _period, layer, cell, _column in disagreeing})
+        message = (
+            f"{ftype}: {len(cells)} cell(s) hold several records in one period whose "
+            f"{', '.join(sorted({column for *_, column in disagreeing}))} values differ -- "
+            f"(layer, cell) {cells[:5]}{' ...' if len(cells) > 5 else ''}. MF6 applies each "
+            "record; the export writes ONE feature per cell, its conductance or rate the "
+            "sum and its elevation the MEAN, which is not the same boundary there."
+        )
+        logger.warning(message)
+        warnings.warn(message, UserWarning, stacklevel=stacklevel_outside_package())
     acting = model.boundaries[ftype].in_force(model.nper)
 
     package = ftype.lower()
@@ -618,7 +708,14 @@ def _bc_frames(model: UsgModel, ftype: str, crs: str):
     out_lines = gpd.GeoDataFrame(line_rows, geometry="geometry", crs=polys.crs)
     out_points = _attach_cycle(out_points, frame, columns[0], acting, name=canonical[columns[0]])
     out_lines = _attach_cycle(out_lines, frame, columns[0], acting, name=canonical[columns[0]])
-    return out_points.to_crs(crs), out_lines.to_crs(crs)
+    out_points, out_lines = out_points.to_crs(crs), out_lines.to_crs(crs)
+    combined = {
+        "records_combined": rows_before - len(frame),
+        "cells_disagreeing": len({(layer, cell) for _p, layer, cell, _c in disagreeing}),
+    }
+    out_points.attrs.update(combined)
+    out_lines.attrs.update(combined)
+    return out_points, out_lines
 
 
 def _period_ranges(periods: list[int]) -> str:

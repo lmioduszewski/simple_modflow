@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 466 entries (471 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 467 entries (472 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 467 | A USG export combines several records one period gives one cell into one feature, by kind | 2026-10-11 |
 | 466 | A legacy `Boundaries(crs=)` naming another CRS than its grid's is refused, and a `GeoPackageSource` follows... | 2026-10-11 |
 | 465 | A one-value noun refuses a per-layer field's options, and a heads option on a map with no heads raises at t... | 2026-10-11 |
 | 464 | A cross-section's axes and a transport profile read the model's own unit and field | 2026-10-11 |
@@ -19437,3 +19438,17 @@ same day, which is the useful part of the result.
       reprojects it to the grid's CRS as it is at each access, from the file's own frame
       (not a round trip of the previous label); a frame set from outside is taken to be
       in the grid's CRS when first read, as `Boundaries` takes one.
+
+467. **A USG export combines several records one period gives one cell into one feature, by kind (2026-10-11).**
+      `_bc_frames` read such a cell's values as a Series and stopped on `float()`, and
+      `_attach_cycle`'s lookup kept the LAST copy. They combine first now, through
+      `agg_for_kind` (ledger 297): conductance and rate add, an elevation or head is the
+      MEAN. **Judgment call, left open:** for two drains on one cell the
+      CONDUCTANCE-weighted elevation is exact while both drain, and the plain mean is
+      not -- measured by hand, `elev 7.5 / cond 100` plus `7.0 / 50` at head 8.0: MF6
+      100.0, mean (7.25 x 150) 112.5, weighted (7.333 x 150) 100.0; at head 7.2 MF6 10.0
+      and both combinations 0. The mean was chosen because it is the library's one rule
+      for records on a cell (the input tables and maps use it); where the copies differ
+      the export WARNS naming the cells and the manifest counts them
+      (`records_combined`), so the case is never silent.
+

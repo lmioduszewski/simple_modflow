@@ -127,3 +127,38 @@ def test_the_manifest_counts_features_in_force_in_only_some_periods(tmp_path):
     assert manifest.layers["boundaries.gpkg:drn_lines"]["features_in_some_periods"] == 1
     assert any("1 of 3 feature(s) are in force in only some of the periods the package "
                "is (0-1)" in note for note in manifest.notes)
+
+
+def _two_drains_on_one_cell(second_elevation):
+    grid = square_grid()
+    model = usg_model(grid, [0, 1])
+    model.boundaries = {"DRN": PeriodRecords(
+        ftype="DRN",
+        periods={0: np.array([[1, 7.5, 100.0], [1, second_elevation, 50.0], [2, 7.5, 100.0]])},
+    )}
+    return model
+
+
+def test_two_records_on_one_cell_are_one_feature_combined_by_kind():
+    """Two drains on one cell in one period -- MF6 applies both -- stopped the export
+    on ``float()`` of a Series (ledger 467). Conductance adds; the elevation is
+    the mean, and a warning names the cell whose copies differ."""
+
+    with pytest.warns(UserWarning, match=r"DRN: 1 cell\(s\) .*elev values differ .*\[\(1, 0\)\]"):
+        points, lines = _bc_frames(_two_drains_on_one_cell(7.0), "DRN", CRS)
+    table = points.set_index("old_cell")
+    assert sorted(table.index) == [0, 1]
+    assert table.loc[0, "conductance"] == 150.0 and table.loc[0, "elevation"] == 7.25
+    assert table.loc[1, "conductance"] == 100.0 and table.loc[1, "elevation"] == 7.5
+    assert lines.set_index("old_cell").loc[0, "conductance"] == 150.0
+    assert points.attrs == {"records_combined": 1, "cells_disagreeing": 1}
+
+
+def test_copies_that_agree_combine_without_a_warning(tmp_path, recwarn):
+    manifest = ExportManifest(directory=tmp_path, crs=CRS, nper=1)
+    _export_boundaries(_two_drains_on_one_cell(7.5), tmp_path, CRS, manifest)
+    assert not [w for w in recwarn if "several records" in str(w.message)]
+    assert manifest.layers["boundaries.gpkg:drn"]["records_combined"] == 1
+    assert any("1 record(s) shared a cell" in note for note in manifest.notes)
+    written = gpd.read_file(tmp_path / "boundaries.gpkg", layer="drn").set_index("old_cell")
+    assert written.loc[0, "conductance"] == 150.0 and written.loc[0, "elevation"] == 7.5
