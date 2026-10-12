@@ -73,8 +73,11 @@ between calendar and cycle order; `.months_of(cycle=-1)` is `{month: period}`;
 own TDIS and STO, naming the first period that breaks the pattern.
 `.equilibrium(model, targets=None, tolerance=None)` is a `CycleEquilibrium` --
 `get()`/`summary()`/`plot()` and, with a tolerance, `converged` -- comparing the last
-two cycles at each period's END (ledger 336): every cell's head and every LAK
-package's lakes by default, or each target set's own simulated values.
+two cycles at each period's END (ledger 336): every cell's head (DIS, DISV or DISU)
+and every LAK package's lakes by default, or each target set's own simulated values
+(`ConcTargets` on the transport model). A cell or lake with a value at one cycle's
+period end and none at the other's (dry at one end only) is counted as `n_one_sided`
+and never passes (ledger 531).
 
 **A period's dates — `model.calendar` / `mf.period_calendar(model)` /
 `mf.PeriodCalendar(start, perlen, time_units, steady=None)`** (ledger 529).

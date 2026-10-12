@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 530 entries (535 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 531 entries (536 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 531 | `CycleEquilibrium` counts a location with a value in ONE cycle only as unsettled, and reads any discretization | 2026-10-12 |
 | 530 | `mf.AverageYear`: one steady period, then calendar-month cycles, its run checked by `equilibrium` | 2026-10-12 |
 | 529 | A period's dates are read in one place, `PeriodCalendar`, and its calendar month is its MIDPOINT's | 2026-10-12 |
 | 528 | A covered cell is clamped to the pyEMU multipliers' `physical=` on its file too | 2026-10-12 |
@@ -20604,7 +20605,8 @@ same day, which is the useful part of the result.
         `AverageYear`'s months and the calendar's MIDPOINT months are always the same.
         No leap-year option was built.
       - `start` must be midnight on the first of a month, so every period ends on a
-        month end. Any other start is refused, naming the first of that month.
+        month end -- until the cycles pass a 29 February, after which each leap year
+        ends them one day earlier (the drift above). Any other start is refused, naming the first of that month.
         `START_DATE_TIME` is `start - steady_length` (default 1 day). The steady period
         takes 1 step at multiplier 1.0, and that is not configurable.
       - `nstp` is required (it is the run-time lever). One `tsmult` for every month.
@@ -20631,3 +20633,23 @@ same day, which is the useful part of the result.
         not a `viz.Picture`, which the six picture verbs return.
       **Not built:** recording the cycle in run metadata, a per-month `tsmult`, and
       equilibrium for SFR reaches unless they are passed as targets.
+
+531. **`CycleEquilibrium` counts a location with a value in ONE cycle only as unsettled, and reads any discretization (2026-10-12).**
+      Review of 530. **Chosen:** a cell or lake with a value at one cycle's
+      period end and none at the other's (dry or without stage at one end only) is
+      listed by `get()` with `NaN` on its empty side and in `change`, counted as
+      `n_one_sided` by `summary()`, and fails `passes`/`converged` whatever the
+      tolerance. It had been dropped with the cells empty at both ends: a 2-layer run
+      whose top layer drained dry between the cycles (50 such cell-months) PASSED a
+      tolerance of 1000 ft on the remaining layer, and the user's pond goes dry on
+      recovery days. A location empty at BOTH ends is still left out -- dry in both
+      years is settled. **The head source is FloPy's reader of the OC's head file**
+      (`model.gwf.output.head()`), so DIS and DISU models are compared; `model.hds` is
+      DISV-only and raised `AttributeError` on a DIS model. `targets=None` on a
+      transport model is refused by name (it has no heads). **The steady flags are
+      compared only when the model's calendar carries them**: a GWT model's are
+      `None`, so every `ConcTargets` call was refused as "not this year's periods";
+      the refusal now names the first difference (period count, start, unit, a
+      period's length, or a period's STO state). PRT's TDIS copy reads the period
+      block through `period_end.period_records` too.
+

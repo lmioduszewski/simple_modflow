@@ -386,6 +386,113 @@ def test_a_run_that_has_not_settled_is_flagged(runs):
         year.equilibrium(run.model("flow")).converged
 
 
+def _execute(root: Path, simulation):
+    shutil.rmtree(root, ignore_errors=True)
+    with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+        warnings.simplefilter("ignore")
+        run = mf.Project(root, name="p").prepare_run("r", simulation)
+        success, report = run.execute(silent=True)
+    assert success, "\n".join(report[-15:])
+    return run
+
+
+@pytest.mark.slow
+def test_a_cell_dry_in_one_cycle_only_is_unsettled(tmp_path):
+    """Ledger 531: a thin top layer wet at the first cycle's period ends drains
+    dry (MF6 writes -1e30) by the second's. Its cells have a value in ONE cycle only;
+    dropped, the report read every remaining cell and passed a loose tolerance."""
+
+    year = mf.AverageYear(2, start="2016-10-01", steady=False, nstp=2)
+    vor = _grid()
+    context = mf.ModelContext(grid=vor, domain=np.ones((2, NCPL), dtype=int))
+    model = mf.gwf("flow", context=context, packages=[
+        mf.disv(nlay=2, top=100.0, botm=[85.0, 0.0], **vor.get_disv_gridprops()),
+        mf.ic(strt=99.0), mf.npf(k=5.0, icelltype=1),
+        mf.sto(sy=0.3, ss=1e-5, iconvert=1, steady_state=year.steady_state, transient=year.transient),
+        mf.ghb(stress_period_data={0: [[(1, c), 50.0, 100.0] for c in range(0, NCPL, 5)]}),
+        mf.rch.array(recharge=year.by_month({m: np.full(NCPL, r) for m, r in RATES.items()}),
+                     irch=0, context=context),
+        mf.oc(head_filerecord="flow.hds", saverecord=[("HEAD", "LAST")]),
+    ])
+    run = _execute(tmp_path / "dry", mf.simulation(model, name="s", packages=[year.tdis()]))
+    heads = flopy.utils.HeadFile(Path(run.workspace) / "flow.hds")
+    october = year.months_of(0)[10], year.months_of(1)[10]
+    top = [heads.get_data(kstpkper=(1, per))[0].ravel() for per in october]
+    one_sided = int(np.sum((np.abs(top[0]) < 1e29) != (np.abs(top[1]) < 1e29)))
+    assert one_sided > 0, "the fixture must dry cells between the cycles"
+
+    equilibrium = year.equilibrium(run.model("flow"), tolerance=1e6)
+    summary = equilibrium.summary().iloc[0]
+    assert summary["max_abs_change"] < 1e6  # every two-sided change is inside the tolerance
+    assert summary["n_one_sided"] > 0 and not summary["passes"] and not equilibrium.converged
+    table = equilibrium.get()
+    rows = table[(table["layer"] == 0) & (table["month"] == 10)]
+    assert len(rows) == one_sided and rows["change"].isna().all()
+    assert rows["previous"].notna().all() and rows["last"].isna().all()
+
+
+@pytest.mark.slow
+def test_a_structured_model_is_compared_too(tmp_path):
+    """Ledger 531: the head file is FloPy's reader of the OC's file, so a DIS
+    model is read; `model.hds` (DISV-only) raised AttributeError on it."""
+
+    year = mf.AverageYear(2, start="2016-10-01", nstp=1)
+    model = mf.gwf("flow", packages=[
+        mf.dis(nlay=1, nrow=3, ncol=4, delr=100.0, delc=100.0, top=100.0, botm=[0.0]),
+        mf.ic(strt=60.0), mf.npf(k=5.0, icelltype=1),
+        mf.sto(sy=0.1, ss=1e-5, iconvert=1, steady_state=year.steady_state, transient=year.transient),
+        mf.chd(stress_period_data={0: [[(0, 0, 0), 50.0]]}),
+        mf.rch.array(recharge=year.by_month({m: 1e-3 * m for m in range(1, 13)}), irch=0),
+        mf.oc(head_filerecord="flow.hds", saverecord=[("HEAD", "LAST")]),
+    ])
+    run = _execute(tmp_path / "dis", mf.simulation(model, name="s", packages=[year.tdis()]))
+    table = year.equilibrium(run.model("flow")).get()
+    assert len(table) == 12 * 12 and set(table["cell"]) == set(range(12))
+    heads = flopy.utils.HeadFile(Path(run.workspace) / "flow.hds")
+    row = table[(table["cell"] == 7) & (table["month"] == 3)].iloc[0]
+    assert row["last"] == heads.get_data(kstpkper=(0, row["per_last"]))[0, 1, 3]
+
+
+@pytest.mark.slow
+def test_conc_targets_are_compared_on_the_transport_model(tmp_path):
+    """Ledger 531: a transport model's calendar carries no STO flags, and
+    comparing them refused every ConcTargets call; with targets=None it is refused by
+    name, since it has no heads."""
+
+    year = mf.AverageYear(2, start="2016-10-01", nstp=1)
+    vor = _grid()
+    context = mf.ModelContext(grid=vor, domain=np.ones((1, NCPL), dtype=int))
+    disv = dict(nlay=1, top=100.0, botm=[0.0], **vor.get_disv_gridprops())
+    flow = mf.gwf("flow", context=context, packages=[
+        mf.disv(**disv), mf.ic(strt=50.0), mf.npf(k=5.0, icelltype=1),
+        mf.sto(sy=0.05, ss=1e-5, iconvert=1, steady_state=year.steady_state, transient=year.transient),
+        mf.ghb(stress_period_data={0: [[(0, c), 50.0, 100.0, 0.0] for c in range(0, NCPL, 5)]},
+               auxiliary=["CONCENTRATION"], pname="ghb"),
+        mf.rch.array(recharge=year.by_month({m: np.full(NCPL, r) for m, r in RATES.items()}),
+                     irch=0, context=context),
+        mf.oc(head_filerecord="flow.hds", budget_filerecord="flow.cbc",
+              saverecord=[("HEAD", "LAST"), ("BUDGET", "LAST")]),
+    ])
+    transport = mf.gwt("tport", context=context, packages=[
+        mf.disv(**disv), mf.ic(strt=0.0), mf.adv(scheme="upstream"), mf.mst(porosity=0.3),
+        mf.ssm(sources=[("ghb", "AUX", "CONCENTRATION")]),
+        mf.cnc(stress_period_data={0: [[(0, 24), 100.0]]}),
+        mf.oc(concentration_filerecord="tport.ucn", saverecord=[("CONCENTRATION", "LAST")]),
+    ])
+    run = _execute(tmp_path / "gwt", mf.simulation(
+        flow, transport, name="s", packages=[year.tdis()], exchanges=[mf.exchange(flow, transport)]))
+    model = run.model("tport")
+    assert model.calendar.steady is None
+    conc = mf.ConcTargets(locations=pd.DataFrame({"name": ["c23"], "layer": [0], "cell": [23]}),
+                          values=pd.DataFrame({"per": [24], "c23": [1.0]}), time_column="per")
+    table = year.equilibrium(model, targets=conc).get()
+    simulated = conc.simulated_heads(model).set_index("per")["c23"]
+    assert len(table) == 12 and (table["source"] == "ConcTargets").all()
+    assert list(table["last"]) == [simulated.loc[per] for per in table["per_last"]]
+    with pytest.raises(ValueError, match="compares a FLOW model's heads"):
+        year.equilibrium(model)
+
+
 @pytest.mark.slow
 def test_equilibrium_reads_every_lake_and_agrees_with_a_lake_target(runs):
     year, run, _, _ = runs["lake"]
@@ -408,6 +515,8 @@ def test_equilibrium_refusals(runs, tmp_path):
         mf.AverageYear(1, start="2016-10-01", nstp=2).equilibrium(model)
     with pytest.raises(ValueError, match=r"not .*AverageYear\(4.*from_model"):
         mf.AverageYear(4, start="2016-10-01", nstp=2).equilibrium(model)
+    with pytest.raises(ValueError, match="it starts 2016-09-30 where the year starts 2017-09-30"):
+        mf.AverageYear(3, start="2017-10-01", nstp=2).equilibrium(model)
     with pytest.raises(ValueError, match="tolerance"):
         year.equilibrium(model, tolerance=-1.0)
     with pytest.raises(TypeError, match="neither simulated_heads nor simulated_series"):

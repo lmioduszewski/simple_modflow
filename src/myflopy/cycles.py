@@ -98,7 +98,8 @@ class AverageYear:
         is the cycle's first month -- October gives a water year. Anything else
         (another day of the month, a time of day) raises ``ValueError`` naming the
         first of that month, because the periods end on month ends only from a
-        month's first day. Parsed as :func:`~myflopy.modflow.mf6.period_calendar.parse_start`
+        month's first day (until the cycles pass a 29 February: each leap year the
+        28-day Februaries end the later periods one day early; see Raises). Parsed as :func:`~myflopy.modflow.mf6.period_calendar.parse_start`
         parses it (a time zone raises).
     steady : bool, default True
         Whether a steady-state period comes first. ``True`` makes period 0 steady
@@ -642,10 +643,14 @@ class AverageYear:
         Parameters
         ----------
         model : SimulationBase
-            The RUN of this year: ``run.model(name)`` or ``mf.load_mf6_run(ws)``. Its
-            calendar must be this year's (``ValueError`` otherwise).
+            The RUN of this year: ``run.model(name)`` or ``mf.load_mf6_run(ws)`` --
+            the flow model, or, for ``ConcTargets``, the transport model holding
+            their concentration file. Its calendar must be this year's: same
+            number of periods, start, unit and lengths, and, for a flow model, the
+            same STO steady flags (``ValueError`` naming the first difference).
         targets : target set, sequence of target sets, or None, optional
-            Where to compare. Default ``None``: EVERYWHERE -- every cell's head and
+            Where to compare. Default ``None``: EVERYWHERE -- every cell's head
+            (any discretization; a flow model only, ``ValueError`` otherwise) and
             every lake's stage (each LAK package saving a stage file). A
             ``HeadTargets``/``ConcTargets`` (``simulated_heads``) or a
             ``LakeStageTargets``/``SfrStageTargets``/``SfrFlowTargets``/``DrnFlowTargets``
@@ -668,7 +673,8 @@ class AverageYear:
         ValueError
             When the year has fewer than two cycles (there is nothing to compare: run
             at least two), when the model's calendar is not this year's, or when
-            ``tolerance`` is negative or not finite.
+            ``tolerance`` is negative or not finite, or when ``targets=None`` on a
+            model that is not a flow model or saves no head file.
         """
 
         return CycleEquilibrium(self, model, targets=targets, tolerance=tolerance)
@@ -742,7 +748,8 @@ class CycleEquilibrium:
     :func:`~myflopy.modflow.mf6.period_end.period_ends`, a target set through its own
     ``simulated_heads``/``simulated_series``), and each month's value in the last
     cycle is compared with the same month's in the one before. A cell, lake or target
-    with no value in either (inactive, dry) is left out of that month.
+    with no value in either (inactive, dry) is left out of that month; one with a
+    value in ONE of the two only is unsettled, and counted (``n_one_sided``).
 
     Parameters
     ----------
@@ -750,7 +757,9 @@ class CycleEquilibrium:
         The cycle the run was built on; at least two cycles (``ValueError``).
     model : SimulationBase
         The run model; its :attr:`~SimulationBase.calendar` must be ``year``'s
-        (same start, unit and lengths, and the same steady flags), or ``ValueError``.
+        (same number of periods, start, unit and lengths, and -- for a flow model,
+        whose calendar carries them -- the same steady flags), or ``ValueError``
+        naming the first difference.
     targets : target set, sequence of target sets, or None, optional
         As :meth:`AverageYear.equilibrium` documents; default ``None`` reads every
         cell's head and every lake's stage. A set answering neither
@@ -772,11 +781,10 @@ class CycleEquilibrium:
             raise ValueError(f"equilibrium(tolerance={tolerance!r}) must be a finite number >= 0, or None.")
         on_model = period_calendar(model)
         declared = year.calendar
-        if not on_model.same_clock(declared) or on_model.steady != declared.steady:
+        differs = _calendar_difference(on_model, declared)
+        if differs:
             raise ValueError(
-                f"The model's periods are not {year!r}'s: it runs {on_model.nper} period(s) "
-                f"from {format_start(on_model.start)} where the year runs {declared.nper} from "
-                f"{format_start(declared.start)} (or its lengths or steady flags differ). "
+                f"The model's periods are not {year!r}'s: {differs}. "
                 "AverageYear.from_model(model) reads the model's own cycle."
             )
         self.year = year
@@ -803,7 +811,11 @@ class CycleEquilibrium:
             for month in self.year.months:
                 old = self._values(source, before[month])
                 new = self._values(source, after[month])
-                keep = np.isfinite(old) & np.isfinite(new)
+                # A location with a value in ONE cycle only -- a cell or lake dry or
+                # inactive at one period end and not the other -- is the plainest
+                # sign of a run still moving: kept, with no `change`, and counted by
+                # summary() (ledger 531).
+                keep = np.isfinite(old) | np.isfinite(new)
                 frame = source.locations.loc[keep].copy()
                 frame.insert(0, "source", source.label)
                 frame["month"] = month
@@ -811,7 +823,9 @@ class CycleEquilibrium:
                 frame["per_last"] = after[month]
                 frame["previous"] = old[keep]
                 frame["last"] = new[keep]
-                frame["change"] = new[keep] - old[keep]
+                frame["change"] = np.where(
+                    np.isfinite(old[keep]) & np.isfinite(new[keep]), new[keep] - old[keep], np.nan
+                )
                 frames.append(frame)
         columns = ["source", "name", "layer", "cell", "month", "per_previous", "per_last",
                    "previous", "last", "change"]
@@ -836,8 +850,11 @@ class CycleEquilibrium:
             cell), ``layer``/``cell`` (zero-based; ``<NA>`` off the head grid),
             ``month`` (1-12), ``per_previous``/``per_last`` (the zero-based periods
             compared), ``previous``/``last`` (their period-end values) and
-            ``change`` (``last - previous``). A location with no value in either
-            period is not listed for that month.
+            ``change`` (``last - previous``). A location with no value in EITHER
+            period (inactive, or dry or without stage at both ends) is not listed
+            for that month; one with a value in ONE of them only -- dry at one
+            period end and not at the other -- is listed with ``NaN`` on its empty
+            side and in ``change``, and :meth:`summary` counts it as unsettled.
         """
 
         return self._pair(self.year.cycles - 2, self.year.cycles - 1)
@@ -848,19 +865,24 @@ class CycleEquilibrium:
         Returns
         -------
         pandas.DataFrame
-            ``source``, ``n`` (locations compared), ``max_abs_change`` (the largest
-            ``|change|`` over every month and location), ``month`` and ``at`` (where
-            it is: ``"layer L, cell C"``, a lake or a target label), ``mean_abs_change``
-            (over every month and location) and ``annual_mean_drift`` (the largest
-            ``|change|`` of a location's month-length-weighted mean over the cycle,
-            how far the year's average level still moves). With a ``tolerance``,
-            ``passes``: ``max_abs_change <= tolerance``.
+            ``source``, ``n`` (locations compared in at least one month),
+            ``max_abs_change`` (the largest ``|change|`` over every month and
+            location), ``month`` and ``at`` (where it is: ``"layer L, cell C"``, a
+            lake or a target label), ``mean_abs_change`` (over every month and
+            location), ``annual_mean_drift`` (the largest ``|change|`` of a
+            location's month-length-weighted mean over the months it was compared,
+            how far the year's average level still moves) and ``n_one_sided``
+            (location-months with a value in one of the two cycles only -- a cell
+            or lake dry at one period end and not the other; ledger
+            531). With a ``tolerance``, ``passes``: ``max_abs_change <=
+            tolerance`` with ``n_one_sided == 0`` and something compared.
         """
 
         table = self.get()
         rows = []
         for source in self._sources:
-            part = table[table["source"] == source.label]
+            rows_of = table[table["source"] == source.label]
+            part = rows_of[rows_of["change"].notna()]
             row: dict[str, Any] = {"source": source.label}
             if part.empty:
                 row.update(n=0, max_abs_change=np.nan, month=pd.NA, at=None,
@@ -883,14 +905,17 @@ class CycleEquilibrium:
                     mean_abs_change=float(size.mean()),
                     annual_mean_drift=float(drift.max()),
                 )
+            row["n_one_sided"] = int(len(rows_of) - len(part))
             if self.tolerance is not None:
-                row["passes"] = bool(row["max_abs_change"] <= self.tolerance) if row["n"] else False
+                row["passes"] = bool(
+                    row["n"] and row["max_abs_change"] <= self.tolerance and not row["n_one_sided"]
+                )
             rows.append(row)
         return pd.DataFrame(rows)
 
     @property
     def converged(self) -> bool:
-        """Whether every source's largest change is within ``tolerance``.
+        """Whether every source's largest change is within ``tolerance``, none one-sided.
 
         Raises ``ValueError`` without a ``tolerance``: the verdict is the
         modeller's, made by naming one.
@@ -973,6 +998,36 @@ class CycleEquilibrium:
         )
 
 
+def _calendar_difference(on_model: PeriodCalendar, declared: PeriodCalendar) -> str | None:
+    """What makes a model's calendar another year's, in words, or ``None`` when it is this one.
+
+    The steady flags are compared only when the model carries them: a transport
+    model's periods are as steady as the flow model it reads (``steady`` is ``None``).
+    """
+
+    if on_model.nper != declared.nper:
+        return f"it runs {on_model.nper} period(s) where the year runs {declared.nper}"
+    if on_model.start != declared.start:
+        return (
+            f"it starts {format_start(on_model.start)} where the year starts "
+            f"{format_start(declared.start)}"
+        )
+    if on_model.time_units != declared.time_units:
+        return f"it counts time in {on_model.time_units} where the year counts days"
+    if not on_model.same_clock(declared):
+        lengths = np.abs(np.asarray(on_model.perlen) - np.asarray(declared.perlen))
+        per = int(np.argmax(lengths))
+        return (
+            f"its period {per} is {on_model.perlen[per]:g} {on_model.time_units} long where "
+            f"the year's is {declared.perlen[per]:g} days"
+        )
+    if on_model.steady is not None and on_model.steady != declared.steady:
+        per = next(p for p, (a, b) in enumerate(zip(on_model.steady, declared.steady, strict=True)) if a != b)
+        state = "steady state" if on_model.steady[per] else "transient"
+        return f"its STO runs period {per} {state}, where the year's does not"
+    return None
+
+
 def _where(row: pd.Series) -> str:
     if row["name"] is not None and not (isinstance(row["name"], float) and np.isnan(row["name"])):
         return str(row["name"])
@@ -1005,17 +1060,34 @@ def _sources(model: Any, targets: Any) -> list[_Source]:
 
 
 def _head_source(model: Any) -> _Source:
-    """Every cell's head at each period end, through the one period-end rule."""
+    """Every cell's head at each period end, through the one period-end rule.
 
-    heads = model.hds
+    The head file is FloPy's reader of the file the model's OC names
+    (``model.gwf.output.head()``), so a DIS, DISV or DISU model is read alike;
+    ``model.hds`` is DISV-only (ledger 531).
+    """
+
+    if str(getattr(model, "model_type", "gwf6") or "gwf6").lower() != "gwf6":
+        raise ValueError(
+            f"equilibrium(targets=None) compares a FLOW model's heads, and this is a "
+            f"{getattr(model, 'model_type', '?')} model: pass the GWF model, or pass this "
+            "model's targets (ConcTargets) as targets=."
+        )
+    output = getattr(getattr(model, "gwf", None), "output", None)
+    heads = output.head() if output is not None else None
+    if heads is None:
+        raise ValueError(
+            "The model saves no head file; equilibrium reads every period of the last two "
+            "cycles: mf.oc(head_filerecord=..., saverecord=[('HEAD', 'LAST')])."
+        )
     ends = period_ends(model, reader=lambda: heads, file="the head file", saves="HEAD")
     if not ends:
         raise ValueError(
             "The head file holds no record; equilibrium reads every period of the last two "
             "cycles: save them with mf.oc(saverecord=[('HEAD', 'LAST')])."
         )
-    nlay = int(heads.nlay)
     first = np.asarray(heads.get_data(kstpkper=next(iter(ends.values()))), dtype=float)
+    nlay = int(first.shape[0]) if first.ndim > 1 else 1
     ncpl = first.size // nlay
     layer, cell = np.divmod(np.arange(nlay * ncpl), ncpl)
     locations = pd.DataFrame({"name": None, "layer": layer, "cell": cell})

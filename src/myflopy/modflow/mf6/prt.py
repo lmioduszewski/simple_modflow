@@ -33,6 +33,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     where_they_are,
 )
 from myflopy.modflow.mf6.hydraulics import declared_time_unit
+from myflopy.modflow.mf6.period_end import period_records
 
 if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
@@ -83,16 +84,16 @@ def _grid_filename(model: SimulationBase) -> str:
 
 
 def _tdis_perioddata(model: SimulationBase) -> list[tuple[float, int, float]]:
-    """The flow model's TDIS ``(perlen, nstp, tsmult)`` rows (defaulting to one steady period)."""
+    """The flow model's TDIS ``(perlen, nstp, tsmult)`` rows (defaulting to one steady period).
 
-    tdis = getattr(model.sim, "tdis", None)
-    data = _mfdata_value(getattr(tdis, "perioddata", None))
-    if data is None:
+    Read through :func:`~myflopy.modflow.mf6.period_end.period_records`, the one
+    reader of the TDIS period block.
+    """
+
+    records = period_records(model)
+    if records is None:
         return [(1.0, 1, 1.0)]
-    return [
-        (float(row["perlen"]), int(row["nstp"]), float(row["tsmult"]))
-        for row in data
-    ]
+    return [(perlen, int(nstp), float(tsmult)) for perlen, nstp, tsmult in records]
 
 
 def _copy_grid_to_prt(flow_model: SimulationBase, prt_model):

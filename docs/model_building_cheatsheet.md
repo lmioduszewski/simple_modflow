@@ -1369,7 +1369,7 @@ the run-time lever. After the run, **choose `cycles` from the run itself**:
 ```python
 model = run.model("valley")
 eq = year.equilibrium(model, tolerance=0.01)   # last two cycles, period end vs period end
-eq.summary()        # per source: max |change|, where, annual-mean drift, passes
+eq.summary()        # per source: max |change|, where, annual-mean drift, n_one_sided, passes
 eq.plot()           # max |change| by month for the last two cycle pairs
 mf.AverageYear.from_model(model) == year      # a run recovers its cycle from its own files
 model.calendar.table()                        # every period's dates and calendar month
