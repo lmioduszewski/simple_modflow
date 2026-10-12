@@ -417,7 +417,7 @@ def test_a_whole_grid_bed_over_integer_lake_ids_is_still_read_by_cell(toy):
 
 def _amounts(toy, key="name", **kw):
     data = _lak(toy, key=key, **kw).options["perioddata"]
-    return [[row[2] for row in data[period]] for period in range(3)]
+    return [[row[2] for row in data.get(period, [])] for period in range(3)]
 
 
 def test_an_array_or_series_is_read_by_period(toy):
@@ -428,7 +428,7 @@ def test_an_array_or_series_is_read_by_period(toy):
     amounts = _amounts(toy, rainfall=np.float64(0.5))
     assert amounts == [[0.5]] * 3 and all(type(a[0]) is float for a in amounts), "no numpy scalar written"
     rate = _lak(toy, outlets=[LakeOutlet("pond", rate=np.array([-1.0, -2.0]))]).options["perioddata"]
-    assert rate == {0: [[0, "RATE", -1.0]], 1: [[0, "RATE", -2.0]], 2: []}
+    assert rate == {0: [[0, "RATE", -1.0]], 1: [[0, "RATE", -2.0]]}  # period 2 sets nothing
     assert LakeOutlet("pond", rate=np.array([-1.0, -2.0])).rate == [-1.0, -2.0]
     assert LakeOutlet("pond", rate=pd.Series({1: -2.0})).rate == {1: -2.0}
     with pytest.raises(ValueError, match=r"2-D array of shape \(2, 3\)"):

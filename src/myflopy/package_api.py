@@ -6316,8 +6316,10 @@ class _SFRPackage:
             default unit conversions come from. The grid's pin is stamped on the
             package.
         nper : int
-            Number of stress periods; the perioddata gets one entry per period
-            ``0 .. nper - 1``. Less than 1 raises ``ValueError``.
+            Number of stress periods; the perioddata gets an entry for each period
+            ``0 .. nper - 1`` that sets something -- a period with no setting writes no
+            block, which MF6 reads identically (ledger 468). Less than 1 raises
+            ``ValueError``.
         streams : str, pathlib.Path, sequence of str or Path, or geopandas.GeoDataFrame
             Stream centerlines, one ``LineString`` per stream; any other geometry,
             a ``MultiLineString`` included, raises ``ValueError``. A path or a list
@@ -6790,7 +6792,9 @@ class _LAKPackage:
         nper : int
             Required. The number of stress periods the per-period values are
             expanded over, from zero. Must be at least 1 (``ValueError``). Give
-            the simulation's TDIS count; the two are not compared here.
+            the simulation's TDIS count; the two are not compared here. A period
+            that sets nothing writes no period block, which MF6 reads identically
+            (ledger 468).
         lakes : str, pathlib.Path, sequence of str or Path, or geopandas.GeoDataFrame
             Required. The lake polygons, ``Polygon`` or ``MultiPolygon`` only
             (``ValueError`` otherwise, and for a polygon with no area). A path or

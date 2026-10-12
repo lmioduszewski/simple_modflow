@@ -243,8 +243,9 @@ class SFRBuilder:
         ``length_units``/``time_units`` the default unit conversions come from.
         The grid's pin is stamped on the built package.
     nper : int
-        Number of stress periods; ``perioddata`` gets one entry per period
-        ``0 .. nper - 1``. Less than 1 raises ``ValueError``. Period keys at or
+        Number of stress periods; ``perioddata`` gets an entry for each period
+        ``0 .. nper - 1`` that sets something (a period with no setting has none, ledger
+        468). Less than 1 raises ``ValueError``. Period keys at or
         beyond ``nper`` in a period input are ignored.
     streams : str, pathlib.Path, sequence of str or Path, or geopandas.GeoDataFrame
         Stream centerlines, one ``LineString`` per stream (anything else, a
@@ -1285,7 +1286,14 @@ class SFRBuilder:
 
     @property
     def perioddata(self) -> dict[int, list[list[Any]]]:
-        """Return normalized MF6 SFR perioddata."""
+        """MF6 SFR perioddata: ``{period: [record, ...]}`` for each period that sets something.
+
+        A period with no setting has NO entry (ledger 468): MF6 keeps every reach
+        setting until a period block changes it, so an empty block is the same model
+        -- measured, budgets and stages byte-identical -- while FloPy 3.10 reads the
+        package's FIRST period for its dtype, and an empty one made ``gwf.plot()`` and
+        the package's ``.plot()`` raise. Every period empty gives ``{}``.
+        """
 
         result = {period: [] for period in range(self.nper)}
         for keyword, value in (
@@ -1304,7 +1312,7 @@ class SFRBuilder:
             for period in result:
                 if period in amounts:
                     result[period].append([source, "DIVERSION", idiv, amounts[period]])
-        return result
+        return {period: rows for period, rows in result.items() if rows}
 
     @property
     def diversiondata(self) -> list[list[Any]] | None:

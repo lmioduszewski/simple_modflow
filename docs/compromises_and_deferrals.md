@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 467 entries (472 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 468 entries (473 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 468 | `mf.sfr`/`mf.lak` write no empty period block | 2026-10-11 |
 | 467 | A USG export combines several records one period gives one cell into one feature, by kind | 2026-10-11 |
 | 466 | A legacy `Boundaries(crs=)` naming another CRS than its grid's is refused, and a `GeoPackageSource` follows... | 2026-10-11 |
 | 465 | A one-value noun refuses a per-layer field's options, and a heads option on a map with no heads raises at t... | 2026-10-11 |
@@ -19451,4 +19452,19 @@ same day, which is the useful part of the result.
       for records on a cell (the input tables and maps use it); where the copies differ
       the export WARNS naming the cells and the manifest counts them
       (`records_combined`), so the case is never silent.
+
+468. **`mf.sfr`/`mf.lak` write no empty period block (2026-10-11).**
+      `SFRBuilder.perioddata` and `LAKBuilder.perioddata` gave every period an entry,
+      `[]` where it sets nothing, and FloPy 3.10 reads a transient list's FIRST period
+      for its dtype, so a package whose period 0 set nothing made `gwf.plot()` and the
+      package's `.plot()` raise. Chosen: OMIT a period that sets nothing, after
+      measuring that MF6 keeps an advanced package's settings until a block changes them:
+      with and without the empty blocks, the model budget, package budget, heads and
+      stage file are BYTE-IDENTICAL for SFR (inflow in one period, and in none) and LAK
+      (`docs/reproducers/advanced_empty_period_blocks.py`). Every period empty gives
+      `{}`. The digest of a re-declared SFR/LAK with an empty period moves (its
+      `perioddata` lost those keys); a stored package does not re-resolve, so nothing
+      saved moves. NOT changed: MVR, where an empty block turns the movers OFF.
+      Same pass: a package artifact restored with no period data (`perioddata` None,
+      which FloPy returns for `{}`) raised in `project/components.py`; it reads none.
 

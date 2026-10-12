@@ -1596,7 +1596,9 @@ class LAKBuilder:
     nper : int
         Required. The number of stress periods the per-period values are
         expanded over, from zero. Must be at least 1 (``ValueError``). Give
-        the simulation's TDIS count; the two are not compared here.
+        the simulation's TDIS count; the two are not compared here. A period
+        that sets nothing writes no period block, which MF6 reads identically
+        (ledger 468).
     lakes : str, pathlib.Path, sequence of str or Path, or geopandas.GeoDataFrame
         Required. The lake polygons, ``Polygon`` or ``MultiPolygon`` only
         (``ValueError`` otherwise, and for a polygon with no area). A path or
@@ -3571,7 +3573,13 @@ class LAKBuilder:
 
     @property
     def perioddata(self) -> dict[int, list[list[Any]]]:
-        """Return combined lake and outlet period settings."""
+        """Lake and outlet period settings, ``{period: [record, ...]}``, for each period that sets something.
+
+        A period with no setting has NO entry (ledger 468): MF6 keeps every lake
+        and outlet setting until a period block changes it, so an empty block is the
+        same model, while FloPy 3.10 reads the package's FIRST period for its dtype and
+        an empty one made ``gwf.plot()`` raise.
+        """
 
         result = {period: [] for period in range(self.nper)}
         for value, keyword in (
@@ -3593,7 +3601,7 @@ class LAKBuilder:
             name = f"outlets[{outlet_number}].rate"
             for period, amount in self._by_period(rate, name):
                 result[period].append([outlet_number, "RATE", self._setting_amount(amount, "RATE", name)])
-        return result
+        return {period: rows for period, rows in result.items() if rows}
 
     @property
     def prepared_tables(self) -> dict[str, LakeTable]:

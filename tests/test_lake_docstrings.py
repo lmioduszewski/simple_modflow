@@ -307,7 +307,7 @@ def _period(toy, key="name", **kw):
 def test_a_per_period_value_takes_the_documented_forms(toy):
     def amounts(value):
         data, _ = _period(toy, rainfall=value)
-        return [[row[2] for row in data[period]] for period in range(3)]
+        return [[row[2] for row in data.get(period, [])] for period in range(3)]
 
     assert amounts(0.1) == [[0.1], [0.1], [0.1]]
     assert amounts([0.1, 0.2]) == [[0.1], [0.2], []], "position 0 = the first period"
@@ -320,7 +320,8 @@ def test_a_per_period_value_takes_the_documented_forms(toy):
 
 def test_an_outlet_rate_is_keyed_by_zero_based_period(toy):
     data, _ = _period(toy, outlets=[LakeOutlet("pond", rate={1: -2.0})])
-    assert data == {0: [], 1: [[0, "RATE", -2.0]], 2: []}
+    # A period with no setting has no block (ledger 468).
+    assert data == {1: [[0, "RATE", -2.0]]}
 
 
 def test_what_mf_lak_used_to_accept_is_refused_and_the_docstrings_say_so(toy):
@@ -338,7 +339,7 @@ def test_what_mf_lak_used_to_accept_is_refused_and_the_docstrings_say_so(toy):
 
     table = LakeTableBuilder(area=4.0, bottom=9.0, top=12.0)
     tables, _ = _period(toy, key="num", tables={101: table})
-    assert tables == {0: [], 1: [], 2: []}  # built; the key found lake "101"
+    assert tables == {}  # built; the key found lake "101" (no period sets anything)
     with pytest.raises(TypeError, match="nlakes=5 is not for"):
         _period(toy, key="num", nlakes=5)
 
