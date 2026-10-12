@@ -40,7 +40,7 @@
 | 540 | The PEST forward run opens the model ONCE for every named-series set | 2026-10-12 |
 | 539 | Zones by RIV/DRN BOUNDNAME are deferred | 2026-10-12 |
 | 538 | The DRN and RIV budget route refuses a target keyed past the run's periods | 2026-10-12 |
-| 537 | On the budget route a period in which a zone's cells hold no boundary reads 0.0, and a zone whose cells nev... | 2026-10-12 |
+| 537 | On the budget route a period in which a zone's cells hold no boundary reads 0.0, and a zone whose cells hol... | 2026-10-12 |
 | 536 | A zone set's budget route refuses a package in scope that wrote no cell-budget record, naming it and... | 2026-10-12 |
 | 535 | A zone drawn as geometry with no `layer` reads EVERY layer of the columns it covers | 2026-10-12 |
 | 534 | RIV exchange-flow targets: `mf.RivFlowTargets` / `model.targets.riv_flow` / `mf.RivFlowObservationSpec`, an... | 2026-10-12 |
@@ -20788,14 +20788,28 @@ same day, which is the useful part of the result.
       record with zero entries for a package that has no boundary in a period (measured),
       so an empty period is not mistaken for an unsaved package. Applies to DRN and RIV.
 
-537. **On the budget route a period in which a zone's cells hold no boundary reads 0.0, and a zone whose cells never hold one keeps its column (2026-10-12).**
+537. **On the budget route a period in which a zone's cells hold no boundary reads 0.0, and a zone whose cells hold none in ANY saved period is refused (2026-10-12, amended the same day).**
       flows-2. It read `NaN`, which the PEST build wrote as an empty field and every
       realization's instruction read failed on (ledger 506 then refused the build); a zone
       over cells with no drain at all returned no rows and the build died on a bare
-      `IndexError`. **Chosen:** 0.0 for every saved period and every zone that HAS cells --
-      the flow is extensive and the observation route already reads MF6's 3e30 there as
-      0.0. A zone with NO cells (every geometry row missed, warned by ledger 211) still gets
-      no column, so the build refuses its target by name rather than calibrate it to zero.
+      `IndexError`. **Chosen:** 0.0 for every saved period ~~and every zone that HAS cells~~
+      in which a zone's cells hold no boundary -- the flow is extensive and the observation
+      route already reads MF6's 3e30 there as 0.0. ~~A zone whose cells never hold one keeps
+      its column and reads 0.0 in every period.~~ **Amended (the coordinator's decision on
+      the R2-rivflow review):** a zone whose cells hold NO boundary of the packages read in
+      ANY period the budget file saved is REFUSED on the budget route -- and so at the PEST
+      build, which reads the base run through it -- naming the zone, its layer(s) and
+      `package=`, with the hint that a `cells` list given with no layer reads layer 0
+      (`_zones._refuse_zones_holding_no_boundary`). Raise, don't guess: such a zone is in
+      the wrong layer or package (on the test toy, a cell list naming layer-1 drains with no
+      layer), and 0.0 in every period calibrated it against a flow no parameter moves. A
+      zone empty in only SOME periods still reads 0.0 there. Judged over every saved RECORD
+      of the packages in scope, not only period ends, so a boundary in any saved step makes
+      the zone real. **Not changed:** the observation route still reads such a zone's 3e30
+      as 0.0 -- the decision names the budget file, and that route reads only cells the user
+      declared in MF6's OBS. A zone with NO cells (every geometry row missed, warned by
+      ledger 211) still gets no column, so the build refuses its target by name rather than
+      calibrate it to zero.
 
 538. **The DRN and RIV budget route refuses a target keyed past the run's periods (2026-10-12).**
       Ledger 500's rule, through `_refuse_keys_off_the_periods(route=...)`: keys `[0, 7]` on

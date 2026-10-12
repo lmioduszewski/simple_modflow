@@ -53,7 +53,11 @@ class DrnFlowTargets(_CellZoneFlowTargets):
     step output control did not save is refused rather than read early. On the
     observation route the zone is its cells' observations at the time step that
     ends each period, keyed by the period (ledger 346). A period in which the
-    zone's cells hold no drain reads 0.0 on both routes (ledger 537).
+    zone's cells hold no drain reads 0.0 on both routes (ledger 537); a zone whose
+    cells hold no drain of the packages read in ANY period the budget file saved
+    is REFUSED on the budget route, naming its layer(s) and ``package=`` -- a zone
+    in the wrong layer or package, not one of zero flow (ledger 537, amended; an
+    explicit ``cells`` list with no ``layer`` is read in layer 0).
 
     **A flow is in MF6's own sign, on both routes**: MF6 writes water a drain
     takes out of the aquifer as NEGATIVE, so ``sim_flow`` is zero or negative and

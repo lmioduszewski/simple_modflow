@@ -1902,7 +1902,9 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   refusal. The budget route reads by `paknam2` through `build_budget_result_table`:
   `package=` reads one package, `None` sums every package of the type in the zone's cells,
   and a package in scope that wrote no record (`save_flows` off) is REFUSED (ledger
-  536). A period with no boundary in a zone reads 0.0 (537). A test
+  536). A period with no boundary in a zone reads 0.0 (537); a zone with none in ANY
+  saved period is REFUSED naming its layer(s) and `package=` (537 as amended: wrong
+  layer or package, not zero flow). A test
   double reaching that route needs a budget READER, not `model.bud`:
   `tests.test_drn_zones_on_faces.attach_budget`.
 - **What PEST is handed is exactly the targets** (ledger 340, 2026-09-27). The build

@@ -348,6 +348,7 @@ cal.observe(baseflow)                              # group "riv_flow" unless the
 | observation route | the package's declared `DRN`/`RIV` observations (`to_flopy_obs` / `attach_flopy_obs`), one per zone cell; with several packages of the type, `package=` is required (ledger 352). |
 | a zone drawn with no `layer` | every layer of the columns it covers (ledger 535; it read layer 0 alone). A `layer` picks one; an explicit `cells` list with no layer is layer 0. |
 | a period with no boundary in the zone's cells | 0.0, on both routes (ledger 537). |
+| a zone whose cells hold no boundary of the packages read in ANY period the budget file saved | REFUSED on the budget route and so at the build, naming the zone, its layer(s) and `package=` (ledger 537, as amended): a zone in the wrong layer or package, not one of zero flow. An explicit `cells` list with no `layer` is read in layer 0. |
 
 The budget route is the cheap one for a big model (Ten Trails `ss`: 0.02 s a set) and
 needs no OBS declaration; declare RIV observations only to cross-check. A zone by RIV

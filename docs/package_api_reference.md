@@ -724,7 +724,9 @@ its flow as zero, and now raises (ledger 238). A zone given as several rows is
 one zone: its cells are the union -- on the observation route as on the budget
 file, which until ledger 336 summed only the LAST row's cells there -- and it is
 reported missing only when every part of it misses. Zone membership is geometry
-only: a covered cell that carries no drain is still in the zone and adds zero.
+only: a covered cell that carries no drain is still in the zone and adds zero --
+but a zone NONE of whose cells carries a drain of the packages read, in any period the
+budget file saved, is refused on the budget route (ledger 537, as amended).
 
 **A zone's cell is a `(layer, cell)` pair, on every route** (ledger 342). MF6's
 cell-budget file names a drain by its model-wide USER node -- `layer * ncpl + cell` on
@@ -798,7 +800,10 @@ the package `package=` names, by the name MF6 writes on each record, or every pa
 the type in the zone's cells when it names none (a `riv` + `crisp` creek pair sums) --
 `package=` on the budget route was refused for DRN until then; a package read must have
 written records (`save_flows=True`), or reading raises naming it (ledger 536);
-a period whose zone cells hold no boundary reads 0.0 (ledger 537); a key past
+a period whose zone cells hold no boundary reads 0.0 (ledger 537), and a zone whose
+cells hold none in ANY period the budget file saved is REFUSED, naming the zone, its
+layer(s) and `package=` -- a zone in the wrong layer or package, not one of zero flow
+(an explicit `cells` list with no layer is read in layer 0); a key past
 the run's periods is refused (ledger 538). **A zone drawn as geometry with no
 `layer` reads EVERY layer of the columns it covers** (ledger 535, ledger 482's
 area rule; it read layer 0 alone -- 1.3% of the Ten Trails `ss` south drains); an explicit

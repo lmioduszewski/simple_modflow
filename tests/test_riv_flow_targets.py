@@ -192,10 +192,36 @@ def test_a_period_with_no_river_in_the_zone_reads_zero(rivers):
     series = mf.RivFlowTargets(locations={"c21": [LOSE[1]]}).simulated_series(rivers)
     assert series["c21"].iloc[0] > 0.0
     assert series["c21"].tolist()[1:] == [0.0]
-    # A zone over cells that never hold a river reads 0.0 in every period, and keeps
-    # its column -- the build died on a bare IndexError when it had none.
-    dry = mf.RivFlowTargets(locations={"dry": [0, 1]}).simulated_series(rivers)
-    assert dry["dry"].tolist() == [0.0] * NPER
+
+
+def test_a_zone_whose_cells_never_hold_a_river_of_the_packages_read_is_refused(rivers):
+    """Ledger 537, as amended: a zone over cells that never hold a river of
+    the packages read read 0.0 in every period (and before that, built nothing and
+    died on a bare IndexError) -- a zone in the wrong layer or package, calibrated
+    against a flow no parameter moves. It is refused naming the zone, its layer(s)
+    and ``package=``: with a package named, the hint says ``package=None`` reads every
+    RIV package."""
+
+    with pytest.raises(ValueError, match=(
+            r"RivFlowTargets: zone\(s\) 'dry' \(layer 0\) hold no river boundary of "
+            r"package=None \(every RIV package: 'riv', 'crisp'\) in any period the "
+            r"model's cell-budget file saved.*read in layer 0")):
+        mf.RivFlowTargets(locations={"dry": [0, 1], "trib": LOSE}).simulated_series(rivers)
+    # Not ``losers``: crisp's OBS declares that name, which would read the other route.
+    wrong_package = mf.RivFlowTargets(locations={"trib": LOSE}, package="riv",
+                                      values={"time": [0], "trib": [100.0]})
+    for read in (wrong_package.simulated_series, wrong_package.stats):
+        with pytest.raises(ValueError, match=(
+                r"zone\(s\) 'trib' \(layer 0\) hold no river boundary of package='riv' "
+                r"\(RIV package 'riv'\).*package=None reads every RIV package\.")):
+            read(rivers)
+    # riv's own layer-1 boundary reads; crisp holds none in layer 1.
+    deep = mf.RivFlowTargets(locations=[{"name": "d", "layer": 1, "cells": [DEEP]}])
+    np.testing.assert_allclose(deep.simulated_series(rivers)["d"],
+                               _truth(rivers, [(1, DEEP)], ("RIV",)), rtol=1e-12)
+    with pytest.raises(ValueError, match=r"'d' \(layer 1\) hold no river boundary of package='crisp'"):
+        mf.RivFlowTargets(locations=[{"name": "d", "layer": 1, "cells": [DEEP]}],
+                          package="crisp").simulated_series(rivers)
 
 
 def test_a_zone_reads_its_own_layer_and_a_drawn_one_every_layer(rivers):
@@ -357,14 +383,16 @@ def test_the_pest_build_hands_pest_the_zone_and_every_realization_rewrites_it(ri
     ``_TARGET_SPEC_TYPES`` fails here by name); the build's base table and a forward run
     write the same bytes, through ONE ``write_named_series_targets`` call for every
     named-series set (ledger 540); a zone's group and weight reach the
-    control file."""
+    control file. A package name read from a table is often ``np.str_``, and the
+    forward run's entry is written by ``repr``: it is written as a plain ``str``,
+    never ``np.str_('crisp')``."""
 
     assert any(target is mf.RivFlowTargets for target, _spec in pest_project._TARGET_SPEC_TYPES)
     gaining = mf.RivFlowTargets(
         locations=pd.DataFrame({"name": ["rock"], "cells": [GAIN], "group": ["baseflow"],
                                 "weight": [0.01]}),
         values={"time": [0, 1], "rock": [-900.0, -950.0]}, package="riv")
-    losing = mf.RivFlowTargets(locations={"losers": LOSE}, package="crisp",
+    losing = mf.RivFlowTargets(locations={"losers": LOSE}, package=np.str_("crisp"),
                                values={"time": [1], "losers": [120.0]})
     cal = rivers.pest("riv", workspace=tmp_path / "pest", start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
@@ -381,6 +409,7 @@ def test_the_pest_build_hands_pest_the_zone_and_every_realization_rewrites_it(ri
     forward = (template / "forward_run.py").read_text()
     assert forward.count("write_named_series_targets(sets=") == 1
     assert "'kind': 'riv_flow'" in forward and "'package': 'crisp'" in forward
+    assert "np.str_" not in forward
 
     tables = ["riv_flow_simulated_riv_flow.csv", "crisp_flow_simulated_riv_flow.csv"]
     bases = {name: (template / name).read_text() for name in tables}

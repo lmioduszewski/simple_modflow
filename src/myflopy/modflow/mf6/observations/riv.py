@@ -63,7 +63,11 @@ class RivFlowTargets(_CellZoneFlowTargets):
     observation route the zone is its cells' ``RIV`` observations at the time
     step that ends each period, keyed by the period (ledger 346). A period in
     which the zone's cells hold no river boundary reads 0.0 on both routes
-    (ledger 537).
+    (ledger 537); a zone whose cells hold no river boundary of the packages read
+    in ANY period the budget file saved is REFUSED on the budget route, naming
+    its layer(s) and ``package=`` -- a zone in the wrong layer or package, not
+    one of zero flow (ledger 537, amended; an explicit ``cells`` list with no
+    ``layer`` is read in layer 0).
 
     **Several RIV packages** (a main stem and a tributary, say): on the
     budget-file route ``package=None`` sums every RIV package's records in the

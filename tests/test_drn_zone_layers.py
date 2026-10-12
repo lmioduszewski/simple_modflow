@@ -387,23 +387,55 @@ def test_a_key_past_the_periods_is_refused_on_the_budget_route(toy):
         targets.stats(toy)
 
 
-@pytest.mark.slow
-def test_a_zone_over_cells_with_no_drain_reads_zero_and_builds(toy, tmp_path):
-    """The budget route returned no rows for it, and the PEST build died on a bare
-    ``IndexError: single positional indexer is out-of-bounds`` (ledger
-    537). It reads 0.0 in every period, as the observation route does."""
+#: A zone over the layer-1 drains given as a cell list with NO layer: it is read in
+#: layer 0, where cells 21 and 27 hold no drain in any period.
+_WRONG_LAYER = {"shallow": [ZONE[1], ZONE[2]]}
+_REFUSED = (
+    r"DrnFlowTargets: zone\(s\) 'shallow' \(layer 0\) hold no drain of package=None "
+    r"\(every DRN package: 'drn'\) in any period the model's cell-budget file saved.*"
+    r"A `cells` list given with no `layer` is read in layer 0"
+)
 
-    dry = mf.DrnFlowTargets(locations={"dry": [0, 1]},
-                            values=pd.DataFrame({"time": [0], "dry": [-1.0]}))
-    assert dry.simulated_series(toy)["dry"].tolist() == [0.0] * NPER
+
+def test_a_zone_whose_cells_never_hold_a_drain_is_refused_on_the_budget_route(toy):
+    """Ledger 537, as amended: such a zone came back with no rows, then read 0.0 in
+    every period -- the user's drains one layer down, calibrated against a flow no
+    parameter moves. It is refused naming the zone, its layer, the packages read and
+    the layer-0 rule; the same cells in their own layer read, and a zone holding a
+    drain in only SOME periods still reads 0.0 in the others (tested on the hygiene
+    toy, ``test_target_hygiene.py``)."""
+
+    for zones in (_WRONG_LAYER, {"shallow": [ZONE[1]], "basin": [DECOY]}):
+        wrong = mf.DrnFlowTargets(locations=zones)
+        with pytest.raises(ValueError, match=_REFUSED):
+            wrong.simulated_series(toy)
+        with pytest.raises(ValueError, match=r"'shallow' \(layer 0\) hold no drain"):
+            wrong.compare(toy)
+    deep = mf.DrnFlowTargets(locations=[{"name": "shallow", "layer": 1, "cells": ZONE[1:]}])
+    np.testing.assert_allclose(deep.simulated_series(toy)["shallow"],
+                               _raw(toy, [(1, c) for c in ZONE[1:]]), rtol=1e-12)
+    # A zone spanning both layers holds the decoy, so it reads: the zone, not each row.
+    spanning = mf.DrnFlowTargets(locations=[{"name": "z", "layer": 0, "cells": [0, 1]},
+                                            {"name": "z", "layer": 1, "cells": [ZONE[0]]}])
+    np.testing.assert_allclose(spanning.simulated_series(toy)["z"],
+                               _raw(toy, [(1, ZONE[0])]), rtol=1e-12)
+
+
+@pytest.mark.slow
+def test_the_pest_build_refuses_a_zone_whose_cells_never_hold_a_drain(toy, tmp_path):
+    """The build died on a bare ``IndexError: single positional indexer is
+    out-of-bounds``, then built a base table of zeros (ledger 537); it refuses
+    the zone by name now, before anything is handed to PEST."""
+
+    wrong = mf.DrnFlowTargets(locations=_WRONG_LAYER,
+                              values=pd.DataFrame({"time": [0], "shallow": [-1.0]}))
     cal = toy.pest("dry", workspace=tmp_path / "pest", start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
-    cal.observe(dry)
+    cal.observe(wrong)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        cal.build("dry.pst", noptmax=0)
-    base = pd.read_csv(Path(cal.template_workspace) / "drn_flow_simulated_drn_flow.csv")
-    assert base["dry"].tolist() == [0.0] * NPER
+        with pytest.raises(ValueError, match=_REFUSED):
+            cal.build("dry.pst", noptmax=0)
 
 
 # -- a partial miss is heard ---------------------------------------------------------

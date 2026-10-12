@@ -469,6 +469,82 @@ def _refuse_cells_off_the_grid(
     )
 
 
+def _refuse_zones_holding_no_boundary(
+    members: dict[str, set[tuple[int, int]]],
+    names: list[str],
+    budget: pd.DataFrame,
+    *,
+    model,
+    quantity: _ObservedQuantity,
+    package: str | None,
+) -> None:
+    """Refuse a zone whose cells hold no boundary of the packages read in ANY saved record.
+
+    A zone empty in only SOME periods reads 0.0 there -- an absent boundary took no
+    water (ledger 537). One empty in EVERY period the budget file saved is not a
+    zone of zero flow but a zone in the wrong place: its cells in the wrong layer
+    (an explicit ``cells`` list with no ``layer`` is read in layer 0), or the
+    boundaries in a package ``package=`` leaves out. It read 0.0 in every period,
+    and a PEST build calibrated the target to a flow the model could never move
+    (ledger 537, amended).
+
+    Parameters
+    ----------
+    members : dict of str to set of tuple of (int, int)
+        :func:`_zone_members`.
+    names : list of str
+        The zones to check: those with at least one member cell (a zone with none
+        has no column and is refused by name where a target names it).
+    budget : pandas.DataFrame
+        :func:`_zone_budget_frame`: every saved record of the packages in scope,
+        one row per boundary, with ``layer`` and ``cell``.
+    model : SimulationBase
+        The model read, whose packages in scope (:func:`_packages_in_scope`) the
+        message names; asked only when a zone is refused.
+    quantity : _ObservedQuantity
+        The family's MF6 quantity, for the message.
+    package : str or None
+        The targets' ``package``, for the message.
+
+    Raises
+    ------
+    ValueError
+        Naming each empty zone (the first ten) with its layer(s), the packages
+        read and ``package=``, and that a cell list with no layer reads layer 0.
+    """
+
+    held = set(zip(budget["layer"].astype(int), budget["cell"].astype(int), strict=True))
+    empty = [name for name in names if not members[name] & held]
+    if not empty:
+        return
+    scope = _packages_in_scope(model, quantity, package)
+    text = quantity.package_type.upper()
+    zones = ", ".join(
+        f"{name!r} (layer{'s' if len(layers) > 1 else ''} {', '.join(str(layer) for layer in layers)})"
+        for name in empty[:10]
+        for layers in [sorted({int(layer) for layer, _cell in members[name]})]
+    ) + (f", and {len(empty) - 10} more" if len(empty) > 10 else "")
+    packages = ", ".join(repr(name.lower()) for name in scope)
+    read = (
+        f"package={package!r} ({text} package {packages})"
+        if package is not None
+        else f"package=None (every {text} package: {packages})"
+    )
+    other = (
+        f"; package=None reads every {text} package"
+        if package is not None
+        else ""
+    )
+    raise ValueError(
+        f"{quantity.owner}: zone(s) {zones} hold no {quantity.boundary} of {read} in any "
+        f"period {_BUDGET_FILE} saved, so their flow would read 0.0 in every period -- "
+        "a zone in the wrong layer or package, not a zone of zero flow. A `cells` list "
+        "given with no `layer` is read in layer 0: give the zone's `layer`, or draw it "
+        "as geometry with no layer to read every layer of its columns; or check which "
+        f"package holds its boundaries{other}."
+    )
+
+
 def _zone_labels(
     members: dict[str, set[tuple[int, int]]], *, owner: str
 ) -> dict[str, list[tuple[str, tuple[int, int]]]]:
@@ -871,14 +947,24 @@ class _CellZoneFlowTargets:
         537), as the observation route reads it: the flow is extensive,
         and a boundary that is absent took no water. It read ``NaN``, which the
         PEST build wrote as an empty field that failed every run's instruction
-        read; and a zone whose cells never hold one came back with no rows at all,
-        and the build died on a bare ``IndexError``.
+        read. **A zone whose cells hold no boundary in ANY saved record is
+        refused** (:func:`_refuse_zones_holding_no_boundary`, ledger 537 as
+        amended): it came back with no rows, and the build died on a bare
+        ``IndexError``, then read 0.0 in every period -- a zone in the wrong layer
+        or package, calibrated against a flow no parameter moves.
 
         Returns
         -------
         tuple of (pandas.DataFrame, list of int)
             ``per``, ``name`` and ``sim_flow`` (MF6's sign), one row per zone
             WITH cells per period the file saved; and those periods.
+
+        Raises
+        ------
+        ValueError
+            As :func:`_zone_budget_frame`, :func:`_refuse_cells_off_the_grid` and
+            the period-end rule; and when a zone with cells holds no boundary of
+            the packages read in any record the budget file saved.
         """
 
         budget = _zone_budget_frame(model, self._QUANTITY, self.package)
@@ -895,6 +981,9 @@ class _CellZoneFlowTargets:
         names = [name for name, pairs in members.items() if pairs]
         if not names or not periods:
             return pd.DataFrame(columns=["per", "name", "sim_flow"]), periods
+        _refuse_zones_holding_no_boundary(
+            members, names, budget, model=model, quantity=self._QUANTITY, package=self.package,
+        )
         located = pd.MultiIndex.from_arrays([budget["layer"], budget["cell"]])
         pieces = [
             budget.loc[located.isin(sorted(members[name]))].assign(zone=index)
@@ -1033,9 +1122,13 @@ class _CellZoneFlowTargets:
         package of the family's type -- each matched by the name MF6 writes on its
         records (ledger 534). A period in which the zone's cells hold no
         boundary reads 0.0, as the observation route reads it (ledger
-        537). A period whose final step was not saved is refused,
-        because its end-of-period flow does not exist in the file; so is a package
-        in scope that wrote no record (ledger 536).
+        537); a zone whose cells hold none in ANY record the file saved is
+        refused (ledger 537, amended), naming its layer(s) and ``package=``: it is
+        a zone in the wrong layer or package -- an explicit ``cells`` list with no
+        ``layer`` is read in layer 0 -- not a zone of zero flow. A period whose
+        final step was not saved is refused, because its end-of-period flow does
+        not exist in the file; so is a package in scope that wrote no record
+        (ledger 536).
 
         Parameters
         ----------
@@ -1070,10 +1163,13 @@ class _CellZoneFlowTargets:
             budget-file route, when a package in scope wrote no record (``save_flows``
             off), a period the budget file saved lacks its final step -- naming the
             period, the steps saved and ``SAVE BUDGET LAST`` -- the file names a
-            node the model's grid does not have, or a zone names a
-            ``(layer, cell)`` it does not have (ledger 343); or as
-            :meth:`zone_definitions` (no zone landing on an active cell, ledger
-            211) and ``to_flopy_obs`` (two zones sharing an observation label).
+            node the model's grid does not have, a zone names a
+            ``(layer, cell)`` it does not have (ledger 343), or a zone's cells
+            hold no boundary of the packages read in any record the file saved,
+            naming the zone, its layer(s) and ``package=`` (ledger 537, amended);
+            or as :meth:`zone_definitions` (no zone landing on an active cell,
+            ledger 211) and ``to_flopy_obs`` (two zones sharing an observation
+            label).
         """
 
         zones, observed = self._observed(model)

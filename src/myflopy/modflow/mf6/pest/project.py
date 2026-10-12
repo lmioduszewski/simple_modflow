@@ -2155,14 +2155,19 @@ class PestProject:
                         f"Named-series observation set {item.get('prefix')!r} has no "
                         "saved location definition to regenerate simulated values from."
                     )
+                package = series_config.get("package")
                 named_series.append(
                     {
                         "kind": str(series_config["kind"]),
                         "locations_file": str(locations_file),
                         "output_csv": str(series_config["output_csv"]),
                         # The package the targets name (ledger 344), so every
-                        # realization reads the observations the base run did.
-                        "package": series_config.get("package"),
+                        # realization reads the observations the base run did --
+                        # as a plain ``str``: the entry is written into the forward
+                        # run by ``repr``, and a name read from a table is often
+                        # ``np.str_``, whose repr is ``np.str_('crisp')``, a call
+                        # the generated script would have to resolve.
+                        "package": None if package is None else str(package),
                     }
                 )
                 continue
