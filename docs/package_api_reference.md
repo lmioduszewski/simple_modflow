@@ -984,7 +984,9 @@ or the template for a serial run, its kind read from the `<name>.pst` the launch
 wrote. `review(kind)` refuses a kind the run lacks, naming those it holds; it used to
 fall back silently. It opens case `<name>`, which PESTPP-IES writes whatever file
 `cal.build(...)` was given, and an interrupted run's `worker_N` directories are not
-listed as runs. The review counts only the iterations the run's phi file records, reads
+listed as runs. A calibration root moved or copied elsewhere keeps its runs: a copy is
+a directory whose build marker names ANOTHER build in the same scan (ledger
+516). The review counts only the iterations the run's phi file records, reads
 `.jcb` ensembles (`ies_save_binary`), reads each file once while it is unchanged
 (ledgers 507, 512, 513), and `best("min_phi")` never returns a realization
 PESTPP-IES dropped (ledger 515):

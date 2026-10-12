@@ -148,14 +148,24 @@ def _marker_names(directory: Path) -> str | None:
     return str(named) if named else None
 
 
-def _a_copy_of(directory: Path, other: Path) -> bool:
-    """Does ``directory``'s build marker name a directory other than ``other``?
+def _resolved(directory) -> str:
+    """``directory``'s resolved path, as a :data:`BUILD_MARKER` records it."""
 
-    No marker answers ``False``: a template built before ledger 360, or a copy of one.
+    return str(Path(directory).resolve())
+
+
+def _a_master_of(master: Path, template_dir: Path) -> bool:
+    """Was ``master`` copied from the template ``template_dir``?
+
+    Yes when its build marker names ``template_dir`` -- or names what the TEMPLATE's
+    own marker names, which is the same template after the calibration root was moved
+    or copied elsewhere, since a marker keeps the path the build wrote (ledger
+    516) -- or when it holds no marker (a template built before ledger 360).
+    No: a master copied from ANOTHER template, whose marker names that one.
     """
 
-    named = _marker_names(directory)
-    return named is not None and named != str(Path(other).resolve())
+    named = _marker_names(master)
+    return named is None or named in (_resolved(template_dir), _marker_names(template_dir))
 
 
 def _results_written_at(directory: Path, case: str) -> float:
@@ -210,7 +220,9 @@ class PestRunHandle:
         (:meth:`PestProject.run_ies`) or ``"prior"`` (:meth:`PestProject.prior`). A
         PARALLEL run's is its default master, found by its EXACT name
         ``<name>_ies_master``/``<name>_prior_master`` beside the template (holding a
-        ``.pst``, and not a copy of another calibration's template); a SERIAL run's is
+        ``.pst``, and not a copy of another calibration's template: its build marker
+        names this template, or what this template's own marker names after the
+        root was moved, or it holds none; ledger 516); a SERIAL run's is
         the template, its kind read from the ``<name>.pst`` the launch wrote there
         (``NOPTMAX -1`` is a prior), counted only once it holds a phi file. When both
         hold a run of one kind, the one whose phi was written last. A master passed as
@@ -331,7 +343,7 @@ def _executions(template_dir: Path, name: str) -> dict[str, Path]:
         if (
             master.is_dir()
             and any(master.glob("*.pst"))
-            and not _a_copy_of(master, template_dir)
+            and _a_master_of(master, template_dir)
         ):
             found.setdefault(kind, []).append(master)
     return {
@@ -355,10 +367,14 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None,
         Directory to scan (recursively). A root that does not exist gives an
         empty list. A metadata file that is a COPY of a template is skipped: one in a
         ``*_master`` directory, one in a directory whose ``myflopy_pest_build.json``
-        names another directory (an IES worker or master pyEMU copied, a backup), one
-        in a ``worker_<n>`` directory a template built before ledger 360 left (ledger
-        508), and one nested inside another build's directory. An unreadable
-        one is skipped silently. ``model.pest_runs`` calls
+        names ANOTHER build directory under ``root`` (an IES worker or master pyEMU
+        copied, a backup), one in a ``worker_<n>`` directory whose marker does not
+        name it or that holds none (a template built before ledger 360 left them
+        unmarked; ledger 508), and one nested inside another build's
+        directory. A template whose marker names a path no build under ``root``
+        occupies is NOT a copy: it is the template itself after its calibration
+        root was moved or copied elsewhere, the marker keeping the path its build
+        wrote (ledger 516). An unreadable one is skipped silently. ``model.pest_runs`` calls
         :func:`find_model_pest_runs` instead, which scans every root in
         :func:`pest_run_roots`.
     model_name : str or None, optional
@@ -384,8 +400,14 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None,
     if not root.exists():
         return []
 
+    found = sorted(root.rglob(METADATA_FILENAME))
+    # Every build directory this scan sees, so a copy is told from a moved original:
+    # a marker keeps the path its build wrote, so after the calibration root is moved
+    # or copied elsewhere EVERY template's marker names a directory that is not its
+    # own, and only a copy's names one that is still here (ledger 516).
+    builds = {_resolved(meta_path.parent) for meta_path in found}
     handles: list[PestRunHandle] = []
-    for meta_path in sorted(root.rglob(METADATA_FILENAME)):
+    for meta_path in found:
         # PESTPP-IES execution dirs (``<run>_ies_master`` / ``<run>_prior_master``,
         # created for parallel runs) are clones of the template and carry a copy
         # of its metadata. The run is represented by its template dir, so skip the
@@ -393,13 +415,18 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None,
         if meta_path.parent.name.endswith("_master"):
             continue
         # So are the worker directories, which an interrupted parallel run leaves
-        # behind (pyEMU removes them only after a clean finish): their marker names
-        # the template they were copied from, and a template built before the marker
-        # existed left them under pyEMU's own names (ledger 508).
-        if _a_copy_of(meta_path.parent, meta_path.parent) or (
-            _WORKER_DIRECTORY.fullmatch(meta_path.parent.name)
-            and not (meta_path.parent / BUILD_MARKER).exists()
-        ):
+        # behind (pyEMU removes them only after a clean finish), and a backup copy:
+        # each one's marker names the template it was copied from (ledger
+        # 508). A copy is one whose marker names ANOTHER build of this scan
+        # -- never merely another path, which every template of a moved or copied
+        # root names (ledger 516). A `worker_<n>` is pyEMU's name for a
+        # worker, so one whose marker does not name itself is a copy whatever it
+        # names (a template built before the marker existed left them unmarked).
+        directory = _resolved(meta_path.parent)
+        named = _marker_names(meta_path.parent)
+        if named is not None and named != directory and named in builds:
+            continue
+        if _WORKER_DIRECTORY.fullmatch(meta_path.parent.name) and named != directory:
             continue
         # Same reason, one level up: a template built before ledger 383 is a
         # COPY of the whole model workspace, so a calibration that lived inside

@@ -446,6 +446,36 @@ def test_an_interrupted_runs_workers_are_not_listed_as_runs(tmp_path):
     ]
 
 
+
+def test_a_moved_calibration_root_keeps_its_runs(tmp_path):
+    """A marker keeps the path its build wrote, so after the root moves EVERY template's
+    names a directory that is not its own; only a copy names one still there (ledger
+    516). Moved: the run, its master, and not its leftover worker."""
+
+    template = _build_dir(tmp_path / "old" / "tt", "tt")
+    master = _master(template, "tt", "ies_master")
+    shutil.copytree(template, template.parent / "worker_0")
+    shutil.move(tmp_path / "old", tmp_path / "new")
+    moved = tmp_path / "new" / "tt"
+
+    runs = find_pest_runs(tmp_path / "new")
+    assert [(run.name, run.template_dir) for run in runs] == [("tt", moved)]
+    assert runs[0].executions == {"ies": moved.parent / master.name}
+
+
+def test_a_copied_calibration_root_keeps_its_runs_and_a_backup_beside_one_is_not_a_run(
+    tmp_path,
+):
+    template = _build_dir(tmp_path / "project" / "tt", "tt")
+    shutil.copytree(tmp_path / "project", tmp_path / "copy")
+    # The copy's marker names the ORIGINAL, which is outside the scanned root.
+    assert [run.template_dir for run in find_pest_runs(tmp_path / "copy")] == [
+        tmp_path / "copy" / "tt"
+    ]
+    # A backup beside the template names a build this scan sees: a copy, not a run.
+    shutil.copytree(template, template.parent / "tt_backup")
+    assert [run.template_dir for run in find_pest_runs(tmp_path / "project")] == [template]
+
 # -- the launch (ledgers 507, 509, 510, 511) ------
 
 

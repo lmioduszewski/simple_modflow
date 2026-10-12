@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 515 entries (520 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 516 entries (521 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 516 | A PEST run is a copy only when its build marker names ANOTHER build the same scan finds, so a moved or copi... | 2026-10-12 |
 | 515 | `best("min_phi")` returns only a realization PESTPP-IES kept | 2026-10-12 |
 | 514 | `field()`, `plot_field` and `parameters_at_bounds` take a log-transformed parameter's statistics in log10,... | 2026-10-12 |
 | 513 | An ensemble file is read once while it is unchanged | 2026-10-12 |
@@ -20270,8 +20271,9 @@ same day, which is the useful part of the result.
       serial run and a master hold one kind, the one whose phi was written last
       wins. `case` is `<name>`. `review(kind)` raises `ValueError` naming the kinds
       held; a run with no execution still opens the template. A metadata copy whose
-      `myflopy_pest_build.json` names another directory is skipped, and so is a
-      `worker_<n>` without a marker (a template built before ledger 360). **Not
+      `myflopy_pest_build.json` names another build directory of the same scan is
+      skipped (ledger 516), and so is a `worker_<n>` whose marker does not
+      name it or that has none (a template built before ledger 360). **Not
       done:** a master passed as `master_dir=` somewhere else is not discovered; it
       was found before only when its name happened to start with `<name>_`.
 
@@ -20352,3 +20354,18 @@ same day, which is the useful part of the result.
       `min()` kept a leading NaN. The label returned was in neither posterior
       ensemble. Now: the last phi row's finite values, restricted to labels in both
       the posterior observation and parameter ensembles. If none is left, it raises.
+
+516. **A PEST run is a copy only when its build marker names ANOTHER build the same scan finds, so a moved or copied calibration root keeps its runs (2026-10-12).**
+      A build marker records the resolved path its build wrote (ledger 360). The first
+      cut of ledger 508 skipped any template whose marker named a path other
+      than its own, and excluded a master whose marker named anything but the
+      template. Moving or copying the calibration root makes EVERY marker name a path
+      that is not its own, so `model.pest_runs` listed nothing (measured: one run with
+      its IES master before `shutil.move` of the root, none after; the parent commit
+      listed it). **Chosen:** a directory is a copy when its marker names another
+      build directory under the scanned root -- a worker or a backup beside its
+      template -- and a master is this template's when its marker names the template,
+      names what the template's own marker names (the two moved together), or holds
+      none. A `worker_<n>` whose marker does not name itself is skipped whatever it
+      names. **Not done:** a backup whose original was deleted is listed, as the only
+      copy left.
