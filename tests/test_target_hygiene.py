@@ -1,4 +1,4 @@
-"""Observation-side hygiene before new target families land (ledgers 499 .. 505).
+"""Observation-side hygiene before new target families land (ledgers 499 .. 506).
 
 Every test runs on the real MF6 toy of ``tests/test_pest_handed_targets.py`` -- a
 6 x 6 Voronoi grid, one layer, three 10-day periods of three steps, a four-reach
@@ -11,6 +11,17 @@ What each test pins, in the order the defects were found:
   nanoseconds (ledger 499);
 * ``compare()``/``stats()`` on every FILE route answered ``NaN`` for a key past the
   run's periods and dropped it from ``stats()`` (ledger 500);
+* a blank, unreadable or fractional well layer became layer 0 (ledger 501),
+  and a name repeated in one layer two full-weight observations (ledger 502);
+* ``cal.observe(model.targets.heads)`` raised, and a point target's ``compare()``
+  returned ``x_x``/``y_x``;
+* a lake or reach id was ``int()``-ed and never checked, and a boundname refused
+  (ledger 503); a lake or reach given no value lost its column in every PEST
+  realization;
+* a per-reading ``weight`` column was dropped, and SFR sets had no weight (ledger
+  504);
+* the PEST head writer read ``<model>.hds`` whatever the OC declared (ledger
+  505), and a weighted target on an empty base cell built (ledger 506).
 """
 
 from __future__ import annotations
