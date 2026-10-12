@@ -19932,7 +19932,11 @@ same day, which is the useful part of the result.
       `options`/`voronoi_options` `"name"` differing from `name=`. **Judgment call:**
       `name=` defaults to `"grid"`, so a spec giving ONLY `voronoi_options={"name":
       "site"}` is refused too -- the default cannot be told from a typed `"grid"`, and
-      `name=` is the one spelling. A CRS given only in `options`/`voronoi_options` still
+      `name=` is the one spelling. **Not ledger 458's stated precedence** (one key in two
+      places keeps the keyword's or the stage dict's value): two CRSs or two names are
+      two descriptions of ONE grid, and the precedence is what built coordinates in one
+      CRS labelled as another -- so `options["crs"]` beside `crs=`, consistent before
+      (ignored), is refused too. A CRS given only in `options`/`voronoi_options` still
       labels without reprojecting, as documented. Tests:
       `tests/test_gridspec_fail_fast.py` (declaration and resolve cases fail on revert).
 
