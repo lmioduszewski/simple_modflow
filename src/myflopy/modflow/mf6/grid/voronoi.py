@@ -129,6 +129,7 @@ from myflopy.modflow.mf6.grid.surfaces import (
     get_raster_vals_at_centroids as surface_get_raster_vals_at_centroids,
 )
 from myflopy.modflow.mf6.grid.tessellation import tessellate
+from myflopy.modflow.utils.datatypes.readers import as_path
 
 logger = get_logger(__name__)
 
@@ -265,13 +266,14 @@ class VoronoiGridPlus(VoronoiGrid):
             Passed as ``qhull_options`` to ``scipy.spatial.Voronoi`` through FloPy's
             ``tri2vor``. The ``tri`` form only: given with the array form it raises
             ``TypeError``, since nothing there runs Qhull. Default None: SciPy's own.
-        idomain_path : pathlib.Path, optional
+        idomain_path : str or os.PathLike, optional
             A vector file (``.shp`` or ``.gpkg``) whose features cover the INACTIVE
             cells, by area. Stored as :attr:`idomain_path` and read by
             :meth:`get_grid_edge` when that call is given neither ``idomain`` nor
             ``idomain_path`` (so also by the ``edges_only=`` boundary helpers when
-            their context carries no ``domain``). Must be a ``pathlib.Path``: a
-            ``str`` fails an ``assert`` (``AssertionError``). Default None.
+            their context carries no ``domain``). A ``str`` or ``os.PathLike``, stored
+            as a ``pathlib.Path``; another type raises ``TypeError`` (ledger
+            457). Default None.
         verts : numpy.ndarray, optional
             The array form: vertex coordinates, shape ``(nverts, 2)``. Needs
             ``iverts`` and ``xcyc`` too.
@@ -509,10 +511,13 @@ class VoronoiGridPlus(VoronoiGrid):
 
     @idomain_path.setter
     def idomain_path(self, value):
-        """Set the optional idomain path used by edge-detection helpers."""
-        if value is not None:
-            assert isinstance(value, Path), 'idomain path must be a Path instance'
-        self._idomain_path = value
+        """Set the optional idomain path used by edge-detection helpers.
+
+        A ``str`` or ``os.PathLike`` is stored as a ``pathlib.Path``; anything else
+        but ``None`` raises ``TypeError`` naming it (ledger 457) -- a ``str``
+        used to fail an ``assert``.
+        """
+        self._idomain_path = as_path(value, name="idomain_path")
 
     @property
     def nlay(self):
@@ -2335,10 +2340,11 @@ class VoronoiGridPlus(VoronoiGrid):
             :class:`VoronoiGridPlus`.
         name : str, optional
             A label stored as ``grid.name``. Default ``"voronoi_grid"``.
-        idomain_path : pathlib.Path, optional
+        idomain_path : str or os.PathLike, optional
             A vector file whose features cover the INACTIVE cells, stored as
-            :attr:`idomain_path` and read by :meth:`get_grid_edge`. Must be a
-            ``pathlib.Path`` (a ``str`` fails an ``assert``). Default None.
+            :attr:`idomain_path` and read by :meth:`get_grid_edge`. A ``str`` or
+            ``os.PathLike``, stored as a ``pathlib.Path``; another type raises
+            ``TypeError`` (ledger 457). Default None.
 
         Returns
         -------
@@ -2403,10 +2409,11 @@ class VoronoiGridPlus(VoronoiGrid):
             :class:`VoronoiGridPlus`.
         name : str, optional
             A label stored as ``grid.name``. Default ``"voronoi_grid"``.
-        idomain_path : pathlib.Path, optional
+        idomain_path : str or os.PathLike, optional
             A vector file whose features cover the INACTIVE cells, stored as
-            :attr:`idomain_path` and read by :meth:`get_grid_edge`. Must be a
-            ``pathlib.Path`` (a ``str`` fails an ``assert``). Default None.
+            :attr:`idomain_path` and read by :meth:`get_grid_edge`. A ``str`` or
+            ``os.PathLike``, stored as a ``pathlib.Path``; another type raises
+            ``TypeError`` (ledger 457). Default None.
 
         Returns
         -------

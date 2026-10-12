@@ -231,6 +231,42 @@ def read_gpkg(gpkg_path: Path) -> gpd.GeoDataFrame:
     return gdf
 
 
+def as_path(value, *, name: str) -> Path | None:
+    """``value`` as a ``pathlib.Path``: the ONE rule for a file path given as an argument.
+
+    A ``str`` or any ``os.PathLike`` is a path; ``None`` stays ``None``; anything
+    else is refused naming ``name`` -- where ``assert isinstance(value, Path)``
+    failed a ``str`` with an ``AssertionError`` (ledger 457), and
+    :func:`read_shp_gpkg` raised an unrelated ``TypeError`` (ledger 416).
+
+    Parameters
+    ----------
+    value : str, os.PathLike or None
+        The path as passed.
+    name : str
+        The argument's name, for the message (``"idomain_path"``).
+
+    Returns
+    -------
+    pathlib.Path or None
+        ``Path(value)``, or ``None`` for ``None``.
+
+    Raises
+    ------
+    TypeError
+        ``value`` is neither ``None``, a ``str`` nor an ``os.PathLike``.
+    """
+
+    if value is None:
+        return None
+    if not isinstance(value, (str, os.PathLike)):
+        raise TypeError(
+            f"{name} must be a path (str or os.PathLike); got {value!r} "
+            f"({type(value).__name__})."
+        )
+    return Path(value)
+
+
 def read_shp_gpkg(files: list | tuple | str | Path) -> gpd.GeoDataFrame:
     """Read one or more shapefiles/GeoPackages into a single GeoDataFrame.
 
@@ -272,12 +308,9 @@ def read_shp_gpkg(files: list | tuple | str | Path) -> gpd.GeoDataFrame:
         )
     paths = []
     for i, path in enumerate(files):
-        if not isinstance(path, (str, os.PathLike)):
-            raise TypeError(
-                f'files[{i}] is {path!r} ({type(path).__name__}); each must be a path, '
-                'a str or os.PathLike.'
-            )
-        paths.append(Path(path))
+        if path is None:
+            raise TypeError(f'files[{i}] is None; each must be a path (str or os.PathLike).')
+        paths.append(as_path(path, name=f'files[{i}]'))
 
     gdfs = []
     for file in paths:

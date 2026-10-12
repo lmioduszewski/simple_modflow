@@ -33,10 +33,13 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 456 entries (461 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 459 entries (464 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 459 | The legacy `DisuGrid` reads `gdf_topbtm` by position and refuses to pick one of several bottoms | 2026-10-11 |
+| 458 | One grid option spelt two ways in two places is refused; one key in two places keeps its documented precedence | 2026-10-11 |
+| 457 | A path argument is read by one rule, `readers.as_path`, and a step or size by one, `_numbers.positive_number` | 2026-10-11 |
 | 456 | A time unit has one table and is checked where it enters: `mf.tdis` takes MF6's six words, `ModelContext`/... | 2026-10-11 |
 | 455 | A DRN zone's observation route reads DIS and DISU: `to_flopy_obs` writes the grid's own cellid and a declar... | 2026-10-11 |
 | 454 | `run_ies`/`prior` hand PEST++ an absolute `PYTHONPATH`, by the one rule in `myflopy._pythonpath`, and refus... | 2026-10-11 |
@@ -18195,8 +18198,9 @@ same day, which is the useful part of the result.
       float". **Accepted, not refused**: a `str` cannot mean anything else in those
       slots (a coordinate sequence is never a string). `read_shp_gpkg` now takes a `str`
       or `os.PathLike`, alone or in a list or tuple, and refuses any other item naming
-      it (its `assert`s are gone). Not touched: `VoronoiGridPlus(idomain_path=<str>)`
-      still fails an `assert` (reported, outside the batch).
+      it (its `assert`s are gone). Not touched: ~~`VoronoiGridPlus(idomain_path=<str>)`
+      still fails an `assert` (reported, outside the batch).~~ (it takes a `str` since
+      ledger 457, through the one path rule `readers.as_path`.)
       Tests: `tests/test_grid_helper_refusals.py` --
       `test_read_shp_gpkg_reads_a_str_path_and_refuses_what_is_not_a_path`,
       `test_triangle_grid_reads_a_str_path_wherever_it_reads_a_file`.
@@ -18216,8 +18220,10 @@ same day, which is the useful part of the result.
       and -- added in review -- `angle` beside `min_angle`, `workspace` beside `model_ws`)
       given together are refused, naming the one that was read: `_option` read the
       first and ignored the rest. So is `GridSpec.voronoi(min_angle=, angle=)`, where
-      the later keyword won. `triangle_options` carrying both `model_ws` and
-      `workspace` is still not checked (a stage dict, below).
+      the later keyword won. ~~`triangle_options` carrying both `model_ws` and
+      `workspace` is still not checked (a stage dict, below).~~ (refused since ledger
+      458, as is a spelling split between `options`/a keyword and
+      `triangle_options`.)
       `triangle_options`/`voronoi_options` are not checked here: their constructors
       already raise `TypeError` on an unknown keyword at resolve. The key sets live once,
       in `specs.py` (`_GRID_TRIANGLE_OPTION_KEYS`, `_GRID_MESH_OPTION_KEYS`,
@@ -19229,3 +19235,43 @@ same day, which is the useful part of the result.
       `grid_identity` fails 204 `test_the_build_warning_flux_label_reads_the_one_table`
       cases and `test_no_module_but_the_two_holds_a_unit_spelling_table` (an AST sweep
       for a dict keyed by two unit words).
+
+457. **A path argument is read by one rule, `readers.as_path`, and a step or size by one, `_numbers.positive_number` (2026-10-11).**
+      `VoronoiGridPlus(idomain_path=)` (and `from_gsf`/`vor_from_disu`) and the legacy
+      `SimulationBase.idomain_path` failed an `assert` on a `str`; both take a `str` or
+      `os.PathLike` now and refuse any other type naming it, as `read_shp_gpkg` does
+      through the same helper. The legacy setter also ignored `None`, so a path could
+      never be cleared; `None` clears it. `generate_dissipating_point_cloud` refuses a
+      non-`Polygon` (a `MultiPolygon`, a file unioning to one, `None`) with a
+      `TypeError` naming the part count, where a bare `assert` stood. The three
+      "finite number above zero" checks are one helper in import layer 0;
+      `_lattice_axis` cast with `float()` first, so `"2.5"` and `True` were a spacing
+      of 2.5 and 1.0 -- now refused like the other two. No judgment call beyond that.
+      Tests: `tests/test_grid_inputs_one_rule.py` (each reverted fails a named test).
+
+458. **One grid option spelt two ways in two places is refused; one key in two places keeps its documented precedence (2026-10-11).**
+      `GridSpec.voronoi(min_angle=30, triangle_options={"angle": 20})` meshed at 30, and
+      a spec holding `options={"min_angle": 30}` beside `triangle_options={"angle": 20}`
+      at 20 -- the resolver's `_triangle_options` let the stage dict win -- each in
+      silence; `options["model_ws"]` beside `triangle_options["workspace"]`, and both
+      inside `triangle_options`, likewise. `specs._check_grid_option_places` refuses
+      them at `GridSpec.voronoi` and at resolve (where a saved spec arrives, ledger
+      417's rule). **Judgment call: the SAME key given twice is not refused** --
+      `angle=` beside `triangle_options["angle"]`, `optimize=` beside
+      `mesh_options["optimize"]`, a named argument beside its `options` key: the
+      docstring states that the keyword wins and that a stage dict wins over
+      `options`, so it is a stated precedence, not a guess between spellings.
+      Tests: `tests/test_grid_inputs_one_rule.py::test_gridspec_voronoi_refuses_one_option_spelt_twice_in_two_places`
+      (six cases), `test_a_saved_spec_holding_both_spellings_is_refused_at_resolve`.
+
+459. **The legacy `DisuGrid` reads `gdf_topbtm` by position and refuses to pick one of several bottoms (2026-10-11).**
+      It read `gdf_topbtm["top"]`/`["bottom"]` and caught only `ValueError`, so a
+      `LayerStack`-attached table (integer labels) raised `KeyError` out of the
+      constructor. It reads `vor.layer_surface_fields()` now -- the geometry-first
+      contract every other reader uses. **Judgment call: a table with several bottoms
+      is REFUSED, naming `bottom=`**, rather than taking the first or the last: a
+      one-layer DISU over a multi-layer table has no obvious bottom, and the old code
+      never read such a table at all. A grid with no table still warns and leaves the
+      omitted elevation unset, as before.
+      Tests: `tests/test_grid_inputs_one_rule.py::test_disugrid_reads_top_and_bottom_whatever_the_columns_are_called`,
+      `test_disugrid_refuses_to_pick_one_of_several_bottoms`.

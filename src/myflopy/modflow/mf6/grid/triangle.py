@@ -8,19 +8,19 @@ and optionally running a conservative CVT/Lloyd-style smoothing pass.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import subprocess
-from typing import Any
 import warnings
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
 import numpy as np
 import shapely as shp
 from flopy.utils.geospatial_utils import GeoSpatialUtil
 from flopy.utils.triangle import Triangle
-from shapely.geometry import GeometryCollection, MultiPoint, MultiPolygon, Point, Polygon
+from shapely.geometry import GeometryCollection, MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
 
 from myflopy._logging import get_logger
@@ -33,7 +33,6 @@ from myflopy.modflow.mf6.grid.seed_optimization import (
     get_fixed_and_free_vertex_ids,
 )
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
-
 
 logger = get_logger(__name__)
 
@@ -1969,8 +1968,9 @@ class TriangleGrid(Triangle):
         polygon : shapely.geometry.Polygon, or str or os.PathLike
             The core polygon, or a ``.shp``/``.gpkg`` path whose features union to a
             single ``Polygon``. Required despite the ``None`` default: anything
-            that is not a ``Polygon`` (a ``MultiPolygon`` included) fails an
-            ``assert``.
+            that is not a ``Polygon`` -- ``None``, a ``MultiPolygon``, a file whose
+            features union to one -- raises ``TypeError`` naming what it got
+            (ledger 457).
         buffer_dist : float, optional
             Outward distance of the outermost ring. Default ``1000``.
         num_buffers : int, optional
@@ -2002,12 +2002,27 @@ class TriangleGrid(Triangle):
 
         Raises
         ------
+        TypeError
+            If ``polygon`` is not, or does not read as, one ``Polygon``.
         ValueError
             If ``method`` is neither ``"power"`` nor ``"exponential"``.
         """
+        given = polygon
         if isinstance(polygon, (str, os.PathLike)):
             polygon = read_shp_gpkg(polygon).union_all()
-        assert isinstance(polygon, shp.Polygon), 'provided argument cannot be converted to a polygon'
+        if not isinstance(polygon, shp.Polygon):
+            # Ledger 457: a bare assert, which `python -O` skips and which named
+            # neither the argument nor what it got.
+            source = f" (the union of {str(given)!r})" if polygon is not given else ""
+            parts = (
+                f" of {len(polygon.geoms)} parts" if hasattr(polygon, "geoms") else ""
+            )
+            raise TypeError(
+                f"polygon= must be ONE shapely Polygon, or a vector file whose features "
+                f"union to one; got a {type(polygon).__name__}{parts}{source}. Each ring "
+                "is drawn around a single outline: pass the polygon to ring, e.g. the "
+                "largest part, or call this once per part."
+            )
 
         min_spacing = np.sqrt(min_area) if min_spacing is None else min_spacing
         max_spacing = np.sqrt(max_area) if max_spacing is None else max_spacing

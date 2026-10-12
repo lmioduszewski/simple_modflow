@@ -168,6 +168,6 @@ def test_a_pixel_size_that_is_not_a_positive_finite_number_is_refused_naming_it(
     # Ledger 414: it reached numpy and rasterio, which failed with
     # ZeroDivisionError, "cannot convert float NaN to integer", or a -400x-400 dataset.
     out = tmp_path / "plane.tif"
-    with pytest.raises(ValueError, match=r"pixel_size must be a positive finite number"):
+    with pytest.raises(ValueError, match=r"pixel_size must be a finite number of model length units above zero"):
         grid.get_raster_from_strike_dip(0.0, 10.0, KNOWN, pixel_size=pixel_size, output_filename=out)
     assert not out.exists()

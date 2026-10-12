@@ -13,6 +13,7 @@ import shapely as shp
 from shapely.geometry import LineString, Polygon
 
 from myflopy._logging import get_logger
+from myflopy._numbers import positive_number
 from myflopy.areas import _same_crs
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg, read_vector_layer
 
@@ -44,25 +45,12 @@ def generate_grid_coordinates(vor, grid_spacing: float) -> tuple[list[float], li
         xs = verts[:, 0]
         ys = verts[:, 1]
 
-    spacing = _positive_step(grid_spacing, 'grid_spacing')
+    spacing = positive_number(grid_spacing, 'grid_spacing')
     x_axis = _extent_axis(float(xs.min()), float(xs.max()), spacing)
     y_axis = _extent_axis(float(ys.min()), float(ys.max()), spacing)
     x_coords = [float(x) for x in x_axis for _ in y_axis]
     y_coords = [float(y) for _ in x_axis for y in y_axis]
     return x_coords, y_coords
-
-
-def _positive_step(value, name: str) -> float:
-    """``value`` as a float, refused by ``name`` unless a finite number above zero."""
-
-    if (
-        isinstance(value, (bool, np.bool_))
-        or not isinstance(value, (int, float, np.integer, np.floating))
-        or not np.isfinite(value)
-        or value <= 0
-    ):
-        raise ValueError(f"{name} must be a finite number above zero, got {value!r}.")
-    return float(value)
 
 
 def _extent_axis(lo: float, hi: float, spacing: float) -> np.ndarray:
@@ -704,10 +692,8 @@ def _lattice_axis(centre: float, spacing: float, size: float) -> np.ndarray:
     moved a non-integer end by up to one unit, toward the origin.
     """
 
-    spacing = float(spacing)
+    spacing = positive_number(spacing, "spacing")
     size = float(size)
-    if not np.isfinite(spacing) or spacing <= 0:
-        raise ValueError(f"spacing must be a finite number above zero, got {spacing!r}.")
     if not np.isfinite(size) or size < 0:
         raise ValueError(f"size must be a finite number of steps, zero or more, got {size!r}.")
     count = int(np.floor(size + 1e-9)) + 1

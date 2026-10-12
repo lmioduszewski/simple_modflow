@@ -3110,6 +3110,11 @@ class GridSpec:
             ``boundary_max_area``, a ``default_*_area`` beside its
             ``*_max_area``, ``line_buffer`` beside ``breakline_buffer``,
             ``angle`` beside ``min_angle``, ``workspace`` beside ``model_ws``.
+            So do those spellings split between ``options`` and
+            ``triangle_options`` -- ``options["min_angle"]`` beside
+            ``triangle_options["angle"]``, ``options["model_ws"]`` beside
+            ``triangle_options["workspace"]`` -- where the stage dict's won in
+            silence (ledger 458).
             ``"idomain"`` raises ``TypeError`` (see ``**engine_options``), and so do
             the removed ``"protect_sources"``/``"protected_labels"`` (ledger 445).
         triangle_options : dict, optional
@@ -3117,8 +3122,12 @@ class GridSpec:
             ``maximum_area`` (the global cap, not ``max_area``), ``nodes``,
             ``exe_name``, ``additional_args``, plus
             ``model_ws``/``workspace`` for Triangle's working directory. A key
-            also given through ``**engine_options`` takes that value. Not
-            validated here; an unknown key raises ``TypeError`` at resolve.
+            also given through ``**engine_options`` takes that value; another
+            SPELLING of one of these keys given there or in ``options``
+            (``min_angle`` for ``angle``, ``model_ws`` for ``workspace``) raises
+            ``TypeError``, here and at :meth:`resolve` (ledger 458). Not
+            otherwise validated here; an unknown key raises ``TypeError`` at
+            resolve.
         mesh_options : dict, optional
             Options for the mesh-build step (``profile``, ``optimize``,
             ``verbose``, ...). A key also given through ``**engine_options``
@@ -3134,7 +3143,10 @@ class GridSpec:
             Stage options routed by name -- ``min_angle``, ``maximum_area``,
             ``profile``, ``idomain_path``, ``optimize`` and friends.
             ``min_angle`` is Triangle's ``angle``: giving both raises
-            ``TypeError`` (the later keyword won, in silence).
+            ``TypeError`` (the later keyword won, in silence), and so does
+            ``min_angle=`` beside a ``triangle_options`` or ``options`` ``angle``
+            (or ``angle=`` beside an ``options`` ``min_angle``) -- one replaced
+            the other in silence (ledger 458).
             **``maximum_area`` is not ``max_area``**: ``maximum_area`` is
             Triangle's GLOBAL cap on every triangle's area, applied ON TOP of
             the boundary's and each refinement's own size, so the smaller limit
@@ -3305,6 +3317,11 @@ class GridSpec:
         merged_voronoi_options = {
             **({} if voronoi_options is None else voronoi_options)
         }
+        _check_grid_option_places(
+            [("keyword", engine_options), ("options", merged_options),
+             ("triangle_options", merged_triangle_options)],
+            where="GridSpec.voronoi()",
+        )
         if "min_angle" in engine_options and "angle" in engine_options:
             # Both write Triangle's `angle`; the later keyword won in silence.
             raise TypeError(
@@ -3748,6 +3765,51 @@ def _check_grid_option_keys(
                 f"spellings of ONE option ({group[0]!r}); only {given[0]!r} was ever "
                 "read. Give one."
             )
+
+
+#: Spellings of one option that live in DIFFERENT places -- ``min_angle`` (a keyword or
+#: an ``options`` key) is Triangle's ``angle`` (a ``triangle_options`` key), and
+#: ``model_ws``/``workspace`` are read from ``triangle_options`` before ``options``.
+_GRID_CROSS_PLACE_SPELLINGS: tuple[tuple[str, ...], ...] = (
+    ("min_angle", "angle"),
+    ("model_ws", "workspace"),
+)
+
+
+def _check_grid_option_places(places: list[tuple[str, dict[str, Any]]], *, where: str) -> None:
+    """Refuse one option given under two spellings in two places (ledger 458).
+
+    ``places`` is ``[(label, dict), ...]`` -- the keywords, ``options`` and
+    ``triangle_options`` at :meth:`GridSpec.voronoi`, and the spec's ``options`` and
+    ``triangle_options`` at resolve. ``GridSpec.voronoi(min_angle=30,
+    triangle_options={"angle": 20})`` meshed at 30 and a spec holding
+    ``options={"min_angle": 30}`` beside ``triangle_options={"angle": 20}`` at 20,
+    each with no word; ``triangle_options`` holding both ``model_ws`` and
+    ``workspace`` read the first. The SAME key in two places is not refused: a
+    keyword is documented to win over the dict it lands in, and a stage dict over
+    ``options``. Two spellings inside ``options``, or as two keywords, are refused
+    elsewhere with their own message (:func:`_check_grid_option_keys`).
+    """
+
+    for group in _GRID_CROSS_PLACE_SPELLINGS:
+        found = [
+            (label, key) for label, given in places for key in group if key in given
+        ]
+        labels = {label for label, _ in found}
+        if len({key for _, key in found}) < 2:
+            continue
+        if len(labels) == 1 and labels <= {"options", "keyword"}:
+            # Refused by `_check_grid_option_keys` / `GridSpec.voronoi`, with their
+            # own message naming the spelling that was read.
+            continue
+        named = " and ".join(
+            f"{key}=" if label == "keyword" else f"{label}[{key!r}]"
+            for label, key in found
+        )
+        raise TypeError(
+            f"{where}: {named} are spellings of ONE option ({group[0]!r}); one "
+            "silently replaced the other. Give one."
+        )
 
 
 def _grid_source(value: Any, argument: str) -> DataSourceSpec:

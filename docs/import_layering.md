@@ -20,6 +20,7 @@ review the diff, commit the regenerated files together.
 - `myflopy._deprecation`
 - `myflopy._length_units`
 - `myflopy._logging`
+- `myflopy._numbers`
 - `myflopy._optional`
 - `myflopy._pythonpath`
 - `myflopy._time_units`
@@ -37,7 +38,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.grid.helpers`
 - `myflopy.modflow.mf6.grid.mesh_quality` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.grid.seed_optimization`
-- `myflopy.modflow.mf6.grid.surfaces`
 - `myflopy.modflow.mf6.observations.plots` *(deferred imports: 3)*
 - `myflopy.modflow.mf6.package_explorer_utils`
 - `myflopy.modflow.mf6.package_registry`
@@ -81,6 +81,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.cross_section_plotting` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.grid.geometry`
 - `myflopy.modflow.mf6.grid.geometry_cleanup`
+- `myflopy.modflow.mf6.grid.surfaces`
 - `myflopy.modflow.mf6.heads_observations`
 - `myflopy.modflow.mf6.hydraulics`
 - `myflopy.modflow.mf6.lak_implicit`

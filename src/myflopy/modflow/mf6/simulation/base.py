@@ -61,6 +61,7 @@ from myflopy.modflow.mf6.surface_water_validation import (
     SurfaceWaterValidationReport,
     validate_surface_water_configuration,
 )
+from myflopy.modflow.utils.datatypes.readers import as_path
 from myflopy.plot import ModelPlots
 
 if TYPE_CHECKING:
@@ -448,11 +449,12 @@ class SimulationBase:
             warning is logged and the list is kept as given. A
             ``DatetimeIndex`` is kept as is; any other type fails an ``assert``.
             Default ``None``.
-        idomain_path : pathlib.Path or None, optional
+        idomain_path : str, os.PathLike or None, optional
             Layer-tagged polygon file used to build :attr:`idomain` lazily, the
             first time it is read, when no idomain array was supplied: each
-            feature's ``layer`` tag says which layers it switches OFF. A non-``Path``
-            value fails an ``assert``. Default ``None``.
+            feature's ``layer`` tag says which layers it switches OFF. Stored as a
+            ``pathlib.Path``; another type raises ``TypeError`` (ledger 457).
+            Default ``None``.
         newton : bool, optional
             Default ``True`` writes the GWF name-file option ``NEWTON
             UNDER_RELAXATION`` (``newtonoptions="under_relaxation"``); ``False``
@@ -738,11 +740,14 @@ class SimulationBase:
 
     @idomain_path.setter
     def idomain_path(self, idomain_path):
-        """Set the optional path used when building idomain from external data."""
+        """Set the optional path used when building idomain from external data.
 
-        if idomain_path is not None:
-            assert isinstance(idomain_path, Path), 'idomain_path must be a Path object'
-            self._idomain_path = idomain_path
+        A ``str`` or ``os.PathLike`` is stored as a ``pathlib.Path``, ``None`` clears
+        it, and anything else raises ``TypeError`` naming it (ledger 457): a
+        ``str`` used to fail an ``assert``, and ``None`` left the old path in place.
+        """
+
+        self._idomain_path = as_path(idomain_path, name="idomain_path")
 
     @property
     def per_dates(self):

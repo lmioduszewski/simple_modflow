@@ -16,6 +16,7 @@ from rasterio.warp import transform_bounds
 from rasterio.windows import Window, from_bounds
 
 from myflopy._logging import get_logger
+from myflopy._numbers import positive_number
 
 logger = get_logger(__name__)
 
@@ -545,17 +546,7 @@ def get_raster_from_strike_dip(
         :func:`get_raster_vals_at_centroids`' frame, with the samples in ``elev``.
     """
     normal = get_normal_from_strike_and_dip(strike, dip)
-    if (
-        isinstance(pixel_size, (bool, np.bool_))
-        or not isinstance(pixel_size, numbers.Real)
-        or not np.isfinite(pixel_size)
-        or pixel_size <= 0
-    ):
-        raise ValueError(
-            f"pixel_size must be a positive finite number of model length units; "
-            f"got {pixel_size!r}."
-        )
-    pixel_size = float(pixel_size)
+    pixel_size = positive_number(pixel_size, "pixel_size", units="model length units")
     output_filename = Path.cwd() / 'raster.tif' if output_filename is None else Path(output_filename)
     domain = get_domain(vor)
     min_x, min_y, max_x, max_y = domain.bounds

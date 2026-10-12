@@ -123,20 +123,41 @@ class DisuGrid:
         model
             Target model receiving the DISU package.
         top, bottom
-            Optional top and bottom elevations. If omitted, the wrapper tries to
-            read them from ``vor.gdf_topbtm``.
+            Optional top and bottom elevations, one per cell. Either one omitted
+            is read from ``vor.gdf_topbtm`` by POSITION, through
+            ``vor.layer_surface_fields()`` -- the model top is the column after
+            the geometry and the bottom the one after it, whatever the columns are
+            called (a ``LayerStack``-attached table labels them ``0, 1, ...``;
+            ledger 459). A table holding more than one bottom raises
+            ``ValueError`` naming ``bottom=``: this DISU has ONE layer, and which
+            bottom it means is the caller's call. A grid carrying no table logs a
+            warning and leaves the omitted one unset.
         """
         self.nlay = 1
-        if top is None:
+        if top is None or bottom is None:
+            # Positional, as every gdf_topbtm reader is (the geometry-first
+            # contract): the labels were "top"/"bottom" here, which a LayerStack's
+            # integer-labelled table never has, and the KeyError escaped the
+            # ValueError handler (ledger 459).
             try:
-                top = vor.gdf_topbtm["top"].to_list()
+                fields = vor.layer_surface_fields()
             except ValueError:
-                logger.warning('the grid carries no top surface; DISU top is unset')
-        if bottom is None:
-            try:
-                bottom = vor.gdf_topbtm["bottom"].to_list()
-            except ValueError:
-                logger.warning('the grid carries no bottom surface; DISU botm is unset')
+                fields = {}
+                logger.warning(
+                    'the grid carries no layer surfaces; DISU %s unset',
+                    'top and botm are' if top is None and bottom is None
+                    else 'top is' if top is None else 'botm is',
+                )
+            bottoms = [key for key in fields if key != 'top']
+            if bottom is None and len(bottoms) > 1:
+                raise ValueError(
+                    f'DisuGrid is ONE layer, and vor.gdf_topbtm holds {len(bottoms)} '
+                    'layer bottoms; pass bottom= (one value per cell) to say which.'
+                )
+            if top is None and 'top' in fields:
+                top = fields['top'].tolist()
+            if bottom is None and bottoms:
+                bottom = fields[bottoms[0]].tolist()
         grid_props = vor.get_disv_gridprops()
         self.disu = flopy.mf6.ModflowGwfdisu(
             model.gwf,

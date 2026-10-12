@@ -29,6 +29,7 @@ from myflopy.specs import (
     _GRID_VORONOI_ROUTED_KEYS,
     GridSpec,
     _check_grid_option_keys,
+    _check_grid_option_places,
 )
 
 logger = get_logger(__name__)
@@ -550,6 +551,10 @@ def _resolve_voronoi(
     options = dict(spec.options)
     _check_grid_option_keys(
         options, dict(spec.mesh_options), where=f"GridSpec {spec.name!r}"
+    )
+    _check_grid_option_places(
+        [("options", options), ("triangle_options", dict(spec.triangle_options))],
+        where=f"GridSpec {spec.name!r}",
     )
     triangle_options = _triangle_options(spec, options)
     model_ws = workspace or _option(

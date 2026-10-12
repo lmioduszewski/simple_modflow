@@ -290,7 +290,7 @@ def test_read_shp_gpkg_reads_a_str_path_and_refuses_what_is_not_a_path(tmp_path)
     path = _gpkg(tmp_path / "a.gpkg", box(0, 0, 2, 3))
     assert read_shp_gpkg(str(path)).union_all().area == pytest.approx(6.0)
     assert read_shp_gpkg((str(path), path)).union_all().area == pytest.approx(6.0)
-    with pytest.raises(TypeError, match=r"files\[1\] is 3 \(int\); each must be a path"):
+    with pytest.raises(TypeError, match=r"files\[1\] must be a path \(str or os.PathLike\); got 3 \(int\)"):
         read_shp_gpkg([path, 3])
     with pytest.raises(TypeError, match=r"files must be a path \(str or os.PathLike\)"):
         read_shp_gpkg(3)
