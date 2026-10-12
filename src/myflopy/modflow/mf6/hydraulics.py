@@ -39,6 +39,7 @@ __all__ = [
     "Transmissivity",
     "declared_time_unit",
     "flow_model",
+    "length_label",
     "transmissivity",
     "model_transmissivity",
     "unit_labels",
@@ -282,13 +283,39 @@ def unit_labels(model) -> tuple[str | None, str | None]:
     transmissivity and the footer's cell area (ledger 401).
     """
 
-    gwf = getattr(model, "gwf", None)
-    length = time = None
-    for name in ("disv", "dis", "disu"):
-        package = gwf.get_package(name) if gwf is not None and hasattr(gwf, "get_package") else None
-        if package is not None:
-            length = mf6_length_abbreviation(_option(package, "length_units"))
-            break
+    length = length_label(getattr(model, "gwf", None))
     unit = declared_time_unit(model)
     time = MF6_TIME_UNITS[unit] if unit is not None else None
     return length, time
+
+
+def length_label(flopy_model) -> str | None:
+    """The abbreviation of a FloPy model's DIS ``LENGTH_UNITS`` -- ``ft``, ``m``, ``cm`` -- or None.
+
+    The one reader of a declared LENGTH unit: :func:`unit_labels` takes its
+    length half from here, and so do the cross-section axis labels, which wrote
+    ``(ft)`` whatever the model said (ledger 464). ``None`` is a model with
+    no discretization, a DIS naming no unit, or ``unknown`` -- MF6's undefined --
+    and a label then carries no unit rather than a guessed one (ledger 434's rule).
+    The word abbreviates through the one table every label reads
+    (:func:`myflopy._length_units.mf6_length_abbreviation`, ledger 456).
+
+    Parameters
+    ----------
+    flopy_model : flopy.mf6.MFModel or None
+        The FloPy model whose ``disv``/``dis``/``disu`` package is read, in that
+        order; a myflopy model's is its ``.gwf``. Anything without
+        ``get_package`` (``None`` included) reads as no unit.
+
+    Returns
+    -------
+    str or None
+    """
+
+    if flopy_model is None or not hasattr(flopy_model, "get_package"):
+        return None
+    for name in ("disv", "dis", "disu"):
+        package = flopy_model.get_package(name)
+        if package is not None:
+            return mf6_length_abbreviation(_option(package, "length_units"))
+    return None

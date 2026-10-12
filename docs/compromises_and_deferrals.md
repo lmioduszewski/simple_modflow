@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 463 entries (468 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 464 entries (469 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 464 | A cross-section's axes and a transport profile read the model's own unit and field | 2026-10-11 |
 | 463 | A layer stack's section and thickness map do what their arguments say | 2026-10-11 |
 | 462 | `section` is offered only by a noun with a line profile: the dependent-variable nouns | 2026-10-11 |
 | 461 | A composer's own `cells`/`agg` and its `kind="plot"` tail act or raise, by kind | 2026-10-11 |
@@ -18567,9 +18568,10 @@ same day, which is the useful part of the result.
       by hand now carry no unit (they took `length=`/`time=`, default `None`, as
       `trans_hover` does), where they wrote feet. Verified on rendered maps of the
       canonical run redeclared `METERS` (byte-identical outputs, 432): no `ft`
-      anywhere in the hovertemplate or customdata. Not done: the cross-section axis
+      anywhere in the hovertemplate or customdata. ~~Not done: the cross-section axis
       labels (`xsections.py` "Elevation (ft)", `cross_section_plotting.py`
-      "Distance/Elevation (ft)") -- static axis text, not hovers. Revert check:
+      "Distance/Elevation (ft)") -- static axis text, not hovers.~~ (done by ledger
+      464.) Revert check:
       `tests/test_hover_model_units.py::test_the_lak_and_sfr_exchange_maps_are_labelled_in_metres`,
       `test_the_group_maps_are_labelled_in_metres`.
 
@@ -18627,8 +18629,10 @@ same day, which is the useful part of the result.
       legend="bottom")` draws at the upper right (`legend` is read for truth only)~~
       (fixed by ledger 463);
       ~~`plot.grid(backend="mpl")` and `GridMesh.plot_mpl()` draw onto pyplot's CURRENT
-      figure~~ (fixed 2026-10-11: each draws in a new figure); the interpolated profile reads `<name>.hds` whatever the model's kind
-      (`FileNotFoundError` on a GWT model) and labels a concentration profile `hds`.
+      figure~~ (fixed 2026-10-11: each draws in a new figure); ~~the interpolated
+      profile reads `<name>.hds` whatever the model's kind (`FileNotFoundError` on a
+      GWT model) and labels a concentration profile `hds`~~ (fixed by ledger
+      464: it reads the model's own reader and names its own field).
       *LAK/SFR/HFB* (R unless marked): `model.surface_water.results.q.get(include=[])`
       returns an empty table rather than refusing; `vor.plot.map(bgs=True)` and
       `show_mounding=True` on a bare grid raise `AttributeError` at `.fig`, as do both
@@ -18739,8 +18743,8 @@ same day, which is the useful part of the result.
       `map(field="stage")` raises `AttributeError`; ~~`StackPlots.map(layer=0)`
       raised `ValueError: list.index(x): x not in list` while its docstring promised an
       index (it now says name only)~~ (fixed by ledger 463: an index is taken);
-      `XSection.plot_mpl` labels the y axis
-      `Elevation (ft)` whatever the length unit or the field; ~~`stack.plot.map(
+      ~~`XSection.plot_mpl` labels the y axis
+      `Elevation (ft)` whatever the length unit or the field~~ (fixed by ledger 464); ~~`stack.plot.map(
       bounds_padding=...)` without `extent=` raises a message saying the map "honours only
       extent=/bounds_padding="~~ (fixed by ledger 463: it frames the grid). **Two rules for one selector:** `FieldMappable` matches
       `field=` exactly (`'Stage'` raises) and `LeafFieldSugar` lower-cases it.
@@ -19364,3 +19368,22 @@ same day, which is the useful part of the result.
       `bounds_padding=` without `extent=` frames the grid; `map()`'s `Returns` is its
       own. Revert check: `tests/test_layers.py` -- ten `section`/`map` tests and
       `test_a_stack_maps_returns_section_names_what_it_returns`.
+
+464. **A cross-section's axes and a transport profile read the model's own unit and field (2026-10-11).**
+      `ModelCrossSectionStyle` defaulted its axes to `Distance (ft)`/`Elevation (ft)`
+      (every `model.plot.section` cross-section, both backends, and
+      `plot_model_cross_section`) and `XSection.plot_mpl` to `Elevation (ft)` -- feet
+      whatever the DIS said, and "elevation" on a concentration profile. One reader,
+      `hydraulics.length_label` (which `unit_labels` now calls), feeds
+      `cross_section_plotting.section_axis_labels`; the style's labels default to
+      `None`, meaning "from the model". Same judgment call as ledger 434: an undeclared
+      unit (or a bare grid) writes NO unit, not feet. A GWT/GWE value profile's y axis
+      reads `Concentration`/`Temperature` with no unit -- the reader's `mg/L`/`°C` is
+      a convention, not something the model declares. The interpolated profile read
+      `<name>.hds` whatever the kind (`FileNotFoundError` on GWT): `InterpolatedSurface`
+      now opens the model's own `_field_reader`, and the stepped series are named
+      `Lyr k conc`/`temp` by kind (`hds` on GWF, unchanged). Not done: the noun
+      profile's own axes (`render_xsections`, the section composers) still read
+      `Distance`/`Elevation` with no unit -- not wrong, only bare. Revert check:
+      `tests/test_hover_model_units.py::test_every_cross_section_axis_is_labelled_in_metres`,
+      `tests/test_gwt_gwe_results.py::test_an_interpolated_transport_profile_reads_the_models_own_field`.

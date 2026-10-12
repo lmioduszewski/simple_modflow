@@ -406,6 +406,32 @@ def test_the_xs_verb_works_on_the_transport_readers(gwt_run, gwe_run):
 
 
 @pytest.mark.slow
+def test_an_interpolated_transport_profile_reads_the_models_own_field(gwt_run, gwe_run):
+    """The interpolated profile opened ``<name>.hds`` whatever the kind, and raised
+    ``FileNotFoundError`` on a transport model (which writes ``.ucn``); a stepped
+    one was labelled ``hds`` and its static y axis ``Elevation (ft)`` (ledger 436)."""
+
+    import matplotlib.pyplot as plt
+
+    for run, field, axis in ((gwt_run, "conc", "Concentration"),
+                             (gwe_run, "temp", "Temperature")):
+        model = run.model("trans")
+        reader = getattr(model, field)
+        interpolated = reader._sections(cells=[0, 5, 10], interpolate=True)[model.name]
+        values = interpolated.to_frame().query("kind == 'profile'")["elevation"]
+        # this model's field, not the flow model's heads (8-10 here): the
+        # interpolator may overshoot a little, never by the head's magnitude
+        hi = float(reader.all_values.abs().max().iloc[0])
+        assert len(values) and float(values.abs().max()) < 2.0 * hi + 1e-6
+        stepped = reader._sections(cells=[0, 5, 10])[model.name]
+        assert f"Lyr 0 {field} - trans" in set(stepped.to_frame()["series"])
+        # the transport models declare no length unit, so no unit is written
+        _figure, ax = stepped.plot_mpl()
+        assert (ax.get_xlabel(), ax.get_ylabel()) == ("Distance", axis)
+        plt.close("all")
+
+
+@pytest.mark.slow
 def test_model_budget_terms_follow_the_model_kind(gwt_run, gwe_run):
     """``model.budget.<term>`` is discovered, so it names each kind's real terms.
 

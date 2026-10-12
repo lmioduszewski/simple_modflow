@@ -594,6 +594,43 @@ class XSection(Picture):
         else:
             return None
 
+    #: What a stepped profile's legend calls the field, by model kind: ``hds`` on
+    #: GWF (as it always read), the transport fields by their own names -- a
+    #: concentration profile was labelled ``hds`` (ledger 436).
+    _FIELD_LABELS = {"gwt6": "conc", "gwe6": "temp"}
+
+    def _profile_series(self, lyr) -> str:
+        """The legend name of layer ``lyr``'s stepped profile (``Lyr 0 conc - A``)."""
+
+        return f"Lyr {lyr} {self._FIELD_LABELS.get(self._model_kind, 'hds')} - {self.section_name}"
+
+    @property
+    def _model_kind(self) -> str:
+        """The model's ``model_type`` (``gwf6``/``gwt6``/``gwe6``), ``''`` without one.
+
+        Read off ``_model`` with a default, so a stand-in built without a model
+        (a test double) labels as heads, as every section did before.
+        """
+
+        return str(getattr(getattr(self, "_model", None), "model_type", "") or "").lower()
+
+    def _axis_labels(self) -> tuple[str, str]:
+        """``(xlabel, ylabel)`` for :meth:`plot_mpl`, in the model's own units.
+
+        The distance is in the DIS length unit; the y axis is an ELEVATION in it
+        for a head or a layer-top profile, and the field's name for a
+        concentration or temperature one. It read ``Elevation (ft)`` whatever the
+        unit or the field (ledger 464).
+        """
+
+        from myflopy.modflow.mf6.cross_section_plotting import section_axis_labels
+
+        xlabel, ylabel = section_axis_labels(getattr(getattr(self, "_model", None), "gwf", None))
+        kind = self._model_kind
+        if getattr(self, "surf_type", "hds") != "lyr" and kind in self._FIELD_LABELS:
+            ylabel = {"conc": "Concentration", "temp": "Temperature"}[self._FIELD_LABELS[kind]]
+        return xlabel, ylabel
+
     @property
     def _surface_name(self) -> str:
         """The interpolated line's legend name: the section, or which layer TOP it is."""
@@ -633,10 +670,10 @@ class XSection(Picture):
         one ``series`` per layer, with a ``layer`` column; a dry or inactive
         cell's value is ``NaN``. An interpolated profile is one ``series`` of
         ``num_points - 2`` evenly spaced points (the line's two ends are
-        dropped), with no ``layer``, sampled from the head file
-        ``<model name>.hds`` whatever the model's kind -- so on a GWT or GWE
-        model it raises ``FileNotFoundError`` -- or under ``surf_type='lyr'``
-        from the layer's top.
+        dropped), with no ``layer``, sampled from the model's own field -- the
+        reader ``model.hds``/``.conc``/``.temp`` opens -- or under
+        ``surf_type='lyr'`` from the layer's top. Stepped profile series are named
+        ``Lyr <k> hds``, ``conc`` or ``temp`` by the model's kind.
 
         Parameters
         ----------
@@ -674,7 +711,7 @@ class XSection(Picture):
                 )
         else:
             for i, lyr in enumerate(self.layer):
-                series_name = f"Lyr {lyr} hds - {self.section_name}"
+                series_name = self._profile_series(lyr)
                 for distance, elevation in zip(points, elevations[i], strict=False):
                     rows.append(
                         {
@@ -731,11 +768,11 @@ class XSection(Picture):
         ----------
         **kwargs
             Forwarded to :func:`myflopy.viz.plot_cross_section`. ``title``
-            defaults to the section's ``section_name`` and ``ylabel`` to
-            ``'Elevation (ft)'`` -- feet whatever the model's length unit, and
-            "elevation" on a concentration or temperature profile too -- so pass
-            ``ylabel=`` for anything else. ``xlabel`` (default ``'Distance'``),
-            ``show_legend`` (default ``True``), ``style``,
+            defaults to the section's ``section_name``, ``xlabel`` to
+            ``'Distance (<unit>)'`` and ``ylabel`` to ``'Elevation (<unit>)'`` in
+            the model's own DIS length unit (no unit when it declares none) --
+            ``'Concentration'``/``'Temperature'`` instead on a GWT/GWE value
+            profile. ``show_legend`` (default ``True``), ``style``,
             ``x_units_per_inch``/``y_units_per_inch`` (an exact print scale,
             applied only when both are set), ``line_kwargs`` (to ``Axes.plot``)
             and ``scale_kwargs`` act; anything else goes on to the figure factory
@@ -753,8 +790,10 @@ class XSection(Picture):
         from myflopy.viz import plot_cross_section
 
         data = self.to_frame()
+        xlabel, ylabel = self._axis_labels()
         kwargs.setdefault("title", self.section_name)
-        kwargs.setdefault("ylabel", "Elevation (ft)")
+        kwargs.setdefault("xlabel", xlabel)
+        kwargs.setdefault("ylabel", ylabel)
         return plot_cross_section(
             data=data,
             x="distance",
@@ -783,7 +822,7 @@ class XSection(Picture):
 
         elif self.interpolate is False:
             for i, lyr in enumerate(self.layer):
-                fig.add_scatter(x=points, y=elevations[i], name=f'Lyr {lyr} hds - {self.section_name}')
+                fig.add_scatter(x=points, y=elevations[i], name=self._profile_series(lyr))
 
         if self.show_model_top:
             xs = self.xs
@@ -861,7 +900,7 @@ class XSection(Picture):
                 for i, lyr in enumerate(self.layer):
                     tr = go.Scatter(
                         x=points, y=elevations[i],
-                        name=f'Lyr {lyr} hds - {self.section_name}'
+                        name=self._profile_series(lyr)
                     )
                     frame.data += (tr,)  # added comma so tr is treated as a tuple
 

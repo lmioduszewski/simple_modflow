@@ -20,6 +20,7 @@ import shapely as shp
 from flopy.plot import PlotCrossSection
 from matplotlib.colors import ListedColormap
 
+from myflopy.modflow.mf6.hydraulics import length_label
 from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.viz import Fig, Picture, category_colors, mpl_axes
@@ -35,8 +36,11 @@ class ModelCrossSectionStyle:
     """Styling controls for report-oriented MODFLOW cross sections."""
 
     figsize: tuple[float, float] = (20, 12)
-    xlabel: str = "Distance (ft)"
-    ylabel: str = "Elevation (ft)"
+    #: ``None`` labels each axis in the drawn model's own length unit --
+    #: ``Distance (m)`` -- through :func:`section_axis_labels`; both read
+    #: ``(ft)`` whatever the model declared (ledger 464).
+    xlabel: str | None = None
+    ylabel: str | None = None
     title: str | None = None
     title_fontsize: float = 24
     label_fontsize: float = 16
@@ -489,6 +493,28 @@ def _cross_section(flopy_model, modelgrid, line_spec):
         ) from error
 
 
+def section_axis_labels(flopy_model) -> tuple[str, str]:
+    """``(xlabel, ylabel)`` of a cross-section: ``Distance (m)``, ``Elevation (m)``.
+
+    The unit is the model's own DIS ``LENGTH_UNITS``, read by
+    :func:`~myflopy.modflow.mf6.hydraulics.length_label`; with none declared (or
+    no model -- a bare grid) the label carries no unit rather than a guessed one.
+
+    Parameters
+    ----------
+    flopy_model : flopy.mf6.MFModel or None
+        The FloPy model drawn, whose discretization names the unit.
+
+    Returns
+    -------
+    tuple of (str, str)
+    """
+
+    unit = length_label(flopy_model)
+    suffix = f" ({unit})" if unit else ""
+    return f"Distance{suffix}", f"Elevation{suffix}"
+
+
 def plot_layered_cross_section(
     modelgrid,
     line,
@@ -555,8 +581,10 @@ def plot_layered_cross_section(
     colorbar
         Draw the colorbar for ``values``. Ignored without ``values``.
     flopy_model
-        Optional flopy model passed through to ``PlotCrossSection`` (only needed
-        for model-aware head rendering).
+        Optional flopy model passed through to ``PlotCrossSection`` (for
+        model-aware head rendering); its DIS ``LENGTH_UNITS`` also labels the
+        axes when neither ``xlabel``/``ylabel`` nor the style names them
+        (:func:`section_axis_labels`).
 
     Returns ``(fig, ax)``.
     """
@@ -647,8 +675,9 @@ def plot_layered_cross_section(
             if bounds is not None:
                 ax.set_ylim(*bounds)
 
-        ax.set_xlabel(xlabel or style.xlabel, size=style.label_fontsize)
-        ax.set_ylabel(ylabel or style.ylabel, size=style.label_fontsize)
+        default_x, default_y = section_axis_labels(flopy_model)
+        ax.set_xlabel(xlabel or style.xlabel or default_x, size=style.label_fontsize)
+        ax.set_ylabel(ylabel or style.ylabel or default_y, size=style.label_fontsize)
         ax.tick_params(axis="both", which="major", labelsize=style.tick_labelsize)
 
         if title or style.title:
@@ -1224,10 +1253,11 @@ class FilledSection(Picture):
         else:
             y_range = [ymin, ymax]
         legend = _plotly_legend(self._legend_loc, self._legend_anchor, style)
+        axis_labels = section_axis_labels(self._flopy_model)
         figure.update_layout(
             title=self._title or style.title,
-            xaxis={"title": {"text": style.xlabel}, "range": [xmin, xmax]},
-            yaxis={"title": {"text": style.ylabel}, "range": y_range},
+            xaxis={"title": {"text": style.xlabel or axis_labels[0]}, "range": [xmin, xmax]},
+            yaxis={"title": {"text": style.ylabel or axis_labels[1]}, "range": y_range},
             showlegend=self._show_legend and values is None,
             hovermode="closest",
             **({"legend": legend} if legend else {}),

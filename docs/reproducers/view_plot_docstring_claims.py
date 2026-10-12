@@ -14,12 +14,18 @@ temporary directory, removed at the end, by default). About 30 s.
 
 Items 10-15 were added by ledger 436, from the second (verification) pass.
 
+Since ledgers 461, 462 and 463 (and a 2026-10-11 fix of item 14 and
+15), items 1-3, 5, 7-9 and 12-15 print what the code does NOW -- each answered or
+refused as its docstring says; the WHAT IT MEASURES list below is the defect as
+first measured.
+
 **The benches.**
 
 * ``canon``: ``CanonicalModelConfig.testing()`` (21 x 21, every package), run once.
 * ``stack``: a 400 x 300 ft ``TriangleGrid`` (angle 30) under a ``LayerStack`` of three
   flat 10 ft units, ``a``/``b``/``c``, top 50 ft.
-* ``gwt``: a one-layer GWF ``flow`` + GWT ``trans`` pair on that triangle grid, CHD
+* ``gwt``: a one-layer GWF ``flow`` + GWT ``trans`` pair on a finer copy of that grid
+  (``max_area=1500``; the default leaves 4 cells, too few to section), CHD
   west (head 10, concentration 1) and east (head 8, concentration 0), one period.
 
 WHAT IT MEASURES
@@ -102,8 +108,11 @@ def canon(root: Path) -> None:
     except TypeError as error:
         print(f"2. mosaic(kind='section', cells=...): TypeError: {error}")
 
-    figure = q.mosaic(kind="plot", by="layer", not_a_parameter=1)
-    print(f"3. mosaic(kind='plot', not_a_parameter=1): {type(figure).__name__}")
+    try:
+        figure = q.mosaic(kind="plot", by="layer", not_a_parameter=1)
+        print(f"3. mosaic(kind='plot', not_a_parameter=1): {type(figure).__name__}")
+    except TypeError as error:
+        print(f"3. mosaic(kind='plot', not_a_parameter=1): TypeError: {error}")
 
     xmin, ymin, xmax, ymax = model.vor.gdf_vorPolys.total_bounds
     line = LineString([(xmin, (ymin + ymax) / 2), (xmax, (ymin + ymax) / 2)])
@@ -196,14 +205,18 @@ def stack(root: Path) -> None:
               .add("a", bottom=Flat(40)).add("b", bottom=Flat(30)).add("c", bottom=Flat(20))
               .build())
 
-    bogus = result.plot.section(y=150).plot_mpl(color_by="bogus")
-    print(f"7. plot_mpl(color_by='bogus') drew: {bogus.get_title()!r}")
+    try:
+        bogus = result.plot.section(y=150).plot_mpl(color_by="bogus")
+        print(f"7. plot_mpl(color_by='bogus') drew: {bogus.get_title()!r}")
+    except ValueError as error:
+        print(f"7. plot_mpl(color_by='bogus'): ValueError: {error}")
     cmaps = set()
     for cmap in ("Reds", "Blues"):
         axes = result.plot.section(y=150, color_by="thickness", cmap=cmap, legend=True).axes
         cmaps |= {c.get_cmap().name for c in axes.collections if c.get_array() is not None}
-        legend = axes.get_legend() is not None
-    print(f"   thickness fill colormaps for cmap='Reds'/'Blues': {sorted(cmaps)}; legend: {legend}")
+        legend = axes.get_legend() is not None or len(axes.figure.axes) > 1
+    print(f"   thickness fill colormaps for cmap='Reds'/'Blues': {sorted(cmaps)}; "
+          f"legend or colorbar: {legend}")
     handles = result.plot.section(y=150, cmap="viridis").axes.get_legend().legend_handles
     colours = np.array([h.get_facecolor()[:3] for h in handles])
     spread = float(np.abs(colours - colours[0]).max())
@@ -211,11 +224,12 @@ def stack(root: Path) -> None:
 
     print(f"8. stack.plot.map('b'): {result.plot.map('b').title!r}")
     try:
-        result.plot.map(1)
+        print(f"   stack.plot.map(1): {result.plot.map(1).title!r}")
     except ValueError as error:
         print(f"   stack.plot.map(1): ValueError: {error}")
     try:
-        result.plot.map(bounds_padding=0.1)
+        limits = result.plot.map(bounds_padding=0.1).axes.get_xlim()
+        print(f"9. stack.plot.map(bounds_padding=0.1): drew, x limits {limits}")
     except TypeError as error:
         print(f"9. stack.plot.map(bounds_padding=0.1): TypeError: {error}")
 
@@ -236,7 +250,7 @@ def stack(root: Path) -> None:
 
 def gwt(root: Path) -> None:
     tri = mf.TriangleGrid(model_ws=str(root / "tri_gwt"), angle=30)
-    tri.set_domain_rectangle(x_dist=400, y_dist=300, origin=(0, 0))
+    tri.set_domain_rectangle(x_dist=400, y_dist=300, origin=(0, 0), max_area=1500)
     tri.build(verbose=False)
     vor = mf.VoronoiGridPlus(tri)
     gp = vor.get_disv_gridprops()
@@ -276,7 +290,9 @@ def gwt(root: Path) -> None:
                      if p.suffix in (".hds", ".ucn"))
     try:
         model.conc._sections(cells=[0, 5, 10], interpolate=True)[model.name].to_frame()
-        print(f"15. interpolated GWT profile: drew (files {written})")
+        series = model.conc._sections(cells=[0, 5, 10])[model.name].to_frame()["series"]
+        print(f"15. interpolated GWT profile: drew (files {written}); stepped series "
+              f"{sorted(set(series))}")
     except FileNotFoundError as error:
         print(f"15. interpolated GWT profile: FileNotFoundError: {error} (files {written})")
 

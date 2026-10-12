@@ -35,8 +35,8 @@ from myflopy.modflow.mf6.grid.geometry import (
     selected_cells,
     where_they_are,
 )
+from myflopy.modflow.mf6.headsplus import DependentVariableFile, _is_sentinel
 from myflopy.modflow.mf6.headsplus import HeadsPlus as Hp
-from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.viz import Picture
@@ -348,7 +348,7 @@ class InterpolatedSurface(Picture):
             if self.surf_type == 'hds':
                 """zs of the self.hds HeadPlus oject for a given layer at a certain stress-and-time period"""
                 zs = np.asarray(
-                    self.hds.all_heads.loc[idxx[self.kstpkper, self.layer, cells], :].values,
+                    self.hds.all_values.loc[idxx[self.kstpkper, self.layer, cells], :].values,
                     dtype=float,
                 )
                 zs[_is_sentinel(zs)] = np.nan  # inactive (+1e30) and dry (-1e30) cells
@@ -413,21 +413,31 @@ class InterpolatedSurface(Picture):
 
     @property
     def hds(self):
-        """The model's :class:`HeadsPlus` reader, opened from its ``.hds`` output (cached)."""
+        """The model's dependent-variable reader -- heads, concentration or temperature (cached).
+
+        A model's OWN reader, ``model.hds``/``.conc``/``.temp`` by its kind (the
+        file its OC names). It opened ``<model name>.hds`` whatever the kind, so
+        the interpolated profile of a GWT model raised ``FileNotFoundError`` --
+        the model writes ``<name>.ucn`` (ledger 436). A duck-typed model with no
+        ``_field_reader`` keeps the ``<name>.hds`` path.
+        """
 
         if self._hds is None:
             if self.model:
-                hds = Hp(
+                reader = getattr(self.model, "_field_reader", None)
+                self._hds = reader if reader is not None else Hp(
                     hds_path=self.model.model_output_folder_path / f'{self.model.name}.hds',
                     vor=self.vor
                 )
-                self._hds = hds
             else:
                 raise ValueError(
                     "no heads file was given and no model was given to find one on; "
                     "pass hds= or model=."
                 )
-        assert isinstance(self._hds, Hp), 'the hds property must be a HeadsPlus instance'
+        assert isinstance(self._hds, DependentVariableFile), (
+            "the hds property must be a dependent-variable reader (HeadsPlus, "
+            "ConcResults or TempResults)"
+        )
         return self._hds
 
     @property

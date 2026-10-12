@@ -118,3 +118,32 @@ def test_the_group_maps_are_labelled_in_metres(metres_canonical):
         assert "ft" not in written
         # a value is written "<number>\xa0<unit>"
         assert re.search(r"\xa0m[²³]?(/d)?(?![A-Za-z])", written), written[:400]
+
+
+@pytest.mark.slow
+def test_every_cross_section_axis_is_labelled_in_metres(metres_canonical):
+    """``ModelCrossSectionStyle`` and ``XSection.plot_mpl`` wrote ``(ft)`` whatever
+    the model declared (ledger 464)."""
+
+    import matplotlib.pyplot as plt
+    from shapely.geometry import LineString
+
+    from myflopy.modflow.mf6.cross_section_plotting import plot_model_cross_section
+
+    model = mf.load_mf6_run(str(metres_canonical))
+    xmin, ymin, xmax, ymax = model.vor.gdf_vorPolys.total_bounds
+    line = LineString([(xmin, (ymin + ymax) / 2), (xmax, (ymin + ymax) / 2)])
+    try:
+        axes = [
+            model.plot.section(line=line).axes[0],
+            plot_model_cross_section(model, line)[1],
+            model.hds._sections(line=line)[model.name].plot_mpl()[1],
+        ]
+        for ax in axes:
+            assert (ax.get_xlabel(), ax.get_ylabel()) == ("Distance (m)", "Elevation (m)")
+        layout = model.plot.section(line=line, backend="plotly").fig.layout
+        assert (layout.xaxis.title.text, layout.yaxis.title.text) == (
+            "Distance (m)", "Elevation (m)",
+        )
+    finally:
+        plt.close("all")
