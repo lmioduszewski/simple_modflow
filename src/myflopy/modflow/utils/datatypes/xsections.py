@@ -16,6 +16,7 @@ from shapely.geometry import LineString
 
 from myflopy import viz as f
 from myflopy._logging import get_logger
+from myflopy.modflow.mf6.cross_section_plotting import section_axis_labels
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.period_end import last_saved_step
@@ -622,8 +623,6 @@ class XSection(Picture):
         concentration or temperature one. It read ``Elevation (ft)`` whatever the
         unit or the field (ledger 464).
         """
-
-        from myflopy.modflow.mf6.cross_section_plotting import section_axis_labels
 
         xlabel, ylabel = section_axis_labels(getattr(getattr(self, "_model", None), "gwf", None))
         kind = self._model_kind

@@ -37,6 +37,7 @@ from myflopy._logging import get_logger
 from myflopy._optional import require
 from myflopy._time_units import check_model_time_units
 from myflopy.areas import Area
+from myflopy.modflow.mf6.cross_section_plotting import legend_placement
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.grid.plotting import GridPlots, _as_linestring
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
@@ -94,8 +95,6 @@ def _checked_section_options(color_by, legend):
     ``color_by='thickness'`` the legend IS the colorbar, which has one place, so
     a placement word there raises rather than being dropped (ledger 463).
     """
-
-    from myflopy.modflow.mf6.cross_section_plotting import legend_placement
 
     if color_by not in _SECTION_COLOR_BY:
         raise ValueError(
