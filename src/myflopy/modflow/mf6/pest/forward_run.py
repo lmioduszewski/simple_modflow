@@ -10,6 +10,11 @@ import pandas as pd
 #: values snapshot's ``name``, the values snapshot's ``column`` (ledger 358).
 TARGET_NAME_COLUMNS = ("name", "obsname", "column")
 
+#: The columns of a build's snapshot files read back as TEXT besides the names: a zone
+#: snapshot's comma-joined ``cells``, which pandas reads as FLOATS (``27.0``) when
+#: every row holds one cell or none (ledger 550).
+TARGET_TEXT_COLUMNS = (*TARGET_NAME_COLUMNS, "cells")
+
 
 def read_target_table(path):
     """Read one of a PEST build's snapshot CSVs with every target name as its TEXT.
@@ -23,6 +28,14 @@ def read_target_table(path):
     files plainly -- lost the cell of every such target and dropped such a DRN zone
     entirely, which 341 recorded as not fixed. ``dtype=str`` is not this rule: it keeps ``007`` but
     still reads ``NA`` as missing. A blank name reads as ``""``.
+
+    A zone snapshot's ``cells`` column is read as its text too (ledger
+    550): a zone given no ``layer`` is snapshotted as one row per
+    layer, each holding its columns ACTIVE there, so a one-column zone over a layer
+    where that column is inactive writes ``""`` beside ``"27"``. Pandas read that
+    column as floats, ``27.0``, which neither the forward run nor the IES review
+    could parse as a cell: every realization failed after a clean build. A blank
+    ``cells`` reads as ``""``, a zone of no cells.
 
     The forward-run writers call this through an import inside their own bodies,
     because pyEMU copies only a writer's source into the generated forward run.
@@ -38,12 +51,12 @@ def read_target_table(path):
     Returns
     -------
     pandas.DataFrame
-        The table, each of its :data:`TARGET_NAME_COLUMNS` as ``str``; every other
-        column as ``pandas.read_csv`` reads it.
+        The table, each of its :data:`TARGET_TEXT_COLUMNS` (the names and a zone's
+        ``cells``) as ``str``; every other column as ``pandas.read_csv`` reads it.
     """
 
     header = pd.read_csv(path, nrows=0).columns
-    converters = {column: str for column in TARGET_NAME_COLUMNS if column in header}
+    converters = {column: str for column in TARGET_TEXT_COLUMNS if column in header}
     return pd.read_csv(path, converters=converters)
 
 

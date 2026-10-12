@@ -202,7 +202,7 @@ def _normalize_zone_locations(
             [_coerce_cells(values) for values in frame["cells"]], index=frame.index, dtype=object
         )
     # A blank layer is ``None`` -- every layer -- whichever way the row names its cells.
-    layers =frame["layer"] if "layer" in frame.columns else [None] * len(frame)
+    layers = frame["layer"] if "layer" in frame.columns else [None] * len(frame)
     resolved_layers = [
         _zone_layer(value, name, owner=owner)
         for value, name in zip(layers, frame["name"], strict=True)

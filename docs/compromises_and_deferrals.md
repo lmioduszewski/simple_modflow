@@ -21087,3 +21087,9 @@ same day, which is the useful part of the result.
       written earlier for it no longer matches: the zone then reads the budget file. A
       template built before keeps its snapshot's layer 0 and stays self-consistent until
       rebuilt. Reproducer: `docs/reproducers/riv_flow_targets.py` (F, G).
+      **The snapshot's `cells` are read back as TEXT** (review): such a zone over a layer
+      where its one column is inactive snapshots `""` beside `"27"`, pandas read that CSV
+      column as floats, and the forward run's `int("27.0")` failed every realization
+      after a clean build (the IES review's parse likewise). Fixed in the ONE reader,
+      `forward_run.read_target_table` (`TARGET_TEXT_COLUMNS`), not in the writer pyEMU
+      copies into `forward_run.py`, so a template built before reads it too.

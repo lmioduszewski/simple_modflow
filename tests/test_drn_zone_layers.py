@@ -548,3 +548,74 @@ def test_a_listed_zone_with_no_layer_needs_the_model_and_columns_it_has(toy):
         mf.DrnFlowTargets(locations={"z": [0, 1]}).zone_definitions(dead)
     assert mf.DrnFlowTargets(locations={"z": [0]}).zone_definitions(dead)["cells"].tolist() == [
         [0], [0]]
+
+
+@pytest.mark.slow
+def test_a_one_column_zone_over_an_inactive_layer_runs_forward(tmp_path):
+    """A zone LISTING one column with no layer, over a layer where that column is
+    INACTIVE, is snapshotted as ``""`` beside ``"27"`` -- and pandas read that CSV
+    column as floats, so the forward run parsed ``"27.0"`` and raised on every
+    realization after a clean build (ledger 550). The snapshot's
+    ``cells`` are read as their text now (``forward_run.read_target_table``), so the
+    forward run writes what the base run did, and the IES review parses the same."""
+
+    pyemu = pytest.importorskip("pyemu")
+    from myflopy.modflow.mf6.pest.forward_run import read_target_table
+    from myflopy.modflow.mf6.pest.ies import _parse_cell_list
+
+    grid = irregular_voronoi_grid(nrow=6, ncol=6, cell_size=100.0, refined=False)
+    props = grid.get_disv_gridprops()
+    xy = np.array([(c[1], c[2]) for c in props["cell2d"]])
+    xmin, _, xmax, _ = grid.gdf_vorPolys.total_bounds
+    edge = [int(c) for c in np.flatnonzero((xy[:, 0] < xmin + 100) | (xy[:, 0] > xmax - 100))]
+    pinched = 27
+    assert pinched not in edge
+    idomain = np.ones((2, grid.ncpl), dtype=int)
+    idomain[0, pinched] = 0
+    model = mf.gwf("m", grid=grid, packages=[
+        mf.disv(nlay=2, ncpl=grid.ncpl, nvert=len(props["vertices"]),
+                vertices=props["vertices"], cell2d=props["cell2d"], top=110.0,
+                botm=[50.0, 0.0], idomain=idomain),
+        mf.npf(k=10.0, icelltype=0),
+        mf.sto(ss=1e-3, sy=0.2, iconvert=0, transient={0: True}),
+        mf.ic(strt=100.0),
+        mf.chd(stress_period_data={0: [[(0, c), 102.0] for c in edge]}),
+        mf.drn(stress_period_data={0: [[(1, pinched), 60.0, 50.0]]}),
+        mf.oc(head_filerecord="m.hds", budget_filerecord="m.cbc",
+              saverecord=[("HEAD", "LAST"), ("BUDGET", "LAST")]),
+    ])
+    simulation = mf.simulation(model, name="s", packages=[
+        mf.tdis(nper=NPER, perioddata=[(PERLEN, NSTP, 1.0)] * NPER)])
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        run = mf.Project(tmp_path / "p", name="p").run("r", simulation)
+    assert run.success, "\n".join(run.report[-20:])
+    built = run.model()
+    expected = _raw(built, [(1, pinched)])
+    assert all(value < 0 for value in expected)
+
+    targets = mf.DrnFlowTargets(locations={"z": [pinched]}, values=pd.DataFrame(
+        {"time": range(NPER), "z": [-5000.0] * NPER}))
+    assert targets.zone_definitions(built)["cells"].tolist() == [[], [pinched]]
+    cal = built.pest("pinched", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
+    cal.observe(targets, prefix="drn")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("pinched.pst", noptmax=0)
+    template = Path(cal.template_workspace)
+    snapshot = template / "drn_target_locations.csv"
+
+    table = "drn_simulated_drn_flow.csv"
+    forward = tmp_path / "forward.csv"
+    write_named_series_targets(
+        [{"kind": "drn_flow", "locations_file": snapshot, "output_csv": forward}],
+        sim_ws=built.workspace, model_name="m")
+    for output in (template / table, forward):
+        ins = pyemu.pst_utils.InstructionFile(str(template / f"{table}.ins"))
+        read = ins.read_output_file(str(output))["obsval"]
+        np.testing.assert_allclose(sorted(read), sorted(expected), rtol=1e-10)
+    # The IES review reads the same snapshot through the same reader.
+    cells = read_target_table(snapshot)["cells"].tolist()
+    assert cells == ["", str(pinched)]
+    assert [_parse_cell_list(value) for value in cells] == [[], [pinched]]
