@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 480 entries (485 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 481 entries (486 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 481 | A picture writes what it names, and a hillshade is drawn from its own raster | 2026-10-11 |
 | 480 | The IES review refuses a selector it cannot honour, and reads backends through the one resolver | 2026-10-11 |
 | 479 | A PRT map's tail cannot reach its own options; `stat`, `layer`, `group` are checked | 2026-10-11 |
 | 478 | A typed index is a whole number: `validators.whole_number`, one rule | 2026-10-11 |
@@ -18672,7 +18673,7 @@ same day, which is the useful part of the result.
       `target_column` or `simulated_column`, draws `type="calibration"` for a typo'd
       `type`, and ignores `title`/`yaxis_title` for `heads`/`residuals_by_period`; the
       `calibration` plot labels its axes swapped (C); `from_timeseries` draws an empty
-      "Baseline" for a name `baseline_compare` lacks (C)~~ (fixed by ledger 477); `VtkScene.save("shot")` returns
+      "Baseline" for a name `baseline_compare` lacks (C)~~ (fixed by ledger 477); ~~`VtkScene.save("shot")` returns
       a path PyVista did not write (`shot.png`), refuses `x.PNG`, and its `.html` route
       ignores every keyword; `Picture.html` does not create a missing parent directory;
       `FrameAnimation.html` picks the restyle page by "first trace has z", so a surface,
@@ -18680,7 +18681,7 @@ same day, which is the useful part of the result.
       fixed `hillshade.png` whatever raster made it and raises for its default
       `tif_path=None` (C); `Choro.add_overlay` after `.fig` never reaches that figure
       (C); `InterpolatedSurface.save_raster` ignores `polygon_clip`/`buffer` when the
-      clipped image, transform and meta are passed (C).
+      clipped image, transform and meta are passed (C)~~ (fixed by ledger 481).
       *Diff tier* (`docs/reproducers/diff_results_tier.py`, R): the MVR diff reads
       `FROM-MVR`/`TO-MVR` from the GWF budget, where MF6 writes `DRN-TO-MVR`/
       `WEL-TO-MVR`, so it is always empty (and `docs/model_diff_cheatsheet.md`'s "empty
@@ -19717,3 +19718,21 @@ same day, which is the useful part of the result.
       aliases. Revert check: 8 tests in `tests/test_mf6_pest.py`, 2 in
       `tests/test_ies_sensitivity.py`, `tests/test_calibration_plot_refusals.py::
       test_calibration_plots_read_the_backend_through_the_one_resolver`.
+
+481. **A picture writes what it names, and a hillshade is drawn from its own raster (2026-10-11).**
+      Ledger 436's picture-output defects, decided. `Choro.add_hillshade` builds the
+      PNG IN MEMORY and embeds it; nothing is written. Chosen over a per-raster cache
+      file: the fixed `hillshade.png` (in the model's output folder, else the working
+      directory) was reused whatever raster made it, and a cache keyed by path and
+      mtime is still a file a map leaves behind -- the conversion is one raster read
+      per map. `tif_path=None` raises naming `hillshade_path=`. `Picture.html` creates
+      its directory as every other picture's does. `FrameAnimation.html` takes the
+      restyle page for a CHOROPLETH first trace only (it keyed on "has `z`", which sent
+      a surface or heatmap there and broke Play). `VtkScene.save` writes any-case
+      `.png`/`.jpg`/... (PyVista reads the suffix case-sensitively, so the lower-case
+      name is written and moved) and refuses a path with no image suffix (PyVista
+      appended `.png` and the returned path named no file); `VtkScene.html` takes no
+      keywords, so `save("x.html", scale=2)` raises. `Choro.add_overlay` after the
+      figure was assembled draws onto it too. `save_raster` refuses `polygon_clip`/
+      `buffer` beside the clipped image. Revert check: `tests/test_picture_outputs.py`
+      (5), `tests/test_surface_domain_mask.py::test_save_raster_refuses_a_clip_it_cannot_apply`.

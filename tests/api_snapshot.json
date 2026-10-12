@@ -5085,8 +5085,7 @@
       "tri:POSITIONAL_OR_KEYWORD=<required>"
     ],
     "VtkScene.html": [
-      "path:POSITIONAL_OR_KEYWORD=<required>",
-      "kwargs:VAR_KEYWORD=<required>"
+      "path:POSITIONAL_OR_KEYWORD=<required>"
     ],
     "VtkScene.save": [
       "path:POSITIONAL_OR_KEYWORD=<required>",

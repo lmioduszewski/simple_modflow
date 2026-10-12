@@ -340,3 +340,14 @@ def test_the_stack_vtk_sheets_are_masked_like_the_plotly_ones(grid):
         xy = np.asarray(sheet.points)[:, :2]
         assert len(xy) > 0
         assert shapely.contains_xy(near, xy[:, 0], xy[:, 1]).all()
+
+
+def test_save_raster_refuses_a_clip_it_cannot_apply(grid, tmp_path):
+    """``polygon_clip``/``buffer`` beside the clipped image were ignored (ledger 481)."""
+
+    surface = _surface(grid)
+    image, transform, meta = surface.clip_raster_with_polygon()
+    for option in ({"buffer": 5.0}, {"polygon_clip": L_SHAPE}):
+        with pytest.raises(ValueError, match="written as it is"):
+            surface.save_raster(output_tif=tmp_path / "x.tif", clipped_image=image,
+                                clipped_transform=transform, meta=meta, **option)

@@ -766,12 +766,13 @@ class InterpolatedSurface(Picture):
             What to clip to when the three pieces above are not given, in the
             surface's own coordinates. The default ``None`` uses ``clip=``,
             else the grid's footprint, and raises ``ValueError`` when the
-            surface has neither. It is silently IGNORED when the three pieces
-            are given, because nothing is clipped then.
+            surface has neither. Given WITH the three pieces it raises
+            ``ValueError``: nothing is clipped then (it was ignored in silence
+            until ledger 481).
         buffer : float, default 0
             Distance, in the surface's length units, to grow (negative: shrink)
-            the clip polygon by. ``0`` leaves it as it is. Silently ignored
-            with the three pieces, as ``polygon_clip`` is.
+            the clip polygon by. ``0`` leaves it as it is. Anything else with the
+            three pieces raises ``ValueError``, as ``polygon_clip`` does.
 
         Returns
         -------
@@ -781,17 +782,25 @@ class InterpolatedSurface(Picture):
         ------
         ValueError
             When some but not all of ``clipped_image``, ``clipped_transform``
-            and ``meta`` are given.
+            and ``meta`` are given, or ``polygon_clip``/``buffer`` with all three.
         """
 
-        polygon_clip = self.clip if polygon_clip is None else polygon_clip
         pieces = (clipped_image, clipped_transform, meta)
         if all(piece is None for piece in pieces):
+            polygon_clip = self.clip if polygon_clip is None else polygon_clip
             clipped_image, clipped_transform, meta = self.clip_raster_with_polygon(polygon=polygon_clip, buffer=buffer)
         elif any(piece is None for piece in pieces):
             raise ValueError(
                 "Pass all three of clipped_image, clipped_transform and meta, or "
                 "none of them."
+            )
+        elif polygon_clip is not None or buffer != 0:
+            # Nothing is clipped when the pieces are given, so these could not act
+            # (ledger 481: they were ignored in silence).
+            raise ValueError(
+                "polygon_clip=/buffer= say how to CLIP, and the clipped image given is "
+                "written as it is; clip it with them (clip_raster_with_polygon), or "
+                "drop the image and let save_raster clip."
             )
 
         # Update the metadata with the new transform and dimensions -- a copy, so

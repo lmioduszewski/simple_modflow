@@ -215,7 +215,7 @@ def test_a_hillshade_adds_a_layer_and_leaves_the_view_alone(monkeypatch):
 
     hillshade = ChoroplethHillshadeBackground.__new__(ChoroplethHillshadeBackground)
     hillshade._bounds = (-127.0, 45.0, -126.0, 46.0)
-    monkeypatch.setattr(hillshade, "file_to_data_uri", lambda: "data:image/png;base64,")
+    monkeypatch.setattr(hillshade, "data_uri", lambda: "data:image/png;base64,")
     figure = viz.Fig()
     figure.update_layout(map={"center": {"lat": 1.0, "lon": 2.0}, "zoom": 17.0})
 

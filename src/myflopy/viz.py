@@ -161,10 +161,9 @@ class Picture:
         Parameters
         ----------
         path : str or os.PathLike
-            The file to write. An existing file is overwritten. Its directory
-            must already exist (``FileNotFoundError`` otherwise). This method
-            does not create it, unlike the ``html`` of :class:`MplPicture`,
-            :class:`VtkScene` and :class:`FrameAnimation`.
+            The file to write. An existing file is overwritten, and missing
+            directories are created, as every picture's ``html`` does (this one
+            raised ``FileNotFoundError`` until ledger 481).
         include_plotlyjs : bool or str, default "cdn"
             How the page gets plotly.js, as Plotly's ``write_html`` reads it.
             ``"cdn"`` links the CDN copy, so the file is small but needs a
@@ -190,6 +189,7 @@ class Picture:
         from pathlib import Path as _Path
 
         path = _Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
         self.fig.write_html(str(path), include_plotlyjs=include_plotlyjs, **kwargs)
         return path
 
@@ -212,8 +212,7 @@ class Picture:
             know, and raises ``ValueError`` for a path with no suffix and no
             ``format=``. Without kaleido installed, the image route raises
             ``ImportError`` naming it before anything is written. The image
-            route never creates a missing directory. The HTML route creates
-            one only when the picture's own ``html`` does.
+            route never creates a missing directory; the HTML route does.
         **kwargs
             For ``.html``: the keywords of this picture's :meth:`html`
             (``include_plotlyjs`` and Plotly's ``write_html`` keywords). For an
@@ -805,6 +804,10 @@ smGraph.dataset.simpleModflowRestyleReady = "true";
 
 
 
+#: The trace types :meth:`FrameAnimation.html`'s restyle page is written for.
+_CHOROPLETH_TRACE_TYPES = ("choropleth", "choroplethmap", "choroplethmapbox")
+
+
 class FrameAnimation(Picture):
     """Frames flipped in one interactive Plotly figure (plan 8.6a).
 
@@ -860,14 +863,13 @@ class FrameAnimation(Picture):
         (5.7 MB vs 6.9 MB, mostly inlined plotly.js either way), and at 20
         frames on a 2,000-cell grid roughly an order of magnitude.
 
-        The test is not "is this a choropleth". It is whether the first frame's
-        first trace carries a ``z``. A frame trace with no ``z`` (2-D lines
-        and markers) falls through to plotly's own writer. Any trace WITH a
-        ``z`` takes the restyle page, a 3-D ``surface``, a ``scatter3d`` or a
-        heatmap included. When that trace carries no ``customdata`` (an
-        ``InterpolatedSurface``'s does not), the page embeds ``null`` where
-        its script calls ``customdata.map``, so Play and the slider fail in
-        the browser while frame 0 still draws.
+        The restyle page is for a frame whose first trace is a CHOROPLETH;
+        anything else -- 2-D lines and markers, a 3-D ``surface``, a
+        ``scatter3d``, a heatmap -- goes to plotly's own writer. Until ledger
+        481 the test was "the first trace carries a ``z``", which sent a
+        surface or heatmap to the restyle page, whose script calls
+        ``customdata.map`` on a trace with none: Play and the slider failed in
+        the browser while frame 0 still drew.
 
         ``include_plotlyjs`` defaults to ``True`` (inlined) rather than
         ``Picture``'s ``"cdn"``: this is the artifact you send someone, so it
@@ -885,8 +887,8 @@ class FrameAnimation(Picture):
             ``"directory"``, ``"require"`` and a ``.js`` URL are as in
             :meth:`Picture.html`.
         **kwargs
-            On the restyle page (a first frame trace carrying ``z``), two
-            keywords only, and any other raises ``TypeError``:
+            On the restyle page (a choropleth animation), two keywords only,
+            and any other raises ``TypeError``:
 
             - ``interval_ms`` (int, default 250): milliseconds between frames
               during playback.
@@ -907,13 +909,17 @@ class FrameAnimation(Picture):
         figure = self.fig
         path = _Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        if figure.frames and getattr(figure.frames[0].data[0], "z", None) is not None:
+        if figure.frames and getattr(figure.frames[0].data[0], "type", None) in _CHOROPLETH_TRACE_TYPES:
             return _write_plotly_choropleth_restyle_html(
                 figure, path, include_plotlyjs=include_plotlyjs, **kwargs
             )
         figure.write_html(str(path), include_plotlyjs=include_plotlyjs, **kwargs)
         return path
 
+
+
+#: The still formats PyVista's ``Plotter.screenshot`` writes (lower case).
+_SCREENSHOT_SUFFIXES = frozenset({".png", ".jpeg", ".jpg", ".bmp", ".tif", ".tiff"})
 
 
 class VtkScene(Picture):
@@ -1008,7 +1014,7 @@ class VtkScene(Picture):
 
         return html.replace(VtkScene._MODULE_SCRIPT, "<script>", 1)
 
-    def html(self, path, **kwargs):
+    def html(self, path):
         """Write a self-contained interactive vtk.js page and return its path.
 
         The page opens from disk as well as over HTTP -- see
@@ -1019,11 +1025,10 @@ class VtkScene(Picture):
         path : str or os.PathLike
             The page to write, whatever its suffix. Missing directories are
             created and an existing file is overwritten. Needs PyVista's trame
-            extras (``ImportError`` naming them otherwise).
-        **kwargs
-            Accepted and IGNORED: nothing is forwarded, because PyVista's
-            ``Plotter.export_html`` takes only the file name. A keyword given
-            here changes nothing and raises nothing.
+            extras (``ImportError`` naming them otherwise). It takes no other
+            argument: PyVista's ``Plotter.export_html`` takes only the file name,
+            and the keywords this accepted and ignored are refused (ledger
+            481).
 
         Returns
         -------
@@ -1050,18 +1055,18 @@ class VtkScene(Picture):
         path : str or os.PathLike
             The file to write. Missing directories are created on both routes.
             ``.html`` or ``.htm`` (any case) goes to :meth:`html`. Any other
-            suffix is a screenshot by PyVista's ``Plotter.screenshot``, which
-            writes ``.png``, ``.jpeg``/``.jpg``, ``.bmp`` or ``.tif``/``.tiff``
-            in LOWER case only (``.PNG`` is refused) and refuses any other
-            suffix with ``ValueError``. A path with NO suffix is written with
-            ``.png`` appended, so the path returned names no file.
+            suffix is a screenshot by PyVista's ``Plotter.screenshot``:
+            ``.png``, ``.jpeg``/``.jpg``, ``.bmp`` or ``.tif``/``.tiff``, any case
+            (PyVista refused ``.PNG``). Another suffix, or none, raises
+            ``ValueError`` -- a path with none was written with ``.png`` appended,
+            so the path returned named no file (ledger 481).
         **kwargs
             For a screenshot, ``Plotter.screenshot``'s keywords:
             ``transparent_background`` (bool), ``window_size`` (``(width,
             height)`` in pixels) and ``scale`` (int, multiplies the window
             size). Passing ``return_img`` changes only what PyVista computes;
-            the path is returned either way. For ``.html`` they reach
-            :meth:`html`, which ignores them.
+            the path is returned either way. For ``.html`` none is taken
+            (``TypeError``).
 
         Returns
         -------
@@ -1069,13 +1074,30 @@ class VtkScene(Picture):
             ``path``.
         """
 
+        import os as _os
         from pathlib import Path as _Path
 
         path = _Path(path)
-        if path.suffix.lower() in {".html", ".htm"}:
-            return self.html(path, **kwargs)
+        suffix = path.suffix.lower()
+        if suffix in {".html", ".htm"}:
+            if kwargs:
+                raise TypeError(
+                    f"An HTML scene takes no options; {sorted(kwargs)} are screenshot "
+                    "keywords (ledger 481)."
+                )
+            return self.html(path)
+        if suffix not in _SCREENSHOT_SUFFIXES:
+            raise ValueError(
+                f"{path.name!r} names no image format a screenshot writes; end it in "
+                f"one of {sorted(_SCREENSHOT_SUFFIXES)} (any case), or .html."
+            )
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.scene.screenshot(str(path), **kwargs)
+        # PyVista reads the suffix case-sensitively; write the lower-case name and
+        # move it onto the one asked for.
+        written = path.with_suffix(suffix)
+        self.scene.screenshot(str(written), **kwargs)
+        if written != path:
+            _os.replace(written, path)
         return path
 
     def show(self, *args, **kwargs):

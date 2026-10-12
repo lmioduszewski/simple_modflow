@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from myflopy.modflow.mf6.simulation.base import SimulationBase
 
 import base64
+import io
 import mimetypes
 from pathlib import Path
 
@@ -1488,11 +1489,12 @@ class Choro(Picture):
         alongside the cell trace -- which is what keeps a composed small-multiple
         from quietly showing only half the picture.
 
-        Register them BEFORE the figure is first assembled, which happens on any
-        ``.fig``, ``.show()``, ``.save()``/``.html()`` or inline display. One
-        added afterwards never reaches this map's own figure (``.fig`` is built
-        once). It still reaches :meth:`overlay_traces`, so a ``mosaic``,
-        ``animate`` or ``.ani`` built later draws it.
+        One added after the figure was first assembled (any ``.fig``,
+        ``.show()``, ``.save()``/``.html()`` or inline display) is drawn onto
+        that figure too, on top of what is there -- until ledger 481 it
+        never reached it, ``.fig`` being built once. Either way it reaches
+        :meth:`overlay_traces`, so a ``mosaic``, ``animate`` or ``.ani`` built
+        later draws it.
 
         Parameters
         ----------
@@ -1511,6 +1513,9 @@ class Choro(Picture):
         """
 
         self._overlays.extend(traces)
+        if self._assembled:
+            for trace in traces:
+                self._fig.add_trace(trace)
         return self
 
     def _highlight_traces(self):
@@ -1815,16 +1820,13 @@ class Choro(Picture):
     ):
         """Render a hillshade GeoTIFF as a PNG image layer beneath the map traces.
 
-        Reuses an already-exported PNG next to the model output when present,
-        otherwise converts ``tif_path`` first. :attr:`fig` calls this with the
-        map's ``hillshade_path=``.
-
-        The PNG is ``hillshade.png`` in the results model's output folder, or in
-        the CURRENT WORKING DIRECTORY when the map has no results model. The
-        name does not depend on the raster, and an existing file of that name is
-        reused WHATEVER raster it was made from. A second map given a different
-        ``tif_path`` therefore draws the first raster's image stretched over
-        the second raster's bounds. Delete the PNG to make it convert again.
+        Converts ``tif_path`` to a PNG IN MEMORY and embeds it as a data URI;
+        nothing is written to disk. :attr:`fig` calls this with the map's
+        ``hillshade_path=``. Until ledger 481 it wrote ``hillshade.png`` to
+        the model's output folder (the working directory without a model) and
+        REUSED any file of that name, whatever raster made it -- so a second map
+        given another raster drew the first one's image over the second's
+        bounds.
 
         The image replaces the basemap (map style ``"white-bg"``) and any other
         ``layout.map.layers``, and the cells are drawn at opacity 0.6 over it.
@@ -1837,19 +1839,21 @@ class Choro(Picture):
             are reprojected to WGS84 to place the image. A 1- or 2-band raster
             is always stretched linearly, from its own minimum to its maximum,
             onto 0-255. A 3+ band raster keeps its ``uint8`` bands as they are
-            and stretches the others. The default ``None`` cannot act: rasterio
-            raises ``TypeError``.
+            and stretches the others. Required despite the ``None`` default:
+            ``None`` raises ``TypeError`` naming ``hillshade_path=`` (rasterio
+            raised its own until ledger 481).
 
         Returns
         -------
         None
         """
 
+        if tif_path is None:
+            raise TypeError(
+                "add_hillshade needs the GeoTIFF to draw; pass tif_path=, or give the "
+                "map hillshade_path=."
+            )
         hillshade = ChoroplethHillshadeBackground(tif_path, self.model)
-        if hillshade.png_path.exists():
-            logger.info('reusing the existing hillshade png at %s', hillshade.png_path)
-        else:
-            hillshade.save_geotiff_as_png()
         hillshade.update_fig_layout(self._fig)
 
     @property
@@ -2255,12 +2259,9 @@ class ChoroplethHillshadeBackground:
             self._bounds = (left, bottom, right, top)
         return self._bounds
 
-    def save_geotiff_as_png(self):
-        """
-           Read a GeoTIFF and save as PNG suitable for Plotly image layer.
-           - Handles 1, 2, 3, 4 bands.
-           Returns: ((left, bottom, right, top) in EPSG:4326)
-           """
+    def _png_image(self):
+        """The GeoTIFF as a PIL image for a Plotly image layer (1, 2, 3 or 4+ bands)."""
+
         with rasterio.open(self.tif_path) as src:
             data = src.read()  # (bands, rows, cols)
 
@@ -2279,27 +2280,38 @@ class ChoroplethHillshadeBackground:
 
         if bands == 1:
             # (H, W) grayscale
-            arr = norm255(data[0])
-            Image.fromarray(arr, mode="L").save(self.png_path)
-        elif bands == 2:
+            return Image.fromarray(norm255(data[0]), mode="L")
+        if bands == 2:
             # Treat band2 as alpha if that makes sense; otherwise just ignore it
             rgb = np.stack([norm255(data[0])] * 3, axis=-1)  # fake RGB from band1
             alpha = norm255(data[1])
-            rgba = np.dstack([rgb, alpha])
-            Image.fromarray(rgba, mode="RGBA").save(self.png_path)
-        elif bands == 3:
+            return Image.fromarray(np.dstack([rgb, alpha]), mode="RGBA")
+        if bands == 3:
             # RGB
             rgb = np.moveaxis(data[:3], 0, 2)
             if rgb.dtype != np.uint8:
                 rgb = np.dstack([norm255(data[0]), norm255(data[1]), norm255(data[2])])
-            Image.fromarray(rgb, mode="RGB").save(self.png_path)
-        else:
-            # 4+ bands -> RGBA using first 4
-            r, g, b, a = (data[0], data[1], data[2], data[3])
-            rgba = np.dstack([*(norm255(x) if x.dtype != np.uint8 else x for x in (r, g, b, a))])
-            Image.fromarray(rgba, mode="RGBA").save(self.png_path)
+            return Image.fromarray(rgb, mode="RGB")
+        # 4+ bands -> RGBA using first 4
+        r, g, b, a = (data[0], data[1], data[2], data[3])
+        rgba = np.dstack([*(norm255(x) if x.dtype != np.uint8 else x for x in (r, g, b, a))])
+        return Image.fromarray(rgba, mode="RGBA")
 
-        return
+    def save_geotiff_as_png(self):
+        """Write the raster as a PNG to :attr:`png_path` (the image :meth:`data_uri` embeds)."""
+
+        self._png_image().save(self.png_path)
+
+    def data_uri(self) -> str:
+        """The raster as a PNG data URI, built in memory -- no file is read or written.
+
+        What a map embeds (ledger 481): a PNG cached on disk under one fixed
+        name was reused whatever raster it had been made from.
+        """
+
+        buffer = io.BytesIO()
+        self._png_image().save(buffer, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
     def file_to_data_uri(self):
         """
@@ -2341,7 +2353,7 @@ class ChoroplethHillshadeBackground:
                 layers=[
                     dict(
                         sourcetype="image",
-                        source=self.file_to_data_uri(),  # local path or URL
+                        source=self.data_uri(),  # built in memory, ledger 481
                         coordinates=coords,
                         below="traces",  # rendered beneath all data traces
                         opacity=1.0,
