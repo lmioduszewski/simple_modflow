@@ -21049,7 +21049,7 @@ same day, which is the useful part of the result.
       with no `TIME_UNITS`, and a TDIS `START_DATE_TIME` that differs from the
       calibration's `start_datetime` (a month would depend on which is read; with no TDIS
       start the calibration's is used). The build metadata's parameter record gains
-      `periods` and `period_groups` (label, `pargp`, periods served, files) for the
+      `periods` and `period_groups` (label, its PEST groups `pargps`, periods served, files) for the
       write-back. `temporal=` is removed with no alias (Q10); because `parameterize`
       passes unknown keywords to pyEMU, an `**extra` key that is no parameter of pyEMU's
       `PstFrom.add_parameters` is now refused at the call (`TypeError`) -- `temporal=`

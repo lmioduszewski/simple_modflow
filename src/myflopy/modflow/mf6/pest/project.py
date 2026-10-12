@@ -1962,16 +1962,18 @@ class PestProject:
                 if isinstance(spec.periods, dict) else spec.periods
             ),
             # One per parameter set `periods=` made (ledger 549): its label
-            # (None without `periods`), the PEST group and name base of its parameters,
-            # the periods its files hold the values of, and the files.
+            # (None without `periods`), the PEST groups the build gave its parameters
+            # (one per layer file of a grid array, one per pilot-point set), the
+            # periods its files hold the values of, and the files.
             "period_groups": [
                 {
                     "label": group.label,
-                    "pargp": f"{spec.name}{group.name_suffix}",
+                    "pargps": list(pargps),
                     "periods": [int(period) for period in group.periods],
                     "files": [target.filename for target in group.targets],
                 }
-                for group in spec.period_groups
+                for group, pargps in zip(
+                    spec.period_groups, spec.period_group_pargps, strict=True)
             ],
             "pargps": groups,
             "pilot_points": pilot_points,

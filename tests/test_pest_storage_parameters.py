@@ -15,6 +15,7 @@ steady period then two transient ones, ``sy`` LAYERED (0.1, 0.2), ``ss`` one sca
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -138,6 +139,11 @@ def test_a_scalar_ss_is_relayered_and_each_layer_is_its_own_grid_set(runs, tmp_p
         ("m.sto_ss_layer1.txt", 0), ("m.sto_ss_layer2.txt", 1)]
     groups = pst.parameter_data.groupby("pargp").size()
     assert groups.to_dict() == {"stossl0": NCPL, "stossl1": NCPL}
+    # The build metadata names the groups the parameters are in, per layer
+    # (review of R2-arrays: it named one group, "stoss", which held none of them).
+    metadata = json.loads((cal.template_workspace / "myflopy_pest_metadata.json").read_text())
+    (record,) = metadata["parameters"]
+    assert [group["pargps"] for group in record["period_groups"]] == [["stossl0", "stossl1"]]
     worker = _forward_run(cal, pst, tmp_path, {"stossl1": 2.0})
     assert np.allclose(_values(worker / "m.sto_ss_layer1.txt"), SS)
     assert np.allclose(_values(worker / "m.sto_ss_layer2.txt"), 2.0 * SS)

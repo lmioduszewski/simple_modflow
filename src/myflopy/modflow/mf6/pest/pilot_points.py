@@ -383,7 +383,7 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
     # PERIOD files of one group share their sets -- one field interpolated once per
     # run and multiplied into each file (ledger 547). The layer is
     # FloPy's record of the file, never parsed from its name (ledger 517).
-    for group in spec.period_groups:
+    for group, pargps in zip(spec.period_groups, spec.period_group_pargps, strict=True):
         by_layer: dict[int | None, list[str]] = {}
         for target in group.targets:
             by_layer.setdefault(target.layer, []).append(target.filename)
@@ -405,6 +405,7 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
                         "[l<layer>][z<zone>])."
                     )
                 taken.add(base)
+                pargps.append(base)
                 cells = np.arange(xc.size) if labels is None else np.flatnonzero(labels == zone)
                 frame = pd.DataFrame({
                     "parnme": [f"{base}pp{i:04d}" for i in range(len(points))],

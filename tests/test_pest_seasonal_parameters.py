@@ -260,9 +260,34 @@ def test_the_build_metadata_records_each_group(runs, tmp_path):
     (record,) = metadata["parameters"]
     assert record["periods"] == "month" and record["family"] == "array"
     october = next(group for group in record["period_groups"] if group["label"] == "m10")
-    assert october["pargp"] == "rchm_m10"
+    assert october["pargps"] == ["rchm_m10"]
     assert october["periods"] == [YEAR.months_of(0)[10], YEAR.months_of(1)[10]]
     assert len(october["files"]) == 2
+
+
+def test_each_group_records_the_pest_groups_its_parameters_are_in(runs, tmp_path):
+    """Review of R2-arrays: a group's record named ``<name>_<label>`` as its one PEST
+    group, which no parameter of a zoned pilot-point set is in (``rpp_m10z1``,
+    ``rpp_m10z2``): a write-back reading it found no parameters. It names each group's
+    real PEST groups, every one of which the control file holds."""
+
+    cal = _cal(runs, tmp_path)
+    zones = np.r_[np.ones(NCPL // 2, int), np.full(NCPL - NCPL // 2, 2)]
+    cal.parameterize("recharge", style="pilotpoints", name="rpp", periods="month",
+                     pp_spacing=15.0, zones=zones)
+    cal.parameterize("recharge", style="zone", name="rz", zones=zones,
+                     periods={"autumn": [YEAR.months_of(0)[10], YEAR.months_of(0)[11]]})
+    pst = _build(cal)
+    metadata = json.loads((cal.template_workspace / "myflopy_pest_metadata.json").read_text())
+    records = {record["name"]: record for record in metadata["parameters"]}
+    held = set(pst.parameter_data["pargp"])
+    october = next(group for group in records["rpp"]["period_groups"] if group["label"] == "m10")
+    assert october["pargps"] == ["rpp_m10z1", "rpp_m10z2"]
+    (autumn,) = records["rz"]["period_groups"]
+    assert autumn["pargps"] == ["rz_autumn"]
+    for record in records.values():
+        named = [pargp for group in record["period_groups"] for pargp in group["pargps"]]
+        assert sorted(named) == sorted(record["pargps"]) and set(named) <= held
 
 
 # -- files numbered by ordinal, repeated blocks -------------------------------------------

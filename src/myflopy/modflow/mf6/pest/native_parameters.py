@@ -949,8 +949,9 @@ class NativeParameterSpec:
         parameter scales. Default empty.
     pilot_point_sets : list of dict, optional
         Filled by :meth:`PestProject.build` for array-target pilot points: one
-        summary per pilot-point set (``name``, ``layer``, ``zone``, ``points``,
-        ``cells``). Default empty.
+        summary per pilot-point set (``name``, ``layer`` -- ``None`` for a set on
+        period files --, ``zone``, ``period_group``, ``points``, ``cells``). Default
+        empty.
 
     Attributes
     ----------
@@ -971,6 +972,13 @@ class NativeParameterSpec:
         Filled by :meth:`PestProject.build`: the parameter sets ``periods`` made,
         each with its label, the periods its files serve and the files
         (:func:`group_period_files`); one unlabelled group without ``periods``.
+    period_group_pargps : list of list of str
+        Filled by :meth:`PestProject.build`, one list per :attr:`period_groups`
+        entry in its order: the PEST groups the build gave that group's parameters
+        -- ``<name>_<label>``, or one per layer file of a ``"grid"`` array
+        (``<name>_<label>l<layer>``) and one per pilot-point set
+        (``<name>_<label>[l<layer>][z<zone>]``), and whatever ``pargp=`` in
+        ``extra`` names instead.
     """
 
     target: str
@@ -1003,6 +1011,7 @@ class NativeParameterSpec:
         self.resolved_targets: list[TargetFile] = []
         self.resolved_zone_labels: list[int] | None = None
         self.period_groups: list[PeriodGroup] = []
+        self.period_group_pargps: list[list[str]] = []
         declared = self.declared_recipe
         self.style = _checked_style(self.style if self.style is not None else declared.default_style)
         # A target of two forms (`recharge`) is held in the form its style can only
@@ -1986,6 +1995,7 @@ def target_files(project, spec: NativeParameterSpec) -> list[TargetFile]:
     if recipe.package == "sto":
         refuse_storage_that_cannot_act(project, spec, model, packages, targets)
     spec.period_groups = period_groups_for(project, spec, model, targets)
+    spec.period_group_pargps = [[] for _group in spec.period_groups]
     targets = [target for group in spec.period_groups for target in group.targets]
     if spec.capture and sum(target.period is not None for target in targets) > 1:
         raise NotImplementedError(
@@ -2274,6 +2284,14 @@ def _carry_river_bottom(project, spec: NativeParameterSpec, grid_type: str) -> N
         carried.add(target.filename)
 
 
+def _record_pargps(pargps: list[str], frame) -> None:
+    """Append the PEST groups of one ``add_parameters`` frame to a period group's list."""
+
+    for group in frame["pargp"]:
+        if str(group) not in pargps:
+            pargps.append(str(group))
+
+
 def add_native_parameter(project, spec: NativeParameterSpec):
     """Compile one :class:`NativeParameterSpec` into ``pf.add_parameters``.
 
@@ -2341,7 +2359,7 @@ def add_native_parameter(project, spec: NativeParameterSpec):
     # carry no layer and share one set: pyEMU's own rule, one per-cell set across the
     # files of a call (ledger 547).
     frames = []
-    for group in spec.period_groups:
+    for group, pargps in zip(spec.period_groups, spec.period_group_pargps, strict=True):
         name = f"{spec.name}{group.name_suffix}"
         group_files = [target.filename for target in group.targets]
         layers = sorted({target.layer for target in group.targets if target.layer is not None})
@@ -2351,6 +2369,7 @@ def add_native_parameter(project, spec: NativeParameterSpec):
                 layer_kwargs["par_name_base"] = f"{name}l{target.layer}"
                 layer_kwargs["pargp"] = f"{name}l{target.layer}"
                 frames.append(project.pf.add_parameters(target.filename, **layer_kwargs))
+                _record_pargps(pargps, frames[-1])
             continue
         group_kwargs = dict(kwargs)
         group_kwargs["par_name_base"] = name
@@ -2358,6 +2377,7 @@ def add_native_parameter(project, spec: NativeParameterSpec):
         group_kwargs.update(spec.extra)
         frames.append(project.pf.add_parameters(
             group_files if len(group_files) > 1 else group_files[0], **group_kwargs))
+        _record_pargps(pargps, frames[-1])
     frame = pd.concat(frames, ignore_index=True)
     _refuse_a_large_correlated_grid(spec, frame)
     if recipe.canonical == "riv.stage":
