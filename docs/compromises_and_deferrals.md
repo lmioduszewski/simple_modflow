@@ -33,11 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 496 entries (501 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 497 entries (502 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
 | 497 | The group and diff LAK exchange compare pairs a connection by where it sits, not by `iconn` | 2026-10-11 |
+| 496 | A read view refuses a `layer=` it does not number, on DIS, DISV and DISU, through one helper | 2026-10-11 |
 | 495 | Every head reader masks MF6's no-value numbers through `headsplus._is_sentinel`, and a calibration target s... | 2026-10-11 |
 | 494 | A USG export changes only the values whose copies differ, and a RIV warns only on differing `rbot`s | 2026-10-11 |
 | 493 | A USG export weights a shared cell's DRN/GHB/RIV elevations by conductance | 2026-10-11 |
@@ -19151,11 +19152,15 @@ same day, which is the useful part of the result.
       FloPy's two layers, so `npf.k.get()` held 48 rows with a layer 1 copying layer 0,
       and once the map refused layer 1 the DEFAULT `npf.k.mosaic()` raised on that
       phantom panel; the transmissivity nouns and `SpatialView`'s fallback layer list
-      read FloPy's count too. They read `views_nlay` now. Not audited on DISU: the
+      read FloPy's count too. They read `views_nlay` now. ~~Not audited on DISU: the
       section/profile readers, PEST zones and pilot points, which still read
       `modelgrid.nlay`. Not changed: `model.hds.get(layer=1)` and
       `q.get(layer=1)` on a DISU still FILTER to zero rows, and `model.hds.array(layer=1)`
-      raises numpy's `IndexError` -- a `get` is a filter, and the array reader is not a map.
+      raises numpy's `IndexError` -- a `get` is a filter, and the array reader is not a map.~~
+      Both done in ledger 496: every read view's `layer=` (`get`, `array`, the
+      sections and the line profile) is refused through `check_view_layers`, and the
+      section/profile readers count through `views_nlay`/`views_ncpl` (PEST was ledger
+      452's).
 
 449. **An input view reads a period through one non-mutating reader, and `per=N` is the block MODFLOW 6 has in force (2026-10-11).**
       FloPy's `get_data(key=N)` and `has_data(key=N)` CREATE the storage they are asked
@@ -20013,6 +20018,33 @@ same day, which is the useful part of the result.
       `>= 1e29`, because importing `headsplus` there would move the module up an import
       layer for a test that already does the right thing. `get_obs_heads` feeds the legacy
       calibration class, so a residual against a dry cell is now `NaN`, not 1e30.
+
+496. **A read view refuses a `layer=` it does not number, on DIS, DISV and DISU, through one helper (2026-10-11).**
+      `package_explorer_utils.check_view_layers` is the one refusal, read against
+      `views_nlay` (ledger 448). The single-model `get`s, `hds.get`/`array`, the head line
+      profile and the cross-section's `layers=`/`head_layers=` use it, and so does the map's
+      own check. Before this, on a DISU `hds.get(layer=1)`, `q.get(layer=1)` and the input
+      `get`s FILTERED to 0 rows, and `hds.array(layer=1)` raised numpy's bare `IndexError`.
+      **Judgment call:** a `get` is a filter, but a layer the model does not have is
+      refused rather than read as "nothing there". That was also true of a layer past a DIS
+      or DISV model's count, so the refusal changes that too. The group and diff tiers'
+      `get(layer=)` still filter: their builders run inside `PACKAGE_TABLE_UNAVAILABLE`
+      handlers, which would read a `ValueError` as "package missing". `hds.array` keeps
+      its documented negative layer (`-1` is the bottom). `to_xugrid(layers=)` was not
+      changed. **The audit of FloPy's `modelgrid.nlay`, as the read views reach it:**
+      the cross-section's layer array, its `fill="results"`, its layer labels and its
+      Plotly renderer now count with `views_nlay`/`views_ncpl`. On a DISU the default
+      `model.plot.section(line)` raised numpy's `TypeError`, because FloPy holds a DISU's
+      `ncpl` as a per-layer array; it now draws the views' one layer. Transmissivity
+      refused EVERY run opened with `mf.load_mf6_run`, DIS included: such a run loads
+      only DIS and OC until a package is asked for by name, and `flow_model` read
+      `gwf.npf` straight off that partial load. It now loads through `model.package("npf")`.
+      Transmissivity also raised on a DIS `(nlay, nrow, ncol)` `botm`, which it now reads
+      row-major. **Left reading FloPy's count, deliberately:** the grid compatibility
+      fingerprint (`project/components.py`), which describes the grid and is not a view;
+      the legacy Matplotlib slider export (`interactive_plotting`, `layers=None`); and
+      `HeadsPlus.to_xugrid`. FloPy's own DISU `PlotCrossSection` finds only 4 of the 8
+      nodes a line through the 2 x 3 x 4 fixture crosses; myflopy draws what FloPy finds.
 
 497. **The group and diff LAK exchange compare pairs a connection by where it sits, not by `iconn` (2026-10-11).**
       MF6 numbers a lake's connections by their position in its list. A footprint one cell

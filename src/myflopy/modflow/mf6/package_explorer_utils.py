@@ -361,6 +361,104 @@ def views_nlay(source) -> int:
     return int(_model_grid(source).nlay)
 
 
+def views_ncpl(source) -> int:
+    """How many cells one of ``source``'s view layers holds: every node on a DISU.
+
+    The companion of :func:`views_nlay` (ledger 496): ``nlay x ncpl`` is
+    the shape a per-layer view array has -- ``(nlay, nrow * ncol)`` on DIS,
+    ``(nlay, ncpl)`` on DISV and ``(1, nodes)`` on DISU, where FloPy's own
+    ``ncpl`` is a per-layer ARRAY inferred from ``IHC``.
+
+    Parameters
+    ----------
+    source : object
+        A model (anything with a ``modelgrid``) or a FloPy grid; a source whose
+        grid has no ``grid_type`` falls back to its ``ncpl`` (read as an
+        ``int``).
+
+    Returns
+    -------
+    int
+        The cells per view layer.
+    """
+
+    if has_cell_numbering(source):
+        return int(cell_numbering(source).ncpl)
+    return int(_model_grid(source).ncpl)
+
+
+def check_view_layers(source, layer, *, note: str = "") -> list[int] | None:
+    """Refuse a ``layer=`` selector naming a layer ``source``'s views do not number.
+
+    The one refusal behind every read view's ``layer=`` (ledger 496), read
+    against :func:`views_nlay`: on a DISU that is ONE layer, whatever layering
+    FloPy infers from ``IHC``, so ``model.hds.get(layer=1)`` and
+    ``chd.results.q.get(layer=1)`` FILTERED to zero rows and
+    ``model.hds.array(layer=1)`` raised numpy's bare ``IndexError``. A layer off
+    a DIS or DISV grid is refused the same way -- it, too, filtered to nothing.
+
+    Parameters
+    ----------
+    source : object or int
+        A model (anything with a ``modelgrid``, as a myflopy model's ``gwf``) or
+        a FloPy grid, read through :func:`views_nlay`; or the layer count itself
+        as an ``int`` -- what a head-file reader opened with no model has, its
+        file's own ``nlay``, which is the views' count (MF6 writes a DISU's
+        nodes as one layer).
+    layer : int, iterable of int or None
+        The selector: one zero-based layer, several, or ``None`` (every layer,
+        nothing to check). A ``bool`` and a non-whole number raise
+        ``TypeError``; numpy integers are accepted.
+    note : str, optional
+        A sentence appended to the refusal -- what ``-1`` means on a map, say.
+        Default ``""``.
+
+    Returns
+    -------
+    list of int or None
+        The layers as Python ``int`` in the order given, or ``None`` when
+        ``layer`` is ``None``.
+
+    Raises
+    ------
+    ValueError
+        A layer outside ``0..nlay - 1``, naming the layer count and, on a DISU,
+        why it is one.
+    """
+
+    if layer is None:
+        return None
+    given = (
+        list(layer)
+        if isinstance(layer, Iterable) and not isinstance(layer, (str, bytes))
+        else [layer]
+    )
+    layers = []
+    for value in given:
+        if isinstance(value, bool) or not isinstance(
+            value, (int, np.integer, float, np.floating)
+        ) or not float(value).is_integer():
+            raise TypeError(f"layer must be a zero-based integer, not {value!r}")
+        layers.append(int(value))
+    counted = isinstance(source, (int, np.integer)) and not isinstance(source, bool)
+    nlay = int(source) if counted else views_nlay(source)
+    bad = [value for value in layers if not 0 <= value < nlay]
+    if bad:
+        span = "one layer, 0" if nlay == 1 else f"{nlay} layers, 0..{nlay - 1}"
+        named = f"layer={bad[0]} is" if len(bad) == 1 else f"layers {bad[:5]} are"
+        disu = (
+            " A DISU model's views number its nodes as ONE layer, whatever layering "
+            "FloPy infers from IHC."
+            if not counted
+            and getattr(_model_grid(source), "grid_type", None) == "unstructured"
+            else ""
+        )
+        raise ValueError(
+            f"{named} outside this model's {span} (zero-based).{note}{disu}"
+        )
+    return layers
+
+
 def cell_numbering(source) -> CellNumbering:
     """The :class:`CellNumbering` of a model or of a FloPy model grid.
 
@@ -591,9 +689,18 @@ def _filter_normalized_table(
     per: int | None = None,
     layer: int | Iterable[int] | None = None,
     cells: Iterable[int] | None = None,
+    views=None,
 ) -> pd.DataFrame:
-    """Apply standard ``per/layer/cell`` filters to a normalized input table."""
+    """Apply standard ``per/layer/cell`` filters to a normalized input table.
 
+    ``views`` -- the model (its ``gwf``) whose views number the layers -- makes a
+    ``layer`` they do not number a ``ValueError`` (:func:`check_view_layers`,
+    ledger 496) rather than an empty table; a single-model view passes it,
+    the builders and the group tier filter without it.
+    """
+
+    if views is not None:
+        check_view_layers(views, layer)
     selected = frame.copy()
     if per is not None and "per" in selected.columns:
         selected = selected[selected["per"] == int(per)]
@@ -1036,6 +1143,8 @@ __all__ = [
     "cell_numbering",
     "has_cell_numbering",
     "views_nlay",
+    "views_ncpl",
+    "check_view_layers",
     "split_cellid_columns",
     "_normalize_term_filter",
     "budget_term_attribute",

@@ -110,6 +110,9 @@ class CellPackageInputsExplorer(FieldMappable):
             gives no row).
         layer : int or iterable of int, optional
             Zero-based layer(s) to keep. Default ``None``: every layer.
+            A layer the model's views do not number -- ONE on a DISU, whatever
+            FloPy infers from ``IHC`` -- raises ``ValueError`` naming the count
+            (ledger 496); it selected nothing.
         cells : int or iterable of int, optional
             Zero-based cell id(s) WITHIN a layer (``0`` to ``ncpl - 1``) to keep;
             a bare int works as well as a list. Default ``None``: every cell.
@@ -122,7 +125,7 @@ class CellPackageInputsExplorer(FieldMappable):
             layer=layer,
             cells=cells,
         )
-        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
+        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells, views=self.model.gwf)
 
     def summary(self) -> pd.DataFrame:
         """Return a compact summary of available inputs for this package."""
@@ -641,6 +644,9 @@ class UzfFieldInputsExplorer(SpatialView):
         layer : int or iterable of int, optional
             Zero-based layer(s) of the UZF object's cell to keep. Default
             ``None``: every layer.
+            A layer the model's views do not number -- ONE on a DISU, whatever
+            FloPy infers from ``IHC`` -- raises ``ValueError`` naming the count
+            (ledger 496); it selected nothing.
         cells : int or iterable of int, optional
             Zero-based cell id(s) within a layer to keep. Default ``None``: every
             cell.
@@ -654,7 +660,7 @@ class UzfFieldInputsExplorer(SpatialView):
             cells=cells,
             package=self.package,
         )
-        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
+        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells, views=self.model.gwf)
 
     def summary(self) -> pd.DataFrame:
         """Return a compact summary of this UZF field's available input data."""
@@ -1284,8 +1290,10 @@ class StaticArrayFieldExplorer(SpatialView):
         Parameters
         ----------
         layer : int or iterable of int, optional
-            Zero-based layer(s) to keep; one the model lacks selects nothing.
-            Default ``None``: every layer.
+            Zero-based layer(s) to keep. Default ``None``: every layer.
+            A layer the model's views do not number -- ONE on a DISU, whatever
+            FloPy infers from ``IHC`` -- raises ``ValueError`` naming the count
+            (ledger 496); it selected nothing.
         cells : int or iterable of int, optional
             Zero-based cell id(s) within a layer to keep. Default ``None``: every
             cell.
@@ -1306,7 +1314,7 @@ class StaticArrayFieldExplorer(SpatialView):
                     }
                 )
         frame = pd.DataFrame(rows)
-        return _filter_normalized_table(frame, layer=layer, cells=cells)
+        return _filter_normalized_table(frame, layer=layer, cells=cells, views=self.model.gwf)
 
     def summary(self) -> pd.DataFrame:
         """Return a compact summary for this array field."""
@@ -1808,6 +1816,9 @@ class TransmissivityMaxExplorer(StaticArrayFieldExplorer):
             table, with no ``per``/``kstp`` columns.
         layer : int or iterable of int, optional
             Zero-based layer(s) to keep. Default ``None``: every layer.
+            A layer the model's views do not number -- ONE on a DISU, whatever
+            FloPy infers from ``IHC`` -- raises ``ValueError`` naming the count
+            (ledger 496); it selected nothing.
         cells : int or iterable of int, optional
             Zero-based cell id(s) within a layer to keep. Default ``None``: every
             cell.
@@ -1834,7 +1845,7 @@ class TransmissivityMaxExplorer(StaticArrayFieldExplorer):
                 frame.insert(4, "kstp", int(key[0]))
             frames.append(frame)
         frame = pd.concat(frames, ignore_index=True)
-        return _filter_normalized_table(frame, layer=layer, cells=cells)
+        return _filter_normalized_table(frame, layer=layer, cells=cells, views=self.model.gwf)
 
 
 class TransmissivityExplorer(TransmissivityMaxExplorer):

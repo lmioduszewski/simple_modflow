@@ -100,7 +100,9 @@ def transmissivity(
         Horizontal hydraulic conductivity (MF6's ``K``, the major axis), a scalar,
         one per layer, or ``(nlay, ncpl)``.
     top, botm
-        The model top ``(ncpl,)`` and the layer bottoms ``(nlay, ncpl)``.
+        The model top ``(ncpl,)`` and the layer bottoms ``(nlay, ncpl)``; a DIS
+        grid's ``(nrow, ncol)`` top and ``(nlay, nrow, ncol)`` bottoms are read
+        row-major, and a DISU's per-node ``botm`` is one layer of every node.
     idomain
         Cells with ``idomain <= 0`` come back NaN: MF6 removes a ``-1``
         (vertical pass-through) cell from horizontal flow as well as a ``0``.
@@ -116,6 +118,11 @@ def transmissivity(
     botm = np.asarray(botm, dtype=float)
     if botm.ndim == 1:
         botm = botm.reshape(1, -1)
+    elif botm.ndim > 2:
+        # A DIS grid's `(nlay, nrow, ncol)`, row-major -- the order the views number
+        # a DIS cell `row * ncol + col` by (ledger 419). It raised "too many values
+        # to unpack" (ledger 496).
+        botm = botm.reshape(botm.shape[0], -1)
     nlay, ncpl = botm.shape
     top = _layer_cells(top, 1, ncpl, "top")[0]
     layer_top = np.vstack([top.reshape(1, ncpl), botm[:-1]])
@@ -163,6 +170,18 @@ def flow_model(model):
         )
     gwf = getattr(model, "gwf", None)
     npf = getattr(gwf, "npf", None) if gwf is not None else None
+    if npf is None and callable(getattr(model, "package", None)):
+        # A run opened with `mf.load_mf6_run` loads its discretization and OC
+        # alone until a package is asked for BY NAME, so `gwf.npf` was None and
+        # transmissivity refused every such run, DIS included (ledger 496).
+        # `model.package` loads the whole simulation once, and `gwf` is the
+        # reloaded model after it.
+        try:
+            model.package("npf")
+        except AttributeError:
+            logger.debug("no NPF package on %r; transmissivity is refused", model)
+        gwf = getattr(model, "gwf", None)
+        npf = getattr(gwf, "npf", None) if gwf is not None else None
     if npf is None:
         kind = getattr(model, "model_type", None) or type(gwf).__name__
         raise ValueError(

@@ -29,7 +29,7 @@ from myflopy._warnings import stacklevel_outside_package
 from myflopy.modflow.mf6.contour_plotting import contour_line_segments_latlon
 from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.hydraulics import flow_model, model_transmissivity, unit_labels
-from myflopy.modflow.mf6.package_explorer_utils import views_nlay
+from myflopy.modflow.mf6.package_explorer_utils import check_view_layers, views_nlay
 from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.animations import Animation
 from myflopy.modflow.utils.datatypes.extent import Extent, resolve_extent
@@ -908,19 +908,13 @@ class Choro(Picture):
             # A bare grid carries no layer count to check against; the layer is a
             # label there, and every value was accepted before.
             return layer
-        nlay = int(self.nlay)
-        if not 0 <= layer < nlay:
-            span = "one layer, 0" if nlay == 1 else f"{nlay} layers, 0..{nlay - 1}"
-            disu = (
-                " A DISU model's views number its nodes as ONE layer, whatever layering "
-                "FloPy infers from IHC."
-                if getattr(self._inputs.gwf.modelgrid, "grid_type", None) == "unstructured"
-                else ""
-            )
-            raise ValueError(
-                f"layer={layer} is outside this model's {span} (zero-based; layer=-1 "
-                f"means 'above ground' only with show_mounding=True).{disu}"
-            )
+        # The one refusal every read view's `layer=` goes through (ledger 496),
+        # against the count `self.nlay` reads (`views_nlay`, ledger 448).
+        check_view_layers(
+            self._inputs.gwf,
+            layer,
+            note=" layer=-1 means 'above ground' only with show_mounding=True.",
+        )
         return layer
 
     @property

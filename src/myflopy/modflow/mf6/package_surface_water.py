@@ -440,6 +440,9 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
         layer : int or iterable of int or None, optional
             Zero-based layer(s) of the groundwater cell to keep. ``None``
             (default) keeps every layer.
+            A layer the model's views do not number -- ONE on a DISU, whatever
+            FloPy infers from ``IHC`` -- raises ``ValueError`` naming the count
+            (ledger 496); it selected nothing.
         cells : int or iterable of int or None, optional
             Zero-based cell number(s) within a layer (the ``cell`` column), ANDed
             with ``layer``. ``None`` (default) keeps every cell.
@@ -458,7 +461,7 @@ class SfrBudgetResultsExplorer(CellBudgetResultsExplorer):
             value_name=self.value_name,
             package=self.package,
         )
-        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
+        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells, views=self.model.gwf)
 
     @property
     def profile(self) -> SfrReachProfileView:
@@ -1104,6 +1107,9 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
         layer : int or iterable of int or None, optional
             Zero-based layer(s) of the connected groundwater cell to keep. ``None``
             (default) keeps every layer.
+            A layer the model's views do not number -- ONE on a DISU, whatever
+            FloPy infers from ``IHC`` -- raises ``ValueError`` naming the count
+            (ledger 496); it selected nothing.
         cells : int or iterable of int or None, optional
             Zero-based cell number(s) within a layer of the connected cell (the
             ``cell`` column), ANDed with ``layer``. ``None`` (default) keeps every
@@ -1134,7 +1140,7 @@ class LakBudgetResultsExplorer(CellBudgetResultsExplorer):
             value_name=self.value_name,
             package=self.package,
         )
-        frame = _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
+        frame = _filter_normalized_table(frame, per=per, layer=layer, cells=cells, views=self.model.gwf)
         connection_types = _normalize_connection_type_filter(connection_type)
         if connection_types is not None and "claktype" in frame.columns:
             frame = frame.loc[
@@ -1827,6 +1833,9 @@ class LakConnectionsExplorer:
         layer : int or iterable of int or None, optional
             Zero-based layer(s) of the connected groundwater cell. ``None``
             (default) keeps every layer.
+            A layer the model's views do not number -- ONE on a DISU, whatever
+            FloPy infers from ``IHC`` -- raises ``ValueError`` naming the count
+            (ledger 496); it selected nothing.
         cells : int or iterable of int or None, optional
             Zero-based cell number(s) within a layer of the connected cell (the
             ``cell`` column). ``None`` (default) keeps every cell.
@@ -1846,7 +1855,7 @@ class LakConnectionsExplorer:
         """
 
         frame = build_lak_connection_table(self.model, package=self.package)
-        frame = _filter_normalized_table(frame, per=None, layer=layer, cells=cells)
+        frame = _filter_normalized_table(frame, per=None, layer=layer, cells=cells, views=self.model.gwf)
         if lake is not None and "lake" in frame.columns:
             frame = frame.loc[frame["lake"] == int(lake)].copy()
         return frame.reset_index(drop=True)
@@ -4337,6 +4346,9 @@ class SurfaceWaterInputsNamespace(FieldMappable):
         layer : int or iterable of int or None, optional
             Zero-based layer(s) of the groundwater cell. ``None`` (default) keeps
             every layer.
+            A layer the model's views do not number -- ONE on a DISU, whatever
+            FloPy infers from ``IHC`` -- raises ``ValueError`` naming the count
+            (ledger 496); it selected nothing.
         cells : int or iterable of int or None, optional
             Zero-based cell number(s) within a layer (the ``cell`` column), ANDed
             with ``layer``. ``None`` (default) keeps every cell.
@@ -4355,7 +4367,8 @@ class SurfaceWaterInputsNamespace(FieldMappable):
             else build_sfr_input_table
         )
         return _filter_normalized_table(
-            builder(self.model, package=self.package), per=per, layer=layer, cells=cells
+            builder(self.model, package=self.package), per=per, layer=layer, cells=cells,
+            views=self.model.gwf,
         )
 
     @property

@@ -21,6 +21,11 @@ from flopy.plot import PlotCrossSection
 from matplotlib.colors import ListedColormap
 
 from myflopy.modflow.mf6.hydraulics import length_label
+from myflopy.modflow.mf6.package_explorer_utils import (
+    check_view_layers,
+    views_ncpl,
+    views_nlay,
+)
 from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.datatypes.readers import read_shp_gpkg
 from myflopy.viz import Fig, Picture, category_colors, mpl_axes
@@ -108,13 +113,19 @@ def normalize_line(line) -> dict:
 
 
 def _resolve_layer_array(grid) -> np.ndarray:
-    """A ``(nlay, ncpl)`` layer-index array for coloring the section by layer."""
+    """A ``(nlay, ncpl)`` layer-index array for coloring the section by layer.
 
-    nlay = grid.nlay
-    if hasattr(grid, "ncpl"):
-        ncpl = grid.ncpl
-        return np.arange(nlay)[:, None] * np.ones((1, ncpl), dtype=int)
-    raise ValueError("layered cross sections currently expect a grid with an 'ncpl' attribute.")
+    Shaped by the layers the model's VIEWS number (``views_nlay``/``views_ncpl``,
+    ledger 496): ``(1, nodes)`` on a DISU, whose ``ncpl`` FloPy holds as a
+    per-layer array -- the default section raised numpy's ``TypeError`` there.
+    """
+
+    if not hasattr(grid, "ncpl"):
+        raise ValueError(
+            "layered cross sections currently expect a grid with an 'ncpl' attribute."
+        )
+    nlay, ncpl = views_nlay(grid), views_ncpl(grid)
+    return np.arange(nlay)[:, None] * np.ones((1, ncpl), dtype=int)
 
 
 def _masked_to_layers(modelgrid, values, chosen):
@@ -125,7 +136,7 @@ def _masked_to_layers(modelgrid, values, chosen):
     paint from these arrays, so they cannot disagree about which cells are drawn.
     """
 
-    nlay = modelgrid.nlay
+    nlay = views_nlay(modelgrid)
     layer_id = _resolve_layer_array(modelgrid)
     if chosen is not None:
         keep = np.zeros(nlay, dtype=bool)
@@ -234,23 +245,20 @@ def readable_on(background) -> str:
     return "black" if (0.299 * red + 0.587 * green + 0.114 * blue) > 0.5 else "white"
 
 
-def _resolve_drawn_layers(layers, nlay: int) -> list[int] | None:
+def _resolve_drawn_layers(layers, grid) -> list[int] | None:
     """The zero-based layers to draw, or None for all of them.
 
-    Validated against ``nlay`` here rather than left to produce an empty picture:
-    a section that silently draws nothing is the same defect as one that draws
-    the wrong thing.
+    Validated against the layers ``grid``'s views number here rather than left to
+    produce an empty picture: a section that silently draws nothing is the same
+    defect as one that draws the wrong thing. One refusal,
+    ``check_view_layers`` (ledger 496): it read FloPy's ``modelgrid.nlay``,
+    two on a DISU whose views number one, so ``head_layers=[0, 1]`` passed here
+    and raised numpy's ``IndexError`` from the head reader.
     """
 
     if layers is None:
         return None
-    chosen = [layers] if isinstance(layers, (int, np.integer)) else list(layers)
-    chosen = [int(k) for k in chosen]
-    bad = [k for k in chosen if not 0 <= k < nlay]
-    if bad:
-        raise ValueError(
-            f"layers={bad} are outside this model's {nlay} layers (0..{nlay - 1})."
-        )
+    chosen = check_view_layers(grid, layers)
     if not chosen:
         raise ValueError("layers= selected nothing; omit it to draw them all.")
     return sorted(set(chosen))
@@ -590,8 +598,8 @@ def plot_layered_cross_section(
     """
     style = ModelCrossSectionStyle() if style is None else style
     line_spec = normalize_line(line)
-    nlay = modelgrid.nlay
-    chosen = _resolve_drawn_layers(layers, nlay)
+    nlay = views_nlay(modelgrid)
+    chosen = _resolve_drawn_layers(layers, modelgrid)
     layer_id, values = _masked_to_layers(modelgrid, values, chosen)
     resolved_layer_colors = _resolve_layer_colors(nlay, layer_colors, style)
     resolved_layer_labels = _resolve_layer_labels(nlay, layer_labels)
@@ -740,7 +748,7 @@ def section_values(model, fill, *, per=None, kstpkper=None):
                 "fill='results' needs a model with results; a bare grid has "
                 "none. Use fill='layer' for the geometry, or pass an array."
             )
-        nlay = model.gwf.modelgrid.nlay
+        nlay = views_nlay(model.gwf)
         return np.asarray(
             [reader.array(layer=k, per=per, kstpkper=kstpkper) for k in range(nlay)],
             dtype=float,
@@ -1014,17 +1022,17 @@ class FilledSection(Picture):
         self._values = section_values(model, fill, per=per, kstpkper=kstpkper)
         names = layer_labels
         if names is None and model is not None:
-            names = layer_labels_from_model(model, modelgrid.nlay)
+            names = layer_labels_from_model(model, views_nlay(modelgrid))
         self._layer_labels = names
         # The water levels are named from the SAME list as the layers, so
         # `layer_labels=["sand", ...]` reaches "Head, sand" too -- it stopped at
         # the layer entries before, and the lines read "Head, Layer 1".
         self._surfaces = section_head_surfaces(
             model, head_layers, per=per, kstpkper=kstpkper,
-            names=_resolve_layer_labels(modelgrid.nlay, names) if names is not None else None,
+            names=_resolve_layer_labels(views_nlay(modelgrid), names) if names is not None else None,
         ) if self._values is None else []
         self._layers = layers
-        self._chosen = _resolve_drawn_layers(layers, modelgrid.nlay)
+        self._chosen = _resolve_drawn_layers(layers, modelgrid)
         if cmap not in colormaps:
             raise ValueError(
                 f"cmap={cmap!r} is not a Matplotlib colormap; both renderers of a "
@@ -1103,7 +1111,7 @@ class FilledSection(Picture):
         from matplotlib.colors import Normalize, to_rgba
 
         style, grid, xsect = self._style, self._grid, self._xsect
-        nlay, ncpl = int(grid.nlay), int(grid.ncpl)
+        nlay, ncpl = views_nlay(grid), views_ncpl(grid)
         xmin, xmax, ymin, ymax = (float(v) for v in xsect.extent)
         mirror = xmin + xmax
 
@@ -1283,8 +1291,8 @@ def section_head_surfaces(model, head_layers, *, per=None, kstpkper=None, names=
     reader = getattr(model, "_field_reader", None)
     if reader is None:
         return []
-    nlay = model.gwf.modelgrid.nlay
-    chosen = _resolve_drawn_layers(head_layers, nlay)
+    nlay = views_nlay(model.gwf)
+    chosen = _resolve_drawn_layers(head_layers, model.gwf)
     if chosen is None:                                     # pragma: no cover
         chosen = list(range(nlay))
     names = list(names) if names is not None else (

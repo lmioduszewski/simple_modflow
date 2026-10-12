@@ -319,7 +319,74 @@ def test_a_disu_input_array_view_numbers_one_layer(runs):
         assert set(frame["layer"]) == {0}
         assert view._spatial_layers() == [0]
         assert view.mosaic() is not None
-    assert len(model.npf.k.get(layer=1)) == 0
+    with pytest.raises(ValueError, match="one layer, 0"):  # it selected 0 rows (ledger 496)
+        model.npf.k.get(layer=1)
+
+
+_DISU_ONE_LAYER = r"layer=1 is outside this model's one layer, 0 .*DISU"
+
+
+def test_every_disu_read_view_refuses_a_layer_its_views_do_not_number(runs):
+    """``get(layer=1)`` FILTERED to zero rows and ``hds.array(layer=1)`` raised
+    numpy's bare ``IndexError``; the sections read FloPy's IHC count, so
+    ``head_layers=[0, 1]`` and the line profile's ``layer=1`` died inside the
+    reader (ledger 496). One refusal, ``check_view_layers``, names the count."""
+
+    model = mf.load_mf6_run(runs.disu)
+    line = [(0.1, 15.0), (39.9, 15.0)]
+    calls = {
+        "hds.get": lambda: model.hds.get(layer=1),
+        "hds.array": lambda: model.hds.array(layer=1),
+        "chd.results.q.get": lambda: model.chd.results.q.get(layer=1),
+        "chd.inputs.head.get": lambda: model.chd.inputs.head.get(layer=1),
+        "npf.transmissivity.get": lambda: model.npf.transmissivity.get(layer=[0, 1]),
+        "hds.section": lambda: model.hds.section(line=line, layer=1),
+        "plot.section head_layers": lambda: model.plot.section(line, head_layers=[0, 1]),
+        "plot.section layers": lambda: model.plot.section(line, layers=[1]),
+    }
+    for name, call in calls.items():
+        with pytest.raises(ValueError, match=r"outside this model's one layer, 0 .*DISU"):
+            call()
+    # Layer 0 -- every node -- still reads, and -1 is the bottom (the one) layer.
+    assert len(model.hds.get(layer=0)) == model.modelgrid.nnodes
+    assert np.array_equal(model.hds.array(layer=-1), model.hds.array(layer=0))
+
+
+def test_a_dis_read_view_refuses_a_layer_off_the_grid(runs):
+    """Not a DISU matter alone: a layer past a DIS model's count filtered to nothing."""
+
+    model = mf.load_mf6_run(runs.base)
+    with pytest.raises(ValueError, match=r"layer=2 is outside this model's 2 layers, 0\.\.1"):
+        model.hds.get(layer=2)
+    with pytest.raises(ValueError, match=r"layers \[2, 5\] are outside"):
+        model.chd.results.q.get(layer=[0, 2, 5])
+    with pytest.raises(ValueError, match="outside this model's 2 layers"):
+        model.hds.array(layer=-3)
+    assert set(model.hds.get(layer=[0, 1])["layer"]) == {0, 1}
+
+
+def test_a_disu_section_draws_its_one_layer(runs):
+    """The default ``fill="layer"`` built a ``(nlay, ncpl)`` layer array from FloPy's
+    per-layer ``ncpl`` ARRAY -- numpy's ``TypeError`` -- and ``fill="results"``
+    asked the head reader for FloPy's layer 1 (ledger 496)."""
+
+    model = mf.load_mf6_run(runs.disu)
+    line = [(0.1, 15.0), (39.9, 15.0)]
+    for fill in ("layer", "results"):
+        assert model.plot.section(line, fill=fill).axes
+        assert model.plot.section(line, fill=fill, backend="plotly").fig.data
+
+
+@pytest.mark.parametrize("run", ["base", "disu"])
+def test_transmissivity_reads_a_freshly_loaded_run(runs, run):
+    """A run opened with ``mf.load_mf6_run`` loads DIS and OC alone until a package is
+    asked for by name; transmissivity read ``gwf.npf`` straight off that partial
+    load and refused EVERY such run as having no NPF (ledger 496)."""
+
+    model = mf.load_mf6_run(getattr(runs, run))
+    assert len(model.npf.transmissivity_max.get()) == model.modelgrid.nnodes
+    model = mf.load_mf6_run(getattr(runs, run))
+    assert model.plot.map(type="trans").fig is not None
 
 
 def test_a_dis_region_refuses_a_layer_or_cell_off_the_grid(runs):

@@ -17,6 +17,7 @@ from shapely.geometry import LineString
 from myflopy import viz as f
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.cross_section_plotting import section_axis_labels
+from myflopy.modflow.mf6.package_explorer_utils import check_view_layers
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.period_end import last_saved_step
@@ -389,9 +390,10 @@ class XSection(Picture):
         if isinstance(layer, int):
             layer = [layer]
         assert isinstance(layer, list), f'{layer} is not a integer or list'
-        assert all(lyr in list(range(self.model.gwf.modelgrid.nlay)) for lyr in layer), \
-            f'one of {layer} is not a valid layer'
-        self._layer = layer
+        # The layers the model's VIEWS number (ledger 496): FloPy's
+        # `modelgrid.nlay` is two on a DISU whose heads are one layer of nodes, so
+        # `layer=1` passed here and died at `.fig` with a bare `KeyError: 1`.
+        self._layer = check_view_layers(self.model.gwf, layer)
 
     @property
     def cells(self):

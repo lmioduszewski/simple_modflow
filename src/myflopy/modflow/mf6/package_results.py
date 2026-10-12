@@ -117,6 +117,9 @@ class CellBudgetResultsExplorer(SpatialView):
             nothing in gives an empty table, not an error.
         layer : int or iterable of int or None, optional
             Zero-based layer(s) to keep. ``None`` (default) keeps every layer.
+            A layer the model's views do not number -- ONE on a DISU, whatever
+            FloPy infers from ``IHC`` -- raises ``ValueError`` naming the count
+            (ledger 496); it selected nothing.
         cells : int or iterable of int or None, optional
             Zero-based cell number(s) WITHIN a layer -- the ``cell`` column, not
             MODFLOW 6's model-wide node number -- combined with ``layer`` by AND.
@@ -139,7 +142,7 @@ class CellBudgetResultsExplorer(SpatialView):
             value_name=self.value_name,
             packages=None if self.package is None else [self.package],
         )
-        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
+        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells, views=self.model.gwf)
 
     def summary(self) -> pd.DataFrame:
         """Return a compact summary of the available result rows."""
@@ -743,6 +746,9 @@ class StageResultsExplorer(SpatialView):
             Zero-based layer(s) of the CONNECTED groundwater cell to keep -- a lake
             connected in several layers repeats its stage in each. ``None``
             (default) keeps every layer.
+            A layer the model's views do not number -- ONE on a DISU, whatever
+            FloPy infers from ``IHC`` -- raises ``ValueError`` naming the count
+            (ledger 496); it selected nothing.
         cells : int or iterable of int or None, optional
             Zero-based cell number(s) within a layer of the connected groundwater
             cell (the ``cell`` column), ANDed with ``layer``. ``None`` (default)
@@ -758,7 +764,7 @@ class StageResultsExplorer(SpatialView):
         """
 
         frame = self._builder(self.model, package=self.package)
-        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells)
+        return _filter_normalized_table(frame, per=per, layer=layer, cells=cells, views=self.model.gwf)
 
     def summary(self) -> pd.DataFrame:
         """Return a compact summary of available stage results."""

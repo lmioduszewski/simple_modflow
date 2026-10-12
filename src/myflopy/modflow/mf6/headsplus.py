@@ -35,6 +35,7 @@ from myflopy.modflow.mf6.heads_observations import (
     sort_dict_by_keys as _sort_dict_by_keys,
 )
 from myflopy.modflow.mf6.hydraulics import unit_labels
+from myflopy.modflow.mf6.package_explorer_utils import check_view_layers
 from myflopy.modflow.mf6.package_plotting import (
     LAYER_FIELD_MAP_PARAMS,
     LineProfileView,
@@ -193,6 +194,17 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
             f"grid.crs = {value!r} (this reader's grid is its .vor)."
         )
 
+    def _check_layers(self, layer):
+        """``layer`` as a list of ints, refused when the views do not number it.
+
+        ``check_view_layers`` (ledger 496) against the model's views when
+        the reader has a model, else against the file's own ``nlay`` -- the same
+        count, since MF6 writes a DISU's nodes as one layer.
+        """
+
+        gwf = getattr(self.model, "gwf", None) if self.model is not None else None
+        return check_view_layers(gwf if gwf is not None else int(self.nlay), layer)
+
     @property
     def all_values(self):
         """The full ``kstpkper/layer/cell`` value table, built and cached on first access.
@@ -253,7 +265,10 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
             here, unlike :meth:`array`; it selects nothing.
         layer : int or sequence of int, optional
             Layer(s) to keep, zero-based (0 is the top), in the same forms. ``None``
-            (default) keeps every layer; a layer the model lacks selects nothing.
+            (default) keeps every layer. A layer the model's views do not number
+            raises ``ValueError`` naming the layer count -- ONE layer on a DISU,
+            whatever FloPy infers from ``IHC`` -- where it selected nothing
+            (ledger 496).
         cells : int or sequence of int, optional
             Cell index(es) to keep, zero-based within a layer (``0`` to
             ``ncpl - 1``), in the same forms. ``None`` (default) keeps every cell.
@@ -271,7 +286,8 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
             If a selector is a bare float, or any other value that is neither an
             integer nor iterable.
         ValueError
-            If a period the file saved lacks its final step -- naming the period,
+            If ``layer`` names a layer the views do not number; or if a period
+            the file saved lacks its final step -- naming the period,
             the steps saved and the ``SAVE HEAD LAST`` (``CONCENTRATION``,
             ``TEMPERATURE``) setting that fixes it. Checked over the whole file,
             whatever ``per`` selects.
@@ -283,6 +299,7 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         """
 
         value = self.value_name
+        self._check_layers(layer)
         frame = self.all_values.reset_index()
         ends = period_ends(
             self.model,
@@ -474,9 +491,11 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         Parameters
         ----------
         layer : int, default 0
-            Zero-based model layer (0 == layer 1). Indexed as numpy indexes, so a
-            negative layer counts from the bottom (``-1`` is the lowest) and one
-            at or past ``nlay`` raises ``IndexError``.
+            Zero-based model layer (0 == layer 1). A negative layer counts from the
+            bottom (``-1`` is the lowest). One at or past the layer count the
+            model's views number -- ONE on a DISU, whatever FloPy infers from
+            ``IHC`` -- raises ``ValueError`` naming that count, as below ``-nlay``
+            does (it raised numpy's bare ``IndexError``, ledger 496).
         per : int or None, default -1
             Zero-based stress period; its LAST SAVED time step is returned
             (:func:`~myflopy.modflow.mf6.period_end.last_saved_step`, ledger 337),
@@ -512,9 +531,12 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         else:
             key = last_saved_step(keys, per)
 
+        if isinstance(layer, (int, np.integer)) and not isinstance(layer, bool) and layer < 0:
+            layer = int(layer) + int(self.nlay)
+        (layer,) = self._check_layers(layer)
         ncpl = int(self.vor.ncpl)
         field = _as_layer_cell_heads(self.get_data(kstpkper=key), nlay=self.nlay, ncpl=ncpl)
-        values = np.asarray(field[int(layer)], dtype=float)
+        values = np.asarray(field[layer], dtype=float)
         if masked:
             values[_is_sentinel(values)] = np.nan
         return values
