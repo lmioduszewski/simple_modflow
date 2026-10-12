@@ -14,7 +14,12 @@ reaches, once with no nugget and once with a nugget of 1.0.
 WHAT IT SHOWS. Both draws fail with ``LinAlgError: Matrix is not positive definite``:
 pyEMU builds the covariance (nugget on its diagonal), then sets each parameter's
 variance from its bounds, which REPLACES the diagonal and so the nugget, leaving two
-rows equal. That is why the build refuses the set rather than advising a nugget.
+rows equal. This calls pyEMU with a structure of sill ``1 + nugget``, as the project
+did until ledger 489; the project now scales it to a sill of 1 first
+(``geostats.unit_sill``), and the nugget then survives and the draw succeeds -- but
+it correlates the stacked nodes at ``1 / (1 + nugget)``, a vertical structure the
+map-plane variogram never described, so the build still refuses the set
+(``docs/reproducers/prior_nugget.py`` measures the nugget's effect).
 """
 
 from __future__ import annotations

@@ -159,3 +159,69 @@ def test_the_pilot_point_prior_spreads_as_far_as_its_bounds_say(tmp_path):
         assert len(columns) == 60
         assert np.log10(values).std() == pytest.approx(expected, rel=0.15), prefix
         assert ((values < 0.5) | (values > 2.0)).mean() < 0.01, prefix
+
+
+def _adjacent_correlation(ensemble, names, x, y, groups, spacing):
+    """Mean log10 correlation of parameters one ``spacing`` apart in one group."""
+
+    values = np.log10(ensemble[names].to_numpy())
+    correlations = np.corrcoef(values.T)
+    distances = np.hypot(x[:, None] - x[None, :], y[:, None] - y[None, :])
+    adjacent = (groups[:, None] == groups[None, :]) & np.isclose(distances, spacing)
+    return float(correlations[adjacent].mean()), float(values.std(axis=0).mean())
+
+
+@pytest.mark.parametrize("nugget", [0.0, 0.5, 1.0])
+def test_the_nugget_reaches_the_prior_pestpp_ies_receives(tmp_path, nugget):
+    """pyEMU's draw replaced the covariance's diagonal with the bound-derived variance,
+    discarding a nugget added on top of the sill-1 variogram: neighbours 10 ft apart
+    under a 30 ft range correlated 0.718 at nuggets 0, 0.5 and 1 alike, for pilot points
+    and a ``grid`` parameter. The structure is scaled to a sill of 1 now, so the
+    correlation is ``exp(-h / range) / (1 + nugget)`` and the variance stays the one the
+    bounds give (ledger 489)."""
+
+    pytest.importorskip("pyemu")
+    import myflopy as mf
+    from tests.test_pest_structured_grid import _build, _dis_run, _heads
+
+    model = mf.load_mf6_run(_dis_run(tmp_path / "run"))
+    cal = model.pest("nug", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("k", style="pilotpoints", pp_space=1, correlation=30.0,
+                     bounds=(0.5, 2.0), name="kp", nugget=nugget)
+    cal.parameterize("k33", style="grid", correlation=30.0, bounds=(0.5, 2.0), name="kg",
+                     nugget=nugget)
+    cal.observe(_heads())
+    _build(cal, "nug")
+    np.random.seed(7)
+    cal._inject_geostatistical_prior(1000)
+    ensemble = pd.read_csv(cal.template_workspace / "nug.prior_par.csv", index_col=0)
+
+    points = pd.concat(frame for frame, _ in cal._pilot_point_frames["kp"])
+    grid = cal.pst.parameter_data.loc[
+        [name for name in ensemble.columns if name.startswith("pname:kg")]]
+    expected = np.exp(-10.0 / 30.0) / (1.0 + nugget)
+    for what, names, x, y, groups in (
+        ("pilot points", list(points["parnme"]), points["x"], points["y"],
+         points["parnme"].str[:4]),
+        ("grid", list(grid.index), grid["x"], grid["y"], grid["pargp"]),
+    ):
+        correlation, spread = _adjacent_correlation(
+            ensemble, names, np.asarray(x, dtype=float), np.asarray(y, dtype=float),
+            np.asarray(groups), 10.0)
+        assert correlation == pytest.approx(expected, abs=0.04), what
+        assert spread == pytest.approx(np.log10(4.0) / 6, rel=0.05), what
+
+
+@pytest.mark.parametrize("nugget", [-0.1, float("nan"), float("inf")])
+def test_a_nugget_that_is_not_a_variance_is_refused(tmp_path, nugget):
+    """A negative nugget would make two distinct points more correlated than one point
+    with itself once the structure is scaled to a sill of 1 (ledger 489)."""
+
+    pytest.importorskip("pyemu")
+    from myflopy.modflow.mf6.pest.project import PestProject
+
+    project = object.__new__(PestProject)
+    project._native_parameter_specs = []
+    with pytest.raises(ValueError, match=r"nugget=.*finite number of at least 0\.0"):
+        project.parameterize("k", style="grid", correlation=30.0, nugget=nugget)
+    assert project._native_parameter_specs == []

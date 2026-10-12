@@ -1173,7 +1173,11 @@ def test_geostruct_for_routes_through_build_geostruct_with_anisotropy(tmp_path):
     assert vario.a == 500.0
     assert vario.anisotropy == 5.0
     assert vario.bearing == 30.0
-    assert geostruct.nugget == 0.1
+    # Scaled to a sill of 1 so pyEMU's draw, which replaces the diagonal with the
+    # bound-derived variance, keeps the nugget's share (ledger 489).
+    assert geostruct.nugget == pytest.approx(0.1 / 1.1)
+    assert vario.contribution == pytest.approx(1.0 / 1.1)
+    assert geostruct.sill == pytest.approx(1.0)
     assert geostruct.transform == "log"
 
 

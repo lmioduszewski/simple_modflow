@@ -28,7 +28,7 @@ from myflopy.modflow.mf6.observations import (
     SfrStageTargets,
 )
 from myflopy.modflow.mf6.period_end import period_lengths
-from myflopy.modflow.mf6.pest.geostats import build_geostruct
+from myflopy.modflow.mf6.pest.geostats import build_geostruct, checked_nugget, unit_sill
 from myflopy.modflow.mf6.pest.native_parameters import (
     NativeParameterSpec,
     add_native_parameter,
@@ -797,11 +797,19 @@ class PestProject:
             Default ``0.0``. Ignored when ``anisotropy`` is ``1.0``, and
             without ``correlation``.
         nugget : float, optional
-            Nugget (unresolved short-scale variance) of the variogram, added to
-            the covariance diagonal on top of the variogram's contribution,
-            which is fixed at ``1.0`` here (so the total sill is
-            ``1.0 + nugget``). Default ``0.0``. Acts only when ``correlation``
-            is given.
+            Nugget (unresolved short-scale variance) of the variogram, relative
+            to the variogram's contribution, which is fixed at ``1.0`` here: a
+            nugget ``n`` is the share ``n / (1 + n)`` of each parameter's prior
+            variance that is uncorrelated even with its nearest neighbour. The
+            variance itself stays the one the bounds imply (log10 standard
+            deviation ``log10(ub / lb) / 6`` for a log parameter); what moves is
+            the correlation of two parameters ``h`` apart in the prior
+            :meth:`run_ies`/:meth:`prior`/:meth:`draw_prior` draw,
+            ``exp(-h / correlation) / (1 + n)`` -- so ``1.0`` halves every
+            correlation (ledger 489; before, the draw discarded the nugget).
+            The same rule for ``style="grid"`` and pilot points. Default ``0.0``.
+            A negative or non-finite value raises ``ValueError`` here. Acts only
+            when ``correlation`` is given.
         temporal : float or None, optional
             Temporal correlation range (days) for time-varying list packages.
             Recorded on the returned spec and read by nothing yet, so it has no
@@ -846,6 +854,7 @@ class PestProject:
         >>> cal.parameterize("drn.elev", bounds=(-2, 2))   # additive offsets
         """
 
+        nugget = checked_nugget(nugget)
         spec = NativeParameterSpec(
             target=target,
             style=style,
@@ -1745,16 +1754,22 @@ class PestProject:
         ``GeoStruct``. The spec's ``correlation`` is the range; ``anisotropy`` and
         ``bearing`` shape the ellipse (e.g. K correlated farther down an alluvial
         valley than across it); ``nugget`` is the unresolved short-scale variance.
+
+        The structure is scaled to a sill of 1 (:func:`~...geostats.unit_sill`):
+        pyEMU's draws replace the covariance's diagonal with the variance the bounds
+        imply, so a nugget added on top of a sill-1 variogram was discarded there and
+        the prior PESTPP-IES received was the same at every nugget (ledger 489).
+        Scaled, the bounds give the total variance and the nugget its share.
         """
 
         return build_geostruct(
-            ExpGeoStruct(
+            unit_sill(ExpGeoStruct(
                 range=float(spec.correlation),
                 anisotropy=float(spec.anisotropy),
                 bearing=float(spec.bearing),
                 nugget=float(spec.nugget),
                 transform=spec.resolved_transform,
-            )
+            ))
         )
 
     def _attach_native_observation_postprocessors(self):

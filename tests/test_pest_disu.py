@@ -178,9 +178,10 @@ def test_pestpp_ies_runs_a_disu_template(run_dir, tmp_path):
 def test_a_correlated_grid_parameter_on_stacked_disu_nodes_is_refused(run_dir, tmp_path):
     """A layered DISU's nodes in one column share a centre, so one correlated set over
     every node has a singular covariance, and PESTPP-IES's prior died in pyEMU's draw
-    with ``LinAlgError: Matrix is not positive definite``; a nugget did not help (pyEMU
-    resets the diagonal from the bounds). It is refused at build, naming a node, the
-    node above or below it, and the spellings that draw."""
+    with ``LinAlgError: Matrix is not positive definite``. A nugget makes it drawable
+    since ledger 489, but would still correlate a column's nodes as one location,
+    so it is refused at build whatever the nugget, naming a node, the node above or
+    below it, and the spellings that draw."""
 
     model = mf.load_mf6_run(run_dir)
     for nugget in (0.0, 0.5):

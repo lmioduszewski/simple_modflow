@@ -232,7 +232,10 @@ class NativeParameterSpec:
         Azimuth (degrees) of the anisotropy major axis. Ignored when
         ``anisotropy`` is ``1.0``.
     nugget
-        Nugget (unresolved short-scale variance) of the ``grid`` variogram.
+        Nugget (unresolved short-scale variance) of the variogram, relative to its
+        contribution of ``1.0``; the prior draw scales the two to a sill of 1, so a
+        nugget ``n`` divides every correlation by ``1 + n`` and leaves the
+        bound-derived variance alone (ledger 489).
     temporal
         Temporal correlation range (days) for time-varying list packages
         (Phase 2 -- recorded but not yet wired).
@@ -648,10 +651,12 @@ def _refuse_a_singular_grid_prior(spec: NativeParameterSpec, modelgrid) -> None:
     per node in ONE correlated set, and the nodes stacked in a column share their
     centre. Their correlation is 1, so the prior covariance is singular and
     PESTPP-IES's draw (pyEMU's ``geostatistical_draws``) died with ``LinAlgError:
-    Matrix is not positive definite`` (ledger 452). A ``nugget`` does not help:
-    pyEMU sets each parameter's variance from its bounds AFTER building the
-    covariance, which discards the nugget on the diagonal. DIS and DISV write one
-    file per layer, each its own set, whose centres are distinct.
+    Matrix is not positive definite`` (ledger 452). A ``nugget`` now reaches the
+    draw (ledger 489) and makes it drawable, but it would correlate the nodes
+    of one column at ``1 / (1 + nugget)`` -- a vertical structure the map-plane
+    variogram never described (ledger 119's one covariance per layer) -- so the set
+    is refused whatever the nugget. DIS and DISV write one file per layer, each its
+    own set, whose centres are distinct.
     """
 
     if spec.correlation is None or getattr(modelgrid, "grid_type", None) != "unstructured":

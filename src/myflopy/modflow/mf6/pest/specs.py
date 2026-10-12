@@ -110,7 +110,13 @@ class ExpGeoStruct:
         ``anisotropy`` is ``1.0``.
     nugget : float, optional
         Nugget variance added to the covariance diagonal, pyEMU's
-        ``GeoStruct(nugget=...)``. Default ``0.0``.
+        ``GeoStruct(nugget=...)``. Default ``0.0``. The project's prior draws
+        scale ``contribution`` and ``nugget`` to sum to ``1.0``
+        (:func:`~myflopy.modflow.mf6.pest.geostats.unit_sill`) before handing the
+        structure to pyEMU, whose draw replaces the diagonal with the
+        bound-derived variance and so would discard a nugget on top of a sill-1
+        variogram (ledger 489); :func:`build_geostruct` itself passes both
+        through unchanged.
     transform : str, optional
         ``"none"`` (default) or ``"log"``: the transform of the property the
         structure describes, pyEMU's ``GeoStruct(transform=...)``.

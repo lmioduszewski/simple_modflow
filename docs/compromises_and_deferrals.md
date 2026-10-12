@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 488 entries (493 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 489 entries (494 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 489 | A variogram's `nugget=` reaches the prior PESTPP-IES receives: the structure is scaled to a sill of 1 befor... | 2026-10-11 |
 | 488 | A run with no mover moved 0.0, and a mover row only one run has is counted, not dropped | 2026-10-11 |
 | 487 | A diff's LAK/SFR stage maps, plots and composes: each feature's Δstage painted on the reference's cells | 2026-10-11 |
 | 486 | The mover diff reads each package's mover term where MF6 writes it, and leaves UZF's unread | 2026-10-11 |
@@ -19227,10 +19228,13 @@ same day, which is the useful part of the result.
       layering: a point resolves to the lowest-numbered node holding it, so a deeper
       node is named by its `cell`. (2) `style="grid"` with `correlation=` is REFUSED
       when nodes share a centre (a layered DISU's stacked nodes): their correlation is
-      1 and the prior draw dies; a `nugget` does not help -- pyEMU's
+      1 and the prior draw dies; ~~a `nugget` does not help -- pyEMU's
       `geostatistical_draws` resets the diagonal to the bound-derived variance after
       building the covariance, so the nugget is discarded (pyEMU 1.4.0,
-      `docs/reproducers/stacked_nodes_grid_prior.py`). Splitting the set per layer was
+      `docs/reproducers/stacked_nodes_grid_prior.py`).~~ (since ledger 489 a nugget
+      reaches the draw and makes it drawable, but it would correlate a column's nodes at
+      `1 / (1 + nugget)`, a vertical structure the variogram never described, so the set
+      is refused whatever the nugget). Splitting the set per layer was
       not built. (3) Pilot points are ONE set
       over every node: the file holds one array, so stacked nodes share a multiplier.
       Tests: `tests/test_pest_disu.py` (7; each piece reverted alone fails one).
@@ -19860,3 +19864,24 @@ same day, which is the useful part of the result.
       refusal of an SFR/LAK with no budget file applies only to one declaring `MOVER`:
       one that does not has no mover term to write. Measured in
       `tests/test_diff_reads_what_mf6_wrote.py` on real MF6 runs, against FloPy's own read.
+
+489. **A variogram's `nugget=` reaches the prior PESTPP-IES receives: the structure is scaled to a sill of 1 before pyEMU draws it (2026-10-11).**
+      pyEMU 1.4.0's `geostatistical_draws` (what `PstFrom.draw`, and so `run_ies`/`prior`/
+      `draw_prior`, reaches for `style="grid"`, and what the pilot-point draw calls
+      directly) builds the covariance with the nugget on its diagonal, then SETS the
+      diagonal to the bound-derived variance: the nugget was replaced, and neighbours
+      10 ft apart under a 30 ft range correlated 0.718 at nuggets 0, 0.5 and 1 alike.
+      `PestProject._geostruct_for` now passes `geostats.unit_sill(spec)` -- contribution
+      `1 / (1 + n)`, nugget `n / (1 + n)` -- so the correlation is
+      `exp(-h / range) / (1 + n)` (measured 0.718 / 0.479 / 0.359 for pilot points, 0.719
+      / 0.481 / 0.363 for `grid`) and the log10 standard deviation stays the bounds'
+      (0.100). **Judgment call: `nugget` keeps its declared meaning** -- a variance on top
+      of the variogram's contribution of 1.0, as `parameterize`'s docstring said ("total
+      sill `1.0 + nugget`") -- and the bounds set the TOTAL; it is the rescale pyEMU's
+      own `SpecSim2d` makes. **Changes every prior declared with `nugget > 0`**; a
+      negative or non-finite nugget is now refused at `parameterize` (it would make two
+      points more correlated than one with itself). `build_geostruct` still passes the
+      structure through as given. The DISU stacked-node refusal (ledger 452) stays.
+      `docs/reproducers/prior_nugget.py`; tests:
+      `tests/test_pilot_point_prior.py::test_the_nugget_reaches_the_prior_pestpp_ies_receives`,
+      `::test_a_nugget_that_is_not_a_variance_is_refused`.
