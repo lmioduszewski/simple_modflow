@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 491 entries (496 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 492 entries (497 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 492 | A package artifact keeps an EMPTY period block, and the restored package runs as the original did | 2026-10-11 |
 | 491 | A Voronoi grid has one CRS and one name: two different spellings of either are refused, at... | 2026-10-11 |
 | 490 | A build refuses an OBS cellid of another form than its discretization's, and... | 2026-10-11 |
 | 489 | A variogram's `nugget=` reaches the prior PESTPP-IES receives: the structure is scaled to a sill of 1 befor... | 2026-10-11 |
@@ -19183,11 +19184,13 @@ same day, which is the useful part of the result.
       the TYPE (`period_number`) before their handler, so a mistyped `per` is refused rather
       than read as an empty table. `hfb.results.q` given a `per` and a `kstpkper` naming
       different periods now raises `ValueError` naming both, where it drew from an empty,
-      column-less frame (`KeyError: 'layer'`). **Not done (measured, another reader):** a
+      column-less frame (`KeyError: 'layer'`). ~~**Not done (measured, another reader):** a
       package ARTIFACT (`project.components._extract_stress_period_data`) captures
       `stress_period_data.get_data()`, which leaves out an EMPTY block -- `{0: [...], 2: []}`
       is captured as `{'0': [...]}` -- so a package switched off by one is restored running
-      the block before it.
+      the block before it.~~ (fixed by ledger 492: an artifact captures every block
+      through `written_period_blocks`, an empty one as `[]`, and the restored package runs
+      as the original did, measured through MF6.)
 
 450. **An empty `newtonoptions` reads as no NEWTON, and NEWTON reads one way in memory and reloaded (2026-10-11).**
       FloPy stores `newtonoptions=""` or `[]` as an empty record list that `has_data()`
@@ -19928,3 +19931,17 @@ same day, which is the useful part of the result.
       `name=` is the one spelling. A CRS given only in `options`/`voronoi_options` still
       labels without reprojecting, as documented. Tests:
       `tests/test_gridspec_fail_fast.py` (declaration and resolve cases fail on revert).
+
+492. **A package artifact keeps an EMPTY period block, and the restored package runs as the original did (2026-10-11).**
+      `_extract_stress_period_data` read `stress_period_data.get_data()`, which leaves an
+      empty block out of a model loaded from its files, so GHB `{0: two cells, 2: [], 3:
+      one cell}` was captured as `{"0", "3"}` and the restored GHB ran 0.3057 in period 2
+      where the original ran 0.0 (MF6, both runs). Capture now reads
+      `written_period_blocks` (ledger 449's one reader of what FloPy WRITES), an empty
+      block as `[]`, which FloPy's constructor writes back as an empty block. **Chosen:**
+      the advanced packages' `perioddata` (UZF, LAK, SFR, MVR) go through the same
+      reader -- an empty MVR block turns every mover off, as a list package's does -- so
+      a package with no period blocks now captures `{}` where it captured `None` (the
+      restore already read both as none). Test:
+      `tests/test_package_artifact_round_trip.py::test_an_empty_period_block_is_captured_and_restored_and_mf6_runs_it_the_same`
+      (real MF6 runs; the budgets are identical per period, period 2 differing on revert).

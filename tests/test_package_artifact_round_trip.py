@@ -15,7 +15,10 @@ the registry too -- a new cell BC is covered automatically.
 
 from __future__ import annotations
 
+import shutil
+
 import numpy as np
+import pytest
 
 from myflopy.project.components import (
     LIST_BC_ARTIFACT_TYPES,
@@ -208,3 +211,77 @@ def test_non_mover_capable_packages_store_no_mover_key(canonical_model):
             package_name=package_type,
         )
         assert "mover" not in artifact.package_data, package_type
+
+
+# --- An EMPTY period block survives the round trip (ledger 492) -------- #
+#
+# `stress_period_data.get_data()` leaves an empty block out of a model loaded
+# from its files, so {0: [...], 2: []} was captured as {"0": [...]} and the
+# restored GHB ran period 0's two cells in period 2, where the original ran none.
+
+def _square_grid(n=3, d=10.0):
+    from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
+
+    verts = np.array([[i * d, j * d] for j in range(n + 1) for i in range(n + 1)], dtype=float)
+    iverts = [
+        [j * (n + 1) + i, (j + 1) * (n + 1) + i, (j + 1) * (n + 1) + i + 1, j * (n + 1) + i + 1]
+        for j in range(n)
+        for i in range(n)
+    ]
+    xcyc = np.array([[(i + 0.5) * d, (j + 0.5) * d] for j in range(n) for i in range(n)])
+    return VoronoiGridPlus(verts=verts, iverts=iverts, xcyc=xcyc)
+
+
+def _ghb_by_period(model) -> dict[int, float]:
+    reader = model._get_budget_reader()
+    return {
+        int(kper): float(sum(record["q"].sum() for record in reader.get_data(text="GHB", kstpkper=(kstp, kper))))
+        for kstp, kper in reader.get_kstpkper()
+    }
+
+
+@pytest.mark.skipif(shutil.which("mf6") is None, reason="needs mf6 on PATH")
+def test_an_empty_period_block_is_captured_and_restored_and_mf6_runs_it_the_same(tmp_path):
+    import contextlib
+    import io
+    import warnings
+
+    import myflopy as mf
+
+    vor = _square_grid()
+    context = mf.ModelContext(grid=vor, domain=np.ones((1, 9), dtype=int))
+    model = mf.gwf("flow", context=context, packages=[
+        mf.disv(nlay=1, top=10.0, botm=[0.0], **vor.get_disv_gridprops()),
+        mf.ic(strt=5.0), mf.npf(k=1.0),
+        mf.chd(stress_period_data={0: [[(0, 0), 6.0], [(0, 8), 4.0]]}),
+        mf.ghb(stress_period_data={0: [[(0, 2), 5.0, 1.0], [(0, 5), 5.0, 1.0]], 2: [],
+                                   3: [[(0, 6), 5.5, 1.0]]}),
+        mf.oc(head_filerecord="flow.hds", budget_filerecord="flow.cbc",
+              saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")]),
+    ])
+    simulation = mf.simulation(model, name="blocks",
+                               packages=[mf.tdis(nper=5, perioddata=[(1.0, 1, 1.0)] * 5)])
+    project = mf.Project(tmp_path / "p", name="p")
+    with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+        warnings.simplefilter("ignore")
+        original = project.prepare_run("original", simulation)
+        assert original.execute(silent=True)[0]
+        reloaded = mf.load_mf6_run(original.workspace, model_name="flow")
+    artifact = build_package_artifact(reloaded, artifact_id="ghb", package_name="ghb")
+    assert artifact.package_data["stress_period_data"] == {
+        "0": [[[0, 2], 5.0, 1.0], [[0, 5], 5.0, 1.0]],
+        "2": [],
+        "3": [[[0, 6], 5.5, 1.0]],
+    }
+
+    with warnings.catch_warnings(), contextlib.redirect_stdout(io.StringIO()):
+        warnings.simplefilter("ignore")
+        restored = project.prepare_run("restored", simulation)
+        target = restored.model("flow")
+        target.gwf.remove_package("ghb")
+        apply_package_artifact(target, artifact, validate=True)
+        assert restored.execute(silent=True)[0]
+
+    ran = _ghb_by_period(original.model("flow"))
+    assert ran[2] == 0.0 and ran[1] != 0.0  # the empty block switched GHB off
+    assert _ghb_by_period(restored.model("flow")) == ran

@@ -13,6 +13,7 @@ import flopy
 import numpy as np
 
 from myflopy.modflow.mf6.lak_implicit import ModflowGwflakImplicit
+from myflopy.modflow.mf6.package_explorer_utils import written_period_blocks
 from myflopy.modflow.mf6.package_registry import (
     _PACKAGE_EXPLORER_SPECS,
     advanced_output_filerecords,
@@ -126,7 +127,10 @@ class PackageArtifact:
         period as a string for a list BC, ``strt`` for IC, ``k``/``k33``/
         ``icelltype`` for NPF, ``packagedata``/``perioddata`` for UZF, LAK and SFR
         (plus ``connectiondata`` for LAK and SFR), ``packages``/``perioddata`` for
-        MVR.
+        MVR. ``stress_period_data`` and ``perioddata`` hold one entry per ``PERIOD``
+        block the package writes, an EMPTY block as ``[]`` -- MODFLOW 6 runs no list
+        records from it, so dropping it restored a package running the block before
+        (ledger 492).
     source_run_id : str or None, optional
         Id of the run it was captured from, or ``None`` (the default;
         ``build_package_artifact`` always records ``None``).
@@ -289,19 +293,33 @@ def _extract_mf6_value(package, attribute: str, default=None):
     return _normalize_record_item(value)
 
 
-def _extract_stress_period_data(package) -> dict[str, list[list[Any]]]:
-    """Serialize FloPy stress-period data into a plain nested Python structure."""
+def _extract_period_blocks(dataset) -> dict[str, list[list[Any]]]:
+    """Every ``PERIOD`` block FloPy writes for ``dataset``, as plain nested lists.
 
-    raw = package.stress_period_data.get_data()
-    stress_period_data: dict[str, list[list[Any]]] = {}
-    for period, rows in raw.items():
+    Read through :func:`~myflopy.modflow.mf6.package_explorer_utils.written_period_blocks`,
+    the one reader of what a package WRITES (ledger 449), so an EMPTY block is kept as
+    ``[]`` -- MODFLOW 6 runs no records from it (a list package, MVR) -- where
+    ``get_data()`` left it out of a model loaded from its files: ``{0: [...], 2: []}``
+    was captured as ``{"0": [...]}`` and the restored package ran period 0's records
+    in period 2 (ledger 492). Keys are the period as a string, in period order;
+    asking adds no block.
+    """
+
+    blocks: dict[str, list[list[Any]]] = {}
+    for period, rows in written_period_blocks(dataset).items():
         normalized_rows = []
-        for row in rows.tolist():
+        for row in [] if rows is None else np.asarray(rows).tolist():
             if not isinstance(row, (list, tuple)):
                 row = [row]
             normalized_rows.append([_normalize_record_item(item) for item in row])
-        stress_period_data[str(int(period))] = normalized_rows
-    return stress_period_data
+        blocks[str(int(period))] = normalized_rows
+    return blocks
+
+
+def _extract_stress_period_data(package) -> dict[str, list[list[Any]]]:
+    """Serialize a list package's period blocks, empty ones included (ledger 492)."""
+
+    return _extract_period_blocks(package.stress_period_data)
 
 
 def _restore_rows(rows: list[list[Any]], *, tuple_indices: tuple[int, ...] = ()) -> list[list[Any]]:
@@ -444,7 +462,7 @@ def build_package_artifact(
             "ntrailwaves": _extract_mf6_value(package, "ntrailwaves", 7),
             "nwavesets": _extract_mf6_value(package, "nwavesets", 40),
             "packagedata": _extract_mf6_value(package, "packagedata"),
-            "perioddata": _normalize_record_item(package.perioddata.get_data()),
+            "perioddata": _extract_period_blocks(package.perioddata),
         }
     elif package_type == "lak":
         package_data = {
@@ -461,7 +479,7 @@ def build_package_artifact(
             "connectiondata": _extract_mf6_value(package, "connectiondata"),
             "tables": _extract_mf6_value(package, "tables"),
             "outlets": _extract_mf6_value(package, "outlets"),
-            "perioddata": _normalize_record_item(package.perioddata.get_data()),
+            "perioddata": _extract_period_blocks(package.perioddata),
         }
         # MF6's LAK IMPLICIT is not a FloPy dataset -- the package's CLASS writes it
         # (ledger 326) -- so no `_extract_mf6_value` can see it, and a restore built a
@@ -487,7 +505,7 @@ def build_package_artifact(
             "packagedata": _extract_mf6_value(package, "packagedata"),
             "connectiondata": _extract_mf6_value(package, "connectiondata"),
             "diversions": _extract_mf6_value(package, "diversions"),
-            "perioddata": _normalize_record_item(package.perioddata.get_data()),
+            "perioddata": _extract_period_blocks(package.perioddata),
         }
     elif package_type == "mvr":
         package_data = {
@@ -495,7 +513,7 @@ def build_package_artifact(
             "maxmvr": _extract_mf6_value(package, "maxmvr"),
             "maxpackages": _extract_mf6_value(package, "maxpackages"),
             "packages": _extract_mf6_value(package, "packages"),
-            "perioddata": _normalize_record_item(package.perioddata.get_data()),
+            "perioddata": _extract_period_blocks(package.perioddata),
         }
     else:
         raise NotImplementedError(
