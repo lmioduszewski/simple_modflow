@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 544 entries (549 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 545 entries (550 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 545 | A text date column that admits two day orders is REFUSED; one that admits one is read in it | 2026-10-12 |
 | 544 | The PEST build records each set's period-end dates, what its observations are, and how it was binned; the r... | 2026-10-12 |
 | 543 | Dated readings are binned onto a model's stress periods EAGERLY, by one rule per mode, and the set carries... | 2026-10-12 |
 | 542 | An array recipe in a package's OPTIONS is refused, so an edit route cannot carry one | 2026-10-12 |
@@ -20926,12 +20927,14 @@ same day, which is the useful part of the result.
       refuse a set on a model whose calendar differs (another cycle count, start, unit or
       period length), naming `from_hydrographs(..., model=<this model>)`. Readings outside
       a history model's span are left out, counted per well and WARNED (`warnings.warn`
-      and the log, ledger 288; every call warns -- no once-only memory); none in span is
+      and the log, ledger 288; nothing in the library remembers having warned, but
+      Python's default filter shows one text once per calling line, so an identical
+      re-run of a notebook cell is silent the second time); none in span is
       refused, printing both spans; a well with nothing left is warned by name. A reading's
       own `weight` column is REFUSED (several readings become one target); weight a well
       through its locations, a lake set through its spec. Lake names are matched exactly,
       as lake values are; well names stripped and lower-cased, as head values are.
-      `min_years` defaults to 1; `between` includes both ends. **Not built:**
+      `min_years` defaults to 1; `between` includes both ends, a date being its midnight. **Not built:**
       `from_hydrographs` for SFR, DRN and RIV targets (stage and flow gauges), the bound
       views' `binning`/`calendar` (they reach it through `.targets`), a time-zone
       conversion (a zoned date is refused), and a canonical notebook cell.
@@ -20950,3 +20953,17 @@ same day, which is the useful part of the result.
       date comes from the metadata. **Not done:** a `date` column in `conflict()` and
       `obs_residuals`, and moving location parsing off the names (items 9 and 11 own the
       kinds that need it).
+
+545. **A text date column that admits two day orders is REFUSED; one that admits one is read in it (2026-10-12).**
+      `read_readings` parses each date on its own, and pandas reads an ambiguous
+      `"01/02/2018"` MONTH first while `"13/02/2018"` can only be DAY first -- so a
+      day-first export came back with every day 1-12 in the wrong month and every day
+      13-31 right, with no word (measured on `["01/02/2018", "13/02/2018"]`: 2 January
+      and 13 February). **Chosen:** a column holding a day-first-only row AND a row read
+      month first is refused, naming one of each and `pandas.to_datetime(...,
+      dayfirst=True)`; month first throughout, day first with no ambiguous row, and ISO
+      pass. **Not chosen:** parsing the whole column through pandas' inferred format,
+      which refuses this case too but also refuses a column mixing a date and a
+      date-and-time (`"1/2/2018"`, `"1/16/2018 08:30"`), the shape a logger export
+      takes when it drops midnight. **The blind spot:** a column written day first whose
+      every day is 1-12 reads month first and cannot be told apart, as in pandas.

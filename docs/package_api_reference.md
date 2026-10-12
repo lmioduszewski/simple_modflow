@@ -950,7 +950,8 @@ set plus `.binning` (per well and period: the reading used, its `offset_days`, c
 `measured`) and `.calendar`, the CLOCK STAMP: `compare()`, `simulated_heads()` /
 `simulated_series()` and the PEST build refuse it on a model whose periods are other
 dates, naming `from_hydrographs(..., model=<this model>)`. Refused when built: a TDIS
-with no `START_DATE_TIME`/`TIME_UNITS`, an unparseable or time-zoned date, two
+with no `START_DATE_TIME`/`TIME_UNITS`, an unparseable or time-zoned date, a text
+date column mixing day-first and month-first rows (ledger 545), two
 different readings of one well at one instant, a well not among the locations, a
 `weight` column in the readings, and an option the mode does not read. The PEST build
 records each set's `period_end_dates`, `observation_kind` and `binning` in its

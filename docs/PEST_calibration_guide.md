@@ -423,7 +423,9 @@ average-year cycle is refused, naming `mf.AverageYear`.
 re-run, and `compare()` and the PEST build REFUSE the old set, naming
 `from_hydrographs(..., model=<this model>)`: a period number would otherwise name another
 date in silence. Refused at construction, by name: a model whose TDIS has no
-`START_DATE_TIME` or `TIME_UNITS`, a date that will not parse or carries a time zone, two
+`START_DATE_TIME` or `TIME_UNITS`, a date that will not parse or carries a time zone, a
+text date column written day first in some rows and read month first in others
+(`13/02/2018` beside `01/02/2018`; ledger 545), two
 different readings of one well at one instant (equal ones collapse), a well not among the
 locations, a `weight` column in the readings (weight a well through its locations), and an
 option the mode does not read. **The review draws dates**: the build records each set's

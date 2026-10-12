@@ -493,16 +493,19 @@ class LakeStageTargets:
             year's monthly median) or ``"mean"`` -- as for heads.
         date_column : str, default "date"
             The readings' date column, matched exactly; each entry a date with a
-            four-digit year and no time zone.
+            four-digit year and no time zone. Text ``d/m/y`` or ``m/d/y`` is read
+            MONTH first, and a column mixing day-first and month-first rows raises
+            ``ValueError`` (ledger 545).
         value_column : str, default "stage"
             The stage column of a LONG or one-series table, matched ignoring case;
             the result's ``value_column``.
-        max_offset : str, pandas.Timedelta, datetime.timedelta or None, default None
+        max_offset : str, pandas.Timedelta, datetime.timedelta, numpy.timedelta64 or None, default None
             History with ``rule="nearest_end"`` only: a reading farther than this
             from its period's end is not used. Elsewhere it raises.
         between : tuple of two dates or None, default None
             Average year only: the readings used, ``(first, last)`` inclusive,
-            either ``None`` for open. In history mode it raises.
+            either ``None`` for open; a date is its midnight. In history mode it
+            raises.
         min_years : int or None, default None
             Average year only: a month read in fewer calendar years has no
             target; ``None`` means 1. In history mode it raises.

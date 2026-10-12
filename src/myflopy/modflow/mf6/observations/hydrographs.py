@@ -30,6 +30,7 @@ start), because a period number would then name another date in silence.
 
 from __future__ import annotations
 
+import re
 import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -155,7 +156,12 @@ def read_readings(
         The column holding each row's date, matched exactly. Every entry must be a
         date pandas parses with a four-digit year (``"2018-01-15"``,
         ``"2018-01-15 08:30"``, a ``Timestamp``), with no time zone -- MF6's
-        ``START_DATE_TIME`` is a wall-clock string (ledger 529).
+        ``START_DATE_TIME`` is a wall-clock string (ledger 529). Text written
+        ``d/m/y`` or ``m/d/y`` is read MONTH first, as pandas reads it; a column
+        written day first in some rows (``"13/02/2018"``) and read month first in
+        others (``"01/02/2018"``) raises ``ValueError`` -- parse such a column
+        yourself (``pandas.to_datetime(..., dayfirst=True)``) and pass the table
+        (ledger 545).
     value_column : str
         The value column of a LONG or one-series table, matched ignoring case;
         unused by a WIDE table.
@@ -174,7 +180,8 @@ def read_readings(
     ValueError
         When the table has no ``date_column`` and no date index; when a date does
         not parse, has no four-digit year or carries a time zone (naming up to five
-        rows); when a value is neither blank nor a finite number; when two readings
+        rows); when text dates mix day-first and month-first rows (naming one of
+        each); when a value is neither blank nor a finite number; when two readings
         of one location at one instant hold DIFFERENT values (naming them); or when
         the table carries a ``weight`` column -- several readings become one target,
         so a reading's own weight has nothing to attach to.
@@ -242,6 +249,7 @@ def read_readings(
             + (f"; and {len(failed) - len(bad)} more" if len(failed) > len(bad) else "")
             + ". Give each row a date with its year and no time zone, e.g. '2018-01-15'."
         )
+    _refuse_mixed_day_order(dates.tolist(), parsed, column=date_column, caller=caller)
     frame[date_column] = [parsed[raw if _hashable(raw) else repr(raw)] for raw in dates.tolist()]
     long = _long_values(
         frame, time_column=date_column, value_column=value_column,
@@ -267,6 +275,51 @@ def read_readings(
     return long.drop_duplicates(subset=keys).reset_index(drop=True)
 
 
+#: A text date written day-month-year or month-day-year with a four-digit year:
+#: ``"13/02/2018"``, ``"2.13.2018"``, ``"01-02-2018 08:30"``.
+_NUMERIC_DMY = re.compile(r"^\s*(\d{1,2})[/.\-](\d{1,2})[/.\-]\d{4}(?!\d)")
+
+
+def _refuse_mixed_day_order(raws: list, parsed: Mapping, *, column: str, caller: str) -> None:
+    """Refuse a text date column that is day-first in some rows and read month-first in others.
+
+    Each entry is parsed on its own (:func:`parse_start`), and pandas reads an
+    ambiguous ``"01/02/2018"`` MONTH first while ``"13/02/2018"`` can only be day
+    first -- so a column written day first came back with every day 1-12 in the
+    wrong month and every day 13-31 right, in silence (ledger 545).
+    A column whose text dates admit ONE order -- month first throughout, day first
+    throughout with no ambiguous row, or ISO ``YYYY-MM-DD`` -- passes; a column of
+    only ambiguous rows reads month first, as pandas does, and cannot be told apart.
+    """
+
+    day_first: tuple[int, str] | None = None
+    month_first: tuple[int, str, pd.Timestamp] | None = None
+    for position, raw in enumerate(raws):
+        if not isinstance(raw, str):
+            continue
+        match = _NUMERIC_DMY.match(raw)
+        if match is None:
+            continue
+        first, second = int(match.group(1)), int(match.group(2))
+        if first > 12 >= second:
+            day_first = day_first or (position, raw)
+        elif first <= 12 and first != second:
+            month_first = month_first or (position, raw, parsed[raw])
+        if day_first is not None and month_first is not None:
+            break
+    if day_first is None or month_first is None:
+        return
+    raise ValueError(
+        f"{caller}: {column!r} is written DAY first in some rows (row {day_first[0]}: "
+        f"{day_first[1]!r}) and is read MONTH first in others (row {month_first[0]}: "
+        f"{month_first[1]!r} -> {month_first[2].date().isoformat()}); a date such as "
+        "'01/02/2018' reads either way, and binning it to the wrong month would be silent. "
+        f"Parse the column yourself and pass the table -- readings[{column!r}] = "
+        f"pandas.to_datetime(readings[{column!r}], dayfirst=True) -- or write the dates "
+        "as YYYY-MM-DD."
+    )
+
+
 def _hashable(value: Any) -> bool:
     try:
         hash(value)
@@ -278,7 +331,10 @@ def _hashable(value: Any) -> bool:
 def _parse_offset(max_offset: Any, *, caller: str) -> pd.Timedelta | None:
     if max_offset is None:
         return None
-    if isinstance(max_offset, (bool, np.bool_, int, float, np.number)):
+    if not isinstance(max_offset, np.timedelta64) and isinstance(
+        max_offset, (bool, np.bool_, int, float, np.number)
+    ):
+        # numpy's timedelta64 subclasses its signed integers, and it HAS a unit.
         raise ValueError(
             f"{caller}: max_offset={max_offset!r} has no unit (pandas would read a bare "
             "number as nanoseconds); give a duration such as '10D' or '36h'."
@@ -399,15 +455,18 @@ def bin_readings(
         then the median of those over the years; ``"mean"`` -- the same with means.
         ``"nearest_end"`` in average-year mode raises ``ValueError`` naming
         ``rule='median'``.
-    max_offset : str or pandas.Timedelta or datetime.timedelta or None, default None
+    max_offset : str or pandas.Timedelta or datetime.timedelta or numpy.timedelta64 or None, default None
         History with ``rule="nearest_end"`` only: a reading farther than this from
         its period's end is not used, so a period with no reading that near has no
-        target. ``"10D"``, ``"36h"``; a bare number (nanoseconds to pandas) or a
-        duration that is not positive raises. ``None``: no limit.
+        target. ``"10D"``, ``"36h"``, a ``numpy.timedelta64``; a bare number
+        (nanoseconds to pandas) or a duration that is not positive raises.
+        ``None``: no limit.
     between : tuple of two dates or None, default None
         Average year only: ``(first, last)``, the readings used, both ends
         included; either may be ``None`` for open. Dates parse as ``readings``'
-        do. ``None``: every reading.
+        do, and a date is its midnight: ``last="2005-12-31"`` leaves out a reading
+        at 08:00 that day (give ``"2005-12-31 23:59:59"`` or the next day's date
+        to keep it). ``None``: every reading.
     min_years : int or None, default None
         Average year only: a month read in fewer distinct calendar years than this
         has no target (it stays in the report, ``measured`` False). ``None``

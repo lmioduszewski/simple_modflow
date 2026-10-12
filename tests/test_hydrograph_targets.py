@@ -237,6 +237,38 @@ def test_readings_that_cannot_be_placed_are_refused(readings, match):
         read_readings(readings, value_column="head", owner="HeadTargets")
 
 
+def test_a_column_mixing_day_first_and_month_first_dates_is_refused():
+    """Each date parses alone, and pandas reads '01/02/2018' MONTH first while
+    '13/02/2018' can only be day first: a day-first column came back with days
+    1-12 in the wrong month, in silence (ledger 545)."""
+
+    mixed = pd.DataFrame({"date": ["01/02/2018", "13/02/2018", "25/02/2018"], "W1": [1.0, 2.0, 3.0]})
+    with pytest.raises(ValueError, match=r"DAY first in some rows \(row 1: '13/02/2018'\) and is read "
+                                         r"MONTH first in others \(row 0: '01/02/2018' -> 2018-01-02\)"
+                                         r".*dayfirst=True"):
+        read_readings(mixed, value_column="head", owner="HeadTargets")
+    parsed = mixed.assign(date=pd.to_datetime(mixed["date"], dayfirst=True))
+    assert read_readings(parsed, value_column="head", owner="HeadTargets")["date"].dt.month.tolist() == [2, 2, 2]
+    one_order = {
+        "month first": (["01/02/2018", "01/16/2018 08:30"], ["2018-01-02", "2018-01-16 08:30"]),
+        "day first, none ambiguous": (["13.02.2018", "25.03.2018"], ["2018-02-13", "2018-03-25"]),
+        "ISO": (["2018-01-02", "2018-01-16T08:30"], ["2018-01-02", "2018-01-16 08:30"]),
+        "same day and month": (["05/05/2018", "13/02/2018"], ["2018-05-05", "2018-02-13"]),
+    }
+    for case, (dates, expected) in one_order.items():
+        long = read_readings(pd.DataFrame({"date": dates, "W1": [1.0, 2.0]}), value_column="head",
+                             owner="HeadTargets")
+        assert long["date"].tolist() == [pd.Timestamp(day) for day in expected], case
+
+
+def test_max_offset_takes_a_numpy_timedelta():
+    """numpy's timedelta64 subclasses its integers; it was refused as 'a bare number'."""
+
+    rows = [("W1", "2017-10-29", 1.0), ("W1", "2017-11-12", 2.0)]
+    by_numpy = bin_readings(_long(rows), _calendar(), max_offset=np.timedelta64(5, "D"))
+    pd.testing.assert_frame_equal(by_numpy.values, bin_readings(_long(rows), _calendar(), max_offset="5D").values)
+
+
 def test_equal_duplicate_readings_collapse_and_dates_may_be_the_index():
     frame = pd.DataFrame({"W1": [1.0, 1.0, np.nan]},
                          index=pd.to_datetime(["2017-10-30", "2017-10-30", "2017-11-30"]))

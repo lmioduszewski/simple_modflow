@@ -569,7 +569,11 @@ class HeadTargets:
             The readings' date column, matched exactly. Each entry must be a date
             with a four-digit year and no time zone (``"2018-01-15"``,
             ``"2018-01-15 08:30"``); anything else raises ``ValueError`` naming the
-            rows.
+            rows. Text written ``d/m/y`` or ``m/d/y`` is read MONTH first, as
+            pandas reads it, and a column written day first in some rows
+            (``"13/02/2018"``) and read month first in others (``"01/02/2018"``)
+            raises ``ValueError`` -- parse it with ``pandas.to_datetime(...,
+            dayfirst=True)`` and pass the table (ledger 545).
         value_column : str or None, default None
             The value column of a LONG or one-series ``readings`` table, matched
             ignoring case, and the result's ``value_column``. ``None``: the class
@@ -587,7 +591,7 @@ class HeadTargets:
             Column of ``locations`` holding each well's PEST weight (the
             constructor's); with no reading weight possible, it is every target's
             weight at that well.
-        max_offset : str, pandas.Timedelta, datetime.timedelta or None, default None
+        max_offset : str, pandas.Timedelta, datetime.timedelta, numpy.timedelta64 or None, default None
             History with ``rule="nearest_end"`` only: a reading farther than this
             from its period's end is not used, so a period with no reading that
             near is unmeasured (``"10D"``, ``"36h"``). A bare number raises
@@ -596,8 +600,9 @@ class HeadTargets:
             ``None``: no limit.
         between : tuple of two dates or None, default None
             Average year only: ``(first, last)``, the readings used, both included,
-            either ``None`` for open (``("2005-10-01", None)``). Given in history
-            mode it raises. ``None``: every reading.
+            either ``None`` for open (``("2005-10-01", None)``). A date is its
+            midnight, so ``last="2005-12-31"`` leaves out a reading later that day.
+            Given in history mode it raises. ``None``: every reading.
         min_years : int or None, default None
             Average year only: a month read in fewer distinct calendar years than
             this has no target (its :attr:`binning` row says ``measured`` False).
