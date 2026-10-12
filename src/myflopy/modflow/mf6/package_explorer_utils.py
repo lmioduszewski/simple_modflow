@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -485,6 +486,35 @@ def _normalize_term_filter(term: str | Iterable[str] | None) -> list[str] | None
     if isinstance(term, str):
         return [str(term).strip().upper()]
     return [str(value).strip().upper() for value in term]
+
+
+def budget_term_attribute(term: str) -> str:
+    """Return the Python attribute name that reaches one MF6 budget record.
+
+    ``"SOURCE-SINK MIX"`` -> ``source_sink_mix``, ``"FLOW-JA-FACE"`` ->
+    ``flow_ja_face``, ``"STO-SS"`` -> ``sto_ss``, ``"UZF-GWRCH"`` ->
+    ``uzf_gwrch``. MF6 separates words with hyphens and, in one case, a space;
+    both collapse to the underscore.
+
+    The one normalizer to run this direction. It is what lets
+    ``ModelBudgetNamespace.__getitem__`` accept either spelling, and what the LAK/SFR
+    ``budget.get(term=...)`` refusal names a term by (``"ext_inflow" is spelled
+    "EXT-INFLOW"``; ledger 473) -- that filter compares MODFLOW 6's spelling
+    only, and returned an empty table in silence for the attribute one. Lives here,
+    in import layer 0, so the budget-table builders below the views can ask it.
+
+    Parameters
+    ----------
+    term : str
+        A budget record name as MODFLOW 6 writes it, any case and padding.
+
+    Returns
+    -------
+    str
+        The lower-case attribute spelling, words joined by ``_``.
+    """
+
+    return re.sub(r"[^0-9a-z]+", "_", str(term).strip().lower()).strip("_")
 
 
 def _normalize_connection_type_filter(
@@ -1008,6 +1038,7 @@ __all__ = [
     "views_nlay",
     "split_cellid_columns",
     "_normalize_term_filter",
+    "budget_term_attribute",
     "_normalize_connection_type_filter",
     "_normalize_surface_water_include",
     "_infer_default_value_column",

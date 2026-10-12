@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -21,6 +20,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _filter_normalized_table,
     _normalize_iterable_filter,
     _normalize_term_filter,
+    budget_term_attribute,
 )
 from myflopy.modflow.mf6.package_plotting import (
     FieldMappable,
@@ -1438,7 +1438,7 @@ class PackageBudgetTermExplorer:
         self,
         *,
         per: int | Iterable[int] | None = None,
-        index: list[str] | tuple[str, ...] = ("per", "lake"),
+        index: list[str] | tuple[str, ...] | None = None,
         values: str = "q",
         **filters,
     ) -> pd.DataFrame:
@@ -1453,12 +1453,12 @@ class PackageBudgetTermExplorer:
         per : int or iterable of int or None, optional
             Zero-based stress period(s) to keep as rows. ``None`` (default) keeps
             every period.
-        index : list or tuple of str, default ("per", "lake")
-            Columns labelling the rows, passed to the parent whatever its own
-            default. The default is the LAK spelling: on an SFR term
-            (``model.sfr.budget.<term>.wide()``) it raises ``KeyError: 'lake'``
-            whenever any row matches, so pass ``index=("per", "reach")`` there.
-            Naming ``"kstpkper"`` keeps every saved step, one row each.
+        index : list or tuple of str or None, optional
+            Columns labelling the rows. Default ``None``: the parent's own --
+            ``("per", "lake")`` on a LAK term, ``("per", "reach")`` on an SFR term
+            (it was ``("per", "lake")`` on both, so every SFR term's ``wide()``
+            raised ``KeyError: 'lake'`` until ledger 473). Naming
+            ``"kstpkper"`` keeps every saved step, one row each.
         values : str, default "q"
             The column to pivot; records of one step on one row add. A name the
             table lacks raises ``KeyError`` once any row matches (an empty
@@ -1476,28 +1476,9 @@ class PackageBudgetTermExplorer:
             holds; empty when nothing matches.
         """
 
-        return self._namespace.wide(
-            term=self.term, per=per, index=index, values=values, **filters
-        )
-
-
-def budget_term_attribute(term: str) -> str:
-    """Return the Python attribute name that reaches one MF6 budget record.
-
-    ``"SOURCE-SINK MIX"`` -> ``source_sink_mix``, ``"FLOW-JA-FACE"`` ->
-    ``flow_ja_face``, ``"STO-SS"`` -> ``sto_ss``, ``"UZF-GWRCH"`` ->
-    ``uzf_gwrch``. MF6 separates words with hyphens and, in one case, a space;
-    both collapse to the underscore.
-
-    This is the FIRST normalizer in the codebase to run this direction. The
-    package-level ``budget.<term>`` namespaces hand-write both spellings as
-    literals, and their only normalizer (``_normalize_term_filter``) upcases
-    without converting ``_`` back to ``-`` -- so ``budget.get(term="ext_inflow")``
-    silently returns an empty frame there. Deriving the mapping in one place is
-    what lets :meth:`ModelBudgetNamespace.__getitem__` accept either spelling.
-    """
-
-    return re.sub(r"[^0-9a-z]+", "_", str(term).strip().lower()).strip("_")
+        if index is not None:
+            filters["index"] = index
+        return self._namespace.wide(term=self.term, per=per, values=values, **filters)
 
 
 class ModelBudgetNamespace:

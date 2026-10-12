@@ -1336,8 +1336,12 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   field's own file's clock (ledger 349; they held every step the period saved).
   *The frame is `…profile.get()`, not `…profile()`.*
 - `budget.<term>` — budget terms: `flow_ja_face`, `gwf`, `ext_inflow`, `ext_outflow`,
-  `rain`, `runoff`, `evaporation`, `storage`, `from_mvr`, `to_mvr`, `mvr`,
-  `stream_fluxes`, `auxiliary`, `types`.
+  `rainfall`, `runoff`, `evaporation`, `storage`, `from_mvr`, `to_mvr`, `mvr`,
+  `stream_fluxes`, `auxiliary`, `types` (`rainfall` was `rain`, pinned to a term no
+  SFR file holds; ledger 473). On LAK and SFR, `budget.get(term=...)` takes
+  MF6's spelling (`"EXT-INFLOW"`) and refuses a term MF6 never writes for the
+  package, naming the spelling (`"ext_inflow"` is refused, not read as empty); each
+  `<term>.wide()` indexes by the package's own feature, `reach` or `lake`.
 
 **LAK** (`model.lak`; `model.lak(package="lak_2")` on a model of several, ledger 352):
 - `results.q` — lake↔aquifer exchange (spatial; column **`q_lake`**, feature-referenced,

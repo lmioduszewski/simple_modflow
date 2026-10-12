@@ -26,6 +26,7 @@ from myflopy.modflow.mf6.package_explorer_utils import (
     _normalize_connection_type_filter,
     _normalize_surface_water_include,
     _normalize_term_filter,
+    budget_term_attribute,
     cell_index_column,
     cell_numbering,
     split_cellid_columns,
@@ -868,6 +869,53 @@ def build_lak_budget_result_table(
     return frame[ordered + remaining]
 
 
+#: Every term MODFLOW 6 writes to a LAK or SFR package budget file (``lak.f90`` /
+#: ``sfr.f90``'s budget objects). A requested term outside it AND outside the file is a
+#: misspelling and is refused; one inside it the file lacks (no mover, no auxiliary) is
+#: simply absent, and reads an empty table.
+_PACKAGE_BUDGET_TERMS = {
+    "lak": frozenset({
+        "FLOW-JA-FACE", "GWF", "RAINFALL", "EVAPORATION", "RUNOFF", "EXT-INFLOW",
+        "WITHDRAWAL", "EXT-OUTFLOW", "STORAGE", "CONSTANT", "FROM-MVR", "TO-MVR",
+        "AUXILIARY",
+    }),
+    "sfr": frozenset({
+        "FLOW-JA-FACE", "GWF", "RAINFALL", "EVAPORATION", "RUNOFF", "EXT-INFLOW",
+        "EXT-OUTFLOW", "STORAGE", "FROM-MVR", "TO-MVR", "AUXILIARY",
+    }),
+}
+
+
+def _selected_budget_terms(
+    package_type: str, available: list[str], requested: list[str] | None
+) -> list[str]:
+    """The file's terms a ``term=`` filter keeps, refusing a term no budget file has.
+
+    ``budget.get(term="ext_inflow")`` matched nothing and returned an empty table
+    without a word (ledger 473): the filter compares MF6's spelling only. A term
+    that is neither in the file nor one MF6 writes for the package raises, naming the
+    file's terms and, where the attribute spelling was given, the MF6 one.
+    """
+
+    if requested is None:
+        return list(available)
+    known = _PACKAGE_BUDGET_TERMS[package_type] | set(available)
+    unknown = [value for value in requested if value not in known]
+    if unknown:
+        by_attribute = {budget_term_attribute(name): name for name in sorted(known)}
+        hints = [
+            f"{value.lower()!r} is spelled {by_attribute[budget_term_attribute(value)]!r}"
+            for value in unknown
+            if budget_term_attribute(value) in by_attribute
+        ]
+        raise ValueError(
+            f"{package_type.upper()} budget term(s) {unknown} are not terms MODFLOW 6 "
+            f"writes for this package; the file holds {available}."
+            + (f" {'; '.join(hints)}." if hints else "")
+        )
+    return [value for value in available if value in requested]
+
+
 def build_lak_budget_term_table(
     model: SimulationBase,
     *,
@@ -902,11 +950,7 @@ def build_lak_budget_term_table(
     one_package(model, "lak", package)  # several and none named: refused by the view's spelling
     budget = package_outputs(model, "lak", package).bud
     available_terms = [str(value).strip().upper() for value in budget.types]
-    selected_terms = (
-        available_terms
-        if requested_terms is None
-        else [value for value in available_terms if value in requested_terms]
-    )
+    selected_terms = _selected_budget_terms("lak", available_terms, requested_terms)
 
     frames: list[pd.DataFrame] = []
     for current_term in selected_terms:
@@ -1006,11 +1050,7 @@ def build_sfr_budget_term_table(
     one_package(model, "sfr", package)  # several and none named: refused by the view's spelling
     budget = package_outputs(model, "sfr", package).bud
     available_terms = [str(value).strip().upper() for value in budget.types]
-    selected_terms = (
-        available_terms
-        if requested_terms is None
-        else [value for value in available_terms if value in requested_terms]
-    )
+    selected_terms = _selected_budget_terms("sfr", available_terms, requested_terms)
     reach_table = build_sfr_reach_table(model, package=package)
 
     frames: list[pd.DataFrame] = []

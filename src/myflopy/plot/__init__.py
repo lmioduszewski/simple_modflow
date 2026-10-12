@@ -3088,7 +3088,6 @@ def _inherit_noun_docs() -> None:
         HfbPackageExplorer.map,
         HfbResultsExplorer.map,
         LakBudgetResultsExplorer.map,
-        LakConnectionsExplorer.map,
         PRTPathlineView.map,
         SfrBudgetResultsExplorer.map,
         StageResultsExplorer.map,
@@ -3109,6 +3108,11 @@ def _inherit_noun_docs() -> None:
     #: every colour exactly where it was (measured: `custom_zs` identical,
     #: figure not).
     inherit_map_docs(UzfInput.map, keep=tier1 | {"per"})
+
+    #: LAK connection GEOMETRY has no time axis: `per` is refused there by name
+    #: (ledger 473). Spliced with the `record` set it documented a `per` that
+    #: raised `TypeError` naming `ModelPlots.map` (ledger 440).
+    inherit_map_docs(LakConnectionsExplorer.map, keep=record - {"per"})
 
     #: The COMPOSERS, spliced once on the mixin every noun inherits them from.
     #: They name the same per-panel drawing options as `map` and forward them to

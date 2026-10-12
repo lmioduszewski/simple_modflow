@@ -1932,7 +1932,9 @@ class LakConnectionsExplorer:
         see ``model.lak.results.q.map()``.
 
         Connection geometry has no time axis, so there is no ``per``: a lake's
-        connections are declared once and do not change with the stress period.
+        connections are declared once and do not change with the stress period,
+        and ``per=`` raises ``TypeError`` saying so (it raised one naming
+        ``ModelPlots.map`` until ledger 473).
 
         Every parameter is named rather than swept into ``**kwargs``: PyCharm and
         Pylance read the ``def`` line and never run the module, so a parameter
@@ -1998,9 +2000,6 @@ class LakConnectionsExplorer:
             that trace.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
-        per : int, optional
-            Stress period to read (0-based). Mutually exclusive with ``kstpkper``;
-            with neither, the model's first output time is used.
         zmin, zmax : float, optional
             Fixed color-scale limits. Set both to hold the scale steady across
             frames or panels; ``zmin >= zmax`` raises rather than rendering one flat
@@ -2159,6 +2158,14 @@ class LakConnectionsExplorer:
         """
 
         refuse_noun_parameters("lak.connections", value_column, trace_kwargs)
+        if "per" in trace_kwargs:
+            # It reached `ModelPlots.map` beside the `per=0` passed below and raised
+            # "got multiple values for keyword argument 'per'" (ledger 473).
+            raise TypeError(
+                "lak.connections.map() takes no per=: a lake's connections are declared "
+                "once and do not change with the stress period. For what flows through "
+                "them in a period, use model.lak.results.q.map(per=...)."
+            )
         hover = resolve_noun_hover(hover, trace_kwargs)
         selected = self.get(lake=lake, layer=layer)
         if value_column not in selected.columns:
@@ -2337,18 +2344,20 @@ class LakBudgetNamespace:
         Every record of the LAK package's OWN budget file (not the GWF model
         budget), one row per entry per saved step -- a FILTER on ``per``, so every
         step a period saved stays; :meth:`summary` and :meth:`wide` read each
-        period's last. The selectors combine by AND, and none raises on a value
-        nothing matches: the table comes back empty.
+        period's last. The selectors combine by AND, and none but a misspelled
+        ``term`` raises on a value nothing matches: the table comes back empty.
 
         Parameters
         ----------
         term : str or iterable of str or None, optional
             Term(s) to keep, MODFLOW 6's spelling in any case -- ``"GWF"``,
             ``["GWF", "STORAGE"]``, ``"EXT-INFLOW"`` (:attr:`types` lists what the
-            file holds). Compared after ``strip().upper()`` and nothing else, so
-            the attribute spelling ``"ext_inflow"`` matches NOTHING and returns an
-            empty table without a word (use ``model.lak.budget.ext_inflow``).
-            ``None`` (default) keeps every term.
+            file holds). Compared after ``strip().upper()``. A term MODFLOW 6
+            writes for the package that this file lacks (no mover, say) gives an
+            empty table; any other raises ``ValueError`` naming the file's terms --
+            the attribute spelling ``"ext_inflow"`` included, which matched nothing
+            in silence until ledger 473 (``model.lak.budget.ext_inflow``
+            reaches it as an attribute). ``None`` (default) keeps every term.
         per : int or iterable of int or None, optional
             Zero-based stress period(s) to keep, every saved step of each.
             ``None`` (default) keeps every period.
@@ -2679,17 +2688,20 @@ class SfrBudgetNamespace:
         budget), one row per entry per saved step, each joined to the reach table
         -- a FILTER on ``per``, so every step a period saved stays; :meth:`summary`
         and :meth:`wide` read each period's last. The selectors combine by AND,
-        and none raises on a value nothing matches: the table comes back empty.
+        and none but a misspelled ``term`` raises on a value nothing matches: the
+        table comes back empty.
 
         Parameters
         ----------
         term : str or iterable of str or None, optional
             Term(s) to keep, MODFLOW 6's spelling in any case -- ``"GWF"``,
             ``["GWF", "STORAGE"]``, ``"EXT-INFLOW"`` (:attr:`types` lists what the
-            file holds). Compared after ``strip().upper()`` and nothing else, so
-            the attribute spelling ``"ext_inflow"`` matches NOTHING and returns an
-            empty table without a word (use ``model.sfr.budget.ext_inflow``).
-            ``None`` (default) keeps every term.
+            file holds). Compared after ``strip().upper()``. A term MODFLOW 6
+            writes for the package that this file lacks (no mover, say) gives an
+            empty table; any other raises ``ValueError`` naming the file's terms --
+            the attribute spelling ``"ext_inflow"`` included, which matched nothing
+            in silence until ledger 473 (``model.sfr.budget.ext_inflow``
+            reaches it as an attribute). ``None`` (default) keeps every term.
         per : int or iterable of int or None, optional
             Zero-based stress period(s) to keep, every saved step of each.
             ``None`` (default) keeps every period.
@@ -2893,10 +2905,14 @@ class SfrBudgetNamespace:
         return PackageBudgetTermExplorer(self, term="RUNOFF", label="sfr.budget.runoff")
 
     @property
-    def rain(self) -> PackageBudgetTermExplorer:
-        """Rainfall term helper."""
+    def rainfall(self) -> PackageBudgetTermExplorer:
+        """Rainfall term helper: MF6's ``RAINFALL`` record.
 
-        return PackageBudgetTermExplorer(self, term="RAIN", label="sfr.budget.rain")
+        It was ``rain``, pinned to a term ``"RAIN"`` no SFR budget file holds, so it
+        read an empty table on every model (ledger 473).
+        """
+
+        return PackageBudgetTermExplorer(self, term="RAINFALL", label="sfr.budget.rainfall")
 
     @property
     def evaporation(self) -> PackageBudgetTermExplorer:
@@ -2961,7 +2977,7 @@ class SfrBudgetNamespace:
             term=[
                 "EXT-INFLOW",
                 "RUNOFF",
-                "RAIN",
+                "RAINFALL",
                 "EVAPORATION",
                 "EXT-OUTFLOW",
                 "STORAGE",

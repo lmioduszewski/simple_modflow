@@ -2786,7 +2786,7 @@
     ],
     "PackageBudgetTermExplorer.wide": [
       "per:KEYWORD_ONLY=None",
-      "index:KEYWORD_ONLY=('per', 'lake')",
+      "index:KEYWORD_ONLY=None",
       "values:KEYWORD_ONLY='q'",
       "filters:VAR_KEYWORD=<required>"
     ],

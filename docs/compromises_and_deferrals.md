@@ -37,7 +37,7 @@
 
 | # | Entry | Date |
 | --: | --- | --- |
-| 473 | A record map's `multiplier` scales each record before `agg`, and never the fill | 2026-10-11 |
+| 473 | A record map's `multiplier` scales each record before `agg` and never the fill, and a LAK/SFR budget term i... | 2026-10-11 |
 | 472 | An input field's records combine by the field's kind at every tier, and pair across models one to one | 2026-10-11 |
 | 471 | A budget record whose value is an AUXILIARY reads one value column | 2026-10-11 |
 | 470 | An SFR exchange record joins the reach it names, so a cell of several reaches counts each flow once | 2026-10-11 |
@@ -18840,14 +18840,16 @@ same day, which is the useful part of the result.
       before `agg` and the fill never is); `exchange_intensity` is length²/time on an SFR cell
       and length/time on a LAK cell, not one comparable unit; an inputs table carries every
       record in every period, not "all under period 0". **Refusals missing or wrong:**
-      `model.sfr.budget.<term>.wide()`'s default `index=("per", "lake")` raises
+      ~~`model.sfr.budget.<term>.wide()`'s default `index=("per", "lake")` raises
       `KeyError: 'lake'` on every SFR term; `lak|sfr.budget.get(term="ext_inflow")` matches
-      nothing in silence; both SFR profile views draw by reach number for ANY `x` but
+      nothing in silence~~ (fixed by ledger 473: the parent's own index, and a term
+      MF6 never writes for the package is refused naming its spelling); both SFR profile views draw by reach number for ANY `x` but
       `"distance"` (a typo included), and `distance_*` is a running total of `rlen` in
       reach-number order, not a channel distance on a branched network;
-      `model.lak.connections.map(per=)` raises a `TypeError` naming `ModelPlots.map`
+      ~~`model.lak.connections.map(per=)` raises a `TypeError` naming `ModelPlots.map`
       while the entry spliced from `plot.map` documents `per` (the `record` keep set in
-      `plot._inherit_noun_docs`, not fixed here); ~~`hfb.results.q.map` with a `per` and a
+      `plot._inherit_noun_docs`, not fixed here)~~ (fixed by ledger 473: refused by
+      name, and no longer documented); ~~`hfb.results.q.map` with a `per` and a
       `kstpkper` that disagree raises `KeyError: 'layer'`~~ (refused naming both since
       ledger 449, and an empty selection draws the grid); an unknown map trace property
       is ignored under `backend="mpl"`; `model.budget["model"]`/`["types"]` return
@@ -19554,7 +19556,7 @@ same day, which is the useful part of the result.
       `value_cells_changed` counts `(per, layer, cell)` keys, as `cells_shared` does, not
       rows of `values()` (a cell of two changed records read 2, and 4 cross-paired).
 
-473. **A record map's `multiplier` scales each record before `agg`, and never the fill (2026-10-11).**
+473. **A record map's `multiplier` scales each record before `agg` and never the fill, and a LAK/SFR budget term is MF6's or refused (2026-10-11).**
       All five map payload builders (`build_cell_input_map_payload`, the group
       comparison's, the SFR/LAK exchange and the surface-water one) multiplied AFTER
       `agg` and over the `fill_value` cells, so `fill_value=1, multiplier=2` drew 2.0
@@ -19563,3 +19565,13 @@ same day, which is the useful part of the result.
       the single-model docstrings already promised ("applied before `agg`"); for a sum
       or a mean it changes nothing, for `max`/`min`/`first` under a negative
       multiplier it does, and a `count` no longer scales.
+      **Also:** `model.sfr.budget.rain` was pinned to `"RAIN"`, which no SFR budget file
+      holds (MF6 writes `RAINFALL`), so it and `stream_fluxes` dropped rainfall on every
+      model; it is `rainfall` now, the spelling `budget_term_attribute` gives and LAK
+      uses. `budget.get(term=...)` REFUSES a term outside MF6's closed list for the
+      package (`package_budget._PACKAGE_BUDGET_TERMS`) and outside the file, naming the
+      MF6 spelling of an attribute one (`'ext_inflow' is spelled 'EXT-INFLOW'`); a listed
+      term the file lacks (no mover) still reads empty, which is what every attribute
+      helper relies on. It does not accept the attribute spelling: one spelling.
+      `<term>.wide()` defaults its `index` to the parent's own (`lake` or `reach`), and
+      `lak.connections.map(per=)` raises `TypeError` naming `results.q.map(per=)`.
