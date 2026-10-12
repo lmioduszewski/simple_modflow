@@ -67,3 +67,21 @@ def test_an_embedded_connection_has_no_area(rewired):
     table = build_lak_connection_table(model)
     assert table["claktype"].iloc[embedded] == "EMBEDDEDH"
     assert np.isnan(table["connection_area"].iloc[embedded])
+
+
+def test_the_reset_leaves_the_declared_elevations_as_declared(rewired):
+    """MF6's reset feeds ``connection_area`` only: ``belev``/``telev`` report what was typed.
+
+    The reset wrote the cell's top and bottom into the table's own ``telev`` and
+    ``belev`` -- ``pd.to_numeric`` returns a float column sharing its array -- so the
+    columns the group view documents as "as declared" read 81.45/109.45 for a declared
+    96.0/96.0 (review of ledger 474).
+    """
+
+    from myflopy.modflow.mf6.package_tables import build_lak_connection_table
+
+    model, data, horizontal, _ = rewired
+    table = build_lak_connection_table(model)
+    assert table["belev"].iloc[horizontal] == pytest.approx(float(data["belev"][horizontal]))
+    assert table["telev"].iloc[horizontal] == pytest.approx(float(data["telev"][horizontal]))
+    assert table["telev"].iloc[horizontal] == table["belev"].iloc[horizontal]

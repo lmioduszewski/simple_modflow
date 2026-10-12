@@ -1837,10 +1837,12 @@ class SpatialView:
             default) is the surface's own: ``'mean'`` for heads, concentration and
             temperature (one model or a group), their difference, and a single
             model's LAK/SFR stage; a package INPUT field's own kind on one model,
-            a group and a diff (``package_registry.input_field_agg``: ``'sum'``
-            for a conductance or a rate, ``'mean'`` for an elevation or a
-            property -- ``model.drn.inputs.elev.plot()`` drew the SUM of the
-            drains' elevations until ledger 472); ``'sum'`` everywhere else
+            a group and a diff, a LAK/SFR input field's included
+            (``package_registry.input_field_agg``: ``'sum'`` for a conductance, a
+            rate or a connection area, ``'mean'`` for an elevation or a property
+            -- ``model.drn.inputs.elev.plot()`` drew the SUM of the drains'
+            elevations until ledger 472, and ``model.lak.inputs.belev.plot()``
+            the sum over a lake's connections until ledger 475); ``'sum'`` everywhere else
             -- a flux and a difference of fluxes, and a group's stage view (one
             row per lake or reach and period, so the sum is the stage). A point
             whose rows hold no value at all stays a gap rather than summing to 0.

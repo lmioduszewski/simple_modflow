@@ -1316,7 +1316,13 @@ noun's own `map()` (e.g. `sfr.results.q.map()`).
   it lists -- so each object comes from the last block that lists it. No `per` lists
   the blocks as WRITTEN, each row under its own period. Reading never changes the
   package (ledger 449: it used to add an empty block, which MF6 runs as "no
-  records from here on").
+  records from here on"). Several records combine by what the field IS -- an
+  elevation averages, a conductance or a rate adds -- on the map, the `plot()`
+  series, the group and the diff alike (`package_registry.input_field_agg`, ledger
+  472), and a group or diff comparison pairs a cell's records one to one, in file
+  order. The LAK/SFR input fields (`model.lak.inputs.belev`, `model.sfr.inputs.rlen`)
+  follow the same function: `connection_area`, `rlen`, `inflow` and `runoff` add,
+  every other column averages over a lake's connections on `plot()` (ledger 475).
 - `results.q` — the groundwater exchange (spatial). The `.get()` column names its
   reference frame: **`q_gwf`** (aquifer `.cbc` record; negative = the feature gains).
   Every package of the type, each row's `pname` naming its own (ledger 352).

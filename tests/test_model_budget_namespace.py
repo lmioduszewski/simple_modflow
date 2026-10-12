@@ -127,9 +127,10 @@ def test_terms_with_no_package_accessor_are_reachable(canonical_run):
 def test_either_spelling_reaches_the_same_term(canonical_run):
     """A name copied straight out of ``types`` must work, hyphens and all.
 
-    The package namespaces' term filter upcases without converting ``_`` back to
-    ``-``, so ``budget.get(term="ext_inflow")`` silently returns an empty frame
-    there. Indexing normalizes both spellings to one answer instead.
+    The LAK/SFR namespaces' term filter takes MF6's spelling only, and refuses the
+    attribute one (``budget.get(term="ext_inflow")`` names ``'EXT-INFLOW'`` since
+    ledger 473; it returned an empty frame in silence). The model budget's
+    indexing normalizes both spellings to one answer instead.
     """
 
     by_record = canonical_run.budget["STO-SS"]

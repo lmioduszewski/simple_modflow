@@ -156,3 +156,21 @@ def test_uzf_fields_combine_by_kind(canonical_run, monkeypatch):
     assert seen["agg"] == "mean"
     canonical_run.uzf.inputs.finf.map().fig
     assert seen["agg"] == "sum"
+
+
+def test_a_lakes_series_averages_its_connections_elevations(canonical_run):
+    """``model.lak.inputs.<field>.plot()`` pools a lake's connections by the field's kind.
+
+    One line per lake over every connection of it: an elevation, a leakance or the
+    starting stage averages, the connection area adds. They all added, so the canonical
+    lake's ``belev.plot()`` drew 6912.0 for 72 connections at 96.0, and ``strt.plot()``
+    72 times its one starting stage (ledger 475).
+    """
+
+    for field, agg in (("belev", "mean"), ("strt", "mean"), ("bedleak", "mean"),
+                       ("connection_area", "sum")):
+        view = getattr(canonical_run.lak.inputs, field)
+        table = view.get()
+        assert table.groupby("per")["lake"].count().max() > 1, "a lake of several connections"
+        expected = table.groupby("per")[field].agg(agg).to_numpy(float)
+        assert np.asarray(view.plot().data[0].y, float) == pytest.approx(expected), field

@@ -591,8 +591,11 @@ def build_lak_connection_table(model: SimulationBase, *, package: str | None = N
             np.asarray(model.vor.area_list, dtype=float).reshape(-1)
         )
     }
-    top = pd.to_numeric(connectiondata.get("telev"), errors="coerce")
-    bottom = pd.to_numeric(connectiondata.get("belev"), errors="coerce")
+    # COPIES: ``pd.to_numeric`` hands a float column back sharing its array, so the
+    # reset below wrote MF6's cell top and bottom into the table's own ``telev`` and
+    # ``belev`` -- the columns that report what was DECLARED (review of ledger 474).
+    top = pd.to_numeric(connectiondata.get("telev"), errors="coerce").copy()
+    bottom = pd.to_numeric(connectiondata.get("belev"), errors="coerce").copy()
     width = pd.to_numeric(connectiondata.get("connwidth"), errors="coerce")
     claktype = connectiondata["claktype"].astype(str).str.strip().str.upper()
     horizontal = claktype.eq("HORIZONTAL")

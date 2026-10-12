@@ -163,7 +163,10 @@ rather than averaging them. It had summed: a pond with 763 connected cells read
 map's cell, a series' period point, a group map and a group or diff comparison take
 their default `agg` from `package_registry.input_field_agg(package, field)` -- one
 function over `FieldSpec.agg` -- which refuses a column the registry does not declare
-rather than guessing. Two records of one cell are PAIRED across models in file order,
+rather than guessing. A LAK/SFR input field, which the registry does not declare, takes
+its kind from that function's one set (`connection_area`, `rlen`, `inflow`, `runoff`
+add; every other column averages -- ledger 475: `model.lak.inputs.belev.plot()`
+drew the sum over a lake's 72 connections). Two records of one cell are PAIRED across models in file order,
 never joined each with each. A record map's `multiplier` scales each record BEFORE
 `agg` and never the `fill_value` cells (ledger 473).
 

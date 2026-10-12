@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 474 entries (479 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 475 entries (480 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 475 | A LAK/SFR input field's series combines a lake's records by the field's kind, through `input_field_agg` | 2026-10-11 |
 | 474 | A LAK connection's `connection_area` is what MF6 reads it as, and `flow_area` is documented as MF6's wetted... | 2026-10-11 |
 | 473 | A record map's `multiplier` scales each record before `agg` and never the fill, and a LAK/SFR budget term i... | 2026-10-11 |
 | 472 | An input field's records combine by the field's kind at every tier, and pair across models one to one | 2026-10-11 |
@@ -19593,3 +19594,19 @@ same day, which is the useful part of the result.
       `build_lak_budget_result_table`'s docstring called `flow_area` that geometry;
       the column always held MF6's wetted `FLOW-AREA` (13 of the testing canonical
       lake's 33 vertical connections read 0.0 in period 0) and now says so.
+
+475. **A LAK/SFR input field's series combines a lake's records by the field's kind, through `input_field_agg` (2026-10-11).**
+      Ledger 472 reached the registry's input fields and missed the LAK/SFR ones,
+      whose `plot()` still summed every column over a lake's connections: on the testing
+      canonical lake (72 connections) `model.lak.inputs.belev.plot()` drew 6912.0 for a
+      bed of 96.0 and `strt.plot()` 7272.0 for a starting stage of 101.0. The registry
+      declares no LAK/SFR input field, so `package_registry.input_field_agg` now carries
+      their kind as ONE set -- `connection_area`, `rlen`, `inflow`, `runoff` add -- the set
+      the LAK/SFR field map already used. **Judgment calls:** every other column, an
+      auxiliary included, AVERAGES rather than being refused as an undeclared registry
+      field is (the table's columns are read off the package, and the map had always
+      treated them as non-additive); and the field MAP keeps `"first"` for those columns
+      rather than moving to `"mean"` -- a cell's records agree for every such field on
+      the canonical model except `connlen`/`connwidth` on 16 cells holding two
+      connections, where neither is the cell's one number and the documented default
+      was left alone. An SFR series is one row per reach, so it did not move.

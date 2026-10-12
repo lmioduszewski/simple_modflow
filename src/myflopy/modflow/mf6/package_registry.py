@@ -655,6 +655,16 @@ def get_package_input_field_spec(package_name: str, field_name: str) -> FieldSpe
     return spec.inputs.get(str(field_name).lower())
 
 
+#: The LAK/SFR input fields that are TOTALS -- an area, a length, a volumetric rate --
+#: and so ADD over the records they combine; every other one (an elevation, a width, a
+#: leakance, a roughness, a starting stage) averages. The registry declares no LAK/SFR
+#: input field, so this set is their ``FieldSpec.kind`` (ledger 475).
+_SURFACE_WATER_EXTENSIVE_INPUTS = frozenset({"connection_area", "rlen", "inflow", "runoff"})
+
+#: The packages whose input fields :data:`_SURFACE_WATER_EXTENSIVE_INPUTS` classifies.
+_SURFACE_WATER_INPUT_PACKAGES = frozenset({"lak", "sfr"})
+
+
 def input_field_agg(package_name: str, field_name: str, agg: str | None = None) -> str:
     """How several records of one package input field combine, from what it IS.
 
@@ -664,15 +674,19 @@ def input_field_agg(package_name: str, field_name: str, agg: str | None = None) 
     an extensive field (a conductance, a rate), ``"mean"`` for an elevation or an
     intensive one. The series panels and the group tier used to take ``"sum"``
     for every field, so ``model.drn.inputs.elev.plot()`` drew the SUM of the
-    drains' elevations (ledger 472).
+    drains' elevations (ledger 472). A LAK or SFR input field, which the
+    registry does not declare, takes its kind from one set instead: ``"sum"``
+    for ``connection_area``, ``rlen``, ``inflow`` and ``runoff``, ``"mean"`` for
+    every other column (ledger 475).
 
     Parameters
     ----------
     package_name : str
-        The package type, any case (``"drn"``, ``"uzf"``).
+        The package type, any case (``"drn"``, ``"uzf"``, ``"lak"``).
     field_name : str
         The input field, any case, as the registry names it (``"elev"``,
-        ``"cond"``, ``"finf"``).
+        ``"cond"``, ``"finf"``), or a column of the LAK/SFR inputs table
+        (``"belev"``, ``"rlen"``).
     agg : str or None, optional
         The caller's own choice, any pandas aggregation name; returned unchanged
         when given. Default ``None``: the field's kind decides.
@@ -685,13 +699,19 @@ def input_field_agg(package_name: str, field_name: str, agg: str | None = None) 
     Raises
     ------
     ValueError
-        When ``agg`` is ``None`` and the registry declares no such field (an
-        auxiliary column, say): what its records ARE is unknown, so the caller
-        must say how they combine rather than have one guessed.
+        When ``agg`` is ``None``, the package is not LAK or SFR, and the registry
+        declares no such field (an auxiliary column, say): what its records ARE
+        is unknown, so the caller must say how they combine rather than have one
+        guessed.
     """
 
     if agg is not None:
         return str(agg)
+    if str(package_name).lower() in _SURFACE_WATER_INPUT_PACKAGES:
+        # The registry declares no LAK/SFR input field: their table's columns are
+        # read off the package, so the kind is this set's (ledger 475).
+        extensive = str(field_name).lower() in _SURFACE_WATER_EXTENSIVE_INPUTS
+        return agg_for_kind("extensive" if extensive else "intensive")
     spec = get_package_input_field_spec(package_name, field_name)
     if spec is None:
         raise ValueError(

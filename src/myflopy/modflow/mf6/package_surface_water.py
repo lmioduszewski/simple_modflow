@@ -50,6 +50,7 @@ from myflopy.modflow.mf6.package_registry import (
     checked_package_name,
     get_default_budget_term,
     get_package_result_spec,
+    input_field_agg,
     one_package,
     package_outputs,
 )
@@ -3095,11 +3096,11 @@ class SfrProfileView:
             channel), the ``packagedata`` fields, ``streambed_top``/
             ``streambed_bottom``, ``stage`` and ``q_gwf`` (MF6's
             aquifer-referenced sign: negative where the reach gains) with
-            ``q_per_length``. ``q_gwf`` is summed from
-            ``model.sfr.results.q.get()``, which joins records to reaches on the
-            CELL, so every reach of a cell holding several reads the CELL's total
-            (testing canonical cell 195 at period 3: -493.56 on reaches 22, 37 and
-            38, whose own flows are -20.91, -471.96 and -0.69; ledger 440).
+            ``q_per_length``. ``q_gwf`` is each reach's own record in
+            ``model.sfr.results.q.get()``, so the reaches of a cell holding several
+            read their own flows (testing canonical cell 195 at period 3: -20.91,
+            -471.96 and -0.69 on reaches 22, 37 and 38; each read the cell's
+            -493.56 until ledger 470 joined a record to its reach).
         """
 
         return build_sfr_long_profile_table(self.model, per=self._period(per), package=self.package)
@@ -3889,6 +3890,17 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
         self.package_name = inputs.package_name
         self.field_name = str(field_name)
 
+    def _series_default_agg(self) -> str:
+        """How :meth:`plot` combines a lake's or reach's records: by the field's kind.
+
+        A lake's line pools every one of its connections, and the default was
+        ``"sum"`` for every field, so ``model.lak.inputs.belev.plot()`` drew 72 times
+        the testing canonical lake's bed and ``strt.plot()`` 72 times its stage
+        (ledger 475): an extensive field adds, every other one averages.
+        """
+
+        return input_field_agg(self.package_name, self.field_name)
+
     def get(
         self,
         *,
@@ -4028,8 +4040,10 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
             How several records landing in ONE cell are reduced to one number.
             The default is chosen per field rather than fixed: ``sum`` for the
             extensive ones (``connection_area``, ``rlen``, ``inflow``,
-            ``runoff``), ``first`` for everything else, which is what keeps an
-            elevation or a leakance from being added to itself. Set it
+            ``runoff`` -- ``package_registry.input_field_agg``'s set), ``first``
+            for everything else, which is what keeps an elevation or a leakance
+            from being added to itself (``plot()`` averages those instead, over a
+            lake's or reach's records). Set it
             explicitly when a cell holds several reaches and you want a
             per-reach statistic rather than the cell total.
         **trace_kwargs
@@ -4213,11 +4227,9 @@ class SurfaceWaterInputFieldExplorer(SpatialView):
         hover = resolve_noun_hover(hover, trace_kwargs)
         selected = self.get(per=per, layer=layer)
         if agg is None:
-            agg = (
-                "sum"
-                if self.field_name in {"connection_area", "rlen", "inflow", "runoff"}
-                else "first"
-            )
+            # A cell's records are copies of one value for every field but a total,
+            # so the map keeps the first where the series averages (ledger 475).
+            agg = "sum" if input_field_agg(self.package_name, self.field_name) == "sum" else "first"
         values, cell_hover = build_cell_input_map_payload(
             selected,
             ncpl=self.model.vor.ncpl,
