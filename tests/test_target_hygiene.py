@@ -21,7 +21,8 @@ What each test pins, in the order the defects were found:
 * a per-reading ``weight`` column was dropped, and SFR sets had no weight (ledger
   504);
 * the PEST head writer read ``<model>.hds`` whatever the OC declared (ledger
-  505), and a weighted target on an empty base cell built (ledger 506).
+  505), and a cell the base run left empty built, whatever its weight (ledger
+  506); a DRN reading's weight beside its zone's split into `weight_x`/`weight_y`.
 """
 
 from __future__ import annotations
@@ -413,23 +414,69 @@ def test_the_head_writers_read_the_file_the_oc_declares_and_never_a_stale_one(tm
         _build(model, tmp_path / "pest2", observe=(heads,))
 
 
-# -- ledger 506: a weighted target needs a base value -------------------
+# -- ledger 506: every cell PEST reads needs a base value --------------
 
 
-def test_a_weighted_target_on_a_cell_the_base_run_left_empty_is_refused(toy, tmp_path):
-    """The build accepted an empty base cell under a weighted target; PEST++ then failed
-    every realization on reading it. A weight-0 row there is left alone."""
+def test_a_cell_the_base_run_left_empty_is_refused_whatever_its_weight(toy, tmp_path):
+    """The build accepted an empty base cell, and PEST++ fails a run on reading an
+    empty field at weight 0 exactly as at weight 1
+    (docs/reproducers/pest_no_value_fields.py). The first check refused it only under
+    a positive weight (review of ledger 506)."""
 
     heads = _head_targets([("W", 22)], pd.DataFrame({"time": [0, 1], "W": [99.0, 99.5]}))
     table = pd.DataFrame({"per": [0, 1, 2], "W": [100.0, np.nan, 100.0]})
     spec = HeadTargetObservationSpec(targets=heads, simulated_values=table)
     with pytest.raises(ValueError, match=(
-            r"HeadTargets \(PEST build, prefix 'hds'\): 1 weighted target\(s\) read a cell the "
-            r"base run's simulated table holds no number in.*'W' at time 1 \(period 1, ")):
+            r"HeadTargets \(PEST build, prefix 'hds'\): the base run's table "
+            r"hds_simulated_heads\.csv holds no number in 1 cell\(s\) PEST's instruction "
+            r"file reads: 'W' at 1 \(oname:hds_otype:lst_usecol:w_per:1, weight 1\)")):
         _build(toy, tmp_path / "pest", observe=(spec,))
-    unweighted = _head_targets([("W", 22)], pd.DataFrame({"time": [0, 1], "W": [99.0, 99.5]}),
-                               ).locations_gdf.assign(weight=0.0)
+    # At weight 0 -- the location's, and an unmeasured period -- it is refused too.
+    unweighted = heads.locations_gdf.assign(weight=0.0)
     quiet = mf.HeadTargets(locations=unweighted, values=pd.DataFrame({"time": [0, 1], "W": [99.0, 99.5]}))
-    _cal, pst = _build(toy, tmp_path / "pest2",
-                       observe=(HeadTargetObservationSpec(targets=quiet, simulated_values=table),))
-    assert (pst.observation_data["weight"] == 0).all()
+    for targets, gap in ((quiet, 1), (heads, 2)):
+        holed = table.assign(W=[100.0, 100.0, 100.0])
+        holed.loc[gap, "W"] = np.nan
+        with pytest.raises(ValueError, match=rf"'W' at {gap} \(oname:hds_otype:lst_usecol:w_per:{gap}, weight 0\)"):
+            _build(toy, tmp_path / f"pest{gap}",
+                   observe=(HeadTargetObservationSpec(targets=targets, simulated_values=holed),))
+
+
+def test_a_drn_zone_whose_drains_are_off_in_an_unmeasured_period_is_refused(tmp_path):
+    """Measured on a real run: a zone whose drains are off in periods 1-2, measured in
+    period 0 only, left those cells of the base table empty; the build succeeded and
+    every PESTPP-IES realization failed on `error tokenizing output line ('1,0.0,')`."""
+
+    grid, props, edge = _grid_and_edges()
+    model = mf.gwf("m", grid=grid, packages=[
+        _disv(grid, props), mf.npf(k=10.0, icelltype=0), mf.ic(strt=100.0),
+        mf.sto(ss=1e-3, sy=0.2, iconvert=0, transient={0: True}),
+        mf.chd(stress_period_data={0: [[(0, int(c)), 102.0] for c in edge]}),
+        mf.drn(stress_period_data={0: [[(0, c), 96.0, 50.0] for c in (20, 21, 27, 30)],
+                                   1: [[(0, 30), 96.0, 50.0]]}),
+        mf.oc(head_filerecord="m.hds", budget_filerecord="m.cbc",
+              saverecord=[("HEAD", "LAST"), ("BUDGET", "LAST")]),
+    ])
+    run = _run(tmp_path, mf.simulation(model, name="s", packages=[
+        mf.tdis(nper=NPER, perioddata=[(PERLEN, NSTP, 1.0)] * NPER)])).model()
+    seep = mf.DrnFlowTargets(locations=pd.DataFrame({"name": ["zone", "b"], "cells": [[20, 21, 27], [30]]}),
+                             values=pd.DataFrame({"time": [0], "zone": [-3.0]}))
+    with pytest.raises(ValueError, match=(
+            r"DrnFlowTargets \(PEST build, prefix 'drn_flow'\): the base run's table "
+            r"drn_flow_simulated_drn_flow\.csv holds no number in 2 cell\(s\).*"
+            r"'zone' at 1 \(oname:drn_flow_otype:lst_usecol:zone_time:1, weight 0\); "
+            r"'zone' at 2 ")):
+        _build(run, tmp_path / "pest", observe=(seep,))
+
+
+def test_a_drn_readings_weight_and_its_zones_are_one_weight_column(toy):
+    """get() and compare() returned weight_x/weight_y once a values table carried a
+    weight, and residuals() raised KeyError naming `weight`."""
+
+    seep = mf.DrnFlowTargets(
+        locations=pd.DataFrame({"name": ["zone"], "cells": [[20, 21, 27]], "weight": [0.2]}),
+        values=pd.DataFrame({"time": [0, 1], "name": ["zone", "zone"], "flow": [-3.0, -4.0],
+                             "weight": [7.0, None]}))
+    for frame in (seep.get(), seep.get(toy), seep.compare(toy), seep.residuals(toy)):
+        assert not {"weight_x", "weight_y"} & set(frame.columns)
+        assert frame["weight"].tolist() == [7.0, 0.2]

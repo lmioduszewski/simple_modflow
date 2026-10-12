@@ -29,6 +29,14 @@ MEASURED (pestpp-glm, pyEMU 1.4.0, 2026-09-25):
                                             line advance instruction"
   extra column  ``time,bar,foo`` (bar=7)    runs, and reads ``bar`` as ``foo``: every
                                             modelled value 7.0, no error
+
+MEASURED with the broken field's observation at WEIGHT 0 (pestpp-glm, 2026-10-12;
+review of ledger 506 -- pestpp-ies fails the same way):
+  empty field at weight 0                   run FAILS: "error tokenizing output line"
+  nan at weight 0                           run FAILS: "casting 'nan' to double yielded
+                                            denormal value"
+So a field PEST++ cannot read fails the run whatever its weight: the instruction file
+reads every field, and the weight only says what phi counts.
 """
 
 from __future__ import annotations
@@ -54,7 +62,7 @@ CASES = {
 }
 
 
-def _case(root: pathlib.Path, label: str, forward: str) -> None:
+def _case(root: pathlib.Path, label: str, forward: str, *, weight_of_row_1: float = 1.0) -> None:
     ws = root / label.replace(" ", "_")
     ws.mkdir()
     (ws / "out.csv").write_text(BASE)
@@ -71,6 +79,8 @@ def _case(root: pathlib.Path, label: str, forward: str) -> None:
     pst.model_command = ["./run.sh"]
     pst.control_data.noptmax = 0
     pst.observation_data.loc[:, "weight"] = 1.0
+    # Row 1 is the field each case breaks; weight 0 asks whether PEST++ reads it anyway.
+    pst.observation_data.loc[pst.observation_data.index[1], "weight"] = weight_of_row_1
     pst.write(str(ws / "t.pst"))
     done = subprocess.run(["pestpp-glm", "t.pst"], cwd=ws, capture_output=True, text=True,
                           timeout=120)
@@ -94,6 +104,10 @@ def main() -> None:
     atexit.register(shutil.rmtree, root, ignore_errors=True)  # /tmp is a quota'd tmpfs (ledger 460)
     for label, forward in CASES.items():
         _case(root, label, forward)
+    # The same broken fields under an observation of weight 0 (review of ledger
+    # 506): the instruction file reads every field whatever its weight.
+    for label in ("empty field", "nan"):
+        _case(root, f"{label} at weight 0", CASES[label], weight_of_row_1=0.0)
 
 
 if __name__ == "__main__":

@@ -37,7 +37,7 @@
 
 | # | Entry | Date |
 | --: | --- | --- |
-| 506 | The PEST build refuses a positively weighted target whose cell in the base run's simulated table holds no f... | 2026-10-12 |
+| 506 | The PEST build refuses a base-run table that holds no finite number in a cell PEST's instruction file reads... | 2026-10-12 |
 | 505 | The PEST head and concentration writers read the file the model's OC declares, and the build refuses one th... | 2026-10-12 |
 | 504 | A reading's own weight is honoured: a `weight` column in a LONG values table beats the location's weight, w... | 2026-10-12 |
 | 503 | A lake or reach target's id is checked against its package, and a boundname is accepted | 2026-10-12 |
@@ -20198,16 +20198,23 @@ same day, which is the useful part of the result.
       passes neither and still reads `<model>.hds`, so a template built on a renamed
       head file must be rebuilt.
 
-506. **The PEST build refuses a positively weighted target whose cell in the base run's simulated table holds no finite number (2026-10-12).**
+506. **The PEST build refuses a base-run table that holds no finite number in a cell PEST's instruction file reads, whatever that observation's weight (2026-10-12).**
       Ledger 340 refuses a target VALUE that is not finite, and nothing checked the
-      SIMULATED side. A cell the base run left empty is empty in every realization
-      written the same way, and PEST++ fails a run on an empty field
-      (`docs/reproducers/pest_no_value_fields.py`). So the build succeeded and the first
-      IES run failed: a DRN zone with no drain in a period on the budget route
-      (flows-2), or a gap in a supplied `simulated_values` table. The check runs in
-      `finalize_observations` against the base table's own cells. **Judgment calls:**
-      a weight-0 row there is left alone, because it is never history-matched. MF6's
-      no-value numbers (`|value| >= 1e29`: an inactive lake written 1e30, a dry SFR
-      reach's -1e30 under ledger 353) are finite and are NOT refused. Refusing a target
-      because the uncalibrated model is dry there would block a calibration meant to
-      wet it.
+      SIMULATED side. A cell the forward run's writer leaves empty is empty in every
+      realization written the same way, and PEST++ fails a run on an empty field or
+      `nan` (`docs/reproducers/pest_no_value_fields.py`). So the build succeeded and
+      every IES realization failed. Measured on a real run: a DRN zone whose drains are
+      off in periods 1-2 (budget route, flows-2) left those cells empty, and
+      PESTPP-IES failed 1 of 1 runs on `error tokenizing output line ('1,0.0,')`. The
+      check runs in `finalize_observations` against the base table's own cells.
+      ~~a weight-0 row there is left alone, because it is never history-matched~~ --
+      the batch's first version refused only a positively weighted cell. **Corrected at
+      review:** PEST++ reads every field whatever its weight -- measured, an empty field
+      and `nan` at weight 0 fail the run exactly as at weight 1 (the same reproducer) --
+      and the DRN case above is two UNMEASURED zone-periods, which the first version
+      passed. Every cell is checked now, forecasts included; a gap in a supplied
+      `simulated_values` table is refused the same, since that table must be what the
+      forward run writes. **Judgment call:** MF6's no-value numbers (`|value| >= 1e29`:
+      an inactive lake written 1e30, a dry SFR reach's -1e30 under ledger 353) are
+      finite and are NOT refused. Refusing a target because the uncalibrated model is
+      dry there would block a calibration meant to wet it.

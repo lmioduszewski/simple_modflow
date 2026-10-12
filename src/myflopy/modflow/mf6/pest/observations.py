@@ -450,9 +450,13 @@ def _prepared_item(
         "shape": (int(len(simulated)), int(len(simulated.columns) - 1)),
         "values_path": values_path,
         "value_label": value_label,
-        # The base run's value in each cell of the table, for the check that a
-        # WEIGHTED observation starts from a number (ledger 506).
+        # The base run's value in each cell of the table, its row keys and column
+        # names, for the check that every cell PEST reads holds a number (ledger
+        # 506).
         "base_values": simulated.iloc[:, 1:].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float),
+        "base_rows": simulated.iloc[:, 0].tolist(),
+        "base_columns": [str(column) for column in simulated.columns[1:]],
+        "table": simulated_path.name,
     }
 
 
@@ -1276,39 +1280,51 @@ def assign_observation_groups(obs: pd.DataFrame, prepared: list[dict]) -> None:
         obs.loc[valued["obsnme"], "obgnme"] = valued["obgnme"].to_numpy(dtype=object)
 
 
-def _refuse_weighted_rows_with_no_base_value(item: dict, valued: pd.DataFrame) -> None:
-    """Refuse a positively weighted observation whose BASE run value is not a finite number.
+def _refuse_base_cells_with_no_number(item: dict, names: list[list[str]]) -> None:
+    """Refuse a set whose BASE table leaves a cell PEST reads without a finite number.
 
-    The base table is where PEST's instruction file reads every realization, and a
-    cell the base run left empty -- a DRN zone with no drain in a period on the
-    budget route, a supplied ``simulated_values`` table with a gap -- is empty in
-    every realization written the same way, so PEST++ fails the run on reading it
-    (``docs/reproducers/pest_no_value_fields.py``). The build accepted it and the
-    first IES run failed (ledger 506). A weight-0 row is left alone: it is
-    never history-matched. MF6's no-value numbers (``|value| >= 1e29``) ARE finite
-    and are not refused here.
+    pyEMU builds the instruction file from the base table, and it reads EVERY cell of
+    it, whatever the observation's weight: PEST++ fails a run on an empty field or
+    ``nan`` at weight 0 exactly as at weight 1 (measured,
+    ``docs/reproducers/pest_no_value_fields.py``). A cell the forward run's own
+    writer left empty -- a DRN zone whose drains are off in a period, on the budget
+    route -- is empty in every realization written the same way, so the build
+    succeeded and every IES realization failed (ledger 506). A supplied
+    ``simulated_values`` table must be what the forward run writes, so a gap there
+    is refused the same. MF6's no-value numbers (``|value| >= 1e29``) ARE finite and
+    are not refused here.
     """
 
     base = item.get("base_values")
-    if base is None or valued.empty:
+    if base is None or base.size == 0:
         return
-    weights = valued["weight"].fillna(1.0).to_numpy(dtype=float)
-    rows = valued["row"].to_numpy(dtype=int)
-    cols = valued["col"].to_numpy(dtype=int)
-    empty = (weights > 0) & ~np.isfinite(base[rows, cols])
+    empty = ~np.isfinite(base)
     if not empty.any():
         return
-    listing = [
-        f"{_shown(target.name)} at time {_shown(target.time)} (period {int(target.per)}, "
-        f"observation {target.obsnme})"
-        for target in valued.loc[empty].itertuples(index=False)
-    ]
+    weighted = {}
+    frame = item.get("target_frame")
+    # A forecast is weight 0 whatever it carries; a measured target its own weight,
+    # else 1.0 -- what the message reports, so the cell can be found and judged.
+    if not item.get("is_forecast") and frame is not None and not frame.empty and "weight" in frame.columns:
+        valued = frame[frame["value"].notna()]
+        for row, col, weight in zip(valued["row"], valued["col"], valued["weight"], strict=True):
+            weighted[(int(row), int(col))] = 1.0 if pd.isna(weight) else float(weight)
+    rows, cols = np.nonzero(empty)
+    listing = []
+    for row, col in zip(rows.tolist(), cols.tolist(), strict=True):
+        weight = weighted.get((row, col), 0.0)
+        listing.append(
+            f"{item['base_columns'][col]!r} at {_shown(item['base_rows'][row])} "
+            f"({names[row][col]}, weight {weight:g})"
+        )
     raise ValueError(
-        f"{_caller(item['owner'], item['prefix'])}: {len(listing)} weighted target(s) read a "
-        "cell the base run's simulated table holds no number in, so every realization "
-        f"would hand PEST++ an empty field there and fail: {_listed(listing)}. Find why "
-        "the model writes nothing there (a zone with no drain in that period, a gap in a "
-        "supplied simulated table), or give the target weight 0."
+        f"{_caller(item['owner'], item['prefix'])}: the base run's table {item['table']} holds "
+        f"no number in {len(listing)} cell(s) PEST's instruction file reads: "
+        f"{_listed(listing)}. PEST++ fails a run on reading an empty field whatever the "
+        "observation's weight, and the forward run writes this table the same way, so "
+        "every realization would fail. Find why the model writes nothing there (a DRN "
+        "zone whose drains are off in that period, a gap in a supplied simulated table) "
+        "and give the set locations and periods the model writes a number for."
     )
 
 
@@ -1346,9 +1362,9 @@ def finalize_observations(project, prepared: list[dict]):
     ------
     ValueError
         When an instruction file does not line up with its table, or names an
-        observation the control file does not hold; when a positively weighted
-        target reads a cell the base run left without a finite number (ledger
-        506); or when a group label cannot be a PEST group
+        observation the control file does not hold; when the base run's table
+        leaves a cell the instruction file reads without a finite number, whatever
+        its weight (ledger 506); or when a group label cannot be a PEST group
         (:func:`assign_observation_groups`).
     """
 
@@ -1367,6 +1383,9 @@ def finalize_observations(project, prepared: list[dict]):
             )
         item["observation_names"] = every
         obs.loc[every, "weight"] = 0.0
+        # Every cell PEST reads must hold a number, whatever its weight (ledger
+        # 506).
+        _refuse_base_cells_with_no_number(item, names)
 
         frame = item["target_frame"]
         frame["obsnme"] = [names[row][col] for row, col in zip(frame["row"], frame["col"], strict=True)]
@@ -1384,7 +1403,6 @@ def finalize_observations(project, prepared: list[dict]):
                 )
             obs.loc[valued["obsnme"], "obsval"] = valued["value"].to_numpy(dtype=float)
             obs.loc[valued["obsnme"], "weight"] = valued["weight"].fillna(1.0).to_numpy(dtype=float)
-            _refuse_weighted_rows_with_no_base_value(item, valued)
     assign_observation_groups(obs, prepared)
     for item in prepared:
         if item.get("values_path") is not None:

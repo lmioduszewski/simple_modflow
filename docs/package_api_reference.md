@@ -881,8 +881,8 @@ it forecasts every row. The head and concentration tables are written by ONE wri
 the base run and every forward run, from the file the model's OC declares (`HEAD
 FILEOUT`/`CONCENTRATION FILEOUT`, read by `output_files._declared_output_path`; it was
 `<model>.hds`/`.ucn` whatever the OC said, ledger 505), and two sets under one
-prefix are refused. So is a weighted target whose cell in the base run's table holds no
-finite number (ledger 506). A PEST
+prefix are refused. So is a base-run table holding no finite number in a cell PEST
+reads, whatever that observation's weight (ledger 506). A PEST
 template built before this bakes the old forward run and must be rebuilt.
 
 **A target's `group` label is its PEST observation group** (ledger 358). A head,

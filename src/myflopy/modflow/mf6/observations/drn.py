@@ -459,6 +459,36 @@ def _zone_labels(members: dict[str, set[tuple[int, int]]]) -> dict[str, list[tup
     return labels
 
 
+#: Where a reading's own weight waits while its values meet the zone table, which
+#: carries a ``weight`` column of its own (ledger 504).
+_READING_WEIGHT = "_reading_weight"
+
+
+def _readings(values: pd.DataFrame) -> pd.DataFrame:
+    """``values`` with a reading's own ``weight`` set aside before it meets the zone table."""
+
+    return values.rename(columns={"weight": _READING_WEIGHT})
+
+
+def _reading_weight_first(merged: pd.DataFrame) -> pd.DataFrame:
+    """One ``weight``: a reading's own, else its zone's (ledger 504).
+
+    The values table may carry a per-reading ``weight`` (ledger 504) and the
+    zone table always carries the zone's, so a plain merge returned ``weight_x`` and
+    ``weight_y`` from :meth:`DrnFlowTargets.get` and :meth:`DrnFlowTargets.compare`,
+    and :meth:`DrnFlowTargets.residuals` raised ``KeyError`` naming ``weight``. This
+    is the order the PEST build applies (``pest.observations._zone_weights``).
+    """
+
+    if _READING_WEIGHT not in merged.columns:
+        return merged
+    reading = pd.to_numeric(merged.pop(_READING_WEIGHT), errors="coerce").astype(float)
+    if "weight" in merged.columns:
+        reading = reading.fillna(pd.to_numeric(merged["weight"], errors="coerce").astype(float))
+    merged["weight"] = reading
+    return merged
+
+
 @dataclass
 class DrnFlowTargets:
     """Observed seepage/discharge targets aggregated from DRN budget cells.
@@ -732,6 +762,10 @@ class DrnFlowTargets:
             ``name`` to the zone table's columns other than geometry: one row
             per value and zone ROW, so a zone given as several rows repeats each
             of its values, and a value naming no zone gets one row of ``NaN``.
+            ONE ``weight`` column: a reading's own weight where the values table
+            gave one, else its zone's (ledger 504) -- the weight the PEST
+            build gives the observation, ``NaN`` meaning 1.0 there (it returned
+            ``weight_x``/``weight_y`` when the values carried one).
         """
 
         definitions = self._locations.copy()
@@ -739,7 +773,10 @@ class DrnFlowTargets:
             definitions = self.zone_definitions(model)
         if self._values.empty:
             return definitions
-        return _copy_frame(self._values.merge(definitions.drop(columns="geometry", errors="ignore"), on="name", how="left"))
+        merged = _readings(self._values).merge(
+            definitions.drop(columns="geometry", errors="ignore"), on="name", how="left"
+        )
+        return _copy_frame(_reading_weight_first(merged))
 
     def to_long(self, model=None) -> pd.DataFrame:
         """Return the long-format DRN-flow target table (the same table as :meth:`get`).
@@ -1045,7 +1082,9 @@ class DrnFlowTargets:
             _refuse_keys_off_the_periods(
                 targets, wide["time"], model=model, caller="DrnFlowTargets.compare(...)"
             )
-            compare = targets.merge(simulated, on=["name", "per"], how="left")
+            compare = _reading_weight_first(
+                _readings(targets).merge(simulated, on=["name", "per"], how="left")
+            )
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_flow"] - compare["flow_target"]
         compare["abs_residual"] = compare["residual"].abs()
@@ -1153,7 +1192,9 @@ class DrnFlowTargets:
             ``flow_target``, ``sim_flow``, ``residual`` (simulated minus target),
             ``abs_residual``, and the zone's ``group``, ``weight`` and ``cells``
             -- ONE set per zone however many rows define it, its cells the
-            sorted ``(layer, cell)`` pairs MF6 reads. ``flow_target`` and
+            sorted ``(layer, cell)`` pairs MF6 reads; ``weight`` is a reading's
+            own where the values table gave one, else the zone's (ledger
+            504). ``flow_target`` and
             ``sim_flow`` are both in MF6's sign -- zero or negative, water
             leaving the aquifer (ledger 350) -- so a residual above zero means
             the model drains LESS than was measured. With no values
@@ -1194,7 +1235,9 @@ class DrnFlowTargets:
             targets["per"] = _measured_periods(
                 targets, value_column="flow_target", caller="DrnFlowTargets.compare(...)"
             )
-            compare = targets.merge(simulated, on=["name", "per"], how="left")
+            compare = _reading_weight_first(
+                _readings(targets).merge(simulated, on=["name", "per"], how="left")
+            )
         compare = _normalize_compare_time(compare)
         compare["residual"] = compare["sim_flow"] - compare["flow_target"]
         compare["abs_residual"] = compare["residual"].abs()

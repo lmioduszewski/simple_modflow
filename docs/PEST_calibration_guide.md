@@ -198,9 +198,9 @@ run's last read `NaN`, and `stats()` left it out in silence). A blank value is
 unmeasured. The base run's heads and concentrations are read from the file the model's OC
 declares (`HEAD FILEOUT`/`CONCENTRATION FILEOUT`, ledger 505), as every forward
 run's are; a declared file missing from the run directory is refused rather than another
-read in its place. A weighted target whose cell in the base run's table holds no number
-is refused too (ledger 506): every realization would hand PEST++ the same empty
-field. Every simulated row no target measures stays in the control file
+read in its place. A base-run table with a cell holding no number is refused too,
+whatever that observation's weight (ledger 506): PEST++ fails a run on reading an
+empty field at weight 0 as at weight 1, and every realization would hand it the same one. Every simulated row no target measures stays in the control file
 at weight 0, holding the base run's own value: reported in every ensemble, never
 history-matched. (Until then each such row carried weight 1, pulling the calibration
 back toward the uncalibrated model at every period nobody measured.)
