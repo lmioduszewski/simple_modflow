@@ -102,6 +102,7 @@ HeadTargets`, and deliberately a *configuration* of it rather than a copy:
     _TABLE_ATTRIBUTE: ClassVar[str] = "all_conc"
     _STORE_COLUMN: ClassVar[str] = "conc"
     _FIELD_LABEL: ClassVar[str] = "concentration"
+    _OBS_KIND: ClassVar[str] = "CONCENTRATION"
 
     #: the long-form input column name callers supply measured values under
     value_column: str = "conc"

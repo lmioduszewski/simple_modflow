@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 476 entries (481 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 477 entries (482 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 477 | Calibration plots draw what the table holds; a target family writes its own observation type | 2026-10-11 |
 | 476 | Observation-area budgets, head observation points and named registries answer by the shared rules or refuse | 2026-10-11 |
 | 475 | A LAK/SFR input field's series combines a lake's records by the field's kind, through `input_field_agg` | 2026-10-11 |
 | 474 | A LAK connection's `connection_area` is what MF6 reads it as, and `flow_area` is documented as MF6's wetted... | 2026-10-11 |
@@ -18660,7 +18661,7 @@ same day, which is the useful part of the result.
       the tooltip, while ~~`NOUN_INERT_PARAMS`' comment says the noun's `hover_spec`
       supersedes it~~ (the comment says so now, ledger 465; naming or refusing it
       is open there) (R).
-      *Calibration and pictures* (R unless marked): `CalibrationPlot` `type="heads"`
+      *Calibration and pictures* (R unless marked): ~~`CalibrationPlot` `type="heads"`
       raises `KeyError` unless every location has a row in every layer any location has
       (`add_heads` loops over all pairs; reached from `from_compare`, `from_targets` and
       `HeadTargets.plots`); `from_compare(type="heads")` raises a bare `KeyError('time')`
@@ -18668,7 +18669,7 @@ same day, which is the useful part of the result.
       `target_column` or `simulated_column`, draws `type="calibration"` for a typo'd
       `type`, and ignores `title`/`yaxis_title` for `heads`/`residuals_by_period`; the
       `calibration` plot labels its axes swapped (C); `from_timeseries` draws an empty
-      "Baseline" for a name `baseline_compare` lacks (C); `VtkScene.save("shot")` returns
+      "Baseline" for a name `baseline_compare` lacks (C)~~ (fixed by ledger 477); `VtkScene.save("shot")` returns
       a path PyVista did not write (`shot.png`), refuses `x.PNG`, and its `.html` route
       ignores every keyword; `Picture.html` does not create a missing parent directory;
       `FrameAnimation.html` picks the restyle page by "first trace has z", so a surface,
@@ -18695,12 +18696,13 @@ same day, which is the useful part of the result.
       non-tuple cellid through `int()` (5.7 is cell 5, `"5"` accepted);
       `RegionRegistry.add` takes any object, and a `RegionGroup` breaks
       `region_summary()`/`summary()`; `resolve_cells("unknown")` says "Group".
-      *Observation targets* (R): `HeadTargets.plots.obs_vs_sim(ax=)`/`timeseries(ax=)`
+      *Observation targets* (R): ~~`HeadTargets.plots.obs_vs_sim(ax=)`/`timeseries(ax=)`
       ignore `ax`; `timeseries(name)` draws a well screened in two layers as one line
       zig-zagging between them (and its period sort is not stable); a bound `ConcTargets`'
       pictures are titled for heads; `HeadTargets.to_flopy_obs`/`attach_flopy_obs`
       accept any `kind` (`"bogus"` is written) and the bound default `kind="HEAD"` is
-      passed for a `ConcTargets`, which a GWT OBS file refuses.
+      passed for a `ConcTargets`, which a GWT OBS file refuses~~ (fixed by ledger
+      477).
       *PEST review and PRT* (R): `IesResults.plot_sensitivity(top=0)` raises `cannot
       convert float NaN to integer`; `forecast(name)` takes a str only;
       `parameters_at_bounds(which=)` reads the prior for anything but `"posterior"`;
@@ -19641,3 +19643,21 @@ same day, which is the useful part of the result.
       the fixed `tdis`/`ims`/`oc`/`model` properties. Revert check:
       `tests/test_budget_obs_areas.py` (10), `tests/test_head_obs_locations.py` (4 of 5),
       `tests/test_legacy_inputs_helpers.py` (3), `tests/test_text_keys_and_config_refusals.py` (6).
+
+477. **Calibration plots draw what the table holds; a target family writes its own observation type (2026-10-11).**
+      Ledger 436's calibration and target-picture defects, decided. **Behaviour change:**
+      the constructor's location-file calibration plot drew SIMULATED on x under labels
+      reading the other way round from its list path; every cross plot now puts OBSERVED
+      on x and SIMULATED on y, as `from_obs_vs_sim` always did. `type="heads"` draws the
+      (location, layer) pairs the table HOLDS, labelling the layer only when a location
+      has several; a misspelt `type` raises (in `from_compare` and the constructor, which
+      drew nothing); one column of the value pair alone raises (it was ignored); `title`/
+      `yaxis_title` reach every `type`; `residuals_by_period` no longer needs a value pair.
+      `from_timeseries` draws a location observed in several layers as one line PER LAYER
+      (sorted stably) and refuses a baseline holding no row for the name. **`ax=` was
+      REMOVED** from `model.targets.heads.plot.obs_vs_sim`/`timeseries` rather than wired:
+      neither builder draws onto a given axes, and a parameter that cannot act is the
+      defect. `HeadTargets.to_flopy_obs`/`attach_flopy_obs` take `kind=None`, the family's
+      own type (`HEAD`, `CONCENTRATION` on `ConcTargets`); any other raises, as ledger 344
+      made it for LAK/SFR/DRN. A bound `ConcTargets`' pictures are titled for
+      concentration. Revert check: `tests/test_calibration_plot_refusals.py` (10).

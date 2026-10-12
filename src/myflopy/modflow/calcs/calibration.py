@@ -178,8 +178,11 @@ def _sort_compare_by_time(frame: pd.DataFrame) -> pd.DataFrame:
         return frame.reset_index(drop=True)
     sort_values = pd.to_numeric(frame["time"], errors="coerce")
     if sort_values.notna().all():
-        return frame.assign(_sort=sort_values).sort_values("_sort").drop(columns="_sort").reset_index(drop=True)
-    return frame.sort_values("time").reset_index(drop=True)
+        return (
+            frame.assign(_sort=sort_values).sort_values("_sort", kind="stable")
+            .drop(columns="_sort").reset_index(drop=True)
+        )
+    return frame.sort_values("time", kind="stable").reset_index(drop=True)
 
 
 def _multiindex_head_frames(compare: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -190,6 +193,11 @@ def _multiindex_head_frames(compare: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
         {"name", "layer", "head_target", "sim_head"},
         caller="CalibrationPlot.from_compare(type='heads')",
     )
+    if "per" not in frame.columns and "time" not in frame.columns:
+        raise ValueError(
+            "CalibrationPlot.from_compare(type='heads') draws against the period, and "
+            f"the table has neither a 'per' nor a 'time' column (it has {list(frame.columns)})."
+        )
     time_values = pd.to_numeric(frame["per"] if "per" in frame.columns else frame["time"], errors="coerce")
     if time_values.isna().any():
         raise ValueError(
@@ -217,6 +225,13 @@ def _infer_compare_value_columns(
 ) -> tuple[str, str]:
     """Resolve target/simulated value columns for compare-style frames."""
 
+    if (target_column is None) != (simulated_column is None):
+        given = "target_column" if target_column is not None else "simulated_column"
+        missing = "simulated_column" if target_column is not None else "target_column"
+        raise ValueError(
+            f"{caller} was given {given}= without {missing}=: the two name ONE pair, so "
+            f"pass both, or neither to infer the pair (ledger 477)."
+        )
     if target_column is not None and simulated_column is not None:
         _require_compare_columns(
             frame,
@@ -244,6 +259,9 @@ def _infer_compare_value_columns(
 
 # Matplotlib/seaborn colors mirroring the Plotly defaults, for backend="matplotlib".
 _MPL_MODEL = "#1f77b4"
+
+#: The plots :meth:`CalibrationPlot.from_compare` draws, by ``type=``.
+_COMPARE_TYPES = ("calibration", "obs_vs_sim", "heads", "residuals_by_period")
 _MPL_BASELINE = "0.6"
 _MPL_TARGET = "crimson"
 
@@ -291,13 +309,13 @@ class CalibrationPlot(f.Fig):
         compare : pandas.DataFrame
             A compare or residual table, one row per target row, as a target
             set's ``compare(model)`` returns it. It is copied, never edited. It
-            must hold a target/simulated value pair: the two columns named
-            below, else the first of ``("head_target", "sim_head")``,
-            ``("stage_target", "sim_stage")``, ``("flow_target", "sim_flow")``,
-            ``("target_value", "sim_value")`` and ``("value_target",
-            "sim_value")`` it carries. With neither, ``ValueError``. That
-            inference runs for every ``type``, including those that do not
-            plot the pair.
+            must hold a target/simulated value pair (every ``type`` but
+            ``"residuals_by_period"``, which reads ``time`` and
+            ``abs_residual``): the two columns named below, else the first of
+            ``("head_target", "sim_head")``, ``("stage_target", "sim_stage")``,
+            ``("flow_target", "sim_flow")``, ``("target_value", "sim_value")``
+            and ``("value_target", "sim_value")`` it carries. With neither,
+            ``ValueError``.
         type : str, default "calibration"
             Which plot:
 
@@ -306,40 +324,57 @@ class CalibrationPlot(f.Fig):
             - ``"obs_vs_sim"``: the same cross plot without the statistics,
               titled "Observed vs simulated" by default;
             - ``"heads"``: target and simulated values against the period, one
-              pair of lines per location and layer. A table without ``name``
-              or ``layer`` raises ``ValueError``. The period is ``per``, else
-              ``time``: a table with neither raises ``KeyError``, and a
-              non-numeric or missing value raises ``ValueError``. Every
-              location must have rows in EVERY layer the table names, or
-              ``KeyError`` (a well in layer 0 beside one in layer 1 raises).
-              The pair is read as heads, and ``title`` and ``yaxis_title`` are
-              ignored;
+              pair of lines per location and layer it has rows in (a location
+              in two layers gets a pair per layer, its legend naming the
+              layer). A table without ``name`` or ``layer`` raises
+              ``ValueError``. The period is ``per``, else ``time``: a table
+              with neither, or a non-numeric or missing value, raises
+              ``ValueError``. Untitled by default;
             - ``"residuals_by_period"``: mean ``abs_residual`` per ``time``
-              (:meth:`from_residuals_by_period`). ``title``, ``yaxis_title`` and
-              the value pair are ignored.
+              (:meth:`from_residuals_by_period`), titled "Residual MAE by
+              period" by default; it takes no value pair (naming one raises).
 
-            Any other string, a misspelling included, draws the
-            ``"calibration"`` plot without a word.
+            Any other string raises ``ValueError`` naming the four (a
+            misspelling drew the ``"calibration"`` plot until ledger 477).
         target_column : str, optional
-            The column of target values (the x axis of a cross plot). It is used
-            only when ``simulated_column`` is ALSO given. Given alone, it is
-            ignored in silence and the pair is inferred as above. A named column
-            the table lacks raises ``ValueError``.
+            The column of target values (the x axis of a cross plot). It names
+            the pair together with ``simulated_column``: given ALONE it raises
+            ``ValueError`` (it was ignored in silence until ledger 477). A
+            named column the table lacks raises ``ValueError``.
         simulated_column : str, optional
-            The column of simulated values (the y axis), under the same rule:
-            it counts only together with ``target_column``.
+            The column of simulated values (the y axis), under the same rule.
         title : str, optional
-            Title of a cross plot. The default ``None`` (or ``""``) gives that
-            plot's own title, listed under ``type``.
+            The figure's title, for every ``type``. The default ``None`` (or
+            ``""``) gives that plot's own title, listed under ``type``.
         yaxis_title : str, optional
-            Y-axis title of a cross plot. The default ``None`` (or ``""``) gives
-            ``"Simulated"``. The x-axis is always titled ``"Observed"``.
+            The y-axis title, for every ``type``. The default ``None`` (or
+            ``""``) gives ``"Simulated"`` on a cross plot, ``"Mean absolute
+            error"`` on ``"residuals_by_period"`` and none on ``"heads"``. A
+            cross plot's x axis is always titled ``"Observed"``, the heads
+            plot's ``"Period"``.
 
         Returns
         -------
         CalibrationPlot
             A Plotly figure (a ``viz.Fig``).
         """
+
+        if type not in _COMPARE_TYPES:
+            raise ValueError(
+                f"CalibrationPlot.from_compare(type={type!r}) is not a plot it draws; "
+                f"type is one of {list(_COMPARE_TYPES)}."
+            )
+        if type == "residuals_by_period":
+            if target_column is not None or simulated_column is not None:
+                raise ValueError(
+                    "type='residuals_by_period' draws abs_residual, so it takes no "
+                    "target_column=/simulated_column=."
+                )
+            return cls.from_residuals_by_period(
+                compare.copy(),
+                title=title or "Residual MAE by period",
+                yaxis_title=yaxis_title or "Mean absolute error",
+            )
 
         resolved_target, resolved_simulated = _infer_compare_value_columns(
             compare,
@@ -353,7 +388,13 @@ class CalibrationPlot(f.Fig):
             if {resolved_target, resolved_simulated} != {"head_target", "sim_head"}:
                 frame = frame.rename(columns={resolved_target: "head_target", resolved_simulated: "sim_head"})
             observed, simulated = _multiindex_head_frames(frame)
-            return cls(observed=observed, simulated=simulated, type=type)
+            fig = cls(observed=observed, simulated=simulated, type=type)
+            fig.update_layout(
+                title=title or None,
+                xaxis_title="Period",
+                yaxis_title=yaxis_title or None,
+            )
+            return fig
 
         if type == "obs_vs_sim":
             return cls.from_obs_vs_sim(
@@ -363,9 +404,6 @@ class CalibrationPlot(f.Fig):
                 title=title or "Observed vs simulated",
                 yaxis_title=yaxis_title or "Simulated",
             )
-
-        if type == "residuals_by_period":
-            return cls.from_residuals_by_period(frame)
 
         return cls.from_obs_vs_sim(
             frame,
@@ -400,10 +438,9 @@ class CalibrationPlot(f.Fig):
             compared INSTEAD.
         type : str, default "calibration"
             Which plot, passed to :meth:`from_compare`, whose entry lists the
-            values. A misspelling draws the ``"calibration"`` plot. ``"heads"``
-            needs a ``layer`` column, which lake, SFR and drain comparisons do
-            not have (``ValueError``), and raises ``KeyError`` when a head
-            target location has no row in a layer another location has.
+            values; a misspelling raises ``ValueError``. ``"heads"`` needs a
+            ``layer`` column, which lake, SFR and drain comparisons do not have
+            (``ValueError``).
 
         Returns
         -------
@@ -626,7 +663,10 @@ class CalibrationPlot(f.Fig):
         model's and the baseline's (ledger 355); the compare table is not changed.
 
         Rows are drawn in ``time`` order, numerically when every ``time`` is a
-        number. The x-axis is titled "Time / period".
+        number, a tie kept in table order. A location with rows in several
+        ``layer`` values (a well screened in two layers) is drawn as one line
+        per layer, each labelled with its layer -- it was one line zig-zagging
+        between them until ledger 477. The x-axis is titled "Time / period".
 
         Parameters
         ----------
@@ -644,8 +684,8 @@ class CalibrationPlot(f.Fig):
             A second compare table, drawn as a third line from its rows for the
             same ``name``. It needs ``name``, ``time`` and ``simulated_column``
             only; its targets are not drawn. A baseline with no row for that
-            name draws an empty line, with no error. The default ``None`` draws
-            none.
+            name raises ``ValueError`` (it drew an empty line until ledger
+            477). The default ``None`` draws none.
         target_column : str, default "head_target"
             The column of target values.
         simulated_column : str, default "sim_head"
@@ -710,16 +750,39 @@ class CalibrationPlot(f.Fig):
             )
             baseline_names = baseline["name"].astype(str)
             baseline = _sort_compare_by_time(baseline.loc[baseline_names.str.lower() == key].copy())
+            if baseline.empty:
+                raise ValueError(
+                    f"baseline_compare has no rows for observation name {name!r}, so its "
+                    "line would be empty; pass a baseline holding it, or none "
+                    "(ledger 477)."
+                )
         resolved_title = title or str(frame["name"].iloc[0])
+
+        # A location observed in several layers is one line PER LAYER: drawn as one
+        # line sorted by time it zig-zagged between its layers' values period by
+        # period (ledger 477).
+        if "layer" in frame.columns and frame["layer"].nunique() > 1:
+            drawn = []
+            for position, (layer, part) in enumerate(frame.groupby("layer", sort=True)):
+                base = baseline
+                if baseline is not None and "layer" in baseline.columns:
+                    base = baseline.loc[baseline["layer"] == layer]
+                elif position > 0:
+                    base = None  # a baseline without layers is drawn once
+                drawn.append((f" (layer {layer})", part, base))
+        else:
+            drawn = [("", frame, baseline)]
 
         if _normalize_backend(backend) == "matplotlib":
             import seaborn as sns
 
             fig, ax = _mpl_axes(figsize=(8, 4))
-            ax.plot(frame["time"], frame[target_column], "o-", color=_MPL_TARGET, label=target_label)
-            ax.plot(frame["time"], frame[simulated_column], "o-", color=_MPL_MODEL, label=simulated_label)
-            if baseline is not None:
-                ax.plot(baseline["time"], baseline[simulated_column], "o-", color=_MPL_BASELINE, label=baseline_label)
+            for suffix, part, base in drawn:
+                ax.plot(part["time"], part[target_column], "o-", color=_MPL_TARGET, label=target_label + suffix)
+                ax.plot(part["time"], part[simulated_column], "o-", color=_MPL_MODEL, label=simulated_label + suffix)
+                if base is not None:
+                    ax.plot(base["time"], base[simulated_column], "o-", color=_MPL_BASELINE,
+                            label=baseline_label + suffix)
             ax.set_xlabel("Time / period")
             ax.set_ylabel(yaxis_title)
             ax.set_title(resolved_title)
@@ -728,25 +791,26 @@ class CalibrationPlot(f.Fig):
             return fig
 
         fig = cls()
-        fig.add_scattergl(
-            x=frame["time"],
-            y=frame[target_column],
-            mode="lines+markers",
-            name=target_label,
-        )
-        fig.add_scattergl(
-            x=frame["time"],
-            y=frame[simulated_column],
-            mode="lines+markers",
-            name=simulated_label,
-        )
-        if baseline is not None:
+        for suffix, part, base in drawn:
             fig.add_scattergl(
-                x=baseline["time"],
-                y=baseline[simulated_column],
+                x=part["time"],
+                y=part[target_column],
                 mode="lines+markers",
-                name=baseline_label,
+                name=target_label + suffix,
             )
+            fig.add_scattergl(
+                x=part["time"],
+                y=part[simulated_column],
+                mode="lines+markers",
+                name=simulated_label + suffix,
+            )
+            if base is not None:
+                fig.add_scattergl(
+                    x=base["time"],
+                    y=base[simulated_column],
+                    mode="lines+markers",
+                    name=baseline_label + suffix,
+                )
         fig.update_layout(
             title=resolved_title,
             xaxis_title="Time / period",
@@ -896,8 +960,14 @@ class CalibrationPlot(f.Fig):
         :param crs: Coordinate reference system used for geospatial data processing
             and mapping.
         :param obs_layers: Integer or list of integers representing observation layers
-        :param type: can be 'calibration' for cross plot or 'heads' to show actual heads as a plot.
+        :param type: can be 'calibration' for cross plot (observed on x, simulated on y)
+            or 'heads' to show actual heads as a plot; any other raises ValueError.
         """
+        if type not in ("calibration", "heads"):
+            raise ValueError(
+                f"CalibrationPlot(type={type!r}) draws 'calibration' or 'heads' "
+                "(a misspelling drew nothing until ledger 477)."
+            )
         super().__init__()
         self._observed = None
         self._simulated = None
@@ -1174,9 +1244,11 @@ class CalibrationPlot(f.Fig):
                     if obs_data.max() > data_max:
                         data_max = obs_data.max()
 
+                    # Observed on x, simulated on y, as every other cross plot
+                    # here draws them (ledger 477).
                     self.add_scattergl(
-                        x=sim_obs.loc[:, 'simulated'],
-                        y=sim_obs.loc[:, 'observed'],
+                        x=sim_obs.loc[:, 'observed'],
+                        y=sim_obs.loc[:, 'simulated'],
                         mode='markers',
                         name=f'{loc_name} {layer}')
 
@@ -1199,46 +1271,54 @@ class CalibrationPlot(f.Fig):
         """
         self.update_layout(
             title='Calibration',
-            xaxis_title='Simulated',
-            yaxis_title='Observed'
+            xaxis_title='Observed',
+            yaxis_title='Simulated'
         )
 
     def add_heads(self):
         """Add observed vs simulated head time-series traces, one per location and layer."""
 
-        locs = list(self.observed.index.get_level_values(0).unique())
-        layers = list(self.observed.index.get_level_values(1).unique())
+        # The (location, layer) pairs the table HOLDS: looping over every location
+        # times every layer raised KeyError for a well in one layer beside a well
+        # in another (ledger 477).
+        pairs = list(self.observed.index.droplevel(2).unique())
+        layers_of = {}
+        for loc, layer in pairs:
+            layers_of.setdefault(loc, []).append(layer)
+        simulated_pairs = set(self.simulated.index.droplevel(2))
 
-        for loc in locs:
-            for layer in layers:
+        for loc, layer in pairs:
+            label = loc if len(layers_of[loc]) == 1 else f'{loc} layer {layer}'
 
-                # get observed data for location and layer
-                loc_obs = self.observed.loc[idxx[loc, layer, :], :].dropna().reset_index().drop(
-                    ['locs', 'layer'], axis=1)
-                loc_obs.kstpkper = loc_obs.kstpkper.apply(lambda x: x[1])
-                loc_obs.set_index('kstpkper', inplace=True)
-                if len(loc_obs) == 0:
-                    continue
+            # get observed data for location and layer
+            loc_obs = self.observed.loc[idxx[loc, layer, :], :].dropna().reset_index().drop(
+                ['locs', 'layer'], axis=1)
+            loc_obs.kstpkper = loc_obs.kstpkper.apply(lambda x: x[1])
+            loc_obs.set_index('kstpkper', inplace=True)
+            if len(loc_obs) == 0:
+                continue
 
-                self.add_scattergl(
-                    name=f'{loc} observed',
-                    x=loc_obs.index,
-                    y=loc_obs.elev,
-                    line_color='blue'
-                )
+            self.add_scattergl(
+                name=f'{label} observed',
+                x=loc_obs.index,
+                y=loc_obs.elev,
+                line_color='blue'
+            )
 
-                # get simulated data for location and layer
-                sim_obs = self.simulated.loc[idxx[loc, layer, :], :].dropna().reset_index().drop(
-                    ['locs', 'layer'], axis=1)
-                sim_obs.kstpkper = sim_obs.kstpkper.apply(lambda x: x[1])
-                sim_obs.set_index('kstpkper', inplace=True)
+            if (loc, layer) not in simulated_pairs:
+                continue
+            # get simulated data for location and layer
+            sim_obs = self.simulated.loc[idxx[loc, layer, :], :].dropna().reset_index().drop(
+                ['locs', 'layer'], axis=1)
+            sim_obs.kstpkper = sim_obs.kstpkper.apply(lambda x: x[1])
+            sim_obs.set_index('kstpkper', inplace=True)
 
-                self.add_scattergl(
-                    name=f'{loc} simulated',
-                    x=sim_obs.index,
-                    y=sim_obs.elev,
-                    line_color='red'
-                )
+            self.add_scattergl(
+                name=f'{label} simulated',
+                x=sim_obs.index,
+                y=sim_obs.elev,
+                line_color='red'
+            )
 
 
 

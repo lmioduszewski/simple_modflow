@@ -198,6 +198,9 @@ class HeadTargets:
     _STORE_COLUMN: ClassVar[str] = "elev"
     #: human-readable field name, used in errors and plot labels
     _FIELD_LABEL: ClassVar[str] = "head"
+    #: The MF6 OBS type of the family's quantity -- the only one ``to_flopy_obs``
+    #: writes (ledger 477, as ledger 344 made it for LAK/SFR/DRN).
+    _OBS_KIND: ClassVar[str] = "HEAD"
 
     locations: str | Path | gpd.GeoDataFrame | pd.DataFrame | pd.Series | dict | list | tuple
     values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple
@@ -979,7 +982,7 @@ class HeadTargets:
         model,
         *,
         csv_name: str = "head_targets.csv",
-        kind: str = "HEAD",
+        kind: str | None = None,
     ) -> dict[str, list[tuple[str, str, tuple[int, ...]]]]:
         """Return a FloPy ``continuous`` dict for MF6 head observations.
 
@@ -992,11 +995,13 @@ class HeadTargets:
         csv_name : str, optional
             The CSV file MF6 writes these observations to -- the dict's one key.
             Default ``"head_targets.csv"``.
-        kind : str, optional
-            The MF6 observation type written on every record, upper-cased.
-            Default ``"HEAD"``. ``ConcTargets`` inherits this default, which a
-            GWT model's OBS file refuses ("Observation type not found: HEAD",
-            measured): pass ``kind="CONCENTRATION"`` there.
+        kind : str or None, optional
+            The MF6 observation type written on every record. Default ``None``:
+            the family's own -- ``"HEAD"``, or ``"CONCENTRATION"`` on
+            ``ConcTargets``. A string must be that type (any case); any other
+            raises ``ValueError`` -- it was written unchecked, and the default
+            gave a ``ConcTargets`` ``"HEAD"``, which a GWT model's OBS file
+            refuses, until ledger 477.
 
         Returns
         -------
@@ -1010,6 +1015,7 @@ class HeadTargets:
             ``ModflowUtlobs(continuous=)`` and a package's ``observations=`` take.
         """
 
+        kind = self._observation_kind(kind)
         matches = self.observation_labels(model)
         # The cellid the model's own OBS reads (ledger 455): `(layer, cell)` was
         # written on every grid, which MF6 refuses on DIS and reads on DISU as node
@@ -1018,13 +1024,28 @@ class HeadTargets:
         records = [
             (
                 str(row.obsname),
-                str(kind).upper(),
+                kind,
                 (int(row.layer), int(row.cell)) if numbering is None
                 else numbering.cellid(row.layer, row.cell),
             )
             for row in matches.itertuples(index=False)
         ]
         return {str(csv_name): records}
+
+    def _observation_kind(self, kind: str | None) -> str:
+        """The family's MF6 OBS type; ``kind`` must be it or ``None`` (ledger 477)."""
+
+        if kind is None:
+            return self._OBS_KIND
+        written = str(kind).strip().upper()
+        if written != self._OBS_KIND:
+            raise ValueError(
+                f"{type(self).__name__} writes {self._OBS_KIND} observations, the "
+                f"quantity it compares; kind={kind!r} would be declared under the "
+                "targets' names as another quantity. Drop kind=, or declare another "
+                "observation type with FloPy directly, under a name of its own."
+            )
+        return written
 
     def attach_flopy_obs(
         self,
@@ -1033,7 +1054,7 @@ class HeadTargets:
         pname: str = "gwf_obs",
         filename: str = "head_targets.obs",
         csv_name: str | None = None,
-        kind: str = "HEAD",
+        kind: str | None = None,
         package=None,
     ):
         """Attach an MF6 utility observation package for these head targets.
@@ -1057,10 +1078,10 @@ class HeadTargets:
             The CSV file MF6 writes the observations to. Default ``None`` takes
             ``filename``'s stem plus ``.csv`` (``"head_targets.csv"`` for the
             default ``filename``).
-        kind : str, optional
-            The MF6 observation type, as in :meth:`to_flopy_obs`. Default
-            ``"HEAD"`` -- on ``ConcTargets`` too, where MF6 refuses it: pass
-            ``kind="CONCENTRATION"``.
+        kind : str or None, optional
+            The MF6 observation type, as in :meth:`to_flopy_obs`: default
+            ``None``, the family's own (``"HEAD"``, ``"CONCENTRATION"`` on
+            ``ConcTargets``); any other raises ``ValueError``.
         package : flopy object or None, optional
             The FloPy model or package to attach the OBS package to instead of
             ``model.gwf``. Default ``None``.
@@ -1098,13 +1119,12 @@ class HeadTargets:
               per row, with fit statistics;
             - ``"obs_vs_sim"``: the same cross plot without the statistics;
             - ``"heads"``: target and simulated values through time, one pair of
-              lines per location and layer -- which RAISES ``KeyError`` unless
-              every location is observed in every layer any location is
-              (measured: two wells, one in layer 0 and one in layer 1; and the
-              canonical model's own set);
+              lines per location and layer it is observed in (it raised
+              ``KeyError`` unless every location was observed in every layer
+              until ledger 477);
             - ``"residuals_by_period"``: mean absolute residual per ``time``.
 
-            Any other string draws the ``"calibration"`` plot.
+            Any other string raises ``ValueError``.
 
         Returns
         -------
@@ -1288,7 +1308,7 @@ class BoundHeadTargets:
         self,
         *,
         csv_name: str = "head_targets.csv",
-        kind: str = "HEAD",
+        kind: str | None = None,
     ):
         """A FloPy ``continuous`` observation dict for the head targets on the bound model.
 
@@ -1302,12 +1322,11 @@ class BoundHeadTargets:
         csv_name : str, optional
             The CSV file MF6 writes these observations to -- the dict's one key,
             passed through ``str``. Default ``"head_targets.csv"``.
-        kind : str, optional
-            The MF6 observation type written on every record, upper-cased and
-            not checked here: MF6 reads it when the model runs. Default
-            ``"HEAD"``. A bound ``ConcTargets`` inherits this default, which a
-            GWT model's OBS file refuses ("Observation type not found: HEAD",
-            measured): pass ``kind="CONCENTRATION"`` there.
+        kind : str or None, optional
+            The MF6 observation type written on every record, as in
+            :meth:`HeadTargets.to_flopy_obs`: default ``None``, the family's own
+            (``"HEAD"``, ``"CONCENTRATION"`` on a bound ``ConcTargets``); any
+            other raises ``ValueError``.
 
         Returns
         -------
@@ -1325,7 +1344,7 @@ class BoundHeadTargets:
         pname: str = "gwf_obs",
         filename: str = "head_targets.obs",
         csv_name: str | None = None,
-        kind: str = "HEAD",
+        kind: str | None = None,
         package=None,
     ):
         """Attach an MF6 head observation package to the bound model.
@@ -1346,10 +1365,9 @@ class BoundHeadTargets:
             The CSV file MF6 writes the observations to. Default ``None`` takes
             ``filename``'s stem plus ``.csv`` (``"head_targets.csv"`` for the
             default ``filename``).
-        kind : str, optional
-            The MF6 observation type, as in :meth:`to_flopy_obs`: upper-cased,
-            not checked, default ``"HEAD"`` -- on a bound ``ConcTargets`` too,
-            where MF6 refuses it: pass ``kind="CONCENTRATION"``.
+        kind : str or None, optional
+            The MF6 observation type, as in :meth:`to_flopy_obs`: default
+            ``None``, the family's own; any other raises ``ValueError``.
         package : flopy object or None, optional
             The FloPy model or package to attach the OBS package to. Default
             ``None`` attaches it to the bound model's FloPy model, ``model.gwf``
@@ -1384,13 +1402,12 @@ class BoundHeadTargets:
               per row, with fit statistics;
             - ``"obs_vs_sim"``: the same cross plot without the statistics;
             - ``"heads"``: target and simulated values through time, one pair of
-              lines per location and layer -- which RAISES ``KeyError`` unless
-              every location is observed in every layer any location is
-              (measured: two wells, one in layer 0 and one in layer 1; and the
-              canonical model's own set);
+              lines per location and layer it is observed in (it raised
+              ``KeyError`` unless every location was observed in every layer
+              until ledger 477);
             - ``"residuals_by_period"``: mean absolute residual per ``time``.
 
-            Any other string draws the ``"calibration"`` plot.
+            Any other string raises ``ValueError``.
 
         Returns
         -------
@@ -1466,9 +1483,8 @@ class BoundHeadTargetPlots:
             Which plot, as :meth:`BoundHeadTargets.calibration_plot` reads it:
             ``"calibration"`` (default, the cross plot with fit statistics),
             ``"obs_vs_sim"`` (without them), ``"heads"`` (values through time,
-            one pair of lines per location and layer; ``KeyError`` unless every
-            location is observed in every layer any location is) or
-            ``"residuals_by_period"``; any other string draws ``"calibration"``.
+            one pair of lines per location and layer it is observed in) or
+            ``"residuals_by_period"``; any other string raises ``ValueError``.
 
         Returns
         -------
@@ -1479,13 +1495,14 @@ class BoundHeadTargetPlots:
 
         return self.bound_targets.calibration_plot(type=type)
 
-    def obs_vs_sim(self, *, baseline=None, ax=None, backend: str = "plotly"):
+    def obs_vs_sim(self, *, baseline=None, backend: str = "plotly"):
         """Return a target-vs-simulated cross plot for one or two models.
 
         One point per comparison row holding both a target and a simulated
         value, in the field's units (model length units for a head), with a 1:1
-        line spanning every value drawn; titled "Observed vs simulated heads"
-        (on a bound ``ConcTargets`` too). A simulated value that is MODFLOW's
+        line spanning every value drawn; titled "Observed vs simulated heads",
+        or "... concentrations" on a bound ``ConcTargets`` (it read "heads" there
+        until ledger 477). A simulated value that is MODFLOW's
         no-value marker (``|value| >= 1e29``) is not drawn (ledger 355). When no
         row of the bound model's comparison holds both values, its series is
         empty, the figure carries a note naming the missing side, and a
@@ -1498,10 +1515,6 @@ class BoundHeadTargetPlots:
             as a "Baseline" series beside the bound model's "Model" series.
             Default ``None`` draws the bound model alone. Its comparison raises
             as the bound model's does.
-        ax : object, optional
-            ACCEPTED AND IGNORED, default ``None``: nothing is drawn on it and a
-            new figure is returned on either backend (measured: a Matplotlib
-            axes passed with ``backend="mpl"`` stays empty).
         backend : str, optional
             ``"plotly"`` (default; also ``"go"``) returns a
             :class:`~myflopy.modflow.calcs.calibration.CalibrationPlot`;
@@ -1520,15 +1533,21 @@ class BoundHeadTargetPlots:
 
         current = self.targets.compare(self.model)
         baseline_frame = None if baseline is None else self.targets.compare(baseline)
-        return CalibrationPlot.from_obs_vs_sim(current, baseline_compare=baseline_frame, backend=backend)
+        return CalibrationPlot.from_obs_vs_sim(
+            current,
+            baseline_compare=baseline_frame,
+            title=f"Observed vs simulated {self.targets._FIELD_LABEL}s",
+            backend=backend,
+        )
 
-    def timeseries(self, name: str | None = None, *, baseline=None, ax=None, backend: str = "plotly"):
+    def timeseries(self, name: str | None = None, *, baseline=None, backend: str = "plotly"):
         """Return a time-series plot for one target location.
 
         The target's values ("Target") and the bound model's ("Model") against
         the target's ``time`` -- the zero-based stress period -- in the field's
-        units, titled with the target's name; the y axis is titled "Head" (on a
-        bound ``ConcTargets`` too). A simulated no-value marker
+        units, titled with the target's name; the y axis is titled "Head", or
+        "Concentration" on a bound ``ConcTargets`` (it read "Head" there until
+        ledger 477). A simulated no-value marker
         (``|value| >= 1e29``) is a gap in the line (ledger 355).
 
         Parameters
@@ -1538,17 +1557,13 @@ class BoundHeadTargetPlots:
             column ignoring case (and the argument's surrounding space). Default
             ``None`` draws the set's only name, and raises ``ValueError`` when
             the set holds more than one; a name matching no row raises
-            ``ValueError`` too. EVERY row carrying the name is drawn as ONE line
-            sorted by ``time``, so a well screened in two layers zig-zags between
-            its layers' heads period by period (measured on the canonical
-            model).
+            ``ValueError`` too. A well screened in two layers is drawn as one
+            line per layer (one line zig-zagged between them until ledger
+            477).
         baseline : SimulationBase or None, optional
             A second run model whose simulated values for the same target are
             drawn as a "Baseline" line. Default ``None`` draws the bound model
             alone.
-        ax : object, optional
-            ACCEPTED AND IGNORED, default ``None``: nothing is drawn on it and a
-            new figure is returned on either backend (measured).
         backend : str, optional
             ``"plotly"`` (default; also ``"go"``) or ``"matplotlib"`` (also
             ``"mpl"``, ``"seaborn"``, ``"sns"``), as in :meth:`obs_vs_sim`;
@@ -1568,6 +1583,7 @@ class BoundHeadTargetPlots:
             current,
             name=name,
             baseline_compare=baseline_frame,
+            yaxis_title=self.targets._FIELD_LABEL.capitalize(),
             backend=backend,
         )
 

@@ -74,7 +74,6 @@
     ],
     "BoundHeadTargetPlots.obs_vs_sim": [
       "baseline:KEYWORD_ONLY=None",
-      "ax:KEYWORD_ONLY=None",
       "backend:KEYWORD_ONLY='plotly'"
     ],
     "BoundHeadTargetPlots.residuals_by_period": [
@@ -84,14 +83,13 @@
     "BoundHeadTargetPlots.timeseries": [
       "name:POSITIONAL_OR_KEYWORD=None",
       "baseline:KEYWORD_ONLY=None",
-      "ax:KEYWORD_ONLY=None",
       "backend:KEYWORD_ONLY='plotly'"
     ],
     "BoundHeadTargets.attach_flopy_obs": [
       "pname:KEYWORD_ONLY='gwf_obs'",
       "filename:KEYWORD_ONLY='head_targets.obs'",
       "csv_name:KEYWORD_ONLY=None",
-      "kind:KEYWORD_ONLY='HEAD'",
+      "kind:KEYWORD_ONLY=None",
       "package:KEYWORD_ONLY=None"
     ],
     "BoundHeadTargets.calibration_plot": [
@@ -120,7 +118,7 @@
     "BoundHeadTargets.summary": [],
     "BoundHeadTargets.to_flopy_obs": [
       "csv_name:KEYWORD_ONLY='head_targets.csv'",
-      "kind:KEYWORD_ONLY='HEAD'"
+      "kind:KEYWORD_ONLY=None"
     ],
     "BoundHeadTargets.to_long": [],
     "BoundHeadTargets.to_wide": [],
@@ -1333,7 +1331,7 @@
       "pname:KEYWORD_ONLY='gwf_obs'",
       "filename:KEYWORD_ONLY='head_targets.obs'",
       "csv_name:KEYWORD_ONLY=None",
-      "kind:KEYWORD_ONLY='HEAD'",
+      "kind:KEYWORD_ONLY=None",
       "package:KEYWORD_ONLY=None"
     ],
     "HeadTargets.calibration_plot": [
@@ -1383,7 +1381,7 @@
     "HeadTargets.to_flopy_obs": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
       "csv_name:KEYWORD_ONLY='head_targets.csv'",
-      "kind:KEYWORD_ONLY='HEAD'"
+      "kind:KEYWORD_ONLY=None"
     ],
     "HeadTargets.to_long": [],
     "HeadTargets.to_wide": [],
