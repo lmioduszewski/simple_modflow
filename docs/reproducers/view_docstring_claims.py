@@ -51,8 +51,9 @@ WHAT IT MEASURES
  11. ``TargetRegistry``: a set registered as ``registry[1]`` is ``in`` the registry and
      ``registry[1]`` raises ``KeyError``.
  12. ``ModelConfig.from_model(model.gwf)`` is empty, and ``config.section("zzz")`` is
-     ``{}``, with no error. ``ModelConfig.model_options`` reports ``"NEWTON"`` for a
-     model whose ``newtonoptions`` is ``""`` or ``[]``, which FloPy writes as no option.
+     ``{}``, with no error. ``ModelConfig.model_options`` reported ``"NEWTON"`` for a
+     model whose ``newtonoptions`` is ``""`` or ``[]``, which FloPy writes as no option;
+     it leaves the option out since ledger 450.
 """
 
 from __future__ import annotations

@@ -106,6 +106,75 @@ def test_the_config_diff_reports_a_newton_difference():
     assert with_newton["setting"].tolist() == ["newtonoptions"]
 
 
+def _newton_model(newtonoptions, *, reload):
+    """A tiny GWF declared with ``newtonoptions``, written, and optionally reloaded."""
+
+    ws = tempfile.mkdtemp(dir=_WORKSPACE)
+    sim = flopy.mf6.MFSimulation(sim_name="t", sim_ws=ws)
+    flopy.mf6.ModflowTdis(sim)
+    flopy.mf6.ModflowIms(sim)
+    options = {} if newtonoptions is None else {"newtonoptions": newtonoptions}
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="t", **options)
+    flopy.mf6.ModflowGwfdis(gwf, nlay=1, nrow=2, ncol=2)
+    flopy.mf6.ModflowGwfnpf(gwf)
+    flopy.mf6.ModflowGwfic(gwf)
+    sim.write_simulation(silent=True)
+    if reload:
+        gwf = flopy.mf6.MFSimulation.load(sim_ws=ws, verbosity_level=0).get_model("t")
+    written = [line.strip() for line in open(f"{ws}/t.nam") if "NEWTON" in line.upper()]
+    return gwf, written
+
+
+@pytest.mark.parametrize("reload", [False, True], ids=["in_memory", "reloaded"])
+@pytest.mark.parametrize(
+    ("declared", "expected"),
+    [
+        ("", None),  # FloPy writes NO option for these two: NEWTON is off
+        ([], None),
+        (None, None),
+        ("NEWTON", "NEWTON"),
+        ([("NEWTON",)], "NEWTON"),
+        (["under_relaxation"], ["under_relaxation"]),
+    ],
+    ids=["empty_str", "empty_list", "undeclared", "newton", "newton_record", "under_relaxation"],
+)
+def test_model_options_report_newton_exactly_when_the_name_file_writes_it(declared, expected, reload):
+    """An EMPTY ``newtonoptions`` was reported as ``"NEWTON"``, so a rebuild turned it on.
+
+    Ledger 450. FloPy stores ``""``/``[]`` as an empty record list that
+    ``has_data()`` calls data, and writes no NEWTON line for it; the reader's
+    flattening then fell through to its bare-NEWTON default. Checked against the name
+    file FloPy writes, in memory and after a reload (whose payload is ``[(True,)]``).
+    """
+
+    gwf, written = _newton_model(declared, reload=reload)
+    assert bool(written) == (expected is not None)  # what MF6 will read
+    options = ModelConfig.model_options(gwf)
+    assert options.get("newtonoptions") == expected
+    # ...and a rebuild from what was reported writes the same name file
+    _rebuilt, rewritten = _newton_model(options.get("newtonoptions"), reload=False)
+    assert rewritten == written
+
+
+@pytest.mark.parametrize("declared", ["", []], ids=["empty_str", "empty_list"])
+def test_an_empty_newtonoptions_has_no_row_in_the_config(declared):
+    """``config.model`` showed a ``newtonoptions`` row for a model NEWTON is off in."""
+
+    assert _tiny_config(newtonoptions=declared).model == {}
+
+
+def test_newton_reads_the_same_in_memory_and_reloaded():
+    """In memory FloPy holds ``[("NEWTON",)]``, reloaded ``[(True,)]``; one reading."""
+
+    rows = []
+    for reload in (False, True):
+        gwf, _written = _newton_model("NEWTON", reload=reload)
+        sim = gwf.simulation
+        model = _FlopyModelLike(sim, gwf, sim.get_package("ims"), "t")
+        rows.append(ModelConfig.from_model(model).model)
+    assert rows[0] == rows[1] == {"newtonoptions": "NEWTON"}
+
+
 def test_extractor_excludes_output_filerecords():
     config = _tiny_config()
     oc = config.oc

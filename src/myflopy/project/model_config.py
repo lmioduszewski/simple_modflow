@@ -73,6 +73,11 @@ def _options_rows(section: str, pkg, blocks) -> list[tuple]:
                     block_name, name,
                 )
                 continue
+            if name == "newtonoptions":
+                # The one reading of NEWTON (ledger 450): an EMPTY payload writes
+                # no option and reads as absent, and a reloaded `[(True,)]` reads as
+                # the same "NEWTON" an in-memory `[("NEWTON",)]` does.
+                value = _newton_kwarg(value)
             if value is None:
                 continue
             rows.append((section, name, _normalize(value)))
@@ -150,8 +155,18 @@ def _newton_kwarg(value):
     ``"NEWTON"`` is returned for the bare case rather than ``[]`` or ``""``: **both of
     those write NOTHING at all** -- measured on all four spellings -- so a reader that
     normalized to the empty form would drop the very option it exists to carry.
+
+    And for the same reason a payload holding NO record -- what ``newtonoptions=""``
+    or ``[]`` leaves, ``get_data()`` answering ``[]`` while ``has_data()`` says True --
+    returns ``None``: FloPy writes no NEWTON line for it, so the model runs without
+    NEWTON, and reporting ``"NEWTON"`` turned it ON in a rebuild (ledger 450).
+    One record, even an empty-looking ``[(True,)]`` from a file reload, is NEWTON.
     """
 
+    if value is None or (isinstance(value, (list, tuple)) and len(value) == 0):
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
     flat: list[str] = []
     stack = [value]
     while stack:
@@ -191,9 +206,11 @@ def _model_option_kwargs(gwf) -> dict:
         except (MFDataException, FlopyException):
             logger.debug("no data for model option %s; leaving it out", name)
             continue
+        if name == "newtonoptions":
+            value = _newton_kwarg(value)
         if value is None:
             continue
-        options[name] = _newton_kwarg(value) if name == "newtonoptions" else value
+        options[name] = value
     return options
 
 
@@ -351,10 +368,10 @@ class ModelConfig:
             rebuild needs them). An option the model does not set is left out,
             while one set to ``False`` comes back as ``False``;
             ``newtonoptions`` comes back as ``"NEWTON"`` or its modifiers
-            (``["under_relaxation"]``), the forms ``mf.gwf`` takes -- and as
-            ``"NEWTON"`` too for a model holding an EMPTY ``newtonoptions``
-            (``""``/``[]``), which FloPy writes as no option at all (measured;
-            ledger 441). An object with no ``name_file`` gives ``{}``.
+            (``["under_relaxation"]``), the forms ``mf.gwf`` takes, and is left
+            out for a model holding an EMPTY ``newtonoptions`` (``""``/``[]``),
+            which FloPy writes as no option at all, so NEWTON is off there (ledger
+            450). An object with no ``name_file`` gives ``{}``.
         """
 
         return _model_option_kwargs(gwf)

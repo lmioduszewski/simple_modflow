@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 449 entries (454 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 450 entries (455 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 450 | An empty `newtonoptions` reads as no NEWTON, and NEWTON reads one way in memory and reloaded | 2026-10-11 |
 | 449 | An input view reads a period through one non-mutating reader, and `per=N` is the block MODFLOW 6 has in force | 2026-10-11 |
 | 448 | A map refuses a `layer=` its model's views do not number: one layer on a DISU | 2026-10-11 |
 | 447 | A run's and a spec's MF6 executable is stored as text: a `str` as given, an `os.PathLike` through... | 2026-10-11 |
@@ -18819,9 +18820,9 @@ same day, which is the useful part of the result.
       afterwards carries an empty PERIOD block and MF6 applies no GHB from period 3 on
       (measured through MF6: 84 records -> 0 in periods 3-5, Normal termination; a view
       changed the model)~~ (fixed by ledger 449: one non-mutating reader, and `per=N`
-      reads the block MF6 has in force). `ModelConfig.model_options` reports `newtonoptions="NEWTON"` for
+      reads the block MF6 has in force). ~~`ModelConfig.model_options` reports `newtonoptions="NEWTON"` for
       a model holding an EMPTY `newtonoptions` (`""`/`[]`), which FloPy writes as no option,
-      so a rebuild from it turns NEWTON on. `model.bud(pkg).plot_budget_obs` does not
+      so a rebuild from it turns NEWTON on~~ (fixed by ledger 450). `model.bud(pkg).plot_budget_obs` does not
       reproject its area polygons to the grid's CRS (an EPSG:4326 file reads 0.0 for every
       area), keeps only
       the FIRST record on a cell, returns an empty table for a `q` the budget lacks, labels
@@ -19086,3 +19087,15 @@ same day, which is the useful part of the result.
       `stress_period_data.get_data()`, which leaves out an EMPTY block -- `{0: [...], 2: []}`
       is captured as `{'0': [...]}` -- so a package switched off by one is restored running
       the block before it.
+
+450. **An empty `newtonoptions` reads as no NEWTON, and NEWTON reads one way in memory and reloaded (2026-10-11).**
+      FloPy stores `newtonoptions=""` or `[]` as an empty record list that `has_data()`
+      calls data and writes NO line for (ledger 286), and `ModelConfig.model_options`
+      fell through to its bare-`"NEWTON"` default for it, so a rebuild turned NEWTON on.
+      `_newton_kwarg` is now the one reading: no record is `None` (left out), one record
+      -- `[("NEWTON",)]` in memory, `[(True,)]` reloaded -- is `"NEWTON"` or its
+      modifiers. **Behaviour change, chosen:** `config.model`'s `newtonoptions` row goes
+      through it too, so it reads `"NEWTON"` / `("under_relaxation",)` (the `mf.gwf`
+      spelling) where it held FloPy's raw tuples -- which differed between an in-memory and
+      a reloaded copy of the same model, `(("NEWTON",),)` against `((True,),)` -- and an
+      empty `newtonoptions` has no row, as a model declaring none.
