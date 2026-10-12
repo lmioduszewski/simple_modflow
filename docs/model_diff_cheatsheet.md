@@ -102,7 +102,7 @@ biggest difference is.
 ```python
 # heads -- a surface-root leaf, exactly like model.hds / group.hds
 # (diff.conc / diff.temp are the transport twins, same verbs)
-diff.hds.summary()                # max/mean|Δ|, RMSE, argmax cell/layer/kstpkper, within_tolerance
+diff.hds.summary()                # max/mean|Δ|, RMSE, argmax cell/layer/kstpkper, n_one_sided, within_tolerance
 diff.hds.get(per=8, layer=1)      # aligned elev / reference_elev / diff per cell
 diff.hds.map("F9_maxflow", per=8, layer=1)   # Δhead choropleth (model - reference)
 diff.hds.plot(layer=0)            # mean Δhead by stress period, line per model
@@ -170,6 +170,12 @@ lake and period where stage rises most vs baseline.
 ## 7. Caveats
 
 - **Results need runs.** Loaded completed runs are fine; unrun models raise.
+- **A dry or inactive cell has no value.** MF6 writes -1e30/+1e30 there; every
+  tier reads it as `NaN`, so its Δ is a gap. `summary()` counts a cell with a
+  value in one model only in `n_one_sided` and fails the tolerance on it (a
+  stage diff counts a dry lake or reach the same way).
+- **Packages are found by TYPE**, whatever they are named: a DRN named `seeps`
+  is compared as the DRN it is.
 - **Cell-level results** (heads, cell budget) assume the **same grid / cell
   numbering**. If two runs use different Voronoi meshes, lean on the
   grid-independent views: `lak/sfr .results.stage`, overall `bud`, `config`.

@@ -38,7 +38,11 @@ from myflopy.modflow.mf6.package_explorer import (
     get_package_input_field_names,
 )
 from myflopy.modflow.mf6.package_explorer_utils import period_number
-from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS, input_field_agg
+from myflopy.modflow.mf6.package_registry import (
+    _PACKAGE_EXPLORER_SPECS,
+    input_field_agg,
+    model_packages_of_type,
+)
 from myflopy.modflow.mf6.package_tables import (
     PACKAGE_TABLE_UNAVAILABLE,
     build_cell_package_input_table,
@@ -76,6 +80,9 @@ _CONNECTION_PACKAGES: tuple[str, ...] = tuple(
     for name, spec in _PACKAGE_EXPLORER_SPECS.items()
     if spec.tiers.connection_diffable
 )
+# Every package type ``diff.packages`` answers -- what ``ModelDiff.package(name)``
+# accepts, so a namespace attribute name (``"_diff"``) is not taken for one.
+_DIFFED_PACKAGE_TYPES: tuple[str, ...] = (*_DIFF_PACKAGES, *_CONNECTION_PACKAGES, "uzf", "mvr")
 _LAK_IDENTITY = (
     "lake", "layer", "cell", "claktype", "belev", "telev", "connlen", "connwidth",
 )
@@ -107,17 +114,15 @@ _SUMMARY_COLUMNS = [
 
 
 def _package_present(model, package_name: str) -> bool:
-    """Return whether ``model`` has a package of the given type attached."""
+    """Return whether ``model`` carries a package of TYPE ``package_name``.
 
-    try:
-        names = [str(name).lower() for name in model.package_names]
-    except (AttributeError, TypeError):  # pragma: no cover - defensive
-        # The group accepts duck-typed model objects, so `package_names` may be
-        # absent (AttributeError) or not iterable (TypeError).
-        logger.debug("cannot list packages on %r", model)
-        return False
-    pkg = package_name.lower()
-    return any(name == pkg or name.startswith(pkg) for name in names)
+    Found by TYPE through ``package_registry.model_packages_of_type`` (ledger 352's
+    one rule), never by name: a DRN named ``seeps`` is a DRN, and a GHB named
+    ``lake_edge`` is not a LAK. It matched a NAME prefix before, so such a DRN was
+    never compared and ``report()`` read "identical to reference".
+    """
+
+    return bool(model_packages_of_type(model, package_name))
 
 
 def _package_keys(model, package_name: str, *, per=None, layer=None):
@@ -921,7 +926,7 @@ class _PackageDiffNamespace:
             return _BcPackageDiffNode(self._diff, pkg)
         raise AttributeError(
             f"ModelDiff does not diff package {name!r}; supported: "
-            f"{', '.join((*_DIFF_PACKAGES, *_CONNECTION_PACKAGES, 'uzf', 'mvr'))}."
+            f"{', '.join(_DIFFED_PACKAGE_TYPES)}."
         )
 
     def __dir__(self):
@@ -1197,7 +1202,7 @@ class ModelDiff:
 
     @property
     def package_names(self) -> list[str]:
-        """BC packages present in at least one model in the group."""
+        """BC package types some model in the group carries, found by TYPE, whatever named."""
 
         return [
             pkg
@@ -1207,7 +1212,7 @@ class ModelDiff:
 
     @property
     def connection_package_names(self) -> list[str]:
-        """Connection-based packages (lak/sfr) present in at least one model."""
+        """Connection-based package types (lak/sfr) some model carries, found by TYPE."""
 
         return [
             pkg
@@ -1271,10 +1276,10 @@ class ModelDiff:
         name : str
             A package type, any case: ``rch``, ``chd``, ``drn``, ``ghb``, ``riv``,
             ``wel``, ``evt``, ``lak``, ``sfr``, ``uzf`` or ``mvr``. Any other name
-            raises ``AttributeError`` listing those -- bar the namespace's own
-            attribute names, which are not refused (``"_diff"`` returns this
-            ``ModelDiff``). Whether a member carries the package is not checked
-            here.
+            raises ``AttributeError`` listing those -- the namespace's own
+            attribute names included (``"_diff"`` returned this ``ModelDiff``
+            until 2026-10-11). Whether a member carries the package is not
+            checked here.
 
         Returns
         -------
@@ -1284,7 +1289,13 @@ class ModelDiff:
             UZF and MVR.
         """
 
-        return getattr(self.packages, str(name).lower())
+        package = str(name).lower()
+        if package not in _DIFFED_PACKAGE_TYPES:
+            raise AttributeError(
+                f"ModelDiff does not diff package {name!r}; supported: "
+                f"{', '.join(_DIFFED_PACKAGE_TYPES)}."
+            )
+        return getattr(self.packages, package)
 
     def model(self, name: str) -> _FocusedModelDiff:
         """Focus the diff on a single non-reference model.
@@ -1314,12 +1325,12 @@ class ModelDiff:
         The cell-based BC packages only (:attr:`package_names`), each through its
         :meth:`PackageDiff.summary`; LAK/SFR geometry, configuration and results
         are :meth:`report`'s. A type is listed when some member carries a package
-        whose NAME is the type or starts with it (``chd_0``, ``drn``), not by the
-        package's type: a DRN named ``seeps`` is left out -- measured, a
-        conductance changed 10 to 30 there and :meth:`report` read "identical to
-        reference" (``docs/reproducers/diff_results_tier.py``). The LAK/SFR list
-        :meth:`report` reads is found the same way, so a GHB named ``lake_edge``
-        counts there as a LAK.
+        of that TYPE, whatever it is named (``package_registry.
+        model_packages_of_type``, ledger 352): a DRN named ``seeps`` is a DRN. It
+        was found by a NAME prefix until 2026-10-11, so that DRN was left out --
+        measured, a conductance changed 10 to 30 there and :meth:`report` read
+        "identical to reference" -- and a GHB named ``lake_edge`` counted as a
+        LAK (``docs/reproducers/diff_results_tier.py``).
 
         Parameters
         ----------
@@ -1358,13 +1369,14 @@ class ModelDiff:
         results : bool, optional
             Default ``False`` reports packages (:meth:`summary`), configuration
             (``config.settings()``) and LAK/SFR connection geometry -- the package
-            and geometry tiers finding a package by its NAME (:meth:`summary`), so
-            one named otherwise is not compared. ``True`` adds,
+            and geometry tiers finding a package by its TYPE, whatever it is named
+            (:meth:`summary`). ``True`` adds,
             per model, ``hds.summary()`` and ``bud.summary()`` at their default
             tolerances (``atol`` = ``rtol`` = 1e-3) as a "Results differences"
-            table, and a breach makes the model "differs" -- their caveats
-            included (a cell dry in one model only reads a head difference of
-            1e30, ``HeadsResultDiff.get``; FloPy's ``tslen`` and
+            table, and a breach makes the model "differs" -- a cell dry or
+            inactive in one model only is one (``n_one_sided``, ledger 484),
+            and the heads row says how many there are; their caveats included
+            (FloPy's ``tslen`` and
             ``time_step`` columns counted as budget terms, so a change of ``nstp``
             alone breaches the budget). When either read fails
             with a missing or unreadable output (``OSError``, ``ValueError``,
@@ -1499,7 +1511,13 @@ class ModelDiff:
             lines.append(
                 f"| heads | {bool(row['within_tolerance'])} "
                 f"| max|diff|={row['max_abs_diff']:.4g} at cell {row['argmax_cell']} "
-                f"layer {row['argmax_layer']} kstpkper {row['argmax_kstpkper']} |"
+                f"layer {row['argmax_layer']} kstpkper {row['argmax_kstpkper']}"
+                + (
+                    f"; {int(row['n_one_sided'])} cell(s) with no value in one model only"
+                    if int(row.get("n_one_sided", 0) or 0)
+                    else ""
+                )
+                + " |"
             )
         breached = budget[~budget["within_tolerance"]] if not budget.empty else budget
         if not budget.empty:

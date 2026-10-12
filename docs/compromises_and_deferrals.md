@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 483 entries (488 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 484 entries (489 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 484 | A dry or inactive cell is a gap at the group and diff tiers, and `hds.long()`/`wide()` read it as `NaN` | 2026-10-11 |
 | 483 | The location-file calibration plot draws the (location, layer) pairs observed, paired by time | 2026-10-11 |
 | 482 | An observation area sums every layer of its columns | 2026-10-11 |
 | 481 | A picture writes what it names, and a hillshade is drawn from its own raster | 2026-10-11 |
@@ -18796,9 +18797,11 @@ same day, which is the useful part of the result.
       tier) -- and `GroupPackageInputs.compare()` joins a cell's records pairwise, so a
       change of 1.0 in each draws 4.0, through `group.diff()` too~~ (fixed by ledger
       472: the field's kind decides, and records pair in file order). **Sentinels:**
-      `group.hds/conc/temp.compare()` difference MF6's 1e30 (a cell dry in one member
+      ~~`group.hds/conc/temp.compare()` difference MF6's 1e30 (a cell dry in one member
       only reads a diff of 1e30) and `compare_map`'s default colour range becomes
-      plus/minus 1e30 (ledger 315's rule is not applied at this tier). **One absent
+      plus/minus 1e30 (ledger 315's rule is not applied at this tier)~~ (fixed by ledger
+      484: a dry or inactive cell is `NaN`, its diff a gap, counted in
+      `n_one_sided`). **One absent
       package ends the call:** a member without LAK or UZF makes the group LAK views and
       `uzf.inputs.<field>` raise `AttributeError`, where the inputs, cell-result, SFR and
       surface-water views leave it out. **Accepted, then ignored or replacing:** `agg` on
@@ -18900,8 +18903,8 @@ same day, which is the useful part of the result.
       `hds.get_obs_heads(<str path>)` ignores the string and reads the constructor's
       `obs_path`, and `get_obs_cells` gives a polygon over several cells the FIRST of them
       (its one-cell `assert` tests the outer list of ledger 192's `{name: [[cells]]}`
-      shape, so it never fires)~~ (fixed by ledger 476). `hds.long()`/`wide()` keep MF6's +/-1e30 (ledger 315's rule is not
-      applied there). ~~`ModelConfig.from_model(model.gwf)` and `config.section(<typo>)` come
+      shape, so it never fires)~~ (fixed by ledger 476). ~~`hds.long()`/`wide()` keep MF6's +/-1e30 (ledger 315's rule is not
+      applied there)~~ (fixed by ledger 484: both read them as `NaN`). ~~`ModelConfig.from_model(model.gwf)` and `config.section(<typo>)` come
       back empty~~ (each raises since ledger 476). **Accepted, then forwarded or ignored:** ~~every record and array noun's
       `**trace_kwargs` tail carries `show_mounding` (and `kstpkper`/`per_timestep`/`bgs`/
       `hover_layers`) to the free verb unrefused -- on five nouns `show_mounding=True` keeps
@@ -19765,3 +19768,18 @@ same day, which is the useful part of the result.
       (a location the file does not name) raises `ValueError` rather than being dropped.
       Revert check: `tests/test_calibration_plot_refusals.py::
       test_the_location_file_cross_plot_pairs_by_time_in_the_layers_observed`.
+
+484. **A dry or inactive cell is a gap at the group and diff tiers, and `hds.long()`/`wide()` read it as `NaN` (2026-10-11).**
+      `group.hds/conc/temp.get()` and `compare()`, and through them `diff.hds/conc/temp`,
+      differenced MF6's -1e30/+1e30: one dry cell against a wet reference read a `diff`
+      of -1e30, `summary()` read `max_abs_diff` 1e30, and the diff map's default range
+      spanned plus/minus 1e30. Each member's value is masked where it is read, by
+      `headsplus._is_sentinel` (ledger 315), the row kept. **Judgment call, copied from
+      the stage diff (ledger 329):** `summary()` computes its statistics over the rows
+      where BOTH models have a value and counts a cell with a value in ONE model only in
+      a new `n_one_sided` column, and any such cell fails `within_tolerance` -- dry in one
+      run and wet in the other is a difference no number measures, so averaging it away
+      would read as agreement. `report(results=True)` names the count.
+      `model.hds.long()`/`wide()` mask too, with no `masked=` switch: the raw numbers
+      are `model.hds.all_values`, which stays the file's. Measured on a 1 x 5 DIS row,
+      four cells dry at a -50 well (`tests/test_diff_reads_what_mf6_wrote.py`).

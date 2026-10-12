@@ -195,7 +195,13 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
 
     @property
     def all_values(self):
-        """The full ``kstpkper/layer/cell`` value table, built and cached on first access."""
+        """The full ``kstpkper/layer/cell`` value table, built and cached on first access.
+
+        The file's own numbers, MODFLOW's no-value sentinels (+1e30 inactive, -1e30
+        dry) included: every view of it -- :meth:`get`, :meth:`long`, :meth:`wide`,
+        :meth:`array`, the maps and the group and diff tiers -- reads them as
+        ``NaN`` (ledger 315).
+        """
 
         if self._value_table is None:
             self._value_table = self._build_value_table()
@@ -368,9 +374,10 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         """Return the field as a long series indexed by ``kstpkper/layer/cell``.
 
         Every SAVED time step, not one value per period (:meth:`get` is the
-        period-end table), as the file holds it: MODFLOW's no-value sentinels
-        (+1e30 inactive, -1e30 dry) are NOT masked here, unlike :meth:`get`,
-        :meth:`array` and the maps.
+        period-end table). MODFLOW's no-value sentinels (+1e30 inactive, -1e30
+        dry; ``|value| >= 1e29``) are ``NaN``, by the rule :meth:`get`,
+        :meth:`array` and the maps follow (ledger 315); they were kept as numbers
+        until 2026-10-11. The file's own numbers are :attr:`all_values`.
 
         Parameters
         ----------
@@ -386,6 +393,7 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         if values not in self.all_values.columns:
             raise KeyError(f"Value column {values!r} was not found.")
         series = pd.to_numeric(self.all_values[values], errors="coerce")
+        series = series.mask(_is_sentinel(series))
         series.name = values
         return series
 
@@ -399,9 +407,11 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         """Pivot the field to one row per layer/cell and one column per ``kstpkper``.
 
         Columns are named ``kstpkper_<kstp>_<kper>``, one per SAVED time step,
-        after the ``index`` columns. Values are the file's own: the no-value
-        sentinels (+1e30 inactive, -1e30 dry) are NOT masked, so an ``agg`` that
-        combines layers (``"mean"``) folds a dry cell's -1e30 into the number.
+        after the ``index`` columns. MODFLOW's no-value sentinels (+1e30
+        inactive, -1e30 dry; ``|value| >= 1e29``) are ``NaN`` before ``agg``
+        runs, as in :meth:`long` (ledger 315), so an ``agg`` combining layers
+        skips a dry cell -- it folded its -1e30 into the number until
+        2026-10-11. A row and step with no value left is ``NaN``.
 
         Parameters
         ----------
@@ -431,11 +441,14 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
         missing_index = [column for column in index if column not in frame.columns]
         if missing_index:
             raise KeyError(f"Wide index columns were not found: {missing_index}")
+        frame[values] = pd.to_numeric(frame[values], errors="coerce")
+        frame[values] = frame[values].mask(_is_sentinel(frame[values]))
         wide = frame.pivot_table(
             index=list(index),
             columns="kstpkper",
             values=values,
             aggfunc=agg,
+            dropna=False,
         )
         wide.columns = [f"kstpkper_{kstp}_{kper}" for kstp, kper in wide.columns]
         return wide.reset_index()

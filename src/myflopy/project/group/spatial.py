@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.hydraulics import unit_labels
 from myflopy.modflow.mf6.package_explorer import (
     LineProfileView,
@@ -197,10 +198,11 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
         """Return this field, aligned across all models in the group.
 
         Each member's full value table (``all_heads``/``all_conc``/``all_temp``)
-        with a ``model`` column: one row per saved step, layer and cell, the
-        values as the file holds them -- a DRY or INACTIVE cell keeps MF6's
-        ``-1e30``/``+1e30`` here; nothing masks it (ledger 315's rule is not
-        applied at this tier, ledger 439).
+        with a ``model`` column: one row per saved step, layer and cell. A DRY or
+        INACTIVE cell -- MF6's ``-1e30``/``+1e30``, ``|value| >= 1e29`` -- is
+        ``NaN``, the row kept, by the single-model rule
+        (``headsplus._is_sentinel``, ledger 315); the sentinel was kept as a
+        number here until ledger 484.
 
         Parameters
         ----------
@@ -227,7 +229,8 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
         -------
         pandas.DataFrame
             ``model``, ``kstpkper``, ``layer``, ``cell`` and the field's value
-            column (``elev`` for heads, in model length; ``conc``; ``temp``).
+            column (``elev`` for heads, in model length; ``conc``; ``temp``;
+            ``NaN`` where the cell has no value).
         """
 
         frames = []
@@ -247,6 +250,8 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
                 frame = frame[frame["layer"].isin(layer_values)]
             if cells is not None:
                 frame = frame[frame["cell"].isin([int(value) for value in cells])]
+            values = pd.to_numeric(frame[self.value_column], errors="coerce")
+            frame = frame.assign(**{self.value_column: values.mask(_is_sentinel(values))})
             frames.append(frame)
 
         if not frames:
@@ -270,10 +275,10 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
         The rows :meth:`get` selects are reduced to each member's own LAST saved
         step of every period (``_reduce_to_period_end``) and paired with the
         reference's on ``per``, ``layer`` and ``cell``, so members of different
-        ``nstp`` align by stress period. The values are differenced as the file
-        holds them: a cell DRY or INACTIVE in one member and not the other
-        differences against MF6's ``1e30`` sentinel (a ``diff`` of order
-        ``1e30``), and one dry in both reads 0.
+        ``nstp`` align by stress period. A cell DRY or INACTIVE in a member has
+        no value (:meth:`get`), so its ``diff`` is ``NaN`` -- a gap, not a number:
+        it differenced MF6's ``1e30`` sentinel until ledger 484 (a ``diff``
+        of order ``1e30`` where one side was dry, 0 where both were).
 
         Parameters
         ----------
@@ -296,8 +301,9 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
         pandas.DataFrame
             ``model``, ``reference_model``, ``kstpkper`` (the compared member's
             step), ``per``, ``layer``, ``cell``, the value column,
-            ``reference_<value>`` and ``diff`` -- always member minus reference.
-            Empty, with those columns, when :meth:`get` is.
+            ``reference_<value>`` and ``diff`` -- always member minus reference,
+            ``NaN`` where either side has no value. Empty, with those columns,
+            when :meth:`get` is.
         """
 
         data = self.get(per=per, kstpkper=kstpkper, layer=layer, cells=cells)
@@ -352,10 +358,10 @@ DependentVariableFile`, and built for the same reason: heads, concentration and
 
         Colors every Voronoi cell by ``diff`` (:meth:`compare`) for one stress
         period and layer, using the same diff-map payload + rendering as the
-        package diff maps. A cell dry or inactive in one member only draws a
-        difference of order ``1e30`` (either sign), and the default colour range
-        then spans plus/minus ``1e30``,
-        which draws every real difference white -- pass ``zmin``/``zmax``.
+        package diff maps. A cell dry or inactive in either member is left blank
+        (its ``diff`` is ``NaN``, :meth:`compare`); it drew a difference of order
+        ``1e30`` and stretched the default colour range to plus/minus ``1e30``
+        until ledger 484.
 
         Internal plumbing: the public route is the one ``diff()`` verb --
         ``group.diff().hds.map(...)`` / ``.conc`` / ``.temp``.

@@ -30,6 +30,11 @@ class _FakeModel:
         self.package_names = list(package_names)
         self.config = config if config is not None else _empty_config()
 
+    def _packages_of_type(self, package_type):
+        """The packages of a TYPE, as ``model_packages_of_type`` asks (these names ARE types)."""
+
+        return [name for name in self.package_names if name.lower() == str(package_type).lower()]
+
 
 def _ghb(model_name: str, rows):
     """Build a tidy GHB input table (rows: (per, layer, cell, bhead, cond))."""

@@ -1460,7 +1460,11 @@ group.diff().temp.summary()          # max/mean |Δtemp|, RMSE, argmax cell/laye
 All three are the same class configured by five attributes (`_GroupFieldView`), so a
 verb added to one is available to all. `diff` is always **model − reference**. Every
 member of a `group.conc` must be a GWT model; the kind-gated reader supplies the error
-otherwise (ledger 100).
+otherwise (ledger 100). A cell MF6 wrote DRY (-1e30) or INACTIVE (+1e30) is `NaN` at every
+tier, as on `model.hds.get()` (ledger 315) -- `model.hds.long()`/`wide()` and the group
+`get`/`compare` included, so its `diff` is a gap -- and the diff's `summary()` counts a cell
+with a value in ONE model only in `n_one_sided`, which fails the tolerance (ledger
+484). The file's own numbers are `model.hds.all_values`.
 
 ### Deprecated spellings (D12)
 

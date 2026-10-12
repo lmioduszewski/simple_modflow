@@ -116,12 +116,13 @@ class HeadsResultDiff(_ResultDiffBase, LineProfileView, DiffSpatialView):
         (head: the model's length unit; ``conc``: the GWT model's concentration
         unit; ``temp``: the GWE model's temperature unit).
 
-        MF6's no-value numbers are NOT masked on this route: it reads each
-        member's raw ``all_heads`` table, so a cell MF6 wrote as dry (-1e30) or
-        inactive (+1e30) enters ``diff`` as a number -- one dry cell against a
-        wet reference reads a ``diff`` of -1e30 (measured,
-        ``docs/reproducers/diff_results_tier.py``). ``model.hds.get()`` masks
-        them as ``NaN``.
+        A cell MF6 wrote as dry (-1e30) or inactive (+1e30) has no value, as on
+        ``model.hds.get()`` (``headsplus._is_sentinel``, ledger 315): its value
+        is ``NaN``, the row kept, and so is its ``diff``. Until ledger 484
+        the sentinel entered ``diff`` as a number -- one dry cell against a wet
+        reference read a ``diff`` of -1e30 (``docs/reproducers/
+        diff_results_tier.py``); :meth:`summary` counts such a row in
+        ``n_one_sided``.
 
         Parameters
         ----------
@@ -150,7 +151,8 @@ class HeadsResultDiff(_ResultDiffBase, LineProfileView, DiffSpatialView):
         pandas.DataFrame
             ``model``, ``reference_model``, ``kstpkper`` (the compared member's own
             step), ``per``, ``layer``, ``cell``, the value column (``elev``,
-            ``conc`` or ``temp``), ``reference_<value>`` and ``diff``.
+            ``conc`` or ``temp``), ``reference_<value>`` and ``diff`` -- ``NaN``
+            where a side has no value.
 
         Raises
         ------
@@ -243,11 +245,14 @@ class HeadsResultDiff(_ResultDiffBase, LineProfileView, DiffSpatialView):
         """One row per model: max/mean |Δhead|, RMSE, where/when the max is, and
         whether every cell is within tolerance.
 
-        Over the rows :meth:`get` returns. A cell dry or inactive in ONE model only
-        is not set aside (:meth:`get`): its +-1e30 sets ``max_abs_diff``,
-        ``mean_abs_diff`` and ``rmse`` and fails the tolerance, where a stage diff
-        counts such rows in ``n_one_sided`` instead. One with the same sentinel on
-        both sides reads a ``diff`` of 0 and passes.
+        Over the rows :meth:`get` returns, as a stage diff counts a dry lake
+        (ledger 329). A cell dry or inactive in a model has no value, so the
+        statistics run over the rows where BOTH models have one, and ``n`` counts
+        those; ``n_one_sided`` counts the rows where exactly one does -- a cell
+        dry in one model and wet in the other, a difference no number measures --
+        and any such row makes ``within_tolerance`` False. A row with no value on
+        either side agrees and counts in neither. Until ledger 484 the
+        sentinel's +-1e30 set ``max_abs_diff``, ``mean_abs_diff`` and ``rmse``.
 
         Parameters
         ----------
@@ -274,38 +279,46 @@ class HeadsResultDiff(_ResultDiffBase, LineProfileView, DiffSpatialView):
         Returns
         -------
         pandas.DataFrame
-            One row per compared model: ``model``, ``n`` (rows compared),
-            ``max_abs_diff``, ``mean_abs_diff``, ``rmse``, ``argmax_cell``,
-            ``argmax_layer``, ``argmax_kstpkper`` (where the largest ``|diff|`` is;
-            the first such row on a tie) and ``within_tolerance``. Empty when
-            there is nothing to compare.
+            One row per compared model: ``model``, ``n`` (rows where both have a
+            value), ``n_one_sided``, ``max_abs_diff``, ``mean_abs_diff``,
+            ``rmse``, ``argmax_cell``, ``argmax_layer``, ``argmax_kstpkper``
+            (where the largest ``|diff|`` is; the first such row on a tie) and
+            ``within_tolerance``. With no row where both have a value, the three
+            statistics are ``NaN``, the two argmax cell columns ``-1`` and
+            ``argmax_kstpkper`` ``None``. Empty when there is nothing to compare.
         """
 
         data = self.get(model_name=model_name, per=per, layer=layer)
         columns = [
-            "model", "n", "max_abs_diff", "mean_abs_diff", "rmse",
+            "model", "n", "n_one_sided", "max_abs_diff", "mean_abs_diff", "rmse",
             "argmax_cell", "argmax_layer", "argmax_kstpkper", "within_tolerance",
         ]
         if data.empty:
             return pd.DataFrame(columns=columns)
         rows = []
         for name, sub in data.groupby("model"):
-            diff = sub["diff"].to_numpy(dtype=float)
-            reference = sub[self._reference_column].to_numpy(dtype=float)
+            has_value = np.isfinite(sub[self.value_column].to_numpy(dtype=float))
+            has_reference = np.isfinite(sub[self._reference_column].to_numpy(dtype=float))
+            one_sided = int((has_value ^ has_reference).sum())
+            compared = sub.loc[has_value & has_reference]
+            diff = compared["diff"].to_numpy(dtype=float)
+            reference = compared[self._reference_column].to_numpy(dtype=float)
             abs_diff = np.abs(diff)
             imax = int(np.argmax(abs_diff)) if abs_diff.size else 0
             rows.append(
                 {
                     "model": name,
                     "n": int(abs_diff.size),
-                    "max_abs_diff": float(abs_diff.max()) if abs_diff.size else 0.0,
-                    "mean_abs_diff": float(abs_diff.mean()) if abs_diff.size else 0.0,
-                    "rmse": float(np.sqrt(np.mean(diff**2))) if diff.size else 0.0,
-                    "argmax_cell": int(sub["cell"].iloc[imax]) if abs_diff.size else -1,
-                    "argmax_layer": int(sub["layer"].iloc[imax]) if abs_diff.size else -1,
-                    "argmax_kstpkper": sub["kstpkper"].iloc[imax] if abs_diff.size else None,
+                    "n_one_sided": one_sided,
+                    "max_abs_diff": float(abs_diff.max()) if abs_diff.size else float("nan"),
+                    "mean_abs_diff": float(abs_diff.mean()) if abs_diff.size else float("nan"),
+                    "rmse": float(np.sqrt(np.mean(diff**2))) if diff.size else float("nan"),
+                    "argmax_cell": int(compared["cell"].iloc[imax]) if abs_diff.size else -1,
+                    "argmax_layer": int(compared["layer"].iloc[imax]) if abs_diff.size else -1,
+                    "argmax_kstpkper": compared["kstpkper"].iloc[imax] if abs_diff.size else None,
                     "within_tolerance": bool(
-                        np.all(_within_tolerance(diff, reference, atol, rtol))
+                        one_sided == 0
+                        and np.all(_within_tolerance(diff, reference, atol, rtol))
                     ),
                 }
             )

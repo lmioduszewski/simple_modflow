@@ -36,6 +36,11 @@ class _FakeModel:
         self.package_names = list(package_names)
         self.config = _empty_config()
 
+    def _packages_of_type(self, package_type):
+        """The packages of a TYPE, as ``model_packages_of_type`` asks (these names ARE types)."""
+
+        return [name for name in self.package_names if name.lower() == str(package_type).lower()]
+
 
 @pytest.fixture
 def connection_tables(monkeypatch):
