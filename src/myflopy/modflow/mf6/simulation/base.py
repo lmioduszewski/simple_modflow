@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -414,7 +415,7 @@ class SimulationBase:
         nper: int = 1,
         vor: Vor = None,
         per_dates: list | pd.DatetimeIndex = None,
-        idomain_path: Path = None,
+        idomain_path: str | os.PathLike | None = None,
         newton: bool = True,
         complexity: str = 'MODERATE',
     ):

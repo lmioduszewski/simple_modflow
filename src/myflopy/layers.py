@@ -3505,7 +3505,7 @@ class LayerStack:
         self.length_units = length_units
         # The same check as ModelContext's (ledger 456): the unit is a label
         # here, and a label in a unit nothing reads is refused where it enters.
-        check_model_time_units(time_units)
+        check_model_time_units(time_units, owner="LayerStack")
         self.time_units = time_units
 
     #: Token :func:`myflopy.specs._json_value` writes this object under. See

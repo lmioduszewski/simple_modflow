@@ -120,7 +120,7 @@ def test_model_context_takes_every_spelling_its_consumers_read(units):
 
 
 def test_layer_stack_refuses_a_time_unit_nothing_reads():
-    with pytest.raises(ValueError, match=r"time_units='weeks'"):
+    with pytest.raises(ValueError, match=r"^LayerStack\(time_units='weeks'\) is not a time unit"):
         mf.LayerStack(top=10.0, time_units="weeks")
     assert mf.LayerStack(top=10.0, time_units="d").time_units == "d"
 
@@ -203,6 +203,23 @@ def test_check_tdis_time_units_is_what_prt_project_asks(tmp_path):
         )
     assert not (tmp_path / "prt").exists()
     assert check_tdis_time_units("YEARS", helper="x") == "YEARS"
+
+
+def test_the_legacy_temporal_discretization_refuses_a_word_mf6_stops_on(tmp_path):
+    """The legacy OO ``TemporalDiscretization`` wrote ``"d"`` and MF6 stopped on it
+    (review of ledger 456); it is the same TDIS, so it keeps ``mf.tdis``'s rule."""
+
+    from myflopy.modflow.mf6.simulation.discretization import TemporalDiscretization
+    from tests.test_mf6_prt import _flow_model
+
+    model = _flow_model("legacy_tdis_units", tmp_path)
+    with pytest.raises(
+        ValueError, match=r"TemporalDiscretization\(time_units='d'\).*Write time_units='days'"
+    ):
+        TemporalDiscretization(model=model, time_units="d", per_len=1.0, num_steps=1)
+    assert model.sim.tdis.time_units.get_data().upper() == "DAYS"   # left as it was
+    TemporalDiscretization(model=model, time_units="Hours", per_len=1.0, num_steps=1)
+    assert model.sim.tdis.time_units.get_data().lower() == "hours"
 
 
 @pytest.mark.parametrize(("flow_word", "prt_word"),

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import numbers
+import os
 import types
 import warnings
 from pathlib import Path
@@ -214,7 +215,7 @@ class VoronoiGridPlus(VoronoiGrid):
         rasters: list | Path = None,
         name: str = 'voronoi_grid',
         qhull_options: str = None,
-        idomain_path: Path = None,
+        idomain_path: str | os.PathLike | None = None,
         verts: np.ndarray = None,
         iverts: list[list] = None,
         xcyc: np.ndarray = None,
@@ -2061,14 +2062,16 @@ class VoronoiGridPlus(VoronoiGrid):
         ----------
         center_point : shapely.geometry.Point
             The lattice's centre; only its ``x``/``y`` are read.
-        spacing : float
+        spacing : int or float
             The step between points in x and in y, in the point's length units. Any
-            finite number above zero (``2.5`` works). Zero, a negative or a
-            non-finite value raises ``ValueError``.
-        size : float
+            finite number above zero (``2.5`` works, a numpy number too). Zero, a
+            negative, a non-finite value, a ``bool`` or a string raises
+            ``ValueError``.
+        size : int or float
             The lattice's width in steps: it spans ``size * spacing`` along each
             axis, half on either side of the centre. Zero gives the centre alone; a
-            negative or non-finite value raises ``ValueError``.
+            negative or non-finite value, a ``bool`` or a string (``"2"``, which
+            was read as 2) raises ``ValueError`` (ledger 457).
         crs : str, int or pyproj.CRS
             The CRS stamped on the result (``GeoSeries.set_crs``); the coordinates
             are not reprojected. Required.
@@ -2101,10 +2104,11 @@ class VoronoiGridPlus(VoronoiGrid):
             The lattice's width in steps, as for :meth:`generate_grid_around_point`:
             a whole ``size`` gives ``size ** 2`` boxes. A size under ``1`` holds no
             box and raises ``ValueError``.
-        gap : float
+        gap : int or float
             The space left between neighbouring boxes, in the same units. ``0``
-            makes them touch. A negative or non-finite gap, or one of ``spacing``
-            or more (no box would be left), raises ``ValueError``.
+            makes them touch. A negative or non-finite gap, a ``bool`` or a string,
+            or one of ``spacing`` or more (no box would be left), raises
+            ``ValueError``.
 
         Returns
         -------
@@ -2314,7 +2318,7 @@ class VoronoiGridPlus(VoronoiGrid):
         crs: str = DEFAULT_CRS,
         rasters: list | Path = None,
         name: str = 'voronoi_grid',
-        idomain_path: Path = None,
+        idomain_path: str | os.PathLike | None = None,
     ):
         """Reconstruct a Voronoi-style grid view from a DISU input file.
 
@@ -2370,7 +2374,7 @@ class VoronoiGridPlus(VoronoiGrid):
         crs: str = DEFAULT_CRS,
         rasters: list | Path = None,
         name: str = 'voronoi_grid',
-        idomain_path: Path = None,
+        idomain_path: str | os.PathLike | None = None,
     ):
         """Build a grid view from a MODFLOW-USG ``.gsf`` grid specification file.
 

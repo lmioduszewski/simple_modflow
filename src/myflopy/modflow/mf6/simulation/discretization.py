@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import flopy
 
 from myflopy._logging import get_logger
+from myflopy._time_units import check_tdis_time_units
 
 logger = get_logger(__name__)
 
@@ -248,7 +249,13 @@ class TemporalDiscretization:
         model
             Target model receiving the TDIS package.
         time_units
-            MF6 time-units label.
+            MF6's TDIS ``TIME_UNITS`` word: ``"unknown"``, ``"seconds"``,
+            ``"minutes"``, ``"hours"``, ``"days"`` or ``"years"``, any case, or
+            ``None`` to write none. Default ``"DAYS"``. Any other word -- ``"d"``,
+            ``"day"`` included -- raises ``ValueError`` before the package is
+            built, naming MF6's word for a known short spelling: FloPy writes any
+            word and MF6 STOPS the run on one it does not read, the rule
+            ``mf.tdis`` keeps (ledger 456).
         per_len
             Default period length used when ``period_data`` is omitted.
         period_data
@@ -291,6 +298,8 @@ class TemporalDiscretization:
             Divisor applied to retry a *failed* step at a smaller dt (must be 0 or
             > 1; 0 means a failed step stops the run). Default ``5.0``.
         """
+        # mf.tdis's declaration rule (ledger 456): MF6 stops on any other word.
+        check_tdis_time_units(time_units, helper="TemporalDiscretization")
         nper = model.nper
         if period_data is None:
             period_data = [[per_len, num_steps, multiplier] for _ in range(nper)]

@@ -110,7 +110,7 @@
  "myflopy.modflow.mf6.simulation": 0,
  "myflopy.modflow.mf6.simulation.accessors": 7,
  "myflopy.modflow.mf6.simulation.base": 9,
- "myflopy.modflow.mf6.simulation.discretization": 0,
+ "myflopy.modflow.mf6.simulation.discretization": 1,
  "myflopy.modflow.mf6.simulation.indexing": 2,
  "myflopy.modflow.mf6.simulation.packages": 1,
  "myflopy.modflow.mf6.simulation.regions": 3,

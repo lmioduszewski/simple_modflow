@@ -22,7 +22,10 @@ import shapely as shp
 
 import myflopy as mf
 from myflopy._numbers import positive_number
-from myflopy.modflow.mf6.grid.geometry import generate_grid_around_point
+from myflopy.modflow.mf6.grid.geometry import (
+    generate_grid_around_point,
+    generate_grid_polygons,
+)
 from myflopy.modflow.mf6.grid.triangle import TriangleGrid
 from myflopy.modflow.mf6.grid.voronoi import VoronoiGridPlus
 
@@ -133,6 +136,32 @@ def test_every_grid_step_refuses_what_is_not_a_number_above_zero(bad):
         positive_number(bad, "spacing")
     with pytest.raises(ValueError, match=r"spacing must be a finite number above zero"):
         generate_grid_around_point(shp.Point(0, 0), bad, 2, "EPSG:2927")
+
+
+@pytest.mark.parametrize("bad", ["2", True, np.bool_(True), -1, np.nan, None])
+def test_a_lattice_size_is_read_by_the_same_rule(bad):
+    """``float(size)`` took ``"2"`` as 2 and ``True`` as 1 (review of ledger 457)."""
+
+    with pytest.raises(ValueError, match=r"size must be a finite number of steps, zero or more"):
+        generate_grid_around_point(shp.Point(0, 0), 1.0, bad, "EPSG:2927")
+    with pytest.raises(ValueError, match=r"size must be a finite number of steps"):
+        generate_grid_polygons(shp.Point(0, 0), 1.0, bad, 0.0)
+
+
+@pytest.mark.parametrize("bad", ["0.5", True, np.bool_(False), None])
+def test_a_box_gap_is_read_by_the_same_rule(bad):
+    with pytest.raises(ValueError, match=r"gap must be a finite number, zero or more"):
+        generate_grid_polygons(shp.Point(0, 0), 2.5, 4, bad)
+
+
+def test_zero_is_a_size_and_a_gap_but_not_a_step():
+    assert len(generate_grid_around_point(shp.Point(0, 0), 1.0, 0, "EPSG:2927")) == 1
+    assert len(generate_grid_polygons(shp.Point(0, 0), 2.5, np.int64(2), 0).geoms) == 4
+    assert positive_number(0, "gap", allow_zero=True) == 0.0
+    with pytest.raises(ValueError, match="gap must be a finite number, zero or more, got -1"):
+        positive_number(-1, "gap", allow_zero=True)
+    with pytest.raises(ValueError, match="spacing must be a finite number above zero, got 0"):
+        positive_number(0, "spacing")
 
 
 def test_a_lattice_takes_a_numpy_number():

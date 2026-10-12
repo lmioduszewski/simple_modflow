@@ -693,9 +693,8 @@ def _lattice_axis(centre: float, spacing: float, size: float) -> np.ndarray:
     """
 
     spacing = positive_number(spacing, "spacing")
-    size = float(size)
-    if not np.isfinite(size) or size < 0:
-        raise ValueError(f"size must be a finite number of steps, zero or more, got {size!r}.")
+    # `float(size)` took "2" and True as a size, as it took them as a spacing.
+    size = positive_number(size, "size", units="steps", allow_zero=True)
     count = int(np.floor(size + 1e-9)) + 1
     return float(centre) + spacing * (np.arange(count) - size / 2)
 
@@ -728,12 +727,11 @@ def generate_grid_polygons(
     # Ledger 415: `shp.box` accepts min > max, so a gap of `spacing` or more
     # gave inverted or overlapping boxes, and a size under one step an empty
     # MultiPolygon, all in silence.
-    if (
-        isinstance(gap, (bool, np.bool_))
-        or not isinstance(gap, (int, float, np.integer, np.floating))
-        or not np.isfinite(gap)
-        or not 0 <= gap < spacing
-    ):
+    try:
+        bad_gap = positive_number(gap, "gap", allow_zero=True) >= spacing
+    except ValueError:
+        bad_gap = True
+    if bad_gap:
         raise ValueError(
             f"gap must be a finite number, zero or more and below spacing={spacing!r}; "
             f"got {gap!r}."

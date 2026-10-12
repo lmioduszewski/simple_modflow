@@ -6480,7 +6480,8 @@ class _SFRPackage:
             context's default) 86400, ``"hours"`` 3600, ``"minutes"`` 60,
             ``"seconds"`` 1, ``"years"`` 31557600, also as a singular or an
             abbreviation (``"d"``, ``"h"``, ...) in any case; ``None`` or
-            ``"unknown"`` 1.0. Any other unit raises ``ValueError``.
+            ``"unknown"`` 1.0. ``ModelContext`` refuses any other unit at
+            construction (ledger 456).
         maximum_picard_iterations : int, optional
             MF6 SFR ``MAXIMUM_PICARD_ITERATIONS``, written as given. Default 1.
         maximum_iterations : int, optional
@@ -7114,7 +7115,8 @@ class _LAKPackage:
             ``"hr"``/``"h"``, 60.0 for ``"minutes"``/``"minute"``/``"min"``, 1.0
             for ``"seconds"``/``"second"``/``"sec"``/``"s"``, 31557600.0 for
             ``"years"``/``"year"``/``"yr"``, 1.0 for ``None``, ``""`` or
-            ``"unknown"``, and ``ValueError`` for any other name.
+            ``"unknown"``. ``ModelContext`` refuses any other name at
+            construction (ledger 456).
         maximum_iterations : int, default 100
             MF6's ``MAXIMUM_ITERATIONS``: the most Newton-Raphson iterations
             MF6 spends on each lake's stage per outer iteration. Raise it only

@@ -5,8 +5,8 @@ The ONE place the time-unit tables live (ledger 456), as
 places, and both are checked where they enter:
 
 * a TDIS ``time_units`` option -- ``mf.tdis(time_units=)``, an edit of a TDIS spec
-  (``with_options``/``packages.fork``/``packages.edit``) and a PRT simulation's own
-  TDIS -- which MF6 reads only as one of :data:`MF6_TIME_UNITS`, in any case. Any
+  (``with_options``/``packages.fork``/``packages.edit``), a PRT simulation's own
+  TDIS and the legacy ``TemporalDiscretization`` -- which MF6 reads only as one of :data:`MF6_TIME_UNITS`, in any case. Any
   other word -- ``d``, ``day``, ``undefined`` -- STOPS the run ("Unrecognized input
   value for TIME_UNITS option"), where an unknown ``LENGTH_UNITS`` word is read as
   undefined (``docs/reproducers/tdis_time_units.py``, ledger 442). FloPy writes any
@@ -89,7 +89,8 @@ def check_tdis_time_units(value: Any, *, helper: str) -> Any:
         The ``time_units`` option as passed. ``None`` is returned as is.
     helper : str
         What the caller wrote, for the message: ``"mf.tdis"``,
-        ``"tdis.with_options"`` or ``"PRTProject"``.
+        ``"tdis.with_options"``, ``"PRTProject"`` or the legacy
+        ``"TemporalDiscretization"``.
 
     Returns
     -------
@@ -149,8 +150,8 @@ def mf6_time_word(units: Any) -> str | None:
     return word
 
 
-def check_model_time_units(value: Any) -> Any:
-    """Refuse a ``ModelContext(time_units=)`` no consumer of it can read.
+def check_model_time_units(value: Any, *, owner: str = "ModelContext") -> Any:
+    """Refuse a ``ModelContext(time_units=)`` or ``LayerStack(time_units=)`` nothing reads.
 
     The context's unit is read by ``mf.sfr``/``mf.lak`` for ``TIME_CONVERSION`` and
     by the build warnings' flux labels. ``mf.sfr``/``mf.lak`` refused an unknown
@@ -163,6 +164,9 @@ def check_model_time_units(value: Any) -> Any:
     value : str or None
         Any spelling :func:`mf6_time_word` takes, or ``None`` / ``""`` /
         ``"unknown"`` for no declared unit (``TIME_CONVERSION`` 1.0).
+    owner : str, optional
+        The class the unit was given to, named in the message:
+        ``"ModelContext"`` (the default) or ``"LayerStack"``.
 
     Returns
     -------
@@ -179,7 +183,7 @@ def check_model_time_units(value: Any) -> Any:
         mf6_time_word(value)
     except ValueError:
         raise ValueError(
-            f"ModelContext(time_units={value!r}) is not a time unit; known: "
+            f"{owner}(time_units={value!r}) is not a time unit; known: "
             f"{sorted(_TIME_SPELLINGS)} (any case), or None / '' / 'unknown' for no unit."
         ) from None
     return value

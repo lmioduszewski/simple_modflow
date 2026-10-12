@@ -838,7 +838,7 @@ Project            ← durable workspace + run/scenario lifecycle (workspace.py)
   and `with_grid` supplies the count from the OLD grid it STILL HOLDS at the call site
   -- it does not mutate, so the mesh is gone from the RESULT and present at the CALL.
   The shared rule is `grid_identity.column_count` / `cellwise_options`, in import layer
-  0 because three callers need it; it tells a scalar and a per-layer list from a flat
+  1 because three callers need it; it tells a scalar and a per-layer list from a flat
   `ncpl` list, an `(nlay, ncpl)` array and a NESTED per-layer list of per-cell lists.
   It gave the arrays a VERDICT and not a route; **`remap=True` is now the route**
   (ledger 300, below). `replace_grid` is a warned `__getattr__`-only alias.

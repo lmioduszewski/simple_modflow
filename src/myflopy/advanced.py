@@ -61,7 +61,7 @@ def _names_cells(options, ncpl: int) -> tuple[str, ...]:
 
     The ncpl-EXACT spelling of :func:`~myflopy.grid_identity.cellwise_options`, kept as
     a name because `package_api`'s lazy areal pin imports it. The rule itself moved to
-    `grid_identity` (import layer 0) when `package_move` needed the same one: npf/ic/sto
+    `grid_identity` (import layer 1) when `package_move` needed the same one: npf/ic/sto
     carry per-cell arrays too and nothing was measuring them (ledger 295).
     """
 

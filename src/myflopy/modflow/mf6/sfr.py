@@ -385,8 +385,9 @@ class SFRBuilder:
         from ``context.time_units``, read case-insensitively -- ``"days"``
         86400, ``"hours"`` 3600, ``"minutes"`` 60, ``"seconds"`` 1, ``"years"``
         31557600 (singulars and the short forms ``"d"``, ``"hr"``, ``"min"``,
-        ``"s"``, ``"yr"``, ... too), ``None``, ``""`` or ``"unknown"`` 1.0; any
-        other unit raises ``ValueError`` at build.
+        ``"s"``, ``"yr"``, ... too), ``None``, ``""`` or ``"unknown"`` 1.0.
+        ``ModelContext`` refuses any other unit at construction (ledger
+        456).
     min_reach_length : float, optional
         Shortest piece of a stream, in model length units, that becomes a
         reach. A piece in one cell no longer than ``max(0.01, min_reach_length)``

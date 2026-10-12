@@ -19214,7 +19214,8 @@ same day, which is the useful part of the result.
       **`mf.tdis(time_units=)` REFUSES a word MF6 stops on, naming MF6's word, rather
       than mapping it** -- ledger 404's call for a raw `length_units=`: one simulation,
       one spelling, one digest. So do `with_options`/`packages.fork`/`packages.edit` on a
-      TDIS and `PRTProject(time_units=)`. A SAVED TDIS spec holding `"d"` is not mapped
+      TDIS, `PRTProject(time_units=)` and the legacy `TemporalDiscretization` (its
+      `time_units="d"` was written and MF6 stopped; found in review). A SAVED TDIS spec holding `"d"` is not mapped
       at build, unlike 432's DIS: MF6 stopped on every run of it, so nothing that ran
       changes. **`ModelContext(time_units=)` and `LayerStack(time_units=)` refuse an
       unknown spelling at construction**, as 433 did for length: a saved project whose
@@ -19247,7 +19248,10 @@ same day, which is the useful part of the result.
       `TypeError` naming the part count, where a bare `assert` stood. The three
       "finite number above zero" checks are one helper in import layer 0;
       `_lattice_axis` cast with `float()` first, so `"2.5"` and `True` were a spacing
-      of 2.5 and 1.0 -- now refused like the other two. No judgment call beyond that.
+      of 2.5 and 1.0 -- now refused like the other two. The same cast took a lattice
+      `size` of `"2"` or `True`, and the box `gap` held a fourth copy of the check;
+      both read the helper with `allow_zero=True` (found in review). No judgment call
+      beyond that.
       Tests: `tests/test_grid_inputs_one_rule.py` (each reverted fails a named test).
 
 458. **One grid option spelt two ways in two places is refused; one key in two places keeps its documented precedence (2026-10-11).**

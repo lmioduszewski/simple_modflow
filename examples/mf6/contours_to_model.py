@@ -310,6 +310,8 @@ def main(argv: list[str] | None = None) -> int:
     # `.plot` is a property and cannot take a grid, so bind the deferred stack.
     layering.for_grid(vor).plot.section(y=HEIGHT / 2).save(root / "section.png")
     print(f"wrote {root / 'heads.html'} and {root / 'section.png'}")
+    if not argv:
+        print("(a scratch directory, removed at exit: name a directory to keep them)")
 
     # The payoff of declaring against the project: it is a portable recipe.
     # The simulation holds only mf.ref/mf.grid_ref, so it stays JSON-clean;
