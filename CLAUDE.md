@@ -1876,12 +1876,22 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `remove_existing=False`. A `W` that is, contains or sits inside the run directory is
   refused (`ValueError`) at `model.pest(...)` and at `build()` whatever markers it holds --
   ledger 107's allowance of a template inside the run is gone. **The parallel RUN is
-  guarded the same way** (361): pyEMU's `start_workers` removes `master_dir` (default
-  `<template parent>/<name>_ies_master`) and `worker_0..N-1` beside it whatever they hold,
-  so `run_ies`/`prior(workers=N)` first requires each to be absent, empty, or a COPY of
-  THIS template -- pyEMU copies the marker, which names the template. Every calibration of
-  one model shares `<model>.pest/` as its worker root, so a second calibration's run
-  deleted the first's workers, live or not; that is refused now.
+  guarded the same way** (361, amended by ledger 532): a launch deletes `master_dir`
+  (default `<template parent>/<name>_ies_master`) and the workers it uses, so
+  `run_ies`/`prior(workers=N)` first requires each to be absent, empty, or a COPY of THIS
+  template -- the marker, copied, names the template. **Each master has its own workers,
+  `<master>.workers/worker_<n>`** (they shared `<model>.pest/worker_<n>` until then, so a
+  second calibration's run deleted the first's), **a master holding results is refused
+  unless `overwrite=True`**, and **a directory a run is still going in is refused whatever
+  `overwrite` says**: every launch writes `myflopy_pest_run.lock` (host, pid, process start)
+  into the template (serial) or master and worker directory (parallel); a live pid, another
+  host, or a PEST++ process working there (`/proc` cwd) is a live run, a dead pid a STALE
+  lock (warned, ignored). The launch copies the master itself (without the template's
+  serial outputs) and hands pyEMU `reuse_master=True, cleanup=False`; workers go after a
+  CLEAN finish unless `keep_workers=True`. **`cal.resume_ies(workers=N)` continues an
+  interrupted history match** (ledger 533): PESTPP-IES refuses `/r`, so it restarts
+  from the run's own ensembles and the outputs are spliced back into ONE run of
+  iterations `0..N` (`pest/run_state.py`).
 - **Observations** accepted directly by `cal.observe(...)`/`cal.forecast(...)`: `HeadTargets`,
   `LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets`, `DrnFlowTargets` (or their
   pre-built `*ObservationSpec`). All are wired into the native build + forward run.
@@ -1974,8 +1984,8 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   parameter-field maps. (The old `results.py` deterministic-review layer was deleted.)
   **A review reads ONE run** (ledgers 507, 508): a serial launch deletes
   an earlier run's `<name>.*` outputs from the template (`runs.pestpp_ies_outputs`, the
-  one list), a parallel master drops what it inherited from the template unrewritten,
-  and `IesResults.iterations` counts only what the run's phi file records. A handle's
+  one list) and says so (`UserWarning`, ledger 532), a parallel master is copied
+  from the template without them, and `IesResults.iterations` counts only what the run's phi file records. A handle's
   `executions` are the masters named EXACTLY `<name>_ies_master`/`<name>_prior_master`
   plus a serial run in the template (kind from its `<name>.pst`'s NOPTMAX), its case is
   `<name>` (what PESTPP-IES writes, whatever `build(filename)` wrote), and

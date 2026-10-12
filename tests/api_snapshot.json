@@ -3122,6 +3122,17 @@
       "workers:KEYWORD_ONLY=None",
       "noise:KEYWORD_ONLY=True",
       "master_dir:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False",
+      "keep_workers:KEYWORD_ONLY=False",
+      "exe:KEYWORD_ONLY='pestpp-ies'",
+      "overdue_giveup_fac:KEYWORD_ONLY=5.0",
+      "pestpp_options:VAR_KEYWORD=<required>"
+    ],
+    "PestProject.resume_ies": [
+      "workers:KEYWORD_ONLY=None",
+      "iterations:KEYWORD_ONLY=None",
+      "master_dir:KEYWORD_ONLY=None",
+      "keep_workers:KEYWORD_ONLY=False",
       "exe:KEYWORD_ONLY='pestpp-ies'",
       "overdue_giveup_fac:KEYWORD_ONLY=5.0",
       "pestpp_options:VAR_KEYWORD=<required>"
@@ -3133,6 +3144,8 @@
       "noise:KEYWORD_ONLY=True",
       "bad_phi_sigma:KEYWORD_ONLY=None",
       "master_dir:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False",
+      "keep_workers:KEYWORD_ONLY=False",
       "exe:KEYWORD_ONLY='pestpp-ies'",
       "overdue_giveup_fac:KEYWORD_ONLY=5.0",
       "pestpp_options:VAR_KEYWORD=<required>"

@@ -70,6 +70,12 @@ MEASURED (same versions, 2026-10-02)              before (f4817ce)              
                                                                              byte-identical
   L  master_dir = the run directory      9 of its 14 files replaced by the   refused, ValueError;
                                          template's, 28 added                byte-identical
+
+SINCE ledger 532 a launch makes its workers in ``<master>.workers/``, one worker
+directory per master, so J and K no longer reach the folder at all: the run goes ahead
+and the user's ``worker_1`` (J) and the first calibration's ``worker_0`` (K) are left
+byte-identical. A folder of the user's AT ``<master>.workers/worker_<n>`` is refused as J
+was (``tests/test_pest_workspace_deleted_only_when_built.py``).
 """
 
 from __future__ import annotations

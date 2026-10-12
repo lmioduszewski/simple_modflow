@@ -480,12 +480,13 @@ def test_the_staging_copy_is_marked_as_the_builds_while_the_build_runs(tmp_path,
     _assert_built_at(cal, tmp_path / "tmpl")
 
 
-# -- the parallel run: pyEMU's master and worker directories (ledger 361) ------------------
+# -- the parallel run: its master and worker directories (ledger 361, ledger 532) ------
 #
-# `start_workers` DELETES `master_dir` and `worker_0..N-1` in its parent whenever they
-# exist, then copies the template into each. These run pyEMU's own `start_workers`, with
+# A launch deletes the master and `<master>.workers/worker_0..N-1` it is about to use, then
+# copies the template into each (until ledger 532 pyEMU did, and its workers were
+# `worker_0..N-1` in the master's PARENT). These run pyEMU's own `start_workers`, with
 # `true` as the PEST++ executable -- it exits at once, so the run "finishes" without PEST
-# -- and the results reader stubbed: what is measured is what pyEMU deletes.
+# -- and the results reader stubbed: what is measured is what a launch deletes.
 
 _TRUE = shutil.which("true")
 needs_true = pytest.mark.skipif(_TRUE is None, reason="needs a `true` executable on PATH")
@@ -526,51 +527,61 @@ def test_a_master_dir_holding_the_users_files_is_refused_before_pyemu_starts(tmp
 
 
 @needs_true
-def test_a_users_worker_folder_beside_the_master_is_refused(tmp_path, _no_results_reader):
-    """The workers go in the master's PARENT as ``worker_0``.. -- a folder of the user's
-    named so was deleted."""
+def test_a_users_folder_where_a_worker_goes_is_refused_and_one_beside_the_master_is_left(
+    tmp_path, _no_results_reader
+):
+    """The workers went in the master's PARENT as ``worker_0``.. -- a folder of the user's
+    named so was deleted (ledger 361 refused it). They go in ``<master>.workers`` now
+    (ledger 532): a ``worker_1`` beside the master is not theirs, and one where
+    a worker goes is refused."""
 
     _, cal = _built(tmp_path)
-    worker = cal.template_workspace.parent / "worker_1"
-    worker.mkdir()
-    (worker / "mine.txt").write_text("the user's\n", encoding="utf-8")
+    beside = cal.template_workspace.parent / "worker_1"
+    beside.mkdir()
+    (beside / "mine.txt").write_text("the user's\n", encoding="utf-8")
+    where = cal.template_workspace.parent / "cal_ies_master.workers" / "worker_1"
+    where.mkdir(parents=True)
+    (where / "mine.txt").write_text("the user's\n", encoding="utf-8")
 
-    with pytest.raises(FileExistsError, match=r"worker directory \S*worker_1 already holds 1 entry"):
+    with pytest.raises(FileExistsError, match=r"worker directory \S*cal_ies_master.workers/worker_1 already holds 1 entry"):
         cal.run_ies(workers=2, exe="true")
-    assert (worker / "mine.txt").read_text(encoding="utf-8") == "the user's\n"
+    assert (where / "mine.txt").read_text(encoding="utf-8") == "the user's\n"
     assert not (cal.template_workspace.parent / "cal_ies_master").exists()
+
+    shutil.rmtree(where.parent)
+    cal.run_ies(workers=2, exe="true")
+    assert (beside / "mine.txt").read_text(encoding="utf-8") == "the user's\n"
 
 
 @needs_true
-def test_another_calibrations_workers_are_refused_as_a_run_that_may_be_going(tmp_path, _no_results_reader):
-    """Every calibration of one model shares ``<model>.pest/`` as its worker root in the
-    default layout, so a second calibration's parallel run deleted the first's workers
-    -- while it ran, if it was running. A copy of ANOTHER template is refused."""
+def test_another_calibrations_workers_are_never_touched(tmp_path, _no_results_reader):
+    """Every calibration of one model shared ``<model>.pest/`` as its worker root, so a
+    second calibration's parallel run deleted the first's workers -- while it ran, if it
+    was running (ledger 361 refused it). Each master has its own worker directory now."""
 
     model, first = _built(tmp_path, name="first")
-    worker = first.template_workspace.parent / "worker_0"
-    shutil.copytree(first.template_workspace, worker)   # what start_workers makes of it
+    worker = first.template_workspace.parent / "first_prior_master.workers" / "worker_0"
+    shutil.copytree(first.template_workspace, worker)   # what a launch makes of it
     before = _tree(worker)
     second = _calibration(model, None, name="second")
     _build(second)
 
-    with pytest.raises(FileExistsError, match="another calibration's template may be"):
-        second.prior(workers=2, exe="true")
+    second.prior(workers=2, exe="true")
     assert _tree(worker) == before
 
 
 @needs_true
-@pytest.mark.parametrize("where", ["run", "template", "inside template", "its own worker"])
+@pytest.mark.parametrize("where", ["run", "template", "inside template", "workers inside template"])
 def test_a_master_over_the_run_or_the_template_is_refused(tmp_path, _no_results_reader, where):
     model, cal = _built(tmp_path)
     run, template = Path(model.workspace), cal.template_workspace
     master, match = {
-        "run": (run, "IS the model's run directory"),
-        "template": (template, "IS this calibration's template"),
+        "run": (run, "master directory .* IS the model's run directory"),
+        "template": (template, "master directory .* IS this calibration's template"),
         "inside template": (template / "master", "sits INSIDE this calibration's template"),
-        "its own worker": (tmp_path / "w" / "worker_1", "is also one of its worker directories"),
+        "workers inside template": (template / "x" / "m",
+                                    "master directory .* sits INSIDE this calibration's template"),
     }[where]
-    (tmp_path / "w").mkdir()
     before_run, before_template = _tree(run), _tree(template)
     with pytest.raises(ValueError, match=match):
         cal.run_ies(workers=2, master_dir=master, exe="true")
@@ -578,17 +589,21 @@ def test_a_master_over_the_run_or_the_template_is_refused(tmp_path, _no_results_
 
 
 @needs_true
-def test_a_master_and_workers_this_calibration_left_are_replaced(tmp_path, _no_results_reader):
-    """A previous run of THIS calibration -- a copy pyEMU made of its template, marker
-    and all -- is cleared, results included, as it always was."""
+def test_a_master_and_workers_this_calibration_left_are_replaced_when_asked(tmp_path, _no_results_reader):
+    """A previous run of THIS calibration -- a copy of its template, marker and all -- is
+    cleared, results included, with ``overwrite=True`` (ledger 532; ledger 361
+    cleared it unasked)."""
 
     _, cal = _built(tmp_path)
     root = cal.template_workspace.parent
-    master, worker = root / "cal_ies_master", root / "worker_0"
+    master, worker = root / "cal_ies_master", root / "cal_ies_master.workers" / "worker_0"
     for copy in (master, worker):
         shutil.copytree(cal.template_workspace, copy)
         (copy / "cal.phi.actual.csv").write_text("iteration,mean\n0,1.0\n", encoding="utf-8")
 
-    assert cal.run_ies(workers=2, exe="true") == master
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        cal.run_ies(workers=2, exe="true")
+    assert (master / "cal.phi.actual.csv").exists()
+    assert cal.run_ies(workers=2, exe="true", overwrite=True) == master
     assert (master / "cal.pst").is_file() and not (master / "cal.phi.actual.csv").exists()
-    assert not worker.exists()   # made again, and cleaned up by pyEMU when the run ended
+    assert not worker.parent.exists()   # made again, and removed when the run finished

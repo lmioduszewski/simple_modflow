@@ -59,6 +59,20 @@ from myflopy.modflow.mf6.pest.pilot_points import (
     emit_pilot_point_commands,
     register_pilot_point_parameters,
 )
+from myflopy.modflow.mf6.pest.run_state import (
+    RUN_LOCK,
+    archive_for_resume,
+    ensemble_file,
+    lambda_in_force,
+    last_completed_iteration,
+    pending_resume,
+    recorded_iterations,
+    release_run_lock,
+    run_activity,
+    splice_resumed_run,
+    worker_root,
+    write_run_lock,
+)
 from myflopy.modflow.mf6.pest.runs import (
     BUILD_MARKER,
     default_pest_root,
@@ -477,47 +491,6 @@ def _relation(directory: Path, other: Path) -> str | None:
     return None
 
 
-def _file_stamps(paths) -> dict[str, tuple[int, int]]:
-    """Each file's name with its ``(size, mtime_ns)``, the stamp a copy made with ``shutil.copy2`` keeps."""
-
-    stamps = {}
-    for path in paths:
-        try:
-            stat = Path(path).stat()
-        except OSError:
-            continue
-        stamps[Path(path).name] = (stat.st_size, stat.st_mtime_ns)
-    return stamps
-
-
-def _remove_unrewritten_copies(directory: Path, stamps: dict[str, tuple[int, int]]) -> None:
-    """Delete from ``directory`` each file still carrying the stamp it was copied with.
-
-    pyEMU's ``start_workers`` copies the template into the master with
-    ``shutil.copytree``, which keeps every file's modification time, so an output of
-    an earlier serial run that PESTPP-IES did not rewrite still carries the template
-    file's size and time to the nanosecond -- and a file PESTPP-IES wrote does not
-    (ledger 507).
-    """
-
-    removed = []
-    for name, stamp in stamps.items():
-        path = Path(directory) / name
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        if (stat.st_size, stat.st_mtime_ns) == stamp:
-            path.unlink()
-            removed.append(name)
-    if removed:
-        logger.info(
-            "removed %d output file(s) %s copied from the template that this run did "
-            "not rewrite: %s", len(removed), directory,
-            ", ".join(sorted(removed)[:8]) + (" ..." if len(removed) > 8 else ""),
-        )
-
-
 @contextlib.contextmanager
 def _working_directory(path: Path):
     """Run a block with ``path`` as the working directory, restoring the old one after.
@@ -575,7 +548,8 @@ class PestProject:
 
     Use :meth:`parameterize` (styles ``constant`` / ``zone`` / ``grid`` /
     ``pilotpoints`` across every target), :meth:`observe`, :meth:`forecast`,
-    :meth:`build`, :meth:`run_ies`/:meth:`prior` and :meth:`settings`. The runs
+    :meth:`build`, :meth:`run_ies`/:meth:`prior` (and :meth:`resume_ies` for an
+    interrupted history match) and :meth:`settings`. The runs
     land beside the model and are reopened for review via ``model.pest_runs``
     (or ``run.pest_runs``) -> :meth:`~...runs.PestRunHandle.review`
     (:class:`~...ies.IesResults`).
@@ -604,7 +578,8 @@ class PestProject:
         ``_``, leading and trailing ``_`` are stripped), the
         default ``.pst`` stem, the ``<name>.pst`` that :meth:`run_ies` and
         :meth:`prior` always write and run, their master directories
-        (``<name>_ies_master`` / ``<name>_prior_master``), and the run as
+        (``<name>_ies_master`` / ``<name>_prior_master``, each with its workers in
+        ``<master>.workers``), and the run as
         ``model.pest_runs`` lists it.
     workspace : str or pathlib.Path or None, optional
         The PEST template directory :meth:`build` writes. Default ``None`` uses
@@ -623,7 +598,8 @@ class PestProject:
         :meth:`run_ies`/:meth:`prior`'s output in it included, while an existing
         folder a build did not write -- a Project root, a data folder, a copy of a
         template -- is refused (``FileExistsError``, naming it and what it holds)
-        and left exactly as it was. Everything is checked before anything is
+        and left exactly as it was, and a template a serial run is still going in is
+        refused (``RuntimeError``, ledger 532). Everything is checked before anything is
         deleted. A ``workspace`` (or its staging directory) that IS, CONTAINS or
         sits INSIDE the model's run directory is refused here and by
         :meth:`build` (``ValueError``) whatever it holds, because the build would
@@ -1450,15 +1426,22 @@ class PestProject:
         is what copied the template into itself until the disk filled (ledger 107),
         one containing it would delete the run.
 
+        A template a serial :meth:`run_ies`/:meth:`prior` is still running in is
+        refused too, whatever it holds (ledger 532).
+
         Raises
         ------
         ValueError
             From :meth:`_refuse_a_workspace_over_the_run`.
+        RuntimeError
+            From :meth:`_refuse_a_live_run`: a run may still be going in the template.
         FileExistsError
             From :meth:`_clearance`: a directory no build wrote is in the way.
         """
 
         self._refuse_a_workspace_over_the_run()
+        self._refuse_a_live_run(self.template_workspace, "template", method="build", instead="",
+                                stacklevel=4)
         cleared = [
             (directory, self._clearance(directory, role))
             for directory, role in (
@@ -2317,6 +2300,9 @@ class PestProject:
             directories first, so it refuses rather than delete what it did not
             write, before anything is deleted. Use the default, a new or empty
             folder, or delete it yourself.
+        RuntimeError
+            Before anything is deleted, when a serial :meth:`run_ies`/:meth:`prior`
+            may still be running in the template (ledger 532).
         """
 
         target_name = Path(filename).name if filename else f"{self.name}.pst"
@@ -2514,6 +2500,8 @@ class PestProject:
         noise: bool = True,
         bad_phi_sigma: float | None = None,
         master_dir: str | Path | None = None,
+        overwrite: bool = False,
+        keep_workers: bool = False,
         exe: str = "pestpp-ies",
         overdue_giveup_fac: float | None = DEFAULT_OVERDUE_GIVEUP_FAC,
         **pestpp_options,
@@ -2528,7 +2516,9 @@ class PestProject:
         posterior forecast distributions).
 
         Call :meth:`build` first. Reasonable defaults make ``cal.run_ies()`` a
-        valid first call; tune from there.
+        valid first call; tune from there. A run interrupted part-way (a killed
+        kernel, a reboot) continues from its last completed iteration with
+        :meth:`resume_ies`.
 
         ``noise``, ``bad_phi_sigma`` and ``**pestpp_options`` are written onto
         ``cal.pst.pestpp_options`` and STAY there: ``noise=False``, a
@@ -2543,9 +2533,19 @@ class PestProject:
         and ``.base.par``, the phi files, the noise ensemble -- except a file a
         PEST++ option names), so a rerun with fewer iterations, or a :meth:`prior`
         after a run, is not reviewed with the earlier run's last iteration as its
-        posterior. A parallel run's master is pyEMU's copy of the template, so it
-        inherits those outputs; each one PESTPP-IES did not rewrite is removed from
-        the master when the run returns, and the template keeps them.
+        posterior; it says so with a ``UserWarning`` (ledger 532). A
+        parallel run's master is copied from the template with those outputs left
+        out (ledger 532), and the template keeps them.
+
+        **A run in progress is never touched** (ledger 532). Every launch
+        writes a ``myflopy_pest_run.lock`` into the directories it runs in -- the
+        template (serial), or the master and its worker directory (parallel) --
+        naming the host, the process and when it started, and removes it when the
+        run returns. A launch that would delete or reuse a directory whose lock names
+        a process still running, a lock written on another host, or one where a PEST++
+        process is working (read from ``/proc`` on Linux), is refused
+        (``RuntimeError``) whatever ``overwrite`` says. A lock whose process is gone
+        is STALE: it is said so (``UserWarning``) and ignored.
 
         Parameters
         ----------
@@ -2574,17 +2574,37 @@ class PestProject:
             problems by dropping lagging realizations. ``None`` (default) sets
             nothing.
         master_dir : str or pathlib.Path or None, optional
-            Master directory for a parallel run; ``None`` (default) uses
-            ``<name>_ies_master`` beside the template workspace, which is where
-            ``model.pest_runs`` looks. The workers are created in its parent
-            directory, as ``worker_0`` .. ``worker_<workers-1>``. Unused by a
-            serial run. **pyEMU deletes the master and worker directories before
-            it copies the template into them** (ledger 361), so each must be
-            absent, empty, or a copy of THIS calibration's template -- a master or
-            worker a previous run of it left, deleted with its results; anything
-            else is refused before pyEMU starts (``FileExistsError``), and a
-            master or worker that is, contains or sits inside the run directory
-            or the template is refused whatever it holds (``ValueError``).
+            Master directory for a parallel run, where its results are collected;
+            ``None`` (default) uses ``<name>_ies_master`` beside the template
+            workspace, which is where ``model.pest_runs`` looks. Its workers are made
+            in ``<master_dir>.workers/`` as ``worker_0`` .. ``worker_<workers-1>``,
+            so no two masters share one (ledger 532; until then every
+            calibration of a model shared ``<model>.pest/worker_<n>``). Unused by a
+            serial run. A launch deletes the master and each worker it uses, then
+            copies the template into them, so each must be absent, empty, or a copy
+            of THIS calibration's template; a master holding an earlier run's
+            results is also refused unless ``overwrite=True``. Anything else is
+            refused before anything is written (``FileExistsError``), a master or
+            worker directory that is, contains or sits inside the run directory or
+            the template is refused whatever it holds (``ValueError``), and one a
+            run is still going in is refused (``RuntimeError``).
+        overwrite : bool, optional
+            Parallel run: ``True`` deletes a master holding an earlier run's results
+            (finished, or interrupted) and runs again there. Default ``False``
+            refuses it (``FileExistsError``), naming the folder, whether its run
+            finished, and the spellings: this one, another ``master_dir=``, or
+            :meth:`resume_ies` for an interrupted history match
+            (ledger 532; ledger 361 deleted it unasked). It never reaches a master
+            another calibration's template made, nor one a run is still going in.
+            Serial run: the template's earlier results are deleted either way, and
+            ``True`` only silences the ``UserWarning`` saying so.
+        keep_workers : bool, optional
+            Parallel run: keep the worker directories (``<master_dir>.workers/``)
+            after the run. Default ``False`` deletes them when the run finishes
+            cleanly -- each is a disposable copy of the template, one per worker, and
+            :meth:`resume_ies` makes them again; a run that fails or is interrupted
+            keeps them either way, for diagnosis (ledger 532). The master
+            and its results are always kept. Unused by a serial run.
         exe : str, optional
             PEST++ IES executable name, default ``"pestpp-ies"`` (a trailing
             ``.exe`` is dropped). When the model's MF6 executable resolves to an
@@ -2630,24 +2650,26 @@ class PestProject:
             When :meth:`build` has not run, or ``cal.pst`` has been put in
             ``regularization`` mode, which PESTPP-IES cannot parse; when
             ``ies_restart_obs_en`` is set while a correlated prior would be drawn
-            into ``ies_par_en`` (ledger 509); or, for a
-            parallel run, when the master or a worker directory is, contains or
-            sits inside the run directory or the template, or the master is named
-            as one of its own workers (ledger 361).
-        FileExistsError
-            For a parallel run, before pyEMU starts, when the master or a worker
-            directory is a file or a non-empty folder that is not a copy of this
-            calibration's template (ledger 361): pyEMU would delete it.
+            into ``ies_par_en`` (ledger 509); or, for a parallel run, when the
+            master or its worker directory is, contains or sits inside the run
+            directory or the template (ledger 361).
         RuntimeError
-            Before PEST++ starts, when a RELATIVE ``PYTHONPATH`` entry, read
-            against the working directory, is not on ``sys.path`` -- the process
-            has changed directory since it started. PEST++ is handed
-            ``PYTHONPATH`` with every relative entry made absolute, so the forward
-            run, started in the template, imports this process's myflopy
+            Before anything is written, when a run may still be going in the
+            template, or (parallel) in the master or its worker directory: its
+            lock names a process still running or written on another host, or a
+            PEST++ process works there (ledger 532). Also, before PEST++
+            starts, when a RELATIVE ``PYTHONPATH`` entry, read against the working
+            directory, is not on ``sys.path`` -- the process has changed directory
+            since it started. PEST++ is handed ``PYTHONPATH`` with every relative
+            entry made absolute, so the forward run, started in the template,
+            imports this process's myflopy
             (``myflopy._pythonpath.pythonpath_for_children``, ledger 454).
+        FileExistsError
+            For a parallel run, before anything is written, when the master or a
+            worker directory is a file or a non-empty folder that is not a copy of
+            this calibration's template (ledger 361), or the master holds an earlier
+            run's results and ``overwrite`` is ``False`` (ledger 532).
         """
-
-        from myflopy.modflow.mf6.pest.ies import IesResults
 
         results_dir = self._launch_pestpp_ies(
             reals=reals,
@@ -2659,9 +2681,11 @@ class PestProject:
             noise=noise,
             bad_phi_sigma=bad_phi_sigma,
             overdue_giveup_fac=overdue_giveup_fac,
+            overwrite=overwrite,
+            keep_workers=keep_workers,
             pestpp_options=pestpp_options,
         )
-        return IesResults(results_dir, case_name=self.name, model=self.model)
+        return self._review(results_dir)
 
     def prior(
         self,
@@ -2670,6 +2694,8 @@ class PestProject:
         workers: int | None = None,
         noise: bool = True,
         master_dir: str | Path | None = None,
+        overwrite: bool = False,
+        keep_workers: bool = False,
         exe: str = "pestpp-ies",
         overdue_giveup_fac: float | None = DEFAULT_OVERDUE_GIVEUP_FAC,
         **pestpp_options,
@@ -2684,12 +2710,16 @@ class PestProject:
         something history matching can fix), and history matching is premature.
 
         Mechanically this is PESTPP-IES with ``NOPTMAX=-1`` (evaluate the prior
-        ensemble and stop). Call :meth:`build` first.
+        ensemble and stop). Call :meth:`build` first. An interrupted prior cannot be
+        resumed -- its simulated values (``<name>.0.obs.csv``) are written only when
+        the whole sweep is done -- so it is run again.
 
         Options persist on ``cal.pst`` between calls exactly as in
         :meth:`run_ies` (a ``bad_phi_sigma`` set there is still set here), and a
         serial prior deletes an earlier run's outputs from the template first, as
-        :meth:`run_ies` describes -- a serial ``run_ies``'s results there included.
+        :meth:`run_ies` describes -- a serial ``run_ies``'s results there included,
+        with a ``UserWarning``. A run in progress is never touched, as
+        :meth:`run_ies` describes (ledger 532).
 
         Parameters
         ----------
@@ -2707,9 +2737,20 @@ class PestProject:
         master_dir : str or pathlib.Path or None, optional
             Master directory for a parallel run. ``None`` (default) uses
             ``<name>_prior_master`` beside the template workspace, which is where
-            ``model.pest_runs`` looks; the workers are created in its parent
-            directory. Unused by a serial run. What pyEMU deletes there, and what
-            is refused, is as for :meth:`run_ies`'s ``master_dir`` (ledger 361).
+            ``model.pest_runs`` looks; the workers are made in
+            ``<master_dir>.workers/``, so a prior and a history match of one
+            calibration -- in two kernels, say -- never share one. Unused by a
+            serial run. What a launch deletes there, and what is refused, is as for
+            :meth:`run_ies`'s ``master_dir`` (ledger 361, ledger 532).
+        overwrite : bool, optional
+            ``True`` deletes a master holding an earlier prior's results and runs
+            again there; default ``False`` refuses it (``FileExistsError``), exactly
+            as :meth:`run_ies`'s ``overwrite``. For a serial run it only silences
+            the ``UserWarning`` saying the template's earlier results were deleted.
+        keep_workers : bool, optional
+            Keep a parallel run's worker directories after it finishes cleanly;
+            default ``False`` deletes them, exactly as :meth:`run_ies`'s
+            ``keep_workers``. Unused by a serial run.
         exe : str, optional
             PEST++ IES executable, default ``"pestpp-ies"``, resolved as in
             :meth:`run_ies`.
@@ -2740,15 +2781,15 @@ class PestProject:
             orphan, as in :meth:`run_ies` (ledger 509); or as
             :meth:`run_ies` raises it for a parallel run's master and worker
             directories (ledger 361).
+        RuntimeError
+            As :meth:`run_ies` raises it: a run may still be going in the template,
+            the master or its worker directory (ledger 532), or a relative
+            ``PYTHONPATH`` entry the process has changed directory away from
+            (ledger 454).
         FileExistsError
             As :meth:`run_ies` raises it, for a parallel run's master and worker
-            directories (ledger 361).
-        RuntimeError
-            As :meth:`run_ies` raises it, for a relative ``PYTHONPATH`` entry the
-            process has changed directory away from (ledger 454).
+            directories (ledger 361, ledger 532).
         """
-
-        from myflopy.modflow.mf6.pest.ies import IesResults
 
         results_dir = self._launch_pestpp_ies(
             reals=reals,
@@ -2760,9 +2801,260 @@ class PestProject:
             noise=noise,
             bad_phi_sigma=None,
             overdue_giveup_fac=overdue_giveup_fac,
+            overwrite=overwrite,
+            keep_workers=keep_workers,
             pestpp_options=pestpp_options,
         )
-        return IesResults(results_dir, case_name=self.name, model=self.model)
+        return self._review(results_dir)
+
+    #: The PEST++ options :meth:`resume_ies` sets itself, to restart from the
+    #: interrupted run's ensembles (ledger 533).
+    _RESUME_OPTIONS = ("ies_par_en", "ies_restart_par_en", "ies_restart_obs_en", "ies_obs_en")
+
+    def resume_ies(
+        self,
+        *,
+        workers: int | None = None,
+        iterations: int | None = None,
+        master_dir: str | Path | None = None,
+        keep_workers: bool = False,
+        exe: str = "pestpp-ies",
+        overdue_giveup_fac: float | None = DEFAULT_OVERDUE_GIVEUP_FAC,
+        **pestpp_options,
+    ):
+        """Continue an interrupted :meth:`run_ies` from its last completed iteration.
+
+        A multi-day history match stopped part-way -- a killed kernel, a reboot, a
+        Ctrl-C -- keeps every iteration it completed. This restarts PESTPP-IES from
+        the last one, in the same directory, with the same control file, and leaves
+        one run behind: iterations ``0..N``, one phi file, reviewed exactly as an
+        uninterrupted run (ledger 533). It also extends a FINISHED run by
+        more iterations (``iterations=`` beyond its own).
+
+        PESTPP-IES has no restart switch (``/r`` is refused: "/r option not supported
+        by pestpp-ies", 5.2.16, measured); it restarts from ensembles. This archives
+        the run's outputs into ``<name>.resumed_from_<n>/`` in the run directory,
+        launches PESTPP-IES with ``ies_par_en`` the run's prior (iteration 0, so the
+        regularization is the run's own), ``ies_restart_par_en`` /
+        ``ies_restart_obs_en`` iteration ``n``'s parameters and simulated values
+        (not rerun), ``ies_obs_en`` the run's noise ensemble, ``ies_initial_lambda``
+        the Marquardt lambda the run's ``.rec`` shows in force for the next iteration,
+        and ``NOPTMAX`` the iterations left; then -- when PESTPP-IES returns, finished
+        or not -- moves the archived iterations ``0..n`` back, renumbers the resumed
+        ones after them and joins the phi files (``total_runs`` continues). The archive
+        keeps the interrupted run's ``.rec`` and ``.log``. Measured on the canonical
+        testing model, 6 realizations, killed after iteration 1 of 3
+        (``docs/reproducers/ies_resume_interrupted_run.py``): the resumed iteration 2
+        read phi 1.71477 against the uninterrupted run's 1.71448 -- 1.65128 without the
+        lambda carried. Not carried: PESTPP-IES's other internal state (its
+        best-phi history restarts at iteration ``n``), and run statistics in the
+        ``.rec``.
+
+        A resume killed too hard for that clean-up to run leaves the archive
+        unspliced; the next :meth:`resume_ies` splices it first.
+
+        Parameters
+        ----------
+        workers : int or None, optional
+            Where the run to resume ran, and how this one runs: ``None`` (default)
+            or ``1`` resumes a SERIAL run, in the template workspace; ``>1`` resumes
+            a PARALLEL run in its master directory with that many workers (any
+            number, not necessarily the interrupted run's), made afresh in
+            ``<master_dir>.workers/`` from the template.
+        iterations : int or None, optional
+            The run's TOTAL number of iterations, counting those already completed.
+            Default ``None`` uses the ``NOPTMAX`` the interrupted run was launched
+            with. One no larger than the last completed iteration is refused
+            (``ValueError``); a larger one extends a finished run.
+        master_dir : str or pathlib.Path or None, optional
+            The master directory of the parallel run to resume; ``None`` (default)
+            is ``<name>_ies_master`` beside the template, :meth:`run_ies`'s default.
+            Unused by a serial resume.
+        keep_workers : bool, optional
+            Keep the worker directories after the resumed run finishes cleanly;
+            default ``False`` deletes them, as :meth:`run_ies`'s ``keep_workers``.
+            Unused by a serial resume.
+        exe : str, optional
+            PEST++ IES executable, default ``"pestpp-ies"``, resolved as in
+            :meth:`run_ies`.
+        overdue_giveup_fac : float or None, optional
+            As in :meth:`run_ies`; default :data:`DEFAULT_OVERDUE_GIVEUP_FAC`,
+            ``5.0``, and ``None`` removes the option. Set on the run's own control
+            file, not on ``cal.pst``.
+        **pestpp_options
+            Further ``pestpp_options`` for the resumed run, set on the interrupted
+            run's own control file (whose options -- ``ies_num_reals``, noise,
+            ``ies_bad_phi_sigma``, ... -- are kept), not on ``cal.pst``. The four
+            options the restart sets, ``ies_par_en``, ``ies_restart_par_en``,
+            ``ies_restart_obs_en`` and ``ies_obs_en``, are refused (``ValueError``).
+
+        Returns
+        -------
+        IesResults
+            The joined run, opened on its directory with case ``name``.
+
+        Raises
+        ------
+        ValueError
+            When :meth:`build` has not run; when an option the restart sets is
+            passed; when the directory holds no ``<name>.pst`` (no run to resume --
+            the message names where a run of the other kind is, if one is); when the
+            run was a prior Monte Carlo (``NOPTMAX -1``); when the run's parameters or
+            observations differ from ``cal.pst``'s (the template was rebuilt since:
+            the workers, made from it, would run another calibration); when the run
+            completed no iteration (nothing to restart from: run again with
+            :meth:`run_ies`); or when ``iterations`` does not exceed the last
+            completed one.
+        RuntimeError
+            When a run may still be going in the template, or (parallel) in the
+            master or its worker directory (ledger 532); or for a relative
+            ``PYTHONPATH`` entry, as in :meth:`run_ies` (ledger 454).
+        FileExistsError
+            As :meth:`run_ies` raises it, for a master or worker directory that is a
+            file or not a copy of this calibration's template.
+        """
+
+        if self.pst is None:
+            raise ValueError("Call build() before resuming a PESTPP-IES run.")
+        refused = sorted(set(pestpp_options) & set(self._RESUME_OPTIONS))
+        if refused:
+            raise ValueError(
+                f"resume_ies() sets {', '.join(refused)} itself, to restart from the "
+                "interrupted run's own ensembles; pass them to run_ies() to start a run "
+                "from ensembles of your choosing."
+            )
+        parallel = bool(workers and int(workers) > 1)
+        case = self.name
+        directory = (
+            (Path(master_dir) if master_dir else self._default_master("run_ies")).resolve()
+            if parallel else self.template_workspace.resolve()
+        )
+        self._refuse_a_live_run(self.template_workspace, "template", method="resume_ies",
+                                instead="", stacklevel=3)
+        if not (directory / f"{case}.pst").is_file():
+            raise ValueError(self._nothing_to_resume(directory, parallel, workers))
+        if parallel:
+            self._check_parallel_directories(
+                directory, int(workers), method="resume_ies", default=not master_dir,
+                overwrite=True, resume=True, stacklevel=3,
+            )
+        pending = pending_resume(directory, case)
+        if pending is not None:
+            joined = splice_resumed_run(directory, case, pending)
+            message = (
+                f"resume_ies(): joined the iterations a previous resume left unjoined in "
+                f"{pending} back into {directory} (it was stopped before it could): "
+                f"iterations {joined}."
+            )
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=2)
+
+        pyemu = self.pyemu or _import_pyemu()
+        with self._quiet_pyemu_context():
+            run_pst = pyemu.Pst(str(directory / f"{case}.pst"))
+        planned = int(run_pst.control_data.noptmax)
+        if planned == -1:
+            raise ValueError(
+                f"The run in {directory} is a prior Monte Carlo (NOPTMAX -1), which "
+                "PESTPP-IES evaluates in one sweep and cannot resume. Run it again: "
+                f"cal.prior(...{', workers=' + str(workers) if parallel else ''}"
+                f"{', overwrite=True' if parallel else ''})."
+            )
+        if (
+            list(run_pst.par_names) != list(self.pst.par_names)
+            or list(run_pst.obs_names) != list(self.pst.obs_names)
+        ):
+            raise ValueError(
+                f"The run in {directory} calibrated other parameters or observations than "
+                f"this calibration's control file ({run_pst.npar} parameters and "
+                f"{run_pst.nobs} observations there against {self.pst.npar} and "
+                f"{self.pst.nobs} here): the template was rebuilt since. The resumed run's "
+                "workers are made from the template, so they would run a different "
+                "calibration. Start it again: "
+                f"cal.run_ies(...{', workers=' + str(workers) + ', overwrite=True' if parallel else ''})."
+            )
+        binary = str(run_pst.pestpp_options.get("ies_save_binary", "")).strip().lower() in (
+            "true", "1", "yes", "t")
+        last = last_completed_iteration(directory, case, binary_first=binary)
+        if last is None:
+            raise ValueError(
+                f"The run in {directory} completed no iteration -- not even its prior "
+                "(iteration 0) -- so there is nothing to restart from. Start it again: "
+                f"cal.run_ies(...{', workers=' + str(workers) + ', overwrite=True' if parallel else ''})."
+            )
+        total = planned if iterations is None else int(iterations)
+        if total <= last:
+            raise ValueError(
+                f"The run in {directory} has completed iteration {last}, and "
+                f"iterations={total} asks for no more. Pass a larger total, e.g. "
+                f"cal.resume_ies(iterations={last + 1}"
+                f"{', workers=' + str(workers) if parallel else ''}), to go further."
+            )
+
+        archive = archive_for_resume(directory, case, last)
+        options = {
+            "ies_par_en": ensemble_file(archive, f"{case}.0.par", binary_first=binary),
+            "ies_restart_par_en": ensemble_file(archive, f"{case}.{last}.par", binary_first=binary),
+            "ies_restart_obs_en": ensemble_file(archive, f"{case}.{last}.obs", binary_first=binary),
+            "ies_obs_en": ensemble_file(archive, f"{case}.obs+noise", binary_first=binary),
+        }
+        for key, path in options.items():
+            if path is None:
+                run_pst.pestpp_options.pop(key, None)
+            else:
+                run_pst.pestpp_options[key] = f"{archive.name}/{path.name}"
+        carried = lambda_in_force(archive / f"{case}.rec", last)
+        if carried is not None and carried > 0:
+            run_pst.pestpp_options["ies_initial_lambda"] = carried
+        if overdue_giveup_fac is None:
+            run_pst.pestpp_options.pop("overdue_giveup_fac", None)
+        else:
+            run_pst.pestpp_options["overdue_giveup_fac"] = float(overdue_giveup_fac)
+        for key, value in pestpp_options.items():
+            run_pst.pestpp_options[key] = value
+        run_pst.control_data.noptmax = total - last
+        logger.info(
+            "resume_ies(): restarting %r in %s from iteration %d for %d more iteration(s)",
+            case, directory, last, total - last,
+        )
+        exe_name, exe_dir = self._resolve_pestpp(exe)
+        try:
+            with self._quiet_pyemu_context():
+                run_pst.write(str(directory / f"{case}.pst"), version=2)
+            if parallel:
+                self._run_parallel(
+                    pyemu, exe_name, exe_dir, f"{case}.pst", directory, int(workers),
+                    method="resume_ies", keep_workers=keep_workers,
+                )
+            else:
+                self._run_serial(pyemu, exe_name, exe_dir, f"{case}.pst", method="resume_ies")
+        finally:
+            splice_resumed_run(directory, case, archive)
+        return self._review(directory)
+
+    def _review(self, directory: Path):
+        """The :class:`~myflopy.modflow.mf6.pest.ies.IesResults` of the run in ``directory``, case ``name``."""
+
+        from myflopy.modflow.mf6.pest.ies import IesResults
+
+        return IesResults(directory, case_name=self.name, model=self.model)
+
+    def _nothing_to_resume(self, directory: Path, parallel: bool, workers) -> str:
+        """The refusal for :meth:`resume_ies` when ``directory`` holds no run, naming where one is."""
+
+        case = self.name
+        message = f"There is no run of {case!r} to resume in {directory}: it holds no {case}.pst."
+        if parallel and (self.template_workspace / f"{case}.phi.actual.csv").is_file():
+            message += (
+                f" A SERIAL run is in the template {self.template_workspace}; resume it "
+                "there: cal.resume_ies()."
+            )
+        elif not parallel and (self._default_master("run_ies") / f"{case}.pst").is_file():
+            message += (
+                f" A PARALLEL run's master is {self._default_master('run_ies')}; resume it "
+                "with workers: cal.resume_ies(workers=<N>)."
+            )
+        return message
 
     def _refuse_regularization_mode(self) -> None:
         """Refuse a control file PESTPP-IES cannot parse, before launching it.
@@ -2925,67 +3217,112 @@ class PestProject:
             return None
         return values.loc[:, kept]
 
-    def _refuse_what_start_workers_would_delete(
-        self, master: Path, workers: int, *, method: str, default: bool
+    def _default_master(self, method: str) -> Path:
+        """The master directory ``method`` uses when no ``master_dir=`` is given."""
+
+        suffix = "prior_master" if method == "prior" else "ies_master"
+        return self.template_workspace.parent / f"{self.name}_{suffix}"
+
+    def _refuse_a_live_run(
+        self, directory: Path, what: str, *, method: str, instead: str, stacklevel: int
     ) -> None:
-        """Refuse a parallel run whose master or worker directories hold anything but a copy of this template.
+        """Refuse when a run is going in ``directory``; warn when its lock is stale.
 
-        pyEMU's ``start_workers`` DELETES ``master_dir`` and ``worker_0`` ..
-        ``worker_<workers-1>`` in its parent (the ``worker_root`` this passes) whenever
-        they exist, whatever they hold, then copies the template into each. Before
-        ledger 361 nothing checked them: a ``master_dir=`` naming a folder of the
-        user's, or the run directory, was deleted, and in the DEFAULT layout every
-        calibration of one model shares ``<model>.pest/`` as its worker root, so a
-        second calibration's parallel run deleted the first's workers while it ran.
+        ``what`` names the directory's role in the message. A run is going when the
+        :data:`~myflopy.modflow.mf6.pest.run_state.RUN_LOCK` names a process still
+        running, a lock cannot be checked (another host), or a PEST++ process works
+        there (ledger 532). Refused whatever ``overwrite=`` says.
+        ``stacklevel`` puts the stale-lock warning at the user's call.
 
-        A run deletes only one that is absent, empty, or a COPY of this calibration's
-        template -- pyEMU copies the template's :data:`BUILD_MARKER` with it, naming
-        the template, so a master or worker a previous run of THIS calibration left
-        counts and another calibration's does not. A copy of a template built before
-        ledger 360 has no marker; it counts in the default layout (``master_dir``
-        omitted) when its metadata names this calibration and this run. Everything is
-        checked before pyEMU is started.
+        Raises
+        ------
+        RuntimeError
+            Naming the directory, what holds it and the spellings to use.
+        """
+
+        activity = run_activity(directory)
+        if activity.blocks:
+            raise RuntimeError(
+                f"Refusing to start {method}(): the {what} {activity.directory} belongs to a "
+                f"PESTPP-IES run that may still be going -- {activity.describe()} Deleting "
+                "or reusing it would destroy that run's results or kill it.\n\n"
+                + (f"Wait for it to finish, or {instead}" if instead else "Wait for it to finish.")
+                + f"\nIf that run is over, delete {activity.directory / RUN_LOCK}."
+            )
+        if activity.state == "stale":
+            message = (
+                f"{method}(): the {what} {activity.directory}: {activity.describe()} "
+                "Treating it as free."
+            )
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=stacklevel)
+
+    def _check_parallel_directories(
+        self,
+        master: Path,
+        workers: int,
+        *,
+        method: str,
+        default: bool,
+        overwrite: bool,
+        resume: bool = False,
+        stacklevel: int = 4,
+    ) -> None:
+        """Refuse a parallel run whose master or worker directories are not this run's to use.
+
+        The master is ``master``; the workers are ``<master>.workers/worker_0`` ..
+        ``worker_<workers-1>`` (:func:`~myflopy.modflow.mf6.pest.run_state.worker_root`),
+        so no two masters -- two calibrations, or one calibration's prior and history
+        match -- share a worker directory (ledger 532). Until then every
+        calibration of a model shared ``<model>.pest/worker_<n>`` (ledger 361).
+
+        A launch deletes the master and each worker it is about to use, so each must be
+        absent, empty, or a COPY of this calibration's template -- the template's
+        :data:`BUILD_MARKER` names it, and a copy of a template built before ledger 360,
+        which has none, counts by its metadata in the default layout only. A master that
+        holds an earlier run's RESULTS is refused unless ``overwrite``
+        (ledger 532: until then a relaunch deleted them, ledger 361); ``resume`` uses
+        it as it is. Any of them, the worker root included, that belongs to a run still
+        going is refused whatever ``overwrite`` says. Everything is checked before
+        anything is written or started.
 
         Raises
         ------
         ValueError
-            When the master or a worker directory is, contains or sits inside the run
-            directory or the template, or the master is one of its own workers.
+            When the master or the worker root is, contains or sits inside the run
+            directory or the template.
+        RuntimeError
+            When a run is going in the template, the master or the worker root.
         FileExistsError
-            When one is a file, or a non-empty directory that is not a copy of this
-            calibration's template, naming it, what it holds and the spelling to use.
+            When one is a file; a non-empty directory that is not a copy of this
+            calibration's template; or a master holding an earlier run's results
+            without ``overwrite``.
         """
 
         run = self.original_workspace.resolve()
         template = self.template_workspace.resolve()
-        master = Path(master)
-        directories = [("master directory", master.resolve())] + [
-            ("worker directory", (master.parent / f"worker_{index}").resolve())
-            for index in range(workers)
-        ]
-        default_master = (
-            self.template_workspace.parent
-            / f"{self.name}_{'ies_master' if method == 'run_ies' else 'prior_master'}"
-        )
-        lines = ["Run it somewhere else:"]
-        if not default:
-            lines.append(
-                f"    cal.{method}(workers={workers}, ...)   # the default: {default_master}, "
-                "its workers beside it"
+        master = Path(master).resolve()
+        root = worker_root(master)
+        workers_at = [root / f"worker_{index}" for index in range(workers)]
+        default_master = self._default_master(method)
+        call = f"cal.{method}(workers={workers}"
+        if resume:
+            instead = (
+                "Resume the run where its master is:\n"
+                f"    {call}, master_dir=<its master directory>)"
             )
-        lines.append(
-            f"    cal.{method}(workers={workers}, master_dir=<a new or empty folder>, ...)"
-            f"   # its workers go beside it, worker_0 .. worker_{workers - 1}"
-        )
-        instead = "\n".join(lines)
+        else:
+            lines = ["Run it somewhere else:"]
+            if not default:
+                lines.append(f"    {call}, ...)   # the default master: {default_master}")
+            lines.append(
+                f"    {call}, master_dir=<a new or empty folder>, ...)   # its workers go "
+                "in <that folder>.workers"
+            )
+            instead = "\n".join(lines)
         where = f"Refusing to start {method}(workers={workers}): the "
-        deletes = (
-            "pyEMU's start_workers DELETES the master directory and worker_0 .. "
-            f"worker_{workers - 1} beside it whenever they exist, whatever they hold, then "
-            "copies the template into each."
-        )
 
-        for what, directory in directories:
+        for what, directory in (("master directory", master), ("worker directory", root)):
             for other, whose in (
                 (run, "the model's run directory"),
                 (template, "this calibration's template"),
@@ -2995,42 +3332,108 @@ class PestProject:
                     raise ValueError(
                         f"{where}{what} {directory} {relation} {whose}"
                         + ("" if relation == "IS" else f" {other}")
-                        + f". {deletes}\n\n{instead}"
+                        + ". A parallel run deletes its master and worker directories "
+                        f"and writes into them.\n\n{instead}"
                     )
-        if directories[0][1] in {directory for _, directory in directories[1:]}:
-            raise ValueError(
-                f"{where}master directory {directories[0][1]} is also one of its worker "
-                f"directories, worker_0 .. worker_{workers - 1}. {deletes}\n\n{instead}"
-            )
 
-        for what, directory in directories:
-            if not os.path.lexists(directory):
-                continue
+        beside = (
+            f"run beside it in another folder:\n    {call}, master_dir=<a new or empty "
+            "folder>, ...)"
+        )
+        self._refuse_a_live_run(master, "master directory", method=method, instead=beside,
+                                stacklevel=stacklevel + 1)
+        self._refuse_a_live_run(root, "worker directory", method=method, instead=beside,
+                                stacklevel=stacklevel + 1)
+
+        for what, directory in (("master directory", master), ("worker directory", root),
+                                *(("worker directory", worker) for worker in workers_at)):
+            if os.path.lexists(directory) and not directory.is_dir():
+                raise FileExistsError(f"{where}{what} {directory} is a FILE.\n\n{instead}")
+
+        for what, directory in (("master directory", master),
+                                *(("worker directory", worker) for worker in workers_at)):
             if not directory.is_dir():
-                raise FileExistsError(
-                    f"{where}{what} {directory} is a FILE. {deletes}\n\n{instead}"
-                )
-            entries = sorted(entry.name for entry in directory.iterdir())
-            if not entries or _written_by_a_build(directory, "template", naming=template):
                 continue
-            if (
+            entries = sorted(entry.name for entry in directory.iterdir())
+            if not entries:
+                continue
+            copy = _written_by_a_build(directory, "template", naming=template) or (
                 default
                 and not os.path.lexists(directory / BUILD_MARKER)
                 and self._metadata_names_this_calibration(directory)
-            ):
-                continue
-            shown = ", ".join(entries[:5]) + (" ..." if len(entries) > 5 else "")
-            raise FileExistsError(
-                f"{where}{what} {directory} already holds {len(entries)} "
-                f"entr{'y' if len(entries) == 1 else 'ies'} ({shown}), and it is not a "
-                f"copy of this calibration's template: its {BUILD_MARKER} would name "
-                f"{template}. {deletes} So a run deletes only one that is absent, empty, "
-                "or a copy pyEMU made of THIS template; a copy of another calibration's "
-                "template may be that calibration's run, still going.\n\n"
-                + instead
-                + f"\nIf {directory} is an old master or worker directory you no longer "
-                "need, delete it yourself."
             )
+            if not copy:
+                shown = ", ".join(entries[:5]) + (" ..." if len(entries) > 5 else "")
+                raise FileExistsError(
+                    f"{where}{what} {directory} already holds {len(entries)} "
+                    f"entr{'y' if len(entries) == 1 else 'ies'} ({shown}), and it is not a "
+                    f"copy of this calibration's template: its {BUILD_MARKER} would name "
+                    f"{template}. A parallel run deletes its master and worker directories "
+                    "before it copies the template into them, so it uses only one that is "
+                    "absent, empty, or a copy of THIS template.\n\n"
+                    + instead
+                    + f"\nIf {directory} is an old master or worker directory you no longer "
+                    "need, delete it yourself."
+                )
+            if what == "master directory" and not resume and not overwrite:
+                self._refuse_overwriting_results(master, workers, method=method, default=default)
+
+    def _refuse_overwriting_results(self, master: Path, workers: int, *, method: str, default: bool) -> None:
+        """Refuse a master holding an earlier run's results (ledger 532).
+
+        Raises
+        ------
+        FileExistsError
+            When ``master`` holds any file
+            :func:`~myflopy.modflow.mf6.pest.runs.pestpp_ies_outputs` lists, naming the
+            folder, whether its run finished, and the spellings: ``overwrite=True``,
+            another ``master_dir=``, and ``resume_ies`` for an interrupted IES run.
+        """
+
+        outputs = pestpp_ies_outputs(master, self.name)
+        if not outputs:
+            return
+        done = recorded_iterations(master, self.name)
+        planned = None
+        try:
+            for line in (master / f"{self.name}.pst").read_text(encoding="utf-8").splitlines():
+                words = line.split()
+                if len(words) >= 2 and words[0].lower() == "noptmax":
+                    planned = int(float(words[1]))
+                    break
+        except (OSError, ValueError):
+            planned = None
+        master_arg = "" if default else f", master_dir={str(master)!r}"
+        lines = [
+            f"    cal.{method}(workers={workers}{master_arg}, overwrite=True, ...)   "
+            "# delete those results and run again",
+            f"    cal.{method}(workers={workers}, master_dir=<a new or empty folder>, ...)   "
+            "# keep them",
+        ]
+        if planned is not None and planned > 0 and (not done or max(done) < planned):
+            state = (
+                f"an INTERRUPTED history match: iterations {done} of the {planned} it was "
+                "launched for" if done else
+                f"an INTERRUPTED history match that recorded no iteration of the {planned} "
+                "it was launched for"
+            )
+            if done:
+                lines.insert(0, f"    cal.resume_ies(workers={workers}{master_arg})   "
+                                "# continue it from its last completed iteration")
+        elif planned == -1:
+            state = "a prior Monte Carlo's results"
+        else:
+            state = (
+                f"a finished history match (iterations {done})" if done
+                else "an earlier run's results"
+            )
+        raise FileExistsError(
+            f"Refusing to start {method}(workers={workers}): the master directory "
+            f"{master} holds {state} -- {len(outputs)} output file(s) of calibration "
+            f"{self.name!r}, e.g. {outputs[0].name}. A run deletes its master directory "
+            "before it starts, and a multi-day run's results are not deleted unasked.\n\n"
+            + "\n".join(lines)
+        )
 
     def _launch_pestpp_ies(
         self,
@@ -3044,6 +3447,8 @@ class PestProject:
         noise: bool = True,
         bad_phi_sigma: float | None = None,
         overdue_giveup_fac: float | None = DEFAULT_OVERDUE_GIVEUP_FAC,
+        overwrite: bool = False,
+        keep_workers: bool = False,
         pestpp_options: dict | None = None,
     ) -> Path:
         """Configure options, write the pst, run PESTPP-IES, and return the results dir.
@@ -3051,22 +3456,26 @@ class PestProject:
         The results directory holds THIS run's outputs only (ledger 507): a
         serial run first deletes the earlier run's outputs from the template
         (:func:`~myflopy.modflow.mf6.pest.runs.pestpp_ies_outputs`, bar a file a
-        PEST++ option names), and a parallel run removes from its master every output
-        pyEMU copied in from the template that PESTPP-IES did not then rewrite.
+        PEST++ option names), saying so (ledger 532); a parallel run makes its
+        master itself, a copy of the template with those outputs removed, and hands it
+        to pyEMU's ``start_workers(reuse_master=True)`` (ledger 532).
         """
 
         if self.pst is None:
             raise ValueError("Call build() before running PESTPP-IES.")
         method = "run_ies" if master_suffix == "ies_master" else "prior"
         parallel = bool(workers and int(workers) > 1)
+        self._refuse_a_live_run(self.template_workspace, "template", method=method, instead="",
+                                stacklevel=4)
         if parallel:
-            master = Path(master_dir) if master_dir else self.template_workspace.parent / f"{self.name}_{master_suffix}"
-            # Before anything is written or started: pyEMU deletes these (ledger 361).
-            self._refuse_what_start_workers_would_delete(
+            master = (Path(master_dir) if master_dir else self._default_master(method)).resolve()
+            # Before anything is written or started (ledger 361, ledger 532).
+            self._check_parallel_directories(
                 master,
                 int(workers),
                 method=method,
                 default=not master_dir,
+                overwrite=overwrite,
             )
         caller_options = dict(pestpp_options or {})
         case = f"{self.name}.pst"
@@ -3094,43 +3503,108 @@ class PestProject:
             # its outputs; one it does not overwrite -- an iteration past this run's
             # last, a noise ensemble a `noise=False` run never writes -- would be
             # reviewed as this run's (ledger 507).
-            self._clear_earlier_run_outputs(self.template_workspace)
+            self._clear_earlier_run_outputs(self.template_workspace, announce=not overwrite, method=method)
         with self._quiet_pyemu_context():
             self.pst.write(str(self.template_workspace / case), version=2)
 
         exe_name, exe_dir = self._resolve_pestpp(exe)
         pyemu = self.pyemu or _import_pyemu()
         if parallel:
-            # pyEMU copies the WHOLE template into the master, an earlier serial run's
-            # outputs included, and starts PESTPP-IES in it at once, so there is no
-            # moment to clear them before; they are removed after, wherever the run
-            # stopped (ledger 507).
-            inherited = _file_stamps(pestpp_ies_outputs(self.template_workspace, self.name))
-            try:
-                with self._pestpp_environment(exe_dir):
-                    pyemu.os_utils.start_workers(
-                        str(self.template_workspace),
-                        exe_name,
-                        case,
-                        num_workers=int(workers),
-                        worker_root=str(master.parent),
-                        master_dir=str(master),
-                    )
-            finally:
-                _remove_unrewritten_copies(master, inherited)
+            # The master is made HERE, not by pyEMU: a copy of the template without an
+            # earlier serial run's outputs, which pyEMU's own copy carried into it
+            # (ledger 532; ledger 507 removed them after the run instead).
+            if master.exists():
+                shutil.rmtree(master)
+            shutil.copytree(
+                self.template_workspace, master, symlinks=True,
+                ignore=shutil.ignore_patterns(RUN_LOCK),
+            )
+            self._clear_earlier_run_outputs(master, announce=False, method=method)
+            self._run_parallel(
+                pyemu, exe_name, exe_dir, case, master, int(workers),
+                method=method, keep_workers=keep_workers,
+            )
             return master
 
-        with self._pestpp_environment(exe_dir):
-            pyemu.os_utils.run(f"{exe_name} {case}", cwd=str(self.template_workspace))
+        self._run_serial(pyemu, exe_name, exe_dir, case, method=method)
         return self.template_workspace
 
-    def _clear_earlier_run_outputs(self, directory: Path) -> None:
+    def _run_serial(self, pyemu, exe_name: str, exe_dir, case: str, *, method: str) -> None:
+        """Run PESTPP-IES in the template, holding its run lock while it goes."""
+
+        write_run_lock(self.template_workspace, method=method, calibration=self.name)
+        try:
+            with self._pestpp_environment(exe_dir):
+                pyemu.os_utils.run(f"{exe_name} {case}", cwd=str(self.template_workspace))
+        finally:
+            release_run_lock(self.template_workspace)
+
+    def _run_parallel(
+        self, pyemu, exe_name: str, exe_dir, case: str, master: Path, workers: int,
+        *, method: str, keep_workers: bool,
+    ) -> None:
+        """Run PESTPP-IES in ``master`` with ``workers`` workers in ``<master>.workers``.
+
+        Both directories carry a run lock while it goes. The workers are deleted when the
+        run finishes cleanly, unless ``keep_workers``; a run that fails or is interrupted
+        keeps them, for diagnosis (ledger 532). pyEMU's own clean-up
+        (``cleanup=True``) deleted them whenever the master exited, failed or not.
+        """
+
+        root = worker_root(master)
+        root.mkdir(exist_ok=True)
+        write_run_lock(master, method=method, calibration=self.name)
+        write_run_lock(root, method=method, calibration=self.name)
+        finished = False
+        try:
+            with self._pestpp_environment(exe_dir):
+                pyemu.os_utils.start_workers(
+                    str(self.template_workspace),
+                    exe_name,
+                    case,
+                    num_workers=workers,
+                    worker_root=str(root),
+                    master_dir=str(master),
+                    reuse_master=True,
+                    cleanup=False,
+                )
+            finished = True
+        finally:
+            release_run_lock(master)
+            release_run_lock(root)
+            if finished and not keep_workers:
+                self._remove_workers(root)
+            elif any(root.glob("worker_*")):
+                logger.info(
+                    "kept the worker directories of %s() in %s%s", method, root,
+                    "" if finished else " (the run did not finish cleanly)",
+                )
+
+    def _remove_workers(self, root: Path) -> None:
+        """Delete each ``worker_<n>`` in ``root`` that is a copy of this template, then ``root`` if empty."""
+
+        template = self.template_workspace.resolve()
+        removed = 0
+        for worker in sorted(root.glob("worker_*")):
+            if worker.is_dir() and _written_by_a_build(worker, "template", naming=template):
+                shutil.rmtree(worker)
+                removed += 1
+        with contextlib.suppress(OSError):
+            root.rmdir()   # refuses, rather than deletes, when anything else is in it
+        logger.info("removed %d worker director%s of a finished run from %s",
+                    removed, "y" if removed == 1 else "ies", root)
+
+    def _clear_earlier_run_outputs(self, directory: Path, *, announce: bool = False,
+                                   method: str = "run_ies") -> None:
         """Delete an earlier PESTPP-IES run's outputs of this case from ``directory``.
 
         Every file :func:`~myflopy.modflow.mf6.pest.runs.pestpp_ies_outputs` lists,
         except one a PEST++ option of this run names (``ies_par_en=<name>.0.par.csv``
         reuses an earlier prior from the template itself), which PESTPP-IES reads
-        before it writes (ledger 507).
+        before it writes (ledger 507). With ``announce`` the deletion is said through
+        ``warnings.warn`` as well as the logger (ledger 532; ledger 288: a log
+        line alone reaches nobody) -- a serial run deleting the results an earlier serial
+        run left in the template.
         """
 
         named = {
@@ -3144,12 +3618,23 @@ class PestProject:
                 continue
             path.unlink()
             removed.append(path.name)
-        if removed:
+        if not removed:
+            return
+        shown = ", ".join(removed[:8]) + (" ..." if len(removed) > 8 else "")
+        if announce:
+            message = (
+                f"{method}() deleted {len(removed)} output file(s) of an earlier PESTPP-IES "
+                f"run of {self.name!r} from the template {directory} before this serial run "
+                f"writes there ({shown}). A serial run's results last until the next serial "
+                f"run; run in parallel (workers=N) to keep each run in its own master "
+                f"directory, or pass overwrite=True to say this deletion is meant."
+            )
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=4)
+        else:
             logger.info(
                 "removed %d output file(s) of an earlier PESTPP-IES run of %r from %s "
-                "before this run writes there: %s",
-                len(removed), self.name, directory, ", ".join(removed[:8])
-                + (" ..." if len(removed) > 8 else ""),
+                "before this run writes there: %s", len(removed), self.name, directory, shown,
             )
 
     def _refuse_a_restart_from_other_parameters(self, method: str) -> None:

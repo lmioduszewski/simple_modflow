@@ -1016,9 +1016,20 @@ directory only when each is absent, empty, or one a build wrote** (ledger 360: m
 a visible `myflopy_pest_build.json` naming it, ledger 361); any other `workspace=` folder
 is refused with `FileExistsError`, and one that is, contains or sits inside the run
 directory with `ValueError`, whatever it holds. **A parallel `run_ies`/`prior(workers=N)`
-likewise** (ledger 361): pyEMU deletes the master directory and `worker_0..N-1` beside it,
-so each must be absent, empty, or a copy of this calibration's template; anything else is
-refused before pyEMU starts. **With `correlation=` on a `grid` or pilot-point parameter,
+likewise** (ledger 361): a launch deletes the master directory and the workers it uses --
+`<master>.workers/worker_0..N-1`, one worker directory per master, so two calibrations or
+a prior beside a history match never share one (ledger 532) -- so each must be
+absent, empty, or a copy of this calibration's template; anything else is refused before
+anything is written. **A master holding an earlier run's results is refused unless
+`overwrite=True`**, and **a template, master or worker directory a run is still going
+in** -- a `myflopy_pest_run.lock` naming a live process or another host, or a PEST++
+process working there -- is refused (`RuntimeError`) whatever `overwrite` says; a lock
+whose process is gone is STALE, said so and ignored (ledger 532). A run's
+worker directories are deleted when it finishes cleanly unless `keep_workers=True`.
+**`cal.resume_ies(workers=N)` continues an interrupted history match** from its last
+completed iteration, in its own directory, and leaves one run of iterations `0..N`
+(ledger 533; PESTPP-IES refuses `/r`, so it restarts from the run's ensembles).
+**With `correlation=` on a `grid` or pilot-point parameter,
 `run_ies`/`prior` hand PESTPP-IES their own prior** (ledger 385): a draw of every
 parameter, each correlated pilot-point set's values from its own correlated draw --
 pyEMU's geostatistical draw, its variance set by the bounds as a `grid` parameter's is
@@ -1034,8 +1045,9 @@ and drops its realization; `None` restores it, ledger 510), and every
 multiplier file applied in the forward run's own process (`chunk_len=10**6`; pyEMU's
 50 starts a `cpu_count` pool per realization at 50 files, ledger 511). **A
 directory holds one run's outputs** (ledger 507): a serial run deletes an
-earlier run's `<name>.*` outputs from the template first, and a parallel master drops
-those it inherited from the template and did not rewrite.
+earlier run's `<name>.*` outputs from the template first, saying so with a `UserWarning`
+(`overwrite=True` silences it), and a parallel master is copied from the template without
+them (ledger 532).
 
 **Reviewing a run** (`IesResults`, from `cal.run_ies(...)` or
 `model.pest_runs[i].review()`) — `IesResults` is a flat class, not the

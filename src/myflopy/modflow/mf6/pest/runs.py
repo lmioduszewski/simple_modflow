@@ -414,8 +414,9 @@ def find_pest_runs(root, *, model_name: str | None = None, model=None,
         # master copies to avoid listing the same run several times.
         if meta_path.parent.name.endswith("_master"):
             continue
-        # So are the worker directories, which an interrupted parallel run leaves
-        # behind (pyEMU removes them only after a clean finish), and a backup copy:
+        # So are the worker directories (`<master>.workers/worker_<n>`,
+        # ledger 532), which a failed or interrupted parallel run, or one launched
+        # with `keep_workers=True`, leaves behind, and a backup copy:
         # each one's marker names the template it was copied from (ledger
         # 508). A copy is one whose marker names ANOTHER build of this scan
         # -- never merely another path, which every template of a moved or copied

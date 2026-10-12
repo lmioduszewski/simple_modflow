@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 531 entries (536 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 533 entries (538 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 533 | `cal.resume_ies(workers=N)` continues an interrupted history match from its last completed iteration and le... | 2026-10-12 |
+| 532 | A parallel PESTPP-IES run keeps its own workers in `<master>.workers`, a master holding results is refused... | 2026-10-12 |
 | 531 | `CycleEquilibrium` counts a location with a value in ONE cycle only as unsettled, and reads any discretization | 2026-10-12 |
 | 530 | `mf.AverageYear`: one steady period, then calendar-month cycles, its run checked by `equilibrium` | 2026-10-12 |
 | 529 | A period's dates are read in one place, `PeriodCalendar`, and its calendar month is its MIDPOINT's | 2026-10-12 |
@@ -17245,22 +17247,29 @@ same day, which is the useful part of the result.
       with a model. The marker carries a `note` saying it lets a build delete the folder and
       that deleting it protects the folder. Cost: one more file in a template listing.
       **The run guard** (`_refuse_what_start_workers_would_delete`, called before anything
-      is written or started): the master and `worker_0..N-1` beside it must each be absent,
-      empty, or a COPY of this calibration's template -- pyEMU copies the template's marker,
-      which names the template's resolved path, so a master or worker a previous run of THIS
-      calibration left still counts and is deleted with its results, as pyEMU documents and
-      as before; a copy of a template built before 360 counts by its metadata, only in the
-      default layout (`master_dir` omitted). Anything else is `FileExistsError`; a master or
-      worker that is, contains or sits inside the run directory or the template, or a master
-      named as one of its own workers, is `ValueError`. **Judgment call: refuse the shared
-      worker root, do not move it.** Giving each calibration its own worker root would
-      remove K's collision instead of refusing it, but moves where workers go and was not
-      measured against `model.pest_runs`' discovery; as shipped, two calibrations of one
-      model cannot run in parallel at once in the default layout (the second passes
-      `master_dir=` in another folder), and a crashed run's leftover workers of another
-      calibration are deleted by hand. **Not detected:** the SAME calibration started twice
-      at once -- both carry its marker, so the second still deletes the first's master and
-      workers.
+      is written or started): the master and ~~`worker_0..N-1` beside it~~ its workers must
+      each be absent, empty, or a COPY of this calibration's template -- pyEMU copies the
+      template's marker, which names the template's resolved path, so a master or worker a
+      previous run of THIS calibration left still counts ~~and is deleted with its results,
+      as pyEMU documents and as before~~; a copy of a template built before 360 counts by
+      its metadata, only in the default layout (`master_dir` omitted). Anything else is
+      `FileExistsError`; a master or worker that is, contains or sits inside the run
+      directory or the template~~, or a master named as one of its own workers,~~ is
+      `ValueError`. ~~**Judgment call: refuse the shared worker root, do not move it.**
+      Giving each calibration its own worker root would remove K's collision instead of
+      refusing it, but moves where workers go and was not measured against
+      `model.pest_runs`' discovery; as shipped, two calibrations of one model cannot run in
+      parallel at once in the default layout (the second passes `master_dir=` in another
+      folder), and a crashed run's leftover workers of another calibration are deleted by
+      hand. **Not detected:** the SAME calibration started twice at once -- both carry its
+      marker, so the second still deletes the first's master and workers.~~ **Restated by
+      ledger 532:** the guard is `_check_parallel_directories`; each master's
+      workers are `<master>.workers/worker_<n>`, so no two masters share one (discovery
+      skips them as copies, measured); a master holding an earlier run's RESULTS is refused
+      unless `overwrite=True`; and a master, worker directory or template a run is still
+      going in -- a `myflopy_pest_run.lock` naming a live process or another host, or a
+      PEST++ process working there -- is refused whatever `overwrite` says, which detects
+      the same calibration started twice.
       **A template `PstFrom` refused after its copy** (a run holding `org/` or `mult/`, i.e.
       made in a copy of a template) carried the staging copy's marker, so the next build
       refused it as a folder "no myflopy PEST build wrote" -- one it wrote. It is marked as
@@ -20268,16 +20277,19 @@ same day, which is the useful part of the result.
       reuses an earlier prior in place). Deleting a serial run's results on the next
       serial launch is deliberate, like ledger 361's master: that run was already
       overwriting them piecemeal. A PARALLEL launch does NOT delete the template's
-      serial results. pyEMU copies the whole template into the master and starts
+      serial results. ~~pyEMU copies the whole template into the master and starts
       PESTPP-IES in the same call, so they are removed from the master afterwards (in
       a `finally`, so Ctrl-C too). A file is removed when it still carries the
       template file's `(size, mtime_ns)`; `copytree` keeps both, and a file
-      PESTPP-IES rewrote does not. The reader also intersects the ensembles with the
+      PESTPP-IES rewrote does not.~~ **Restated by ledger 532:** the launch
+      copies the template into the master itself, leaves those outputs out, and hands
+      pyEMU `reuse_master=True`, so the master never holds them. The reader also intersects the ensembles with the
       phi file's `iteration` column, which fixes runs already on disk, and reads
-      `noise` as `None` whenever the run's `.pst` sets `ies_no_noise`. **Left open:**
+      `noise` as `None` whenever the run's `.pst` sets `ies_no_noise`. ~~**Left open:**
       a process killed hard during a parallel run (no `finally`) leaves the inherited
       copies in the master. If PESTPP-IES never wrote its own phi there, the
-      template's stale phi then reads as the run's.
+      template's stale phi then reads as the run's.~~ **Closed by ledger 532:**
+      the master is made without them.
 
 508. **`model.pest_runs` lists a calibration's executions by exact master name plus a serial run in the template, opens case `<name>`, refuses a kind the run lacks, and skips worker copies (2026-10-12).**
       Masters were found by the glob `<name>_*master*` and classified by a substring.
@@ -20653,3 +20665,63 @@ same day, which is the useful part of the result.
       period's length, or a period's STO state). PRT's TDIS copy reads the period
       block through `period_end.period_records` too.
 
+532. **A parallel PESTPP-IES run keeps its own workers in `<master>.workers`, a master holding results is refused unless `overwrite=True`, a directory a run is still going in is refused whatever `overwrite` says, workers go after a clean finish unless `keep_workers=True`, and a serial run says what it deletes (2026-10-12).**
+      The user's answer Q8, amending ledger 361. Every parallel launch made its workers in
+      the master's PARENT, `<model>.pest/worker_<n>`, shared by every calibration of the
+      model and by one calibration's prior and history match; the guard accepted any copy
+      of THIS template, so a relaunch (or a `prior()` in a second kernel) deleted a live
+      run's workers, and a relaunch deleted the previous master with its results.
+      **Chosen:** workers in `<master>.workers/worker_<n>` (`run_state.worker_root`): one
+      per master, so two calibrations or a prior beside a history match never meet, and
+      `model.pest_runs` skips them as copies (measured, ledger 508's rule unchanged). A
+      master holding any `pestpp_ies_outputs` file is refused (`FileExistsError`) unless
+      `overwrite=True`, naming whether its run finished and `resume_ies` for an
+      interrupted history match. **Liveness is a lock plus a process scan:**
+      `myflopy_pest_run.lock` (host, pid, the process's `/proc` start ticks, time, method)
+      in the template (serial) or master and worker root (parallel), removed in a
+      `finally`; a live pid, another host, or a `pestpp*` process whose cwd is inside the
+      folder (`/proc`, Linux) blocks, whatever `overwrite` says; a dead pid is STALE --
+      warned (`UserWarning` and logger) and ignored. The scan is what catches a kernel
+      SIGKILLed while PESTPP-IES kept going; it keys on the command name so a shell left
+      in the folder does not block. **Judgment call: a lock written on another host, or on
+      Windows (where `os.kill(pid, 0)` TERMINATES the process), cannot be checked and
+      counts as live** -- the refusal names the file to delete. `build()` refuses a
+      template a serial run is going in. **The launch makes the master itself**
+      (`copytree` without the lock, then the template's serial outputs removed) and hands
+      pyEMU `reuse_master=True, cleanup=False`; pyEMU's `cleanup=True` deleted the workers
+      whenever the master exited, failed or not, so now a CLEAN finish deletes them
+      (`keep_workers=True` keeps them) and a failure or interrupt keeps them for diagnosis.
+      **A serial run deleting an earlier run's results** says so with `warnings.warn` as
+      well as the logger (the coordinator's decision; ledger 288), `overwrite=True`
+      silencing it -- it is not refused, unlike a master: that run was already overwriting
+      them piecemeal (ledger 507). **Behaviour change:** a relaunch into a master holding
+      results now raises where it deleted them. **Not done:** pyEMU still copies the whole
+      template, a serial run's outputs included, into each worker (its `start_workers`
+      takes no ignore list); the lock is not a mutex against two launches in the same
+      instant. Tests: `tests/test_pest_parallel_runs_policy.py`;
+      `tests/test_pest_workspace_deleted_only_when_built.py` moved to the new layout.
+
+533. **`cal.resume_ies(workers=N)` continues an interrupted history match from its last completed iteration and leaves one run of iterations `0..N` (2026-10-12).**
+      PESTPP-IES 5.2.16 refuses `/r` ("/r option not supported by pestpp-ies", measured),
+      so pyEMU's `start_workers(restart=True)` cannot work. **Chosen:** restart from the
+      run's ensembles -- `ies_par_en` the run's iteration-0 parameters (the regularization
+      prior), `ies_restart_par_en`/`ies_restart_obs_en` iteration `n` (not rerun),
+      `ies_obs_en` its noise ensemble, `ies_initial_lambda` the lambda its `.rec` shows in
+      force, `NOPTMAX` the iterations left -- set on the RUN's own control file, never on
+      `cal.pst`. PESTPP-IES numbers the restart from 0, so the outputs are archived to
+      `<name>.resumed_from_<n>/` and spliced back in a `finally` (resumed `k >= 1` ->
+      `n + k`, its iteration 0 dropped, phi files joined, `total_runs` continued); an
+      archive a hard kill left unspliced is spliced by the next resume. **A separate verb,
+      not `run_ies(restart=True)`:** `reals`/`iterations` default to 50/3 there, which
+      would silently disagree with the run being resumed; the resume reads the run's own.
+      **The lambda is carried because it was measured to matter:** on the canonical
+      testing model killed after iteration 1 of 3, the resumed iteration 2 read phi
+      1.65128 without it and 1.71477 with it, against the uninterrupted 1.71448
+      (`docs/reproducers/ies_resume_interrupted_run.py`; its iteration 3 differs because
+      the REFERENCE lost a realization there). **Refused:** a prior (nothing is written
+      before its sweep ends), a run that completed no iteration, `iterations` not past the
+      last completed one, a run whose parameter/observation names differ from `cal.pst`
+      (the workers come from the template), and the four restart options passed by hand.
+      **Not done:** a SERIAL run resumes only while its template is not rebuilt -- `build()`
+      deletes it (ledger 360), so the guidance is to run long calibrations in parallel;
+      PESTPP-IES's other internal state (best-phi history) restarts at `n`.

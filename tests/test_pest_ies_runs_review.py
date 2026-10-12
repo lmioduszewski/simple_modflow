@@ -574,9 +574,13 @@ def test_a_serial_launch_clears_the_earlier_runs_outputs(correlated, monkeypatch
     assert (template / "corr_build.0.obs.csv").exists(), "another case's is not this run's"
 
 
-def test_a_parallel_master_drops_what_it_inherited_and_did_not_rewrite(
+def test_a_parallel_master_never_holds_the_templates_serial_outputs(
     correlated, monkeypatch, tmp_path
 ):
+    """pyEMU copied the whole template into the master, an earlier serial run's outputs
+    included, and ledger 507 removed the ones PESTPP-IES did not rewrite after the run.
+    The launch makes the master itself now, without them (ledger 532)."""
+
     cal = correlated
     _stub_pestpp(monkeypatch, cal)
     template = cal.template_workspace
@@ -584,11 +588,12 @@ def test_a_parallel_master_drops_what_it_inherited_and_did_not_rewrite(
         (template / name).write_text("earlier serial run")
     master = tmp_path / "corr_ies_master"
 
-    def start_workers(worker_dir, exe, pst, *, num_workers, worker_root, master_dir):
-        shutil.copytree(worker_dir, master_dir)  # pyEMU: copytree, times kept
-        (Path(master_dir) / "corr.0.obs.csv").write_text("this run")
-        (Path(master_dir) / "corr.phi.actual.csv").write_text("this run, rewritten")
-        raise KeyboardInterrupt  # a run stopped mid-way still has its master cleaned
+    def start_workers(worker_dir, exe, pst, **kwargs):
+        assert kwargs["reuse_master"] is True and Path(kwargs["master_dir"]) == master
+        assert not (master / "corr.2.obs.csv").exists()
+        assert not (master / "corr.phi.actual.csv").exists()
+        (master / "corr.0.obs.csv").write_text("this run")
+        raise KeyboardInterrupt  # a run stopped mid-way
 
     monkeypatch.setattr(cal.pyemu.os_utils, "start_workers", start_workers)
     with pytest.raises(KeyboardInterrupt):
@@ -596,7 +601,6 @@ def test_a_parallel_master_drops_what_it_inherited_and_did_not_rewrite(
 
     assert not (master / "corr.2.obs.csv").exists()
     assert (master / "corr.0.obs.csv").read_text() == "this run"
-    assert (master / "corr.phi.actual.csv").exists()
     assert (template / "corr.2.obs.csv").exists(), "the template keeps its serial run"
     for name in ("corr.2.obs.csv", "corr.phi.actual.csv", "corr.0.obs.csv"):
         (template / name).unlink()
@@ -618,7 +622,8 @@ def test_reruns_in_one_template_review_their_own_iterations(toy, tmp_path):
 
     first = cal.run_ies(reals=3, iterations=2, **fast)
     assert first.iterations == [0, 1, 2]
-    second = cal.run_ies(reals=3, iterations=1, noise=False, ies_save_binary=True, **fast)
+    with pytest.warns(UserWarning, match=r"run_ies\(\) deleted \d+ output file"):
+        second = cal.run_ies(reals=3, iterations=1, noise=False, ies_save_binary=True, **fast)
     assert second.iterations == [0, 1]
     assert second.posterior_iteration == 1
     assert not (cal.template_workspace / "valley_pest.2.obs.csv").exists()
@@ -626,7 +631,8 @@ def test_reruns_in_one_template_review_their_own_iterations(toy, tmp_path):
     assert second.noise is None
     assert len(second.posterior._df) >= 1
 
-    prior = cal.prior(reals=3)
+    with pytest.warns(UserWarning, match=r"prior\(\) deleted \d+ output file"):
+        prior = cal.prior(reals=3)
     assert prior.iterations == [0]
 
     handle = find_pest_runs(tmp_path)[0]

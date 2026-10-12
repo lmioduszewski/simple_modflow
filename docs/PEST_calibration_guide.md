@@ -562,24 +562,65 @@ earlier run of the calibration left there: each iteration's ensembles and
 `.base.par`, the phi files and the noise ensemble, except a file a PEST++ option
 names. A rerun with fewer iterations, or a `prior()` after a run, is therefore not
 reviewed with the earlier run's last iteration as its posterior. A serial run's
-results last until the next serial run. A parallel run's master inherits the
-template's outputs (pyEMU copies the whole template). When the run returns, each
-output PESTPP-IES did not rewrite is removed from the master. The review also
+results last until the next serial run, and the deletion is said with a `UserWarning`
+(`overwrite=True` says it is meant and silences it; ledger 532). A parallel
+run's master is copied from the template without those outputs. The review also
 counts only the iterations the run's phi file records, so a directory filled
 before this fix also reads correctly.
 
-**What a parallel run deletes** (ledger 361). With `workers=N`, pyEMU's
-`start_workers` deletes the master directory -- `<name>_ies_master` (or
-`<name>_prior_master`) beside the template, or the `master_dir=` you pass -- and
-`worker_0` .. `worker_<N-1>` in that directory's parent, whenever they exist, then copies
-the template into each. myflopy checks them first: each must be absent, empty, or a COPY
-of this calibration's template (a master or worker a previous run of it left, deleted
-with its results, as always). A folder of yours there, or another calibration's workers
--- every calibration of one model shares `<model>.pest/` as its worker root, so they may
-be its run, still going -- is refused with `FileExistsError` before pyEMU starts, and a
-master or worker that is, contains or sits inside the run directory or the template is
-refused with `ValueError`. Pass `master_dir=` a new or empty folder whose parent holds
-no `worker_*` folders of anyone else's.
+**Where a parallel run writes, and what it deletes** (ledger 361, ledger 532). With
+`workers=N` the results are collected in the master directory -- `<name>_ies_master` (or
+`<name>_prior_master`) beside the template, or the `master_dir=` you pass -- and the
+workers run in `<master>.workers/worker_0` .. `worker_<N-1>`. Each master has its own
+worker directory, so two calibrations of one model, or a `prior()` in one kernel and a
+`run_ies()` in another, never share one. A launch deletes the master and the workers it
+uses, then copies the template into them, so myflopy checks them first:
+
+- each must be absent, empty, or a COPY of this calibration's template; a folder of
+  yours, or another calibration's copy, is refused with `FileExistsError`, and one that
+  is, contains or sits inside the run directory or the template with `ValueError`;
+- **a master holding an earlier run's results is refused unless `overwrite=True`**,
+  naming the folder, whether its run finished, and the spellings -- `overwrite=True` to
+  replace it, another `master_dir=` to keep it, `cal.resume_ies(workers=N)` to continue
+  an interrupted history match;
+- **a directory a run is still going in is refused whatever `overwrite` says**
+  (`RuntimeError`). Every launch writes `myflopy_pest_run.lock` into the directories it
+  runs in, naming the host, the process and when it started, and removes it when the run
+  returns; a lock naming a process still running, or written on another host, or a PEST++
+  process working in the folder (read from `/proc` on Linux), means a run is going. A
+  lock whose process is gone -- the kernel was killed -- is STALE: it is said so with a
+  `UserWarning` and ignored. `build()` refuses a template a serial run is going in.
+
+When the run finishes cleanly its worker directories are deleted -- each is a full copy
+of the template, disposable, and a resume makes them again; `keep_workers=True` keeps
+them. A run that fails or is interrupted keeps them for diagnosis. The master and its
+results are always kept.
+
+**Resuming an interrupted history match** (ledger 533). A multi-day run stopped
+part-way (a killed kernel, a reboot) keeps every iteration it completed. In a fresh
+kernel, declare and `build()` the calibration again as before -- the template is rebuilt,
+the master is not -- and continue it:
+
+```python
+ies = cal.resume_ies(workers=10)              # parallel: the master <name>_ies_master
+ies = cal.resume_ies(workers=10, iterations=5) # or go further than the run asked
+```
+
+PESTPP-IES refuses the PEST `/r` restart switch, so this restarts it from the run's own
+ensembles: the prior for regularization, the last completed iteration's parameters and
+simulated values (not rerun), and the noise ensemble -- and from the Marquardt lambda the
+run's `.rec` shows in force, without which the resumed run takes another path (measured on
+the canonical testing model: the resumed iteration 2 read phi 1.715 against the
+uninterrupted run's 1.714, and 1.651 without the lambda). The run's earlier outputs are moved
+to `<name>.resumed_from_<n>/` while it goes and joined back after, the resumed
+iterations renumbered after them, so the directory holds one run of iterations `0..N`
+and reviews like any other; the archive keeps the interrupted run's `.rec` and `.log`.
+The resumed run's workers are made from the template, so a template rebuilt with other
+parameters or observations is refused. A SERIAL run (`resume_ies()` with no `workers`)
+resumes only while its template has not been rebuilt: `build()` deletes the template and
+with it a serial run's results (ledger 360) -- run long calibrations in parallel. A prior
+Monte Carlo cannot be resumed: its simulated values are written only at the end of the
+sweep.
 
 ### The DBTL loop
 

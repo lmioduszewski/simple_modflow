@@ -69,7 +69,8 @@ def main() -> None:
             cal.build("overdue.pst", noptmax=0)
         for value in (DEFAULT, 12, None):
             options = {} if value is DEFAULT else {"overdue_giveup_fac": value}
-            results = cal.prior(reals=3, workers=2, **options)
+            # Each run replaces the last one's master (ledger 532).
+            results = cal.prior(reals=3, workers=2, overwrite=True, **options)
             record = (pathlib.Path(results.workspace) / "overdue.rec").read_text(errors="replace")
             lines = [line.strip() for line in record.splitlines() if "overdue_giveup_fac" in line]
             shown = "(default)" if value is DEFAULT else repr(value)
