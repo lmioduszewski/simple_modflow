@@ -26,6 +26,18 @@ Measured 2026-10-11 against 8c99c58:
 
 Every LayerStack the test suite builds (129 distinct declarations), the two layer
 notebooks' and the reproducers' stacks came out byte-identical on both trees.
+
+Ledger 446, measured 2026-10-11 against 3289af0 (an explicit ``trigger_sep`` no
+longer replaces a ``"floor"`` layer's trigger; it is capped at the layer's share of the
+unit minimum):
+
+- a 3 ft floor unit, ``min_thickness=2``, ``trigger_sep=5``: 2.0 ft and its base 1 ft
+  higher before, 3.0 ft after; split 3, slices ``[0.6667] * 3`` before and
+  ``[1.0] * 3`` after; a 2.4 ft unit with min 1 split 3 (``test_trigger_sep_can_be_
+  overridden``), ``[0.3333] * 3`` and its base 1.4 ft higher before, ``[0.8] * 3``
+  after;
+- a 1.5 ft floor unit with min 2 is opened to 2.0 by default and under ``trigger_sep``
+  1.6 and 5, and left 1.5 under 1.0, on both trees -- what ``trigger_sep`` still does.
 """
 
 from __future__ import annotations
@@ -65,6 +77,15 @@ show("0.5 ft clay, min 0.5, inactive", clay(9.5, min_thickness=0.5, pinch="inact
 show("0.3 ft clay, min 0.5, inactive", clay(9.7, min_thickness=0.5, pinch="inactive"))
 show("2 ft floor unit, min 2, split [0.9, 0.1]", clay(8.0, min_thickness=2.0, split=[0.9, 0.1]))
 show("1 ft floor unit, min 2, split [0.9, 0.1]", clay(9.0, min_thickness=2.0, split=[0.9, 0.1]))
+# ledger 446: an explicit trigger_sep on a "floor" unit
+show("3 ft floor unit, min 2, trigger_sep 5", clay(7.0, min_thickness=2.0), trigger_sep=5.0)
+show("3 ft floor unit, min 2, split 3, trigger_sep 5", clay(7.0, min_thickness=2.0, split=3),
+     trigger_sep=5.0)
+show("2.4 ft floor unit, min 1, split 3, trigger_sep 5", clay(7.6, min_thickness=1.0, split=3),
+     trigger_sep=5.0)
+for trigger in (None, 1.0, 1.6, 5.0):
+    show(f"1.5 ft floor unit, min 2, trigger_sep {trigger}", clay(8.5, min_thickness=2.0),
+         trigger_sep=trigger)
 
 for index in ([10, 11], [1, 0]):
     frame = pd.DataFrame({0: [10.0, 10.0], 1: [5.0, 9.99]}, index=index)

@@ -4596,17 +4596,22 @@ class LayerStack:
     def _reconcile_separations(self, min_thk, pinch, min_sep: float, trigger_sep):
         """Per-layer ``(min_sep, trigger_sep)`` for reconcile, from each layer's policy.
 
-        One rule: **reconcile never reaches a unit at or above its own
-        ``min_thickness``** (ledger 377). The engine SETS every contact at most
-        ``trigger_sep`` apart to exactly ``min_sep``, so a trigger above a unit's
-        minimum thins a unit that is present.
+        One rule, for every policy: **reconcile never reaches a unit at or above its
+        own ``min_thickness``** (ledger 377, ledger 446). The engine SETS every
+        contact at most ``trigger_sep`` apart to exactly ``min_sep``, so a trigger
+        above a unit's minimum thins a unit that is present. Every layer's trigger
+        is therefore the one asked for capped at its share of the unit minimum, and
+        ``trigger_sep`` only ever acts on a unit already below that minimum.
 
         A ``"floor"`` layer declares a real minimum thickness, so reconcile enforces
         **its own** ``min_thickness`` -- that is what makes ``min_thickness`` set
         geometry rather than only decide an idomain value. Its separation and its
         trigger are both that minimum, so reconcile only ever OPENS it. An explicit
-        ``trigger_sep`` replaces a floor layer's trigger, as documented on
-        :meth:`build`; it then holds a thicker unit at its minimum too.
+        ``trigger_sep`` is capped at that minimum like any other layer's: a larger
+        one is the default, and a smaller one opens only the floor units at most
+        that thin. Its cap is the minimum itself rather than just under it, because
+        its separation IS the minimum -- a unit exactly at it is set to where it
+        already is -- and a cap below it would leave a unit a hair under its floor.
 
         A ``"passthrough"`` or ``"inactive"`` layer must be allowed to come out too
         thin, because being too thin is the signal that it pinches out. Reconcile
@@ -4639,12 +4644,11 @@ class LayerStack:
         seps, triggers = [], []
         for thickness, policy, share in zip(min_thk, pinch, self._layer_shares(), strict=True):
             own = float(thickness) * share
-            if policy == "floor":
-                seps.append(own)
-                triggers.append(own if trigger_sep is None else stack_trigger)
-            else:
-                seps.append(float(min_sep))
-                triggers.append(min(stack_trigger, own * _UNDER_THE_MINIMUM))
+            floor = policy == "floor"
+            seps.append(own if floor else float(min_sep))
+            asked = own if (floor and trigger_sep is None) else stack_trigger
+            cap = own if floor else own * _UNDER_THE_MINIMUM
+            triggers.append(min(asked, cap))
         return seps, triggers
 
     def _max_split(self) -> int:
@@ -4790,16 +4794,21 @@ class LayerStack:
             ``1.0 / <largest split>``: the historical 1 length unit for an
             unsplit stack, and proportionally smaller once a unit is cut into
             slices, so that splitting a unit does not shrink it. Pass a number to
-            override. It never reaches a pinching unit at or above its own
-            ``min_thickness``: such a layer's trigger is capped just under its
-            (share of its) minimum, so a 0.8 ft clay with ``min_thickness=0.5``
-            stays 0.8 ft and active (ledger 377). A unit below its minimum
-            is pinched, and crushed to ``min_sep`` where it is also within this
-            trigger -- a 1.5 ft clay with ``min_thickness=2`` keeps its 1.5 ft and
-            is pinched without being moved. A ``"floor"`` layer's
-            trigger is its own minimum when this is omitted, and this number
-            when given -- so a large one holds a thicker floor unit at its
-            minimum too.
+            override. **It never reaches a unit at or above its own
+            ``min_thickness``, whatever the unit's pinch policy**: every layer's
+            trigger is capped at its (share of its) minimum (ledger 377,
+            ledger 446), so this number only acts on a unit already below
+            its minimum. A pinching unit (``"passthrough"``/``"inactive"``) is capped
+            just under it -- a 0.8 ft clay with ``min_thickness=0.5`` stays 0.8 ft
+            and active -- and one below its minimum is pinched, and crushed to
+            ``min_sep`` only where it is also within this trigger: a 1.5 ft clay
+            with ``min_thickness=2`` keeps its 1.5 ft and is pinched without being
+            moved. A ``"floor"`` unit is capped at its minimum: a 2.4 ft unit
+            split three ways keeps its 0.8 ft slices under ``trigger_sep=5``.
+            Omitted, a floor layer's trigger IS its minimum, so every floor unit
+            below it is opened to it; a smaller number opens only the floor units
+            at most that thin (the others stay below their minimum), and a larger
+            one changes nothing.
         method : str, default "area"
             Raster sampling method: ``"area"`` (area-weighted) or ``"centroid"``.
         refresh : bool, default False

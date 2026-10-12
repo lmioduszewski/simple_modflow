@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 445 entries (450 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 446 entries (451 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 446 | An explicit `trigger_sep` never thins a `"floor"` unit at or above its own minimum | 2026-10-11 |
 | 445 | `protect_sources` / `protected_labels` are removed; the vertices near a `"line"` band's ring stay held, as... | 2026-10-11 |
 | 444 | Examples, reproducers and notebooks the library broke are EXECUTED by a test, and the rest were run once an... | 2026-10-11 |
 | 443 | The API snapshot pins the signature of every public callable, the set `test_public_parameters_documented` m... | 2026-10-11 |
@@ -17483,10 +17484,12 @@ same day, which is the useful part of the result.
       minimum is pinched exactly as before, and crushed to `min_sep` only where it is also
       within the stack trigger (a 1.5 ft clay with min 2 keeps its 1.5 ft, idomain 0). The tolerance is there
       because the pinch rule is STRICTLY below and the engine's trigger is "at or below": a
-      unit exactly at its minimum was crushed too. **Kept, judgment call:** an explicit
+      unit exactly at its minimum was crushed too. ~~**Kept, judgment call:** an explicit
       `trigger_sep` still replaces a `"floor"` layer's trigger (documented, and
       `test_trigger_sep_can_be_overridden` asserts it) -- a floor unit stays active, so the
-      silent loss is the pinching one. **The ENGINE keeps its documented rule** for direct
+      silent loss is the pinching one.~~ (Reversed by the user, ledger 446: a floor
+      layer's trigger is capped at its share of the unit minimum too, so an explicit
+      `trigger_sep` no longer thins a floor unit at or above it.) **The ENGINE keeps its documented rule** for direct
       callers (`vor.reconcile_surfaces`, `LayerSurfaces`): its docstrings now say it THINS.
       **Same pass, the minimum is divided BY SHARE**, for floor and pinching slices alike:
       divided equally, a 2 ft floor unit at its 2 ft minimum split `[0.9, 0.1]` had its
@@ -18973,3 +18976,32 @@ same day, which is the useful part of the result.
       the vertices near those rings are no longer held there; their inputs are not on
       this machine, so whether those meshes move is unknown. The refused-key message
       says what is held now rather than "it changed no mesh", which Part 2 falsified.
+
+446. **An explicit `trigger_sep` never thins a `"floor"` unit at or above its own minimum (2026-10-11).**
+      The user's call, reversing ledger 377's judgment call: `LayerStack._reconcile_separations`
+      caps EVERY layer's trigger at its share of the unit minimum, through one expression --
+      a pinching layer just under it (`_UNDER_THE_MINIMUM`, ledger 377), a floor layer AT it,
+      because a floor layer's separation IS its minimum, so a unit exactly there is set to
+      where it already is, and a cap below it would leave one a hair under its floor. An
+      explicit `trigger_sep` used to REPLACE a floor layer's trigger, so a 2.4 ft unit split
+      three ways under `trigger_sep=5` came back as three 1/3 ft slices, its base 1.4 ft up.
+      **What `trigger_sep` still does on a floor unit:** a number at or above the minimum is
+      the default exactly (`np.array_equal`); a smaller one opens only the floor units at
+      most that thin, leaving the rest below their minimum, active (unchanged).
+      **Measured, what moves:** only stacks passing an explicit `trigger_sep` larger than a
+      floor layer's share of its minimum. Recorded at `_build` under both rules over the
+      full suite (591 builds, 217 distinct declaration + build-kwarg pairs, 9 passing a
+      `trigger_sep`): 7 had a different trigger and 3 moved -- both cases of
+      `test_an_explicit_trigger_never_thins_a_floor_unit_above_its_minimum` and
+      `test_trigger_sep_can_be_overridden`, the only one that predates this. The other
+      pre-existing one, `test_an_explicit_trigger_does_not_switch_off_a_present_pinching_unit`
+      (`trigger_sep=2` over a floor unit 9.2 ft thick, minimum 1), is byte-identical.
+      `layer_management_workflow`'s 10 distinct stacks: no trigger
+      differs. No example, reproducer or notebook passes `trigger_sep` to a `LayerStack`
+      (the Cumberland archive's `trigger_sep=5` is the engine's `vor.reconcile_surfaces`),
+      and with it omitted the two rules are the same expression. Cases:
+      `docs/reproducers/reconcile_present_units.py`. Revert checks: the replacing rule fails
+      `test_trigger_sep_can_be_overridden` (rewritten to the new rule),
+      `test_an_explicit_trigger_never_thins_a_floor_unit_above_its_minimum[None]`/`[3]` and
+      `test_an_explicit_trigger_leaves_a_floor_unit_exactly_at_its_minimum_where_it_is`,
+      which also fails a floor cap of `_UNDER_THE_MINIMUM`.

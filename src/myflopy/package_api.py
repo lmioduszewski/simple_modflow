@@ -2658,9 +2658,11 @@ def disv(
         PINCHING unit's surfaces; a ``"floor"`` unit uses its own minimum thickness.
     trigger_sep : float, optional
         Layer-stack forms: the separation at or below which reconcile acts at all,
-        length units. Omitted, ``1.0 / <largest split>``. Never reaches a pinching
-        unit at or above its own ``min_thickness``; full text on
-        :meth:`LayerStack.build`.
+        length units. Omitted, ``1.0 / <largest split>`` (a ``"floor"`` unit's own
+        minimum for that unit). Never reaches a unit at or above its own
+        ``min_thickness``, ``"floor"`` units included -- each layer's trigger is
+        capped at its share of the unit minimum, so a number only acts on a unit
+        below it; full text on :meth:`LayerStack.build`.
     method : {"area", "centroid"}, default "area"
         Layer-stack forms: how a raster is sampled onto a cell -- area-weighted, or
         the value at its centroid.

@@ -1607,14 +1607,32 @@ def test_an_unsplit_stack_keeps_the_historical_trigger(real_vor):
 
 
 def test_trigger_sep_can_be_overridden(real_vor):
+    """``trigger_sep`` is overridable, but it never thins a unit at or above its own
+    minimum, ``"floor"`` units included (ledger 446). A 2.4 ft unit split three
+    ways under ``trigger_sep=5`` came back as three 1/3 ft slices, its base moved
+    1.4 ft up: the explicit trigger replaced each floor slice's own. Capped at each
+    slice's share of the unit minimum (1.0 / 3), the 0.8 ft slices are untouched.
+
+    What it still does: below the minimum, it chooses which units reconcile reaches.
+    A 0.6 ft unit split three ways (0.2 ft slices under a 1/3 ft share) is opened to
+    its minimum by default, and left where it lies under a trigger of 0.1."""
+
     loose = _one_unit(real_vor, 2.4, split=3, )
     tight = (LayerStack(real_vor, top=Flat(100))
              .add("u", bottom=Flat(97.6), split=3)
              .add("below", thickness=20).build(trigger_sep=5.0))
     assert np.allclose(loose.thickness[:3, 0], 0.8)
-    # everything trips the raised trigger; each slice is then held at its share of
-    # the unit minimum (1.0 / 3) rather than collapsed to the fallback min_sep
-    assert np.allclose(tight.thickness[:3, 0], 1.0 / 3)
+    assert np.allclose(tight.thickness[:3, 0], 0.8)
+    assert np.allclose(tight.botm[2], 97.6), "the unit's base moved"
+    assert np.array_equal(tight.botm, loose.botm)
+
+    def thin(**build):
+        return (LayerStack(real_vor, top=Flat(100))
+                .add("u", bottom=Flat(99.4), split=3)
+                .add("below", thickness=20).build(**build))
+
+    assert np.allclose(thin().thickness[:3, 0], 1.0 / 3)
+    assert np.allclose(thin(trigger_sep=0.1).thickness[:3, 0], 0.2)
 
 
 @pytest.mark.parametrize("split", [None, 3])

@@ -5,7 +5,9 @@ wrong rows edited; ``LayerStack`` crushed a pinching unit at or above its own
 ``min_thickness`` to ``min_sep`` and switched it off; ``which="top"`` left the contact
 above a raised surface closer than ``min_sep``; ``adjust_top_btm_overlaps`` reconciled
 with the defaults whatever ``min_sep`` it was given and wrote into the caller's frame;
-and a per-layer ``min_sep`` crashed the pinch check with ``TypeError``.
+and a per-layer ``min_sep`` crashed the pinch check with ``TypeError``. And one
+judgment call reversed (ledger 446): an explicit ``trigger_sep`` thinned a
+``"floor"`` unit above its own minimum, since it replaced that layer's trigger.
 """
 
 from __future__ import annotations
@@ -148,6 +150,58 @@ def test_a_floor_unit_split_unequally_keeps_its_base_and_its_shares(vor):
             .build(vor))
     assert np.allclose(thin.thickness[:2, 0], [1.8, 0.2])
 
+
+
+def _floor(vor, bottom, *, min_thickness=2.0, split=None, **build):
+    return (mf.LayerStack(top=Flat(10.0))
+            .add("sand", bottom=Flat(bottom), min_thickness=min_thickness, split=split)
+            .add("below", bottom=Flat(0.0))
+            .build(vor, **build))
+
+
+@pytest.mark.parametrize("split", [None, 3])
+def test_an_explicit_trigger_never_thins_a_floor_unit_above_its_minimum(vor, split):
+    """A 3 ft floor unit with ``min_thickness=2`` came back 2 ft under
+    ``trigger_sep=5`` -- the explicit trigger REPLACED the floor layer's own, and the
+    engine sets every contact within it to the separation, so the unit's base rose
+    1 ft (ledger 446). Capped at its (share of its) minimum, a large trigger is
+    the default: the same arrays, to the bit."""
+
+    n = 1 if split is None else 3
+    result = _floor(vor, 7.0, split=split, trigger_sep=5.0)
+    assert np.allclose(result.botm[n - 1], 7.0), "the floor unit's base moved"
+    assert np.allclose(result.thickness[:n].sum(axis=0), 3.0)
+    default = _floor(vor, 7.0, split=split)
+    assert np.array_equal(result.botm, default.botm)
+    assert np.array_equal(result.idomain, default.idomain)
+
+
+def test_an_explicit_trigger_leaves_a_floor_unit_exactly_at_its_minimum_where_it_is(vor):
+    """The floor cap is the minimum ITSELF, not just under it: the floor layer's
+    separation is its minimum, so a unit exactly at it is set to where it already is,
+    and a cap below it would leave a unit a hair under its floor unopened."""
+
+    result = _floor(vor, 8.0, trigger_sep=5.0)
+    assert np.array_equal(result.botm[0], np.full(result.botm.shape[1], 8.0))
+    floor_trigger = (mf.LayerStack(top=Flat(10.0))
+                     .add("sand", bottom=Flat(8.0), min_thickness=2.0)
+                     .add("below", bottom=Flat(0.0))
+                     ._reconcile_separations([2.0, 1.0], ["floor", "floor"], 0.1, 5.0))
+    assert floor_trigger == ([2.0, 1.0], [2.0, 1.0])
+
+
+def test_trigger_sep_still_chooses_which_thin_floor_units_are_opened(vor):
+    """What an explicit ``trigger_sep`` still does on a floor unit: below its minimum,
+    a number smaller than the minimum opens only a unit at most that thin. A 1.5 ft
+    unit with min 2 is opened to 2 by default and under 1.6, and left 1.5 ft (and
+    active -- ``"floor"`` never pinches) under 1.0."""
+
+    for trigger in (None, 1.6, 5.0):
+        assert np.allclose(_floor(vor, 8.5, trigger_sep=trigger).thickness[0], 2.0)
+    kept = _floor(vor, 8.5, trigger_sep=1.0)
+    assert np.allclose(kept.thickness[0], 1.5)
+    assert np.allclose(kept.botm[0], 8.5)
+    assert set(np.unique(kept.idomain[0])) == {1}
 
 # --- [12] which="top" leaves no contact closer than min_sep ---------------------- #
 
