@@ -99,3 +99,45 @@ def test_every_file_route_refuses_a_key_past_the_runs_periods(toy):
             targets.stats(toy)
     # The periods the run holds still compare.
     assert _head_targets([("W", 22)], pd.DataFrame({"time": [0, 2], "W": [95.0, 96.0]})).stats(toy)["n"].item() == 2
+
+
+# -- ledgers 501 / 502: a well's layer and name ----------------
+
+
+def test_a_present_layer_column_must_hold_a_layer_number_on_every_row(toy):
+    """['2,3', None, 'L3', 0.7] all became layer 0, in silence."""
+
+    locations = pd.DataFrame({"name": ["A", "B", "C", "D", "E"], "cell": [1, 2, 3, 4, 5],
+                              "layer": ["2,3", None, "L3", 0.7, -1]})
+    values = pd.DataFrame({"time": [0], "A": [1.0]})
+    with pytest.raises(ValueError, match=(
+            r"the layer column 'layer' must give every target a zero-based model layer.*"
+            r"5 row\(s\) do not: 'A' \('2,3'\); 'B' \(blank\); 'C' \('L3'\); 'D' \(0\.7\); "
+            r"'E' \(-1\)")):
+        mf.HeadTargets(locations=locations, values=values)
+    with pytest.raises(ValueError, match=r"'D' \(0\.7\)"):
+        mf.HeadTargets.from_cells(cells=[4], names=["D"], layers=0.7, values=[[1.0]])
+    # 1.0 is layer 1; no column at all is layer 0, as documented.
+    whole = mf.HeadTargets(locations=pd.DataFrame({"name": ["A"], "cell": [1], "layer": [1.0]}),
+                           values=values)
+    assert whole.locations_gdf["layer"].tolist() == [1]
+    absent = mf.HeadTargets(locations=pd.DataFrame({"name": ["A"], "cell": [1]}), values=values)
+    assert absent.locations_gdf["layer"].tolist() == [0]
+
+
+def test_a_name_repeated_in_one_layer_is_refused_and_in_two_layers_is_two_screens(toy, tmp_path):
+    """W1 twice in layer 0 became W1_lay0 and W1_lay0_c5 -- two full-weight observations
+    of one series -- and compare() cross-joined it: stats() n = 5 for 2 measurements."""
+
+    values = pd.DataFrame({"time": [0], "W1": [95.0], "W2": [97.0]})
+    for cells in ([5, 5, 22], [5, 15, 22]):
+        locations = pd.DataFrame({"name": ["W1", "w1 ", "W2"], "cell": cells, "layer": 0})
+        with pytest.raises(ValueError, match=(
+                rf"a target name may appear once per layer, and 'W1' in layer 0 \(cell "
+                rf"{cells[0]}, cell {cells[1]}\) is given more than once")):
+            mf.HeadTargets(locations=locations, values=values)
+    # Two layers of one well are two observations, as ledger 234 made them.
+    two = mf.HeadTargets(locations=pd.DataFrame({"name": ["W1", "W1", "W2"], "cell": [5, 5, 22],
+                                                 "layer": [0, 0, 0]}).assign(layer=[0, 1, 0]),
+                         values=values)
+    assert sorted(two.locations_gdf["layer"]) == [0, 0, 1]

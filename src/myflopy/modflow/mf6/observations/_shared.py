@@ -1118,7 +1118,14 @@ def _load_locations(
     group_column: str | None,
     weight_column: str | None,
 ) -> pd.DataFrame:
-    """Load and validate a head-target locations layer."""
+    """Load and validate a head-target locations layer.
+
+    The ``layer`` column, when there is one, must hold a zero-based layer NUMBER on
+    every row (:func:`_location_layers`, ledger 501); with no column every
+    target is in layer 0. A name may not repeat within one layer
+    (:func:`_refuse_names_repeated_in_a_layer`, ledger 502); in two layers it
+    is the two-screen well of ledger 234.
+    """
 
     if isinstance(locations, gpd.GeoDataFrame):
         frame = locations.copy()
@@ -1178,18 +1185,19 @@ def _load_locations(
     if weight_column and weight_column in frame.columns:
         frame = frame.rename(columns={weight_column: "weight"})
 
+    frame["name"] = frame["name"].astype(str)
     if "layer" not in frame.columns:
         frame["layer"] = 0
     else:
-        frame["layer"] = pd.to_numeric(frame["layer"], errors="coerce").fillna(0).astype(int)
+        frame["layer"] = _location_layers(frame["layer"], frame["name"], column=layer_column)
 
     if "group" not in frame.columns:
         frame["group"] = pd.NA
     if "weight" not in frame.columns:
         frame["weight"] = np.nan
 
-    frame["name"] = frame["name"].astype(str)
     frame["name_key"] = _normalize_identifier_series(frame["name"])
+    _refuse_names_repeated_in_a_layer(frame)
     if "cell" in frame.columns:
         frame["cell"] = pd.to_numeric(frame["cell"], errors="coerce")
         if frame["cell"].isna().any():
@@ -1202,6 +1210,86 @@ def _load_locations(
         frame["x"] = pd.to_numeric(frame.get("x", np.nan), errors="coerce")
         frame["y"] = pd.to_numeric(frame.get("y", np.nan), errors="coerce")
     return frame
+
+
+def _location_layers(layers: pd.Series, names: pd.Series, *, column: str | None) -> pd.Series:
+    """Each target's zero-based layer, read from a PRESENT layer column; anything else raises.
+
+    A blank, a non-number (``"2,3"``, ``"L3"``) and a fraction (``0.7``) were read
+    as layer 0 -- the first two by a documented guess, the fraction by ``astype(int)``
+    truncating it -- so a well with no layer typed became a layer-0 target in
+    silence (ledger 501). ``1.0`` is layer 1.
+
+    Parameters
+    ----------
+    layers : pandas.Series
+        The column as given.
+    names : pandas.Series
+        Each row's target name, aligned with ``layers``, for the message.
+    column : str or None
+        The column's name as the caller gave it (``layer_column``), for the message.
+
+    Returns
+    -------
+    pandas.Series
+        The layers as ``int``, aligned with ``layers``.
+
+    Raises
+    ------
+    ValueError
+        When any row's layer is blank, not a number, has a fraction or is
+        negative, naming up to five such rows.
+    """
+
+    numbers = pd.to_numeric(layers, errors="coerce").astype(float)
+    values = numbers.to_numpy()
+    bad = ~np.isfinite(values) | (values != np.floor(values)) | (values < 0)
+    if bad.any():
+        listing = [
+            f"{_shown(name)} ({'blank' if _is_blank(raw) else _shown(raw)})"
+            for name, raw in zip(names[bad], layers[bad], strict=True)
+        ]
+        raise ValueError(
+            f"Head target locations: the layer column {column!r} must give every target a "
+            "zero-based model layer, a whole number from 0, and "
+            f"{len(listing)} row(s) do not: {_listing(listing)}. A blank or unreadable "
+            "layer used to be read as layer 0 (a fraction truncated) in silence. Give each "
+            "row its layer -- MF6's files number layers from 1, so a table written for them "
+            "is one too high -- or drop the column (layer_column=None) to put every target "
+            "in layer 0."
+        )
+    return numbers.astype(int)
+
+
+def _refuse_names_repeated_in_a_layer(frame: pd.DataFrame) -> None:
+    """Refuse a target name given twice in ONE layer (ledger 502).
+
+    Names are compared as targets are matched to their values -- stripped and
+    lower-cased (``name_key``). A name in two layers is one well screened in both
+    (ledger 234); twice in one layer it was two full-weight PEST observations of one
+    measured series (``W1_lay0`` and ``W1_lay0_c5``), and ``compare()`` cross-joined
+    its rows, ``n`` rows becoming ``n**2`` in ``stats()``.
+    """
+
+    repeated = frame.duplicated(subset=["name_key", "layer"], keep=False)
+    if not repeated.any():
+        return
+    listing = []
+    for (_key, layer), group in frame.loc[repeated].groupby(["name_key", "layer"], sort=True):
+        where = (
+            ", ".join(f"cell {int(cell)}" for cell in group["cell"])
+            if "cell" in group.columns and group["cell"].notna().all()
+            else f"{len(group)} rows"
+        )
+        listing.append(f"{_shown(group['name'].iloc[0])} in layer {int(layer)} ({where})")
+    raise ValueError(
+        "Head target locations: a target name may appear once per layer, and "
+        f"{_listing(listing)} {'is' if len(listing) == 1 else 'are'} given more than once "
+        "(names compared ignoring case and surrounding blanks). Each copy became its own "
+        "full-weight PEST observation of the one measured series, doubling its weight. "
+        "Drop the duplicate row, or give two different wells two names; a well screened in "
+        "two layers is one row per layer."
+    )
 
 
 def _normalize_values_frame(

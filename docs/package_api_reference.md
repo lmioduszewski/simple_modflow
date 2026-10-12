@@ -660,7 +660,11 @@ cell id is checked instead: an id the grid does not have, or one inactive in its
 layer, raises (ledger 233). A name used in TWO layers is two observations,
 `<name>_lay<layer>`: `targets.observation_labels(model)` is the one definition,
 and the MF6 records, the simulated CSV, the forward-run mapping and the pst all
-carry it (ledger 234).
+carry it (ledger 234). A name used twice in ONE layer is refused, naming it (ledger
+502): it was two full-weight observations of one series. A `layer` column, when
+present, must give every row a whole number from 0 -- a blank, `"2,3"`, `0.7` or `-1`
+raises naming the rows, where it was read as layer 0 (ledger 501); no column at
+all still means layer 0.
 
 A DRN seepage ZONE reaches the cells it COVERS -- a polygon by area, a trace by
 the cells it runs through, a point the one cell holding it -- active in the

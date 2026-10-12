@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 500 entries (505 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 502 entries (507 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 502 | A head or concentration target name given twice in ONE layer is refused, naming it | 2026-10-12 |
+| 501 | A head or concentration target's PRESENT layer column must give every row a layer number; a blank, a non-nu... | 2026-10-12 |
 | 500 | `compare()`/`stats()` refuse a key past the run's periods on every FILE route, as the observation route and... | 2026-10-12 |
 | 499 | A target's key that is a date, a duration or negative is refused, naming that a zero-based period number is... | 2026-10-12 |
 | 498 | `hover_fields` is refused at every noun and every group and diff surface; the verb takes it | 2026-10-11 |
@@ -20114,3 +20116,26 @@ same day, which is the useful part of the result.
       was never saved is refused like one past `nper`. The function takes `route=` to
       name the file. **Not changed:** the DRN budget route, in `drn.py`, which this
       batch does not own.
+
+501. **A head or concentration target's PRESENT layer column must give every row a layer number; a blank, a non-number, a fraction or a negative raises, naming the rows (2026-10-12).**
+      `_load_locations` read the column with `to_numeric(errors="coerce").fillna(0)
+      .astype(int)`. A blank or unreadable layer was layer 0 by a documented guess,
+      and a fraction was truncated without a word: `['2,3', None, 'L3', 0.7]` came out
+      `[0, 0, 0, 0]`. That contradicts the user's "raise, don't guess" rule, and ledger
+      340 had already refused the same truncation for period keys. **This changes
+      results for an existing target set:** a table carrying any such row, which built
+      before, now raises at construction. **Kept:** no layer column at all, or
+      `layer_column=None`, still puts every target in layer 0, as documented. A
+      1-BASED table (SSPA's, `LayTOS 1..5`) cannot be detected except at a layer equal
+      to `nlay`, which the grid check already refuses; the message says MF6's files
+      number from 1.
+
+502. **A head or concentration target name given twice in ONE layer is refused, naming it (2026-10-12).**
+      `_ensure_unique_observation_names` resolved a repeat by adding `_c<cell>`, so a
+      duplicated row, or a well ID reused at two places in one layer, became two
+      full-weight PEST observations of one measured series. `compare()` cross-joined
+      the rows: 2 measurements gave `stats()` `n = 5`, and the build wrote two weight-1
+      observations at one `obsval`. Names are compared as values are matched to them
+      (stripped, lower-cased). A name in two LAYERS is still one well screened in both,
+      two observations, by ledger 234's decision; the double weight that gives a
+      two-screen well is that decision's, and is not changed here.

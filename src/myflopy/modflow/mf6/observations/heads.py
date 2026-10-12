@@ -99,8 +99,10 @@ class HeadTargets:
         Only the ``name_column``, ``cell``/``node``, ``layer_column``,
         ``group_column`` and ``weight_column`` columns (and the geometry) are
         kept. Raises ``ValueError`` when ``name_column`` is missing, when a
-        table with no geometry has no ``cell``/``node`` column, or when a cell
-        value is not numeric.
+        table with no geometry has no ``cell``/``node`` column, when a cell
+        value is not numeric, when a present ``layer_column`` holds anything
+        but a whole number from 0, or when a name repeats within one layer
+        (see ``layer_column``).
     values : str, pathlib.Path, pandas.DataFrame, pandas.Series, dict, list or tuple
         Target values through time. A path is read with ``pandas.read_csv``; a
         ``dict`` is read as columns and a list/tuple as rows (``times`` can
@@ -130,7 +132,13 @@ class HeadTargets:
     layer_column : str or None, optional
         Column of ``locations`` holding each target's zero-based model layer.
         Default ``"layer"``. ``None``, or a column that is not there, puts
-        every target in layer 0, and a blank or non-numeric entry is read as 0.
+        every target in layer 0. When the column IS there every row must give a
+        whole number from 0 (``1.0`` is layer 1): a blank, a non-number
+        (``"2,3"``, ``"L3"``), a fraction or a negative raises ``ValueError``
+        naming the rows (ledger 501 -- a blank or non-number was read
+        as 0, and a fraction truncated). A name may appear once per layer --
+        twice in ONE layer raises, naming it (ledger 502); in two
+        layers it is one well screened in both, two observations (ledger 234).
         A target only matches a cell that is ACTIVE in its own layer
         (:meth:`match_to_model`).
     group_column : str or None, optional
@@ -307,7 +315,9 @@ class HeadTargets:
         layers : int, sequence of int or None, optional
             Zero-based model layer of each target. Default ``0``. A scalar
             applies to every cell and ``None`` means 0; a list, tuple, array or
-            ``Series`` must have one entry per cell (``ValueError``).
+            ``Series`` must have one entry per cell (``ValueError``). Each must
+            be a whole number from 0: a blank, a fraction or a negative raises
+            (ledger 501).
         groups : object, sequence or None, optional
             Observation-group label per target -- its PEST observation group
             (see the constructor's ``group_column``, which says how a label
@@ -340,7 +350,9 @@ class HeadTargets:
         if count == 0:
             raise ValueError("from_cells(...) requires at least one cell.")
         names_list = _coerce_label_list(names, count=count, default_prefix="OBS")
-        layer_list = [int(value) for value in _coerce_scalar_or_list(layers, count=count, default=0)]
+        # Checked where every location table is (``_location_layers``): ``int()``
+        # here truncated a fractional layer in silence (ledger 501).
+        layer_list = list(_coerce_scalar_or_list(layers, count=count, default=0))
         group_list = _coerce_scalar_or_list(groups, count=count, default=pd.NA)
         weight_list = _coerce_scalar_or_list(weights, count=count, default=np.nan)
         locations = pd.DataFrame(
