@@ -24,8 +24,9 @@ from myflopy.modflow.mf6.canonical_transport import (
 )
 from myflopy.modflow.mf6.pest.native_parameters import (
     NativeParameterSpec,
-    _select_layer_files,
+    TargetFile,
     resolve_target,
+    select_layers,
 )
 from myflopy.modflow.mf6.pest.project import METADATA_FILENAME
 
@@ -94,21 +95,21 @@ def test_layers_on_a_whole_grid_array_is_refused_not_ignored():
 
     recipe = resolve_target("porosity")
     with pytest.raises(ValueError, match="single whole-grid array"):
-        _select_layer_files(["m_t.mst_porosity.txt"], [0], recipe)
+        select_layers([TargetFile("m_t.mst_porosity.txt", "mst")], [0], recipe)
 
 
 def test_layers_that_match_no_file_names_the_ones_that_exist():
     """Same fallthrough, per-layer case: ``layers=[9]`` on a 4-layer model used
     to silently parameterize all four."""
 
-    files = [f"m.npf_k_layer{i}.txt" for i in (1, 2, 3, 4)]
+    files = [TargetFile(f"m.npf_k_layer{i + 1}.txt", "npf", i) for i in range(4)]
     recipe = resolve_target("k")
 
-    assert _select_layer_files(files, [0, 2], recipe) == [
+    assert [target.filename for target in select_layers(files, [0, 2], recipe)] == [
         "m.npf_k_layer1.txt", "m.npf_k_layer3.txt"
     ]
     with pytest.raises(ValueError, match=r"Available layers: \[0, 1, 2, 3\]"):
-        _select_layer_files(files, [9], recipe)
+        select_layers(files, [9], recipe)
 
 
 def _relayer_stub(*, layered, nlay, values):
@@ -121,13 +122,15 @@ def _relayer_stub(*, layered, nlay, values):
     array = SimpleNamespace(
         supports_layered=lambda: True,
         _get_storage_obj=lambda: SimpleNamespace(layered=layered),
-        get_data=lambda: values,
+        get_data=lambda apply_mult=False: values,
         store_internal=lambda: calls.append("store_internal"),
         make_layered=lambda: calls.append("make_layered"),
         set_data=lambda data: calls.append(("set_data", len(data))),
     )
     transport = SimpleNamespace(
-        get_package=lambda name: SimpleNamespace(porosity=array),
+        # Asked by TYPE (ledger 352): `get_package()` with no name lists the packages.
+        get_package=lambda: [SimpleNamespace(porosity=array, package_type="mst",
+                                             package_name="mst")],
         modelgrid=SimpleNamespace(nlay=nlay),
         model_type="gwt6",
     )
@@ -180,20 +183,27 @@ def test_relayering_is_skipped_when_it_would_be_wrong_or_pointless():
 
 def test_a_stale_whole_grid_file_never_wins_over_the_per_layer_files(tmp_path):
     """Relayering an array that was ALREADY external leaves the old whole-grid
-    file on disk -- unreferenced by the package, but still there. Resolving the
-    exact name first would point every parameter at values MODFLOW no longer
-    reads, and the calibration would run happily against them."""
+    file on disk -- unreferenced by the package, but still there. A file name glob
+    had to try the per-layer names first to avoid pointing every parameter at values
+    MODFLOW no longer reads; the files now come from FloPy's own records of the
+    package (ledger 517), which name only what MF6 reads."""
 
-    from myflopy.modflow.mf6.pest.native_parameters import _resolve_files
+    import flopy
 
-    recipe = resolve_target("porosity")
-    (tmp_path / "m_t.mst_porosity.txt").write_text("0.25\n", encoding="utf-8")
-    assert _resolve_files(tmp_path, "m_t", recipe) == ["m_t.mst_porosity.txt"]
+    from myflopy.modflow.mf6.pest.native_parameters import package_target_files
 
-    for layer in (1, 2):
-        (tmp_path / f"m_t.mst_porosity_layer{layer}.txt").write_text("0.25\n", encoding="utf-8")
-    assert _resolve_files(tmp_path, "m_t", recipe) == [
-        "m_t.mst_porosity_layer1.txt", "m_t.mst_porosity_layer2.txt"
+    sim = flopy.mf6.MFSimulation("s", sim_ws=str(tmp_path), exe_name="mf6")
+    flopy.mf6.ModflowTdis(sim)
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="m")
+    flopy.mf6.ModflowGwfdis(gwf, nlay=2, nrow=1, ncol=3, top=10.0, botm=[5.0, 0.0])
+    flopy.mf6.ModflowGwfnpf(gwf, k=[[[1.0, 2.0, 3.0]], [[4.0, 5.0, 6.0]]])
+    sim.set_all_data_external()
+    sim.write_simulation(silent=True)
+    (tmp_path / "m.npf_k.txt").write_text("0.25\n", encoding="utf-8")
+    recipe = resolve_target("k")
+    targets = package_target_files(gwf, recipe, [gwf.npf], tmp_path)
+    assert [(target.filename, target.layer) for target in targets] == [
+        ("m.npf_k_layer1.txt", 0), ("m.npf_k_layer2.txt", 1)
     ]
 
 
@@ -214,18 +224,18 @@ def test_a_whole_grid_capture_file_does_not_claim_to_be_layer_zero():
 
     from myflopy.modflow.mf6.pest.project import PestProject
 
-    def _capture(filename):
+    def _capture(filename, layer):
         project = SimpleNamespace(
             pf=SimpleNamespace(add_observations=lambda *a, **k: None),
             _capture_field_specs={},
         )
         spec = NativeParameterSpec(target="porosity", capture=True)
-        spec.resolved_files = [filename]
+        spec.resolved_targets = [TargetFile(filename, "mst", layer)]
         PestProject._add_capture_field_observations(project, spec)
         return project._capture_field_specs["porosity"]["layer_prefixes"]
 
-    assert _capture("m_t.mst_porosity.txt") == {}
-    assert _capture("m_t.mst_porosity_layer3.txt") == {2: "porosityfieldl2"}
+    assert _capture("m_t.mst_porosity.txt", None) == {}
+    assert _capture("m_t.mst_porosity_layer3.txt", 2) == {2: "porosityfieldl2"}
 
 
 @pytest.mark.slow

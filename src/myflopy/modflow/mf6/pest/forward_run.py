@@ -408,3 +408,55 @@ def write_named_series_targets(kind, locations_file, output_csv, sim_ws=".", mod
         simulated = simulated.fillna(targets._PEST_NO_STAGE)
     simulated.to_csv(output_csv, index=False)
 
+
+
+def carry_river_bottom(model_file, pair_csv, stage_col, rbot_col):
+    """Move each river record's bottom by its stage's offset, keeping the declared depth.
+
+    Runs as a pre-model command of the forward run AFTER pyEMU's
+    ``apply_list_and_array_pars`` (which pyEMU puts first), on a RIV list file a
+    ``riv.stage`` parameter offsets. pyEMU moves the STAGE column only; this sets
+    ``rbot = rbot_start + (stage - stage_start)`` row by row, from the values the
+    build recorded in ``pair_csv``, so a record keeps its depth: lowering a stage
+    alone pushed it below its bottom, which MF6 refuses at any icelltype, and changed
+    the depth, which moves the river's flux (ledgers 290/291's pair rule; ledger
+    519). Idempotent: run twice, it writes the same file.
+
+    Self-contained: pyEMU copies only this function's source into the generated
+    forward run, so it must not depend on other module-level helpers.
+
+    Parameters
+    ----------
+    model_file : str
+        The RIV external list file MF6 reads, as pyEMU just wrote it, relative to the
+        forward run's directory.
+    pair_csv : str
+        The build's record of the file's starting ``stage`` and ``rbot``, one row per
+        record in file order.
+    stage_col : int
+        Zero-based column of the stage in ``model_file``, on the model's grid (two
+        further right of the cellid's first column on DISV, ledger 420).
+    rbot_col : int
+        Zero-based column of the river bottom in ``model_file``.
+
+    Raises
+    ------
+    ValueError
+        When ``model_file`` holds a different number of records than ``pair_csv``.
+    """
+
+    import pandas as pd
+
+    rows = pd.read_csv(model_file, sep=r"\s+", header=None, dtype=str, keep_default_na=False)
+    start = pd.read_csv(pair_csv)
+    if len(rows) != len(start):
+        raise ValueError(
+            f"{model_file} holds {len(rows)} records and {pair_csv} {len(start)}: the "
+            "river bottom cannot be carried with its stage record by record."
+        )
+    stage = pd.to_numeric(rows[stage_col]).to_numpy()
+    rbot = start["rbot"].to_numpy(dtype=float) + (stage - start["stage"].to_numpy(dtype=float))
+    rows[rbot_col] = [repr(float(value)) for value in rbot]
+    with open(model_file, "w", encoding="utf-8") as handle:
+        for values in rows.itertuples(index=False):
+            handle.write(" ".join(str(value) for value in values) + "\n")

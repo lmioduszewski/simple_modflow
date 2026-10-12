@@ -59,7 +59,40 @@ cal.parameterize("uzf.vks", style="grid", correlation=400, bounds=(0.2, 5))
 
 # zones: one multiplier per label, from a raster, a polygon layer, or an array
 cal.parameterize("k", style="zone", zones=mf.ZoneSpec.from_raster("hsu.tif", model))
+
+# elevations are OFFSETS in model units; bounds default to (-2, 2)
+cal.parameterize("drn.elev")
+# two RIV packages (riv + crisp): name the one, or share one set
+cal.parameterize("riv.cond", package="crisp", bounds=(0.1, 10))
+cal.parameterize("riv.stage", package=("riv", "crisp"), bounds=(-1, 1))
 ```
+
+**A target scales the packages of its TYPE.** `ghb.cond` scales every GHB record
+whatever the package is named, through the files FloPy's own records of the run's
+packages name -- it used to guess the file name from the type, so a GHB named `edge`
+was not found and a second DRN (`seeps` beside `drn`) was left out with no word (ledger
+517). A model with SEVERAL packages of the type refuses a call with no
+`package=`, naming each and the spellings: `package="crisp"` picks one, and
+`package=("riv", "crisp")` shares one parameter set (its default name gains
+`_<package>`, `rivcond_crisp`). Two creeks are usually two parameters.
+
+**An elevation is an offset, never a multiplier.** `chd`, `ghb.bhead`, `drn.elev` and
+`riv.stage` are additive in model length units -- `bounds=(-2, 2)` by default --
+because a multiplier on a head scales with the datum (x1.1 moves a 400 ft head 40 ft and
+a 40 ft one 4). `additive=False` there is refused, and so are bounds that EXCLUDE the
+value a parameter starts at: 0 for an offset, 1.0 for a multiplier and every pilot point
+(`bounds=(2, 5)` would start each one outside its own range, ledger 518).
+To raise K by 2-5x, change the model and calibrate around it. **`riv.stage` moves each
+record's river bottom by the same offset**, so its depth -- what sets the river's flux
+-- survives every realization (ledgers 290/291); a record already below its bottom is
+refused at build.
+
+**An argument that cannot act is refused, not ignored** (ledger 520):
+`layers=` on a list target (use `zones=`), `correlation=` on `constant`/`zone`, a
+variogram shape (`anisotropy`/`bearing`/`nugget`) without `correlation=`,
+`temporal=`, and any style but `constant`/`zone`/`grid`/`pilotpoints` -- pyEMU's own
+`"pp"` names `"pilotpoints"`. A parameter name used twice is refused too: give each
+stacked call its own `name=`.
 
 **Zones** are per-cell integer labels; `style="zone"` gives one adjustable multiplier
 per distinct label. `ZoneSpec.from_raster` samples a categorical raster by **majority
@@ -100,7 +133,11 @@ concentration together**: heads pin K, and concentration then pins porosity.
 `build_canonical_transport_calibration_demo` ships both target families for this reason.
 
 `layers=` is rejected on a target MODFLOW writes as one whole-grid array, rather than
-being quietly ignored the way it used to be.
+being quietly ignored the way it used to be. A multi-layer `style="grid"` parameter is
+one group per layer, named by the ZERO-BASED layer (`kl0`, `kl1`, as pilot points are);
+a correlated one is refused above 5,000 parameters per group, because its prior is a
+dense covariance of every pair (about 1 GB at 5,000, 12 GB for one 20,323-cell layer;
+ledger 522) -- pilot points carry a correlated field for a fraction of that.
 
 **`style="pilotpoints"` works on porosity too**, as of 2026-07-30. It was briefly
 documented here as flow-only, because the pilot-point interpolation read a hardcoded

@@ -33,10 +33,18 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 516 entries (521 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 524 entries (529 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 524 | The build metadata records every `parameterize` call under `parameters`; `parameter_sets` is gone | 2026-10-12 |
+| 523 | A parameter name already declared is refused at `parameterize()` | 2026-10-12 |
+| 522 | A correlated `style="grid"` block above 5,000 parameters is refused at build | 2026-10-12 |
+| 521 | A multi-layer `style="grid"` group is named by its ZERO-BASED layer | 2026-10-12 |
+| 520 | Every `parameterize` argument that cannot act is refused, and so is any style but the four | 2026-10-12 |
+| 519 | `riv.cond` and `riv.stage` are targets, and `riv.stage` moves each record's bottom with its stage | 2026-10-12 |
+| 518 | An elevation target is an ADDITIVE offset, and bounds must hold the value a parameter starts at | 2026-10-12 |
+| 517 | A parameter's files are FloPy's own records of the packages of its TYPE, and several packages of a type nee... | 2026-10-12 |
 | 516 | A PEST run is a copy only when its build marker names ANOTHER build the same scan finds, so a moved or copi... | 2026-10-12 |
 | 515 | `best("min_phi")` returns only a realization PESTPP-IES kept | 2026-10-12 |
 | 514 | `field()`, `plot_field` and `parameters_at_bounds` take a log-transformed parameter's statistics in log10,... | 2026-10-12 |
@@ -2637,7 +2645,7 @@ same day, which is the useful part of the result.
        `if selected:` (and `... or files` in `pilot_points.py`) -- so `layers=[0]` on a
        target with no per-layer files, or `layers=[9]` on a 4-layer model, parameterized
        EVERY layer while the control file looked exactly as the caller intended.
-     - Now `_select_layer_files` refuses, naming which case it is: a whole-grid array has
+     - Now ~~`_select_layer_files`~~ `select_layers` (ledger 517) refuses, naming which case it is: a whole-grid array has
        no per-layer file to pick, and a bad layer index lists the ones that exist.
      - **This is a behavior change**, not purely additive: a call that used to "work"
        now raises. Every existing use in the repo passes valid layers, so nothing
@@ -2682,7 +2690,9 @@ same day, which is the useful part of the result.
      - `store_internal()` runs first so a model LOADED from a previous run — its
        griddata already external and unlayered — can still be calibrated. That
        leaves the old whole-grid file on disk, unreferenced by the package. So
-       `_resolve_files` now matches per-layer files BEFORE the exact name;
+       ~~`_resolve_files` now matches per-layer files BEFORE the exact name~~ the files
+       are the ones FloPy's records of the package name since ledger 517,
+       which never include the stale one;
        resolving the stale file instead would point every parameter at values
        MODFLOW no longer reads, and the calibration would run happily against
        them. The stale file is left in place rather than deleted — this code
@@ -2717,7 +2727,8 @@ same day, which is the useful part of the result.
        (transport) rather than the precondition (does the recipe name its base
        array?). `k33` is a flow target, so it sailed through, and every future flow
        array target would have inherited the bug. The replacement guard states the
-       real precondition.
+       real precondition. (Since ledger 517 every recipe names its package
+       type and dataset to find its files at all, so the guard is structural.)
      - Fixing it made the old refusal's stated reason false, so transport pilot
        points are now SUPPORTED, not refused: verified that porosity pilot points
        interpolate against the MST array (0.40, the spoiled truth) and not NPF K.
@@ -20369,3 +20380,108 @@ same day, which is the useful part of the result.
       none. A `worker_<n>` whose marker does not name itself is skipped whatever it
       names. **Not done:** a backup whose original was deleted is listed, as the only
       copy left.
+
+517. **A parameter's files are FloPy's own records of the packages of its TYPE, and several packages of a type need `package=` (2026-10-12).**
+      Every list recipe globbed `{model}.<type>_stress_period_data_*.txt`, but FloPy names
+      an external file after the package's FILE: on a model with DRN `drn` and `seeps`,
+      `drn.cond` scaled `drn` alone with no word, and a model whose only GHB is `edge`
+      raised `FileNotFoundError` (measured, finding build-7/params-4). **Chosen:**
+      `native_parameters.target_files` finds the packages on the build's STAGED model by
+      type (`package_registry.packages_of_type`, RCHA counting as RCH) and reads each
+      file name off the dataset's STORAGE after `set_all_data_external()` -- per period,
+      per layer -- relative to the simulation's directory, as MF6 reads it. Not off
+      `get_record()`: it loads the data, and for a model in a sub-directory (myflopy
+      writes coupled models that way) it opened the list file at the model's path where
+      FloPy had written it at the simulation's (measured, `FileNotFoundError`). Several
+      packages of the type with no `package=` raise `SeveralPackagesError` naming each
+      and the spellings (ledger 352's rule, settled with the design); a name picks one, a
+      sequence shares ONE parameter set, and the default name gains `_<package>`. Asked
+      at `parameterize()` of the model object when it can list its packages, and again
+      at `build()` of the staged model, which is authoritative. A recipe's value column
+      and whether it is an elevation come from the registry's `record_fields` and
+      `FieldSpec.kind`; a recipe cannot be written without a package type and dataset,
+      so two `test_parameterize_payoff.py` AUTOMATIC sites were replaced by stronger
+      ones (the pilot-point guard became structural; the per-layer-first glob became
+      the records). `recharge` on an ARRAY RCH is refused naming the form (item 1 adds
+      the recipe). **Not done:** pyEMU's `use_rows` (records within one file) is not
+      used -- a file belongs to one package, so it is not needed here; note for its
+      first user that pyEMU falls back to ALL rows when none match.
+
+518. **An elevation target is an ADDITIVE offset, and bounds must hold the value a parameter starts at (2026-10-12).**
+      The user's answer to Q1. `chd` and `ghb.bhead` were log multipliers with bounds
+      (0.5, 2.0), so a 400 ft head ranged 200-800 ft and the prior scaled with the
+      datum; `drn.elev` was additive but inherited (0.5, 2.0), so it started at 0
+      OUTSIDE its bounds and could only raise a drain (finding params-5/params-6).
+      **Chosen:** additive comes from `FieldSpec.kind == "elevation"` (`chd`,
+      `ghb.bhead`, `drn.elev`, `riv.stage`), one rule with ledger 297; `additive=False`
+      there is refused; `bounds=None` is (-2.0, 2.0) model length units for an offset
+      and (0.5, 2.0) for a multiplier. The +-2 is a judgment, not a measurement: the
+      user asked for a symmetric default "e.g. -2..+2", about a surveyed stage or head's
+      uncertainty. Bounds that EXCLUDE the start -- 0 for an offset, 1.0 for a
+      multiplier and every pilot point -- are refused in `NativeParameterSpec`, not the
+      pilot engine, as is a log multiplier's lower bound <= 0 and lower >= upper.
+      **Behaviour change:** a script that calibrated `chd`/`ghb.bhead` as multipliers
+      now raises on its multiplier bounds (the repo's `(0.9, 1.1)` CHD calls moved to
+      `(-1.0, 1.0)`), and one passing no bounds gets offsets of +-2.
+
+519. **`riv.cond` and `riv.stage` are targets, and `riv.stage` moves each record's bottom with its stage (2026-10-12).**
+      Ledgers 290/291's pair rule: pyEMU offsets the STAGE column, and
+      `forward_run.carry_river_bottom`, a pre-model command after pyEMU's apply, sets
+      `rbot = rbot_start + (stage - stage_start)` from a `<file>.riv_pair.csv` the
+      build writes -- not from pyEMU's `org/` copy, whose layout is pyEMU's own.
+      Measured on DISV, DIS and DISU: +1.5 moves both columns by 1.5, leaves cond, and
+      MF6 terminates normally. A record whose stage is already below its bottom is
+      refused at build (MF6 refuses it at any icelltype, and every realization would
+      carry it). **Not done:** an offset that lowers `rbot` below its CELL bottom is
+      not checked -- at icelltype != 0 MF6 fails that realization, at 0 it over-drains
+      (ledger 290); keeping the bounds inside each record's clearance is left to the
+      caller, since the clearance differs per record and per layer.
+
+520. **Every `parameterize` argument that cannot act is refused, and so is any style but the four (2026-10-12).**
+      The user's rule (ledgers 332-334). Refused, naming the spelling that acts: a
+      style not in `constant/zone/grid/pilotpoints` -- pyEMU's `"pp"`/`"pilot_points"`
+      reached pyEMU's structured-grid pilot points and died on DISV with `'VertexGrid'
+      object has no attribute 'delr'` (finding params-12), so they name
+      `"pilotpoints"` rather than being mapped to it; `layers=` on a list target;
+      `additive=True` and `**extra` on array-target pilot points; `temporal=` (nothing
+      reads it; round 2 replaces it); `correlation=` on constant/zone;
+      `anisotropy`/`bearing`/`nugget` without `correlation=`, and `bearing` with
+      `anisotropy=1.0`. **Not done here:** `zones=` on array pilot points (the pilot
+      lane makes it act) and `pp_space`/`pp_points` on other styles (the pilot lane
+      owns those arguments).
+
+521. **A multi-layer `style="grid"` group is named by its ZERO-BASED layer (2026-10-12).**
+      Groups were numbered by file position from 1 (`kl1` = the first selected layer)
+      beside pilot points' zero-based `kl<layer>`, so `layers=[2, 3]` gave `kgl1/kgl2`
+      next to `kvl2/kvl3` (finding params-15). A grid selecting ONE layer file keeps
+      the bare name, as before. **Behaviour change:** every multi-layer grid group name
+      moves down by one (or more, with `layers=`).
+
+522. **A correlated `style="grid"` block above 5,000 parameters is refused at build (2026-10-12).**
+      Its prior is drawn from a dense n x n covariance at every `run_ies()`/`prior()`:
+      measured (`docs/reproducers/correlated_grid_prior_size.py`, 100 realizations)
+      0.99 GB peak and 3.7 s at 5,000, 1.92 GB and 7.7 s at 8,000, growing as n**2 --
+      near 12 GB for one 20,323-cell Ten Trails layer, which raised `MemoryError` under
+      a 12 GB cap (finding scale-5). The limit is `CORRELATED_GRID_LIMIT`, counted per
+      parameter group after pyEMU's `add_parameters`, and the refusal points at pilot
+      points, `zones=`, or no correlation. **Not done:** a sparse, tapered or spectral
+      draw on an unstructured grid, and caching the drawn prior across launches.
+
+523. **A parameter name already declared is refused at `parameterize()` (2026-10-12).**
+      A second call under one name overwrote the first's records: two pilot-point calls
+      left the first set out of the control file while its forward-run step kept
+      reading a table frozen at 1.0 (finding build-2/params-2). Refused (any case)
+      rather than suffixed automatically, because the name keys pyEMU's parameter
+      names, the groups the review and write-back read, and the metadata.
+
+524. **The build metadata records every `parameterize` call under `parameters`; `parameter_sets` is gone (2026-10-12).**
+      `parameter_sets` was always `[]`: its loop read `_parameter_specs`, which nothing
+      filled, and nothing read it (finding build-6). Each record holds the name,
+      target, family, package type, `package=`, the packages scaled, style,
+      transform, bounds, physical, additive, layers, zone LABELS, correlation, every
+      file with its package/layer/period, the parameter groups, and a pilot-point
+      set's group and template -- what item 14's write-back reads. The dead
+      `_parameter_specs`, `_prepared_parameters`, `_parameter_frames`,
+      `_registered_geostructs` and `_forward_run_config` were removed. **Not
+      recorded:** the zone ARRAY itself and the pilot points' coordinates, which live
+      in the template's own files.

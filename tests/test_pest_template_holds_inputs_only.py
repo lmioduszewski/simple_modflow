@@ -139,7 +139,7 @@ def test_an_output_is_written_inside_each_realizations_copy(tmp_path, budget):
     assert "Normal termination" in ran.stdout
     model = mf.load_mf6_run(run)
     cal = model.pest("out", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
     if budget != "out/m.cbc":
         with pytest.raises(ValueError, match=r"(?s)writes output outside its run directory: "
                                              rf"'{budget}' \(FILEOUT in m.oc.*each would write "
@@ -179,7 +179,7 @@ def test_a_models_listing_file_is_written_inside_each_realizations_copy(tmp_path
     assert (run / listing).stat().st_size > 0
     model = mf.load_mf6_run(run)
     cal = model.pest("lst", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
     if listing != "out/m.lst":
         with pytest.raises(ValueError, match=r"(?s)writes output outside its run directory: "
                                              rf"'{listing}' \(LIST in m\.nam\).*each would "
@@ -236,7 +236,7 @@ def test_a_build_refuses_an_input_named_relative_to_outside_the_run(tmp_path):
     rerun("../shared/k.txt")
     model = mf.load_mf6_run(run)
     cal = model.pest("outside", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
     with pytest.raises(ValueError) as refused:
         cal.build("outside.pst")
     message = str(refused.value)
@@ -247,7 +247,7 @@ def test_a_build_refuses_an_input_named_relative_to_outside_the_run(tmp_path):
     rerun(str(shared))
     model = mf.load_mf6_run(run)
     cal = model.pest("outside", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         cal.build("outside.pst")

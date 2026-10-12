@@ -28,11 +28,9 @@ from myflopy.modflow.mf6.grid.geometry import model_cell_polygons
 from myflopy.modflow.mf6.package_explorer_utils import cell_numbering
 from myflopy.modflow.mf6.pest.native_parameters import (
     _flatten_array_file,
-    _resolve_files,
-    _select_layer_files,
     flopy_model_for,
-    model_name_for,
     staged_model,
+    target_files,
 )
 
 
@@ -160,12 +158,9 @@ def add_pilot_point_parameter(project, spec) -> pd.DataFrame:
     parameters after ``build_pst``.
     """
 
-    files = _resolve_files(
-        project.template_workspace, model_name_for(project, spec.recipe), spec.recipe
-    )
-    if spec.layers is not None:
-        files = _select_layer_files(files, spec.layers, spec.recipe)
-    spec.resolved_files = list(files)
+    # FloPy's own records of the staged model, by package TYPE, narrowed to
+    # `layers=` (ledger 517); sets `spec.resolved_files`.
+    files = [target.filename for target in target_files(project, spec)]
     for name in files:
         _flatten_array_file(Path(project.template_workspace) / name)
 

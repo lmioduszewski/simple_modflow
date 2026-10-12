@@ -56,8 +56,10 @@ class PestSettings:
             for par in self.parameters:
                 phys = par.get("physical")
                 phys_txt = f" physical={tuple(phys)}" if phys else ""
+                package = par.get("package")
+                package_txt = f" package={package!r}" if package is not None else ""
                 lines.append(
-                    f"    - {par['target']:<10} style={par['style']:<11} "
+                    f"    - {par['target']:<10}{package_txt} style={par['style']:<11} "
                     f"bounds={tuple(par['bounds'])}{phys_txt} "
                     f"transform={par['transform']}"
                 )

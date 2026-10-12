@@ -1901,7 +1901,7 @@ def test_grid_k_parameterization_on_voronoi_with_capture(tmp_path):
     assert len(kspec.resolved_files) == 2
     assert all("npf_k_layer" in name for name in kspec.resolved_files)
     assert pst.npar_adj == 2 * ncpl + 1
-    assert pst.parameter_data["pargp"].nunique() == 3  # kl1, kl2, recharge
+    assert pst.parameter_data["pargp"].nunique() == 3  # kl0, kl1, recharge
 
     # Capture obs: per-cell K field per layer, distinct (non-colliding) names,
     # all zero-weight.
@@ -2014,32 +2014,18 @@ def test_pilot_points_scale_their_own_target_not_the_k_field(tmp_path):
 
 
 def test_pilot_points_refuse_an_array_target_with_no_declared_base_array():
-    """The replacement guard: pilot points multiply a base array read off the
-    model, so an ARRAY recipe that does not name one must refuse rather than
-    fall back to whatever package the code happened to hardcode.
-
-    Driven through a synthetic recipe because all three shipped array targets
-    declare package/variable -- which is the point: the guard now describes the
-    real precondition instead of naming one model kind.
+    """Pilot points multiply a base array read off the model, so an ARRAY recipe has
+    to name one. That was a guard in `NativeParameterSpec`; since every recipe names
+    its package TYPE and dataset to find its files (ledger 517), a recipe
+    that names none cannot be written at all.
     """
 
     from myflopy.modflow.mf6.pest import native_parameters as np_mod
 
-    incomplete = np_mod._Recipe("mystery", "array", "{model}.mystery.txt")
-    original = dict(np_mod._RECIPES)
-    np_mod._RECIPES["mystery"] = incomplete
-    try:
-        with pytest.raises(NotImplementedError, match="which model array"):
-            np_mod.NativeParameterSpec(target="mystery", style="pilotpoints")
-        # ...but the same recipe is fine on the styles that need no base array.
-        assert np_mod.NativeParameterSpec(target="mystery", style="constant").style == "constant"
-    finally:
-        np_mod._RECIPES.clear()
-        np_mod._RECIPES.update(original)
-
-    # The array targets that DO declare one are accepted -- including the
-    # transport target the previous guard refused for a reason that the
-    # recipe-resolved base array has now removed.
+    with pytest.raises(TypeError):
+        np_mod._Recipe("mystery", "array")
+    # The array targets declare one -- including the transport target the guard
+    # before the recipe-resolved base array refused.
     for target in ("k", "k33", "porosity"):
         assert np_mod.NativeParameterSpec(target=target, style="pilotpoints").style == "pilotpoints"
 

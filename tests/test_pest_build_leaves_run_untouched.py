@@ -103,7 +103,7 @@ def _calibrate(model, workspace: Path | None, *, name="s1"):
 
     cal = model.pest(name, workspace=workspace, start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), capture=True)
-    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
     grid = model.gwf.modelgrid
     points = np.c_[np.asarray(grid.xcellcenters)[PP_CELLS], np.asarray(grid.ycellcenters)[PP_CELLS]]
     cal.parameterize("k33", style="pilotpoints", pp_points=points, bounds=(0.5, 2.0))

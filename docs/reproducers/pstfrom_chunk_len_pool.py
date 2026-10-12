@@ -93,7 +93,7 @@ def build(root: pathlib.Path) -> pathlib.Path:
         warnings.simplefilter("ignore")
         run = mf.Project(root / "p", name="p").run("r", simulation)
         cal = run.model().pest("chunks", workspace=root / "chunks", start_datetime="2024-01-01")
-        cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+        cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
         cal.observe(mf.HeadTargets(
             locations=pd.DataFrame({"name": ["W1"], "cell": [14], "layer": [0]}),
             values=pd.DataFrame({"time": [NPER - 1], "W1": [100.0]}),

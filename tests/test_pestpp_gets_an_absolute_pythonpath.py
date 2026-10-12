@@ -39,7 +39,7 @@ def calibration(tmp_path):
 
     model = mf.load_mf6_run(_dis_run(tmp_path / "run"))
     cal = model.pest("pp", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         cal.build("pp.pst", noptmax=0)

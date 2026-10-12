@@ -47,12 +47,20 @@ AUTOMATIC_SITES = frozenset(
         "spec.style_default",
         "spec.additive_default",
         "spec.name_slug",
-        "spec.pilotpoints_guard",
+        # Ledger 517 replaced two sites with stronger ones: the
+        # pilot-point guard against an array recipe naming no base array is now
+        # STRUCTURAL (a recipe cannot be written without its package type and
+        # dataset), and the file-name glob that had to try per-layer names first is
+        # FloPy's own records of the package, found by TYPE.
+        "recipe.requires_package",
+        "recipe.use_col_from_registry",
+        "spec.additive_from_kind",
+        "spec.package_slug",
         "model_name_for",
         "flopy_model_for",
         "relayer_array_target",
-        "resolve_files.layered_first",
-        "select_layer_files",
+        "target_files.by_type",
+        "select_layers",
         "zone_resolution",
     }
 )
@@ -90,6 +98,8 @@ DOC_TOKENS = {
     "ghb.bhead": "ghb",
     "drn.cond": "drn",
     "drn.elev": "drn",
+    "riv.cond": "riv",
+    "riv.stage": "riv",
     "wel": "wel",
     "uzf.vks": "uzf.vks",
     "porosity": "porosity",
@@ -212,11 +222,12 @@ _PROBE = textwrap.dedent(
     # Inject a synthetic recipe BEFORE importing any consumer.
     from myflopy.modflow.mf6.pest import native_parameters as np_mod
 
-    np_mod._RECIPES["zzz"] = np_mod._Recipe(
-        "zzz", "array", "{model}.npf_k.txt", package="npf", variable="k",
-    )
+    np_mod._RECIPES["zzz"] = np_mod._Recipe("zzz", "array", "npf", "k")
     np_mod._RECIPES["zzz.list"] = np_mod._Recipe(
-        "zzz.list", "list", "{model}.drn_stress_period_data_*.txt", use_col=3,
+        "zzz.list", "list", "drn", "stress_period_data", "cond",
+    )
+    np_mod._RECIPES["zzz.elev"] = np_mod._Recipe(
+        "zzz.elev", "list", "drn", "stress_period_data", "elev",
     )
     np_mod._ALIASES["zed"] = "zzz"
 
@@ -233,14 +244,24 @@ _PROBE = textwrap.dedent(
     found["spec.style_default"] = spec.style == "constant"
     found["spec.additive_default"] = spec.additive is False
     found["spec.name_slug"] = spec.name == "zzz"
+    found["spec.package_slug"] = (
+        np_mod.NativeParameterSpec(target="zzz.list", package="seeps").name == "zzzlist_seeps"
+    )
+    # The value column and whether a field is an elevation come from the package
+    # registry's record_fields and FieldSpec.kind, never restated in the entry.
+    found["recipe.use_col_from_registry"] = np_mod._RECIPES["zzz.list"].use_col == 3
+    elevation = np_mod.NativeParameterSpec(target="zzz.elev")
+    found["spec.additive_from_kind"] = (
+        elevation.additive is True and elevation.bounds == np_mod.OFFSET_BOUNDS
+    )
 
-    # An array recipe WITHOUT package/variable must be refused for pilot points.
-    np_mod._RECIPES["zzz.bare"] = np_mod._Recipe("zzz.bare", "array", "{model}.x.txt")
+    # An array recipe cannot be written without the package type and dataset that
+    # pilot points read their base array from.
     try:
-        np_mod.NativeParameterSpec(target="zzz.bare", style="pilotpoints")
-        found["spec.pilotpoints_guard"] = False
-    except NotImplementedError:
-        found["spec.pilotpoints_guard"] = True
+        np_mod._Recipe("zzz.bare", "array")
+        found["recipe.requires_package"] = False
+    except TypeError:
+        found["recipe.requires_package"] = True
 
     # The remaining sites are reached through helpers that take the recipe.
     found["model_name_for"] = callable(np_mod.model_name_for)
@@ -248,18 +269,29 @@ _PROBE = textwrap.dedent(
     found["relayer_array_target"] = callable(np_mod.relayer_array_target)
 
     import pathlib, tempfile
+    import flopy
     with tempfile.TemporaryDirectory() as scratch:
-        workspace = pathlib.Path(scratch)
-        (workspace / "m.npf_k_layer1.txt").write_text("1.0\\n")
-        (workspace / "m.npf_k.txt").write_text("1.0\\n")
-        resolved = np_mod._resolve_files(workspace, "m", np_mod._RECIPES["zzz"])
-    found["resolve_files.layered_first"] = resolved == ["m.npf_k_layer1.txt"]
+        sim = flopy.mf6.MFSimulation("s", sim_ws=scratch, exe_name="mf6")
+        flopy.mf6.ModflowTdis(sim)
+        gwf = flopy.mf6.ModflowGwf(sim, modelname="m")
+        flopy.mf6.ModflowGwfdis(gwf, nlay=1, nrow=1, ncol=2, top=1.0, botm=[0.0])
+        flopy.mf6.ModflowGwfdrn(gwf, pname="seeps", filename="m.seeps",
+                                stress_period_data=[[(0, 0, 0), 0.5, 1.0]])
+        sim.set_all_data_external()
+        sim.write_simulation(silent=True)
+        recipe = np_mod._RECIPES["zzz.list"]
+        packages = np_mod.select_packages(gwf, recipe)
+        resolved = np_mod.package_target_files(gwf, recipe, packages, pathlib.Path(scratch))
+    found["target_files.by_type"] = [t.filename for t in resolved] == [
+        "m.seeps_stress_period_data_1.txt"
+    ]
 
     try:
-        np_mod._select_layer_files(["m.npf_k.txt"], [0], np_mod._RECIPES["zzz"])
-        found["select_layer_files"] = False
+        np_mod.select_layers([np_mod.TargetFile("m.npf_k.txt", "npf")], [0],
+                             np_mod._RECIPES["zzz"])
+        found["select_layers"] = False
     except ValueError:
-        found["select_layer_files"] = True
+        found["select_layers"] = True
 
     from types import SimpleNamespace
     from myflopy.modflow.mf6.pest.zones import resolve_zone_array

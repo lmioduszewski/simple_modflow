@@ -82,7 +82,7 @@ def built(tmp_path_factory):
     cal = model.pest("dis", workspace=root / "pest", start_datetime="2024-01-01")
     cal.parameterize("k", style="grid", correlation=30.0, bounds=(0.5, 2.0))
     cal.parameterize("k33", style="zone", zones=ZONES, bounds=(0.5, 2.0))
-    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
     cal.observe(_heads())
     pst = _build(cal, "dis")
     return model, cal, pst
@@ -115,7 +115,7 @@ def test_array_and_list_parameters_on_a_dis_model_scale_what_mf6_reads(built, tm
 
     par = pst.parameter_data.copy()
     par.loc[par.index[par["pargp"].str.startswith("kl")], "parval1"] = 2.0
-    par.loc[par.index[par["pargp"] == "chd"], "parval1"] = 1.1
+    par.loc[par.index[par["pargp"] == "chd"], "parval1"] = 0.5
     zone2 = [name for name in par.index if name.startswith("pname:k33") and name.endswith("zone:2")]
     par.loc[zone2, "parval1"] = 0.5
     for tpl, inp in zip(pst.template_files, pst.input_files, strict=True):
@@ -130,7 +130,7 @@ def test_array_and_list_parameters_on_a_dis_model_scale_what_mf6_reads(built, tm
     chd = pd.read_csv(template / "m.chd_stress_period_data_1.txt", sep=r"\s+", header=None)
     assert chd.iloc[:, :3].to_numpy().tolist() == (
         [[1, row + 1, 1] for row in range(NROW)] + [[1, row + 1, NCOL] for row in range(NROW)])
-    assert np.allclose(chd.iloc[:, 3], [110.0] * NROW + [104.5] * NROW)
+    assert np.allclose(chd.iloc[:, 3], [100.5] * NROW + [95.5] * NROW)
 
 
 def test_head_targets_on_a_dis_model_are_its_cells(built):
@@ -189,7 +189,7 @@ def test_a_model_built_from_mf_dis_locates_targets_and_pilot_points(tmp_path):
 
     cal = model.pest("dis", workspace=tmp_path / "pest", start_datetime="2024-01-01")
     cal.parameterize("k", style="pilotpoints", pp_space=2, bounds=(0.5, 2.0))
-    cal.parameterize("chd", style="zone", zones=ZONES, bounds=(0.9, 1.1))
+    cal.parameterize("chd", style="zone", zones=ZONES, bounds=(-1.0, 1.0))
     points = gpd.GeoDataFrame({"name": ["W"], "layer": [0]},
                               geometry=gpd.points_from_xy([25.0], [25.0]))
     cal.observe(mf.HeadTargets(locations=points,

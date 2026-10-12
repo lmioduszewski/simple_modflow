@@ -1799,10 +1799,21 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
 ### What's already built (`src/myflopy/modflow/mf6/pest/`)
 - **One unified parameterization API**: `cal.parameterize(target, style=...)` compiling
   to native `pyemu.utils.PstFrom`. Targets: `k`, `k33`, `recharge`, `chd`, `ghb.cond`/
-  `ghb.bhead`, `drn.cond`/`drn.elev`, `wel`, `uzf.vks` (`vks`), and transport `porosity` (`mst.porosity`/
+  `ghb.bhead`, `drn.cond`/`drn.elev`, `riv.cond`/`riv.stage`, `wel`, `uzf.vks` (`vks`),
+  and transport `porosity` (`mst.porosity`/
   `n`), whose GWT sibling is resolved via `pest/model_lookup.py` — calibrate it with
   heads in the mix, since `v = Ki/n` makes K and porosity near-collinear from
-  concentration alone. Styles: `constant`, `zone`, `grid` (one
+  concentration alone. **A target's files are found by package TYPE** from FloPy's own
+  records of the staged model (`native_parameters.target_files`, ledger
+  517) -- never a file-name glob, which scaled one of two GHBs in silence --
+  and several packages of the type are REFUSED without `package=` (a name, or a
+  sequence sharing ONE set; ledger 352's rule). **An ELEVATION (`chd`, `ghb.bhead`,
+  `drn.elev`, `riv.stage`, from `FieldSpec.kind`) is an ADDITIVE offset in model units**,
+  default bounds (-2, 2), a multiplier on it refused; bounds that exclude the starting
+  value (0 for an offset, 1 for a multiplier and every pilot point) are refused
+  (ledger 518); `riv.stage` moves RBOT with STAGE (ledger 519).
+  An argument that cannot act is refused (`layers=` on a list target, `temporal=`,
+  `correlation=` on constant/zone, a style other than the four). Styles: `constant`, `zone`, `grid` (one
   geostat-correlated multiplier per Voronoi cell + correlated prior), and `pilotpoints`
   (IDW from a `pp_space` net or explicit `pp_points` — `pilot_points.py`; pyEMU's own
   pilot points are unusable on unstructured grids). The legacy `add_parameter` +

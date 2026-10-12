@@ -11,9 +11,11 @@ import shutil
 import sys
 import time
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 
 import flopy
+from flopy.mf6.mfbase import FlopyException, MFDataException
 
 from myflopy._logging import get_logger
 from myflopy._optional import require
@@ -28,6 +30,7 @@ from myflopy.modflow.mf6.observations import (
     SfrStageTargets,
 )
 from myflopy.modflow.mf6.observations.registry import bare_targets
+from myflopy.modflow.mf6.package_registry import model_packages_of_type
 from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.geostats import build_geostruct, checked_nugget, unit_sill
 from myflopy.modflow.mf6.pest.native_parameters import (
@@ -38,6 +41,7 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     pyemu_spatial_reference,
     refuse_an_undeclared_array,
     relayer_array_target,
+    select_packages,
     staged_model,
 )
 from myflopy.modflow.mf6.pest.observations import (
@@ -686,7 +690,6 @@ class PestProject:
         self.spatial_reference = spatial_reference
         self.zero_based = bool(zero_based)
         self.longnames = bool(longnames)
-        self._parameter_specs: list = []
         self._observation_specs: list = []
         self._forecast_specs: list = []
         self._native_parameter_specs: list[NativeParameterSpec] = []
@@ -694,10 +697,6 @@ class PestProject:
         self._pilot_point_frames: dict[str, list] = {}
         self._capture_field_specs: dict[str, dict] = {}
         self._prepared_observations: list[dict] = []
-        self._prepared_parameters: dict[str, dict] = {}
-        self._parameter_frames: dict[str, object] = {}
-        self._registered_geostructs: dict[str, object] = {}
-        self._forward_run_config: dict = {}
         # The simulation LOADED from the build's staging copy of the run, while
         # `build()` runs; every recipe that reads a package's array reads it here,
         # never off `self.model` (ledger 356).
@@ -717,12 +716,13 @@ class PestProject:
         target: str,
         *,
         style: str | None = None,
-        bounds: tuple[float, float] = (0.5, 2.0),
+        bounds: tuple[float, float] | None = None,
         physical: tuple[float, float] | None = None,
         transform: str = "log",
         additive: bool | None = None,
         zones=None,
         layers=None,
+        package: str | Sequence[str] | None = None,
         pp_space: int | None = None,
         pp_points=None,
         correlation: float | None = None,
@@ -750,21 +750,35 @@ class PestProject:
             (with aliases): ``"k"`` (``"npf.k"``/``"hk"``/``"kh"``),
             ``"k33"`` (``"kv"``), ``"recharge"`` (``"rch"``),
             ``"chd"``, ``"ghb.cond"``/``"ghb.bhead"`` (``"ghb"``),
-            ``"drn.cond"``/``"drn.elev"`` (``"drn"``), ``"wel"`` (``"pumping"``),
+            ``"drn.cond"``/``"drn.elev"`` (``"drn"``),
+            ``"riv.cond"`` (``"riv"``)/``"riv.stage"``, ``"wel"`` (``"pumping"``),
             ``"uzf.vks"`` (``"vks"``) — UZF saturated vertical K, the one UZF
             quantity heads respond to — and ``"porosity"``
             (``"mst.porosity"``/``"n"``), which lives on the GWT sibling of a
             coupled transport simulation and is resolved there automatically.
             ``k``, ``k33`` and ``porosity`` are ARRAY targets; the rest scale a
             column of a LIST package's files. An unknown name raises
-            ``KeyError`` here, listing the known ones. Each target scales the
-            external files FloPy writes for it (``recharge``, for instance,
-            reads ``<model>.rch_stress_period_data_*.txt``), and :meth:`build`
-            raises ``FileNotFoundError`` when the model has none. An ARRAY
-            target whose package the run's files do not declare it on -- ``k33``
-            on an NPF written with no ``k33=``, where MF6 takes K33 from K -- or
-            whose package the model lacks, is refused by :meth:`build` with a
-            ``ValueError`` naming the target and the package.
+            ``KeyError`` here, listing the known ones.
+
+            A target scales the package(s) of its TYPE -- ``riv.cond`` every RIV
+            record, whatever the package is named -- found on the model the build
+            stages from the run's files, and the external files FloPy's own records
+            say those packages read (``<model>.<package file>_stress_period_data_<n>.txt``
+            ...), never a file name guessed from the type (ledger 517).
+            :meth:`build` raises ``ValueError`` when the model has no package of the
+            type, or when the package is the array form (READASARRAYS) of a list
+            target (``recharge`` on an array RCH). An ARRAY target whose package the
+            run's files do not declare it on -- ``k33`` on an NPF written with no
+            ``k33=``, where MF6 takes K33 from K -- is refused by :meth:`build` with
+            a ``ValueError`` naming the target and the package.
+
+            ``chd``, ``ghb.bhead``, ``drn.elev`` and ``riv.stage`` scale an
+            ELEVATION (the package registry's ``FieldSpec.kind``) and are additive
+            offsets in model length units (see ``additive``). ``riv.stage`` moves
+            each record's river bottom by the same offset as its stage, so the
+            declared depth survives every realization (ledgers 290/291's pair rule,
+            ledger 519); :meth:`build` refuses a record whose stage is
+            already below its bottom, which MF6 refuses at any icelltype.
 
             Porosity is absent from the flow equation, so it is identifiable
             only from CONCENTRATION data — and since transport velocity is
@@ -781,25 +795,40 @@ class PestProject:
             - ``"pilotpoints"`` -- geostatistical pilot points.
 
             ``None`` uses the recipe default (``"constant"`` for every target).
-            The value is lower-cased and not checked against these four: it
-            reaches pyEMU as ``par_type``, except ``"pilotpoints"`` on an array
-            target, which myflopy builds itself. ``"grid"`` on
+            The value is lower-cased; anything but these four raises
+            ``ValueError`` here -- pyEMU's own pilot-point spellings (``"pp"``,
+            ``"pilot_points"``, ...), which reached pyEMU's structured-grid pilot
+            points and died on a DISV grid, name ``"pilotpoints"`` (ledger
+            520). It reaches pyEMU as ``par_type``, except
+            ``"pilotpoints"`` on an array target, which myflopy builds itself.
+            ``"grid"`` on
             *array* targets (K, K33) builds one multiplier per Voronoi/DISV
             cell, and an independent set per layer file, located through the
             model's spatial reference (the modelgrid is used automatically);
             pass ``correlation=`` to correlate them and ``layers=`` to restrict
-            which layers. ``"grid"`` also works for list targets.
+            which layers. ``"grid"`` also works for list targets. A correlated
+            ``"grid"`` block -- one layer file of an array target, or a list target
+            -- of more than 5,000 parameters is refused by :meth:`build`: its
+            prior is drawn from a dense covariance of every pair (3.3 GB for one
+            20,323-cell layer); use ``"pilotpoints"`` (ledger 522).
             ``"pilotpoints"`` on an array target places a pilot-point net
             (``pp_space=`` spacing or explicit ``pp_points=``) and interpolates
             the multipliers to cells by inverse-distance weighting in the
             forward run -- the supported sparse-field style on Voronoi/DISV
             grids.
-        bounds : tuple of (float, float), optional
+        bounds : tuple of (float, float) or None, optional
             ``(lower, upper)`` bounds on the adjustable value, pyEMU's
             ``lower_bound``/``upper_bound`` (each pilot point's ``parlbnd`` /
-            ``parubnd``). Default ``(0.5, 2.0)``. For a multiplier
-            these are factors (e.g. ``(0.2, 5)`` = 5x down to 5x up); for an
-            additive parameter they are offsets in model units.
+            ``parubnd``). For a multiplier these are factors (e.g. ``(0.2, 5)`` =
+            5x down to 5x up); for an additive parameter they are offsets in model
+            length units. ``None`` (default) is ``(0.5, 2.0)`` for a multiplier and
+            ``(-2.0, 2.0)`` for an offset (ledger 518). Raises
+            ``ValueError`` here when ``lower >= upper``, when either is not finite,
+            when they EXCLUDE the value the parameter starts at -- ``1.0`` for a
+            multiplier (every pilot point included), ``0.0`` for an offset, where
+            PEST would begin outside its own bounds and the input value would never
+            be tried -- or when a log-transformed multiplier's lower bound is not
+            above 0.
         physical : tuple of (float, float) or None, optional
             ``(ult_lbound, ult_ubound)`` -- hard limits clamped onto the *final*
             model value after all multipliers are applied (pyEMU's
@@ -815,10 +844,13 @@ class PestProject:
             for additive parameters.
         additive : bool or None, optional
             Apply the parameter as an additive offset instead of a multiplier
-            (pyEMU ``par_style="a"``). ``None`` (default) uses the recipe
-            default (drain elevation is additive; everything else is
-            multiplicative). Array-target pilot points still MULTIPLY in their
-            forward run; for them it only forces the transform to ``"none"``.
+            (pyEMU ``par_style="a"``). ``None`` (default) follows what the scaled
+            field IS (the package registry's ``FieldSpec.kind``): an ELEVATION --
+            ``chd``, ``ghb.bhead``, ``drn.elev``, ``riv.stage`` -- is an offset,
+            everything else a multiplier. ``False`` on an elevation raises
+            ``ValueError``: a multiplier on an elevation scales with the datum
+            (ledger 518). ``True`` on array-target pilot points raises
+            ``ValueError``: they MULTIPLY the array in their forward run.
         zones : ZoneSpec or array_like of int or None, optional
             Per-cell integer zone labels, normalized to the shape pyEMU wants
             for the target's family at :meth:`build` (see :class:`ZoneSpec`,
@@ -833,10 +865,23 @@ class PestProject:
             For multi-layer *array* targets, restrict the parameter to these
             zero-based model layers (e.g. ``layers=[0, 1]`` for the unconfined
             aquifers); other layers keep their input value. ``None`` (default)
-            covers all layers. Read only for array targets -- a list target
-            ignores it. :meth:`build` raises ``ValueError`` when no requested
+            covers all layers. Given for a LIST target it raises ``ValueError``
+            here, naming ``zones=``: a list target scales every record of its
+            package's files. :meth:`build` raises ``ValueError`` when no requested
             layer has its own file, or the target is written as one whole-grid
             file.
+        package : str or sequence of str or None, optional
+            Which package(s) of the target's TYPE the parameter scales, by NAME
+            (FloPy's ``package_name``, any case) -- ``package="crisp"`` on a model
+            whose RIV packages are ``riv`` and ``crisp``. A sequence,
+            ``package=("riv", "crisp")``, shares ONE parameter set across the
+            packages it names. ``None`` (default) is the model's only package of
+            the type; with several it raises ``SeveralPackagesError`` naming each
+            and these spellings -- a package is never picked in silence (ledger
+            352) -- here when the model's packages can be listed, else at
+            :meth:`build`. A name that is no package of the type raises
+            ``ValueError`` naming the ones there are; a name given twice, or an
+            empty one, raises here. The default ``name`` gains ``_<package>``.
         pp_space : int or None, optional
             Pilot-point spacing for ``style="pilotpoints"`` on an array target,
             in multiples of the median cell width (the square root of the median
@@ -858,18 +903,20 @@ class PestProject:
             ensemble from it (``ies_par_en``). With ``style="pilotpoints"`` on an
             array target it shapes only that prior draw -- the pilot values are
             drawn correlated, while the interpolation to cells stays
-            inverse-distance. ``None`` (default) builds no variogram; ignored
-            for ``"constant"``/``"zone"``.
+            inverse-distance. ``None`` (default) builds no variogram. Given with
+            ``"constant"`` or ``"zone"`` it raises ``ValueError`` here: they have
+            nothing to correlate.
         anisotropy : float, optional
             Anisotropy ratio of the variogram -- correlated this many
             times farther along the major axis than across it (``1.0`` =
             isotropic, the default). For an alluvial valley, e.g. ``5`` makes K
             correlate farther down-valley than across it. Acts only when
-            ``correlation`` is given; pyEMU asserts it is positive.
+            ``correlation`` is given, and anything but ``1.0`` without it raises
+            ``ValueError`` here; pyEMU asserts it is positive.
         bearing : float, optional
             Azimuth of the anisotropy major axis, in degrees east of north.
-            Default ``0.0``. Ignored when ``anisotropy`` is ``1.0``, and
-            without ``correlation``.
+            Default ``0.0``. Anything else with ``anisotropy=1.0``, or without
+            ``correlation``, raises ``ValueError`` here: it cannot act.
         nugget : float, optional
             Nugget (unresolved short-scale variance) of the variogram, relative
             to the variogram's contribution, which is fixed at ``1.0`` here: a
@@ -883,21 +930,23 @@ class PestProject:
             correlation (ledger 489; before, the draw discarded the nugget).
             The same rule for ``style="grid"`` and pilot points. Default ``0.0``.
             A negative or non-finite value raises ``ValueError`` here. Acts only
-            when ``correlation`` is given.
+            when ``correlation`` is given; anything but ``0.0`` without it raises
+            ``ValueError`` here.
         temporal : float or None, optional
-            Temporal correlation range (days) for time-varying list packages.
-            Recorded on the returned spec and read by nothing yet, so it has no
-            effect on the build. Default ``None``.
+            Reserved for a temporal correlation range; nothing reads it, so any
+            value but ``None`` (the default) raises ``ValueError`` here.
         name : str or None, optional
             Parameter group / name base (pyEMU's ``par_name_base`` and
             ``pargp``). Default ``None`` uses the canonical target with dots
-            removed (``"k"``, ``"ghbcond"``, ``"uzfvks"``). A multi-layer
-            array ``"grid"`` parameter appends ``l1``, ``l2``, ... per selected
-            layer file, pilot points append ``l<layer>`` (zero-based), and a
-            captured field is named ``<name>field``. Give each call a distinct
-            name when stacking calls on one target: the project's
-            per-parameter records are keyed by it, so a second call under the
-            same name overwrites the first's.
+            removed (``"k"``, ``"ghbcond"``, ``"uzfvks"``), plus ``_<package>``
+            when ``package=`` is given (``"rivcond_crisp"``,
+            ``"rivcond_riv_crisp"`` for a sequence). A multi-layer array ``"grid"``
+            parameter appends ``l<layer>`` per selected layer file and pilot points
+            ``l<layer>``, both the ZERO-BASED layer (ledger 521), and a
+            captured field is named ``<name>field``. A name another
+            ``parameterize`` call of this project already holds (any case) raises
+            ``ValueError`` here: stacking calls on one target needs a distinct name
+            for each.
         capture : bool, optional
             Also record the *resolved* model-input field (after multipliers are
             applied) as zero-weight observations named from ``<name>field``
@@ -916,9 +965,9 @@ class PestProject:
             ``PstFrom.add_parameters`` for cases the facade does not cover.
             They are applied LAST, so a key here overrides what the facade
             derived (``par_type``, the bounds, ``transform``, ``zone_array``,
-            ``geostruct``, ...). Not forwarded for array-target pilot points,
-            which do not go through ``add_parameters``. Stored on the returned
-            spec as ``extra``.
+            ``geostruct``, ...). Given for array-target pilot points, which never
+            call ``add_parameters``, they raise ``ValueError`` here. Stored on the
+            returned spec as ``extra``.
 
         Returns
         -------
@@ -926,12 +975,26 @@ class PestProject:
             The recorded specification (also stored on the project). Inspect the
             full set at any time with :meth:`settings`.
 
+        Raises
+        ------
+        KeyError
+            For an unknown ``target``.
+        ValueError
+            For an argument that cannot act or bounds that cannot hold (above), a
+            ``name`` already declared, or a ``package=`` naming no package of the
+            type.
+        SeveralPackagesError
+            When the model carries several packages of the target's type and no
+            ``package=`` names one.
+
         Examples
         --------
         >>> cal.parameterize("k", style="constant", bounds=(0.2, 5), physical=(1e-3, 100))
         >>> cal.parameterize("recharge", bounds=(0.5, 1.5), physical=(0, 1e-2))
         >>> cal.parameterize("ghb.cond", bounds=(0.1, 10))
-        >>> cal.parameterize("drn.elev", bounds=(-2, 2))   # additive offsets
+        >>> cal.parameterize("drn.elev", bounds=(-2, 2))   # additive offsets, in ft
+        >>> cal.parameterize("riv.cond", package="crisp", bounds=(0.1, 10))
+        >>> cal.parameterize("riv.stage", package=("riv", "crisp"))  # one shared offset
         """
 
         nugget = checked_nugget(nugget)
@@ -944,6 +1007,7 @@ class PestProject:
             additive=additive,
             zones=zones,
             layers=tuple(layers) if layers is not None else None,
+            package=package,
             pp_space=pp_space,
             pp_points=pp_points,
             correlation=correlation,
@@ -955,8 +1019,53 @@ class PestProject:
             capture=capture,
             extra=extra,
         )
+        self._refuse_a_repeated_parameter_name(spec)
+        self._refuse_an_unnamed_package(spec)
         self._native_parameter_specs.append(spec)
         return spec
+
+    def _refuse_a_repeated_parameter_name(self, spec: NativeParameterSpec) -> None:
+        """Refuse a parameter name another :meth:`parameterize` call already holds (any case).
+
+        The name keys pyEMU's parameter names and group, the project's frames and the
+        build's metadata, so a second call under it overwrote the first's records:
+        two pilot-point calls on one target left the first set's parameters out of
+        the control file while its forward-run step kept reading a table frozen at
+        1.0 (ledger 523).
+        """
+
+        wanted = str(spec.name).strip().lower()
+        for earlier in self._native_parameter_specs:
+            if str(earlier.name).strip().lower() == wanted:
+                raise ValueError(
+                    f"Parameter name {spec.name!r} is already declared, by "
+                    f"parameterize({earlier.recipe.canonical!r}, style={earlier.style!r}). "
+                    "Each call needs its own: pass name= (e.g. "
+                    f"name={(spec.name + '_' + spec.style)!r})."
+                )
+
+    def _refuse_an_unnamed_package(self, spec: NativeParameterSpec) -> None:
+        """Refuse, at the call, a ``package=`` the model's packages already show to be wrong.
+
+        :meth:`build` decides on the staged model (:func:`select_packages`); this asks
+        the model this project calibrates the same question, so several packages of the
+        type and no ``package=`` -- or a name that is none of them -- is refused when it
+        is written. A transport target, or a model that cannot list its packages, is
+        left to :meth:`build`.
+        """
+
+        if spec.recipe.model != "flow":
+            return
+        try:
+            held = model_packages_of_type(self.model, spec.recipe.package)
+        except (AttributeError, TypeError, KeyError, OSError, FlopyException,
+                MFDataException) as error:
+            # A model that cannot list its packages (a test double, a run whose files
+            # FloPy cannot read): the build's check on the staged model still runs.
+            logger.debug("Package check of %r left to build(): %s", spec.name, error)
+            return
+        if held:
+            select_packages(self.model, spec.recipe, spec.package)
 
     def observe(self, targets, *, prefix: str | None = None):
         """Register history-matching observations from a ``myflopy`` target set.
@@ -1548,8 +1657,8 @@ class PestProject:
         # writes one whole-grid file that pyEMU cannot index against a DISV
         # spatial reference. See `relayer_array_target`.
         for spec in self._native_parameter_specs:
-            refuse_an_undeclared_array(self, spec.recipe)
-            relayer_array_target(self, spec.recipe)
+            refuse_an_undeclared_array(self, spec.recipe, spec.package)
+            relayer_array_target(self, spec.recipe, spec.package)
         simulation.set_all_data_external()
         simulation.write_simulation(silent=True)
         logger.info(
@@ -1638,31 +1747,70 @@ class PestProject:
             prepared.append(item)
         self._prepared_observations = prepared
 
+    def _parameter_record(self, spec: NativeParameterSpec) -> dict:
+        """What one :meth:`parameterize` call compiled to, for the build's metadata.
+
+        Everything a later reader needs to put a realization's values back on the
+        model without this object (ledger 524): the target, the packages
+        and files it scales (with each file's package, layer and period, from FloPy's
+        records), the style, transform, bounds, physical limits and whether it is an
+        offset, the layers and zone labels, its parameter groups, and a pilot-point
+        set's tables. ``parameter_sets`` was written before from a list nothing
+        filled, so it was always empty.
+        """
+
+        frame = self._native_parameter_frames.get(spec.name)
+        groups = (
+            sorted({str(group) for group in frame["pargp"]})
+            if frame is not None and "pargp" in getattr(frame, "columns", ()) else []
+        )
+        pilot_points = []
+        for pp_frame, tpl_path in self._pilot_point_frames.get(spec.name, []):
+            group = str(pp_frame["pargp"].iloc[0]) if len(pp_frame) else None
+            pilot_points.append({"pargp": group, "template": Path(tpl_path).name})
+            if group is not None and group not in groups:
+                groups.append(group)
+        zones = getattr(spec, "resolved_zone_labels", None)
+        return {
+            "name": spec.name,
+            "target": spec.recipe.canonical,
+            "family": spec.recipe.family,
+            "package_type": spec.recipe.package,
+            "package": list(spec.package) if isinstance(spec.package, tuple) else spec.package,
+            "packages": sorted({target.package for target in spec.resolved_targets}),
+            "style": spec.style,
+            "transform": spec.resolved_transform,
+            "bounds": [float(value) for value in spec.bounds],
+            "physical": (
+                [float(value) for value in spec.physical] if spec.physical is not None else None
+            ),
+            "additive": bool(spec.additive),
+            "layers": list(spec.layers) if spec.layers is not None else None,
+            "zones": zones,
+            "correlation": spec.correlation,
+            "files": [
+                {"filename": target.filename, "package": target.package,
+                 "layer": target.layer, "period": target.period}
+                for target in spec.resolved_targets
+            ],
+            "pargps": groups,
+            "pilot_points": pilot_points,
+            "capture": bool(spec.capture),
+        }
+
     def _write_project_metadata(self, *, filename: str | Path | None = None):
-        """Persist reopen-friendly run metadata inside the generated workspace."""
+        """Persist reopen-friendly run metadata inside the generated workspace.
+
+        ``parameters`` holds one record per :meth:`parameterize` call
+        (:meth:`_parameter_record`).
+        """
 
         observation_sets = [
             item["metadata"]
             for item in self._prepared_observations
             if "metadata" in item and item["metadata"] is not None
         ]
-        parameter_sets = []
-        for spec in self._parameter_specs:
-            prepared = self._prepared_parameters.get(spec.name, {})
-            config = prepared.get("config", {})
-            parameter_sets.append(
-                {
-                    "name": spec.name,
-                    "type": type(spec).__name__,
-                    "kind": config.get("kind"),
-                    "transform": getattr(spec, "transform", None),
-                    "bounds_mode": getattr(spec, "bounds_mode", None),
-                    "bounds": list(spec.bounds) if getattr(spec, "bounds", None) is not None else None,
-                    "parameter_space": getattr(spec, "parameter_space", None),
-                    "parameter_style": getattr(spec, "parameter_style", None),
-                    "files": {key: value for key, value in config.items() if key.endswith("_csv")},
-                }
-            )
+        parameters = [self._parameter_record(spec) for spec in self._native_parameter_specs]
 
         metadata = {
             "version": 1,
@@ -1671,7 +1819,7 @@ class PestProject:
             "original_workspace": str(self.original_workspace.resolve()),
             "pst_file": Path(filename).name if filename is not None else None,
             "observation_sets": observation_sets,
-            "parameter_sets": parameter_sets,
+            "parameters": parameters,
             "capture_fields": list(self._capture_field_specs.values()),
         }
         metadata_path = self.template_workspace / METADATA_FILENAME
@@ -1965,12 +2113,14 @@ class PestProject:
         # -- recording it as `{0: base}` instead would label every layer's
         # values "layer 0" and hand `plot_field` nlay*ncpl values for ncpl cells.
         layer_prefixes: dict[int, str] = {}
-        for filename in spec.resolved_files:
+        for target in spec.resolved_targets:
+            filename = target.filename
             if recipe.family == "array":
-                match = re.search(r"_layer(\d+)\.txt$", str(filename))
-                prefix = f"{base}l{int(match.group(1)) - 1}" if match else base
-                if match:
-                    layer_prefixes[int(match.group(1)) - 1] = prefix
+                # The layer FloPy's records name the file for (ledger 517),
+                # never one parsed back out of the file name.
+                prefix = f"{base}l{target.layer}" if target.layer is not None else base
+                if target.layer is not None:
+                    layer_prefixes[target.layer] = prefix
                 self.pf.add_observations(filename, prefix=prefix)
             else:
                 # The value column on THIS grid: one further right on DIS, whose
@@ -2163,6 +2313,7 @@ class PestProject:
         parameters = [
             {
                 "target": spec.recipe.canonical,
+                "package": spec.package,
                 "style": spec.style,
                 "bounds": tuple(spec.bounds),
                 "physical": tuple(spec.physical) if spec.physical is not None else None,

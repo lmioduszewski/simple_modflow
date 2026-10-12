@@ -300,6 +300,20 @@ canonical model has a GWT sibling (`build_canonical_transport_calibration_demo`)
 worked example is `examples/mf6/notebooks/canonical_07_transport_and_prt.ipynb`.
 Zones for `style="zone"` come from `mf.ZoneSpec` (`from_raster` — majority vote, not mean — `from_polygons` — by cell **centroid**, and a centroid on a zone's edge belongs to the first zone covering it — `from_array`); the shape each target family needs is resolved for you.
 
+**`cal.parameterize(target, ...)` scales the packages of the target's TYPE** -- `k`,
+`k33`, `recharge`, `chd`, `ghb.cond`/`ghb.bhead`, `drn.cond`/`drn.elev`,
+`riv.cond`/`riv.stage`, `wel`, `uzf.vks`, `porosity` -- through the files FloPy's own
+records of the run's packages name (ledger 517). Several packages of the type
+(`riv` beside `crisp`) need `package=`: a name picks one, a sequence shares one
+parameter set, and a call naming none raises `mf.SeveralPackagesError` naming each
+(ledger 352). An ELEVATION (`chd`, `ghb.bhead`, `drn.elev`, `riv.stage`) is an additive
+offset in model units, `bounds=(-2, 2)` by default, a multiplier refused; any bounds
+excluding the starting value (0 for an offset, 1 for a multiplier or pilot point) are
+refused; `riv.stage` moves each record's `rbot` with its stage (ledgers
+518, 519). An argument that cannot act -- `layers=` on a list
+target, `correlation=` on constant/zone, a style but the four -- raises (ledger
+520).
+
 Transport properties are `parameterize` targets too: `cal.parameterize("porosity")`
 (aliases `mst.porosity`, `n`) resolves the GWT sibling automatically. Calibrate it
 alongside heads — porosity is absent from the flow equation, and `v = Ki/n` makes it
@@ -1355,6 +1369,9 @@ second `mf.lak` beside a default-named `lak`:
   `model.budget.<term>`, UZF's `results`, `model.surface_water`. The budget-file
   reader under the results kept only the first record of each saved time, so
   `crisp` (53% of Ten Trails' river exchange) was absent from `model.riv.results.q`.
+- A calibration PARAMETER scales the packages of its type and needs
+  `cal.parameterize(..., package=...)` -- a name, or a sequence sharing one set -- when
+  there are several (ledger 517).
 - A view whose rows are one package's numbered **features** -- LAK's lakes, SFR's
   reaches, UZF's cells by `ifno` -- reads ONE package. On a model carrying several,
   every such view raises `mf.SeveralPackagesError` naming them and the one spelling

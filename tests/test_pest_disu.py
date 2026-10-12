@@ -100,7 +100,7 @@ def test_array_and_list_parameters_on_a_disu_model_scale_what_mf6_reads(run_dir,
     extra = {"zone": {"zones": ZONES},
              "pilotpoints": {"pp_space": 2}}.get(style, {})
     cal.parameterize("k", style=style, bounds=(0.5, 2.0), **extra)
-    cal.parameterize("chd", style="constant", bounds=(0.9, 1.1))
+    cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
     _observe(cal)
     pst = _build(cal, f"u_{style}")
     heads = flopy.utils.HeadFile(str(run_dir / "m.hds")).get_data(kstpkper=(0, 1)).reshape(-1)
@@ -114,7 +114,7 @@ def test_array_and_list_parameters_on_a_disu_model_scale_what_mf6_reads(run_dir,
     par.loc[k_names, "parval1"] = 2.0
     if style == "zone":
         par.loc[[name for name in k_names if name.endswith("zone:2")], "parval1"] = 0.5
-    par.loc[par.index[par["pargp"] == "chd"], "parval1"] = 1.1
+    par.loc[par.index[par["pargp"] == "chd"], "parval1"] = 0.5
     for tpl, inp in zip(pst.template_files, pst.input_files, strict=True):
         pyemu.pst_utils.write_to_template(par["parval1"], str(template / tpl), str(template / inp))
     subprocess.run([sys.executable, "forward_run.py"], cwd=template, check=True,
@@ -124,7 +124,7 @@ def test_array_and_list_parameters_on_a_disu_model_scale_what_mf6_reads(run_dir,
     assert np.allclose(np.loadtxt(template / "m.npf_k.txt").reshape(-1), scale * K)
     chd = pd.read_csv(template / "m.chd_stress_period_data_1.txt", sep=r"\s+", header=None)
     assert chd.iloc[:, 0].tolist() == [node + 1 for node in CHD_NODES]
-    assert np.allclose(chd.iloc[:, 1], [110.0] * NROW + [104.5] * NROW)
+    assert np.allclose(chd.iloc[:, 1], [100.5] * NROW + [95.5] * NROW)
     simulated = flopy.utils.HeadFile(str(template / "m.hds")).get_data(kstpkper=(0, 1))
     assert simulated.reshape(-1).size == NODES and np.isfinite(simulated).all()
     # The base heads PEST holds are the run's: W at node 5 (row 1, column 1 of the
@@ -156,7 +156,7 @@ def test_pestpp_ies_runs_a_disu_template(run_dir, tmp_path):
     model = mf.load_mf6_run(run_dir)
     cal = model.pest("u", workspace=tmp_path / "pest", start_datetime="2024-01-01")
     cal.parameterize("k", style="pilotpoints", pp_space=2, correlation=30.0, bounds=(0.5, 2.0))
-    cal.parameterize("chd", style="zone", zones=ZONES, bounds=(0.9, 1.1))
+    cal.parameterize("chd", style="zone", zones=ZONES, bounds=(-1.0, 1.0))
     _observe(cal)
     pst = _build(cal, "u")
     expected = pst.observation_data["obsval"]
