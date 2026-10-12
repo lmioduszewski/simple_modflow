@@ -92,6 +92,43 @@ def test_the_calibration_cross_plot_puts_observed_on_its_observed_axis():
     assert list(figure.data[0].x) == observed.tolist()
 
 
+def test_the_location_file_cross_plot_pairs_by_time_in_the_layers_observed(
+    canonical_run, tmp_path
+):
+    """The constructor's location-file plot (ledger 483).
+
+    It looped every simulated location times every layer, so on a multi-layer model a
+    well observed in one layer raised ``KeyError``; it paired the two tables by
+    POSITION; and it drew SIMULATED on x (ledger 477 moved the axes, untested).
+    """
+
+    from pathlib import Path
+
+    model = canonical_run
+    polys = model.vor.gdf_vorPolys
+    points = [polys.geometry.iloc[cell].representative_point() for cell in (30, 200)]
+    path = Path(tmp_path) / "wells.gpkg"
+    gpd.GeoDataFrame({"ExploName": ["A", "B"]}, geometry=points, crs=model.vor.crs).to_file(path)
+    simulated = model.hds.get_obs_heads(locs=path, long_format=True)
+    observed = simulated.copy()
+    observed["elev"] = observed["elev"] + 1.0
+    in_one_layer = [
+        (name == "A" and layer == 0) or (name == "B" and layer == 2)
+        for name, layer, _ in observed.index
+    ]
+    observed = observed[in_one_layer].iloc[::-1].iloc[1:]  # reordered, one time short
+    figure = CalibrationPlot(observed=observed, simulated=None, model=model, loc_shp_gpkg=path)
+    points_drawn = {trace.name: trace for trace in figure.data if trace.name != "1:1 line"}
+    assert sorted(points_drawn) == ["A 0", "B 2"]
+    for trace in points_drawn.values():
+        # observed on x, its own time's head (observed - 1) on y
+        assert np.allclose(np.asarray(trace.x, dtype=float) - 1.0, np.asarray(trace.y, dtype=float))
+    assert len(points_drawn["A 0"].x) + len(points_drawn["B 2"].x) == len(observed)
+    stray = observed.rename(index={"A": "C"}, level=0)
+    with pytest.raises(ValueError, match="have no simulated heads"):
+        CalibrationPlot(observed=stray, simulated=None, model=model, loc_shp_gpkg=path)
+
+
 def test_a_timeseries_draws_one_line_per_layer_and_refuses_an_absent_baseline():
     figure = CalibrationPlot.from_timeseries(_TWO_LAYERS)
     assert [trace.name for trace in figure.data] == [

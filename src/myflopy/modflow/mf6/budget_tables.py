@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
 from myflopy.modflow.mf6.grid.geometry import (
@@ -180,16 +181,20 @@ def budget_obs_df(
     :func:`~myflopy.modflow.mf6.grid.geometry.read_footprints` (reprojected to the
     grid's CRS; a file carrying none is taken to be in it; a multi-part polygon is
     one area), a cell belongs to an area it COVERS by area
-    (:func:`~myflopy.modflow.mf6.grid.geometry.footprint_cells`), an area on no cell
-    is refused naming both frames, every record on a cell is ADDED (a flow is
-    extensive, ledger 297), and the rows are the BUDGET file's own saved times
-    (ledger 301), never the head file's.
+    (:func:`~myflopy.modflow.mf6.grid.geometry.footprint_cells`) in EVERY layer --
+    a record's model-wide node is read as its in-layer cell through
+    ``budget.model.node_to_lni`` (ledger 482) -- an area on no cell is refused
+    naming both frames, every record in an area is ADDED (a flow is extensive,
+    ledger 297), and the rows are the BUDGET file's own saved times (ledger 301),
+    never the head file's.
 
     Parameters
     ----------
     budget : Budget
         The package accessor (``model.bud("drn")``); its :attr:`Budget.df` holds the
-        flows, indexed by ``(node, kstpkper)``.
+        flows, indexed by ``(node, kstpkper)`` (a zero-based model-wide node), and
+        its ``model`` numbers those nodes. A node that model does not have raises
+        ``ValueError``.
     model : SimulationBase
         The model whose grid (``model.vor``) the areas are matched against.
     shp_gpkg : str or pathlib.Path
@@ -235,9 +240,23 @@ def budget_obs_df(
         source_crs=areas.attrs.get("source_crs"),
         grid_crs=model.vor.crs,
     )
+    # A record names its cell by MF6's model-wide node (``layer * ncpl + cell`` on a
+    # DISV, zero-based here), and an area is a COLUMN of in-layer cells: match the
+    # node's in-layer cell through the budget model's own numbering, so a record in
+    # layer 1+ counts under its area (ledger 342's rule; matching the node itself
+    # read only layer 0 -- every GHB area of the canonical model lost 3/4 of its
+    # flow -- ledger 482).
+    lni = budget.model.node_to_lni
     nodes = flows.index.get_level_values("node")
+    try:
+        in_layer = np.fromiter((lni[int(node)][1] for node in nodes), dtype=int, count=len(nodes))
+    except KeyError as missing:
+        raise ValueError(
+            f"Budget node {missing.args[0]} is not a cell of this model's grid; the "
+            "budget file and the model do not match."
+        ) from None
     for label, cells in zip(areas.index, area_cells, strict=True):
-        inside = flows[nodes.isin(cells)]
+        inside = flows[np.isin(in_layer, list(cells))]
         table[label] = (
             inside.groupby(level="kstpkper", sort=False).sum().reindex(times, fill_value=0.0)
             / multiplier

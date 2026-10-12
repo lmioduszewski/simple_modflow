@@ -189,8 +189,10 @@ class Budget:
             ``None`` default. The areas are REPROJECTED to the grid's CRS; a file
             carrying no CRS is taken to be in it. A multi-part polygon is one area.
             A cell belongs to an area that COVERS it by area (the footprint rule:
-            an area drawn along cell faces reaches only the cells inside it), and
-            an area covering no cell RAISES ``ValueError`` naming both extents and
+            an area drawn along cell faces reaches only the cells inside it), in
+            EVERY layer: a record below layer 0 counts under the area over its
+            column (it was left out, read as another cell number, until ledger
+            482). An area covering no cell RAISES ``ValueError`` naming both extents and
             both CRSs -- before ledger 476 a file in another CRS read 0.0 for
             every area in silence. A feature that is not a polygon, or one with no
             area, raises ``ValueError``.

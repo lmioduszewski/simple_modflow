@@ -1221,35 +1221,44 @@ class CalibrationPlot(f.Fig):
                 print('using observation data based on provided'
                       'shapefile or geopackage for calibration plot')
             assert isinstance(self.simulated, pd.DataFrame)
-            loc_names = self.simulated.index.get_level_values(level=0).unique().to_list()
-            layers = self.simulated.index.get_level_values(level=1).unique().to_list()
+            # The (location, layer) pairs the OBSERVED table holds, each paired with
+            # the simulated rows by saved time. Looping every location of the
+            # simulated table times every layer raised KeyError for a pair the
+            # observed table lacked -- on any multi-layer model, since the simulated
+            # heads carry every layer -- and pairing the two by POSITION set a
+            # target beside another time's head (ledger 483).
+            simulated_pairs = set(self.simulated.index.droplevel(2))
+            observed_pairs = list(self.observed.index.droplevel(2).unique())
+            unmatched = sorted(
+                {str(pair) for pair in observed_pairs if pair not in simulated_pairs}
+            )
+            if unmatched:
+                raise ValueError(
+                    f"Observed (location, layer) {unmatched[:6]} have no simulated heads: "
+                    f"the location file {self.loc_shp_gpkg.name} names no such point, or "
+                    "the model has no such layer."
+                )
+            for loc_name, layer in observed_pairs:
+                obs_data = self.observed.loc[idxx[loc_name, layer, :], 'elev'].droplevel([0, 1])
+                sim_data = self.simulated.loc[idxx[loc_name, layer, :], 'elev'].droplevel([0, 1])
+                sim_obs = pd.concat([sim_data, obs_data], axis=1, join='inner')
+                sim_obs.columns = ['simulated', 'observed']
+                sim_obs = sim_obs.dropna()
+                if sim_obs.empty:
+                    continue
 
-            for loc_name in loc_names:
-                for layer in layers:
+                # get max and min of obs data to draw cal line
+                low, high = sim_obs['observed'].min(), sim_obs['observed'].max()
+                data_min = low if data_min is None else min(data_min, low)
+                data_max = high if data_max is None else max(data_max, high)
 
-                    sim_data = pd.Series(self.simulated.loc[idxx[loc_name, layer, :], 'elev'].to_list())
-                    obs_data = pd.Series(self.observed.loc[idxx[loc_name, layer, :], 'elev'].to_list())
-                    sim_obs = pd.concat([sim_data, obs_data], axis=1)
-                    sim_obs.columns = ['simulated', 'observed']
-                    sim_obs = sim_obs.dropna()
-
-                    # get max and min of obs data to draw cal line
-                    if data_min is None:
-                        data_min = obs_data.min()
-                    if data_max is None:
-                        data_max = obs_data.max()
-                    if obs_data.min() < data_min:
-                        data_min = obs_data.min()
-                    if obs_data.max() > data_max:
-                        data_max = obs_data.max()
-
-                    # Observed on x, simulated on y, as every other cross plot
-                    # here draws them (ledger 477).
-                    self.add_scattergl(
-                        x=sim_obs.loc[:, 'observed'],
-                        y=sim_obs.loc[:, 'simulated'],
-                        mode='markers',
-                        name=f'{loc_name} {layer}')
+                # Observed on x, simulated on y, as every other cross plot
+                # here draws them (ledger 477).
+                self.add_scattergl(
+                    x=sim_obs.loc[:, 'observed'],
+                    y=sim_obs.loc[:, 'simulated'],
+                    mode='markers',
+                    name=f'{loc_name} {layer}')
 
         if cal_range is None:
             cal_range = [data_min, data_max]

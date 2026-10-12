@@ -744,7 +744,9 @@ numbers each start at 0), carried into PEST's forward run -- the packages are fo
 TYPE, so one NAMED `lak` does not hide a `lak_2` beside it (ledger 345); with none it is refused
 wherever the targets are declared -- and for LAK and SFR always, since their file
 belongs to one package -- while an undeclared DRN zone still sums every package's
-drains. `to_flopy_obs` refuses a `kind=` other than the family's quantity and two
+drains. `to_flopy_obs` refuses a `kind=` other than the family's quantity -- head and
+concentration targets too, whose default is their own `HEAD`/`CONCENTRATION` (ledger
+477; a `ConcTargets` wrote `HEAD`, which a GWT OBS file refuses) -- and two
 names MF6 would upper-case to one label (`"Pond A"`, `"pond-a"`). An SFR stage's
 no-data value (3e30) reads `NaN` there, as a lake's does. On the file it reads ONE value per lake, reach
 or zone per stress period, at the period's end (ledgers 331, 336, 348; it had added a

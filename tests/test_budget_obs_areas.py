@@ -144,3 +144,23 @@ def test_sfr_plot_flows_draws_each_reachs_outflow_on_its_own_clock(canonical_run
     assert len(shown[-1].data) == 1
     with pytest.raises(ValueError, match="is not a time this SFR budget file saved"):
         budget.plot_flows(kstpkper=[(9, 9)])
+
+
+def test_an_area_sums_every_layer_of_its_columns(canonical_run, tmp_path):
+    """A record names a MODEL-WIDE node; matching it as a cell number read only layer 0.
+
+    The canonical GHB sits in all four layers: an area over every GHB column read a
+    quarter of the package total until ledger 482.
+    """
+
+    model = canonical_run
+    budget = Budget(model, "ghb")
+    nodes = budget.df.index.get_level_values("node")
+    layers = {model.node_to_lni[int(node)][0] for node in nodes}
+    assert len(layers) > 1  # the premise: records below layer 0
+    columns = sorted({model.node_to_lni[int(node)][1] for node in nodes})
+    area = model.vor.gdf_vorPolys.loc[columns].union_all().buffer(1)
+    path = tmp_path / "ghb_columns.gpkg"
+    gpd.GeoDataFrame({"name": ["all"]}, geometry=[area], crs=model.vor.crs).to_file(path)
+    table = budget.plot_budget_obs(shp_gpkg=path, plot_fig=False)
+    pd.testing.assert_series_equal(table["all"], table["total"], check_names=False)

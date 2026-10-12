@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 481 entries (486 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 483 entries (488 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 483 | The location-file calibration plot draws the (location, layer) pairs observed, paired by time | 2026-10-11 |
+| 482 | An observation area sums every layer of its columns | 2026-10-11 |
 | 481 | A picture writes what it names, and a hillshade is drawn from its own raster | 2026-10-11 |
 | 480 | The IES review refuses a selector it cannot honour, and reads backends through the one resolver | 2026-10-11 |
 | 479 | A PRT map's tail cannot reach its own options; `stat`, `layer`, `group` are checked | 2026-10-11 |
@@ -19692,7 +19694,7 @@ same day, which is the useful part of the result.
       `ncols`/`sync_views`/`title` (`ncols` defaults to `None`, meaning 2, so a given
       one can be told apart), and `pathlines.get(group=)` matches the group as MF6 wrote
       it -- upper-cased -- and raises `KeyError` for one the run lacks, as `map` does.
-      **Not done:** naming the PRT maps' parameters (ledger 8.8's rule) so the tails
+      **Not done:** naming the PRT maps' parameters (plan 8.8's rule) so the tails
       enter `test_noun_signatures`; that is the noun conversion with spliced docstrings,
       larger than this batch. Revert check: `tests/test_prt_maps.py` (4 new tests).
 
@@ -19736,3 +19738,27 @@ same day, which is the useful part of the result.
       figure was assembled draws onto it too. `save_raster` refuses `polygon_clip`/
       `buffer` beside the clipped image. Revert check: `tests/test_picture_outputs.py`
       (5), `tests/test_surface_domain_mask.py::test_save_raster_refuses_a_clip_it_cannot_apply`.
+
+482. **An observation area sums every layer of its columns (2026-10-11).**
+      Review of ledger 476. `plot_budget_obs` matched a record's MODEL-WIDE node
+      against the area's in-layer cell numbers, so only layer 0 counted (as it had before
+      476, which kept the rule while rewriting the rest): an area over every column of
+      the canonical GHB, which sits in all four layers, read 0.30 against a package total of
+      1.20. **Chosen:** an area is a set of COLUMNS and adds the records of every layer
+      under it, each node read as its in-layer cell through `budget.model.node_to_lni`
+      (ledger 342's rule); a node that model does not have raises. No `layer=` was added --
+      nothing asked for one, and a per-layer split is `df` filtered by node. Revert check:
+      `tests/test_budget_obs_areas.py::test_an_area_sums_every_layer_of_its_columns`.
+
+483. **The location-file calibration plot draws the (location, layer) pairs observed, paired by time (2026-10-11).**
+      Review of ledger 477, which moved this plot's axes without a test reaching it.
+      `CalibrationPlot(observed=<frame>, model=, loc_shp_gpkg=)` looped every SIMULATED
+      location times every layer, and the simulated heads carry every layer, so an observed
+      table lacking any (location, layer) pair -- any multi-layer model, or an Excel
+      `observed` read for one `obs_layers` -- raised `KeyError`; and it paired the two
+      tables by POSITION, so an observed table missing or reordering a time set a target
+      beside another time's head. It now draws the pairs the observed table holds, joined
+      to the simulated rows on `kstpkper`, and an observed pair with no simulated rows
+      (a location the file does not name) raises `ValueError` rather than being dropped.
+      Revert check: `tests/test_calibration_plot_refusals.py::
+      test_the_location_file_cross_plot_pairs_by_time_in_the_layers_observed`.
