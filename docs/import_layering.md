@@ -117,6 +117,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.observations._shared`
 - `myflopy.modflow.mf6.package_budget`
 - `myflopy.modflow.mf6.package_inputs`
+- `myflopy.modflow.mf6.period_calendar`
 - `myflopy.modflow.mf6.pest.zones`
 - `myflopy.modflow.mf6.prt` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.prt_maps` *(deferred imports: 1)*
@@ -187,6 +188,7 @@ review the diff, commit the regenerated files together.
 
 ## Layer 7
 
+- `myflopy.cycles`
 - `myflopy.layers` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.specs`
 - `myflopy.modflow.mf6.simulation.accessors`

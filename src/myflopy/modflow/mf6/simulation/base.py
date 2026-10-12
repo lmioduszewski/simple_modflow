@@ -21,6 +21,11 @@ from myflopy.modflow.mf6.package_registry import (
     package_name_of,
     packages_of_type,
 )
+from myflopy.modflow.mf6.period_calendar import (
+    PeriodCalendar,
+    period_calendar,
+    tdis_start_date_time,
+)
 from myflopy.modflow.mf6.simulation.accessors import (
     field_reader,
     get_all_conc,
@@ -580,9 +585,10 @@ class SimulationBase:
         start_datetime : str or None, optional
             Simulation start date (e.g. ``"2020-01-01"``) that pyEMU uses to place
             time-varying parameters/observations on the time axis. Default ``None``
-            reads it from the model's TDIS ``start_date_time``; when that is unset
-            too, ``ValueError`` is raised, so pass it explicitly for a model without
-            one.
+            reads it from the model's TDIS ``START_DATE_TIME`` (through
+            ``period_calendar.tdis_start_date_time``, the one reader of it); when
+            that is unset too, ``ValueError`` is raised, so pass it explicitly for a
+            model without one.
         workspace : str or pathlib.Path or None, optional
             The template directory ``build()`` writes. Default ``None`` uses
             ``<workspace>.pest/<slug>``, beside the model directory, where
@@ -609,7 +615,7 @@ class SimulationBase:
         from myflopy.modflow.mf6.pest.project import PestProject
 
         if start_datetime is None:
-            start_datetime = self._tdis_start_datetime()
+            start_datetime = tdis_start_date_time(self)
             if start_datetime is None:
                 raise ValueError(
                     "start_datetime could not be read from the model's TDIS; "
@@ -619,16 +625,19 @@ class SimulationBase:
             self, name, start_datetime=start_datetime, workspace=workspace, **kwargs
         )
 
-    def _tdis_start_datetime(self) -> str | None:
-        """The TDIS ``start_date_time`` as a string, or ``None`` if unset."""
+    @property
+    def calendar(self) -> PeriodCalendar:
+        """The dates of every stress period: the TDIS read as a :class:`~myflopy.modflow.mf6.period_calendar.PeriodCalendar`.
 
-        tdis = getattr(self.sim, "tdis", None)
-        sdt = getattr(tdis, "start_date_time", None)
-        if sdt is None:
-            return None
-        getter = getattr(sdt, "get_data", None)
-        value = getter() if callable(getter) else sdt
-        return str(value) if value else None
+        ``mf.period_calendar(model)``, read anew on each access: start, end and
+        midpoint of each period, its calendar month (the MIDPOINT's) and its
+        steady-state flag from the model's STO (ledger 529). ``.table()``
+        shows them. Raises ``ValueError`` when the TDIS declares no
+        ``START_DATE_TIME`` or no ``TIME_UNITS``, naming the ``mf.tdis(...)``
+        argument that declares it.
+        """
+
+        return period_calendar(self)
 
     @property
     def package_names(self) -> list[str]:

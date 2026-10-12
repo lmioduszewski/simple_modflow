@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 528 entries (533 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 530 entries (535 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 530 | `mf.AverageYear`: one steady period, then calendar-month cycles, its run checked by `equilibrium` | 2026-10-12 |
+| 529 | A period's dates are read in one place, `PeriodCalendar`, and its calendar month is its MIDPOINT's | 2026-10-12 |
 | 528 | A covered cell is clamped to the pyEMU multipliers' `physical=` on its file too | 2026-10-12 |
 | 527 | `pp_spacing=` in model length units replaces `pp_space`, with no alias and no default; `zones=` is honoured... | 2026-10-12 |
 | 526 | Pilot points interpolate in log10 space from the 8 nearest points of their set, through weights stored at b... | 2026-10-12 |
@@ -20570,3 +20572,62 @@ same day, which is the useful part of the result.
       covers keep pyEMU's output untouched (pyEMU already clamped them). Rejected: clamping
       the whole file to every pilot set's limits -- a zoned set's `physical=` would reach
       cells outside its zone.
+
+529. **A period's dates are read in one place, `PeriodCalendar`, and its calendar month is its MIDPOINT's (2026-10-12).**
+      `period_calendar.py` holds the one reader of TDIS `START_DATE_TIME`
+      (`tdis_start_date_time`; `SimulationBase._tdis_start_datetime` is gone and
+      `model.pest()` calls it), and `period_end.period_records` is the one reader of the
+      TDIS period block (`period_lengths` is its first column). `PeriodCalendar` dates
+      every period as start plus the cumulative lengths at MF6's seconds per unit,
+      rounded to the millisecond, because FloPy writes an hour as `0.04166667` d (0.3 ms
+      off). `model.calendar` and `mf.period_calendar(model)` read it. **Month = the
+      MIDPOINT's:** Ten Trails starts 2017-09-30, so a START rule labels every period
+      with the month before it. A non-leap cycle in a leap year starts March on 29
+      February, so the start rule mislabels it there too (measured in
+      `test_period_calendar`). **Steady flags follow MF6, measured:** no STO is steady in
+      every period, and a period BEFORE the first STO block is TRANSIENT. Its storage
+      flows equal those of a STO naming `TRANSIENT` from period 1, and the listing names
+      only periods that have a block (`docs/reproducers/sto_default_transient.py`).
+      Refused: no `START_DATE_TIME`, a `TIME_UNITS` MF6 reads as undefined (both name
+      `mf.tdis(...)`), a time zone, and a date string with no four-digit year (pandas
+      reads `"October"` as year 1). **Not routed through it:** `ModelContext.dates`
+      (declared by the user, read by nothing) and `model.per_dates` (user labels for map
+      footers) do not read the TDIS. `model_config._tdis_period_rows` still reads the
+      period block from a TDIS object for the config rows.
+
+530. **`mf.AverageYear`: one steady period, then calendar-month cycles, its run checked by `equilibrium` (2026-10-12).**
+      One object states the period-to-month map for the TDIS, the STO flags, every
+      per-period forcing and the last cycle. **Chosen:**
+      - Month lengths are NON-leap calendar days, as in the user's 72-period TDIS.
+        Each leap year moves the periods one day early. A cycle long enough to move a
+        midpoint out of its month (about 14 leap years) is refused, so
+        `AverageYear`'s months and the calendar's MIDPOINT months are always the same.
+        No leap-year option was built.
+      - `start` must be midnight on the first of a month, so every period ends on a
+        month end. Any other start is refused, naming the first of that month.
+        `START_DATE_TIME` is `start - steady_length` (default 1 day). The steady period
+        takes 1 step at multiplier 1.0, and that is not configurable.
+      - `nstp` is required (it is the run-time lever). One `tsmult` for every month.
+      - `by_month` keys on CALENDAR month. A sequence of twelve is refused as ambiguous
+        between calendar and cycle order. `None` values are refused, because MF6 would
+        repeat the previous block there. The steady period gets the
+        month-length-weighted annual mean of numeric values (the user's answer to Q3).
+        Records, time-series names and recipes need `steady=`. Arrays are placed
+        uncopied.
+      - Without a steady period, `steady_state` is `None`, not `{}` (FloPy writes empty
+        blocks for `{}`).
+      - `from_model` INFERS the cycle from the run's TDIS and STO. Nothing is recorded,
+        because the PEST build and `load_mf6_run` read only files (ledger 356). It does
+        not read the steady period's `nstp`/`tsmult`.
+      - `equilibrium` compares the last two cycles at each period's END (ledger 336).
+        The head file is read through `period_ends`. A target set is read through its
+        own `simulated_heads`/`simulated_series`. With `targets=None` it compares every
+        cell's head and every LAK package that saves a stage file; a package without one
+        is skipped with a warning (`warnings.warn` and the log, ledger 288). With no
+        `tolerance` there is no verdict, and `converged` raises: what counts as settled
+        is the modeller's call, relative to target noise. One cycle is refused (nothing
+        to compare). `plot()` returns a `viz.Fig` (or a Matplotlib `Figure` with
+        `backend="mpl"`), as every other table plot does (`IesResults.plot_phi`). It is
+        not a `viz.Picture`, which the six picture verbs return.
+      **Not built:** recording the cycle in run metadata, a per-month `tsmult`, and
+      equilibrium for SFR reaches unless they are passed as targets.

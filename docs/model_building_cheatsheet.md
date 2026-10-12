@@ -1342,6 +1342,39 @@ if not success:
     print("\n".join(report[-25:]))
 ```
 
+### Time: an average year — `mf.AverageYear`
+
+A model calibrated to an AVERAGE year: one steady-state period under the year's mean
+forcing, then the twelve calendar months `cycles` times until the heads repeat, with
+targets on the last year. `AverageYear` states the period-to-month map once
+(ledger 530):
+
+```python
+year = mf.AverageYear(3, start="2016-10-01", nstp=10, tsmult=1.1)   # a water year
+#  nper = 1 + 12 * 3 = 37; non-leap month lengths; START_DATE_TIME 2016-09-30
+flow = mf.gwf("valley", context=ctx, packages=[
+    ...,
+    mf.sto(sy=0.15, ss=1e-5, steady_state=year.steady_state, transient=year.transient),
+    mf.rch.array(recharge=year.by_month({1: jan, 2: feb, ..., 12: dec})),   # CALENDAR months
+    mf.lak(..., nper=year.nper, rainfall=year.by_month(rain), evaporation=year.by_month(evap)),
+])
+sim = mf.simulation(flow, packages=[year.tdis(ats=True), mf.ims(complexity="COMPLEX")])
+```
+
+`by_month` keys on the calendar month (January = 1) whatever month `start` is, gives
+every period a block of its own, and gives the steady period the month-length-weighted
+annual mean of numeric values (pass `steady=` otherwise). `nstp` is required: it is
+the run-time lever. After the run, **choose `cycles` from the run itself**:
+
+```python
+model = run.model("valley")
+eq = year.equilibrium(model, tolerance=0.01)   # last two cycles, period end vs period end
+eq.summary()        # per source: max |change|, where, annual-mean drift, passes
+eq.plot()           # max |change| by month for the last two cycle pairs
+mf.AverageYear.from_model(model) == year      # a run recovers its cycle from its own files
+model.calendar.table()                        # every period's dates and calendar month
+```
+
 ### Setting up the workspace
 
 `mf.Project(root, name=)` creates nothing on disk until you ask it to. Runs land

@@ -478,15 +478,12 @@ def _told_apart(first: float, second: float) -> tuple[str, str]:
     return repr(first), repr(second)
 
 
-def period_lengths(model: Any) -> list[float] | None:
-    """Each stress period's length from ``model``'s TDIS, or ``None`` when it has none.
+def period_records(model: Any) -> list[tuple[float, int | None, float | None]] | None:
+    """Each stress period's ``(perlen, nstp, tsmult)`` from ``model``'s TDIS, or ``None``.
 
-    Every run model carries a TDIS (MF6 will not run without one) -- a live one
-    (``run.model()``) and one read back from its files (``mf.load_mf6_run``) alike --
-    so ``None`` means a duck-typed double, a table with no simulation behind it, and
-    the period-end rule then has nothing to check a file against. The lengths are the
-    ones FloPy holds, which for a live model differ from what MF6 read by FloPy's
-    8-decimal write rounding; :data:`END_RTOL` absorbs that.
+    The ONE reader of a model's TDIS ``PERIODDATA`` block: :func:`period_lengths`
+    takes its first column, and ``mf.AverageYear.from_model`` reads all three to
+    recover the cycle a run was built on (ledger 530).
 
     Parameters
     ----------
@@ -495,8 +492,13 @@ def period_lengths(model: Any) -> list[float] | None:
 
     Returns
     -------
-    list of float or None
-        ``perlen`` per stress period, zero-based, in the model's time units.
+    list of tuple of (float, int or None, float or None) or None
+        ``(perlen, nstp, tsmult)`` per stress period, zero-based, ``perlen`` in the
+        model's time units, as FloPy holds them (a live model's lengths differ from
+        what MF6 read by FloPy's 8-decimal write rounding; :data:`END_RTOL` absorbs
+        that). ``nstp``/``tsmult`` are ``None`` when the block holds no such column
+        (a test double carrying ``perlen`` alone). ``None`` when the model has no
+        TDIS, or a TDIS with no period block.
     """
 
     from flopy.mf6.mfbase import MFDataException
@@ -513,7 +515,42 @@ def period_lengths(model: Any) -> list[float] | None:
         return None
     if data is None:
         return None
-    return [float(value) for value in data["perlen"]]
+    perlen = [float(value) for value in data["perlen"]]
+    columns = []
+    for field, kind in (("nstp", int), ("tsmult", float)):
+        try:
+            columns.append([kind(value) for value in data[field]])
+        except (KeyError, ValueError, IndexError):
+            # A double holding `perlen` alone (a dict, or a recarray without the
+            # field): the lengths are still the period-end rule's whole input.
+            columns.append([None] * len(perlen))
+    return list(zip(perlen, *columns, strict=True))
+
+
+def period_lengths(model: Any) -> list[float] | None:
+    """Each stress period's length from ``model``'s TDIS, or ``None`` when it has none.
+
+    Every run model carries a TDIS (MF6 will not run without one) -- a live one
+    (``run.model()``) and one read back from its files (``mf.load_mf6_run``) alike --
+    so ``None`` means a duck-typed double, a table with no simulation behind it, and
+    the period-end rule then has nothing to check a file against. The lengths are the
+    ones FloPy holds, which for a live model differ from what MF6 read by FloPy's
+    8-decimal write rounding; :data:`END_RTOL` absorbs that. Read through
+    :func:`period_records`, the one reader of the TDIS period block.
+
+    Parameters
+    ----------
+    model : SimulationBase or object
+        A run model (``model.sim.tdis``), or a double without one.
+
+    Returns
+    -------
+    list of float or None
+        ``perlen`` per stress period, zero-based, in the model's time units.
+    """
+
+    records = period_records(model)
+    return None if records is None else [record[0] for record in records]
 
 
 def period_ends(
@@ -732,5 +769,6 @@ __all__ = [
     "period_end_steps",
     "period_ends",
     "period_lengths",
+    "period_records",
     "saved_steps",
 ]

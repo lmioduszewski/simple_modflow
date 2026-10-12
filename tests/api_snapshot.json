@@ -38,6 +38,32 @@
       "values:POSITIONAL_OR_KEYWORD=<required>",
       "units:KEYWORD_ONLY=None"
     ],
+    "AverageYear": [
+      "cycles:POSITIONAL_OR_KEYWORD=<required>",
+      "start:KEYWORD_ONLY=<required>",
+      "steady:KEYWORD_ONLY=True",
+      "steady_length:KEYWORD_ONLY=None",
+      "nstp:KEYWORD_ONLY=<required>",
+      "tsmult:KEYWORD_ONLY=1.0"
+    ],
+    "AverageYear.by_month": [
+      "values:POSITIONAL_OR_KEYWORD=<required>",
+      "steady:KEYWORD_ONLY=None"
+    ],
+    "AverageYear.equilibrium": [
+      "model:POSITIONAL_OR_KEYWORD=<required>",
+      "targets:KEYWORD_ONLY=None",
+      "tolerance:KEYWORD_ONLY=None"
+    ],
+    "AverageYear.from_model": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "AverageYear.months_of": [
+      "cycle:POSITIONAL_OR_KEYWORD=-1"
+    ],
+    "AverageYear.tdis": [
+      "options:VAR_KEYWORD=<required>"
+    ],
     "BoundDrnFlowTargets.attach_flopy_obs": [
       "pname:KEYWORD_ONLY='drn_flow_obs'",
       "filename:KEYWORD_ONLY='drn_flow_targets.obs'",
@@ -624,6 +650,11 @@
       "grass_kwargs:VAR_KEYWORD=<required>"
     ],
     "CoverageReport.summary": [],
+    "CycleEquilibrium.get": [],
+    "CycleEquilibrium.plot": [
+      "backend:KEYWORD_ONLY='plotly'"
+    ],
+    "CycleEquilibrium.summary": [],
     "DataSourceSpec": [
       "path:POSITIONAL_OR_KEYWORD=<required>",
       "external:POSITIONAL_OR_KEYWORD=False",
@@ -3029,6 +3060,16 @@
       "key:POSITIONAL_OR_KEYWORD=<required>"
     ],
     "ParticleTrackingResult.to_dict": [],
+    "PeriodCalendar": [
+      "start:POSITIONAL_OR_KEYWORD=<required>",
+      "perlen:POSITIONAL_OR_KEYWORD=<required>",
+      "time_units:POSITIONAL_OR_KEYWORD='days'",
+      "steady:POSITIONAL_OR_KEYWORD=None"
+    ],
+    "PeriodCalendar.same_clock": [
+      "other:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "PeriodCalendar.table": [],
     "PestProject": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
       "name:POSITIONAL_OR_KEYWORD=<required>",
@@ -5446,6 +5487,9 @@
     "patch_simulation_plot": [
       "sim:POSITIONAL_OR_KEYWORD=<required>"
     ],
+    "period_calendar": [
+      "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
     "plot_model_head_map": [
       "model:POSITIONAL_OR_KEYWORD=<required>",
       "head_data:POSITIONAL_OR_KEYWORD=<required>",
@@ -6906,6 +6950,7 @@
       "budget",
       "budget_cumulative",
       "budget_incremental",
+      "calendar",
       "cellids",
       "chd",
       "conc",
@@ -7110,6 +7155,7 @@
     "myflopy.__preferred__": [
       "Area",
       "Array",
+      "AverageYear",
       "BoundarySource",
       "BuiltModel",
       "BuiltSimulation",
@@ -7183,6 +7229,7 @@
       "ParallelSplitRun",
       "ParticleTracking",
       "ParticleTrackingInput",
+      "PeriodCalendar",
       "PestProject",
       "PestRunHandle",
       "Points",
@@ -7272,6 +7319,7 @@
       "oc",
       "open_prt_run",
       "patch_simulation_plot",
+      "period_calendar",
       "plot_model_head_map",
       "plot_particle_pathlines",
       "prepare_particle_tracking",

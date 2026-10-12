@@ -57,6 +57,36 @@ MF6's word for a short spelling (`"d"` -> `"days"`): FloPy writes any word, and 
 STOPS the run on one it does not read. `with_options`/`packages.fork`/`packages.edit`
 on a TDIS and `PRTProject(time_units=)` refuse the same words (ledger 456).
 
+**Time: an average year — `mf.AverageYear(cycles, *, start, steady=True,
+steady_length=None, nstp, tsmult=1.0)`** (ledger 530). One steady-state period
+(1 day by default, 1 step), then `cycles` repeats of the twelve calendar months from
+`start` (midnight on the first of a month; October gives a water year), each its
+NON-leap length in days. `.tdis(**options)` is the `mf.tdis` spec (`nper`,
+`perioddata`, `time_units="days"` and `start_date_time = start - steady_length` are its
+own and raise if passed; `ats=` passes through); `.steady_state`/`.transient` are the
+`mf.sto` flags (`None`, not `{}`, without a steady period); `.by_month({calendar month:
+value})` is `{period: value}` for every period, the steady period the
+month-length-weighted annual mean of numeric values (numbers, same-shape arrays,
+`{lake: v}` dicts) unless `steady=` is given -- a list of twelve is refused as ambiguous
+between calendar and cycle order; `.months_of(cycle=-1)` is `{month: period}`;
+`.periods` the table. `AverageYear.from_model(model)` reads a run's cycle back from its
+own TDIS and STO, naming the first period that breaks the pattern.
+`.equilibrium(model, targets=None, tolerance=None)` is a `CycleEquilibrium` --
+`get()`/`summary()`/`plot()` and, with a tolerance, `converged` -- comparing the last
+two cycles at each period's END (ledger 336): every cell's head and every LAK
+package's lakes by default, or each target set's own simulated values.
+
+**A period's dates — `model.calendar` / `mf.period_calendar(model)` /
+`mf.PeriodCalendar(start, perlen, time_units, steady=None)`** (ledger 529).
+The one reading of the TDIS clock: `starts`, `ends`, `midpoints`, `months` and
+`.table()`; a period's calendar month is its MIDPOINT's (the Ten Trails TDIS starts
+2017-09-30, so each period's START is the day before its month). The steady flags
+follow MF6's STO rule -- no STO is steady throughout, and a period before the first STO
+block is TRANSIENT (measured, `docs/reproducers/sto_default_transient.py`).
+`same_clock(other)` compares two calendars to FloPy's 8-decimal write. A TDIS without
+`START_DATE_TIME` or `TIME_UNITS` is refused naming `mf.tdis(start_date_time=...,
+time_units="days")`; `model.pest()` takes its default start date from the same reader.
+
 `mf.ic` / `mf.oc` / `mf.disv` / `mf.dis` / `mf.disu` are **model-kind-aware**: they
 build the GWF/GWT/GWE (and, for `oc`/`disv`/`dis`, PRT) FloPy class off the model's
 type, so the same helper serves a transport, energy, or particle-tracking model

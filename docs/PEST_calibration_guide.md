@@ -28,6 +28,17 @@ enough that you can run it hundreds of times, because you will.
 
 A forecast you can defend > a pretty model you ran once.
 
+**Time setup for an average-year calibration.** Declare the steady period and the
+monthly cycles with `mf.AverageYear` (ledger 530) -- its `tdis()`, STO flags
+and `by_month()` forcing -- and before building PEST, run it once and read
+`year.equilibrium(run.model(name), tolerance=...)`: every cycle is twelve more
+periods in EVERY realization's forward run, so take the fewest cycles whose last two
+agree to within your target noise. Targets are compared on the last cycle
+(`year.months_of(-1)` maps each calendar month to its period). A run recovers its
+cycle from its own files with `mf.AverageYear.from_model(model)`, and
+`model.calendar` dates every period; `model.pest(name)` takes its `start_datetime`
+from the same TDIS `START_DATE_TIME`.
+
 ---
 
 ## 1. The prior — what you're uncertain about (parameterization)

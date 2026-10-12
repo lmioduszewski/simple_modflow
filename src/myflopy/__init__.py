@@ -45,6 +45,7 @@ if TYPE_CHECKING:
         build_gwf_prt_exchange,
         build_ims,
     )
+    from myflopy.cycles import AverageYear
     from myflopy.geopackage import CellSurfaceOffset, GeoPackageSource, Spread
     from myflopy.layers import (
         Array,
@@ -120,6 +121,7 @@ if TYPE_CHECKING:
         ParallelSplitResults,
         ParallelSplitRun,
     )
+    from myflopy.modflow.mf6.period_calendar import PeriodCalendar, period_calendar
     from myflopy.modflow.mf6.pest import (
         ConcObservationSpec,
         DrnFlowObservationSpec,
@@ -304,6 +306,9 @@ _EXPORTS = {
     "BoundarySource": ("myflopy.sources", "BoundarySource"),
     "Polygons": ("myflopy.sources", "Polygons"),
     "Area": ("myflopy.areas", "Area"),
+    "AverageYear": ("myflopy.cycles", "AverageYear"),
+    "PeriodCalendar": ("myflopy.modflow.mf6.period_calendar", "PeriodCalendar"),
+    "period_calendar": ("myflopy.modflow.mf6.period_calendar", "period_calendar"),
     "DataSourceSpec": ("myflopy.sources", "DataSourceSpec"),
     "GeoPackageSourceSpec": ("myflopy.sources", "GeoPackageSourceSpec"),
     "LiteralSource": ("myflopy.sources", "LiteralSource"),
