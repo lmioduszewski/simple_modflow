@@ -27,12 +27,16 @@ suite read their SOURCE or not at all (ledger 444):
   period with no settings.
 
 Each runs as a reader would: the scripts in a subprocess, the notebook's code cells
-in order in one namespace. The scripts write under ``tempfile.mkdtemp()``, so TMPDIR
-points at the test's own directory and its teardown removes what they leave.
+in order in one namespace, with each cell's last expression and every ``display``
+argument RENDERED as Jupyter would -- a picture assembles its figure lazily, so
+executing the code alone draws nothing. The scripts write under
+``tempfile.mkdtemp()``, so TMPDIR points at the test's own directory and its teardown
+removes what they leave.
 """
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -40,6 +44,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -131,6 +136,36 @@ EXECUTED_NOTEBOOKS = {
 }
 
 
+def _render(obj) -> None:
+    """Draw ``obj`` the way Jupyter would display it, letting any failure raise.
+
+    A myflopy picture assembles its figure LAZILY (``Picture.fig``), so a cell whose
+    map is its last expression -- or is handed to ``display`` -- draws nothing until
+    the front end asks for a representation. Executing the code alone left every such
+    cell untested: with every map's assembly made to raise, five of the six notebooks
+    still passed, ``feature_rich_model_workflow`` among them, whose last cell IS a map
+    (review of ledger 444). IPython's own formatters print and swallow an
+    exception in a ``_repr_*_`` method, so the methods are called directly here.
+    """
+
+    if obj is None:
+        return
+    for method in ("_repr_mimebundle_", "_repr_html_", "_repr_png_", "_repr_svg_"):
+        if callable(getattr(obj, method, None)):
+            getattr(obj, method)()
+            return
+
+
+def _run_cell(source: str, filename: str, namespace: dict) -> None:
+    """Run one code cell, then render its last expression as Jupyter's display would."""
+
+    tree = ast.parse(source, filename)
+    last = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
+    exec(compile(tree, filename, "exec"), namespace)
+    if last is not None:
+        _render(eval(compile(ast.Expression(last.value), filename, "eval"), namespace))
+
+
 @pytest.mark.slow
 @pytest.mark.skipif(shutil.which("mf6") is None, reason="needs mf6 on PATH")
 @pytest.mark.parametrize("name", sorted(EXECUTED_NOTEBOOKS))
@@ -151,12 +186,28 @@ def test_the_notebook_runs_top_to_bottom(name, tmp_path, monkeypatch):
     here.mkdir(parents=True)
     monkeypatch.chdir(here)
     monkeypatch.syspath_prepend(str(NOTEBOOKS))
-    namespace: dict[str, object] = {"__name__": "__main__", "display": lambda *a, **k: None}
+
+    def display(*objs, **_options):
+        for obj in objs:
+            _render(obj)
+
+    import IPython.display
+    import plotly.io
+
+    # `from IPython.display import display` inside a notebook must get the renderer
+    # too (outside a kernel IPython's own just prints the repr); and `fig.show()`
+    # serializes the figure instead of opening a browser tab -- plotly's default
+    # renderer outside Jupyter is "browser".
+    monkeypatch.setattr(IPython.display, "display", display)
+    monkeypatch.setattr(plotly.io, "show", lambda fig, *a, **k: fig.to_plotly_json())
+    namespace: dict[str, object] = {"__name__": "__main__", "display": display}
     for index, source in enumerate(cells, start=1):
         try:
-            exec(compile(source, f"<{name} cell {index}>", "exec"), namespace)
+            _run_cell(source, f"<{name} cell {index}>", namespace)
         except Exception as error:  # noqa: BLE001 -- re-raised naming the cell and its text
             raise AssertionError(
                 f"{name}: code cell {index} failed: {type(error).__name__}: {error}\n\n{source}"
             ) from error
+        finally:
+            plt.close("all")
     assert EXECUTED_NOTEBOOKS[name](namespace)

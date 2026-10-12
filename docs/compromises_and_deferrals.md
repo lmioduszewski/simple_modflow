@@ -18916,7 +18916,8 @@ same day, which is the useful part of the result.
       with no settings -- replaced by `model.plot.map(select=)`). Two variant-workflow
       scripts refused a second run and pass `overwrite=True` as their siblings do.
       `tests/test_examples_run.py` executes those ten (scripts in a subprocess, notebooks
-      cell by cell; slow; the cheatsheet example skips without GRASS) and each test
+      cell by cell, each cell's last expression and `display` argument RENDERED, since a
+      picture draws nothing until asked for its representation; slow; the cheatsheet example skips without GRASS) and each test
       fails on revert. NOT done: executing EVERY example in the suite -- the sweep took
       ~40 minutes of MF6/PEST++ (`canonical_03` 405 s, `canonical_07` 494 s,
       `pest_observation_groups` past 600 s under load; it passes run alone) and would

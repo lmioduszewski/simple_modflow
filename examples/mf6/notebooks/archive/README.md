@@ -12,10 +12,11 @@ them is the declarative facade:
   `forecast` / `build`, compiling to native `pyemu.utils.PstFrom`.
 - **`canonical_06_pest_ies_uncertainty.ipynb`** — `run_ies` + `IesResults`
   (phi convergence, ensembles vs observations, posterior forecast uncertainty).
-
-The comprehensive legacy multi-target demo (`canonical_04_pest_and_results.ipynb`)
-remains in the parent folder because it still covers lake/SFR/DRN named-series
-observations that the native facade has not yet absorbed.
+- **`canonical_04_pest_and_results.ipynb`** — the same facade end to end on the
+  canonical model: calibrate, run PESTPP-IES, review the ensemble. Lake, SFR and DRN
+  targets (`LakeStageTargets`, `SfrStageTargets`, `SfrFlowTargets`,
+  `DrnFlowTargets`) are accepted by `observe(...)` like `HeadTargets`; nothing in
+  this folder covers an observation the facade lacks.
 
 `targets_api_quickstart.ipynb` is not part of the slice and does not run either: it
 reads a `model` and target files it never builds.
