@@ -359,8 +359,6 @@ def test_max_optimization_points_is_gone_everywhere(tmp_path):
     # that would have applied it was never called -- so it is removed, not wired.
     import inspect
 
-    import pytest
-
     import myflopy as mf
 
     for method in (TriangleGrid.optimize_seeds, TriangleGrid.build_optimized):

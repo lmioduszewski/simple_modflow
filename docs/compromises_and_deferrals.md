@@ -71,7 +71,7 @@
 | 414 | A raster sample reads a `str` or `os.PathLike` path and a numpy number; any other item is refused naming it | 2026-10-11 |
 | 413 | A model's mover takes no `modelnames`: `mvr_spec` refuses `modelnames=True`, and `mf.mvr`/`MVRBuilder` no l... | 2026-10-11 |
 | 412 | An SFR `reach_layer` is a WHOLE number, a float such as `1.0` included, inside the domain's layers | 2026-10-11 |
-| 411 | `protect_sources` / `protected_labels` still change no mesh: every refinement ring vertex stays fixed, beca... | 2026-10-11 |
+| 411 | `protect_sources` / `protected_labels` still change no mesh (removed, ledger 445): every refinement ring ve... | 2026-10-11 |
 | 410 | `max_optimization_points` is removed from the mesh optimizer and `GridSpec.voronoi`, and the optimizer's de... | 2026-10-11 |
 | 409 | Declaring the domain again on one `TriangleGrid` replaces the previous domain's background sizing region;... | 2026-10-11 |
 | 408 | A global `maximum_area` on `TriangleGrid` is a cap ON TOP of every refinement region's and the domain's own... | 2026-10-11 |
@@ -18073,7 +18073,7 @@ same day, which is the useful part of the result.
       `test_max_optimization_points_is_gone_everywhere`; restoring the branch fails
       `test_every_status_the_optimizer_can_report_is_one_it_documents`.
 
-411. **`protect_sources` / `protected_labels` still change no mesh: every refinement ring vertex stays fixed, because freeing them moves default optimized meshes and, measured, makes them worse (2026-10-11).**
+411. **`protect_sources` / `protected_labels` ~~still change no mesh~~ (removed, ledger 445): every refinement ring vertex stays fixed, because freeing them moves default optimized meshes and, measured, makes them worse (2026-10-11).**
       FloPy's `.poly` writer gives every segment a nonzero marker, Triangle passes it to
       the vertices along it, and `get_fixed_and_free_vertex_ids` fixes every marked
       vertex -- so the rings of every refinement region, the domain's background sizing
@@ -18968,3 +18968,8 @@ same day, which is the useful part of the result.
       override check fails `test_protection_options_are_gone_everywhere`; dropping the
       resolve refusal fails `test_a_saved_gridspec_carrying_a_removed_mesh_option_is_refused_at_resolve`;
       dropping the hold fails `test_optimize_seeds_holds_vertices_near_a_line_band_ring`.
+      **Not measured (review):** the two Cumberland notebooks passed
+      `protected_labels` naming their LAKES, which are file regions, not line bands, so
+      the vertices near those rings are no longer held there; their inputs are not on
+      this machine, so whether those meshes move is unknown. The refused-key message
+      says what is held now rather than "it changed no mesh", which Part 2 falsified.

@@ -2573,8 +2573,9 @@ def _refuse_removed_mesh_options(owner: str, carriers) -> None:
             if carried and key in carried:
                 raise TypeError(
                     f"{owner} carries {where}{{{key!r}: ...}}, which was removed (ledger "
-                    f"445): every refinement-ring vertex is already fixed under mesh "
-                    f"optimization, so it changed no mesh. Delete the key."
+                    f"445): which vertices mesh optimization holds fixed is no longer "
+                    f"configurable -- every refinement ring's, and those near a 'line' "
+                    f"band's ring, as the old default held them. Delete the key."
                 )
 
 
