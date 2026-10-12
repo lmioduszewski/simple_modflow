@@ -2539,8 +2539,8 @@ class IesResults:
 
         Dispatch is on the set's ``geometry``, not on its kind: **point**
         families (head, concentration) snapshot a point GeoPackage and a
-        name -> cell map; **zone** families (DRN) snapshot the explicit cell
-        list per zone. Anything that declares neither is skipped -- lake stage
+        name -> cell map; **zone** families (DRN, RIV) snapshot the explicit
+        cell list per zone row, read back as ONE row per zone. Anything that declares neither is skipped -- lake stage
         and SFR stage/flow record only a lake or reach NUMBER, which is not a
         place on the grid (compromise ledger 76).
 
@@ -2617,6 +2617,17 @@ class IesResults:
                 frame["cells"] = [
                     _parse_cell_list(value) for value in table["cells"]
                 ]
+                # ONE row per zone: a zone given as several rows -- and a drawn zone
+                # with no layer, snapshotted as one row per layer it reads (ledger
+                # 535) -- is one observation, and a row per snapshot row
+                # repeated its residual in `obs_residuals()` once per layer. Its
+                # cells are the columns any row covers, as the map paints them.
+                frame = frame.groupby("location", sort=False, as_index=False).agg(
+                    prefix=("prefix", "first"),
+                    kind=("kind", "first"),
+                    value_kind=("value_kind", "first"),
+                    cells=("cells", lambda lists: sorted({int(c) for cells in lists for c in cells})),
+                )
             frames.append(frame)
 
         if not frames:
@@ -2748,7 +2759,8 @@ class IesResults:
             ``value_kind``, ``measured``, ``simulated``, ``residual``,
             ``weight``, ``n``, and whichever location the run recorded:
             ``cell``/``x``/``y`` for point targets (heads, concentration),
-            ``cells`` (the zone's cell list) for DRN zones. Empty when the run
+            ``cells`` (the zone's cell list) for DRN and RIV zones -- one row per
+            zone, its cells the columns any of its rows covers. Empty when the run
             recorded no locatable observation sets.
         """
 
@@ -2796,7 +2808,7 @@ class IesResults:
         """Map where the calibrated model is biased, and by how much.
 
         Point targets (heads, concentration) draw as markers at their
-        coordinates; DRN zones color the cells they cover. Both read on ONE
+        coordinates; DRN and RIV zones color the cells they cover. Both read on ONE
         diverging scale centered on zero, so a point and the zone beneath it
         mean the same thing at the same color: **red is under-simulated**
         (simulated below measured), blue is over-simulated, white is on the
@@ -2869,7 +2881,7 @@ class IesResults:
                     "residual map needs the *_target_locations.gpkg / "
                     "*_head_target_map.csv snapshots written beside the control "
                     "file, and only point targets (heads, concentration) and "
-                    "DRN zones record geometry -- lake and SFR targets record "
+                    "DRN and RIV zones record geometry -- lake and SFR targets record "
                     "only a lake or reach number."
                 )
             raise ValueError(

@@ -1544,8 +1544,8 @@ def observation_cellid_form_complaints(model) -> list[str]:
     DISU -- and FloPy writes whatever tuple it is given. A DISV pair on a DIS built
     clean and MF6 stopped; on a DISU it built clean and MF6 RAN, reading ``(1, 6)`` as
     node 2 -- a drain-flow observation reported 3e30 for a drain at another node,
-    under Normal termination. ``DrnFlowTargets.to_flopy_obs(None)`` writes that pair,
-    having no grid to read.
+    under Normal termination. ``DrnFlowTargets.to_flopy_obs(None)`` and
+    ``RivFlowTargets.to_flopy_obs(None)`` write that pair, having no grid to read.
 
     Parameters
     ----------
@@ -1574,7 +1574,8 @@ def observation_cellid_form_complaints(model) -> list[str]:
                 f"{numbering.form}: "
                 + _listing(f"{name!r} at {cellid}" for name, cellid in wrong)
                 + ". An observation names its cell in the grid's own form, and "
-                "DrnFlowTargets.to_flopy_obs(None), with no model to read, writes DISV's "
+                "DrnFlowTargets/RivFlowTargets.to_flopy_obs(None), with no model to read, "
+                "writes DISV's "
                 "(layer, cell): declare the package without observations= and attach "
                 "them to the built model -- targets.attach_flopy_obs(run.model()), "
                 "which writes this form -- or write each cellid in this form"

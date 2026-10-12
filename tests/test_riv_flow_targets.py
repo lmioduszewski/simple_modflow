@@ -405,14 +405,20 @@ def test_the_pest_build_hands_pest_the_zone_and_every_realization_rewrites_it(ri
 @pytest.mark.slow
 def test_pestpp_ies_runs_a_riv_flow_calibration_end_to_end(rivers, tmp_path):
     """Real PESTPP-IES: two iterations of three realizations reading two RIV sets,
-    each realization's riv_flow observations read back from the forward run."""
+    each realization's riv_flow observations read back from the forward run. The
+    ``losers`` zone is DRAWN with no layer, so its snapshot is one row per layer
+    (ledger 535); the review reads it back as ONE zone -- it listed the
+    zone's residual once per layer in ``obs_residuals()``."""
 
     targets = mf.RivFlowTargets(locations={"rock": GAIN}, package="riv",
                                 values={"time": [0, 1], "rock": [-900.0, -950.0]})
     cal = rivers.pest("ies", workspace=tmp_path / "ies", start_datetime="2024-01-01")
     cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
     cal.observe(targets)
-    cal.observe(mf.RivFlowTargets(locations={"losers": LOSE}, package="crisp",
+    polys = rivers.vor.gdf_vorPolys.geometry
+    drawn = gpd.GeoDataFrame({"name": ["losers"]}, crs=rivers.vor.crs, geometry=[
+        polys.loc[LOSE[0]].union(polys.loc[LOSE[1]]).buffer(-1.0)])
+    cal.observe(mf.RivFlowTargets(locations=drawn, package="crisp",
                                   values={"time": [0], "losers": [150.0]}), prefix="crisp_flow")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -423,3 +429,8 @@ def test_pestpp_ies_runs_a_riv_flow_calibration_end_to_end(rivers, tmp_path):
     columns = [c for c in posterior.columns if c.startswith("oname:riv_flow")]
     assert columns and np.isfinite(posterior[columns].to_numpy(dtype=float)).all()
     assert (posterior[columns].to_numpy(dtype=float) < 0).all()  # gaining: MF6's sign
+    residuals = result.obs_residuals()
+    assert sorted(zip(residuals["prefix"], residuals["location"], strict=True)) == [
+        ("crisp_flow", "losers"), ("riv_flow", "rock")]
+    losers = residuals.set_index("location").loc["losers"]
+    assert losers["cells"] == LOSE and losers["n"] == 1

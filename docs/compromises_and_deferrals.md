@@ -20776,6 +20776,9 @@ same day, which is the useful part of the result.
       read as 0.0 (measured, MF6 6.8). **Deliberately NOT changed:** a row giving explicit
       `cells` with no layer keeps layer 0 -- its numbers are in-layer by the documented
       contract, and whether a blank there should mean every layer is left to the user.
+      The PEST build snapshots such a zone as one row per layer; `IesResults` reads the
+      snapshot back as ONE row per zone (its cells the columns any row covers) -- at review
+      `obs_residuals()` listed a drawn zone's residual once per layer.
 
 536. **A zone set's budget route refuses a package in scope that wrote no cell-budget record, naming it and `save_flows=True` (2026-10-12).**
       A package declared without `SAVE_FLOWS` writes nothing to the budget file, and its
