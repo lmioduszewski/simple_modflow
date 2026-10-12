@@ -487,6 +487,8 @@ _SLOW_TESTS = {
     "test_canonical_calibration_demo_builds_native_pst_with_multilayer_k",
     "test_grid_k_parameterization_on_voronoi_with_capture",
     "test_pilot_point_k_parameterization_on_voronoi",
+    # test_pest_ies_runs_review.py -- three serial PESTPP-IES runs in one template
+    "test_reruns_in_one_template_review_their_own_iterations",
     # test_workspace.py -- executes MF6
     "test_run_builds_writes_executes_and_reopens_with_flopy_310",
     "test_project_multi_model_run_uses_per_model_subdirs",
@@ -539,6 +541,8 @@ def pytest_collection_modifyitems(config, items):
         "test_canonical_eight_part_split_runs_with_mpi",
         "test_canonical_eight_part_split_runs_with_local_lake_connections",
         "test_pilot_point_k_parameterization_on_voronoi",
+    # test_pest_ies_runs_review.py -- three serial PESTPP-IES runs in one template
+    "test_reruns_in_one_template_review_their_own_iterations",
     }
     items.sort(key=lambda item: 0 if item.originalname in priority else 1)
 

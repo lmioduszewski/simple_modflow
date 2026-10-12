@@ -15,9 +15,12 @@ PESTPP-IES output files this reads (``<case>`` is the control-file stem):
 - ``<case>.phi.actual.csv`` / ``<case>.phi.meas.csv`` -- objective function by
   iteration (one column per realization, plus a ``base`` column);
 - ``<case>.<iter>.obs.csv`` -- the observation ensemble at each iteration
-  (iteration ``0`` is the prior; the highest iteration is the posterior);
+  (iteration ``0`` is the prior; the highest iteration the phi file records is the
+  posterior);
 - ``<case>.<iter>.par.csv`` -- the parameter ensemble at each iteration;
 - ``<case>.obs+noise.csv`` -- the measurement-noise ensemble.
+
+Each ensemble is read as ``.jcb`` too, the form ``ies_save_binary`` writes.
 """
 
 from __future__ import annotations
@@ -142,6 +145,14 @@ def _log_decade_colorbar_for_mosaic(low, high) -> dict:
 
 # Display names for stats whose column name reads badly as a figure label.
 _STAT_LABELS = {"reduction": "uncertainty reduction"}
+
+# The same, for a field whose statistics :meth:`IesResults.field` took in log10.
+_LOG_STAT_LABELS = {
+    "mean": "geometric mean",
+    "std": "std of log10",
+    "change": "change (geometric)",
+    "reduction": "uncertainty reduction (log10)",
+}
 
 # Which divisor was zero when a derived stat comes back non-finite.
 _UNDEFINED_REASONS = {
@@ -297,6 +308,11 @@ def _hover_column(values, *, reason: str = "undefined (prior mean 0)") -> list:
 
 # Trailing ``:<value>`` time token in a pyEMU long observation name.
 _TIME_RE = re.compile(r":([0-9eE.+\-]+)$")
+
+
+#: The two forms PESTPP-IES writes an ensemble in: CSV, and PEST's binary ``.jcb``
+#: under ``ies_save_binary`` (ledger 512).
+_ENSEMBLE_SUFFIXES = (".csv", ".jcb")
 
 
 def _import_pyemu():
@@ -473,9 +489,9 @@ class IesResults:
 
     Notes
     -----
-    Iteration ``0`` is the prior ensemble; the highest iteration written to disk
-    is treated as the posterior (pestpp-ies may stop before ``NOPTMAX`` if it
-    converges). Use :meth:`obs_ensemble` / :meth:`par_ensemble` to reach any
+    Iteration ``0`` is the prior ensemble; the highest of THIS run's iterations --
+    those its phi file records, :attr:`iterations` -- is treated as the posterior
+    (pestpp-ies may stop before ``NOPTMAX`` if it converges). Use :meth:`obs_ensemble` / :meth:`par_ensemble` to reach any
     specific iteration.
     """
 
@@ -491,6 +507,8 @@ class IesResults:
         self.case = case_name or self._discover_case()
         self.pst = self.pyemu.Pst(str(self.workspace / f"{self.case}.pst"))
         self.model = model
+        # Ensembles read so far, by (kind, path): (the file's (size, mtime_ns), ensemble).
+        self._ensembles: dict[tuple[str, str], tuple[tuple[int, int], object]] = {}
         # No `try_parse_name_metadata()` call here: `pyemu.Pst(filename)` loads
         # via `Pst.load`, which calls it already (verified against the installed
         # pyemu). The explicit re-call was redundant, and its `except Exception`
@@ -545,14 +563,44 @@ class IesResults:
 
     @cached_property
     def iterations(self) -> list[int]:
-        """Sorted iteration numbers with an observation ensemble on disk."""
+        """Sorted iterations of THIS run with an observation ensemble on disk.
 
-        nums = []
-        for path in self.workspace.glob(f"{self.case}.*.obs.csv"):
-            middle = path.name[len(self.case) + 1 : -len(".obs.csv")]
-            if middle.isdigit():
-                nums.append(int(middle))
+        An iteration counts when its ``<case>.<n>.obs.csv`` -- or ``.obs.jcb``, written
+        under ``ies_save_binary`` -- exists AND the run's own phi file
+        (``<case>.phi.actual.csv``, which every run rewrites from its first row) lists
+        it. A file of an earlier run in the same directory, an iteration past this
+        run's last, is not this run's (ledger 507): a rerun with fewer
+        iterations reviewed the earlier run's last iteration as its posterior, and a
+        prior Monte Carlo an IES posterior. Without a phi file every ensemble on
+        disk counts.
+        """
+
+        nums = set()
+        for suffix in _ENSEMBLE_SUFFIXES:
+            for path in self.workspace.glob(f"{self.case}.*.obs{suffix}"):
+                middle = path.name[len(self.case) + 1 : -len(f".obs{suffix}")]
+                if middle.isdigit():
+                    nums.add(int(middle))
+        recorded = self._phi_iterations()
+        if recorded is not None:
+            nums &= recorded
         return sorted(nums)
+
+    def _phi_iterations(self) -> set[int] | None:
+        """The iterations the run's phi file records, or ``None`` when it has none."""
+
+        path = self.workspace / f"{self.case}.phi.actual.csv"
+        if not path.exists():
+            return None
+        try:
+            column = pd.read_csv(path, usecols=["iteration"])["iteration"]
+        except (OSError, ValueError) as error:
+            # A phi file PESTPP-IES is still writing, or one with no `iteration`
+            # column (pandas' EmptyDataError and ParserError are ValueErrors): no
+            # record to read, so every ensemble on disk counts.
+            logger.debug("phi file %s gives no iteration record: %s", path, error)
+            return None
+        return {int(value) for value in pd.to_numeric(column, errors="coerce").dropna()}
 
     @property
     def prior_iteration(self) -> int:
@@ -572,30 +620,85 @@ class IesResults:
 
     # -- ensembles --------------------------------------------------------
 
+    def _option_is_set(self, name: str) -> bool:
+        """Whether the run's control file sets the boolean PEST++ option ``name``."""
+
+        value = self.pst.pestpp_options.get(name)
+        return str(value).strip().lower() in ("true", "1", "yes", "t")
+
+    def _ensemble_file(self, stem: str) -> Path | None:
+        """The run's ensemble file ``<stem>.csv`` or ``<stem>.jcb``, or ``None``.
+
+        Both forms are read (ledger 512); when both exist, the one the run's
+        ``ies_save_binary`` option says it wrote.
+        """
+
+        suffixes = _ENSEMBLE_SUFFIXES
+        if self._option_is_set("ies_save_binary"):
+            suffixes = tuple(reversed(suffixes))
+        for suffix in suffixes:
+            path = self.workspace / f"{stem}{suffix}"
+            if path.exists():
+                return path
+        return None
+
+    def _read_ensemble(self, kind: str, path: Path):
+        """Read one ensemble file, once while it is unchanged on disk.
+
+        Cached by path and the file's size and modification time, so the review reads
+        each file once however many views use it (ledger 513) -- a captured
+        full-grid field is hundreds of MB, ~2 s a read -- and a file rewritten since
+        (a run still going) is read again.
+        """
+
+        stat = path.stat()
+        key = (kind, str(path))
+        stamp = (stat.st_size, stat.st_mtime_ns)
+        cached = self._ensembles.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        cls = (
+            self.pyemu.ObservationEnsemble if kind == "obs" else self.pyemu.ParameterEnsemble
+        )
+        if path.suffix == ".jcb":
+            ensemble = cls.from_binary(pst=self.pst, filename=str(path))
+        else:
+            ensemble = cls.from_csv(pst=self.pst, filename=str(path))
+        self._ensembles[key] = (stamp, ensemble)
+        return ensemble
+
     def obs_ensemble(self, iteration: int):
         """Return the observation ensemble at ``iteration`` as a pyEMU object.
 
         Parameters
         ----------
         iteration : int
-            The PESTPP-IES iteration whose ``<case>.<iteration>.obs.csv`` to read:
-            ``0`` is the prior, and :attr:`iterations` lists those on disk. Passed
-            through ``int()``, so ``"2"`` reads iteration 2 and a float is
-            truncated toward zero (``2.9`` reads iteration 2). An iteration with
-            no file raises ``FileNotFoundError`` naming the path.
+            The PESTPP-IES iteration whose ``<case>.<iteration>.obs.csv`` -- or
+            ``.obs.jcb``, written under ``ies_save_binary`` (ledger 512) --
+            to read: ``0`` is the prior, and :attr:`iterations` lists this run's. Passed
+            through ``int()``, so ``"2"`` reads iteration 2 and a float is truncated
+            toward zero (``2.9`` reads iteration 2). An iteration with no file raises
+            ``FileNotFoundError`` naming the path. Not checked against
+            :attr:`iterations`, so a file an earlier run left is read when asked for
+            by number.
 
         Returns
         -------
         pyemu.ObservationEnsemble
-            One row per realization (labelled as the CSV labels them: text when
-            the file holds a ``base`` row, integers when it does not), one column
-            per observation.
+            One row per realization (labelled as the file labels them: text when it
+            holds a ``base`` row, integers when a CSV does not), one column per
+            observation. The SAME object on every call while the file is unchanged
+            (ledger 513): modify a ``.copy()``, never it.
         """
 
-        path = self.workspace / f"{self.case}.{int(iteration)}.obs.csv"
-        if not path.exists():
-            raise FileNotFoundError(f"No observation ensemble at iteration {iteration}: {path}")
-        return self.pyemu.ObservationEnsemble.from_csv(pst=self.pst, filename=str(path))
+        stem = f"{self.case}.{int(iteration)}.obs"
+        path = self._ensemble_file(stem)
+        if path is None:
+            raise FileNotFoundError(
+                f"No observation ensemble at iteration {iteration}: "
+                f"{self.workspace / stem}.csv (or .jcb)"
+            )
+        return self._read_ensemble("obs", path)
 
     def par_ensemble(self, iteration: int):
         """Return the parameter ensemble at ``iteration`` as a pyEMU object.
@@ -603,24 +706,29 @@ class IesResults:
         Parameters
         ----------
         iteration : int
-            The PESTPP-IES iteration whose ``<case>.<iteration>.par.csv`` to read:
-            ``0`` is the prior. Passed through ``int()``, so ``"2"`` reads
-            iteration 2 and a float is truncated toward zero. An iteration with no
-            file raises ``FileNotFoundError`` naming the path -- including one
-            :attr:`iterations` lists, when the run stopped between writing that
-            iteration's observation and parameter ensembles.
+            The PESTPP-IES iteration whose ``<case>.<iteration>.par.csv`` -- or
+            ``.par.jcb`` (ledger 512) -- to read: ``0`` is the prior. Passed
+            through ``int()``, so ``"2"`` reads iteration 2 and a float is truncated
+            toward zero. An iteration with no file raises ``FileNotFoundError`` naming
+            the path -- including one :attr:`iterations` lists, when the run stopped
+            between writing that iteration's observation and parameter ensembles.
 
         Returns
         -------
         pyemu.ParameterEnsemble
             One row per realization, one column per parameter, in the values
-            PESTPP-IES wrote (not log-transformed).
+            PESTPP-IES wrote (not log-transformed). The SAME object on every call
+            while the file is unchanged (ledger 513): modify a ``.copy()``.
         """
 
-        path = self.workspace / f"{self.case}.{int(iteration)}.par.csv"
-        if not path.exists():
-            raise FileNotFoundError(f"No parameter ensemble at iteration {iteration}: {path}")
-        return self.pyemu.ParameterEnsemble.from_csv(pst=self.pst, filename=str(path))
+        stem = f"{self.case}.{int(iteration)}.par"
+        path = self._ensemble_file(stem)
+        if path is None:
+            raise FileNotFoundError(
+                f"No parameter ensemble at iteration {iteration}: "
+                f"{self.workspace / stem}.csv (or .jcb)"
+            )
+        return self._read_ensemble("par", path)
 
     @property
     def prior(self):
@@ -648,12 +756,19 @@ class IesResults:
 
     @cached_property
     def noise(self):
-        """The observation+noise ensemble, or ``None`` if the run used no noise."""
+        """The observation+noise ensemble, or ``None`` if the run used no noise.
 
-        path = self.workspace / f"{self.case}.obs+noise.csv"
-        if not path.exists():
+        ``None`` whenever the run's control file sets ``ies_no_noise``, whatever an
+        earlier run left in the directory (ledger 507); else
+        ``<case>.obs+noise.csv`` or ``.jcb``.
+        """
+
+        if self._option_is_set("ies_no_noise"):
             return None
-        return self.pyemu.ObservationEnsemble.from_csv(pst=self.pst, filename=str(path))
+        path = self._ensemble_file(f"{self.case}.obs+noise")
+        if path is None:
+            return None
+        return self._read_ensemble("obs", path)
 
     @cached_property
     def phi(self) -> pd.DataFrame:
@@ -1119,15 +1234,19 @@ class IesResults:
     def parameters_at_bounds(self, *, which: str = "posterior", tol: float = 0.01) -> pd.DataFrame:
         """Return, by parameter group, how many parameters are pinned at a bound.
 
-        A parameter counts as "at a bound" when its ensemble-mean value sits
-        within ``tol`` (a fraction of the bound range, measured in the
-        parameter's transform space) of its lower or upper bound.
+        A parameter counts as "at a bound" when its ensemble mean, taken in the
+        parameter's transform space, sits within ``tol`` (a fraction of the bound
+        range, in that space) of its lower or upper bound. For a log-transformed
+        parameter that is the mean of ``log10`` value -- a geometric mean -- as in
+        :meth:`sensitivity`; until ledger 514 it was ``log10`` of the
+        arithmetic mean, which a wide log-normal spread pulls toward the upper
+        bound.
 
         Parameters
         ----------
         which : str, default 'posterior'
             Which parameter ensemble to average: ``"posterior"`` reads
-            :attr:`posterior_parameters` (the highest iteration on disk),
+            :attr:`posterior_parameters` (the highest of :attr:`iterations`),
             ``"prior"`` :attr:`prior_parameters`; any case. Anything else raises
             ``ValueError`` -- until ledger 480 it read the prior without a
             word.
@@ -1136,8 +1255,8 @@ class IesResults:
             parameter's bound range: a parameter whose ensemble mean sits at or
             below ``tol`` of the way from its lower bound counts at the lower, at
             or above ``1 - tol`` at the upper. Measured in ``log10`` for a
-            ``partrans == "log"`` parameter whose bounds and mean are all
-            positive, linearly otherwise. Not range-checked: ``tol >= 0.5`` counts
+            ``partrans == "log"`` parameter whose bounds and every realization's
+            value are positive, linearly otherwise. Not range-checked: ``tol >= 0.5`` counts
             every parameter at a bound, and a negative one counts none. A
             parameter whose bounds are equal is counted at neither.
 
@@ -1152,14 +1271,16 @@ class IesResults:
         side = _which_ensemble(which)
         ensemble = (self.posterior_parameters if side == "posterior" else self.prior_parameters)._df
         par = self.pst.parameter_data.loc[[c for c in ensemble.columns if c in self.pst.parameter_data.index]]
-        means = ensemble[par.index].mean()
+        values = ensemble[par.index].astype(float)
         lower = par["parlbnd"].astype(float)
         upper = par["parubnd"].astype(float)
         is_log = par["partrans"].astype(str).str.lower().eq("log")
 
-        value, low, high = means.copy(), lower.copy(), upper.copy()
-        log_mask = is_log & (lower > 0) & (upper > 0) & (means > 0)
-        value[log_mask] = np.log10(means[log_mask])
+        value, low, high = values.mean(), lower.copy(), upper.copy()
+        log_mask = is_log & (lower > 0) & (upper > 0) & (values > 0).all()
+        # The mean in the space the parameter is estimated in: of log10 value for a
+        # log parameter (ledger 514), as `sensitivity` measures it.
+        value[log_mask] = np.log10(values.loc[:, log_mask]).mean()
         low[log_mask] = np.log10(lower[log_mask])
         high[log_mask] = np.log10(upper[log_mask])
         span = (high - low).replace(0, np.nan)
@@ -1437,10 +1558,9 @@ class IesResults:
         Parameters
         ----------
         which : str, default 'posterior'
-            Passed to :meth:`parameters_at_bounds`: ``"posterior"`` reads the
-            posterior parameter ensemble and ANY other value the prior (unchecked
-            and case-sensitive, so a typo reads the prior while the title names
-            the typo). ``"prior"`` is the intended other spelling.
+            Passed to :meth:`parameters_at_bounds`: ``"posterior"`` reads
+            :attr:`posterior_parameters`, ``"prior"`` :attr:`prior_parameters`;
+            any case. Anything else raises ``ValueError`` (ledger 480).
         tol : float, default 0.01
             Passed to :meth:`parameters_at_bounds`: closeness to a bound, as a
             fraction of the bound range (``log10`` for log-transformed
@@ -1945,7 +2065,35 @@ class IesResults:
             prior spread the data removed), and ``base`` (the
             minimum-error-variance realization) when available. Cells that were
             not captured are absent, so the frame is generally shorter than
-            ``ncpl``.
+            ``ncpl``. ``frame.attrs["space"]`` names the space the statistics
+            were taken in (ledger 514):
+
+            * ``"log10"`` -- when every parameter of the field is log-transformed
+              (``transform="log"``, :meth:`PestProject.parameterize`'s default) and
+              every captured value of both ensembles is positive. The space
+              PESTPP-IES estimates those parameters in, and :meth:`sensitivity`'s:
+              each mean is GEOMETRIC (``10 ** mean(log10 value)``), each std is the
+              std of ``log10`` value (in decades), so ``change`` is the ratio of
+              geometric means and ``reduction`` agrees with :meth:`sensitivity`'s
+              ``learned``. Arithmetic statistics of a log-normal K read an unchanged
+              median as roughly halved wherever the data narrowed the spread.
+            * ``"linear"`` -- otherwise (a ``transform="none"`` parameter of the
+              field, no parameter of the field found in the control file, or a
+              value at or below zero): arithmetic means and stds, in model units.
+
+            The parameters of a field are those of its parameter set's group:
+            ``pargp`` ``<name>`` or ``<name>l<layer>...``, ``<name>`` being the
+            captured field's parameter-set name.
+
+        Notes
+        -----
+        Capturing a field records EVERY cell of every layer it covers as a
+        zero-weight observation: 101,615 observations for ``k33`` over Ten Trails'
+        5 x 20,323 cells, which grew its template from 18 to 33 MB and puts that
+        many columns in every observation ensemble each iteration writes (a 352 MB
+        CSV for one 5-layer field at 200 realizations, ~2 s a read). A capture covers
+        the layers its parameter does (``layers=``); save the ensembles in binary
+        (``run_ies(ies_save_binary=True)``), which the review reads too.
         """
 
         info = self._capture_info(target)
@@ -1956,14 +2104,24 @@ class IesResults:
             )
         cells = self._field_cell_index(info, layer)
         names = list(cells.keys())
-        prior = self.prior._df.loc[:, names]
-        posterior = self.posterior._df.loc[:, names]
+        prior = self.prior._df.loc[:, names].astype(float)
+        posterior = self.posterior._df.loc[:, names].astype(float)
+        space = self._field_space(info, prior, posterior)
+        if space == "log10":
+            # Statistics in the space the parameters are estimated in: a geometric
+            # mean and a spread in decades (ledger 514).
+            logged_prior, logged_posterior = np.log10(prior), np.log10(posterior)
+            means = (10.0 ** logged_prior.mean(), 10.0 ** logged_posterior.mean())
+            spreads = (logged_prior.std(), logged_posterior.std())
+        else:
+            means = (prior.mean(), posterior.mean())
+            spreads = (prior.std(), posterior.std())
         frame = pd.DataFrame({
             "cell": [cells[name] for name in names],
-            "prior_mean": prior.mean().to_numpy(),
-            "prior_std": prior.std().to_numpy(),
-            "posterior_mean": posterior.mean().to_numpy(),
-            "posterior_std": posterior.std().to_numpy(),
+            "prior_mean": means[0].to_numpy(),
+            "prior_std": spreads[0].to_numpy(),
+            "posterior_mean": means[1].to_numpy(),
+            "posterior_std": spreads[1].to_numpy(),
         })
         if "base" in posterior.index:
             frame["base"] = posterior.loc["base"].to_numpy()
@@ -1975,7 +2133,32 @@ class IesResults:
         # which the map renders as a named reason rather than a silent gap.
         with np.errstate(divide="ignore", invalid="ignore"):
             frame["reduction"] = 1.0 - frame["posterior_std"] / frame["prior_std"]
-        return frame.sort_values("cell").reset_index(drop=True)
+        frame = frame.sort_values("cell").reset_index(drop=True)
+        frame.attrs["space"] = space
+        return frame
+
+    def _field_space(self, info: dict, prior: pd.DataFrame, posterior: pd.DataFrame) -> str:
+        """``"log10"`` or ``"linear"``: the space :meth:`field` takes a field's statistics in.
+
+        ``"log10"`` when the control file holds parameters of the field -- group
+        ``<name>`` or ``<name>l<layer>...`` -- all ``partrans == "log"``, and every
+        value of both ensembles is positive; the rule :meth:`sensitivity` applies per
+        parameter (ledger 514).
+        """
+
+        name = str(info.get("name") or info.get("target") or "")
+        data = getattr(self.pst, "parameter_data", None)
+        if not name or data is None or "pargp" not in data:
+            return "linear"
+        pattern = re.compile(rf"{re.escape(name.lower())}(l\d+.*)?")
+        groups = data["pargp"].astype(str).str.lower()
+        transforms = data.loc[groups.map(lambda group: bool(pattern.fullmatch(group))).to_numpy(),
+                              "partrans"].astype(str).str.lower()
+        if transforms.empty or not transforms.eq("log").all():
+            return "linear"
+        values = np.concatenate([prior.to_numpy(dtype=float).ravel(),
+                                 posterior.to_numpy(dtype=float).ravel()])
+        return "log10" if values.size and bool((values > 0).all()) else "linear"
 
     def _field_choro(self, target: str, *, stat: str, which: str, layer: int,
                      title: str | None = None, **choropleth_kwargs):
@@ -2017,7 +2200,9 @@ class IesResults:
             return spread
 
         values = _scatter(column)
-        label = f"{target} {_STAT_LABELS.get(stat_key, stat_key)}" + (
+        # Name the space the statistics were taken in (ledger 514).
+        labels = _LOG_STAT_LABELS if frame.attrs.get("space") == "log10" else _STAT_LABELS
+        label = f"{target} {labels.get(stat_key, stat_key)}" + (
             f" ({which})" if stat_key in ("mean", "std") else ""
         )
 
@@ -2832,8 +3017,11 @@ class IesResults:
             ``"base"`` (default, recommended) returns the ``base`` realization --
             the minimum-error-variance parameter set, the closest analogue to a
             deterministic GLM calibration. ``"min_phi"`` returns the lowest-phi
-            realization in the LAST row of the 'actual' phi file; this is
-            tempting but discouraged (it tends to be over-fit and noisy), so
+            realization in the LAST row of the 'actual' phi file among those
+            PESTPP-IES kept: one with an empty phi cell (dropped or failed) or
+            absent from the posterior observation or parameter ensemble is never
+            returned (ledger 515), and ``ValueError`` is raised when no
+            realization is left; this is tempting but discouraged (it tends to be over-fit and noisy), so
             prefer ``"base"`` unless you have a reason. Any case. A run with no
             ``base`` realization raises ``ValueError`` naming ``"min_phi"`` (it
             answered with the ``"min_phi"`` choice in silence until ledger
@@ -2857,9 +3045,21 @@ class IesResults:
                 "phi realization instead."
             )
         if criterion == "min_phi":
-            final = phi.iloc[-1]
-            candidates = {col: float(final[col]) for col in realization_cols}
-            return min(candidates, key=candidates.get)
+            # PESTPP-IES writes an EMPTY phi cell for a realization it dropped or that
+            # failed, and no number compares below NaN, so `min` kept a leading one
+            # and returned a realization with no posterior (ledger 515).
+            final = pd.to_numeric(phi.iloc[-1][realization_cols], errors="coerce").dropna()
+            final.index = final.index.astype(str)
+            held = set(map(str, self.posterior._df.index)) & set(
+                map(str, self.posterior_parameters._df.index)
+            )
+            final = final[final.index.isin(held)]
+            if final.empty:
+                raise ValueError(
+                    "No realization of the last iteration has both a phi and a "
+                    "posterior parameter set; PESTPP-IES dropped or failed every one."
+                )
+            return str(final.idxmin())
         raise ValueError(f"Unknown criterion {criterion!r}; use 'base' or 'min_phi'.")
 
     @property

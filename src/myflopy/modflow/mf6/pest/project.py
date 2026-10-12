@@ -53,7 +53,11 @@ from myflopy.modflow.mf6.pest.pilot_points import (
     add_pilot_point_parameter,
     register_pilot_point_parameters,
 )
-from myflopy.modflow.mf6.pest.runs import default_pest_root
+from myflopy.modflow.mf6.pest.runs import (
+    BUILD_MARKER,
+    default_pest_root,
+    pestpp_ies_outputs,
+)
 from myflopy.modflow.mf6.pest.specs import (
     ConcObservationSpec,
     DrnFlowObservationSpec,
@@ -74,15 +78,15 @@ PYEMU_LOG = "PstFrom.log"
 #: run (ledger 356): a sibling of the template, removed when the build ends.
 STAGING_SUFFIX = ".staging"
 
-#: The file a build writes into its template, and into its staging copy, naming the
-#: directory it was written for and that directory's role: the one sign by which a
-#: later build may DELETE that directory (ledger 360). A build deletes a directory
-#: only when it is absent, empty, or carries this file naming it -- a folder the build
-#: did not write is refused, whatever else it holds. VISIBLE, not a dot-file (ledger
-#: 361): a hidden marker survived ``rm <template>/*`` and Finder's select-all delete,
-#: so a folder emptied that way and refilled with the user's files still carried it,
-#: and the next build deleted them.
-BUILD_MARKER = "myflopy_pest_build.json"
+# BUILD_MARKER (imported from `runs`, where run discovery reads it too) is the file a
+# build writes into its template, and into its staging copy, naming the directory it
+# was written for and that directory's role: the one sign by which a later build may
+# DELETE that directory (ledger 360). A build deletes a directory only when it is
+# absent, empty, or carries this file naming it -- a folder the build did not write is
+# refused, whatever else it holds. VISIBLE, not a dot-file (ledger 361): a hidden
+# marker survived ``rm <template>/*`` and Finder's select-all delete, so a folder
+# emptied that way and refilled with the user's files still carried it, and the next
+# build deleted them.
 
 #: The ``written_by`` value of a :data:`BUILD_MARKER`.
 _MARKER_WRITER = "myflopy PEST build"
@@ -127,6 +131,22 @@ _TARGET_SPEC_TYPES = (
 #: own default, which the correlated grid draw used all along; the pilot-point draw
 #: now uses it too (ledger 424).
 PRIOR_SIGMA_RANGE = 6
+
+#: The ``overdue_giveup_fac`` :meth:`PestProject.run_ies` and :meth:`PestProject.prior`
+#: hand PESTPP-IES unless told otherwise: a parallel model run taking longer than this
+#: many times the average run is killed and its realization counted failed. PESTPP-IES
+#: resets an unset factor to 2.0, which on a shared machine kills a slow NEWTON run
+#: and drops its realization -- selectively, the hard-to-converge ones (ledger
+#: 510).
+DEFAULT_OVERDUE_GIVEUP_FAC = 5.0
+
+#: ``PstFrom``'s ``chunk_len``: how many multiplier files one process of a forward
+#: run's ``apply_list_and_array_pars`` takes. pyEMU's default, 50, splits 50 or more
+#: files into chunks and applies them in a ``spawn`` pool of ``min(cpu_count, 60)``
+#: processes -- in EVERY realization, beside every other worker's (measured at 61
+#: files: 21 child processes, ~3.4 GB PSS and 4.4 s against 1.3 s in one process;
+#: ledger 511). Parallelism belongs to the IES workers, so one chunk.
+PYEMU_APPLY_CHUNK_LEN = 10**6
 
 
 def _pest_run_slug(name: str) -> str:
@@ -449,6 +469,47 @@ def _relation(directory: Path, other: Path) -> str | None:
     if directory.is_relative_to(other):
         return "sits INSIDE"
     return None
+
+
+def _file_stamps(paths) -> dict[str, tuple[int, int]]:
+    """Each file's name with its ``(size, mtime_ns)``, the stamp a copy made with ``shutil.copy2`` keeps."""
+
+    stamps = {}
+    for path in paths:
+        try:
+            stat = Path(path).stat()
+        except OSError:
+            continue
+        stamps[Path(path).name] = (stat.st_size, stat.st_mtime_ns)
+    return stamps
+
+
+def _remove_unrewritten_copies(directory: Path, stamps: dict[str, tuple[int, int]]) -> None:
+    """Delete from ``directory`` each file still carrying the stamp it was copied with.
+
+    pyEMU's ``start_workers`` copies the template into the master with
+    ``shutil.copytree``, which keeps every file's modification time, so an output of
+    an earlier serial run that PESTPP-IES did not rewrite still carries the template
+    file's size and time to the nanosecond -- and a file PESTPP-IES wrote does not
+    (ledger 507).
+    """
+
+    removed = []
+    for name, stamp in stamps.items():
+        path = Path(directory) / name
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if (stat.st_size, stat.st_mtime_ns) == stamp:
+            path.unlink()
+            removed.append(name)
+    if removed:
+        logger.info(
+            "removed %d output file(s) %s copied from the template that this run did "
+            "not rewrite: %s", len(removed), directory,
+            ", ".join(sorted(removed)[:8]) + (" ..." if len(removed) > 8 else ""),
+        )
 
 
 @contextlib.contextmanager
@@ -843,7 +904,13 @@ class PestProject:
             (one prefix per layer file for a layered array), so each
             realization's per-cell property field is carried in the ensembles.
             Enables spatial parameter maps via ``IesResults.plot_field`` /
-            ``IesResults.field``. Default ``False``.
+            ``IesResults.field``. Default ``False``. It costs one observation per
+            CELL of every layer captured, in every ensemble every iteration writes:
+            ``k33`` over Ten Trails' 5 x 20,323 cells added 101,615 and grew the
+            template from 18 to 33 MB, and one 5-layer field at 200 realizations is
+            a 352 MB observation-ensemble CSV per iteration. A capture covers the
+            layers the parameter does (``layers=``); ``run_ies(ies_save_binary=True)`` writes the
+            ensembles in binary, which the review reads too.
         **extra
             Advanced keyword arguments passed straight through to pyEMU's
             ``PstFrom.add_parameters`` for cases the facade does not cover.
@@ -1278,6 +1345,9 @@ class PestProject:
                     zero_based=self.zero_based,
                     start_datetime=self.start_datetime,
                     echo=False,
+                    # Apply every multiplier file in the forward run's own process,
+                    # never in a per-realization pool (ledger 511).
+                    chunk_len=PYEMU_APPLY_CHUNK_LEN,
                 )
         except BaseException:
             # `PstFrom` copies the staging directory into the template FIRST and can
@@ -2207,6 +2277,7 @@ class PestProject:
         bad_phi_sigma: float | None = None,
         master_dir: str | Path | None = None,
         exe: str = "pestpp-ies",
+        overdue_giveup_fac: float | None = DEFAULT_OVERDUE_GIVEUP_FAC,
         **pestpp_options,
     ):
         """Run iterative ensemble smoother history matching with PESTPP-IES.
@@ -2225,7 +2296,18 @@ class PestProject:
         ``cal.pst.pestpp_options`` and STAY there: ``noise=False``, a
         ``bad_phi_sigma`` or an extra option from an earlier
         :meth:`run_ies`/:meth:`prior` call is still set on the next one, whose
-        defaults do not clear it.
+        defaults do not clear it. ``overdue_giveup_fac`` is set (or removed) by
+        every call.
+
+        The directory a run writes into holds that run's outputs only (ledger
+        507). A serial run first deletes from the template every output
+        an earlier run of this calibration left there (each iteration's ensembles
+        and ``.base.par``, the phi files, the noise ensemble -- except a file a
+        PEST++ option names), so a rerun with fewer iterations, or a :meth:`prior`
+        after a run, is not reviewed with the earlier run's last iteration as its
+        posterior. A parallel run's master is pyEMU's copy of the template, so it
+        inherits those outputs; each one PESTPP-IES did not rewrite is removed from
+        the master when the run returns, and the template keeps them.
 
         Parameters
         ----------
@@ -2242,7 +2324,8 @@ class PestProject:
             Number of parallel agents. ``None`` (default) or ``1`` runs
             serially in the template workspace, where the results then are;
             ``>1`` starts that many workers with pyEMU's ``start_workers``
-            and collects the results in ``master_dir``.
+            and collects the results in ``master_dir``. A serial run deletes an
+            earlier run's outputs from the template first (above).
         noise : bool, optional
             Whether to carry measurement noise into the posterior (recommended,
             the default ``True``, which sets nothing). ``False`` sets
@@ -2271,12 +2354,31 @@ class PestProject:
             directory is prepended to ``PATH`` for the run (unless ``PATH``
             already contains it); otherwise the name is resolved on ``PATH`` as
             it is.
+        overdue_giveup_fac : float or None, optional
+            PESTPP-IES's ``overdue_giveup_fac``: in a PARALLEL run, a model run
+            taking longer than this many times the average run is killed and its
+            realization counted failed (dropped from the ensemble). Default
+            :data:`DEFAULT_OVERDUE_GIVEUP_FAC`, ``5.0`` (ledger 510):
+            PESTPP-IES resets an unset factor to ``2.0``, and on a loaded machine a
+            NEWTON model's slow, hard-to-converge realizations are killed at twice
+            the average -- selectively, so the ensemble loses them. A larger value
+            tolerates slower runs; ``None`` removes the option, giving PESTPP-IES's
+            own ``2.0``. Set on ``cal.pst.pestpp_options`` by every call. A serial
+            run kills nothing.
         **pestpp_options
             Any additional ``pst.pestpp_options`` to set (e.g.
             ``ies_localizer="loc.mat"``), passed straight through and applied
-            after the options above, so they override them. ``ies_par_en`` is
-            then replaced by the drawn prior when a ``grid`` parameter, or an
-            array-target ``pilotpoints`` parameter, carries ``correlation=``.
+            after the options above, so they override them. When a ``grid``
+            parameter, or an array-target ``pilotpoints`` parameter, carries
+            ``correlation=``, a call naming no ``ies_par_en`` draws a correlated
+            prior ensemble into ``<name>.prior_par.csv`` and sets ``ies_par_en`` to
+            it (replacing one an earlier call left on ``cal.pst``); an
+            ``ies_par_en`` passed HERE is used as given and nothing is drawn (ledger
+            509 -- it was replaced by the draw too). ``ies_restart_obs_en``
+            -- the simulated values of an ``ies_par_en``'s realizations, which
+            PESTPP-IES then does not rerun -- must come with the ``ies_par_en``
+            that made them: set without one while a prior would be drawn, it is
+            refused (``ValueError``).
 
         Returns
         -------
@@ -2288,7 +2390,9 @@ class PestProject:
         ------
         ValueError
             When :meth:`build` has not run, or ``cal.pst`` has been put in
-            ``regularization`` mode, which PESTPP-IES cannot parse; or, for a
+            ``regularization`` mode, which PESTPP-IES cannot parse; when
+            ``ies_restart_obs_en`` is set while a correlated prior would be drawn
+            into ``ies_par_en`` (ledger 509); or, for a
             parallel run, when the master or a worker directory is, contains or
             sits inside the run directory or the template, or the master is named
             as one of its own workers (ledger 361).
@@ -2316,6 +2420,7 @@ class PestProject:
             master_dir=master_dir,
             noise=noise,
             bad_phi_sigma=bad_phi_sigma,
+            overdue_giveup_fac=overdue_giveup_fac,
             pestpp_options=pestpp_options,
         )
         return IesResults(results_dir, case_name=self.name, model=self.model)
@@ -2328,6 +2433,7 @@ class PestProject:
         noise: bool = True,
         master_dir: str | Path | None = None,
         exe: str = "pestpp-ies",
+        overdue_giveup_fac: float | None = DEFAULT_OVERDUE_GIVEUP_FAC,
         **pestpp_options,
     ):
         """Run the prior parameter ensemble once (prior Monte Carlo).
@@ -2343,7 +2449,9 @@ class PestProject:
         ensemble and stop). Call :meth:`build` first.
 
         Options persist on ``cal.pst`` between calls exactly as in
-        :meth:`run_ies` (a ``bad_phi_sigma`` set there is still set here).
+        :meth:`run_ies` (a ``bad_phi_sigma`` set there is still set here), and a
+        serial prior deletes an earlier run's outputs from the template first, as
+        :meth:`run_ies` describes -- a serial ``run_ies``'s results there included.
 
         Parameters
         ----------
@@ -2367,10 +2475,18 @@ class PestProject:
         exe : str, optional
             PEST++ IES executable, default ``"pestpp-ies"``, resolved as in
             :meth:`run_ies`.
+        overdue_giveup_fac : float or None, optional
+            How many times the average run a parallel model run may take before
+            PESTPP-IES kills it and drops its realization; default
+            :data:`DEFAULT_OVERDUE_GIVEUP_FAC`, ``5.0``, and ``None`` removes the
+            option (PESTPP-IES's own ``2.0``), exactly as in :meth:`run_ies`
+            (ledger 510).
         **pestpp_options
             Additional ``pst.pestpp_options``, passed straight through and
-            applied after ``noise``; ``ies_par_en`` is replaced as in
-            :meth:`run_ies`.
+            applied after ``noise``; ``ies_par_en`` and ``ies_restart_obs_en``
+            behave as in :meth:`run_ies` (a passed ``ies_par_en`` is used as given,
+            and a restart ensemble without one is refused while a correlated prior
+            would be drawn).
 
         Returns
         -------
@@ -2382,8 +2498,10 @@ class PestProject:
         ------
         ValueError
             When :meth:`build` has not run, or ``cal.pst`` has been put in
-            ``regularization`` mode; or as :meth:`run_ies` raises it for a
-            parallel run's master and worker directories (ledger 361).
+            ``regularization`` mode; for a restart ensemble a drawn prior would
+            orphan, as in :meth:`run_ies` (ledger 509); or as
+            :meth:`run_ies` raises it for a parallel run's master and worker
+            directories (ledger 361).
         FileExistsError
             As :meth:`run_ies` raises it, for a parallel run's master and worker
             directories (ledger 361).
@@ -2403,6 +2521,7 @@ class PestProject:
             master_dir=master_dir,
             noise=noise,
             bad_phi_sigma=None,
+            overdue_giveup_fac=overdue_giveup_fac,
             pestpp_options=pestpp_options,
         )
         return IesResults(results_dir, case_name=self.name, model=self.model)
@@ -2451,7 +2570,9 @@ class PestProject:
         coherent field. Drawing from the prior covariance instead yields *smooth*
         prior realizations (handed to PESTPP-IES via ``ies_par_en``) -- this is
         what makes posterior property-pattern maps meaningful rather than
-        laughable. No-op when there are no geostatistical parameters.
+        laughable. No-op when there are no geostatistical parameters. The launch
+        calls it only when the call names no ``ies_par_en`` of its own (ledger
+        509).
 
         The ensemble holds EVERY adjustable parameter of ``cal.pst`` -- PESTPP-IES
         refuses one that lacks any -- so it starts from :meth:`draw_prior` (each
@@ -2469,11 +2590,7 @@ class PestProject:
         # Pilot points do NOT: they are PEST template parameters registered after
         # `build_pst`, so they need their own draw (see
         # `_draw_pilot_point_prior`).
-        correlated = [
-            spec
-            for spec in self._native_parameter_specs
-            if spec.style in ("grid", "pilotpoints") and spec.correlation is not None
-        ]
+        correlated = self._correlated_prior_specs()
         if self.pf is None or not correlated:
             return
 
@@ -2685,12 +2802,21 @@ class PestProject:
         master_dir: str | Path | None = None,
         noise: bool = True,
         bad_phi_sigma: float | None = None,
+        overdue_giveup_fac: float | None = DEFAULT_OVERDUE_GIVEUP_FAC,
         pestpp_options: dict | None = None,
     ) -> Path:
-        """Configure options, write the pst, run PESTPP-IES, and return the results dir."""
+        """Configure options, write the pst, run PESTPP-IES, and return the results dir.
+
+        The results directory holds THIS run's outputs only (ledger 507): a
+        serial run first deletes the earlier run's outputs from the template
+        (:func:`~myflopy.modflow.mf6.pest.runs.pestpp_ies_outputs`, bar a file a
+        PEST++ option names), and a parallel run removes from its master every output
+        pyEMU copied in from the template that PESTPP-IES did not then rewrite.
+        """
 
         if self.pst is None:
             raise ValueError("Call build() before running PESTPP-IES.")
+        method = "run_ies" if master_suffix == "ies_master" else "prior"
         parallel = bool(workers and int(workers) > 1)
         if parallel:
             master = Path(master_dir) if master_dir else self.template_workspace.parent / f"{self.name}_{master_suffix}"
@@ -2698,37 +2824,134 @@ class PestProject:
             self._refuse_what_start_workers_would_delete(
                 master,
                 int(workers),
-                method="run_ies" if master_suffix == "ies_master" else "prior",
+                method=method,
                 default=not master_dir,
             )
+        caller_options = dict(pestpp_options or {})
         case = f"{self.name}.pst"
         self.pst.pestpp_options["ies_num_reals"] = int(reals)
         if not noise:
             self.pst.pestpp_options["ies_no_noise"] = True
         if bad_phi_sigma is not None:
             self.pst.pestpp_options["ies_bad_phi_sigma"] = float(bad_phi_sigma)
-        for key, value in (pestpp_options or {}).items():
+        if overdue_giveup_fac is None:
+            self.pst.pestpp_options.pop("overdue_giveup_fac", None)
+        else:
+            self.pst.pestpp_options["overdue_giveup_fac"] = float(overdue_giveup_fac)
+        for key, value in caller_options.items():
             self.pst.pestpp_options[key] = value
         self._refuse_regularization_mode()
-        self._inject_geostatistical_prior(int(reals))
+        # A caller's own `ies_par_en` is used as given; the correlated prior is drawn
+        # only when the call names none (ledger 509).
+        if "ies_par_en" not in caller_options:
+            self._refuse_a_restart_from_other_parameters(method)
+            self._inject_geostatistical_prior(int(reals))
         self.pst.control_data.noptmax = int(noptmax)
+
+        if not parallel:
+            # The run writes into the template, where an earlier run of this case left
+            # its outputs; one it does not overwrite -- an iteration past this run's
+            # last, a noise ensemble a `noise=False` run never writes -- would be
+            # reviewed as this run's (ledger 507).
+            self._clear_earlier_run_outputs(self.template_workspace)
         with self._quiet_pyemu_context():
             self.pst.write(str(self.template_workspace / case), version=2)
 
         exe_name, exe_dir = self._resolve_pestpp(exe)
         pyemu = self.pyemu or _import_pyemu()
         if parallel:
-            with self._pestpp_environment(exe_dir):
-                pyemu.os_utils.start_workers(
-                    str(self.template_workspace),
-                    exe_name,
-                    case,
-                    num_workers=int(workers),
-                    worker_root=str(master.parent),
-                    master_dir=str(master),
-                )
+            # pyEMU copies the WHOLE template into the master, an earlier serial run's
+            # outputs included, and starts PESTPP-IES in it at once, so there is no
+            # moment to clear them before; they are removed after, wherever the run
+            # stopped (ledger 507).
+            inherited = _file_stamps(pestpp_ies_outputs(self.template_workspace, self.name))
+            try:
+                with self._pestpp_environment(exe_dir):
+                    pyemu.os_utils.start_workers(
+                        str(self.template_workspace),
+                        exe_name,
+                        case,
+                        num_workers=int(workers),
+                        worker_root=str(master.parent),
+                        master_dir=str(master),
+                    )
+            finally:
+                _remove_unrewritten_copies(master, inherited)
             return master
 
         with self._pestpp_environment(exe_dir):
             pyemu.os_utils.run(f"{exe_name} {case}", cwd=str(self.template_workspace))
         return self.template_workspace
+
+    def _clear_earlier_run_outputs(self, directory: Path) -> None:
+        """Delete an earlier PESTPP-IES run's outputs of this case from ``directory``.
+
+        Every file :func:`~myflopy.modflow.mf6.pest.runs.pestpp_ies_outputs` lists,
+        except one a PEST++ option of this run names (``ies_par_en=<name>.0.par.csv``
+        reuses an earlier prior from the template itself), which PESTPP-IES reads
+        before it writes (ledger 507).
+        """
+
+        named = {
+            Path(str(value)).name
+            for value in self.pst.pestpp_options.values()
+            if isinstance(value, (str, os.PathLike))
+        }
+        removed = []
+        for path in pestpp_ies_outputs(directory, self.name):
+            if path.name in named:
+                continue
+            path.unlink()
+            removed.append(path.name)
+        if removed:
+            logger.info(
+                "removed %d output file(s) of an earlier PESTPP-IES run of %r from %s "
+                "before this run writes there: %s",
+                len(removed), self.name, directory, ", ".join(removed[:8])
+                + (" ..." if len(removed) > 8 else ""),
+            )
+
+    def _refuse_a_restart_from_other_parameters(self, method: str) -> None:
+        """Refuse a restart observation ensemble the correlated prior draw would orphan.
+
+        ``ies_restart_obs_en`` hands PESTPP-IES the simulated values of the parameter
+        ensemble ``ies_par_en`` names, realization by realization; it skips running
+        them. When a ``grid`` or array ``pilotpoints`` parameter carries
+        ``correlation=``, a launch that names no ``ies_par_en`` DRAWS a new one, so the
+        restart ensemble would be paired with parameters it was never run with -- the
+        realization names, 0..n-1 in both, match, so nothing failed (ledger
+        509).
+
+        Raises
+        ------
+        ValueError
+            When ``ies_restart_obs_en`` is set on ``cal.pst`` (by this call or an
+            earlier one) and a correlated prior would be drawn.
+        """
+
+        restart = self.pst.pestpp_options.get("ies_restart_obs_en")
+        if not restart or self.pf is None or not self._correlated_prior_specs():
+            return
+        names = ", ".join(repr(spec.name) for spec in self._correlated_prior_specs())
+        raise ValueError(
+            f"Refusing to start {method}(): ies_restart_obs_en={restart!r} is set, so "
+            "PESTPP-IES would take those simulated values as the runs of the parameter "
+            "ensemble ies_par_en names -- but this call names no ies_par_en, and the "
+            f"correlated parameter(s) {names} would have a NEW prior ensemble drawn "
+            "into ies_par_en. The observations would belong to other parameters, "
+            "realization by realization.\n\n"
+            "Name the parameter ensemble those observations were run with:\n"
+            f"    cal.{method}(ies_par_en=<its .par.csv>, ies_restart_obs_en={restart!r}, ...)\n"
+            "or, to draw a new prior and run it, drop the restart ensemble (it persists "
+            "on cal.pst from the call that set it):\n"
+            "    del cal.pst.pestpp_options['ies_restart_obs_en']"
+        )
+
+    def _correlated_prior_specs(self) -> list:
+        """The parameter specs whose prior :meth:`_inject_geostatistical_prior` draws correlated."""
+
+        return [
+            spec
+            for spec in self._native_parameter_specs
+            if spec.style in ("grid", "pilotpoints") and spec.correlation is not None
+        ]

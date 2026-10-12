@@ -964,11 +964,30 @@ pyEMU's geostatistical draw, its variance set by the bounds as a `grid` paramete
 77% of a `(0.5, 2)` draw at a bound).
 `cal.draw_prior(n)` draws the same way (`use_specsim=False` by default; `True`, pyEMU's
 spectral simulation, only on a regular structured grid -- refused on DISV, ledger
-384).
+384). An `ies_par_en=` passed to the call is used as given and nothing is drawn, and
+an `ies_restart_obs_en` set without one while a prior would be drawn is refused
+(ledger 509). **Launch defaults for long runs** -- `overdue_giveup_fac=5.0`
+on `run_ies`/`prior` (PESTPP-IES's own 2.0 kills a parallel run at twice the average
+and drops its realization; `None` restores it, ledger 510), and every
+multiplier file applied in the forward run's own process (`chunk_len=10**6`; pyEMU's
+50 starts a `cpu_count` pool per realization at 50 files, ledger 511). **A
+directory holds one run's outputs** (ledger 507): a serial run deletes an
+earlier run's `<name>.*` outputs from the template first, and a parallel master drops
+those it inherited from the template and did not rewrite.
 
 **Reviewing a run** (`IesResults`, from `cal.run_ies(...)` or
 `model.pest_runs[i].review()`) — `IesResults` is a flat class, not the
-`noun.verb` grammar, so its figures are `plot_*` and its tables are bare nouns:
+`noun.verb` grammar, so its figures are `plot_*` and its tables are bare nouns.
+A handle's `executions` (ledger 508) maps `"ies"`/`"prior"` to the directory
+holding that run: the master named exactly `<name>_ies_master`/`<name>_prior_master`,
+or the template for a serial run, its kind read from the `<name>.pst` the launch
+wrote. `review(kind)` refuses a kind the run lacks, naming those it holds; it used to
+fall back silently. It opens case `<name>`, which PESTPP-IES writes whatever file
+`cal.build(...)` was given, and an interrupted run's `worker_N` directories are not
+listed as runs. The review counts only the iterations the run's phi file records, reads
+`.jcb` ensembles (`ies_save_binary`), reads each file once while it is unchanged
+(ledgers 507, 512, 513), and `best("min_phi")` never returns a realization
+PESTPP-IES dropped (ledger 515):
 
 | data | figure | what it answers |
 | --- | --- | --- |
@@ -977,7 +996,7 @@ spectral simulation, only on a regular structured grid -- refused on DISV, ledge
 | `parameters_at_bounds()` | `plot_parameters_at_bounds()` | is the prior too tight |
 | `sensitivity(forecast=…)` | `plot_sensitivity(forecast=…)` | what the data informed, and what drives a forecast — ensemble-based, **not** CSS |
 | `forecasts()`, `forecast(name)` | `forecast(name).plot()` | the payoff: posterior prediction spread |
-| `field(target)` | `plot_field(target, stat=…)` | property patterns — `mean`/`std`/`base`/`change`/`reduction` |
+| `field(target)` | `plot_field(target, stat=…)` | property patterns — `mean`/`std`/`base`/`change`/`reduction`, in log10 (geometric mean, std in decades) for a log-transformed field, as `sensitivity()` (ledger 514) |
 | — | `plot_field_mosaic(target, stat=…)` | prior vs posterior on one shared scale (`mean`/`std` only) |
 | `obs_residuals(prefix=…)` | `plot_obs_residuals(prefix=…)` | *where* the model is biased (heads/conc as points, DRN zones as cells; `prefix=` picks one family so mixed units do not share a color scale) |
 | `capture_fields`, `observation_sets` | `report(path)` | what the run recorded; the headline plots bundled to HTML |

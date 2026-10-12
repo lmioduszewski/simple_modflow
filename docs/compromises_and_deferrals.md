@@ -33,10 +33,19 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 506 entries (511 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 515 entries (520 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 515 | `best("min_phi")` returns only a realization PESTPP-IES kept | 2026-10-12 |
+| 514 | `field()`, `plot_field` and `parameters_at_bounds` take a log-transformed parameter's statistics in log10,... | 2026-10-12 |
+| 513 | An ensemble file is read once while it is unchanged | 2026-10-12 |
+| 512 | The review reads `ies_save_binary` (`.jcb`) ensembles | 2026-10-12 |
+| 511 | `PstFrom` is built with `chunk_len=10**6`, so a forward run applies every multiplier file in its own process | 2026-10-12 |
+| 510 | `run_ies`/`prior` hand PESTPP-IES `overdue_giveup_fac=5.0` unless told otherwise | 2026-10-12 |
+| 509 | An `ies_par_en` passed to `run_ies`/`prior` is used as given, and an `ies_restart_obs_en` that a drawn corr... | 2026-10-12 |
+| 508 | `model.pest_runs` lists a calibration's executions by exact master name plus a serial run in the template,... | 2026-10-12 |
+| 507 | A PESTPP-IES run's directory holds that run's outputs: a serial launch deletes the earlier run's from the t... | 2026-10-12 |
 | 506 | The PEST build refuses a base-run table that holds no finite number in a cell PEST's instruction file reads... | 2026-10-12 |
 | 505 | The PEST head and concentration writers read the file the model's OC declares, and the build refuses one th... | 2026-10-12 |
 | 504 | A reading's own weight is honoured: a `weight` column in a LONG values table beats the location's weight, w... | 2026-10-12 |
@@ -2545,8 +2554,10 @@ same day, which is the useful part of the result.
        location-agnostic (it `rglob`s whatever root it is handed), the forward run
        uses only basenames, and `original_workspace` in the metadata has no reader.
        Only two call sites hardcoded a root. The one hard constraint is that IES
-       masters must stay SIBLINGS of the template (`runs.py` globs
-       `template_dir.parent`); break that and a finished run silently lists as
+       masters must stay SIBLINGS of the template (~~`runs.py` globs
+       `template_dir.parent`~~ `runs.py` looks for `<name>_ies_master` and
+       `<name>_prior_master` by exact name in `template_dir.parent`, ledger
+       508); break that and a finished parallel run silently lists as
        "built (not run)".
      - ~~`_clear_stale_template` is kept for an explicit `workspace=` inside the model
        directory, and finally has a test — it had none.~~ **SUPERSEDED by ledger 360**:
@@ -20218,3 +20229,126 @@ same day, which is the useful part of the result.
       an inactive lake written 1e30, a dry SFR reach's -1e30 under ledger 353) are
       finite and are NOT refused. Refusing a target because the uncalibrated model is
       dry there would block a calibration meant to wet it.
+
+507. **A PESTPP-IES run's directory holds that run's outputs: a serial launch deletes the earlier run's from the template, a parallel master drops what it inherited and did not rewrite, and the review counts only the iterations the run's phi file records (2026-10-12).**
+      A serial `run_ies`/`prior` writes `<name>.*` into the template, and nothing
+      removed the previous run's. The review called the highest `<name>.<n>.obs.csv` on
+      disk the posterior, so a rerun with fewer iterations, or a prior after a run,
+      was reviewed against the earlier run's last iteration. A `noise=False` run also
+      showed the earlier noise ensemble. Measured on the toy
+      (`docs/reproducers/ies_rerun_review.py`): iterations `[0, 1, 2]`, posterior 2,
+      phi rows `[0, 1]`. **Chosen:** one list, `runs.pestpp_ies_outputs` (iteration
+      files, phi files, noise ensemble, `.base.par`/`.base.rei`). A serial launch
+      deletes those, except a file a PEST++ option names (`ies_par_en=<name>.0.par.csv`
+      reuses an earlier prior in place). Deleting a serial run's results on the next
+      serial launch is deliberate, like ledger 361's master: that run was already
+      overwriting them piecemeal. A PARALLEL launch does NOT delete the template's
+      serial results. pyEMU copies the whole template into the master and starts
+      PESTPP-IES in the same call, so they are removed from the master afterwards (in
+      a `finally`, so Ctrl-C too). A file is removed when it still carries the
+      template file's `(size, mtime_ns)`; `copytree` keeps both, and a file
+      PESTPP-IES rewrote does not. The reader also intersects the ensembles with the
+      phi file's `iteration` column, which fixes runs already on disk, and reads
+      `noise` as `None` whenever the run's `.pst` sets `ies_no_noise`. **Left open:**
+      a process killed hard during a parallel run (no `finally`) leaves the inherited
+      copies in the master. If PESTPP-IES never wrote its own phi there, the
+      template's stale phi then reads as the run's.
+
+508. **`model.pest_runs` lists a calibration's executions by exact master name plus a serial run in the template, opens case `<name>`, refuses a kind the run lacks, and skips worker copies (2026-10-12).**
+      Masters were found by the glob `<name>_*master*` and classified by a substring.
+      As a result `tt` was given `tt_ss`'s and `tt_prior_k`'s masters, and
+      `tt_prior_k_ies_master` read as a prior. The case was the stem of the file
+      `cal.build(filename)` wrote, while PESTPP-IES always runs `<name>.pst`, so the
+      manual's `pest("valley_pest")` + `build("valley.pst")` reviewed nothing. Serial
+      runs were never listed. `review("ies")` fell back silently to any master, so a
+      prior was reviewed as the history match. An interrupted run's `worker_N`
+      copies were listed as runs. **Chosen:** `PestRunHandle.masters` is renamed
+      `executions` (sole user, no alias). Its entries are `<name>_ies_master` and
+      `<name>_prior_master` exactly (a master whose copied build marker names another
+      template is excluded), plus the template when it holds `<name>.phi.actual.csv`.
+      The template's kind comes from its `<name>.pst` NOPTMAX (`-1` = prior). When a
+      serial run and a master hold one kind, the one whose phi was written last
+      wins. `case` is `<name>`. `review(kind)` raises `ValueError` naming the kinds
+      held; a run with no execution still opens the template. A metadata copy whose
+      `myflopy_pest_build.json` names another directory is skipped, and so is a
+      `worker_<n>` without a marker (a template built before ledger 360). **Not
+      done:** a master passed as `master_dir=` somewhere else is not discovered; it
+      was found before only when its name happened to start with `<name>_`.
+
+509. **An `ies_par_en` passed to `run_ies`/`prior` is used as given, and an `ies_restart_obs_en` that a drawn correlated prior would orphan is refused (2026-10-12).**
+      With a correlated `grid` or array `pilotpoints` parameter, every launch drew a
+      prior into `ies_par_en`, replacing the caller's (documented). It kept their
+      `ies_restart_obs_en`, so PESTPP-IES paired observations with parameters they
+      were never run with. The realization names 0..n-1 matched, so nothing failed.
+      **Chosen:** a call that passes `ies_par_en` gets no draw. Without one, a set
+      `ies_restart_obs_en` (persisted on `cal.pst` or passed now) is refused before
+      anything is written. The message names both options and `del
+      cal.pst.pestpp_options[...]`. This is a behaviour change: an explicit
+      `ies_par_en` was overwritten before. Reusing a prior Monte Carlo as IES
+      iteration 0 is the case this enables. `ies_obs_en` (the noise ensemble) is not
+      tied to parameters and is left alone. A seed for the draw was not added.
+
+510. **`run_ies`/`prior` hand PESTPP-IES `overdue_giveup_fac=5.0` unless told otherwise (2026-10-12).**
+      Left unset, PESTPP-IES resets the factor to 2.0. A parallel model run that
+      takes twice the average is killed and its realization dropped. That was seen
+      once on a 3-realization Ten Trails steady run under a load average of 7-16
+      (1.83 min against a 0.91 min average). It culls slow, hard-to-converge NEWTON
+      realizations selectively, which biases the posterior. **Judgment call:** 5.0,
+      the low end of the reviewer's 5-10. It is high enough that a loaded shared
+      machine's ~2x spread does not kill a realization, and low enough that a truly
+      hung run is still given up within a few run-lengths. It is a named parameter;
+      `None` removes the option. Measured (`docs/reproducers/ies_overdue_giveup_fac.py`):
+      the master's `.rec` states 5, 12, or "resetting overdue_giveup_fac to 2.0".
+
+511. **`PstFrom` is built with `chunk_len=10**6`, so a forward run applies every multiplier file in its own process (2026-10-12).**
+      pyEMU's default of 50 opens a `spawn` pool of `min(cpu_count, 60)` processes in
+      every realization once 50 or more files are parameterized. Exactly 50 gives
+      two chunks, the second empty. Monthly recharge arrays and per-period RIV files
+      pass 50 easily. Measured (`docs/reproducers/pstfrom_chunk_len_pool.py`, 61
+      CHD files, 20 cores): 21 child processes, 732 MB tree PSS (sampled) and 2.9 s
+      at 50, against 0, 201 MB and 1.7 s. On a 61-period Ten Trails copy: ~3.4 GB
+      PSS and 4.4 s against 1.3 s. Parallelism belongs to the IES workers. A
+      template built before this keeps `chunk_len=50` in its `forward_run.py` until
+      rebuilt.
+
+512. **The review reads `ies_save_binary` (`.jcb`) ensembles (2026-10-12).**
+      `iterations`, `obs_ensemble`, `par_ensemble` and `noise` read `<stem>.csv` or
+      `<stem>.jcb`. When both exist (a binary run beside an earlier CSV run), the
+      run's `.pst` `ies_save_binary` decides which, not file times.
+
+513. **An ensemble file is read once while it is unchanged (2026-10-12).**
+      `prior`/`posterior` and their parameter twins re-read the CSV on every access:
+      4 reads per `plot_field` and 11 per `report()`. A captured 5-layer field at 200
+      realizations is 352 MB, ~2.2 s per read. **Chosen:** a per-`IesResults` cache
+      keyed by path, validated by `(size, mtime_ns)`, so a run still writing is read
+      again. **The cost:** `obs_ensemble()`/`par_ensemble()` return the SAME object
+      while the file is unchanged, so a caller who modifies it in place (pyEMU's
+      in-place transforms) changes every later view. Documented. Not copied, because
+      a copy of a 352 MB frame on every access is the cost being removed. Reading
+      only the needed columns (`usecols`) was not done.
+
+514. **`field()`, `plot_field` and `parameters_at_bounds` take a log-transformed parameter's statistics in log10, as `sensitivity()` does (2026-10-12).**
+      `field()` took arithmetic means and stds of a log-normal K, so `change` read an
+      unchanged median as a ~0.54x drop (prior log10 K ~ N(1, 0.5), posterior N(1,
+      0.1)). `reduction` also disagreed with `sensitivity()`'s `learned`, which is
+      log10. **Chosen:** `"log10"` space when every parameter of the field is
+      `partrans == "log"` and every captured value is positive. The parameters are
+      found by `pargp` `<name>` or `<name>l<layer>...` (`<name>` = the captured
+      field's parameter-set name), because nothing in the build metadata records the
+      transform (this relies on the group naming of today's grid,
+      pilot-point and constant styles). Otherwise `"linear"`, as before: a
+      `transform="none"` field, no group found, or a non-positive value. The space is
+      `frame.attrs["space"]` and is named in the map title. **This changes the numbers
+      users read:** `prior_mean`/`posterior_mean` become geometric means,
+      `prior_std`/`posterior_std` become stds of log10 (decades), and `change`
+      becomes the ratio of geometric means. `parameters_at_bounds` now takes the
+      mean of log10 value rather than log10 of the arithmetic mean, so a wide spread
+      no longer pulls a log parameter toward its upper bound. Per-cell fallback
+      (sensitivity falls back per parameter) was not done, so one map never mixes
+      two spaces.
+
+515. **`best("min_phi")` returns only a realization PESTPP-IES kept (2026-10-12).**
+      PESTPP-IES writes an empty phi cell for a dropped or failed realization, and
+      `min()` kept a leading NaN. The label returned was in neither posterior
+      ensemble. Now: the last phi row's finite values, restricted to labels in both
+      the posterior observation and parameter ensembles. If none is left, it raises.

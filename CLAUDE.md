@@ -1951,6 +1951,18 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `find_pest_runs`/`PestRunHandle`) list calibrations done on a model; `.review()` reopens
   one as `IesResults` (`ies.py`, `open_ies_run`) — phi, ensemble-vs-obs, forecasts,
   parameter-field maps. (The old `results.py` deterministic-review layer was deleted.)
+  **A review reads ONE run** (ledgers 507, 508): a serial launch deletes
+  an earlier run's `<name>.*` outputs from the template (`runs.pestpp_ies_outputs`, the
+  one list), a parallel master drops what it inherited from the template unrewritten,
+  and `IesResults.iterations` counts only what the run's phi file records. A handle's
+  `executions` are the masters named EXACTLY `<name>_ies_master`/`<name>_prior_master`
+  plus a serial run in the template (kind from its `<name>.pst`'s NOPTMAX), its case is
+  `<name>` (what PESTPP-IES writes, whatever `build(filename)` wrote), and
+  `review(kind)` REFUSES a kind it lacks -- it fell back silently to the prior.
+  `field()` takes a log-transformed field's statistics in log10 (geometric mean), as
+  `sensitivity()` does (ledger 514). `run_ies`/`prior` default
+  `overdue_giveup_fac=5.0` (ledger 510) and build with `chunk_len=10**6`
+  (ledger 511).
 - `geostats.py` — `ExpGeoStruct` / `build_geostruct`: the **single** geostruct builder
   (`project._geostruct_for` delegates to it); `grid` style takes `anisotropy`/`bearing`/
   `nugget` via `parameterize`.

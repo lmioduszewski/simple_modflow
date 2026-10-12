@@ -417,6 +417,42 @@ Defaults make `cal.run_ies()` a valid first call. Production knobs (localization
 covariance re-inflation, bad-phi filtering) pass straight through as keyword
 arguments when you need them.
 
+**Defaults set for long runs on a shared machine.**
+
+- `overdue_giveup_fac=5.0` (ledger 510). In a parallel run PESTPP-IES kills a
+  model run that takes this many times the average run, and drops its realization.
+  Left unset, PESTPP-IES uses 2.0, and on a loaded machine that culls a NEWTON model's
+  slow, hard-to-converge realizations selectively. Pass a larger value to be more
+  tolerant, or `None` for PESTPP-IES's own 2.0.
+- Every multiplier file is applied in the forward run's own process (`PstFrom`'s
+  `chunk_len=10**6`, ledger 511). pyEMU's default of 50 starts a
+  `cpu_count`-process pool in every realization once 50 or more files are
+  parameterized. Monthly recharge arrays and per-period river files reach that
+  quickly. Measured on a 61-file toy: 21 child processes and 2.9 s per apply,
+  against none and 1.7 s.
+
+**Reusing an ensemble** (ledger 509). An `ies_par_en=` you pass is used as
+given. When a `grid` or array `pilotpoints` parameter carries `correlation=`, a call
+that passes no `ies_par_en` draws a fresh correlated prior into it. Pass
+`ies_restart_obs_en=` (a prior Monte Carlo's simulated values, which PESTPP-IES then
+does not rerun) together with the `ies_par_en` that produced them, for example
+`cal.run_ies(ies_par_en=prior_dir / "cal.0.par.csv", ies_restart_obs_en=prior_dir / "cal.0.obs.csv")`.
+A restart ensemble set without one, while a prior would be drawn, is refused: it
+would pair every realization's observations with other parameters. The option
+persists on `cal.pst`, so `del cal.pst.pestpp_options["ies_restart_obs_en"]` drops it.
+
+**One run's outputs per directory** (ledger 507). A serial run (`workers`
+unset) writes `<name>.*` into the template. Before it starts, it deletes the outputs an
+earlier run of the calibration left there: each iteration's ensembles and
+`.base.par`, the phi files and the noise ensemble, except a file a PEST++ option
+names. A rerun with fewer iterations, or a `prior()` after a run, is therefore not
+reviewed with the earlier run's last iteration as its posterior. A serial run's
+results last until the next serial run. A parallel run's master inherits the
+template's outputs (pyEMU copies the whole template). When the run returns, each
+output PESTPP-IES did not rewrite is removed from the master. The review also
+counts only the iterations the run's phi file records, so a directory filled
+before this fix also reads correctly.
+
 **What a parallel run deletes** (ledger 361). With `workers=N`, pyEMU's
 `start_workers` deletes the master directory -- `<name>_ies_master` (or
 `<name>_prior_master`) beside the template, or the `master_dir=` you pass -- and
@@ -491,16 +527,25 @@ backend switch is the house one: `"plotly"`/`"interactive"` or
 **Reading the field maps.** They are colored by policy, and the policy depends on
 the statistic, not the parameter:
 
+- **Statistics in the parameters' space** (ledger 514). When every parameter
+  of the field is log-transformed (the default) and every value is positive,
+  `field()` takes its statistics in log10, the space PESTPP-IES estimates in. The
+  mean is GEOMETRIC, the std is in decades, `change` is the ratio of geometric means,
+  and `reduction` agrees with `sensitivity()`'s `learned`. Arithmetic statistics of a
+  log-normal K read an unchanged median as roughly halved wherever the data
+  narrowed the spread (measured: change 0.54 against a geometric 1.00).
+  `field(...).attrs["space"]` names the space, and the map title says
+  "geometric mean"/"std of log10".
 - `stat="mean"` / `"base"` — absolute conductivity, which spans decades, so it is
   drawn on a **log** scale with the colorbar relabeled back into real units
   (`0.001`, `0.01`, …) on *both* backends. A cell whose K is exactly 0 has no
   logarithm and draws as a gap. (Since ledger 252 every log map reads this way,
   hand-built or by policy; `plot_field`'s only extra is the `x` suffix on the
   `change` map's ratios.)
-- `stat="std"` — a spread in model units, drawn **linear**: a posterior standard
-  deviation is legitimately zero wherever the ensemble collapsed, and those are
+- `stat="std"` — a spread (in decades for a log field, model units otherwise), drawn
+  **linear**: a posterior standard deviation is legitimately zero wherever the ensemble collapsed, and those are
   precisely the cells this map exists to show.
-- `stat="change"` — `posterior_mean / prior_mean`, a **ratio** whose neutral value
+- `stat="change"` — `posterior_mean / prior_mean` (geometric means for a log field), a **ratio** whose neutral value
   is 1, so it is mapped as `log10(ratio)` on a diverging red-white-blue scale with
   symmetric limits: white is "calibration left this alone", **red is reduced**,
   blue is increased, and a halving sits exactly as far from white as a doubling.
@@ -602,7 +647,13 @@ What you're checking for:
   being implausibly narrow.
 - **Forecasts**: value the *spread*, not a tiny phi. Use `capture=True` on a
   parameter (e.g. `cal.parameterize("k", ..., capture=True)`) to enable the field
-  maps.
+  maps. **Capture costs one zero-weight observation per cell of every layer captured.**
+  On Ten Trails, `k33` over 5 x 20,323 cells added 101,615 observations and grew the
+  template from 18 to 33 MB. Every observation ensemble then carries those columns:
+  one 5-layer field at 200 realizations is a 352 MB CSV per iteration, ~2 s per read.
+  A capture covers the layers its parameter covers (`layers=`). Consider
+  `run_ies(ies_save_binary=True)`; the review reads `.jcb` ensembles (ledger
+  512) and reads each file once (ledger 513).
 - **Property maps**: if the calibrated K pattern looks physically absurd, adjust
   the geostatistics/prior — don't accept it just because phi dropped.
 - **% of parameters at their bounds**: many parameters pinned at bounds means the
