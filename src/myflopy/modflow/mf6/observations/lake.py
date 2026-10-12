@@ -32,6 +32,12 @@ from myflopy.modflow.mf6.observations._shared import (
     _stage_at_period_end,
     _wide_by_period,
 )
+from myflopy.modflow.mf6.observations.hydrographs import (
+    bin_readings,
+    model_clock,
+    read_readings,
+    refuse_another_clock,
+)
 from myflopy.modflow.mf6.observations.plots import BoundNamedSeriesTargetPlots
 from myflopy.modflow.mf6.package_budget import build_lak_stage_result_table
 from myflopy.modflow.mf6.package_tables import lake_bottoms
@@ -229,7 +235,8 @@ class LakeStageTargets:
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
         ``times`` is applied. :meth:`compare` and the PEST build read it as a
         zero-based stress period, by number (``1.0`` is period 1; a fraction,
-        a negative key, a date or a duration raises -- ledger 499) --
+        a negative key, a date or a duration raises -- ledger 499; dated
+        readings are binned onto periods by :meth:`from_hydrographs`) --
         see :meth:`compare` for what it is matched against on each route.
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed stage, matched
@@ -280,6 +287,9 @@ class LakeStageTargets:
     #: stalled PESTPP-IES (lambda stuck near 1e57, phi 1.11 against 0.085 with the
     #: bottom; ``docs/reproducers/dry_lake_bottom.py``).
     _PEST_NO_STAGE: ClassVar[float] = 1.0e30
+    #: The :class:`~myflopy.modflow.mf6.observations.hydrographs.Binning` of a
+    #: :meth:`from_hydrographs` set; ``None`` otherwise.
+    _binned: ClassVar[object] = None
 
     def __post_init__(self):
         """Normalize the ``name -> lake`` locations and observed values into internal tables."""
@@ -420,6 +430,155 @@ class LakeStageTargets:
         )
         values_frame = frame.loc[:, [time_column, "name", value_column]].copy()
         return cls(locations=locations, values=values_frame, time_column=time_column, value_column=value_column)
+
+    @classmethod
+    def from_hydrographs(
+        cls,
+        locations,
+        readings,
+        *,
+        model,
+        package: str | None = None,
+        mode: str = "history",
+        rule: str | None = None,
+        date_column: str = "date",
+        value_column: str = "stage",
+        max_offset=None,
+        between=None,
+        min_years: int | None = None,
+    ):
+        """Lake-stage targets from DATED readings, binned onto ``model``'s stress periods.
+
+        The lake twin of :meth:`HeadTargets.from_hydrographs
+        <myflopy.modflow.mf6.observations.heads.HeadTargets.from_hydrographs>`,
+        binning by the same rule (:mod:`~myflopy.modflow.mf6.observations.hydrographs`,
+        ledger 543) against ``model``'s calendar. The result is an
+        ordinary period-keyed set carrying :attr:`binning` and the CLOCK STAMP
+        :attr:`calendar`, which :meth:`compare`, :meth:`simulated_series` and the
+        PEST build check against the model they meet.
+
+        Parameters
+        ----------
+        locations : dict, pandas.Series, pandas.DataFrame, list or tuple
+            The named lakes, read as the constructor's ``locations``: ``{name:
+            lake}`` with MF6's lake number ZERO-based, or the lake's boundname.
+        readings : str, pathlib.Path, pandas.DataFrame or pandas.Series
+            The dated stage readings, in the model's length units. A path is read
+            with ``pandas.read_csv``. WIDE: ``date_column`` plus one column per
+            lake target, headed by its name; LONG: ``date_column``, ``name`` and
+            ``value_column``; ONE SERIES (or a ``Series`` indexed by date) for a
+            single lake. Dates may be the index. A blank value is no reading;
+            anything else that is not a finite number raises ``ValueError``. A
+            name that is not a target name (matched EXACTLY, as lake values are)
+            raises ``ValueError`` naming it; two readings of one lake at one
+            instant collapse when equal and raise when not; a ``weight`` column
+            raises (weight the set through ``cal.observe(..., weight=)``).
+        model : SimulationBase
+            The model the targets will be compared on, whose calendar the
+            readings are binned against (its TDIS must declare
+            ``START_DATE_TIME`` and ``TIME_UNITS``).
+        package : str or None, default None
+            The LAK package's name when the model carries several (the
+            constructor's ``package``).
+        mode : {"history", "average_year"}, default "history"
+            As :meth:`HeadTargets.from_hydrographs
+            <myflopy.modflow.mf6.observations.heads.HeadTargets.from_hydrographs>`:
+            ``"history"`` bins the record onto the model's own dates (readings
+            outside its span are left out and warned); ``"average_year"`` needs
+            an ``mf.AverageYear`` model and puts each calendar month's target on
+            its period of the last cycle.
+        rule : str or None, default None
+            History: ``"nearest_end"`` (default), ``"median"`` or ``"mean"``;
+            average year: ``"median"`` (default; the median over years of each
+            year's monthly median) or ``"mean"`` -- as for heads.
+        date_column : str, default "date"
+            The readings' date column, matched exactly; each entry a date with a
+            four-digit year and no time zone.
+        value_column : str, default "stage"
+            The stage column of a LONG or one-series table, matched ignoring case;
+            the result's ``value_column``.
+        max_offset : str, pandas.Timedelta, datetime.timedelta or None, default None
+            History with ``rule="nearest_end"`` only: a reading farther than this
+            from its period's end is not used. Elsewhere it raises.
+        between : tuple of two dates or None, default None
+            Average year only: the readings used, ``(first, last)`` inclusive,
+            either ``None`` for open. In history mode it raises.
+        min_years : int or None, default None
+            Average year only: a month read in fewer calendar years has no
+            target; ``None`` means 1. In history mode it raises.
+
+        Returns
+        -------
+        LakeStageTargets
+            Keyed by zero-based stress period, carrying :attr:`binning` and
+            :attr:`calendar`.
+
+        Raises
+        ------
+        ValueError
+            As listed under each parameter, and as the constructor raises.
+
+        Warns
+        -----
+        UserWarning
+            As :meth:`HeadTargets.from_hydrographs
+            <myflopy.modflow.mf6.observations.heads.HeadTargets.from_hydrographs>`.
+        """
+
+        owner = cls.__name__
+        known = cls(locations=locations, package=package)
+        calendar, months = model_clock(model, mode=mode, owner=owner)
+        long = read_readings(readings, date_column=date_column, value_column=value_column, owner=owner)
+        if "name" not in long.columns:
+            if len(known._series) != 1:
+                raise ValueError(
+                    f"{owner}.from_hydrographs(...): the readings name no lake (one series), "
+                    f"and there are {len(known._series)} lake targets; give a WIDE table, one "
+                    "column per target, or a LONG one with a 'name' column."
+                )
+            long["name"] = next(iter(known._series))
+        unknown = sorted(set(long["name"].astype(str)) - set(known._series))
+        if unknown:
+            raise ValueError(
+                f"{owner}.from_hydrographs(...): the readings name {len(unknown)} lake "
+                "target(s) not among the locations (matched exactly, case counts): "
+                + ", ".join(unknown[:10]) + (" ..." if len(unknown) > 10 else "") + "."
+            )
+        binning = bin_readings(
+            long, calendar, mode=mode, rule=rule, max_offset=max_offset, between=between,
+            min_years=min_years, months=months, owner=owner,
+        )
+        targets = cls(
+            locations=locations,
+            values=binning.values.rename(columns={"value": value_column}),
+            time_column="time",
+            value_column=value_column,
+            package=package,
+        )
+        targets._binned = binning
+        return targets
+
+    @property
+    def binning(self) -> pd.DataFrame | None:
+        """How each target was made from dated readings, or ``None`` for a set keyed by period.
+
+        Set by :meth:`from_hydrographs`; the columns are
+        :attr:`HeadTargets.binning
+        <myflopy.modflow.mf6.observations.heads.HeadTargets.binning>`'s.
+        """
+
+        binned = self._binned
+        return None if binned is None else binned.report.copy()
+
+    @property
+    def calendar(self):
+        """The :class:`~myflopy.modflow.mf6.period_calendar.PeriodCalendar` the targets were binned against, or ``None``.
+
+        The CLOCK STAMP of a :meth:`from_hydrographs` set (ledger 543).
+        """
+
+        binned = self._binned
+        return None if binned is None else binned.calendar
 
     def get(self) -> pd.DataFrame:
         """Return the named lake-stage definitions or merged values."""
@@ -637,6 +796,7 @@ class LakeStageTargets:
         >>> series["pond"].isna()                       # True where the pond is inactive
         """
 
+        refuse_another_clock(self, model, caller="LakeStageTargets.simulated_series(...)")
         observed = self._observed(model)
         if observed is not None:
             return observed
@@ -721,6 +881,7 @@ class LakeStageTargets:
             (the period rule PEST's build reads too, ledger 340).
         """
 
+        refuse_another_clock(self, model, caller="LakeStageTargets.compare(...)")
         definitions = self._definitions_on(model)
         observed = self._observed(model)
         if observed is not None:

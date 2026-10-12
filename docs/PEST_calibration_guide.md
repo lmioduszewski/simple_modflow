@@ -305,7 +305,7 @@ matched to the simulated row whose index equals its `time` read as a zero-based 
 period — `1.0` is period 1 — and `build()` REFUSES, naming the target, a key with a
 fraction (`1.5`), a negative key, a DATE (ledger 499: pandas reads a datetime
 as nanoseconds since 1970, so a table read with `parse_dates` was keyed by period
-1706659200000000000 -- bin dated readings to stress periods first), two readings of one
+1706659200000000000 -- dated readings are binned by `from_hydrographs`, below), two readings of one
 target in one period, a value that is not a number, and a target at a period (or a
 name) the simulated table does not hold. `compare()` and `stats()` refuse the same keys
 on every route, the file routes included (ledger 500: there a period past the
@@ -376,6 +376,60 @@ stage PICTURES leave a dry reach blank -- the targets' own `.plot` pictures too 
 > Weighting matters *a lot* and there is no one-size-fits-all. Pre-process data
 > for information content, use more groups rather than fewer, and aim weights at
 > the model's purpose.
+
+### From a hydrograph table (ledgers 543, 544)
+
+Field data is keyed by DATE; a target is keyed by stress period. `from_hydrographs` bins
+the one onto the other against the model's own calendar (`model.calendar`: its TDIS
+`START_DATE_TIME`, `TIME_UNITS` and period lengths, ledger 529), by one stated rule, for
+heads, concentrations (`ConcTargets`) and lake stages alike:
+
+```python
+flow = run.model("flow")
+# WIDE: a date column and one column per well -- the usual export (LONG works too)
+heads = mf.HeadTargets.from_hydrographs("wells.gpkg", "hydrographs.csv", model=flow)
+heads.binning          # per (well, period): the reading used, its offset from the period end, ...
+heads.calendar         # the clock the set was binned on
+lakes = mf.LakeStageTargets.from_hydrographs({"pond": 0}, "lake_stage.csv", model=flow)
+cal.observe(heads); cal.observe(lakes)
+```
+
+**History mode** (the default) -- the model runs the dated record. Each period's target is
+the reading NEAREST its END (`rule="nearest_end"`), because the simulated value is the
+period-end value (ledger 336): binning a run's own every-step heads back gave its
+period-end heads exactly, where a monthly median missed by up to 0.27 ft
+(`docs/reproducers/hydrograph_binning.py`). It also absorbs Ten Trails' clock: the TDIS
+starts 2017-09-30, so every period ends at 00:00 on its month's LAST day, and a reading
+that afternoon belongs to its own month's period. `rule="median"`/`"mean"` reduce the
+readings inside the period instead; `max_offset="10D"` leaves a period unmeasured when no
+reading is that near its end. Readings outside the model's span are left out with a
+warning naming each well; none in span is refused.
+
+**Average-year mode** -- the model is an `mf.AverageYear` cycle and the readings come from
+many years:
+
+```python
+year_heads = mf.HeadTargets.from_hydrographs(
+    "wells.gpkg", "hydrographs.csv", model=flow, mode="average_year",
+    between=("2005-10-01", None), min_years=3)
+```
+
+Each calendar month's target is the MEDIAN over years of each year's monthly median (a
+year read daily counts once, as a year read monthly does; `rule="mean"` uses means), on
+that month's period of the LAST cycle (`year.months_of(-1)`). A model that is not an
+average-year cycle is refused, naming `mf.AverageYear`.
+
+**The set carries its clock.** Change the cycle count, the start or a period length and
+re-run, and `compare()` and the PEST build REFUSE the old set, naming
+`from_hydrographs(..., model=<this model>)`: a period number would otherwise name another
+date in silence. Refused at construction, by name: a model whose TDIS has no
+`START_DATE_TIME` or `TIME_UNITS`, a date that will not parse or carries a time zone, two
+different readings of one well at one instant (equal ones collapse), a well not among the
+locations, a `weight` column in the readings (weight a well through its locations), and an
+option the mode does not read. **The review draws dates**: the build records each set's
+period-end dates (every set on a dated model), so `ies.plot_vs_obs()` and
+`plot_prior_vs_obs()` put the ensembles on a date axis; a template built before that keeps
+period numbers.
 
 ### Observation groups: your `group` labels (ledger 358)
 
@@ -680,7 +734,7 @@ Each cycle, look at these. myflopy gives one method per item:
 ```python
 ies.plot_phi()                  # did misfit drop? quickly early but not TOO quickly (overfit)?
 ies.plot_phi_distribution()     # spread of phi: prior vs posterior — collapse to ~0 = overfitting
-ies.plot_vs_obs()               # prior(grey)/posterior(blue) vs measured(red), one panel per location
+ies.plot_vs_obs()               # prior(grey)/posterior(blue) vs measured(red), one panel per location, on period-end DATES when the build recorded them
 ies.plot_vs_obs(groups=["deep"])  # ...only the locations measured in group "deep" (the name the pst holds: "north_wells" for "North Wells")
 ies.plot_phi_contributions()    # which observation groups make up the misfit (visibility weighting)
 ies.plot_parameters_at_bounds() # % of parameters pinned at bounds — prior too tight / compensating?

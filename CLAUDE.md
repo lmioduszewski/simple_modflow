@@ -1935,6 +1935,18 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   layer or package, not zero flow). A test
   double reaching that route needs a budget READER, not `model.bud`:
   `tests.test_drn_zones_on_faces.attach_budget`.
+- **Dated readings become period keys in ONE place** (ledger 543):
+  `HeadTargets.from_hydrographs` (and `ConcTargets`) / `LakeStageTargets.from_hydrographs`
+  bin a WIDE or LONG date-keyed table against `model.calendar` through
+  `observations/hydrographs.py` -- history: the reading NEAREST each period's END (ledger
+  336; on the Ten Trails TDIS, start 2017-09-30, a period ends 00:00 on its month's last
+  day, so containment would move a last-day reading a month on); average year: per
+  calendar month the median over years of each year's monthly median, on the LAST
+  `mf.AverageYear` cycle (a model that is not one is refused). Binning is EAGER and the set
+  carries the model's calendar as a CLOCK STAMP: `compare()` and the PEST build refuse it
+  on a model with other dates (another cycle count). Do not bin dates anywhere else. The
+  build records each set's `period_end_dates`, and the IES review draws dates (ledger
+  544).
 - **What PEST is handed is exactly the targets** (ledger 340, 2026-09-27). The build
   matches each target to the row pyEMU's INSTRUCTION FILE reads -- by POSITION, the key
   read as a period by NUMBER through `_shared._numeric_periods` (`1.0` is period 1,

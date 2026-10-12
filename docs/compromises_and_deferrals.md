@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 542 entries (547 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 544 entries (549 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 544 | The PEST build records each set's period-end dates, what its observations are, and how it was binned; the r... | 2026-10-12 |
+| 543 | Dated readings are binned onto a model's stress periods EAGERLY, by one rule per mode, and the set carries... | 2026-10-12 |
 | 542 | An array recipe in a package's OPTIONS is refused, so an edit route cannot carry one | 2026-10-12 |
 | 541 | A raster of values fills an array slot as a recipe, and `*` multiplies recipes | 2026-10-12 |
 | 540 | The PEST forward run opens the model ONCE for every named-series set | 2026-10-12 |
@@ -20164,8 +20166,10 @@ same day, which is the useful part of the result.
       as `time`, and the PEST build died on `float()` of a `Timestamp`. A `datetime64`/
       `timedelta64` column, or an object column holding dates, times or durations, is
       refused now, in the one function every family, route and the build read. **Not
-      done:** binning dated readings onto periods. That is the date-keyed hydrograph
-      constructor (item 8); until it lands the refusal says to bin first. A negative key
+      done:** ~~binning dated readings onto periods. That is the date-keyed hydrograph
+      constructor (item 8); until it lands the refusal says to bin first.~~ Restated
+      (ledger 543): dated readings are binned by `HeadTargets.from_hydrographs`
+      (`ConcTargets`, `LakeStageTargets` alike), and the refusal names it. A negative key
       is refused in the same place: no period is numbered below 0.
 
 500. **`compare()`/`stats()` refuse a key past the run's periods on every FILE route, as the observation route and the build already did (2026-10-12).**
@@ -20896,3 +20900,53 @@ same day, which is the useful part of the result.
       `supplied twice` -- is item 14's (`fork_package` override replaces the recipe).
       The scan is shallow (value, list items, dict values) so a record list is never
       walked on construction.
+
+543. **Dated readings are binned onto a model's stress periods EAGERLY, by one rule per mode, and the set carries that model's clock (2026-10-12).**
+      `HeadTargets.from_hydrographs` (inherited by `ConcTargets`) and
+      `LakeStageTargets.from_hydrographs` share `observations/hydrographs.py`
+      (`read_readings`, `bin_readings`), against the model's `PeriodCalendar` (ledger
+      529). **Chosen (the user's Q4):** history mode takes, per period, the reading
+      NEAREST its END (`rule="nearest_end"`; `median`/`mean` inside `(start, end]` are
+      options). Measured on MF6 (`docs/reproducers/hydrograph_binning.py`): a run's own
+      heads at every step bin back to its period-end heads exactly under nearest-end,
+      and miss by 0.27 ft (max) / 0.15 ft (mean) under the median. On Ten Trails' TDIS
+      (2017-09-30) a period ends at 00:00 on its month's last day, so containment would
+      move a last-day reading into the next period. Each reading goes to ONE end (a
+      sparse reading is never reused); a reading midway between two ends goes to the
+      period holding it; a tie between two readings goes to the earlier. Average-year
+      mode is, per calendar month, the median over calendar years of each year's
+      monthly median (`rule="mean"`: means), on the LAST cycle's period of that month.
+      The months come from `mf.AverageYear.from_model(model).months_of(-1)` -- the one
+      reading of a run's cycle -- not from period midpoints and a `cycle_length=`, so a
+      model that is not an average-year cycle is REFUSED naming `mf.AverageYear`.
+      `hydrographs.model_clock` imports `myflopy.cycles` inside the function (cycles sits
+      at import layer 7, above the observations), one more deferred import. **Eager, with
+      a stamp, not a lazy recipe:** every downstream path stays period-keyed and
+      unchanged; `compare()`, `simulated_heads()`/`simulated_series()` and the PEST build
+      refuse a set on a model whose calendar differs (another cycle count, start, unit or
+      period length), naming `from_hydrographs(..., model=<this model>)`. Readings outside
+      a history model's span are left out, counted per well and WARNED (`warnings.warn`
+      and the log, ledger 288; every call warns -- no once-only memory); none in span is
+      refused, printing both spans; a well with nothing left is warned by name. A reading's
+      own `weight` column is REFUSED (several readings become one target); weight a well
+      through its locations, a lake set through its spec. Lake names are matched exactly,
+      as lake values are; well names stripped and lower-cased, as head values are.
+      `min_years` defaults to 1; `between` includes both ends. **Not built:**
+      `from_hydrographs` for SFR, DRN and RIV targets (stage and flow gauges), the bound
+      views' `binning`/`calendar` (they reach it through `.targets`), a time-zone
+      conversion (a zoned date is refused), and a canonical notebook cell.
+
+544. **The PEST build records each set's period-end dates, what its observations are, and how it was binned; the review draws its ensembles against those dates (2026-10-12).**
+      Every observation set's build metadata now carries `observation_kind` (`"level"`:
+      a period-end value against its target; items 9/11 add their own kinds),
+      `period_end_dates` (each period's END from the model's calendar, ISO) whenever the
+      model's TDIS dates its periods -- for every family, binned or not -- and `binning`
+      (mode, rule, options of a `from_hydrographs` set, else `null`). `IesResults`
+      `plot_vs_obs`/`plot_prior_vs_obs` draw each location on those DATES, the axis titled
+      "date (period end)"; a set built before this, or on an undated model, keeps period
+      numbers, titled "stress period" (the matplotlib axis read "time"). **Kept from the
+      names:** the observation's set (pyEMU's `oname:<prefix>_otype`) and its period
+      (pyEMU's `per:`/`time:` index token) are still parsed from pyEMU's names; only the
+      date comes from the metadata. **Not done:** a `date` column in `conflict()` and
+      `obs_residuals`, and moving location parsing off the names (items 9 and 11 own the
+      kinds that need it).

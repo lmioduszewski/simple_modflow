@@ -51,7 +51,9 @@ from myflopy.modflow.mf6.observations._shared import (
     _shown,
 )
 from myflopy.modflow.mf6.observations._zones import _CellZoneFlowTargets
+from myflopy.modflow.mf6.observations.hydrographs import refuse_another_clock
 from myflopy.modflow.mf6.output_files import _declared_output_path
+from myflopy.modflow.mf6.period_calendar import period_calendar
 from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.forward_run import (
     _write_conc_target_csv,
@@ -418,6 +420,37 @@ def _locate_targets(
     return frame.assign(row=rows, col=cols).reset_index(drop=True)
 
 
+#: What every observation of a set built today IS, recorded in the build metadata
+#: (ledger 544): the simulated value at a period's END, compared with
+#: the target's value. A later kind (a difference between periods) records its own.
+OBSERVATION_KIND_LEVEL = "level"
+
+
+def _dating_record(project, targets, *, caller: str) -> dict:
+    """The build metadata that places a set's observations in TIME (ledger 544).
+
+    ``observation_kind``; ``period_end_dates`` -- each zero-based period's END as
+    an ISO date-time, from the model's calendar (ledger 529), so the review draws
+    dates where it drew period numbers -- absent when the model's TDIS cannot date
+    its periods (no ``START_DATE_TIME``), which leaves that review on periods; and
+    ``binning`` -- how a ``from_hydrographs`` set was binned (mode, rule, options),
+    else ``None``. A ``from_hydrographs`` set on a model of another clock is
+    refused first (:func:`~myflopy.modflow.mf6.observations.hydrographs.refuse_another_clock`).
+    """
+
+    refuse_another_clock(targets, project.model, caller=caller)
+    record: dict = {"observation_kind": OBSERVATION_KIND_LEVEL}
+    try:
+        calendar = period_calendar(project.model)
+    except ValueError:
+        calendar = None
+    if calendar is not None:
+        record["period_end_dates"] = [stamp.isoformat() for stamp in calendar.ends]
+    binned = getattr(targets, "_binned", None)
+    record["binning"] = None if binned is None else binned.record()
+    return record
+
+
 def _register_table(project, simulated: pd.DataFrame, simulated_path: Path, *, prefix: str):
     """Hand pyEMU the base copy of a simulated table: one observation per cell of it."""
 
@@ -495,6 +528,7 @@ def _prepare_named_series_observations(
     """Create one pyEMU list-style observation source from a named-series target set."""
 
     owner = type(targets).__name__
+    dating = _dating_record(project, targets, caller=_caller(owner, prefix))
     simulated_path = project.template_workspace / f"{prefix}_simulated_{metadata_kind}.csv"
     _write_frame(simulated_wide, simulated_path)
     _register_table(project, simulated_wide, simulated_path, prefix=prefix)
@@ -525,6 +559,7 @@ def _prepare_named_series_observations(
         "value_column": value_column,
         "n_locations": int(len(use_cols)),
         "n_rows": int(len(located)),
+        **dating,
     }
     if values_path is not None:
         metadata["values_file"] = values_path.name
@@ -738,6 +773,7 @@ def _prepare_point_observations(
     """Heads or concentrations: map, base table (one writer), locations, targets."""
 
     owner = type(spec.targets).__name__
+    dating = _dating_record(project, spec.targets, caller=_caller(owner, spec.prefix))
     field_kind = {"head_targets": "head", "conc_targets": "concentration"}[kind]
     field_file = {
         {"head": "head_file", "concentration": "conc_file"}[field_kind]: _declared_field_file(
@@ -798,6 +834,7 @@ def _prepare_point_observations(
         "value_column": value_label,
         "n_locations": int(mapping["name"].nunique()),
         "n_rows": int(len(located)),
+        **dating,
     }
     item["mapping_csv"] = mapping_path.name
     item["output_csv"] = simulated_path.name

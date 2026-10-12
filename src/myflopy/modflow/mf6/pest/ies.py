@@ -333,6 +333,20 @@ def _parse_time(obsnme: str) -> float | None:
         return None
 
 
+def _panel_axis(panel: dict) -> np.ndarray:
+    """A location panel's x values: its period-end DATES when its set recorded them, else its periods."""
+
+    return panel["dates"] if panel.get("dates") is not None else panel["times"]
+
+
+def _axis_title(panels: list[dict]) -> str:
+    """``"date (period end)"`` when every panel is drawn on dates, else ``"stress period"``."""
+
+    if panels and all(panel.get("dates") is not None for panel in panels):
+        return "date (period end)"
+    return "stress period"
+
+
 @dataclass
 class IesSettings:
     """Printable summary of how an IES run was configured and what it produced."""
@@ -863,11 +877,49 @@ class IesResults:
         return fig
 
     def _observation_metadata(self) -> pd.DataFrame:
-        """Return observation rows annotated with parsed time and group."""
+        """Return observation rows annotated with parsed time, its date, and group.
+
+        ``_time`` is the period pyEMU's name carries (its table's ``per``/``time``
+        index). ``_date`` is that period's END date when the observation's set
+        recorded the model's calendar at build (``period_end_dates``, ledger
+        544), else ``NaT`` -- a run built before that, or on a model
+        whose TDIS declares no ``START_DATE_TIME``, keeps period numbers.
+        """
 
         obs = self.pst.observation_data.copy()
         obs["_time"] = [_parse_time(name) for name in obs.index]
+        obs["_date"] = pd.Series(pd.NaT, index=obs.index, dtype="datetime64[ns]")
+        ends = self._period_end_dates()
+        if ends:
+            prefixes = obs.index.to_series().str.extract(self._OBS_PREFIX_RE)["prefix"].str.lower()
+            dated = []
+            for prefix, time in zip(prefixes, obs["_time"], strict=True):
+                dates = ends.get(prefix) if isinstance(prefix, str) else None
+                per = None if time is None or not float(time).is_integer() else int(time)
+                dated.append(
+                    dates[per] if dates is not None and per is not None and 0 <= per < len(dates) else pd.NaT
+                )
+            obs["_date"] = pd.DatetimeIndex(dated)
         return obs
+
+    #: The observation-set prefix pyEMU writes first in a list-style name,
+    #: ``oname:<prefix>_otype:...``.
+    _OBS_PREFIX_RE = re.compile(r"^oname:(?P<prefix>.+?)_otype:")
+
+    def _period_end_dates(self) -> dict[str, pd.DatetimeIndex]:
+        """``{set prefix, lower-cased: each period's end date}`` for every set whose build recorded them.
+
+        Written by the PEST build from the model's calendar (ledger
+        544); empty for a run built before, so its review draws period
+        numbers as it always did.
+        """
+
+        found = {}
+        for entry in self.observation_sets:
+            ends = entry.get("period_end_dates")
+            if ends:
+                found[str(entry.get("prefix", "")).lower()] = pd.DatetimeIndex(pd.to_datetime(list(ends)))
+        return found
 
     # The simulated COLUMN an observation belongs to: pyEMU names a list-style
     # observation "<column base>_<index>:<value>" ("oname:hds_otype:lst_usecol:w1"
@@ -947,7 +999,9 @@ class IesResults:
         Returns
         -------
         list of dict
-            ``title``, ``names`` (time-ordered), ``times`` and ``measured`` (a
+            ``title``, ``names`` (time-ordered), ``times`` (periods), ``dates``
+            (each observation's period END date, or ``None`` when its set
+            recorded no calendar -- ledger 544) and ``measured`` (a
             boolean array over ``names``) per location.
         """
 
@@ -974,10 +1028,15 @@ class IesResults:
             else:
                 title = str(column)
             frame = obs.loc[members].sort_values("_time", kind="stable")
+            dates = frame["_date"]
             panels.append({
                 "title": title,
                 "names": frame.index.tolist(),
                 "times": frame["_time"].to_numpy(),
+                # Each observation's period END date, when the build recorded the
+                # model's calendar for its set (ledger 544): the axis
+                # the panel is drawn on.
+                "dates": dates.to_numpy() if dates.notna().all() else None,
                 "measured": measured.loc[frame.index].to_numpy(dtype=bool),
             })
             if len(panels) >= int(max_locations):
@@ -994,6 +1053,14 @@ class IesResults:
         markers the measured values. A good fit means the blue lines bracket the
         red markers. Each panel is titled with its observation set's prefix, the
         target and, in brackets, its observation group.
+
+        **The x axis is each period's END DATE** when the build recorded the
+        model's calendar for the set (``period_end_dates``, every build on a model
+        whose TDIS declares ``START_DATE_TIME``; ledger 544), and the
+        stress period number otherwise -- a run built before that, or an undated
+        model. A target binned from dated readings
+        (``HeadTargets.from_hydrographs``) is drawn at the end of the period it
+        was binned onto, the instant its simulated value is read.
 
         A panel was one observation GROUP until ledger 358, which was one
         location only because pyEMU gave every simulated column a group of its
@@ -1047,7 +1114,7 @@ class IesResults:
         if _normalize_backend(backend) == "matplotlib":
             fig, axes = viz.mpl_axes(len(panels), 1, figsize=(8, 2.6 * len(panels)), squeeze=False)
             for ax, panel in zip(axes[:, 0], panels, strict=False):
-                names, times, hit = panel["names"], panel["times"], panel["measured"]
+                names, times, hit = panel["names"], _panel_axis(panel), panel["measured"]
                 for real in prior.index:
                     ax.plot(times, prior.loc[real, names].to_numpy(dtype=float), color=_MPL_PRIOR, lw=0.8, alpha=0.4)
                 for real in posterior.index:
@@ -1055,14 +1122,14 @@ class IesResults:
                 ax.plot(times[hit], obsval.loc[names].to_numpy(dtype=float)[hit], "^", color=_MPL_MEAS, ms=7)
                 ax.set_title(panel["title"], loc="left", fontsize=9)
                 ax.set_ylabel("value")
-            axes[-1, 0].set_xlabel("time")
+            axes[-1, 0].set_xlabel(_axis_title(panels))
             fig.suptitle("Simulated ensemble vs measured observations")
             fig.tight_layout()
             return fig
 
         fig = viz.subplots(rows=len(panels), cols=1, subplot_titles=titles, shared_xaxes=False)
         for row, panel in enumerate(panels, start=1):
-            names, times, hit = panel["names"], panel["times"], panel["measured"]
+            names, times, hit = panel["names"], _panel_axis(panel), panel["measured"]
             first = True
             for real in prior.index:
                 fig.add_scatter(x=times, y=prior.loc[real, names].to_numpy(dtype=float), mode="lines",
@@ -1080,6 +1147,7 @@ class IesResults:
                             name="measured", legendgroup="measured", showlegend=row == 1)
         fig.update_layout(title="Simulated ensemble vs measured observations",
                           dragmode="pan", height=260 * len(panels))
+        fig.update_xaxes(title_text=_axis_title(panels), row=len(panels), col=1)
         return fig
 
     def forecast(self, name) -> IesForecast:
@@ -1795,7 +1863,9 @@ class IesResults:
           matching -- don't try to calibrate your way out of it.
 
         One panel per target LOCATION with a measured observation, as
-        :meth:`plot_vs_obs` draws them (ledger 358); :meth:`plot_conflict`
+        :meth:`plot_vs_obs` draws them (ledger 358), on the same x axis: each
+        period's end DATE when the build recorded the model's calendar, else the
+        stress period (ledger 544); :meth:`plot_conflict`
         summarizes the same test by observation group.
 
         Parameters
@@ -1844,13 +1914,13 @@ class IesResults:
 
             names, hit = panel["names"], panel["measured"]
             measured = obsval.loc[names].to_numpy(dtype=float)[hit]
-            times = panel["times"][hit]
+            times = _panel_axis(panel)[hit]
             if conflict is not None:
                 kept = [name for name, flag in zip(names, hit, strict=True) if flag]
                 flags = conflict["in_conflict"].reindex(kept).fillna(False).to_numpy(dtype=bool)
             else:
                 flags = np.zeros(len(times), dtype=bool)
-            return names, panel["times"], times, measured, flags
+            return names, _panel_axis(panel), times, measured, flags
 
         if _normalize_backend(backend) == "matplotlib":
             fig, axes = viz.mpl_axes(len(panels), 1, figsize=(8, 2.6 * len(panels)), squeeze=False)
@@ -1863,7 +1933,7 @@ class IesResults:
                     ax.plot(times[flags], measured[flags], "X", color=_MPL_CONFLICT, ms=10, label="prior-data conflict")
                 ax.set_title(panel["title"], loc="left", fontsize=9)
                 ax.set_ylabel("value")
-            axes[-1, 0].set_xlabel("time")
+            axes[-1, 0].set_xlabel(_axis_title(panels))
             fig.suptitle("Prior ensemble vs measured observations")
             fig.tight_layout()
             return fig
@@ -1887,6 +1957,7 @@ class IesResults:
                                 row=row, col=1, name="prior-data conflict", legendgroup="conflict", showlegend=row == 1)
         fig.update_layout(title="Prior ensemble vs measured observations",
                           dragmode="pan", height=260 * len(panels))
+        fig.update_xaxes(title_text=_axis_title(panels), row=len(panels), col=1)
         return fig
 
     def plot_conflict(self, *, coverage: float = 1.0, backend: str = "plotly"):

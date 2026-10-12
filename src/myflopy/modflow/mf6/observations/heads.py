@@ -41,6 +41,12 @@ from myflopy.modflow.mf6.observations._shared import (
     _simulated_field_by_period,
     _wide_by_period,
 )
+from myflopy.modflow.mf6.observations.hydrographs import (
+    bin_readings,
+    model_clock,
+    read_readings,
+    refuse_another_clock,
+)
 from myflopy.modflow.mf6.package_explorer_utils import cell_numbering, has_cell_numbering
 from myflopy.viz import mpl_axes
 
@@ -187,7 +193,8 @@ class HeadTargets:
         :meth:`compare` and the PEST build read it as a ZERO-BASED STRESS
         PERIOD, by number (``1.0`` is period 1), and both raise on a label that
         is not a whole number, is negative, or is a date or a duration (pandas
-        reads a datetime as nanoseconds; ledger 499), on two values for
+        reads a datetime as nanoseconds; ledger 499 -- dated readings are binned
+        onto periods by :meth:`from_hydrographs`), on two values for
         one target in one period, and on a period the run did not save (ledger
         500).
     value_column : str, optional
@@ -223,6 +230,9 @@ class HeadTargets:
     #: The MF6 OBS type of the family's quantity -- the only one ``to_flopy_obs``
     #: writes (ledger 477, as ledger 344 made it for LAK/SFR/DRN).
     _OBS_KIND: ClassVar[str] = "HEAD"
+    #: The :class:`~myflopy.modflow.mf6.observations.hydrographs.Binning` of a
+    #: :meth:`from_hydrographs` set (its report and clock stamp); ``None`` otherwise.
+    _binned: ClassVar[Any] = None
 
     locations: str | Path | gpd.GeoDataFrame | pd.DataFrame | pd.Series | dict | list | tuple
     values: str | Path | pd.DataFrame | pd.Series | dict | list | tuple
@@ -467,6 +477,237 @@ class HeadTargets:
             time_column=time_column,
             value_column=value_column,
         )
+
+    @classmethod
+    def from_hydrographs(
+        cls,
+        locations,
+        readings,
+        *,
+        model,
+        mode: str = "history",
+        rule: str | None = None,
+        date_column: str = "date",
+        value_column: str | None = None,
+        name_column: str = "name",
+        layer_column: str | None = "layer",
+        group_column: str | None = "group",
+        weight_column: str | None = "weight",
+        max_offset=None,
+        between=None,
+        min_years: int | None = None,
+    ):
+        """Targets from DATED readings, binned onto ``model``'s stress periods by one stated rule.
+
+        A target set is keyed by stress period (ledger 340) and a date is refused as
+        a key (ledger 499); this is where dated readings become period keys --
+        against ``model``'s own calendar (``model.calendar``, its TDIS
+        ``START_DATE_TIME``, ``TIME_UNITS`` and period lengths; ledger 529) --
+        by the rule :mod:`~myflopy.modflow.mf6.observations.hydrographs` states
+        once for heads, concentrations and lake stages (ledger 543). The
+        result is an ordinary period-keyed set: :meth:`compare`, the PEST build,
+        groups and weights read it unchanged. It also carries :attr:`binning` --
+        which reading or statistic each target is -- and :attr:`calendar`, the
+        CLOCK STAMP: :meth:`compare`, :meth:`simulated_heads` and the PEST build
+        refuse the set on a model whose periods are other dates (another cycle
+        count, another start), naming this call.
+
+        Parameters
+        ----------
+        locations : str, pathlib.Path, GeoDataFrame, DataFrame, Series, dict, or list or tuple of dict
+            Where each well is, read exactly as the constructor's ``locations`` (a
+            vector file, points, or zero-based cells within a layer), with
+            ``name_column``, ``layer_column``, ``group_column`` and
+            ``weight_column`` as there.
+        readings : str, pathlib.Path, pandas.DataFrame or pandas.Series
+            The dated readings, in the model's length units (concentration units
+            on ``ConcTargets``). A path is read with ``pandas.read_csv``. WIDE:
+            ``date_column`` plus one column per well, headed by its name -- the
+            usual hydrograph export; LONG: ``date_column``, ``name`` and
+            ``value_column``, one row per reading; ONE SERIES (``date_column`` and
+            ``value_column`` only, or a ``Series`` indexed by date) when there is one
+            location. Dates may be the table's index instead of a column. A blank
+            value is no reading; any other entry that is not a finite number raises
+            ``ValueError``. A name not among ``locations`` (stripped, ignoring case)
+            raises ``ValueError`` naming it. Two readings of one well at one instant
+            collapse when equal and raise when they differ. A ``weight`` column
+            raises: several readings become one target, so weight a well through
+            ``weight_column``.
+        model : SimulationBase
+            The model the targets will be compared on -- ``run.model(name)`` or
+            ``mf.load_mf6_run(ws)`` -- whose calendar the readings are binned
+            against. Its TDIS must declare ``START_DATE_TIME`` and a
+            ``TIME_UNITS`` (``ValueError`` naming ``mf.tdis(...)`` otherwise).
+        mode : {"history", "average_year"}, default "history"
+            ``"history"``: the model runs the dated record (Ten Trails' monthly
+            2017-2023 periods); readings outside its span,
+            ``(START_DATE_TIME, last period end]``, are left out with a warning
+            naming each well and its count (``warnings.warn`` and the log, ledger
+            288), and none in span raises, printing both spans. ``"average_year"``:
+            the model is an ``mf.AverageYear`` cycle (ledger 530) -- checked by
+            ``mf.AverageYear.from_model(model)``, and a model that is not one raises
+            naming ``mf.AverageYear`` -- and each calendar month's target, from
+            every year's readings of that month, lands on the month's period of
+            the LAST cycle (``AverageYear.months_of(-1)``).
+        rule : str or None, default None
+            How a period's value is made. History: ``"nearest_end"`` (the default)
+            -- every reading goes to the period END nearest it (a reading midway
+            between two goes to the period holding it), and each period's target is
+            the reading nearest its end (a tie goes to the EARLIER reading, the one
+            inside the period). It matches what is simulated: the head at the
+            period's end (ledger 336). With Ten Trails' TDIS starting 2017-09-30
+            every period ends at 00:00 on its month's LAST day, so a reading on
+            31 October at noon is period 0's, where a rule by containment would
+            give it to period 1. ``"median"``/``"mean"``: the statistic of the
+            readings inside the period, ``(start, end]``. Average year:
+            ``"median"`` (the default) -- each year's monthly median, then the
+            median of those over the years, so a year read daily counts once, as
+            a year read monthly does (the user's rule, Q4); ``"mean"`` -- the same
+            with means. ``"nearest_end"`` there raises ``ValueError`` naming
+            ``rule='median'``.
+        date_column : str, default "date"
+            The readings' date column, matched exactly. Each entry must be a date
+            with a four-digit year and no time zone (``"2018-01-15"``,
+            ``"2018-01-15 08:30"``); anything else raises ``ValueError`` naming the
+            rows.
+        value_column : str or None, default None
+            The value column of a LONG or one-series ``readings`` table, matched
+            ignoring case, and the result's ``value_column``. ``None``: the class
+            default, ``"head"`` (``"conc"`` on ``ConcTargets``). Unused by a WIDE
+            table.
+        name_column : str, default "name"
+            Column of ``locations`` holding each well's name (the constructor's).
+        layer_column : str or None, default "layer"
+            Column of ``locations`` holding each well's zero-based layer (the
+            constructor's).
+        group_column : str or None, default "group"
+            Column of ``locations`` holding each well's observation-group label --
+            its PEST group (the constructor's).
+        weight_column : str or None, default "weight"
+            Column of ``locations`` holding each well's PEST weight (the
+            constructor's); with no reading weight possible, it is every target's
+            weight at that well.
+        max_offset : str, pandas.Timedelta, datetime.timedelta or None, default None
+            History with ``rule="nearest_end"`` only: a reading farther than this
+            from its period's end is not used, so a period with no reading that
+            near is unmeasured (``"10D"``, ``"36h"``). A bare number raises
+            (pandas reads it as nanoseconds), as does a duration that is not
+            positive. Given in average-year mode, or with another rule, it raises.
+            ``None``: no limit.
+        between : tuple of two dates or None, default None
+            Average year only: ``(first, last)``, the readings used, both included,
+            either ``None`` for open (``("2005-10-01", None)``). Given in history
+            mode it raises. ``None``: every reading.
+        min_years : int or None, default None
+            Average year only: a month read in fewer distinct calendar years than
+            this has no target (its :attr:`binning` row says ``measured`` False).
+            ``None`` means 1; a whole number from 1. Given in history mode it
+            raises.
+
+        Returns
+        -------
+        HeadTargets
+            An instance of the class it is called on, keyed by zero-based stress
+            period, carrying :attr:`binning` and :attr:`calendar`.
+
+        Raises
+        ------
+        ValueError
+            As listed under each parameter; and as the constructor raises for the
+            locations.
+
+        Warns
+        -----
+        UserWarning
+            History mode: readings outside the model's span, counted per well; any
+            mode: a well whose readings all fell out, by name.
+
+        Examples
+        --------
+        >>> flow = run.model("flow")
+        >>> heads = mf.HeadTargets.from_hydrographs("wells.gpkg", "hydrographs.csv", model=flow)
+        >>> heads.binning[["name", "per", "reading", "offset_days", "value"]].head()
+        >>> year_heads = mf.HeadTargets.from_hydrographs(
+        ...     "wells.gpkg", "hydrographs.csv", model=flow, mode="average_year",
+        ...     between=("2005-10-01", None), min_years=3)
+        """
+
+        owner = cls.__name__
+        if value_column is None:
+            value_column = cls.__dataclass_fields__["value_column"].default
+        if isinstance(locations, (str, Path)):
+            locations = gpd.read_file(locations)
+        known = _load_locations(
+            locations,
+            name_column=name_column,
+            layer_column=layer_column,
+            group_column=group_column,
+            weight_column=weight_column,
+        )
+        calendar, months = model_clock(model, mode=mode, owner=owner)
+        long = read_readings(readings, date_column=date_column, value_column=value_column, owner=owner)
+        if "name" not in long.columns:
+            if known["name_key"].nunique() != 1:
+                raise ValueError(
+                    f"{owner}.from_hydrographs(...): the readings name no well (one "
+                    f"series), and there are {known['name_key'].nunique()} locations; give "
+                    "a WIDE table, one column per well, or a LONG one with a 'name' column."
+                )
+            long["name"] = str(known["name"].iloc[0])
+        unknown = sorted(
+            set(_normalize_identifier_series(long["name"])) - set(known["name_key"])
+        )
+        if unknown:
+            raise ValueError(
+                f"{owner}.from_hydrographs(...): the readings name {len(unknown)} well(s) "
+                f"not among the locations (compared stripped, ignoring case): "
+                + ", ".join(unknown[:10]) + (" ..." if len(unknown) > 10 else "")
+                + ". Add them to the locations, or drop their columns."
+            )
+        binning = bin_readings(
+            long, calendar, mode=mode, rule=rule, max_offset=max_offset, between=between,
+            min_years=min_years, months=months, owner=owner,
+        )
+        targets = cls(
+            locations=locations,
+            values=binning.values.rename(columns={"value": value_column}),
+            name_column=name_column,
+            layer_column=layer_column,
+            group_column=group_column,
+            weight_column=weight_column,
+            time_column="time",
+            value_column=value_column,
+        )
+        targets._binned = binning
+        return targets
+
+    @property
+    def binning(self) -> pd.DataFrame | None:
+        """How each target was made from dated readings, or ``None`` for a set keyed by period.
+
+        Set by :meth:`from_hydrographs`: one row per (well, period) its readings
+        reached -- ``name``, ``per``, ``month`` (the period's midpoint month),
+        ``period_start``, ``period_end``, ``n_readings``, ``n_years``,
+        ``first_reading``, ``last_reading``, ``reading`` (the reading used, under
+        ``rule="nearest_end"``), ``offset_days`` (it minus the period end; negative
+        before), ``value`` and ``measured`` (False for an average-year month under
+        ``min_years``, which is no target).
+        """
+
+        binned = self._binned
+        return None if binned is None else binned.report.copy()
+
+    @property
+    def calendar(self):
+        """The :class:`~myflopy.modflow.mf6.period_calendar.PeriodCalendar` the targets were binned against, or ``None``.
+
+        The CLOCK STAMP of a :meth:`from_hydrographs` set: comparing it with, or
+        building PEST on, a model whose calendar differs raises (ledger
+        543). ``None`` for a set keyed by period by hand.
+        """
+
+        binned = self._binned
+        return None if binned is None else binned.calendar
 
     @property
     def locations_gdf(self) -> gpd.GeoDataFrame:
@@ -879,6 +1120,7 @@ class HeadTargets:
             fixes it; or when no target lands on an active cell (ledger 211).
         """
 
+        refuse_another_clock(self, model, caller=f"{type(self).__name__}.simulated_heads(...)")
         matches = self.observation_labels(model)
         sim = _simulated_field_by_period(
             model,
@@ -936,6 +1178,7 @@ class HeadTargets:
         """
 
         caller = f"{type(self).__name__}.compare(...)"
+        refuse_another_clock(self, model, caller=caller)
         _measured_periods(
             self._values, value_column="head_target", name_column="name_key", caller=caller
         )

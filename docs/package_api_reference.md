@@ -912,7 +912,7 @@ and its statistics, and `residuals_by_period` out of the period's mean (ledger 3
 period 1, and a key with a fraction (`1.5`, which was truncated to 1) is refused, as are
 a negative key and a DATE or a duration (ledger 499: pandas reads a datetime as
 nanoseconds since 1970, so a `parse_dates` table was keyed by period
-1706659200000000000). `compare()`/`stats()` refuse a key naming a period the route's
+1706659200000000000; dated readings are binned by `from_hydrographs`, below). `compare()`/`stats()` refuse a key naming a period the route's
 table does not hold on EVERY route -- the head, concentration, LAK and SFR stage and SFR
 budget files as well as the observation route (ledger 500; a file route read
 `NaN` for it and `stats()` dropped the row in silence). Two
@@ -928,6 +928,34 @@ family's value columns (`stage`/`sim_stage` on a lake set, `head_target` on a he
 concentration set, `stage_target`/`flow_target`/`sim_flow` on SFR and DRN sets), which
 pandas refused with `value_name (stage) cannot match an element` (review of ledger
 423).
+
+**Dated readings: `HeadTargets.from_hydrographs(locations, readings, *, model,
+mode="history", rule=None, date_column="date", value_column=None, name_column=,
+layer_column=, group_column=, weight_column=, max_offset=None, between=None,
+min_years=None)`** (`ConcTargets` inherits it; `LakeStageTargets.from_hydrographs(locations,
+readings, *, model, package=None, mode=, rule=, date_column=, value_column="stage",
+max_offset=, between=, min_years=)` alike; ledger 543). `readings` is a CSV path
+or a table, WIDE (a date column and one column per well -- dates may be the index) or
+LONG (`date`, `name`, value), binned against `model.calendar` by one module,
+`observations/hydrographs.py` (`read_readings`, `bin_readings`). `mode="history"`:
+`rule="nearest_end"` (default) makes each period's target the reading nearest its END
+-- the simulated value is the period-end value (ledger 336), and on Ten Trails' clock a
+last-day reading stays in its own month -- with `median`/`mean` inside `(start, end]` as
+options and `max_offset=` a limit; readings outside the model's span are left out and
+warned by well. `mode="average_year"`: an `mf.AverageYear` model only (refused
+otherwise, by name); each calendar month's target is the median over years of each
+year's monthly median (`rule="mean"`: means), on the LAST cycle's period of that month,
+with `between=(first, last)` and `min_years=`. The result is an ordinary period-keyed
+set plus `.binning` (per well and period: the reading used, its `offset_days`, counts,
+`measured`) and `.calendar`, the CLOCK STAMP: `compare()`, `simulated_heads()` /
+`simulated_series()` and the PEST build refuse it on a model whose periods are other
+dates, naming `from_hydrographs(..., model=<this model>)`. Refused when built: a TDIS
+with no `START_DATE_TIME`/`TIME_UNITS`, an unparseable or time-zoned date, two
+different readings of one well at one instant, a well not among the locations, a
+`weight` column in the readings, and an option the mode does not read. The PEST build
+records each set's `period_end_dates`, `observation_kind` and `binning` in its
+metadata, and `IesResults.plot_vs_obs`/`plot_prior_vs_obs` draw the ensembles on those
+dates (ledger 544).
 
 **A reading's own weight beats its location's, which beats its set's, which beats 1.0**
 (ledger 504). A LONG values table (`time`, `name`, value) may carry a `weight`

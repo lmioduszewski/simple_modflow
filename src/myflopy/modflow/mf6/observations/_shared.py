@@ -2053,8 +2053,10 @@ def _refuse_dated_keys(raw: pd.Series, *, column: str, caller: str) -> None:
     raise ValueError(
         f"{caller} reads `{column}` as a zero-based stress period NUMBER, and {labels} "
         f"{'is' if int(dated.sum()) == 1 else 'are'} a date or a duration (pandas would read "
-        "it as nanoseconds since 1970, a period no model has). Bin dated readings to the "
-        "stress periods they fall in first, and key each target by its period, 0, 1, 2, ..."
+        "it as nanoseconds since 1970, a period no model has). Dated readings are binned onto "
+        "a model's stress periods by HeadTargets.from_hydrographs(locations, readings, "
+        "model=...) -- ConcTargets and LakeStageTargets alike (ledger 543); "
+        "otherwise key each target by its period, 0, 1, 2, ..."
     )
 
 
