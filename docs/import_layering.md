@@ -77,7 +77,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6`
 - `myflopy.modflow.mf6.boundaries`
 - `myflopy.modflow.mf6.contour_plotting`
-- `myflopy.modflow.mf6.cross_section_plotting` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.grid.geometry`
 - `myflopy.modflow.mf6.grid.geometry_cleanup`
 - `myflopy.modflow.mf6.grid.surfaces`
@@ -106,6 +105,7 @@ review the diff, commit the regenerated files together.
 
 - `myflopy.modflow.mf6.budget_tables`
 - `myflopy.modflow.mf6.chd`
+- `myflopy.modflow.mf6.cross_section_plotting` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.drn`
 - `myflopy.modflow.mf6.ghb`
 - `myflopy.modflow.mf6.grid.remap`
@@ -113,7 +113,6 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.grid.tessellation`
 - `myflopy.modflow.mf6.grid.triangle` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.headsplus` *(deferred imports: 2)*
-- `myflopy.modflow.mf6.interactive_plotting`
 - `myflopy.modflow.mf6.kflow`
 - `myflopy.modflow.mf6.observations._shared`
 - `myflopy.modflow.mf6.package_budget`
@@ -135,6 +134,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.areal`
 - `myflopy.modflow.mf6.budget_plotting`
 - `myflopy.modflow.mf6.grid.interpolated_surface`
+- `myflopy.modflow.mf6.interactive_plotting`
 - `myflopy.modflow.mf6.observations.drn`
 - `myflopy.modflow.mf6.observations.heads` *(deferred imports: 4)*
 - `myflopy.modflow.mf6.observations.lake` *(deferred imports: 1)*
