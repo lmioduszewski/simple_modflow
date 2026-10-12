@@ -463,6 +463,14 @@ bounds, forecast and `plot_field` mean/change — not every figure on the class:
 reduction map, the mosaic, the residual map, `plot_prior_vs_obs` and `plot_conflict`
 are called directly.
 
+The scoring calls (`phi_contributions`, `obs_residuals`, `plot_obs_residuals`) read
+ONE posterior realization, `realization="base"` by default, and a label the ensemble
+lacks RAISES naming some it has -- they scored the ensemble mean in silence until
+ledger 480. A run with no `base` realization (`ies_include_base` off) needs a
+label, or `best(criterion="min_phi")`; `best()` itself refuses `"base"` there. The
+backend switch is the house one: `"plotly"`/`"interactive"` or
+`"matplotlib"`/`"mpl"`/`"static"` (`"go"` and `"sns"` are no longer spellings).
+
 **Reading the field maps.** They are colored by policy, and the policy depends on
 the statistic, not the parameter:
 
