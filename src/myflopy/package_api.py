@@ -1494,6 +1494,7 @@ def _lazy_bc_spec(
 
 
 def _source(
+    package: str,
     path: PathLike,
     *,
     context: ModelContext,
@@ -1510,9 +1511,18 @@ def _source(
 ) -> GeoPackageSource:
     """Return a configured GeoPackage source for package-first helpers.
 
-    Its refusals name ``mf.<pkg>.gpkg``, the call the caller made.
+    Its refusals name ``mf.<pkg>.gpkg``, the call the caller made -- ``gaps=`` and
+    ``min_above_bottom=``/``snap_within=`` too, which are checked HERE, before the
+    source is constructed: ``GeoPackageSource.__post_init__`` runs before ``_verb`` can
+    be set, and named "A GeoPackage source" on this route while the lazy route named the
+    call.
     """
 
+    verb = f"mf.{package}.gpkg"
+    check_gaps(gaps, verb=verb)
+    check_placement_options(
+        min_above_bottom=min_above_bottom, snap_within=snap_within, verb=verb
+    )
     source = GeoPackageSource(
         path,
         context,
@@ -3789,6 +3799,7 @@ class _CHDPackage:
             )
 
         return _source(
+            "chd",
             path,
             context=context,
             nper=nper,
@@ -4060,6 +4071,7 @@ class _GHBPackage:
             )
 
         return _source(
+            "ghb",
             path,
             context=context,
             nper=nper,
@@ -4318,6 +4330,7 @@ class _DRNPackage:
             )
 
         return _source(
+            "drn",
             path,
             context=context,
             nper=nper,
@@ -4598,6 +4611,7 @@ class _RIVPackage:
             )
 
         return _source(
+            "riv",
             path,
             context=context,
             nper=nper,
@@ -4846,6 +4860,7 @@ class _WELPackage:
             )
 
         return _source(
+            "wel",
             path,
             context=context,
             nper=nper,
@@ -5325,6 +5340,7 @@ class _RCHPackage:
             )
 
         return _source(
+            "rch",
             path,
             context=context,
             nper=nper,
@@ -5880,6 +5896,7 @@ class _EVTPackage:
             )
 
         return _source(
+            "evt",
             path,
             context=context,
             nper=nper,

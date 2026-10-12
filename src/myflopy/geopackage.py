@@ -1261,11 +1261,11 @@ class GeoPackageSource:
             raise ValueError("ModelContext.grid is required for GeoPackage mapping.")
         if self.nper < 1:
             raise ValueError("nper must be at least 1.")
-        check_gaps(self.gaps, verb="A GeoPackage source")
+        check_gaps(self.gaps, verb="GeoPackageSource")
         check_placement_options(
             min_above_bottom=self.min_above_bottom,
             snap_within=self.snap_within,
-            verb="A GeoPackage source",
+            verb="GeoPackageSource",
         )
 
     @property
