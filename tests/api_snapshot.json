@@ -2562,9 +2562,11 @@
     ],
     "MvrResultDiff.get": [
       "package:KEYWORD_ONLY=<required>",
-      "direction:KEYWORD_ONLY='from_mvr'",
+      "direction:KEYWORD_ONLY='to_mvr'",
       "model_name:KEYWORD_ONLY=None",
-      "kwargs:VAR_KEYWORD=<required>"
+      "per:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None"
     ],
     "MvrResultDiff.summary": [
       "model_name:KEYWORD_ONLY=None",

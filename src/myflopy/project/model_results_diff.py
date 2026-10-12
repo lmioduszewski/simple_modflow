@@ -20,19 +20,32 @@ references are zero-based.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
+from myflopy._logging import get_logger
+from myflopy.modflow.mf6.package_budget import (
+    build_lak_budget_term_table,
+    build_sfr_budget_term_table,
+)
 from myflopy.modflow.mf6.package_explorer import (
     DiffSpatialView,
     FieldMappable,
     LineProfileView,
 )
-from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
+from myflopy.modflow.mf6.package_registry import (
+    _PACKAGE_EXPLORER_SPECS,
+    model_packages_of_type,
+)
 from myflopy.modflow.utils.datatypes.xsections import XSection
+from myflopy.project.group._shared import _reduce_to_period_end, _stable_compare_keys
 from myflopy.project.group.lak import GroupLakStageResults
 from myflopy.project.group.results import GroupCellPackageResults
 from myflopy.project.group.sfr import GroupSfrStageResults
+
+logger = get_logger(__name__)
 
 # Default tolerances for the ``within_tolerance`` test: |diff| <= atol + rtol*|ref|.
 _DEFAULT_ATOL = 1e-3
@@ -994,15 +1007,36 @@ class StageResultDiff(_ResultDiffBase):
         return pd.DataFrame(rows, columns=columns)
 
 
-class MvrResultDiff(_ResultDiffBase):
-    """Mover (MVR) difference vs the reference model.
+def _declares_mover(model, package_type: str) -> bool:
+    """Whether ``model`` carries a package of TYPE ``package_type`` declaring ``MOVER``."""
 
-    Meant to compare the ``FROM-MVR`` / ``TO-MVR`` budget terms of the packages
-    the mover moves water between, per package and direction across models. It
-    looks for them in the groundwater budget file under exactly those names,
-    where MF6 was not found to write them (:meth:`get` says what it writes and
-    where), so on the runs measured it returns an empty table although water
-    moved.
+    for package in model_packages_of_type(model, package_type):
+        option = getattr(package, "mover", None)
+        value = option.get_data() if hasattr(option, "get_data") else option
+        if value:
+            return True
+    return False
+
+
+class MvrResultDiff(_ResultDiffBase):
+    """Mover (MVR) difference vs the reference model, read where MF6 writes it.
+
+    One package type and direction at a time: the water a package hands the mover
+    (``"to_mvr"``) or takes from it (``"from_mvr"``), each member at its own last
+    saved step of every period, differenced against the reference's. MF6 writes the
+    two in different files by package (ledger 486):
+
+    - a DRN, GHB, RIV or WEL only PROVIDES: ``<TYPE>-TO-MVR`` in the groundwater
+      budget file, one row per boundary cell;
+    - SFR and LAK provide and receive: ``TO-MVR`` and ``FROM-MVR`` in the package's
+      OWN budget file, one row per reach or lake;
+    - UZF writes ``UZF-GWD TO-MVR`` in the groundwater budget and ``FROM-MVR`` /
+      ``REJ-INF-TO-MVR`` in its own, which is not read here: ``package="uzf"`` is
+      refused, and :meth:`summary` warns when a member's UZF declares ``MOVER``.
+
+    Until ledger 486 it read records named ``FROM-MVR``/``TO-MVR`` from the
+    groundwater budget file, where MF6 writes neither, so every table was empty
+    although water moved.
     """
 
     # Packages MF6 accepts as mover providers/receivers, i.e. exactly those
@@ -1015,83 +1049,178 @@ class MvrResultDiff(_ResultDiffBase):
         for name, spec in _PACKAGE_EXPLORER_SPECS.items()
         if spec.capabilities.mover
     )
+    #: the packages that write their mover terms in their own budget file, per feature
+    _FEATURE_TABLES = {"sfr": ("reach", "sfr"), "lak": ("lake", "lak")}
     _DIRECTIONS = (("from_mvr", "FROM-MVR"), ("to_mvr", "TO-MVR"))
     _COLUMNS = [
         "model", "package", "direction", "value", "n",
-        "max_abs_diff", "mean_abs_diff", "rmse", "argmax_cell", "within_tolerance",
+        "max_abs_diff", "mean_abs_diff", "rmse", "argmax_cell", "argmax_feature",
+        "within_tolerance",
     ]
 
-    def _cell_diff(self, package: str, term: str) -> CellBudgetResultDiff:
-        """Build a cell-budget diff for one package's mover ``term`` (FROM/TO-MVR)."""
+    def _checked(self, package: str, direction: str) -> tuple[str, str]:
+        """``(package type, direction)`` lower-cased, refused by name when MF6 writes no such term."""
 
-        accessor = GroupCellPackageResults(
-            self.group, package, budget_text=term, value_name="q"
+        name = str(package).lower()
+        if name not in self._MOVER_PACKAGES:
+            raise ValueError(
+                f"{package!r} is no mover package type; MF6 moves water for "
+                f"{', '.join(self._MOVER_PACKAGES)}."
+            )
+        if name == "uzf":
+            raise ValueError(
+                "UZF's mover terms are not read by this diff: MF6 writes 'UZF-GWD TO-MVR' "
+                "in the groundwater budget file and 'FROM-MVR' / 'REJ-INF-TO-MVR' in "
+                "UZF's own budget file, which myflopy has no reader for."
+            )
+        directions = dict(self._DIRECTIONS)
+        if direction not in directions:
+            raise ValueError(
+                f"direction={direction!r}; spell it 'to_mvr' (water the package hands "
+                "the mover) or 'from_mvr' (water it takes from the mover)."
+            )
+        if direction == "from_mvr" and name not in self._FEATURE_TABLES:
+            raise ValueError(
+                f"A {name.upper()} only provides water to the mover: MF6 writes "
+                f"'{name.upper()}-TO-MVR' for it and no FROM-MVR. Use direction='to_mvr'; "
+                "only SFR and LAK (and UZF) receive."
+            )
+        return name, direction
+
+    def _feature_compare(self, package: str, term: str, *, per=None) -> pd.DataFrame:
+        """One SFR/LAK mover term from each member's package budget file, paired by period and feature."""
+
+        builder = {"sfr": build_sfr_budget_term_table, "lak": build_lak_budget_term_table}[package]
+        frames = []
+        for name, model in self.group.models.items():
+            if not model_packages_of_type(model, package):
+                continue
+            frame = builder(model, term=term)
+            if frame.empty:
+                continue
+            frame = frame.copy()
+            frame["model"] = name
+            frames.append(frame)
+        if not frames:
+            return pd.DataFrame()
+        data = _reduce_to_period_end(pd.concat(frames, ignore_index=True))
+        if per is not None:
+            data = data[data["per"] == int(per)]
+        key_columns = _stable_compare_keys(data, ["q"])
+        reference = self.group.reference
+        ref = data[data["model"] == reference][[*key_columns, "q"]].rename(
+            columns={"q": "reference_q"}
         )
-        return CellBudgetResultDiff(self._diff, accessor)
+        comp = data[data["model"] != reference].merge(ref, on=key_columns, how="inner")
+        comp["reference_model"] = reference
+        comp["q_diff"] = comp["q"].astype(float) - comp["reference_q"].astype(float)
+        ordered = ["model", "reference_model", *key_columns, "q", "reference_q", "q_diff"]
+        return comp[ordered].reset_index(drop=True)
 
-    def get(self, *, package: str, direction: str = "from_mvr", model_name=None, **kwargs):
-        """Return per-cell mover flow differences for one package + direction.
+    def get(
+        self,
+        *,
+        package: str,
+        direction: str = "to_mvr",
+        model_name=None,
+        per=None,
+        layer=None,
+        cells=None,
+    ) -> pd.DataFrame:
+        """Return per-row mover-flow differences for one package type and direction.
 
-        Reads the records named exactly ``FROM-MVR`` / ``TO-MVR`` in each
-        member's GROUNDWATER budget file (the ``.cbc``), where MF6 was not found
-        to write them: a DRN or WEL moving water writes ``DRN-TO-MVR`` /
-        ``WEL-TO-MVR`` there, and SFR and LAK write ``FROM-MVR``/``TO-MVR`` into
-        their OWN package budget files, which this does not read. So against
-        those runs the table is empty although water moved (measured on two
-        drains and a well moving water into a stream, and on the canonical
-        model's SFR-to-lake mover, ``docs/reproducers/diff_results_tier.py``).
+        Each member's mover term, reduced to its own last saved step of every
+        stress period (``period_end.at_last_saved_steps``, ledger 348) and paired
+        with the reference's on its integer and text identity (the period, and the
+        cell and package NAME for a boundary; the reach or lake for SFR and LAK)
+        by an inner join. ``q`` is MF6's own number in model volume per time:
+        NEGATIVE for water a package hands the mover, POSITIVE for water it takes.
+        A member that does not carry the package type contributes no rows.
 
         Parameters
         ----------
         package : str
-            The package type the rows are labelled with, any case (lower-cased).
-            It labels the ``package`` column and selects nothing: the term's
-            records are read from every package that wrote one. Any string is
-            accepted.
-        direction : str, optional
-            ``"from_mvr"`` (default) reads the ``FROM-MVR`` term, ``"to_mvr"`` the
-            ``TO-MVR`` term. Anything else -- ``"TO-MVR"`` included -- raises
-            ``KeyError``.
+            The package TYPE, any case: ``"drn"``, ``"ghb"``, ``"riv"``, ``"wel"``,
+            ``"sfr"`` or ``"lak"`` -- every package of the type is read, each row
+            naming its own (``pname``) for a boundary; SFR and LAK read the
+            model's ONE package of the type and raise ``SeveralPackagesError``
+            with several. ``"uzf"`` raises ``ValueError`` (its own budget file is
+            not read), as does any other name.
+        direction : str, default "to_mvr"
+            ``"to_mvr"``, the water the package hands the mover (DRN/GHB/RIV/WEL:
+            ``<TYPE>-TO-MVR`` in the groundwater budget file; SFR/LAK: ``TO-MVR``
+            in the package's budget file), or ``"from_mvr"``, the water it takes
+            (SFR/LAK ``FROM-MVR``). A boundary package with ``"from_mvr"`` raises
+            ``ValueError``: MF6 writes no such term, since only SFR, LAK, UZF
+            and MAW receive. Any other spelling raises ``ValueError``. The default
+            was ``"from_mvr"`` until ledger 486.
         model_name : str or None, optional
             Keep one compared model, by its name in the group. Default ``None``
-            keeps every non-reference model. Checked only when there are rows
-            (:meth:`CellBudgetResultDiff.get`).
-        **kwargs
-            Forwarded to :meth:`CellBudgetResultDiff.get`: ``per``, ``layer`` and
-            ``cells``. Anything else raises ``TypeError``.
+            keeps every non-reference model. A name not in the group raises
+            ``KeyError`` and the reference's ``ValueError`` -- only when there are
+            rows to filter.
+        per : int or None, optional
+            Keep one zero-based stress period, each member at its own last saved
+            step of it. Default ``None`` keeps every period.
+        layer : int or sequence of int or None, optional
+            Keep these zero-based layers of a boundary package's cells. Default
+            ``None`` keeps every layer. Given for SFR or LAK it raises
+            ``ValueError``: their rows are reaches and lakes, not cells.
+        cells : int or sequence of int or None, optional
+            Keep these zero-based in-layer cells of a boundary package. Default
+            ``None`` keeps every cell; for SFR or LAK it raises ``ValueError`` as
+            ``layer`` does.
 
         Returns
         -------
         pandas.DataFrame
-            :meth:`CellBudgetResultDiff.get`'s table with value column ``q``;
-            empty, with no columns, when nothing is found.
+            ``model``, ``reference_model``, the identity columns (a boundary's
+            ``node``, ``node2``, ``layer``, ``cell``, ``package``, ``pname``,
+            ``per``; SFR's ``package``, ``term``, ``per``, ``reach``, ``layer``,
+            ``cell``, ``node``, ``node2``; LAK's the same with ``lake`` and no
+            cell), ``q``, ``reference_q`` and ``q_diff`` (model minus reference).
+            Empty, with no columns, when no member wrote the term.
         """
 
+        package, direction = self._checked(package, direction)
         term = dict(self._DIRECTIONS)[direction]
-        return self._cell_diff(package.lower(), term).get(model_name=model_name, **kwargs)
+        if package in self._FEATURE_TABLES:
+            if layer is not None or cells is not None:
+                raise ValueError(
+                    f"A {package.upper()} mover row is a "
+                    f"{self._FEATURE_TABLES[package][0]}, not a cell: layer= and cells= "
+                    "select a boundary package's cells only."
+                )
+            frame = self._feature_compare(package, term, per=per)
+        else:
+            accessor = GroupCellPackageResults(
+                self.group, package, budget_text=f"{package.upper()}-TO-MVR", value_name="q"
+            )
+            frame = CellBudgetResultDiff(self._diff, accessor).get(
+                per=per, layer=layer, cells=cells
+            )
+        if model_name is not None and not frame.empty:
+            frame = frame[frame["model"].isin(self._targets(model_name))]
+        return frame.reset_index(drop=True)
 
     def summary(
         self, *, model_name=None, atol: float = _DEFAULT_ATOL, rtol: float = _DEFAULT_RTOL
     ) -> pd.DataFrame:
-        """Per (model, package, direction) mover-flow Δ stats + within tolerance.
+        """Per (model, package, direction) mover-flow difference statistics and tolerance.
 
-        Packages without a mover term (or without results) are skipped.
-
-        Probes each mover-capable package type (``drn``, ``ghb``, ``riv``, ``wel``,
-        ``uzf``, ``sfr``, ``lak``) in both directions through :meth:`get`, so it
-        reads what :meth:`get` reads -- no mover term at all on the runs
-        measured there, so the table came back empty although water moved. A
-        probe raising ``ValueError``, ``AttributeError``, ``OSError`` or
-        ``KeyError`` is skipped.
+        Reads :meth:`get` for every package type some member declares ``MOVER``
+        on -- DRN, GHB, RIV and WEL in the direction they have (``"to_mvr"``),
+        SFR and LAK in both -- and leaves out a pair no member wrote a row for. A
+        member's UZF declaring ``MOVER`` is NOT read (:meth:`get`): it is warned
+        about, by ``warnings.warn`` and the log, and left out.
 
         Parameters
         ----------
         model_name : str or None, optional
             Summarize one compared model, by its name in the group. Default
-            ``None`` summarizes every non-reference model. Never refused: a name
-            not in the group, or the reference's, gives the empty table (where a
-            probe has rows, its ``KeyError``/``ValueError`` is skipped like any
-            other).
+            ``None`` summarizes every non-reference model. A name not in the
+            group raises ``KeyError`` and the reference's ``ValueError`` -- when
+            some term has rows.
         atol : float, optional
             Absolute tolerance, in model volume per time, for
             ``|q_diff| <= atol + rtol * |reference q|``, row by row. Default
@@ -1102,36 +1231,61 @@ class MvrResultDiff(_ResultDiffBase):
         Returns
         -------
         pandas.DataFrame
-            ``model``, ``package``, ``direction``, ``value``, ``n``,
-            ``max_abs_diff``, ``mean_abs_diff``, ``rmse``, ``argmax_cell`` and
-            ``within_tolerance``, one row per model, package and direction found.
+            ``model``, ``package``, ``direction``, ``value`` (``"q"``), ``n``,
+            ``max_abs_diff``, ``mean_abs_diff``, ``rmse``, ``argmax_cell`` (the
+            in-layer cell of the largest ``|q_diff|`` for a boundary package, else
+            ``-1``), ``argmax_feature`` (its reach or lake for SFR/LAK, else
+            ``-1``) and ``within_tolerance``; one row per model, package and
+            direction with rows. Empty when no member moves water.
         """
 
-        frames = []
+        models = list(self.group.models.values())
+        if any(_declares_mover(model, "uzf") for model in models):
+            message = (
+                "diff.packages.mvr.results.summary() leaves out UZF's mover terms: MF6 "
+                "writes them in UZF's own budget file, which this diff does not read."
+            )
+            warnings.warn(message, UserWarning, stacklevel=2)
+            logger.warning(message)
+        rows = []
         for package in self._MOVER_PACKAGES:
-            for direction, term in self._DIRECTIONS:
-                try:
-                    part = self._cell_diff(package, term).summary(
-                        model_name=model_name, atol=atol, rtol=rtol
+            if package == "uzf" or not any(_declares_mover(model, package) for model in models):
+                continue
+            directions = (
+                self._DIRECTIONS if package in self._FEATURE_TABLES else (("to_mvr", "TO-MVR"),)
+            )
+            feature = self._FEATURE_TABLES.get(package, (None,))[0]
+            for direction, _term in directions:
+                data = self.get(package=package, direction=direction, model_name=model_name)
+                if data.empty:
+                    continue
+                for name, sub in data.groupby("model"):
+                    diff = sub["q_diff"].to_numpy(dtype=float)
+                    reference = sub["reference_q"].to_numpy(dtype=float)
+                    abs_diff = np.abs(diff)
+                    imax = int(np.argmax(abs_diff))
+                    rows.append(
+                        {
+                            "model": name,
+                            "package": package,
+                            "direction": direction,
+                            "value": "q",
+                            "n": int(abs_diff.size),
+                            "max_abs_diff": float(abs_diff.max()),
+                            "mean_abs_diff": float(abs_diff.mean()),
+                            "rmse": float(np.sqrt(np.mean(diff**2))),
+                            "argmax_cell": (
+                                int(sub["cell"].iloc[imax]) if feature is None else -1
+                            ),
+                            "argmax_feature": (
+                                -1 if feature is None else int(sub[feature].iloc[imax])
+                            ),
+                            "within_tolerance": bool(
+                                np.all(_within_tolerance(diff, reference, atol, rtol))
+                            ),
+                        }
                     )
-                except (ValueError, AttributeError, OSError, KeyError):
-                    # This loop PROBES 7 mover-capable packages x 2 directions,
-                    # so most iterations are expected to fail: flopy's
-                    # CellBudgetFile raises ValueError ("text string is not in
-                    # the budget file") for a package with no mover term, and
-                    # AttributeError when the model has no budget reader at all
-                    # because it was never run. Skipping is the documented
-                    # behaviour, not a degradation -- hence no log line here;
-                    # one per absent term would be 14 lines of noise per call.
-                    continue
-                if part.empty:
-                    continue
-                part = part.copy()
-                part["direction"] = direction
-                frames.append(part)
-        if not frames:
-            return pd.DataFrame(columns=self._COLUMNS)
-        return pd.concat(frames, ignore_index=True)[self._COLUMNS]
+        return pd.DataFrame(rows, columns=self._COLUMNS)
 
 
 class LakResultsDiffNamespace(CellResultsDiffNamespace):

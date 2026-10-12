@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 485 entries (490 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 486 entries (491 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 486 | The mover diff reads each package's mover term where MF6 writes it, and leaves UZF's unread | 2026-10-11 |
 | 485 | Group and diff exchange and budget comparisons pair each member's period end, a LAK connection by what it I... | 2026-10-11 |
 | 484 | A dry or inactive cell is a gap at the group and diff tiers, and `hds.long()`/`wide()` read it as `NaN` | 2026-10-11 |
 | 483 | The location-file calibration plot draws the (location, layer) pairs observed, paired by time | 2026-10-11 |
@@ -19801,3 +19802,22 @@ same day, which is the useful part of the result.
       a key. `diff.bud` keeps its `totim` join (an exact time match, which lines up period
       ends across `nstp`) and no longer melts FloPy's `time_step`/`stress_period`/`tslen`
       into terms: they label each row as `per`/`kstpkper`.
+
+486. **The mover diff reads each package's mover term where MF6 writes it, and leaves UZF's unread (2026-10-11).**
+      `diff.packages.mvr.results` read records named `FROM-MVR`/`TO-MVR` from the
+      groundwater budget file, where MF6 writes neither, so every `get` and `summary()`
+      was empty although water moved (two drains moving 35.0 and 34.5 against 91.3 and
+      31.5 into a stream). MF6 writes a boundary's as `<TYPE>-TO-MVR` in the groundwater
+      budget (`BoundaryPackage.f90`) and SFR's and LAK's as `TO-MVR`/`FROM-MVR` in their
+      own budget files; `get(package=, direction=)` reads those, each member at its period
+      end, a boundary per cell and `pname`, SFR/LAK per reach/lake. **Judgment calls:**
+      `direction` defaults to `"to_mvr"` (it was `"from_mvr"`, which no boundary
+      package has; every mover package provides); a boundary package's `"from_mvr"` is
+      REFUSED naming `"to_mvr"`, as are `layer=`/`cells=` on SFR/LAK. `summary()` reads
+      only the types some member declares `MOVER` on, instead of probing all seven and
+      swallowing four exception types. **Not built:** UZF -- its `REJ-INF-TO-MVR` and
+      `FROM-MVR` live in UZF's own budget file, which myflopy has no reader for, and its
+      `UZF-GWD TO-MVR` alone would be half of what it moves; `package="uzf"` is refused
+      and `summary()` warns when a member's UZF declares `MOVER`. The MVR package's own
+      `MOVER-FLOW` budget (one record per provider/receiver pair) is not read either: it
+      exists only when MVR declares `BUDGET FILEOUT`, which `mf.mvr` does not by default.

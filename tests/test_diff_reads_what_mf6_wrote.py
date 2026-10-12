@@ -9,6 +9,12 @@ Real MF6 runs, small enough to build per module:
 ``named``    a 3 x 3 DIS model whose DRN is NAMED ``seeps`` (conductance 10 against
              30) and whose GHB is named ``lake_edge``: a package found by its NAME
              prefix was never compared, and the GHB counted as a LAK.
+``movers``   a 3 x 3 DIS model whose two drains (``drn_a``, ``drn_b``) and a well hand
+             their water to the mover, all into a one-reach SFR; the second run has
+             ``drn_a``'s conductance 30 for 10. MF6 writes ``DRN-TO-MVR``/``WEL-TO-MVR``
+             in the groundwater budget file and SFR's ``FROM-MVR`` in its own; the
+             diff read ``FROM-MVR``/``TO-MVR`` from the former and was always empty
+             (ledger 486).
 ``steps``    the canonical model on its testing grid (six 30-day periods, a 72-
              connection lake, an SFR-to-lake mover) at one time step per period and
              at two: a period is its END on both, and the LAK join keyed on the
@@ -99,6 +105,68 @@ def toys(tmp_path_factory):
 def named(tmp_path_factory):
     root = tmp_path_factory.mktemp("diff_named")
     return {"a": _named(root / "a", 10.0), "b": _named(root / "b", 30.0)}
+
+
+def _movers(workspace, drn_a_cond):
+    """The 3 x 3 model of two drains and a well moving water into one SFR reach."""
+
+    sim = flopy.mf6.MFSimulation(sim_name="mv", sim_ws=str(workspace), exe_name="mf6",
+                                 verbosity_level=0)
+    flopy.mf6.ModflowTdis(sim, nper=1, perioddata=[(1.0, 1, 1.0)])
+    flopy.mf6.ModflowIms(sim, complexity="SIMPLE")
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="mv", save_flows=True)
+    flopy.mf6.ModflowGwfdis(gwf, nlay=1, nrow=3, ncol=3, delr=10.0, delc=10.0,
+                            top=10.0, botm=0.0)
+    flopy.mf6.ModflowGwfnpf(gwf, k=10.0)
+    flopy.mf6.ModflowGwfic(gwf, strt=9.0)
+    flopy.mf6.ModflowGwfchd(gwf, stress_period_data=[[(0, r, 0), 9.0] for r in range(3)])
+    flopy.mf6.ModflowGwfdrn(gwf, mover=True, pname="drn_a",
+                            stress_period_data=[[(0, 1, 2), 5.0, drn_a_cond]])
+    flopy.mf6.ModflowGwfdrn(gwf, mover=True, pname="drn_b", filename="mv_b.drn",
+                            stress_period_data=[[(0, 0, 2), 5.0, 10.0]])
+    flopy.mf6.ModflowGwfwel(gwf, mover=True, pname="wel",
+                            stress_period_data=[[(0, 2, 2), -1.0]])
+    flopy.mf6.ModflowGwfsfr(
+        gwf, mover=True, pname="sfr", nreaches=1, budget_filerecord="mv.sfr.bud",
+        packagedata=[[0, (0, 1, 1), 10.0, 1.0, 0.001, 8.0, 1.0, 0.0, 0.03, 0, 1.0, 0]],
+        connectiondata=[[0]], perioddata=[[0, "INFLOW", 0.0]],
+    )
+    flopy.mf6.ModflowGwfmvr(
+        gwf, maxmvr=3, maxpackages=4, packages=[["drn_a"], ["drn_b"], ["wel"], ["sfr"]],
+        perioddata={0: [["drn_a", 0, "sfr", 0, "FACTOR", 1.0],
+                        ["drn_b", 0, "sfr", 0, "FACTOR", 1.0],
+                        ["wel", 0, "sfr", 0, "FACTOR", 1.0]]},
+    )
+    flopy.mf6.ModflowGwfoc(gwf, budget_filerecord="mv.cbc", head_filerecord="mv.hds",
+                           saverecord=[("HEAD", "ALL"), ("BUDGET", "ALL")])
+    return _write_run(sim, workspace)
+
+
+def _moved(path, text):
+    """``{package name: q}`` of the records named ``text`` in a budget file, by FloPy alone."""
+
+    budget = flopy.utils.CellBudgetFile(str(path), precision="auto")
+    moved = {}
+    for index, header in enumerate(budget.recordarray):
+        if header["text"].decode().strip() == text:
+            record = budget.get_record(index)
+            moved[header["paknam2"].decode().strip()] = float(record["q"].sum())
+    return moved
+
+
+@pytest.fixture(scope="module")
+def movers(tmp_path_factory):
+    root = tmp_path_factory.mktemp("diff_movers")
+    runs = {"a": _movers(root / "a", 10.0), "b": _movers(root / "b", 30.0)}
+    for name in runs:
+        held = {raw.decode().strip() for raw in flopy.utils.CellBudgetFile(
+            str(root / name / "mv.cbc"), precision="auto").recordarray["text"]}
+        assert {"DRN-TO-MVR", "WEL-TO-MVR"} <= held
+        assert not {"FROM-MVR", "TO-MVR"} & held
+    runs["moved"] = {name: _moved(root / name / "mv.cbc", "DRN-TO-MVR") for name in ("a", "b")}
+    runs["received"] = {name: _moved(root / name / "mv.sfr.bud", "FROM-MVR")
+                        for name in ("a", "b")}
+    return runs
 
 
 @pytest.fixture(scope="module")
@@ -240,3 +308,69 @@ def test_listing_budget_diff_has_no_bookkeeping_terms(steps):
     rows = diff.bud.get()
     assert set(rows["per"]) == set(range(6))
     assert set(rows["kstpkper"]) == {(1, p) for p in range(6)}
+
+
+# -- (c) the mover diff reads what MF6 writes ------------------------------------------
+
+
+def test_mover_diff_reads_each_providers_term_from_the_groundwater_budget(movers):
+    moved = movers["moved"]
+    assert moved["a"]["DRN_A"] < 0 and moved["b"]["DRN_A"] < moved["a"]["DRN_A"]
+    mvr = mf.ModelGroup({"a": movers["a"], "b": movers["b"]}, reference="a").diff()
+    drn = mvr.packages.mvr.results.get(package="drn").set_index("pname")
+    assert set(drn.index) == {"DRN_A", "DRN_B"}
+    for pname in ("DRN_A", "DRN_B"):
+        assert drn.loc[pname, "reference_q"] == pytest.approx(moved["a"][pname])
+        assert drn.loc[pname, "q"] == pytest.approx(moved["b"][pname])
+    wel = mvr.packages.mvr.results.get(package="wel")
+    assert len(wel) == 1 and wel["q"].iloc[0] < 0
+
+
+def test_mover_diff_reads_a_receivers_term_from_its_own_budget_file(movers):
+    received = movers["received"]
+    mvr = mf.ModelGroup({"a": movers["a"], "b": movers["b"]}, reference="a").diff()
+    sfr = mvr.packages.mvr.results.get(package="sfr", direction="from_mvr")
+    assert len(sfr) == 1
+    assert sfr["reference_q"].iloc[0] == pytest.approx(received["a"]["SFR"])
+    assert sfr["q"].iloc[0] == pytest.approx(received["b"]["SFR"])
+    assert sfr["q_diff"].iloc[0] > 50.0     # drn_a's conductance tripled
+
+    summary = mvr.packages.mvr.results.summary().set_index(["package", "direction"])
+    assert set(summary.index) == {("drn", "to_mvr"), ("wel", "to_mvr"),
+                                  ("sfr", "from_mvr"), ("sfr", "to_mvr")}
+    assert not bool(summary.loc[("drn", "to_mvr"), "within_tolerance"])
+    assert summary.loc[("sfr", "from_mvr"), "argmax_feature"] == 0
+
+
+def test_mover_diff_refuses_a_term_mf6_does_not_write(movers):
+    mvr = mf.ModelGroup({"a": movers["a"], "b": movers["b"]},
+                        reference="a").diff().packages.mvr.results
+    with pytest.raises(ValueError, match="DRN-TO-MVR.*direction='to_mvr'"):
+        mvr.get(package="drn", direction="from_mvr")
+    with pytest.raises(ValueError, match="UZF's own budget file"):
+        mvr.get(package="uzf")
+    with pytest.raises(ValueError, match="'to_mvr'"):
+        mvr.get(package="sfr", direction="TO-MVR")
+    with pytest.raises(ValueError, match="not a cell"):
+        mvr.get(package="sfr", layer=0)
+
+
+def test_the_canonical_stream_feeds_its_lake_through_the_mover(steps):
+    mvr = mf.ModelGroup({"one": steps["one"], "two": steps["two"]},
+                        reference="one").diff().packages.mvr.results
+    lake = mvr.get(package="lak", direction="from_mvr")
+    assert len(lake) == 6 and (lake["reference_q"] > 0).all()
+    stream = mvr.get(package="sfr")
+    assert (stream["reference_q"] < 0).any()
+
+
+def test_mover_summary_says_it_leaves_out_a_uzf_mover(movers, monkeypatch):
+    import myflopy.project.model_results_diff as results_diff
+
+    real = results_diff._declares_mover
+    monkeypatch.setattr(results_diff, "_declares_mover",
+                        lambda model, kind: kind == "uzf" or real(model, kind))
+    mvr = mf.ModelGroup({"a": movers["a"], "b": movers["b"]},
+                        reference="a").diff().packages.mvr.results
+    with pytest.warns(UserWarning, match="leaves out UZF's mover terms"):
+        mvr.summary()

@@ -124,7 +124,11 @@ diff.packages.sfr.results.stage.summary()  # Δreach stage
 diff.packages.sfr.results.q.summary()      # Δ stream-groundwater exchange
 
 # mover
-diff.packages.mvr.results.summary()        # FROM-MVR/TO-MVR per package (empty if no mover)
+diff.packages.mvr.results.summary()        # per package type + direction that declares MOVER
+diff.packages.mvr.results.get(package="drn")                        # DRN-TO-MVR, per cell (GWF budget)
+diff.packages.mvr.results.get(package="lak", direction="from_mvr")  # LAK FROM-MVR, per lake (its own budget)
+# a DRN/GHB/RIV/WEL only provides ("to_mvr"); SFR/LAK also receive ("from_mvr");
+# UZF's mover terms live in its own budget file and are refused, not read
 
 # spatial Δ maps (per-cell flux difference choropleth, per model):
 # all diff maps use the diverging red/white/blue scale (negative = red,
