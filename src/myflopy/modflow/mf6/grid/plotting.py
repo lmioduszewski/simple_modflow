@@ -385,11 +385,11 @@ class GridMesh(Picture):
         ----------
         ax : matplotlib.axes.Axes, optional
             The Axes to draw the cell edges into, in the grid's own coordinates.
-            ``None`` (the default) calls ``plt.subplot(1, 1, 1, aspect="equal")``
-            on pyplot's CURRENT figure: that draws into an equal-aspect 1 x 1
-            Axes the figure already holds (a second call draws over the first),
-            and otherwise adds one on top of whatever Axes are there. Pyplot opens
-            a new figure only when none is current.
+            ``None`` (the default) draws into a NEW figure of one equal-aspect
+            Axes, as every other static picture does. It used to call FloPy's
+            ``plt.subplot(1, 1, 1, aspect="equal")``, which drew onto pyplot's
+            CURRENT figure -- over a figure of the caller's own (ledger
+            436).
         plot_title : bool, default True
             Title the Axes ``"ncells: <ncpl>; nverts: <nverts>"``. ``False`` leaves
             the title alone.
@@ -409,6 +409,8 @@ class GridMesh(Picture):
 
         from flopy.utils.voronoi import VoronoiGrid
 
+        if ax is None:
+            _, ax = f.mpl_axes(subplot_kw={"aspect": "equal"})
         return VoronoiGrid.plot(self.vor, ax=ax, plot_title=plot_title, **kwargs)
 
 

@@ -18626,8 +18626,8 @@ same day, which is the useful part of the result.
       461: `cells` reaches the section); ~~`stack.plot.section(
       legend="bottom")` draws at the upper right (`legend` is read for truth only)~~
       (fixed by ledger 463);
-      `plot.grid(backend="mpl")` and `GridMesh.plot_mpl()` draw onto pyplot's CURRENT
-      figure; the interpolated profile reads `<name>.hds` whatever the model's kind
+      ~~`plot.grid(backend="mpl")` and `GridMesh.plot_mpl()` draw onto pyplot's CURRENT
+      figure~~ (fixed 2026-10-11: each draws in a new figure); the interpolated profile reads `<name>.hds` whatever the model's kind
       (`FileNotFoundError` on a GWT model) and labels a concentration profile `hds`.
       *LAK/SFR/HFB* (R unless marked): `model.surface_water.results.q.get(include=[])`
       returns an empty table rather than refusing; `vor.plot.map(bgs=True)` and

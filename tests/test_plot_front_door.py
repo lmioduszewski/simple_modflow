@@ -349,6 +349,30 @@ def test_flopys_renderer_survives_the_shadowing():
     assert callable(VoronoiGrid.plot)
 
 
+@pytest.mark.parametrize("spelling", ["free", "mesh"])
+def test_a_static_mesh_draws_in_a_figure_of_its_own(triangulated_grid, spelling):
+    """``plot.grid(backend='mpl')`` and ``GridMesh.plot_mpl()`` drew onto pyplot's
+    CURRENT figure (FloPy's ``plt.subplot``), so a figure of the caller's own got
+    the mesh on top of its Axes (ledger 436)."""
+
+    import matplotlib.pyplot as plt
+
+    from myflopy.plot import GridMesh
+
+    mine = plt.figure()
+    mine.add_subplot(1, 1, 1, aspect="equal").plot([0, 1], [0, 1])
+    try:
+        if spelling == "free":
+            drawn = plot.grid(triangulated_grid, backend="mpl")
+        else:
+            drawn = GridMesh(triangulated_grid).plot_mpl().figure
+        assert drawn is not mine
+        assert len(mine.axes[0].collections) == 0, "the caller's Axes were drawn on"
+        assert drawn.axes[0].collections and drawn.axes[0].get_aspect() == 1.0
+    finally:
+        plt.close("all")
+
+
 @pytest.mark.canonical
 @pytest.mark.slow
 def test_the_grid_verbs_draw_on_the_canonical_grid(canonical_run):
