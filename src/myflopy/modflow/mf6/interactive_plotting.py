@@ -24,11 +24,11 @@ import pandas as pd
 from flopy.plot import PlotMapView
 
 from myflopy._optional import require
-from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.modflow.mf6.cross_section_plotting import (
     ModelCrossSectionStyle,
     plot_model_cross_section,
 )
+from myflopy.modflow.mf6.headsplus import _is_sentinel
 from myflopy.viz import Picture, VtkScene, _normalize_frames, mpl_axes
 
 if TYPE_CHECKING:

@@ -17,9 +17,9 @@ from shapely.geometry import LineString
 from myflopy import viz as f
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.cross_section_plotting import section_axis_labels
-from myflopy.modflow.mf6.package_explorer_utils import check_view_layers
 from myflopy.modflow.mf6.grid.interpolated_surface import InterpolatedSurface
 from myflopy.modflow.mf6.headsplus import _is_sentinel
+from myflopy.modflow.mf6.package_explorer_utils import check_view_layers
 from myflopy.modflow.mf6.period_end import last_saved_step
 from myflopy.modflow.utils.animations import Animation
 from myflopy.viz import Fig, Picture
