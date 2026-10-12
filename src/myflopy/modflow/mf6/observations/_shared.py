@@ -1609,13 +1609,182 @@ def _normalize_lake_stage_values(
     return _copy_frame(long)
 
 
+def _feature_id(value, *, name, owner: str, feature: str):
+    """One target's declared lake or reach: a zero-based number as ``int``, or a boundname as ``str``.
+
+    The id was ``int()``-ed, so ``0.7`` read lake 0 and ``2.6`` reach 2 in
+    silence, a negative id read an empty frame, and a boundname died on a bare
+    ``int()`` error (ledger 503). A whole number (``1.0``, or text that
+    reads as one, ``"3"``) is the number; other text is a boundname, resolved
+    against the package when the targets are read
+    (:func:`_resolve_feature_ids`).
+
+    Raises
+    ------
+    ValueError
+        For a blank, a fraction, a negative number, or anything that is neither a
+        number nor text.
+    """
+
+    def refuse(why: str) -> ValueError:
+        return ValueError(
+            f"{owner}: target {_shown(name)} names {feature} {_shown(value)}, which {why}. "
+            f"A {feature} is MF6's {feature} number, ZERO-based, or its boundname."
+        )
+
+    if isinstance(value, (bool, np.bool_)):
+        raise refuse("is not a number or a boundname")
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise refuse("is blank")
+        try:
+            number = float(text)
+        except ValueError:
+            return text
+        value = number
+    if _is_blank(value):
+        raise refuse("is blank")
+    if not isinstance(value, (int, float, np.integer, np.floating)):
+        raise refuse("is not a number or a boundname")
+    number = float(value)
+    if not np.isfinite(number) or number != np.floor(number):
+        raise refuse("is not a whole number")
+    if number < 0:
+        raise refuse("is negative: the first is 0")
+    return int(number)
+
+
+def _resolve_feature_ids(
+    model,
+    quantity: _ObservedQuantity,
+    ids,
+    *,
+    package: str | None = None,
+) -> dict[str, int]:
+    """Each target's ZERO-based lake or reach number in the package it reads, checked (ledger 503).
+
+    A boundname is found in the package's ``packagedata`` (any case), as MF6 finds
+    an observation's; a number must be one the package has. Neither was checked: a
+    lake or reach the package does not have read an empty frame or ``NaN`` in
+    silence, and only the PEST build refused it. MF6's own files number lakes and
+    reaches from ONE, so a table written for them is off by one -- detectable only
+    at the last number, which is refused naming that.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        The model whose package the ids name. One with no package of the type (a
+        test double) is not checked -- its numbers pass as given, and a boundname
+        raises, having nothing to be found in.
+    quantity : _ObservedQuantity
+        The family: its package type, feature word and owner for messages.
+    ids : mapping of str to int or str
+        Target name to its declared id (:func:`_feature_id`).
+    package : str or None, optional
+        The owning package's name; ``None``: the model's one package of the type.
+        With several and none named the numbers pass unchecked -- every route
+        refuses that model by name -- and a boundname raises.
+
+    Returns
+    -------
+    dict of str to int
+        Target name to its zero-based number.
+
+    Raises
+    ------
+    ValueError
+        When a number is not one of the package's, a boundname names none of its
+        features or more than one, or a boundname cannot be resolved (no package,
+        or several and none named).
+    """
+
+    ids = dict(ids)
+    named = {name: ident for name, ident in ids.items() if isinstance(ident, str)}
+    if package is not None:
+        owners = [_named_package(model, quantity, package)]
+    else:
+        owners = _packages_of_type(model, quantity.package_type)
+    if len(owners) != 1:
+        if named:
+            if owners:
+                raise _several_packages(
+                    quantity, owners,
+                    f"a {quantity.feature} boundname is looked up in ONE of them",
+                    f"Name the package the targets belong to: {quantity.owner}(..., package=<its name>).",
+                )
+            raise ValueError(
+                f"{quantity.owner}: {_listing(repr(name) for name in named)} "
+                f"{'is' if len(named) == 1 else 'are'} given by boundname, and model "
+                f"{getattr(model, 'name', '?')!r} has no {quantity.package_type.upper()} package "
+                f"to find a {quantity.feature} boundname in."
+            )
+        return {name: int(ident) for name, ident in ids.items()}
+    packagedata = getattr(owners[0], "packagedata", None)
+    data = packagedata.get_data() if packagedata is not None else None
+    if data is None:
+        # A package with no packagedata to read (a test double): nothing to check
+        # a number against, and nothing to find a boundname in.
+        if named:
+            raise ValueError(
+                f"{quantity.owner}: {_listing(repr(name) for name in named)} "
+                f"{'is' if len(named) == 1 else 'are'} given by boundname, and the "
+                f"{quantity.package_type.upper()} package holds no packagedata to find it in."
+            )
+        return {name: int(ident) for name, ident in ids.items()}
+    # FloPy hands back a record array; a table double, a DataFrame. The first field
+    # is the feature's zero-based number either way.
+    table = pd.DataFrame(data) if not isinstance(data, pd.DataFrame) else data
+    numbers = [int(value) for value in table.iloc[:, 0]]
+    held = set(numbers)
+    boundnames: dict[str, list[int]] = {}
+    if "boundname" in table.columns:
+        for number, bound in zip(numbers, table["boundname"], strict=True):
+            if bound is not None and str(bound).strip():
+                boundnames.setdefault(str(bound).strip().lower(), []).append(number)
+    where = f"the {quantity.package_type.upper()} package {getattr(owners[0], 'package_name', '')!r}"
+    plural = f"{quantity.feature}es" if quantity.feature.endswith("h") else f"{quantity.feature}s"
+    resolved: dict[str, int] = {}
+    wrong: list[str] = []
+    for name, ident in ids.items():
+        if isinstance(ident, str):
+            found = boundnames.get(ident.lower(), [])
+            if len(found) == 1:
+                resolved[name] = found[0]
+            elif not found:
+                wrong.append(f"{name!r}: boundname {ident!r} names no {quantity.feature} of it")
+            else:
+                wrong.append(
+                    f"{name!r}: boundname {ident!r} names {len(found)} {plural} "
+                    f"({', '.join(map(str, found[:6]))}), and a target reads ONE"
+                )
+        elif ident in held:
+            resolved[name] = int(ident)
+        else:
+            hint = (
+                f" -- one past the last: MF6's files number {plural} from 1, so "
+                f"the last is {ident - 1} here"
+                if held and ident == max(held) + 1 else ""
+            )
+            wrong.append(f"{name!r}: {quantity.feature} {ident}{hint}")
+    if wrong:
+        span = f"0 .. {max(held)}" if held else "none"
+        raise ValueError(
+            f"{quantity.owner}: {len(wrong)} target(s) name a {quantity.feature} {where} does "
+            f"not have (its {plural} are {span}, numbered from 0): {_listing(wrong)}. "
+            f"Such a target read nothing -- an empty or NaN column -- in silence. Give each "
+            f"its ZERO-based {quantity.feature} number or its boundname."
+        )
+    return resolved
+
+
 def _normalize_named_integer_locations(
     locations,
     *,
     id_column: str,
     target_name: str,
 ) -> pd.DataFrame:
-    """Normalize simple ``name -> integer id`` location definitions."""
+    """Normalize simple ``name -> id`` location definitions (ids read by :func:`_feature_id`)."""
 
     source = {} if locations is None else locations
     if isinstance(source, pd.Series):
@@ -1640,10 +1809,13 @@ def _normalize_named_integer_locations(
         )
 
     normalized = {
-        str(name): int(value)
+        str(name): _feature_id(value, name=name, owner=target_name, feature=id_column)
         for name, value in dict(source).items()
     }
-    return pd.DataFrame([{"name": name, id_column: value} for name, value in normalized.items()])
+    frame = pd.DataFrame([{"name": name, id_column: value} for name, value in normalized.items()])
+    if frame.empty:
+        return pd.DataFrame(columns=["name", id_column])
+    return frame
 
 
 def _normalize_named_series_values(

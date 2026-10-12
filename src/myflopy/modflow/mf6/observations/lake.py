@@ -16,6 +16,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _declared_route,
     _default_compare_stats,
     _default_obs_csv_name,
+    _feature_id,
     _measured_periods,
     _normalize_compare_time,
     _normalize_lake_stage_values,
@@ -27,6 +28,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _refuse_observation_kind,
     _refuse_reserved_target_names,
     _refuse_shared_labels,
+    _resolve_feature_ids,
     _stage_at_period_end,
     _wide_by_period,
 )
@@ -188,9 +190,16 @@ class LakeStageTargets:
         The named lakes: a ``{name: lake}`` dict, a ``Series`` indexed by name,
         or a ``DataFrame`` / list of record dicts with ``name`` and ``lake``
         columns (``ValueError`` when either is missing). ``lake`` is MF6's lake
-        number, ZERO-based (:meth:`to_flopy_obs` writes it one-based); each is
-        passed through ``int`` and each name through ``str``. Several names may
-        share a lake. Default ``None``: no targets.
+        number, ZERO-based (:meth:`to_flopy_obs` writes it one-based). A whole number (``1.0``, or text reading as one, ``"3"``)
+        is the number; other text is the lake's BOUNDNAME, found (any case) in
+        the LAK packagedata when the targets are read and refused unless it
+        names exactly one lake. A blank, a fraction or a negative raises
+        ``ValueError`` here, and a number the package does not have raises when
+        the targets are read (ledger 503 -- ``int()`` truncated
+        ``0.7`` to 0 and a missing lake read nothing, in silence; MF6's files
+        number lakes from ONE, so one past the last is named so). Each name is
+        passed through ``str``.
+        Several names may share a lake. Default ``None``: no targets.
     values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
         Observed lake stage through time, in the model's length units. A path is
         read with ``pandas.read_csv``. LONG form has ``name`` and
@@ -281,7 +290,9 @@ class LakeStageTargets:
                 raise ValueError("LakeStageTargets locations records require 'name' and 'lake' keys.")
             source = source_frame.set_index("name")["lake"].to_dict()
         for name, lake_id in dict(source).items():
-            normalized[str(name)] = int(lake_id)
+            normalized[str(name)] = _feature_id(
+                lake_id, name=name, owner=type(self).__name__, feature="lake"
+            )
         _refuse_reserved_target_names(
             normalized, owner=type(self).__name__, columns=("stage", "sim_stage")
         )
@@ -319,7 +330,8 @@ class LakeStageTargets:
         lake : str
             The target's name.
         lake_id : int
-            MF6's lake number for it, ZERO-based (passed through ``int``).
+            MF6's lake number for it, ZERO-based, or its boundname -- read as
+            the constructor's ``locations`` reads a lake.
         values : pandas.Series or sequence of float
             Observed stages, in the model's length units. A ``Series`` carries
             its time labels as its index; any other sized sequence is one stage
@@ -464,13 +476,26 @@ class LakeStageTargets:
             [{"n_lakes": int(len(self._series)), "n_rows": int(len(self._values))}]
         )
 
+    def _lakes_on(self, model) -> dict[str, int]:
+        """Each target's ZERO-based lake number in ``model``'s LAK package, checked (ledger 503)."""
+
+        return _resolve_feature_ids(model, _LAKE_STAGE, self._series, package=self.package)
+
+    def _definitions_on(self, model) -> pd.DataFrame:
+        """``name``/``lake`` with every lake a checked zero-based number in ``model``."""
+
+        return pd.DataFrame(
+            [{"name": name, "lake": lake} for name, lake in self._lakes_on(model).items()],
+            columns=["name", "lake"],
+        )
+
     def _observation_route(self, model):
         """The LAK STAGE observation each target reads, or ``None`` for the stage file (ledger 344)."""
 
         return _declared_route(
             model,
             _LAKE_STAGE,
-            {name: (name, _observation_label(name), lake) for name, lake in self._series.items()},
+            {name: (name, _observation_label(name), lake) for name, lake in self._lakes_on(model).items()},
             package=self.package,
         )
 
@@ -561,9 +586,10 @@ class LakeStageTargets:
         pandas.DataFrame
             ``time`` plus one float column per target name, in model length
             units: the lake's bottom where it is dry, ``NaN`` where it is
-            inactive. On the stage-file route a target naming a lake the
-            model does not have gets no column. Empty (those columns, no rows)
-            when the stage file holds no record.
+            inactive. Empty (those columns, no rows) when the stage file holds
+            no record. A target naming a lake the LAK package does not have
+            raises (it got no column on the stage-file route, ledger
+            503).
 
         Raises
         ------
@@ -575,7 +601,9 @@ class LakeStageTargets:
             On the observation route, when a file the OBS declares is not in the
             workspace.
         ValueError
-            When a target's label is declared in the LAK's OBS as another
+            When a target's lake is not one the LAK package has, or its
+            boundname names none or several (ledger 503); when a
+            target's label is declared in the LAK's OBS as another
             quantity, for another lake or more than once; when some targets of
             the set are declared and others are not; when the model carries
             several LAK packages and ``package`` does not name one, or names one
@@ -608,9 +636,9 @@ class LakeStageTargets:
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._series.keys()])
         frame = _lake_stage_at_period_end(model, frame)
-        definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
-        # A target naming a lake the model does not have matches no row; drop it
-        # here, as the pivot always did, rather than as a NaN ``time`` row.
+        # Every lake is one the package has (ledger 503): one it did not
+        # have matched no row here and lost its column in silence.
+        definitions = self._definitions_on(model)
         merged = definitions.merge(frame, on="lake", how="left").dropna(subset=["per"])
         merged["per"] = merged["per"].astype(int)
         # ``dropna=False`` keeps a record in which every target is dry, and a
@@ -672,7 +700,8 @@ class LakeStageTargets:
         FileNotFoundError
             As :meth:`simulated_series`: a declared observation file is missing.
         ValueError
-            As :meth:`simulated_series`: a target's label declared as something
+            As :meth:`simulated_series`: a lake the package does not have,
+            a target's label declared as something
             else, a set declared in part, several LAK packages and no
             ``package``, a file that does not line up or one short of a period's
             end; on either route, when a target's key is no stress period the
@@ -684,7 +713,7 @@ class LakeStageTargets:
             (the period rule PEST's build reads too, ledger 340).
         """
 
-        definitions = pd.DataFrame([{"name": name, "lake": lake_id} for name, lake_id in self._series.items()])
+        definitions = self._definitions_on(model)
         observed = self._observed(model)
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_stage")
@@ -696,7 +725,9 @@ class LakeStageTargets:
         if self._values.empty:
             compare = _compare_without_values(simulated, target_column="stage_target")
         else:
-            targets = self.get().copy()
+            # The values joined to the CHECKED lakes, a boundname resolved -- what
+            # ``get()`` shows as declared.
+            targets = _copy_frame(self._values.merge(definitions, on="name", how="left"))
             targets["per"] = _measured_periods(
                 targets, value_column="stage", caller="LakeStageTargets.compare(...)"
             )
@@ -806,8 +837,10 @@ class LakeStageTargets:
 
         kind = _refuse_observation_kind(kind, _LAKE_STAGE)
         _refuse_shared_labels(self._series.keys(), _LAKE_STAGE)
+        # A number is written from one, as MF6 numbers lakes; a boundname as it is,
+        # which MF6 resolves in the LAK's packagedata.
         records = [
-            (_observation_label(name), kind, int(lake_id) + 1)
+            (_observation_label(name), kind, lake_id if isinstance(lake_id, str) else int(lake_id) + 1)
             for name, lake_id in self._series.items()
         ]
         return {str(csv_name): records}

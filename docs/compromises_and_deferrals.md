@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 502 entries (507 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 503 entries (508 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 503 | A lake or reach target's id is checked against its package, and a boundname is accepted | 2026-10-12 |
 | 502 | A head or concentration target name given twice in ONE layer is refused, naming it | 2026-10-12 |
 | 501 | A head or concentration target's PRESENT layer column must give every row a layer number; a blank, a non-nu... | 2026-10-12 |
 | 500 | `compare()`/`stats()` refuse a key past the run's periods on every FILE route, as the observation route and... | 2026-10-12 |
@@ -20139,3 +20140,21 @@ same day, which is the useful part of the result.
       (stripped, lower-cased). A name in two LAYERS is still one well screened in both,
       two observations, by ledger 234's decision; the double weight that gives a
       two-screen well is that decision's, and is not changed here.
+
+503. **A lake or reach target's id is checked against its package, and a boundname is accepted (2026-10-12).**
+      Lake and SFR targets passed each id through `int()`. A boundname died on a bare
+      `int()` error, `0.7` read lake 0 and `2.6` reach 2 in silence, and a negative or
+      out-of-range id read an empty frame (`compare()` `NaN`, `stats()` one row fewer).
+      Only the PEST build refused it. A whole number, or text that reads as one, is now
+      the number. Other text is a BOUNDNAME, resolved any case against the package's
+      `packagedata` by the rule MF6 uses for an observation's id
+      (`_resolve_feature_ids`). Ids are resolved, and numbers checked, wherever the
+      targets meet a model: both routes, `compare`, `simulated_series` and the PEST
+      snapshot, which holds the RESOLVED numbers so every realization reads the lakes
+      the base run did. **Judgment calls:** a boundname naming several reaches is
+      refused, not summed, because a reach target reads ONE reach. The 1-based slip
+      (typing 1 for the first of four lakes) cannot be detected, since it reads the
+      second lake. Only one past the last is caught, and the message names that slip.
+      A model with several packages of the type and no `package=` is not checked here,
+      because every route refuses it by name (ledger 352). A package without
+      `packagedata` (a test double) is not checked either.

@@ -207,8 +207,10 @@ def test_a_period_key_written_as_a_float_reaches_its_row_in_every_family(toy, tm
 
 
 def test_a_target_nothing_holds_is_refused_by_the_build_naming_it(toy, tmp_path):
-    """A period the table does not hold, and a lake the model does not have: both
-    vanished from the pst without a word, leaving the base run's value weighted."""
+    """A period the table does not hold, and a name no target defines: both vanished
+    from the pst without a word, leaving the base run's value weighted. (A lake the
+    model does not have is refused before the build reaches the table now, ledger
+    503 -- ``tests/test_target_hygiene.py``.)"""
 
     late = _head_targets([("W", 22)], pd.DataFrame({"time": [5], "W": [50.0]}))
     with pytest.raises(ValueError, match=(
@@ -217,7 +219,7 @@ def test_a_target_nothing_holds_is_refused_by_the_build_naming_it(toy, tmp_path)
         r"with per = 5.*Its rows are per = 0, 1, 2")):
         _build(toy, tmp_path / "late", observe=(late,))
 
-    ghost = mf.LakeStageTargets(locations={"pond": 0, "ghost": 7},
+    ghost = mf.LakeStageTargets(locations={"pond": 0},
                                 values=pd.DataFrame({"time": [0], "ghost": [99.0]}))
     with pytest.raises(ValueError, match=r"'ghost' at time 0 \(period 0\): no column 'ghost'"):
         _build(toy, tmp_path / "ghost", observe=(ghost,))

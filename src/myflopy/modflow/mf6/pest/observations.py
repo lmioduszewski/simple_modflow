@@ -847,7 +847,11 @@ def prepare_lake_stage_observations(project, spec: LakeStageObservationSpec):
     # reads neither an empty field nor "nan" (ledger 329), and the two files must
     # agree row for row.
     pivot = targets.simulated_series(project.model).fillna(targets._PEST_NO_STAGE)
-    locations_snapshot = targets.get().loc[:, ["name", "lake"]].drop_duplicates()
+    # Every DEFINED lake, its number checked and a boundname resolved: the forward
+    # run rebuilds the targets from this, and a snapshot of the value rows lost a
+    # lake given no value -- every realization wrote a column fewer than the base
+    # run, and PEST's positional read failed (flows-3).
+    locations_snapshot = targets._definitions_on(project.model)
     return _prepare_named_series_observations(
         project,
         targets=targets,
@@ -865,7 +869,8 @@ def prepare_sfr_stage_observations(project, spec: SfrStageObservationSpec):
 
     targets = spec.targets
     pivot = targets.simulated_series(project.model)
-    locations_snapshot = targets.get().loc[:, ["name", "reach"]].drop_duplicates()
+    # Every DEFINED reach (see ``prepare_lake_stage_observations``).
+    locations_snapshot = targets._locations_on(project.model)
     return _prepare_named_series_observations(
         project,
         targets=targets,
@@ -882,7 +887,8 @@ def prepare_sfr_flow_observations(project, spec: SfrFlowObservationSpec):
 
     targets = spec.targets
     pivot = targets.simulated_series(project.model)
-    locations_snapshot = targets.get().loc[:, ["name", "reach"]].drop_duplicates()
+    # Every DEFINED reach (see ``prepare_lake_stage_observations``).
+    locations_snapshot = targets._locations_on(project.model)
     return _prepare_named_series_observations(
         project,
         targets=targets,

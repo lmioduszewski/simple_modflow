@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -30,6 +31,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _refuse_observation_kind,
     _refuse_reserved_target_names,
     _refuse_shared_labels,
+    _resolve_feature_ids,
     _stage_at_period_end,
     _wide_by_period,
 )
@@ -174,9 +176,16 @@ class SfrStageTargets:
         name, or a ``DataFrame`` / list of record dicts with ``name`` and
         ``reach`` columns (``ValueError`` naming whichever is missing; a
         repeated name keeps its FIRST row). ``reach`` is MF6's reach number,
-        ZERO-based (:meth:`to_flopy_obs` writes it one-based); each is passed
-        through ``int`` and each name through ``str``. Default ``None``: no
-        targets.
+        ZERO-based (:meth:`to_flopy_obs` writes it one-based). A whole number (``1.0``, or text reading as one, ``"3"``)
+        is the number; other text is the reach's BOUNDNAME, found (any case) in
+        the SFR packagedata when the targets are read and refused unless it
+        names exactly one reach. A blank, a fraction or a negative raises
+        ``ValueError`` here, and a number the package does not have raises when
+        the targets are read (ledger 503 -- ``int()`` truncated
+        ``0.7`` to 0 and a missing reach read nothing, in silence; MF6's files
+        number reaches from ONE, so one past the last is named so). Each name is
+        passed through ``str``.
+        Default ``None``: no targets.
     values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
         Observed stage through time, in the model's length units. A path is
         read with ``pandas.read_csv``. LONG form has ``name`` and
@@ -237,6 +246,9 @@ class SfrStageTargets:
     value_column: str = "stage"
     times: list | tuple | pd.Index | pd.Series | None = None
     package: str | None = None
+
+    #: What the family reads, for resolving and checking its reaches (ledger 503).
+    _QUANTITY: ClassVar[_ObservedQuantity] = _SFR_STAGE
 
     def __post_init__(self):
         """Normalize the ``name -> reach`` locations and observed values into internal tables."""
@@ -318,6 +330,18 @@ class SfrStageTargets:
 
         return pd.DataFrame([{"n_reaches": int(len(self._locations)), "n_rows": int(len(self._values))}])
 
+    def _locations_on(self, model) -> pd.DataFrame:
+        """``name``/``reach`` with every reach a checked ZERO-based number in ``model`` (ledger 503)."""
+
+        reaches = _resolve_feature_ids(
+            model, self._QUANTITY, dict(self._locations[["name", "reach"]].itertuples(index=False)),
+            package=self.package,
+        )
+        return pd.DataFrame(
+            [{"name": name, "reach": reach} for name, reach in reaches.items()],
+            columns=["name", "reach"],
+        )
+
     def _observed(self, model):
         """The observation route's wide table, or ``None`` when the set reads the stage file.
 
@@ -330,7 +354,7 @@ class SfrStageTargets:
             _SFR_STAGE,
             {
                 str(name): (str(name), _observation_label(name), int(reach))
-                for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
+                for name, reach in self._locations_on(model)[["name", "reach"]].itertuples(index=False)
             },
             package=self.package,
         )
@@ -380,9 +404,10 @@ class SfrStageTargets:
         Returns
         -------
         pandas.DataFrame
-            ``time`` plus one float column per target name. On the stage-file
-            route a target naming a reach the model does not have gets no column.
-            Empty (those columns, no rows) when the stage file holds no record.
+            ``time`` plus one float column per target name. Empty (those
+            columns, no rows) when the stage file holds no record. A target
+            naming a reach the SFR package does not have raises (it got no
+            column on the stage-file route, ledger 503).
 
         Raises
         ------
@@ -390,7 +415,9 @@ class SfrStageTargets:
             On the observation route, when a file the OBS declares is not in the
             workspace.
         ValueError
-            When a target's label is declared in the SFR's OBS as another
+            When a target's reach is not one the SFR package has, or its
+            boundname names none or several (ledger 503); when a
+            target's label is declared in the SFR's OBS as another
             quantity only, for another reach or twice as a STAGE; when some
             targets of the set are declared and others are not; when the model
             carries several SFR packages and ``package`` does not name one, or
@@ -418,7 +445,7 @@ class SfrStageTargets:
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].tolist()])
         frame = _sfr_stage_at_period_end(model, frame)
-        merged = self._locations.merge(frame, on="reach", how="left")
+        merged = self._locations_on(model).merge(frame, on="reach", how="left")
         wide = merged.pivot_table(index="per", columns="name", values="stage", aggfunc="first").reset_index()
         wide.columns.name = None
         return wide.rename(columns={"per": "time"})
@@ -459,7 +486,8 @@ class SfrStageTargets:
         FileNotFoundError
             As :meth:`simulated_series`: a declared observation file is missing.
         ValueError
-            As :meth:`simulated_series`: a target's label declared as something
+            As :meth:`simulated_series`: a reach the package does not have,
+            a target's label declared as something
             else, a set declared in part, several SFR packages and no
             ``package``, or a file that does not line up or does not end every
             period; on either route, when a target's key is no stress period the
@@ -470,18 +498,21 @@ class SfrStageTargets:
             period (the period rule PEST's build reads too, ledger 340).
         """
 
+        locations = self._locations_on(model)
         observed = self._observed(model)
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_stage")
             simulated["per"] = simulated["time"]
-            simulated = self._locations.merge(simulated, on="name", how="left")
+            simulated = locations.merge(simulated, on="name", how="left")
         else:
             simulated = _sfr_stage_at_period_end(model, _calibration_stage_table(model))
-            simulated = self._locations.merge(simulated, on="reach", how="left").rename(columns={"stage": "sim_stage"})
+            simulated = locations.merge(simulated, on="reach", how="left").rename(columns={"stage": "sim_stage"})
         if self._values.empty:
             compare = _compare_without_values(simulated, target_column="stage_target")
         else:
-            targets = self.get().copy()
+            # The values joined to the CHECKED reaches, a boundname resolved --
+            # what ``get()`` shows as declared.
+            targets = _copy_frame(self._values.merge(locations, on="name", how="left"))
             targets["per"] = _measured_periods(
                 targets, value_column="stage_target", caller="SfrStageTargets.compare(...)"
             )
@@ -586,8 +617,10 @@ class SfrStageTargets:
 
         kind = _refuse_observation_kind(kind, _SFR_STAGE)
         _refuse_shared_labels(self._locations["name"].astype(str), _SFR_STAGE)
+        # A number is written from one, as MF6 numbers reaches; a boundname as it
+        # is, which MF6 resolves in the SFR's packagedata.
         records = [
-            (_observation_label(name), kind, int(reach) + 1)
+            (_observation_label(name), kind, reach if isinstance(reach, str) else int(reach) + 1)
             for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
         ]
         return {str(csv_name): records}
@@ -714,9 +747,16 @@ class SfrFlowTargets:
         by name, or a ``DataFrame`` / list of record dicts with ``name`` and
         ``reach`` columns (``ValueError`` naming whichever is missing; a
         repeated name keeps its FIRST row). ``reach`` is MF6's reach number,
-        ZERO-based (:meth:`to_flopy_obs` writes it one-based); each is passed
-        through ``int`` and each name through ``str``. Default ``None``: no
-        targets.
+        ZERO-based (:meth:`to_flopy_obs` writes it one-based). A whole number (``1.0``, or text reading as one, ``"3"``)
+        is the number; other text is the reach's BOUNDNAME, found (any case) in
+        the SFR packagedata when the targets are read and refused unless it
+        names exactly one reach. A blank, a fraction or a negative raises
+        ``ValueError`` here, and a number the package does not have raises when
+        the targets are read (ledger 503 -- ``int()`` truncated
+        ``0.7`` to 0 and a missing reach read nothing, in silence; MF6's files
+        number reaches from ONE, so one past the last is named so). Each name is
+        passed through ``str``.
+        Default ``None``: no targets.
     values : str, pathlib.Path, DataFrame, Series, dict, list, tuple or None, optional
         Observed streamflow through time, in model length cubed per model time
         unit, in MF6's own sign: water leaving the reach is NEGATIVE, so enter a
@@ -780,6 +820,9 @@ class SfrFlowTargets:
     value_column: str = "flow"
     times: list | tuple | pd.Index | pd.Series | None = None
     package: str | None = None
+
+    #: What the family reads, for resolving and checking its reaches (ledger 503).
+    _QUANTITY: ClassVar[_ObservedQuantity] = _SFR_FLOW
 
     def __post_init__(self):
         """Normalize the ``name -> reach`` locations and observed flows into internal tables."""
@@ -869,6 +912,18 @@ class SfrFlowTargets:
 
         return pd.DataFrame([{"n_reaches": int(len(self._locations)), "n_rows": int(len(self._values))}])
 
+    def _locations_on(self, model) -> pd.DataFrame:
+        """``name``/``reach`` with every reach a checked ZERO-based number in ``model`` (ledger 503)."""
+
+        reaches = _resolve_feature_ids(
+            model, self._QUANTITY, dict(self._locations[["name", "reach"]].itertuples(index=False)),
+            package=self.package,
+        )
+        return pd.DataFrame(
+            [{"name": name, "reach": reach} for name, reach in reaches.items()],
+            columns=["name", "reach"],
+        )
+
     def _observed(self, model):
         """The observation route's wide table, or ``None`` when the set reads the budget file."""
 
@@ -877,7 +932,7 @@ class SfrFlowTargets:
             _SFR_FLOW,
             {
                 str(name): (str(name), _observation_label(name), int(reach))
-                for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
+                for name, reach in self._locations_on(model)[["name", "reach"]].itertuples(index=False)
             },
             package=self.package,
         )
@@ -1053,7 +1108,9 @@ class SfrFlowTargets:
             On the observation route, when a file the OBS declares is not in the
             workspace.
         ValueError
-            When a target's label is declared in the SFR's OBS as another
+            When a target's reach is not one the SFR package has, or its
+            boundname names none or several (ledger 503); when a
+            target's label is declared in the SFR's OBS as another
             quantity only, for another reach or twice as a ``DOWNSTREAM-FLOW``;
             when some targets of the set are declared and others are not; when
             the model carries several SFR packages and ``package`` does not name
@@ -1078,7 +1135,7 @@ class SfrFlowTargets:
         frame = self._package_flow_table(model)
         if frame.empty:
             return pd.DataFrame(columns=["time", *self._locations["name"].astype(str).tolist()])
-        merged = self._locations.merge(frame, on="reach", how="left")
+        merged = self._locations_on(model).merge(frame, on="reach", how="left")
         value_column = "sim_flow" if "sim_flow" in merged.columns else "q"
         wide = merged.pivot_table(index="per", columns="name", values=value_column, aggfunc="first").reset_index()
         wide.columns.name = None
@@ -1123,7 +1180,8 @@ class SfrFlowTargets:
         FileNotFoundError
             As :meth:`simulated_series`: a declared observation file is missing.
         ValueError
-            As :meth:`simulated_series`: a target's label declared as something
+            As :meth:`simulated_series`: a reach the package does not have,
+            a target's label declared as something
             else, a set declared in part, several SFR packages and no
             ``package``, or a file that does not line up or does not end every
             period; on either route, when a target's key is no stress period the
@@ -1134,18 +1192,21 @@ class SfrFlowTargets:
             ledger 340).
         """
 
+        locations = self._locations_on(model)
         observed = self._observed(model)
         if observed is not None:
             simulated = observed.melt(id_vars=["time"], var_name="name", value_name="sim_flow")
             simulated["per"] = simulated["time"]
-            simulated = self._locations.merge(simulated, on="name", how="left")
+            simulated = locations.merge(simulated, on="name", how="left")
         else:
             simulated = self._package_flow_table(model)
-            simulated = self._locations.merge(simulated, on="reach", how="left")
+            simulated = locations.merge(simulated, on="reach", how="left")
         if self._values.empty:
             compare = _compare_without_values(simulated, target_column="flow_target")
         else:
-            targets = self.get().copy()
+            # The values joined to the CHECKED reaches, a boundname resolved --
+            # what ``get()`` shows as declared.
+            targets = _copy_frame(self._values.merge(locations, on="name", how="left"))
             targets["per"] = _measured_periods(
                 targets, value_column="flow_target", caller="SfrFlowTargets.compare(...)"
             )
@@ -1252,8 +1313,10 @@ class SfrFlowTargets:
 
         kind = _refuse_observation_kind(kind, _SFR_FLOW)
         _refuse_shared_labels(self._locations["name"].astype(str), _SFR_FLOW)
+        # A number is written from one, as MF6 numbers reaches; a boundname as it
+        # is, which MF6 resolves in the SFR's packagedata.
         records = [
-            (_observation_label(name), kind, int(reach) + 1)
+            (_observation_label(name), kind, reach if isinstance(reach, str) else int(reach) + 1)
             for name, reach in self._locations[["name", "reach"]].itertuples(index=False)
         ]
         return {str(csv_name): records}

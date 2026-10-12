@@ -762,7 +762,14 @@ numbers each start at 0), carried into PEST's forward run -- the packages are fo
 TYPE, so one NAMED `lak` does not hide a `lak_2` beside it (ledger 345); with none it is refused
 wherever the targets are declared -- and for LAK and SFR always, since their file
 belongs to one package -- while an undeclared DRN zone still sums every package's
-drains. `to_flopy_obs` refuses a `kind=` other than the family's quantity -- head and
+drains. **A lake or reach target names its lake or reach by its ZERO-based number or
+its BOUNDNAME** (ledger 503): a boundname is found, any case, in the package's
+`packagedata` and must name exactly one feature; a number must be one the package has.
+Both are checked when the targets are read -- a missing lake or reach used to read an
+empty column or `NaN` in silence, and `int()` truncated `0.7` to lake 0 -- and one past
+the last is named as the likely 1-based slip, since MF6's own files number from one.
+`to_flopy_obs` writes a boundname as the observation's id. `to_flopy_obs` refuses a
+`kind=` other than the family's quantity -- head and
 concentration targets too, whose default is their own `HEAD`/`CONCENTRATION` (ledger
 477; a `ConcTargets` wrote `HEAD`, which a GWT OBS file refuses) -- and two
 names MF6 would upper-case to one label (`"Pond A"`, `"pond-a"`). An SFR stage's

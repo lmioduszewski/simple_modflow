@@ -15,13 +15,28 @@ What each test pins, in the order the defects were found:
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
+import geopandas as gpd
 import pandas as pd
 import pytest
 
 import myflopy as mf
-from tests.test_pest_handed_targets import _build, _head_targets, run_toy
+from tests.test_pest_handed_targets import (
+    NPER,
+    NSTP,
+    PERLEN,
+    REACHES,
+    _build,
+    _disv,
+    _grid_and_edges,
+    _head_targets,
+    _run,
+    run_toy,
+)
 
-pytest.importorskip("pyemu")
+pyemu = pytest.importorskip("pyemu")
 
 
 @pytest.fixture(scope="module")
@@ -162,8 +177,6 @@ def test_a_target_set_read_back_from_the_model_is_observed_and_forecast(toy, tmp
 def test_compare_of_point_targets_returns_x_and_y_in_the_grids_frame(toy):
     """A point-located set returned x_x/y_x (its own CRS) and x_y/y_y, and no `x`."""
 
-    import geopandas as gpd
-
     centres = toy.vor.gdf_vorPolys.geometry.centroid
     points = gpd.GeoDataFrame({"name": ["A", "B"], "layer": [0, 0]},
                               geometry=[centres.iloc[5], centres.iloc[22]],
@@ -173,3 +186,104 @@ def test_compare_of_point_targets_returns_x_and_y_in_the_grids_frame(toy):
     assert not {"x_x", "y_x", "x_y", "y_y"} & set(frame.columns)
     assert frame.set_index("name")["x"].round(6).to_dict() == {
         "A": round(centres.iloc[5].x, 6), "B": round(centres.iloc[22].x, 6)}
+
+
+# -- ledger 503: lake and reach ids checked; boundnames accepted --------
+
+
+def test_a_lake_or_reach_id_must_be_a_whole_number_from_0_or_a_boundname():
+    """int() truncated 0.7 to lake 0 and 2.6 to reach 2, in silence."""
+
+    for family, feature in ((mf.LakeStageTargets, "lake"), (mf.SfrStageTargets, "reach"),
+                            (mf.SfrFlowTargets, "reach")):
+        for bad, why in ((0.7, "is not a whole number"), (-1, "is negative"), (None, "is blank"),
+                         (" ", "is blank")):
+            with pytest.raises(ValueError, match=rf"target 'x' names {feature} .* which {why}"):
+                family(locations={"x": bad})
+    # A whole number, as a float or as text, is the number; other text is a boundname.
+    assert mf.LakeStageTargets(locations={"a": 1.0, "b": "2", "c": "Keevie"}).get()["lake"].tolist() == [1, 2, "Keevie"]
+
+
+def test_a_lake_or_reach_the_package_does_not_have_is_refused_naming_it(toy):
+    """Lake 1 on a one-lake model and reach 9 on four reaches read an empty frame, and
+    with values a NaN that stats() dropped -- only the PEST build refused them. MF6
+    numbers from ONE, so typing 1 for the first lake is the likely mistake."""
+
+    pond = mf.LakeStageTargets(locations={"p": 0, "past": 1},
+                               values=pd.DataFrame({"time": [0], "p": [99.0], "past": [99.0]}))
+    for call in (pond.compare, pond.stats, pond.simulated_series):
+        with pytest.raises(ValueError, match=(
+                r"LakeStageTargets: 1 target\(s\) name a lake the LAK package 'lak' does not "
+                r"have \(its lakes are 0 \.\. 0, numbered from 0\): 'past': lake 1 -- one past "
+                r"the last: MF6's files number lakes from 1, so the last is 0 here")):
+            call(toy)
+    gage = mf.SfrFlowTargets(locations={"far": 9})
+    with pytest.raises(ValueError, match=r"'far': reach 9\. Such a target read nothing"):
+        gage.simulated_series(toy)
+
+
+def test_a_lake_given_by_its_boundname_reads_that_lake(toy):
+    by_number = mf.LakeStageTargets(locations={"p": 0}, values=pd.DataFrame({"time": [0, 1], "p": [99.0, 98.0]}))
+    by_name = mf.LakeStageTargets(locations={"p": "POND"}, values=pd.DataFrame({"time": [0, 1], "p": [99.0, 98.0]}))
+    pd.testing.assert_frame_equal(by_name.compare(toy), by_number.compare(toy))
+    pd.testing.assert_frame_equal(by_name.simulated_series(toy), by_number.simulated_series(toy))
+    # Written for MF6 as the boundname, which MF6 resolves in the LAK packagedata.
+    assert by_name.to_flopy_obs() == {"lake_stage_targets.csv": [("p", "STAGE", "POND")]}
+    with pytest.raises(ValueError, match=r"'q': boundname 'nowhere' names no lake of it"):
+        mf.LakeStageTargets(locations={"q": "nowhere"}).simulated_series(toy)
+
+
+def test_a_reach_boundname_naming_one_reach_reads_it_and_one_naming_two_is_refused(tmp_path):
+    grid, props, edge = _grid_and_edges()
+    last = len(REACHES) - 1
+    names = ["up", "up", "mid", "down"]
+    stream = mf.sfr.flopy(
+        packagedata=[[i, (0, c), 100.0, 5.0, 0.001, 95.0 - 0.1 * i, 1.0, 1.0, 0.03,
+                      1 if i in (0, last) else 2, 1.0, 0, names[i]] for i, c in enumerate(REACHES)],
+        connectiondata=[[i, *([i - 1] if i > 0 else []), *([-(i + 1)] if i < last else [])]
+                        for i in range(len(REACHES))],
+        perioddata={0: [[0, "INFLOW", 50.0]]}, boundnames=True,
+        stage_filerecord="m.sfr.stg", budget_filerecord="m.sfr.bud",
+    )
+    model = mf.gwf("m", grid=grid, packages=[
+        _disv(grid, props), mf.npf(k=10.0, icelltype=0), mf.ic(strt=100.0),
+        mf.chd(stress_period_data={0: [[(0, int(c)), 102.0] for c in edge]}), stream,
+        mf.oc(head_filerecord="m.hds", budget_filerecord="m.cbc",
+              saverecord=[("HEAD", "LAST"), ("BUDGET", "LAST")]),
+    ])
+    run = _run(tmp_path, mf.simulation(model, name="s", packages=[
+        mf.tdis(nper=NPER, perioddata=[(PERLEN, NSTP, 1.0)] * NPER)]))
+    m = run.model()
+    for family in (mf.SfrFlowTargets, mf.SfrStageTargets):
+        pd.testing.assert_frame_equal(family(locations={"g": "Mid"}).simulated_series(m),
+                                      family(locations={"g": 2}).simulated_series(m))
+        with pytest.raises(ValueError, match=r"'g': boundname 'up' names 2 reaches \(0, 1\), and a target reads ONE"):
+            family(locations={"g": "up"}).compare(m)
+
+
+def test_a_lake_or_reach_given_no_value_keeps_its_column_in_every_realization(toy, tmp_path):
+    """flows-3: the forward run rebuilt the targets from a snapshot of get() -- the VALUE
+    rows -- so a location with no value lost its column in every realization: base
+    'time,pond,pond_unmeasured', forward 'time,pond', and pyEMU's instruction read
+    failed. The build succeeded."""
+
+    pond = mf.LakeStageTargets(locations={"pond": "pond", "pond_unmeasured": 0},
+                               values=pd.DataFrame({"time": [0], "pond": [99.0]}))
+    stage = mf.SfrStageTargets(locations={"g": 3, "g_up": 1}, values=pd.DataFrame({"time": [0], "g": [95.0]}))
+    flow = mf.SfrFlowTargets(locations={"gage": 3, "gage_up": 1},
+                             values=pd.DataFrame({"time": [0], "gage": [-40.0]}))
+    cal, _pst = _build(toy, tmp_path / "pest", observe=(pond, stage, flow))
+    template = cal.template_workspace
+    tables = ("lak_stage_simulated_lake_stage.csv", "sfr_stage_simulated_sfr_stage.csv",
+              "sfr_flow_simulated_sfr_flow.csv")
+    base = {table: (template / table).read_text().splitlines()[0] for table in tables}
+    assert base == {tables[0]: "time,pond,pond_unmeasured", tables[1]: "time,g,g_up",
+                    tables[2]: "time,gage,gage_up"}
+    for table in tables:
+        (template / table).unlink()
+    subprocess.run([sys.executable, "forward_run.py"], cwd=template, check=True,
+                   capture_output=True, text=True)
+    for table in tables:
+        assert (template / table).read_text().splitlines()[0] == base[table]
+        pyemu.pst_utils.InstructionFile(str(template / f"{table}.ins")).read_output_file(
+            str(template / table))
