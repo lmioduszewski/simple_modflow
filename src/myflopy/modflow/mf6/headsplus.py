@@ -36,6 +36,7 @@ from myflopy.modflow.mf6.heads_observations import (
 )
 from myflopy.modflow.mf6.hydraulics import unit_labels
 from myflopy.modflow.mf6.package_plotting import (
+    LAYER_FIELD_MAP_PARAMS,
     LineProfileView,
     _apply_backend,
     refuse_noun_parameters,
@@ -915,7 +916,10 @@ class DependentVariableFile(LineProfileView, bf.HeadFile):
 
         if self.model is None:
             raise ValueError(f"{type(self).__name__}.map() requires a parent model.")
-        refuse_noun_parameters(f"model.{self._choro_type}", self._choro_type, trace_kwargs)
+        refuse_noun_parameters(
+            f"model.{self._choro_type}", self._choro_type, trace_kwargs,
+            honours=LAYER_FIELD_MAP_PARAMS,
+        )
         # Checked at the call, beside `hover=` too (ledger 400).
         layers = (
             "active+strip" if hover_layers is None

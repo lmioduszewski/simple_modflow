@@ -398,7 +398,9 @@ tail that swallowed `fill=` until ledger 334; it is swept explicitly now, and ev
 `Class.section` with a tail is pinned.
 A noun names Tier 1 (`NOUN_MAP_PARAMS`, 25 including `backend`) plus its own
 selectors, REFUSES `values`/`type`/the legacy hover trio, and omits the Tier 2
-per-layer names that were measured byte-identical on a record noun. **Docstrings are STATIC, and generated** (ledger 178/180, 2026-09-05): the free
+per-layer names that were measured byte-identical on a record noun -- and REFUSES
+them when they ride its tail (`refuse_noun_parameters(honours=)`, ledger 465;
+`hover_layers` passes where the picture keeps a per-layer hover). **Docstrings are STATIC, and generated** (ledger 178/180, 2026-09-05): the free
 verb is the single author, and `scripts/derive_docstrings.py` writes the spliced
 result back into each source file, because PyCharm and Pylance never run the
 module and were showing ONE line of `model.plot.section` against 169. Change a

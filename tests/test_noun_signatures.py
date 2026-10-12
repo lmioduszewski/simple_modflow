@@ -617,3 +617,58 @@ def test_every_section_with_a_tail_is_accounted_for():
         f"new: {sorted(found - set(_SECTION_TAILS))}; "
         f"gone: {sorted(set(_SECTION_TAILS) - found)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# A per-layer FIELD's options ride a record or array noun's tail (ledger 465)
+#
+# The tiers above say which names a noun NAMES; the tail still carried
+# `LAYER_FIELD_MAP_PARAMS` to the free verb. Measured on these eight nouns: `bgs`,
+# `kstpkper`, `per_timestep` and `hover_layers` left the figure byte-identical and
+# `show_mounding` added a head row to every tooltip -- `hover_layers` excepted on
+# the transmissivity noun and `model.inputs.uzf`, which keep a per-layer hover.
+# ---------------------------------------------------------------------------
+
+_ONE_VALUE_NOUNS = {
+    "drn.inputs.elev": lambda m: m.drn.inputs.elev,
+    "drn.results.q": lambda m: m.drn.results.q,
+    "npf.k": lambda m: m.npf.k,
+    "npf.transmissivity": lambda m: m.npf.transmissivity,
+    "inputs.uzf": lambda m: m.inputs.uzf,
+    "lak.results.stage": lambda m: m.lak.results.stage,
+    "lak.results.q": lambda m: m.lak.results.q,
+    "uzf.inputs.finf": lambda m: m.uzf.inputs.finf,
+}
+_HONOURED = {("npf.transmissivity", "hover_layers"), ("inputs.uzf", "hover_layers")}
+_LAYER_VALUES = {"show_mounding": True, "bgs": True, "kstpkper": (0, 1),
+                 "per_timestep": "first", "hover_layers": "all"}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("noun", sorted(_ONE_VALUE_NOUNS))
+def test_a_one_value_noun_refuses_a_per_layer_fields_options(canonical_run, noun):
+    view = _ONE_VALUE_NOUNS[noun](canonical_run)
+    for option in LAYER_FIELD_MAP_PARAMS:
+        call = {option: _LAYER_VALUES[option]}
+        if (noun, option) in _HONOURED:
+            assert view.map(**call).get_choropleth().hovertemplate
+            continue
+        with pytest.raises(TypeError, match=option):
+            view.map(**call)
+
+
+@pytest.mark.slow
+def test_a_heads_noun_still_takes_every_per_layer_option(canonical_run):
+    for option in LAYER_FIELD_MAP_PARAMS:
+        assert canonical_run.hds.map(**{option: _LAYER_VALUES[option]})
+
+
+@pytest.mark.parametrize("option", ["bgs", "show_mounding"])
+def test_a_bare_grid_map_refuses_a_heads_option_at_the_call(triangulated_grid, option):
+    """It built, and ``.fig`` raised ``'NoneType' object has no attribute
+    'all_values'`` (ledger 440)."""
+
+    with pytest.raises(TypeError, match="HEADS"):
+        triangulated_grid.plot.map(**{option: True})
+    with pytest.raises(TypeError, match="HEADS"):
+        free_map(triangulated_grid, **{option: True})

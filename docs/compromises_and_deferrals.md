@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 464 entries (469 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 465 entries (470 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 465 | A one-value noun refuses a per-layer field's options, and a heads option on a map with no heads raises at t... | 2026-10-11 |
 | 464 | A cross-section's axes and a transport profile read the model's own unit and field | 2026-10-11 |
 | 463 | A layer stack's section and thickness map do what their arguments say | 2026-10-11 |
 | 462 | `section` is offered only by a noun with a line profile: the dependent-variable nouns | 2026-10-11 |
@@ -18634,13 +18635,14 @@ same day, which is the useful part of the result.
       GWT model) and labels a concentration profile `hds`~~ (fixed by ledger
       464: it reads the model's own reader and names its own field).
       *LAK/SFR/HFB* (R unless marked): `model.surface_water.results.q.get(include=[])`
-      returns an empty table rather than refusing; `vor.plot.map(bgs=True)` and
+      returns an empty table rather than refusing; ~~`vor.plot.map(bgs=True)` and
       `show_mounding=True` on a bare grid raise `AttributeError` at `.fig`, as do both
-      HFB maps given either; C: `build_lak_connection_table` computes
+      HFB maps given either~~ (fixed by ledger 465: `TypeError` at the call); C: `build_lak_connection_table` computes
       `connection_area` for EMBEDDEDH/V connections, whose `connwidth` MF6 never reads.
       *Single-model inputs*: `hover_fields` through a record or array noun's tail changes
-      the tooltip, while `NOUN_INERT_PARAMS`' comment says the noun's `hover_spec`
-      supersedes it (R).
+      the tooltip, while ~~`NOUN_INERT_PARAMS`' comment says the noun's `hover_spec`
+      supersedes it~~ (the comment says so now, ledger 465; naming or refusing it
+      is open there) (R).
       *Calibration and pictures* (R unless marked): `CalibrationPlot` `type="heads"`
       raises `KeyError` unless every location has a row in every layer any location has
       (`add_heads` loops over all pairs; reached from `from_compare`, `from_targets` and
@@ -18772,8 +18774,9 @@ same day, which is the useful part of the result.
       `uzf.inputs.<field>` raise `AttributeError`, where the inputs, cell-result, SFR and
       surface-water views leave it out. **Accepted, then ignored or replacing:** `agg` on
       the LAK and SFR `compare_map`; `values=` in every `compare_map` tail, which replaces
-      the drawn differences while the hover keeps them; `show_mounding` through
-      `lak.connections.map`'s tail, which its own docstring calls worse than inert;
+      the drawn differences while the hover keeps them; ~~`show_mounding` through
+      `lak.connections.map`'s tail, which its own docstring calls worse than inert~~
+      (refused since ledger 465);
       `per` beside `kstpkper` on `group.hds.get`/`compare`. An unknown `model_name`,
       `connection_type` or `lak_connection_type` returns no rows rather than refusing.
       **Also:** ~~the LAK/SFR `compare_map` hovers read `ft/d`/`ft²/d` and the heads one
@@ -18863,12 +18866,13 @@ same day, which is the useful part of the result.
       (its one-cell `assert` tests the outer list of ledger 192's `{name: [[cells]]}`
       shape, so it never fires). `hds.long()`/`wide()` keep MF6's +/-1e30 (ledger 315's rule is not
       applied there). `ModelConfig.from_model(model.gwf)` and `config.section(<typo>)` come
-      back empty. **Accepted, then forwarded or ignored:** every record and array noun's
+      back empty. **Accepted, then forwarded or ignored:** ~~every record and array noun's
       `**trace_kwargs` tail carries `show_mounding` (and `kstpkper`/`per_timestep`/`bgs`/
       `hover_layers`) to the free verb unrefused -- on five nouns `show_mounding=True` keeps
       the colours and adds a head-derived row to every tooltip, which their own docstrings
       call worse than inert; refusing it is `NOUN_REFUSED_PARAMS`' job, and the narrowing
-      rule (a dropped name still rides the tail) is why it was not. `transmissivity_max
+      rule (a dropped name still rides the tail) is why it was not~~ (refused since ledger
+      465, bar `hover_layers` where it acts). `transmissivity_max
       .get(per=)`; `get_obs_cells(crs=)`, which reprojects the points on to the grid's CRS
       regardless; `long`/`wide(values=)`, whose one legal value is `store_column` (`"elev"`,
       not `"head"`); `LakBudget`/`SFRBudget.get(return_df=)`, which only the literal `False`
@@ -19387,3 +19391,26 @@ same day, which is the useful part of the result.
       `Distance`/`Elevation` with no unit -- not wrong, only bare. Revert check:
       `tests/test_hover_model_units.py::test_every_cross_section_axis_is_labelled_in_metres`,
       `tests/test_gwt_gwe_results.py::test_an_interpolated_transport_profile_reads_the_models_own_field`.
+
+465. **A one-value noun refuses a per-layer field's options, and a heads option on a map with no heads raises at the call (2026-10-11).**
+      A record or array noun's `**trace_kwargs` carried `LAYER_FIELD_MAP_PARAMS` to the
+      free verb unrefused (ledger 441). Measured on eight nouns (drn inputs and q, npf
+      `k` and `transmissivity`, `inputs.uzf`, LAK stage and q, UZF `finf`): `bgs`,
+      `kstpkper`, `per_timestep` and `hover_layers` left the figure byte-identical and
+      `show_mounding` kept the colours and added a head row to every tooltip -- except
+      `hover_layers` on `npf.transmissivity` and `model.inputs.uzf`, whose hovers keep a
+      per-layer readout. `refuse_noun_parameters(honours=)` now refuses that tier by
+      name; the default refuses (a new noun is safe by default), and the heads noun and
+      the PRT pathline map (drawn over heads) honour all of it. `bgs=`/`show_mounding=`
+      on a map with no run model -- `vor.plot.map`, an unrun model, both HFB maps --
+      built and raised `AttributeError` at `.fig`; `_choropleth_factory` raises
+      `TypeError` at the call. **Not decided: `hover_fields`.** It is NOT inert, as
+      `NOUN_INERT_PARAMS` said: through a noun's tail it appends a context field the
+      noun's hover carries (`drn.results.q.map(hover_fields=["Record Count"])` adds that
+      line; a name the context lacks adds nothing). Naming it on every noun (~18
+      signatures and the composers) or refusing it for `hover=` are both house-rule
+      readings; the comment now says what it does and it still acts. Revert check:
+      `tests/test_noun_signatures.py::test_a_one_value_noun_refuses_a_per_layer_fields_options`
+      (8 cases), `test_a_bare_grid_map_refuses_a_heads_option_at_the_call`,
+      `tests/test_hfb.py::test_both_barrier_maps_refuse_a_heads_option_at_the_call`,
+      `tests/test_hover_integration.py::test_mosaic_hover_sugar_threads_through_without_leaking`.

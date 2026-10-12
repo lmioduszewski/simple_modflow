@@ -475,6 +475,16 @@ def test_an_hfb_map_refuses_a_field_override_and_an_unknown_backend(barrier_run)
             verb(backend="nope")
 
 
+@pytest.mark.parametrize("option", ["bgs", "show_mounding"])
+def test_both_barrier_maps_refuse_a_heads_option_at_the_call(barrier_run, option):
+    """Their backdrop reads no heads: both raised ``AttributeError`` at ``.fig``
+    (ledger 440), and now raise ``TypeError`` at the call (ledger 465)."""
+
+    for verb in (barrier_run.hfb.inputs.map, barrier_run.hfb.results.q.map):
+        with pytest.raises(TypeError, match=option):
+            verb(**{option: True})
+
+
 # --- any discretization, ordered by TYPE (ledger 378) ---------------------
 
 

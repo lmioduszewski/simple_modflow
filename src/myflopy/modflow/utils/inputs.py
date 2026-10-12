@@ -259,8 +259,9 @@ class UzfInput:
         each measured to leave this figure byte-identical; ``hover_layers``
         reshapes the head rows of its tooltip (this legacy map keeps the heads
         hover the record nouns turn off), and ``show_mounding`` is worse than
-        inert: it injects a head-derived row into the tooltip on every cell. They
-        are not REFUSED, though: ``**trace_kwargs`` carries them to the free verb.
+        inert: it injects a head-derived row into the tooltip on every cell. Passed
+        anyway, each raises ``TypeError`` but ``hover_layers``, which acts and is
+        passed on (ledger 465).
         ``show_layer_elevs``/``hover_surfaces`` are named, and act: they read the
         GRID's layer frame (ledger 258). ``values``/``type`` and the legacy
         hover trio raise instead of being forwarded: infiltration is what this
@@ -290,10 +291,12 @@ class UzfInput:
             as that parameter, unrefused -- ``zoom``, ``hover_fields``,
             ``animation_kstpkpers``, ``rch_scale`` (which acts on a recharge map
             only), ``layer`` (which moves the head tooltip and no colour:
-            infiltration has no layer axis here), and the per-layer
-            ``kstpkper``, ``per_timestep``, ``bgs``, ``hover_layers`` and
-            ``show_mounding`` (measured: ``show_mounding=True`` keeps every colour
-            and adds a head-derived row to every tooltip). Anything else rides to
+            infiltration has no layer axis here), and ``hover_layers``, which
+            reshapes the head rows of the tooltip. The per-layer ``kstpkper``,
+            ``per_timestep``, ``bgs`` and ``show_mounding`` raise ``TypeError``
+            (ledger 465; ``show_mounding=True`` had kept every colour and
+            added a head-derived row to every tooltip, ledger 441). Anything else
+            rides to
             the ``go.Choroplethmap`` trace (``zmid``, ``colorbar``), where Plotly
             refuses an unknown name with ``ValueError`` when the figure is built.
 
@@ -452,7 +455,8 @@ class UzfInput:
         >>> model.inputs.uzf.map(backend="mpl").savefig("finf.png")
         """
 
-        refuse_noun_parameters("inputs.uzf", "finf", trace_kwargs)
+        # Its hover keeps a per-layer readout, which `hover_layers` reshapes.
+        refuse_noun_parameters("inputs.uzf", "finf", trace_kwargs, honours=("hover_layers",))
         hover = resolve_noun_hover(hover, trace_kwargs)
         finf = self.finf(per, multiplier).finf
         choro = self.model.plot.map(

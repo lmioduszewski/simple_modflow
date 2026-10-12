@@ -33,7 +33,9 @@ viz.mosaic([...panels...], ncols=2)                 # free-form composer (any mi
   / surface-elevation table with dry-cell marking, and a muted footer. Call-site
   sugar works on every map verb: `hover_layers="active"|"active+strip"|"all"|"none"`
   (`"none"` drops the per-layer value line altogether; any other spelling raises
-  at the call, naming the four), `hover_surfaces=True`, `hover_fields=["stage"]`,
+  at the call, naming the four; a noun with one value per cell -- a package's
+  record or array field -- has no per-layer readout and refuses it, ledger
+  465), `hover_surfaces=True`, `hover_fields=["stage"]`,
   or a full `hover=HoverSpec(...)`. LAK/SFR exchange maps automatically include
   the feature's stage. A head, and a footer's cell area, are written in the model's
   own length unit (`ft`/`ft²`, `m`/`m²`, `cm`/`cm²`, read from its DIS), and with no

@@ -35,6 +35,7 @@ from myflopy import viz
 from myflopy._logging import get_logger
 from myflopy.modflow.mf6.hydraulics import MF6_TIME_UNITS, declared_time_unit
 from myflopy.modflow.mf6.package_plotting import (
+    LAYER_FIELD_MAP_PARAMS,
     NOUN_MAP_PARAMS,
     SpatialView,
     _apply_backend,
@@ -1053,7 +1054,10 @@ class PRTPathlineView(_PRTDerivedView):
         >>> run.pathlines.map(backend="mpl").savefig("tracks.png")
         """
 
-        refuse_noun_parameters("prt.pathlines", "particle tracks", base_kwargs)
+        # The tracks draw over a heads map, which honours every per-layer option.
+        refuse_noun_parameters(
+            "prt.pathlines", "particle tracks", base_kwargs, honours=LAYER_FIELD_MAP_PARAMS
+        )
         hover = resolve_noun_hover(hover, base_kwargs)
         # The base-map options a caller actually set. Reconstructed from the
         # NAMED parameters, because naming them (8.8) emptied the `**base_kwargs`

@@ -778,10 +778,9 @@ class GroupLakConnections:
         not named here: connection geometry has no time axis, so each was
         measured to leave the figure byte-identical, and ``show_mounding`` is
         worse than inert: it injects a head-derived row into a geometry tooltip
-        on every cell. They are NOT refused, though -- each still reaches the
-        free verb through ``**trace_kwargs`` by its name. ``show_layer_elevs``
-        and ``hover_surfaces`` ARE named: the layer frame is the grid's, so they
-        act on any map (ledger 306).
+        on every cell. Passed anyway, each raises ``TypeError`` (ledger 465).
+        ``show_layer_elevs`` and ``hover_surfaces`` ARE named: the layer frame is
+        the grid's, so they act on any map (ledger 306).
 
         Parameters
         ----------
@@ -839,9 +838,11 @@ class GroupLakConnections:
             axis); and ``hover_spec`` is read as the old spelling of ``hover``,
             ``hover`` winning when both are given. ``custom_zs``, which this noun
             computes, raises ``TypeError`` as a second value. A free-verb
-            parameter this noun does not name -- ``zoom``, ``bgs``, ``kstpkper``,
-            ``per_timestep``, ``hover_layers``, ``show_mounding``, ... -- reaches
-            the verb by that name. The rest are properties of the Plotly
+            parameter this noun does not name -- ``zoom``, ``hover_fields``, ...
+            -- reaches the verb by that name, while a per-layer field's ``bgs``,
+            ``kstpkper``, ``per_timestep``, ``hover_layers`` and
+            ``show_mounding`` raise ``TypeError`` (ledger 465). The rest
+            are properties of the Plotly
             ``Choroplethmap`` trace -- ``zmid``, ``colorbar``, ``reversescale``,
             ``showscale`` -- checked only when the figure is built, so a
             misspelled one raises ``ValueError`` at ``.fig`` or ``.show()``, and

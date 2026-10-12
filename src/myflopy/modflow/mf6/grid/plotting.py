@@ -105,6 +105,23 @@ def _choropleth_factory(
     Those are validated LATE, by Plotly at ``plot()`` time, not here -- ``title=``
     in particular is a matplotlib-only argument and raises there.
     """
+    head_options = [
+        name for name, asked in (("bgs", choro_kwargs.get("bgs")), ("show_mounding", show_mounding))
+        if asked
+    ]
+    if head_options and model is None:
+        # Both read a run model's HEADS. With none bound -- a bare grid, an unrun
+        # model, a barrier map's cell-number backdrop -- the Choro was built and
+        # `.fig` raised `AttributeError: 'NoneType' object has no attribute
+        # 'all_values'`, far from the call (ledger 436).
+        raise TypeError(
+            f"{' and '.join(f'{name}=True' for name in head_options)} "
+            f"{'map' if len(head_options) > 1 else 'maps'} a run "
+            "model's HEADS (depth below ground, or head above the layer bottom), and "
+            "this map has none to read: a bare grid (vor.plot.map), a model not yet "
+            "run, or a barrier map's backdrop. Map the run model instead: "
+            "model.plot.map(bgs=True) or model.hds.map(show_mounding=True)."
+        )
     inputs = model if model is not None else choro_kwargs.get("input_model")
     if hover_spec is None and custom_hover is None and inputs is not None:
         hover_spec = _default_hover_spec(type, inputs)
@@ -473,7 +490,6 @@ class GridPlots:
         contour_method: str = "linear",
         features=None,
         hillshade_path=None,
-        bgs: bool = False,
         zoom: int = 13,
         fit_bounds: bool = True,
         bounds_padding: float = 0.05,
@@ -493,11 +509,14 @@ class GridPlots:
         that does not have one yet.
 
         A DELIBERATE SUBSET of :func:`myflopy.plot.map`. Everything omitted --
-        ``per``, ``kstpkper``, ``layer``, ``type``, ``show_mounding``, the
-        sectioned-hover knobs -- reads a model's results, and a bare grid has
+        ``per``, ``kstpkper``, ``layer``, ``type``, ``bgs``, ``show_mounding``,
+        the sectioned-hover knobs -- reads a model's results, and a bare grid has
         none, so advertising them here would promise something this scope cannot
         do. They still ride the ``**trace_kwargs`` tail if you pass one, because
-        narrowing the signature should not narrow what already worked.
+        narrowing the signature should not narrow what already worked -- bar
+        ``bgs`` and ``show_mounding``, which read heads and raise ``TypeError``
+        here (they built, and raised ``AttributeError`` at ``.fig``; ledger
+        465).
 
         .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         Bound form of :func:`myflopy.plot.map`.
@@ -532,8 +551,7 @@ class GridPlots:
             ``"mpl"`` returns a static :class:`matplotlib.figure.Figure`. The
             same switch every other picture verb takes, so the spelling does not
             change with the scope. Note the Matplotlib branch draws in model
-            coordinates with no basemap, which makes ``bgs`` and ``zoom`` inert
-            there.
+            coordinates with no basemap, which makes ``zoom`` inert there.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         values : sequence of float, optional
@@ -762,7 +780,6 @@ class GridPlots:
             contour_resolution=contour_resolution,
             contour_method=contour_method,
             hillshade_path=hillshade_path,
-            bgs=bgs,
             fit_bounds=fit_bounds,
             bounds_padding=bounds_padding,
             extent=extent,

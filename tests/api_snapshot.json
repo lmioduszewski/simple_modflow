@@ -970,7 +970,6 @@
       "contour_method:KEYWORD_ONLY='linear'",
       "features:KEYWORD_ONLY=None",
       "hillshade_path:KEYWORD_ONLY=None",
-      "bgs:KEYWORD_ONLY=False",
       "zoom:KEYWORD_ONLY=13",
       "fit_bounds:KEYWORD_ONLY=True",
       "bounds_padding:KEYWORD_ONLY=0.05",

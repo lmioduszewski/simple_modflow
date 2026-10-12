@@ -647,7 +647,9 @@ def build_surface_water_q_map_payload(
 # `kstpkper`/`bgs`/`hover_layers`/`hover_surfaces`/`show_layer_elevs` produce a
 # byte-identical figure, and `show_mounding` is worse than inert -- it injects a
 # head-derived row into an elevation tooltip on every cell. Naming a parameter
-# that provably cannot act is the same defect as hiding one that can.
+# that provably cannot act is the same defect as hiding one that can -- and so is
+# FORWARDING one: a one-value noun's tail refuses Tier 2 by name
+# (`refuse_noun_parameters`, ledger 465).
 
 #: Drawing parameters every spatial noun offers, on top of its own selectors.
 #:
@@ -770,8 +772,12 @@ def refuse_series_composer_options(where: str, verb: str, unexpected: dict) -> N
     )
 
 
-#: Reachable on a noun but measured NOT to act, so deliberately not offered:
-#:   `hover_fields` -- the noun sets `hover_spec`, which supersedes it.
+#: Reachable on a noun but deliberately not offered:
+#:   `hover_fields` -- NOT inert, measured (ledger 436): through a noun's tail it
+#:     appends a context field the noun's hover carries (`drn.results.q.map(
+#:     hover_fields=["Record Count"])` adds that line). Whether to name it on every
+#:     noun or refuse it for `hover=` is an open decision (ledger 465), so it
+#:     still rides the tail and acts.
 #:   `zoom` -- inert under the default `fit_bounds=True`, which replaces it with
 #:     a fitted zoom. (This line used to say it "needs a basemap the noun's
 #:     choropleth does not draw"; measured, nouns draw `carto-voyager` and
@@ -780,15 +786,52 @@ def refuse_series_composer_options(where: str, verb: str, unexpected: dict) -> N
 NOUN_INERT_PARAMS = ("hover_fields", "zoom", "rch_scale", "animation_kstpkpers")
 
 
-def refuse_noun_parameters(noun: str, field: str, kwargs: dict) -> None:
+def refuse_noun_parameters(noun: str, field: str, kwargs: dict, *, honours=()) -> None:
     """Raise if a noun was handed a parameter that contradicts what it draws.
 
     Called from a noun's ``map()`` before forwarding. Without it these arrive in
     the ``**trace_kwargs`` tail: `type=` collided with a `TypeError` naming
     `ModelPlots.map`, a class the caller never typed, and `values=` won outright,
     producing a figure whose cells and whose tooltips disagreed.
+
+    The per-layer FIELD options (:data:`LAYER_FIELD_MAP_PARAMS`) are refused too,
+    unless ``honours`` names them: a noun that draws one value per cell is not
+    told apart by them. Measured on eight nouns (ledger 465): ``bgs``,
+    ``kstpkper``, ``per_timestep`` and ``hover_layers`` left the figure
+    byte-identical, and ``show_mounding`` kept the colours and added a head row
+    to every tooltip -- except ``hover_layers`` on the two pictures that keep a
+    per-layer hover (the transmissivity nouns and ``model.inputs.uzf``).
+
+    Parameters
+    ----------
+    noun : str
+        How the caller reached the noun, for the message (``"hfb.inputs"``).
+    field : str
+        What the noun draws, for the message (``"barrier flow"``).
+    kwargs : dict
+        The noun's ``**trace_kwargs`` tail, read and never modified.
+    honours : iterable of str, default ()
+        The per-layer field options this noun's picture DOES act on -- every one
+        of :data:`LAYER_FIELD_MAP_PARAMS` on a dependent-variable noun or a map
+        drawn over one, ``("hover_layers",)`` on a per-layer hover. The rest of
+        that tier raises ``TypeError`` when it rides the tail.
+
+    Raises
+    ------
+    TypeError
+        Naming the first refused parameter found and what to call instead.
     """
 
+    for name in LAYER_FIELD_MAP_PARAMS:
+        if name in kwargs and name not in honours:
+            raise TypeError(
+                f"{noun}.map() draws {field}, one value per cell, so it takes no "
+                f"{name}=: that option reads a per-layer field -- heads, "
+                "concentration, temperature -- and changes nothing here"
+                + (" but the tooltip, which it fills with a head-derived row"
+                   if name == "show_mounding" else "")
+                + f". Map the field it reads instead: model.hds.map({name}=...)."
+            )
     for name in NOUN_REFUSED_PARAMS:
         if name not in kwargs:
             continue

@@ -313,8 +313,8 @@ class CellPackageInputFieldExplorer(SpatialView):
         ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
         deliberately not named. Each was measured to leave a record noun's figure
         byte-identical, and ``show_mounding`` is worse than inert: it injects a
-        head-derived row into an elevation tooltip on every cell. They are not
-        REFUSED, though: ``**trace_kwargs`` carries them to the free verb.
+        head-derived row into an elevation tooltip on every cell. Passed anyway,
+        each raises ``TypeError`` (ledger 465).
         ``show_layer_elevs``/``hover_surfaces`` are named, and act: they read the
         GRID's layer frame (ledger 258).
 
@@ -351,10 +351,10 @@ class CellPackageInputFieldExplorer(SpatialView):
             :func:`myflopy.plot.map` parameter this noun does not name reaches it
             as that parameter, unrefused -- ``zoom``, ``hover_fields``,
             ``animation_kstpkpers``, ``rch_scale`` (which acts on a recharge
-            map only), and the per-layer ``kstpkper``,
-            ``per_timestep``, ``bgs``, ``hover_layers`` and ``show_mounding``
-            (measured: ``show_mounding=True`` keeps every colour and adds a
-            head-derived row to every tooltip; ledger 441). Anything else
+            map only). The per-layer ``kstpkper``, ``per_timestep``, ``bgs``,
+            ``hover_layers`` and ``show_mounding`` raise ``TypeError`` (ledger
+            465; ``show_mounding=True`` had kept every colour and added a
+            head-derived row to every tooltip, ledger 441). Anything else
             rides to the ``go.Choroplethmap`` trace (``zmid``, ``colorbar``), where
             Plotly refuses an unknown name with ``ValueError`` when the figure is
             built.
@@ -755,8 +755,8 @@ class UzfFieldInputsExplorer(SpatialView):
         ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
         deliberately not named. Each was measured to leave a record noun's figure
         byte-identical, and ``show_mounding`` is worse than inert: it injects a
-        head-derived row into an infiltration tooltip on every cell. They are not
-        REFUSED, though: ``**trace_kwargs`` carries them to the free verb.
+        head-derived row into an infiltration tooltip on every cell. Passed anyway,
+        each raises ``TypeError`` (ledger 465).
         ``show_layer_elevs``/``hover_surfaces`` are named, and act: they read the
         GRID's layer frame (ledger 258).
 
@@ -798,10 +798,10 @@ class UzfFieldInputsExplorer(SpatialView):
             :func:`myflopy.plot.map` parameter this noun does not name reaches it
             as that parameter, unrefused -- ``zoom``, ``hover_fields``,
             ``animation_kstpkpers``, ``rch_scale`` (which acts on a recharge
-            map only), and the per-layer ``kstpkper``,
-            ``per_timestep``, ``bgs``, ``hover_layers`` and ``show_mounding``
-            (measured: ``show_mounding=True`` keeps every colour and adds a
-            head-derived row to every tooltip; ledger 441). Anything else
+            map only). The per-layer ``kstpkper``, ``per_timestep``, ``bgs``,
+            ``hover_layers`` and ``show_mounding`` raise ``TypeError`` (ledger
+            465; ``show_mounding=True`` had kept every colour and added a
+            head-derived row to every tooltip, ledger 441). Anything else
             rides to the ``go.Choroplethmap`` trace (``zmid``, ``colorbar``), where
             Plotly refuses an unknown name with ``ValueError`` when the figure is
             built.
@@ -1443,8 +1443,9 @@ class StaticArrayFieldExplorer(SpatialView):
         map's own transmissivity hover, ``hover_layers`` does reshape the
         tooltip (measured). ``show_mounding`` is worse than inert: it injects a
         head-derived row into the tooltip of every cell, on a picture that is not
-        a head. They are not REFUSED, though: ``**trace_kwargs`` carries them to
-        the free verb.
+        a head. Passed anyway, each raises ``TypeError`` -- bar ``hover_layers`` on
+        ``npf.transmissivity``, which acts there and is passed on (ledger
+        465).
         ``show_layer_elevs``/``hover_surfaces`` are named, and act: they read the
         GRID's layer frame (ledger 258).
 
@@ -1474,10 +1475,12 @@ class StaticArrayFieldExplorer(SpatialView):
             :func:`myflopy.plot.map` parameter this noun does not name reaches it
             as that parameter, unrefused -- ``zoom``, ``hover_fields``,
             ``animation_kstpkpers``, ``rch_scale`` (which acts on a recharge
-            map only), and the per-layer ``kstpkper``,
-            ``per_timestep``, ``bgs``, ``hover_layers`` and ``show_mounding``
-            (measured: ``show_mounding=True`` keeps every colour and adds a
-            head-derived row to every tooltip; ledger 441). Anything else
+            map only). The per-layer ``kstpkper``, ``per_timestep``, ``bgs``,
+            ``hover_layers`` and ``show_mounding`` raise ``TypeError`` -- bar
+            ``hover_layers`` on ``npf.transmissivity``, which reshapes its
+            tooltip and is passed on (ledger 465; ``show_mounding=True``
+            had kept every colour and added a head-derived row to every tooltip,
+            ledger 441). Anything else
             rides to the ``go.Choroplethmap`` trace (``zmid``, ``colorbar``), where
             Plotly refuses an unknown name with ``ValueError`` when the figure is
             built.
@@ -1643,6 +1646,9 @@ class StaticArrayFieldExplorer(SpatialView):
             f"{self.package_name}.{self.field_name}",
             self.field_name,
             trace_kwargs,
+            # A derived field (transmissivity) keeps the free verb's per-layer
+            # hover, which `hover_layers` reshapes; a plain array has none.
+            honours=("hover_layers",) if self._map_type is not None else (),
         )
         hover = resolve_noun_hover(hover, trace_kwargs)
         drawing = dict(

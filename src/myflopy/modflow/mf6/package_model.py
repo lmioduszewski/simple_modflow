@@ -502,11 +502,11 @@ class HfbResultsExplorer:
             the barrier flow), and ``hover_spec`` is read as the old spelling of
             ``hover``, which wins when both are given. A parameter of
             ``vor.plot.map`` this noun does not name (``zoom``, ...) reaches it by
-            that name, as does one of the ``Choro`` picture it builds
-            (``per_timestep``, ``hover_layers``, ...), and ``custom_zs``
-            recolours the backdrop cells. The backdrop is a bare grid
-            that reads no model, so ``bgs=True`` and ``show_mounding=True``, which
-            read heads, raise ``AttributeError`` at ``.fig``. The rest are
+            that name, and ``custom_zs`` recolours the backdrop cells. A per-layer
+            field's ``bgs``, ``show_mounding``, ``per_timestep`` and
+            ``hover_layers`` raise ``TypeError`` at the call: the backdrop is a
+            bare grid that reads no model (the first two raised
+            ``AttributeError`` at ``.fig``; ledger 465). The rest are
             properties of the backdrop's Plotly ``Choroplethmap`` trace -- ``zmid``,
             ``colorbar``, ``reversescale``, ``showscale`` -- never of the barrier
             lines; checked only when the figure is built, so a misspelled one
@@ -1033,12 +1033,12 @@ class HfbPackageExplorer:
             never lands here), and ``hover_spec`` is read as the old spelling of
             ``hover``, which wins when both are given. A parameter of
             ``vor.plot.map`` this noun does not name (``zoom``, ...) reaches it by
-            that name, as does one of the ``Choro`` picture it builds
-            (``kstpkper``, ``per_timestep``, ``hover_layers``, ...), and
-            ``custom_zs`` recolours the backdrop cells as ``values`` does. The
-            backdrop is a bare grid that reads no model, so ``bgs=True`` and
-            ``show_mounding=True``, which read heads, raise ``AttributeError`` at
-            ``.fig``. The rest are properties of the backdrop's Plotly
+            that name, and ``custom_zs`` recolours the backdrop cells as
+            ``values`` does. A per-layer field's ``bgs``, ``show_mounding``,
+            ``kstpkper``, ``per_timestep`` and ``hover_layers`` raise
+            ``TypeError`` at the call: the backdrop is a bare grid that reads no
+            model (the first two raised ``AttributeError`` at ``.fig``; ledger
+            465). The rest are properties of the backdrop's Plotly
             ``Choroplethmap`` trace -- ``zmid``, ``colorbar``, ``reversescale``,
             ``showscale`` -- never of the barrier lines; checked only when the
             figure is built, so a misspelled one raises ``ValueError`` at ``.fig``

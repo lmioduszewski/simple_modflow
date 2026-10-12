@@ -396,8 +396,8 @@ class CellBudgetResultsExplorer(SpatialView):
         ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
         deliberately not named. Each was measured to leave a record noun's figure
         byte-identical, and ``show_mounding`` is worse than inert: it injects a
-        head-derived row into the tooltip on every cell. Passed anyway, they ride
-        ``**trace_kwargs`` to the free verb. ``show_layer_elevs`` and
+        head-derived row into the tooltip on every cell. Passed anyway, each raises
+        ``TypeError`` (ledger 465). ``show_layer_elevs`` and
         ``hover_surfaces`` ARE named (ledger 306): the layer frame is the grid's,
         so they act on any map.
 
@@ -439,9 +439,11 @@ class CellBudgetResultsExplorer(SpatialView):
             ``values``, ``type``, ``custom_hover``, ``hover_heads`` and ``hover_ks``
             raise ``TypeError`` (this noun supplies its own field and hover), and
             ``hover_spec`` is read as the old spelling of ``hover``, which wins when
-            both are given. A free-verb parameter this noun does not name -- ``zoom``,
-            ``bgs``, ``kstpkper``, ``per_timestep``, ``hover_layers``,
-            ``show_mounding``, ... -- reaches the verb by that name, and ``custom_zs``,
+            both are given. A free-verb parameter this noun does not name --
+            ``zoom``, ``hover_fields``, ... -- reaches the verb by that name,
+            while a per-layer field's ``bgs``, ``kstpkper``, ``per_timestep``,
+            ``hover_layers`` and ``show_mounding`` raise ``TypeError`` (ledger
+            465), and ``custom_zs``,
             which this noun computes, raises ``TypeError`` as a second value. The rest
             are properties of the Plotly ``Choroplethmap`` trace -- ``zmid``,
             ``colorbar``, ``reversescale``, ``showscale`` -- checked only when the
@@ -833,8 +835,8 @@ class StageResultsExplorer(SpatialView):
         ``per_timestep``, ``bgs``, ``hover_layers``, ``show_mounding`` -- are
         deliberately not named. Each was measured to leave a record noun's figure
         byte-identical, and ``show_mounding`` is worse than inert: it injects a
-        head-derived row into the tooltip on every cell. Passed anyway, they ride
-        ``**trace_kwargs`` to the free verb. ``show_layer_elevs`` and
+        head-derived row into the tooltip on every cell. Passed anyway, each raises
+        ``TypeError`` (ledger 465). ``show_layer_elevs`` and
         ``hover_surfaces`` ARE named (ledger 306): the layer frame is the grid's,
         so they act on any map.
 
@@ -876,9 +878,11 @@ class StageResultsExplorer(SpatialView):
             ``values``, ``type``, ``custom_hover``, ``hover_heads`` and ``hover_ks``
             raise ``TypeError`` (this noun supplies its own field and hover), and
             ``hover_spec`` is read as the old spelling of ``hover``, which wins when
-            both are given. A free-verb parameter this noun does not name -- ``zoom``,
-            ``bgs``, ``kstpkper``, ``per_timestep``, ``hover_layers``,
-            ``show_mounding``, ... -- reaches the verb by that name, and ``custom_zs``,
+            both are given. A free-verb parameter this noun does not name --
+            ``zoom``, ``hover_fields``, ... -- reaches the verb by that name,
+            while a per-layer field's ``bgs``, ``kstpkper``, ``per_timestep``,
+            ``hover_layers`` and ``show_mounding`` raise ``TypeError`` (ledger
+            465), and ``custom_zs``,
             which this noun computes, raises ``TypeError`` as a second value. The rest
             are properties of the Plotly ``Choroplethmap`` trace -- ``zmid``,
             ``colorbar``, ``reversescale``, ``showscale`` -- checked only when the
