@@ -29,7 +29,7 @@ def _prior_correlation_by_distance(cal, reals=60):
     if not path.exists():
         return None
     ensemble = pd.read_csv(path, index_col=0)
-    frame = cal._pilot_point_frames["k"][0][0].set_index("parnme")
+    frame = cal._pilot_point_sets[0]["frame"].set_index("parnme")
     names = [name for name in frame.index if name in ensemble.columns]
     if len(names) < 4:
         return None
@@ -68,7 +68,7 @@ def test_the_variogram_range_shapes_the_pilot_point_prior(
         tmp_path / "model", config=CanonicalModelConfig.testing(), n_head_wells=4
     )
     cal = demo.model.pest("pp", start_datetime="2024-01-01")
-    cal.parameterize("k", style="pilotpoints", pp_space=5, correlation=correlation,
+    cal.parameterize("k", style="pilotpoints", pp_spacing=500.0, correlation=correlation,
                      bounds=(0.1, 10.0), physical=(1e-3, 300.0))
     cal.observe(demo.head_targets)
     cal.build("pp.pst", noptmax=0)
@@ -99,7 +99,7 @@ def test_no_correlation_means_no_injected_prior(tmp_path):
         tmp_path / "model", config=CanonicalModelConfig.testing(), n_head_wells=4
     )
     cal = demo.model.pest("nocorr", start_datetime="2024-01-01")
-    cal.parameterize("k", style="pilotpoints", pp_space=5, bounds=(0.1, 10.0))
+    cal.parameterize("k", style="pilotpoints", pp_spacing=500.0, bounds=(0.1, 10.0))
     cal.observe(demo.head_targets)
     cal.build("nocorr.pst", noptmax=0)
 
@@ -144,7 +144,7 @@ def test_the_pilot_point_prior_spreads_as_far_as_its_bounds_say(tmp_path):
 
     model = mf.load_mf6_run(_dis_run(tmp_path / "run"))
     cal = model.pest("bounds", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    cal.parameterize("k", style="pilotpoints", pp_space=1, correlation=30.0,
+    cal.parameterize("k", style="pilotpoints", pp_spacing=10.0, correlation=30.0,
                      bounds=(0.5, 2.0), name="kp")
     cal.parameterize("k33", style="grid", correlation=30.0, bounds=(0.5, 2.0), name="kg")
     cal.observe(_heads())
@@ -186,7 +186,7 @@ def test_the_nugget_reaches_the_prior_pestpp_ies_receives(tmp_path, nugget):
 
     model = mf.load_mf6_run(_dis_run(tmp_path / "run"))
     cal = model.pest("nug", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    cal.parameterize("k", style="pilotpoints", pp_space=1, correlation=30.0,
+    cal.parameterize("k", style="pilotpoints", pp_spacing=10.0, correlation=30.0,
                      bounds=(0.5, 2.0), name="kp", nugget=nugget)
     cal.parameterize("k33", style="grid", correlation=30.0, bounds=(0.5, 2.0), name="kg",
                      nugget=nugget)
@@ -196,7 +196,8 @@ def test_the_nugget_reaches_the_prior_pestpp_ies_receives(tmp_path, nugget):
     cal._inject_geostatistical_prior(1000)
     ensemble = pd.read_csv(cal.template_workspace / "nug.prior_par.csv", index_col=0)
 
-    points = pd.concat(frame for frame, _ in cal._pilot_point_frames["kp"])
+    points = pd.concat(item["frame"] for item in cal._pilot_point_sets
+                       if item["spec"].name == "kp")
     grid = cal.pst.parameter_data.loc[
         [name for name in ensemble.columns if name.startswith("pname:kg")]]
     expected = np.exp(-10.0 / 30.0) / (1.0 + nugget)
@@ -225,3 +226,38 @@ def test_a_nugget_that_is_not_a_variance_is_refused(tmp_path, nugget):
     with pytest.raises(ValueError, match=r"nugget=.*finite number of at least 0\.0"):
         project.parameterize("k", style="grid", correlation=30.0, nugget=nugget)
     assert project._native_parameter_specs == []
+
+
+@pytest.mark.slow
+def test_zoned_pilot_points_are_drawn_correlated_within_a_zone_and_not_across(tmp_path):
+    """One covariance block per pilot-point SET -- a (layer, zone) of one call -- so a
+    long variogram ties neighbours of one zone together and leaves neighbours across a
+    zone edge independent (ledger 527)."""
+
+    pytest.importorskip("pyemu")
+    demo = build_canonical_calibration_demo(
+        tmp_path / "model", config=CanonicalModelConfig.testing(), n_head_wells=4
+    )
+    xc = np.asarray(demo.model.gwf.modelgrid.xcellcenters, dtype=float).reshape(-1)
+    zones = np.where(xc < np.median(xc), 1, 2)
+    cal = demo.model.pest("ppzone", start_datetime="2024-01-01")
+    cal.parameterize("k", style="pilotpoints", pp_spacing=300.0, correlation=3000.0,
+                     zones=zones, layers=[0], bounds=(0.1, 10.0))
+    cal.observe(demo.head_targets)
+    cal.build("ppzone.pst", noptmax=0)
+    np.random.seed(5)
+    cal._inject_geostatistical_prior(500)
+    ensemble = pd.read_csv(cal.template_workspace / "ppzone.prior_par.csv", index_col=0)
+
+    points = pd.concat(item["frame"] for item in cal._pilot_point_sets)
+    names = list(points["parnme"])
+    x, y = points["x"].to_numpy(dtype=float), points["y"].to_numpy(dtype=float)
+    zone = points["zone"].to_numpy()
+    correlations = np.corrcoef(np.log10(ensemble[names].to_numpy()).T)
+    distances = np.hypot(x[:, None] - x[None, :], y[:, None] - y[None, :])
+    near = (distances > 0) & (distances < 450.0)
+    within = near & (zone[:, None] == zone[None, :])
+    across = near & (zone[:, None] != zone[None, :])
+    assert within.any() and across.any()
+    assert correlations[within].mean() > 0.5
+    assert abs(correlations[across].mean()) < 0.15

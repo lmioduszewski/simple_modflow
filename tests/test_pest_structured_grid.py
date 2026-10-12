@@ -188,7 +188,7 @@ def test_a_model_built_from_mf_dis_locates_targets_and_pilot_points(tmp_path):
     assert polygons.geometry.iloc[NCOL + 1].centroid.coords[0] == pytest.approx((15.0, 35.0))
 
     cal = model.pest("dis", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    cal.parameterize("k", style="pilotpoints", pp_space=2, bounds=(0.5, 2.0))
+    cal.parameterize("k", style="pilotpoints", pp_spacing=20.0, bounds=(0.5, 2.0))
     cal.parameterize("chd", style="zone", zones=ZONES, bounds=(-1.0, 1.0))
     points = gpd.GeoDataFrame({"name": ["W"], "layer": [0]},
                               geometry=gpd.points_from_xy([25.0], [25.0]))
@@ -228,7 +228,7 @@ def test_a_captured_dis_field_reviews_on_its_own_cells(tmp_path, style):
 
     model = mf.load_mf6_run(_dis_run(tmp_path / "run"))
     cal = model.pest("cap", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    extra = {"pp_space": 2} if style == "pilotpoints" else {}
+    extra = {"pp_spacing": 20.0} if style == "pilotpoints" else {}
     cal.parameterize("k", style=style, bounds=(0.5, 2.0), capture=True, **extra)
     cal.observe(_heads())
     _build(cal, "cap")

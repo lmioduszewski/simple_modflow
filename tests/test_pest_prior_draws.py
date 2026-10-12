@@ -52,7 +52,7 @@ def _calibration(demo, name: str, *, k33: str):
     """``k`` as correlated pilot points, and ``k33`` as ``grid`` (correlated) or ``constant``."""
 
     cal = demo.model.pest(name, start_datetime="2024-01-01")
-    cal.parameterize("k", style="pilotpoints", pp_space=5, correlation=3000.0,
+    cal.parameterize("k", style="pilotpoints", pp_spacing=500.0, correlation=3000.0,
                      bounds=(0.1, 10.0), physical=(1e-3, 300.0))
     if k33 == "grid":
         cal.parameterize("k33", style="grid", correlation=3000.0, layers=[0])

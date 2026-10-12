@@ -47,60 +47,106 @@ def read_target_table(path):
     return pd.read_csv(path, converters=converters)
 
 
-def apply_pilotpoints_to_array(parameter_csv, points_meta_csv, cells_meta_csv, array_file,
-                               lower_limit=-1.0e30, upper_limit=1.0e30):
-    """Interpolate pilot-point multipliers onto a flattened array layer file (IDW).
+def apply_pilotpoints_to_array(array_file, manifest="pilot_point_sets.json"):
+    """Multiply every pilot-point set on one array file into it (a forward-run pre-command).
 
-    Runs as a pre-model command in the native forward run: reads the
-    template-populated pilot-point values, inverse-distance-weights them onto
-    each cell, multiplies the captured base values, clamps to the physical
-    limits, and rewrites the external layer file (one value per line) that MF6
-    reads.
+    The build adds ONE call per array file, after pyEMU's
+    ``apply_list_and_array_pars``. It reads the file's entry in ``manifest`` and
+    starts from the file as pyEMU has just rewritten it from its ``org/`` copy when
+    pyEMU parameterizes that file too (``base_from_file``), else from the base the
+    build captured (``base_file``) -- so a worker directory reused across
+    realizations writes the same file every run. Each cell is then multiplied by the
+    PRODUCT, over every set covering it, of that set's interpolated factor: the
+    set's template-populated pilot values, combined through the weights the build
+    stored (``factors``: per covered cell, its nearest points and their
+    inverse-distance-squared weights) -- ``10 ** sum(weight * log10(value))`` for a
+    log-transformed parameter, ``sum(weight * value)`` otherwise. A covered cell is
+    then clamped to the tightest of its sets' ``physical=`` limits; a cell no set
+    covers keeps the value it started from. The file is rewritten in the layout it
+    was read in (ledger 525).
 
-    Nothing here is K-specific -- the base values are whichever array the target
-    names (``base_value`` in the cells CSV). The parameters were called ``k_file``
-    and ``base_k`` until 2026-07-30, which is how the build side came to hardwire
-    NPF K for every target and write it into K33.
+    Until 525 this rebuilt the whole layer from the build-time base after
+    pyEMU's apply, which erased every constant/zone/grid multiplier on the file and
+    every other pilot-point set on it, interpolated over EVERY point of the layer in
+    linear space (a field 13-60% above its points' geometric mean), and recomputed
+    each cell's distances on every run. A template built before it keeps its own
+    copy of that function.
 
     Self-contained: pyEMU copies only this function's source into the generated
-    forward run, so it must not depend on other module-level helpers.
+    forward run, so its imports live inside it.
+
+    Parameters
+    ----------
+    array_file : str
+        The external array file MF6 reads (``<model>.npf_k_layer1.txt``), relative
+        to the working directory, which is the template or a copy of it.
+    manifest : str, optional
+        The build's pilot-point manifest, ``pilot_point_sets.json`` (the default),
+        naming each set's ``parameter_csv``, ``points_csv``, ``factors``,
+        ``interpolation`` and limits and, per file, ``base_from_file`` and
+        ``base_file``.
+
+    Raises
+    ------
+    ValueError
+        When the manifest has no entry for ``array_file``; when a set's value file
+        lacks one of its points' values, or holds one that is not a finite number;
+        or when a log-interpolated value is not above zero.
     """
+
+    import json
 
     import numpy as np
     import pandas as pd
 
-    pv_frame = pd.read_csv(parameter_csv)
-    values = pd.Series(
-        pd.to_numeric(pv_frame["value"], errors="coerce").to_numpy(),
-        index=pv_frame["parnme"].astype(str),
-    )
-    points = pd.read_csv(points_meta_csv)
-    cells = pd.read_csv(cells_meta_csv)
-    points["pv"] = points["parnme"].astype(str).map(values)
-    if points["pv"].isna().any():
-        raise ValueError(f"Missing pilot-point values in {parameter_csv!r}.")
-    px = points["x"].to_numpy(dtype=float)
-    py = points["y"].to_numpy(dtype=float)
-    pv = points["pv"].to_numpy(dtype=float)
-    cx = cells["x"].to_numpy(dtype=float)
-    cy = cells["y"].to_numpy(dtype=float)
-    base = cells["base_value"].to_numpy(dtype=float)
-    cell_ids = cells["cell"].to_numpy(dtype=int)
-    # The captured array file is treated as a model *output* by pyEMU, so the
-    # input .txt no longer exists -- rebuild the whole layer array from the
-    # captured base values and write the file MF6 reads.
-    arr = np.zeros(int(cell_ids.max()) + 1, dtype=float)
-    for index in range(len(cell_ids)):
-        d2 = (px - cx[index]) ** 2 + (py - cy[index]) ** 2
-        zero = np.where(d2 == 0)[0]
-        if zero.size:
-            factor = float(pv[zero[0]])
+    with open(manifest, encoding="utf-8") as handle:
+        info = json.load(handle)
+    entries = [entry for entry in info["files"] if entry["array_file"] == array_file]
+    if len(entries) != 1:
+        raise ValueError(f"{manifest} names no pilot-point sets for {array_file!r}.")
+    entry = entries[0]
+    source = array_file if entry["base_from_file"] else entry["base_file"]
+    start = np.loadtxt(source, ndmin=2)
+    values = start.reshape(-1).astype(float)
+    factor = np.ones(values.size)
+    lower = np.full(values.size, -np.inf)
+    upper = np.full(values.size, np.inf)
+    covered = np.zeros(values.size, dtype=bool)
+    for record in info["sets"]:
+        if record["array_file"] != array_file:
+            continue
+        frame = pd.read_csv(record["parameter_csv"])
+        given = pd.Series(
+            pd.to_numeric(frame["value"], errors="coerce").to_numpy(),
+            index=frame["parnme"].astype(str).str.lower(),
+        )
+        points = pd.read_csv(record["points_csv"])
+        pv = points["parnme"].astype(str).str.lower().map(given).to_numpy(dtype=float)
+        if not np.isfinite(pv).all():
+            raise ValueError(
+                f"{record['parameter_csv']} holds no finite value for some of "
+                f"{record['name']!r}'s pilot points."
+            )
+        stored = np.load(record["factors"])
+        cells, index, weight = stored["cells"], stored["index"], stored["weight"]
+        if record["interpolation"] == "log":
+            if (pv <= 0).any():
+                raise ValueError(
+                    f"{record['name']!r} is interpolated in log space and a pilot value in "
+                    f"{record['parameter_csv']} is not above zero."
+                )
+            set_factor = 10.0 ** np.sum(weight * np.log10(pv)[index], axis=1)
         else:
-            weights = 1.0 / np.maximum(d2, 1.0e-12)
-            factor = float(np.sum(weights * pv) / np.sum(weights))
-        value = base[index] * factor
-        arr[cell_ids[index]] = min(max(value, float(lower_limit)), float(upper_limit))
-    np.savetxt(array_file, arr.reshape(-1, 1), fmt="%.10E")
+            set_factor = np.sum(weight * pv[index], axis=1)
+        factor[cells] *= set_factor
+        covered[cells] = True
+        if record["lower_limit"] is not None:
+            lower[cells] = np.maximum(lower[cells], record["lower_limit"])
+        if record["upper_limit"] is not None:
+            upper[cells] = np.minimum(upper[cells], record["upper_limit"])
+    result = values * factor
+    result[covered] = np.clip(result[covered], lower[covered], upper[covered])
+    np.savetxt(array_file, result.reshape(start.shape), fmt="%.10E")
 
 
 def _write_head_target_csv(model_name, mapping_csv, output_csv, perlen=None, sim_ws=".", head_file=None):

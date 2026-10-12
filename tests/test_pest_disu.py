@@ -98,7 +98,7 @@ def test_array_and_list_parameters_on_a_disu_model_scale_what_mf6_reads(run_dir,
     model = mf.load_mf6_run(run_dir)
     cal = model.pest("u", workspace=tmp_path / "pest", start_datetime="2024-01-01")
     extra = {"zone": {"zones": ZONES},
-             "pilotpoints": {"pp_space": 2}}.get(style, {})
+             "pilotpoints": {"pp_spacing": 20.0}}.get(style, {})
     cal.parameterize("k", style=style, bounds=(0.5, 2.0), **extra)
     cal.parameterize("chd", style="constant", bounds=(-1.0, 1.0))
     _observe(cal)
@@ -155,7 +155,7 @@ def test_pestpp_ies_runs_a_disu_template(run_dir, tmp_path):
 
     model = mf.load_mf6_run(run_dir)
     cal = model.pest("u", workspace=tmp_path / "pest", start_datetime="2024-01-01")
-    cal.parameterize("k", style="pilotpoints", pp_space=2, correlation=30.0, bounds=(0.5, 2.0))
+    cal.parameterize("k", style="pilotpoints", pp_spacing=20.0, correlation=30.0, bounds=(0.5, 2.0))
     cal.parameterize("chd", style="zone", zones=ZONES, bounds=(-1.0, 1.0))
     _observe(cal)
     pst = _build(cal, "u")

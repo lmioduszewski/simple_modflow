@@ -147,6 +147,65 @@ that also made `parameterize("k33", style="pilotpoints")` overwrite K33 with hor
 K, 30x wrong and silent. Pilot points now multiply the array their own target names, so
 every array target (`k`, `k33`, `porosity`) supports them. See ledger 115.
 
+### Pilot points (array targets)
+
+```python
+# a net 1,500 ft apart on layers 0 and 1 (pp_spacing is in MODEL LENGTH UNITS)
+cal.parameterize("k", style="pilotpoints", pp_spacing=1500.0, layers=[0, 1],
+                 bounds=(0.1, 10), physical=(1e-3, 300), correlation=4000.0)
+# a broad multiplier under them: the two MULTIPLY
+cal.parameterize("k", style="constant", layers=[0, 1], name="kc", bounds=(0.2, 5))
+print(cal.settings())    # after build(): the point count of every set
+```
+
+- **Placement.** `pp_spacing=` lays a regular net -- squares that wide from the lowest
+  cell centre, the cell centre nearest each occupied square's middle becoming a point
+  -- or `pp_points=` gives the locations (a GeoDataFrame of Points or `(x, y)` pairs in
+  the grid's frame). Give exactly one. `pp_spacing` replaced `pp_space`, which counted
+  in median cell widths and laid 4,501 points per layer on Ten Trails' refined mesh
+  (ledger 527); 1,500 ft lays about 100 there. `build()` records each set's
+  point count on the spec (`spec.pilot_point_sets`) and in `cal.settings()`.
+- **Interpolation.** Each cell takes the `pp_nearest` (default 8) nearest points of its
+  set, weighted by inverse distance squared, in **log10 space** for a log-transformed
+  parameter -- a cell between a point at 10 and one at 0.1 reads 1, not 5.05. The
+  weights are computed once at build and stored in the template
+  (`<set>_pp.factors.npz`), so a forward run does no distance arithmetic. The old rule
+  (every point of the layer, linear) let a block of points set to x5 reach only 2.3-4.1
+  between them and biased a lognormal field 13-60% high
+  (`docs/reproducers/pilot_point_interpolation.py`, ledger 526).
+- **Stacking.** Every pilot-point set on an array file is applied by one forward-run
+  command after pyEMU's multipliers, multiplying the file as pyEMU wrote it: a constant,
+  zone or grid multiplier and any number of pilot-point sets on one layer all reach
+  MF6 as a product. Until ledger 525 a pilot-point set rebuilt the layer from
+  the build-time base and erased them all (`docs/reproducers/pilot_points_stack_and_zone.py`).
+  A covered cell is clamped to the tightest `physical=` of the sets covering it.
+- **Zones.** `zones=` gives each label `> 0` its own set on each layer: its own net (or
+  the explicit points inside it), interpolated onto its own cells only, with its own
+  prior covariance; cells labelled `<= 0` keep their value. Different spacing, bounds
+  or variogram per zone are separate calls, each with a masked `zones=` and a `name=`:
+
+  ```python
+  cut = mf.ZoneSpec.from_polygons("cut.gpkg", model)          # 1 inside, 0 outside
+  outside = mf.ZoneSpec.from_array(1 - cut.values)
+  cal.parameterize("k", style="pilotpoints", layers=[2], zones=outside, name="k3",
+                   pp_spacing=1500.0, bounds=(0.1, 10), correlation=4000.0)
+  cal.parameterize("k", style="pilotpoints", layers=[2], zones=cut, name="k3cut",
+                   pp_spacing=500.0, bounds=(0.01, 100), physical=(1e-4, 10))
+  ```
+
+  No point outside the polygon moves a cell inside it, so the cut's contrast in the
+  base field survives at multiplier 1.
+- **Names.** A set is `<name>l<layer>` -- `<name>l<layer>z<zone>` with zones -- and its
+  points `...pp0000`, lower-cased as PEST reads them. Two calls on one layer need two
+  names (refused otherwise); calls on different layers may share one.
+- **Refused at build**: an explicit point in no cell, in a cell labelled `<= 0`, or given
+  twice; a zone `> 0` no explicit point lies in; zones labelling nothing; two sets on one
+  cell whose `physical=` limits share no value.
+- **What a write-back reads.** `pilot_point_sets.json` in the template lists every set
+  (layer, zone, its value, points and factor files, interpolation, limits) and, per
+  array file, whether the forward run starts from pyEMU's output or from the captured
+  `<file>.pp_base`.
+
 **An array target needs its array in the run's files.** `parameterize("k33")` on a
 model whose NPF was written with no `k33=` has nothing to multiply -- MF6 then takes
 K33 from K -- and `build()` refuses it naming the target and the package. It used to

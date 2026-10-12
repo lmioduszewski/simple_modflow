@@ -391,7 +391,7 @@ handful of calls off `model.pest(...)`:
 ```python
 cal = model.pest("valley_pest", start_datetime="2024-01-01")
 
-cal.parameterize("k",        style="pilotpoints", bounds=(0.1, 10.0))
+cal.parameterize("k",        style="pilotpoints", pp_spacing=500.0, bounds=(0.1, 10.0))
 cal.parameterize("recharge", style="constant",    bounds=(0.5, 2.0))
 
 cal.observe(obs)               # the HeadTargets from above
@@ -411,7 +411,9 @@ results.plot_phi()
 ```
 
 Parameter **styles** are `constant`, `zone`, `grid` (one geostatistically
-correlated multiplier per Voronoi cell), and `pilotpoints` (IDW from a pilot net).
+correlated multiplier per Voronoi cell), and `pilotpoints` (a pilot net `pp_spacing`
+model length units apart, interpolated to each cell from its nearest points in log
+space, stacking with the other styles).
 See [Chapter 17, *PEST / pyEMU*](17_pest.md).
 
 ---

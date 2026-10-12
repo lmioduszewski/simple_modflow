@@ -1815,8 +1815,15 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   An argument that cannot act is refused (`layers=` on a list target, `temporal=`,
   `correlation=` on constant/zone, a style other than the four). Styles: `constant`, `zone`, `grid` (one
   geostat-correlated multiplier per Voronoi cell + correlated prior), and `pilotpoints`
-  (IDW from a `pp_space` net or explicit `pp_points` — `pilot_points.py`; pyEMU's own
-  pilot points are unusable on unstructured grids). The legacy `add_parameter` +
+  (a `pp_spacing=` net in MODEL LENGTH UNITS or explicit `pp_points` — `pilot_points.py`;
+  pyEMU's own pilot points are unusable on unstructured grids). **Pilot points MULTIPLY
+  onto what pyEMU wrote** (ledger 525): ONE forward-run command per array
+  file, after `apply_list_and_array_pars`, so they stack with constant/zone/grid and
+  with each other -- they used to rebuild the layer from the build-time base and erase
+  every other multiplier on it. Each cell reads the `pp_nearest` (8) nearest points of
+  its SET -- one call, one layer, one `zones=` label -- by IDW in log10 space, through
+  weights stored at build (526); `zones=` is honoured (527), and
+  the template's `pilot_point_sets.json` lists every set. The legacy `add_parameter` +
   `build_pst` + `KPilotPointParameter`/`DrainElevation`/`DrainConductance` specs were
   RETIRED (deleted 2026-06-22) — do not reintroduce them.
 - `PestProject` (`project.py`) — orchestrates pyEMU/PstFrom; native `build()` + `run_ies`/

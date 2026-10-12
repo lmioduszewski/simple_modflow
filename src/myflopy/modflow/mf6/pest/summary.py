@@ -63,6 +63,12 @@ class PestSettings:
                     f"bounds={tuple(par['bounds'])}{phys_txt} "
                     f"transform={par['transform']}"
                 )
+                for item in par.get("pilot_point_sets") or ():
+                    zone = "" if item.get("zone") is None else f" zone {item['zone']}"
+                    lines.append(
+                        f"        {item['name']}: {item['points']} pilot points over "
+                        f"{item['cells']} cells (layer {item['layer']}{zone})"
+                    )
         else:
             lines.append("    (none)")
 

@@ -918,6 +918,20 @@ becomes the same name as a different label (`"North"`, `"north"`); a DRN zone's 
 carry one label. pyEMU used to give every simulated column a group of its own, so a
 group was one well. The PEST guide shows the groups with PEST++'s phi-factor file.
 
+**Pilot points** (`cal.parameterize("k"|"k33"|"porosity", style="pilotpoints", ...)`):
+`pp_spacing=` lays a net in MODEL LENGTH UNITS (it replaced `pp_space`, median cell
+widths; ledger 527) or `pp_points=` gives the locations -- exactly one;
+`zones=` makes one set per label `> 0` per layer, its net, interpolation and prior
+covariance confined to its own cells, and cells labelled `<= 0` untouched; each cell is
+interpolated from the `pp_nearest=8` nearest points of its set by inverse distance
+squared, in log10 space for a log parameter, through weights stored at build
+(`<set>_pp.factors.npz`; ledger 526). One forward-run command per array file
+multiplies every set on it into the file pyEMU's multipliers wrote, so pilot points
+stack with a constant/zone/grid multiplier and with each other (ledger 525).
+Sets are named `<name>l<layer>[z<zone>]`, lower-cased; `spec.pilot_point_sets` and
+`cal.settings()` give each set's point count after `build()`, and the template's
+`pilot_point_sets.json` lists every set for a write-back.
+
 Targets: `mf.HeadTargets`, `mf.SfrStageTargets`, `mf.SfrFlowTargets`,
 `mf.LakeStageTargets`, `mf.DrnFlowTargets`. Calibration: `model.pest(name,
 start_datetime=)` → `PestProject` → `cal.parameterize(...)` / `cal.observe(...)` /

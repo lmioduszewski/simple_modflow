@@ -564,7 +564,7 @@ class SimulationBase:
         run is auto-discoverable afterwards. The whole loop then lives on the model::
 
             cal = model.pest("calib", start_datetime="2020-01-01")
-            cal.parameterize("k", style="pilotpoints", pp_space=8)
+            cal.parameterize("k", style="pilotpoints", pp_spacing=1500.0)
             cal.observe(head_targets)
             cal.build(); cal.run_ies()
             model.pest_runs[-1].review().plot_phi()   # no imports needed

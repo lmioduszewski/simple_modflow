@@ -213,6 +213,10 @@ _RECIPES: dict[str, _Recipe] = {
     "porosity": _Recipe("porosity", "array", "mst", "porosity", model="transport"),
 }
 
+#: How many of a pilot-point set's nearest points a cell is interpolated from, by
+#: default (ledger 526).
+DEFAULT_PP_NEAREST = 8
+
 # Friendly aliases -> canonical key.
 _ALIASES: dict[str, str] = {
     "npf.k": "k",
@@ -423,8 +427,10 @@ class NativeParameterSpec:
         an elevation scales with the datum; ``True`` on array pilot points raises
         ``ValueError`` -- they multiply.
     zones : ZoneSpec or array_like of int or None, optional
-        Zone labels for ``style="zone"`` (and to mask cells); see
-        :meth:`PestProject.parameterize`. Default ``None``.
+        Zone labels for ``style="zone"`` (and to mask cells); with array-target
+        ``style="pilotpoints"``, one pilot-point set per label ``> 0`` on each
+        selected layer (ledger 527); see :meth:`PestProject.parameterize`.
+        Default ``None``.
     layers : int or iterable of int or None, optional
         Zero-based layers an ARRAY target is restricted to, held as a tuple of
         ``int`` (:func:`checked_layers`, which refuses anything else). Default
@@ -435,12 +441,21 @@ class NativeParameterSpec:
         package of the type; several raise ``SeveralPackagesError`` at
         :meth:`PestProject.parameterize` or :meth:`PestProject.build`. A tuple shares
         one parameter set across the packages it names.
-    pp_space : int or None, optional
-        Pilot-point spacing, in median cell widths; see
-        :meth:`PestProject.parameterize`. Default ``None``.
+    pp_spacing : float or None, optional
+        Pilot-point net spacing, in MODEL LENGTH UNITS, for array-target
+        ``style="pilotpoints"`` (ledger 527); see :meth:`PestProject.parameterize`.
+        Default ``None``. Array-target pilot points need exactly one of it and
+        ``pp_points``, and a spacing that is not finite and above zero raises
+        ``ValueError``; any other style refuses it.
     pp_points : geopandas.GeoDataFrame or array_like or None, optional
-        Explicit pilot-point locations; see :meth:`PestProject.parameterize`.
-        Default ``None``.
+        Explicit pilot-point locations for array-target ``style="pilotpoints"``;
+        see :meth:`PestProject.parameterize`. Default ``None``. Refused beside
+        ``pp_spacing`` and on any other style.
+    pp_nearest : int, optional
+        How many of a set's nearest pilot points each cell is interpolated from
+        (ledger 526): a whole number, 1 or more. Default
+        :data:`DEFAULT_PP_NEAREST` (``8``). Any other value is refused on every
+        style but array-target ``style="pilotpoints"``.
     correlation : float or None, optional
         Variogram range (model length units) for ``style="grid"`` or
         ``"pilotpoints"``. Default ``None``. Given with ``"constant"``/``"zone"`` it
@@ -475,6 +490,10 @@ class NativeParameterSpec:
     resolved_files : list of str, optional
         Filled by :meth:`PestProject.build`: the template-relative files the
         parameter scales. Default empty.
+    pilot_point_sets : list of dict, optional
+        Filled by :meth:`PestProject.build` for array-target pilot points: one
+        summary per pilot-point set (``name``, ``layer``, ``zone``, ``points``,
+        ``cells``). Default empty.
 
     Attributes
     ----------
@@ -497,8 +516,9 @@ class NativeParameterSpec:
     zones: Any = None
     layers: tuple[int, ...] | None = None
     package: str | tuple[str, ...] | None = None
-    pp_space: int | None = None
+    pp_spacing: float | None = None
     pp_points: Any = None
+    pp_nearest: int = DEFAULT_PP_NEAREST
     correlation: float | None = None
     anisotropy: float = 1.0
     bearing: float = 0.0
@@ -508,6 +528,7 @@ class NativeParameterSpec:
     capture: bool = False
     extra: dict = field(default_factory=dict)
     resolved_files: list[str] = field(default_factory=list)
+    pilot_point_sets: list[dict] = field(default_factory=list)
 
     def __post_init__(self):
         """Resolve the recipe, fill the defaults, and refuse an argument that cannot act."""
@@ -567,6 +588,7 @@ class NativeParameterSpec:
                 f"temporal={self.temporal!r}: nothing reads a temporal correlation yet, so "
                 "it cannot act. Drop it."
             )
+        self._check_pilot_point_arguments()
         self._refuse_an_idle_variogram()
         self.bounds = self._checked_bounds()
         if self.name is None:
@@ -643,6 +665,53 @@ class NativeParameterSpec:
                 "above 0, or transform='none'."
             )
         return (lower, upper)
+
+    def _check_pilot_point_arguments(self) -> None:
+        """Refuse pilot-point placement arguments that cannot act, naming the spelling.
+
+        ``pp_spacing`` replaced ``pp_space`` (median cell widths) with no alias
+        (ledger 527): a net on a strongly refined mesh measured in its
+        median cell laid 4,501 points per layer on Ten Trails.
+        """
+
+        pilot = self.style == "pilotpoints" and self.recipe.family == "array"
+        if not pilot:
+            given = [
+                name for name, value in (("pp_spacing", self.pp_spacing),
+                                         ("pp_points", self.pp_points))
+                if value is not None
+            ]
+            if self.pp_nearest != DEFAULT_PP_NEAREST:
+                given.append("pp_nearest")
+            if given:
+                raise ValueError(
+                    f"{', '.join(given)} place and interpolate pilot points, and "
+                    f"{self.recipe.canonical!r} with style={self.style!r} has none; they act "
+                    "only with style='pilotpoints' on an array target (k, k33, porosity)."
+                )
+            return
+        if (self.pp_spacing is None) == (self.pp_points is None):
+            raise ValueError(
+                f"style='pilotpoints' on {self.recipe.canonical!r} places its points by "
+                "pp_spacing= (a regular net, its spacing in MODEL LENGTH UNITS -- e.g. "
+                "pp_spacing=1500.0 for a net 1,500 ft apart on a model in feet) or by "
+                "pp_points= (explicit locations): give exactly one."
+            )
+        if self.pp_spacing is not None:
+            if isinstance(self.pp_spacing, bool) or not np.isfinite(float(self.pp_spacing)) \
+                    or float(self.pp_spacing) <= 0:
+                raise ValueError(
+                    f"pp_spacing={self.pp_spacing!r} must be a finite length above zero, in "
+                    "model length units."
+                )
+            self.pp_spacing = float(self.pp_spacing)
+        if isinstance(self.pp_nearest, bool) or int(self.pp_nearest) != self.pp_nearest \
+                or int(self.pp_nearest) < 1:
+            raise ValueError(
+                f"pp_nearest={self.pp_nearest!r} must be a whole number of pilot points, 1 "
+                "or more."
+            )
+        self.pp_nearest = int(self.pp_nearest)
 
     @property
     def resolved_transform(self) -> str:
@@ -758,8 +827,9 @@ def staged_model(project, model_name: str):
 
     ``PestProject.build`` loads the simulation from its staging copy of the run
     (``project._staged_simulation``), and everything the build reads off a FloPy
-    model -- a recipe's package array (:func:`relayer_array_target`, the
-    pilot-point base array), the cell centres pilot points are placed on, the
+    model -- a recipe's package array (:func:`relayer_array_target`), the cell
+    centres pilot points are placed on (their base is the template's own array
+    file, ledger 525), the
     default spatial reference -- is read THERE: the numbers the template's model
     holds, as written to its files. They were read off ``project.model``, the
     caller's object, until ledger 356, and the relayering changed that object's

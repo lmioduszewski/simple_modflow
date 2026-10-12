@@ -17,7 +17,7 @@ absolute at start, ledger 425); the "before" column is the parent commit's
 
 THE SETUP. A 6 x 6 irregular Voronoi grid of ~100 ft cells, one confined layer, CHD at
 102 ft on the west and east edges, heads filling from 90 ft, three 10-day periods.
-``k`` by pilot points (``pp_space=1``) and ``k33`` by ``grid`` (one per cell), each
+``k`` by pilot points (``pp_spacing=100.0``; ``pp_space=1`` when measured) and ``k33`` by ``grid`` (one per cell), each
 with ``correlation=300``, bounds ``(0.5, 2)``; two head targets. ``np.random.seed(0)``,
 ``prior(reals=50)``.
 
@@ -83,7 +83,7 @@ def main():
     try:
         model = _run(root)
         cal = model.pest("bounds", workspace=root / "pest", start_datetime="2024-01-01")
-        cal.parameterize("k", style="pilotpoints", pp_space=1, correlation=300.0,
+        cal.parameterize("k", style="pilotpoints", pp_spacing=100.0, correlation=300.0,
                          bounds=(0.5, 2.0), name="kp")
         cal.parameterize("k33", style="grid", correlation=300.0, bounds=(0.5, 2.0), name="kg")
         cal.observe(mf.HeadTargets(

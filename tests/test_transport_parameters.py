@@ -60,7 +60,7 @@ def test_pilot_points_on_porosity_interpolate_the_porosity_array(tmp_path):
         tmp_path / "model", config=CanonicalModelConfig.testing()
     )
     cal = demo.model.pest("pp_poros", start_datetime="2024-01-01")
-    cal.parameterize("porosity", style="pilotpoints", pp_space=6,
+    cal.parameterize("porosity", style="pilotpoints", pp_spacing=600.0,
                      bounds=(0.5, 2.0), physical=(0.01, 0.9))
     cal.observe(demo.conc_targets)
     cal.build("pp_poros.pst", noptmax=0)

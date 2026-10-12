@@ -34,6 +34,7 @@ from myflopy.modflow.mf6.package_registry import model_packages_of_type
 from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.geostats import build_geostruct, checked_nugget, unit_sill
 from myflopy.modflow.mf6.pest.native_parameters import (
+    DEFAULT_PP_NEAREST,
     NativeParameterSpec,
     add_native_parameter,
     flopy_model_for,
@@ -55,6 +56,7 @@ from myflopy.modflow.mf6.pest.observations import (
 )
 from myflopy.modflow.mf6.pest.pilot_points import (
     add_pilot_point_parameter,
+    emit_pilot_point_commands,
     register_pilot_point_parameters,
 )
 from myflopy.modflow.mf6.pest.runs import (
@@ -562,7 +564,7 @@ class PestProject:
     ``start_datetime`` has no TDIS fallback and you must supply it::
 
         cal = model.pest("calib", start_datetime="2020-01-01")
-        cal.parameterize("k",        style="pilotpoints", pp_space=8, physical=(1e-3, 100))
+        cal.parameterize("k",        style="pilotpoints", pp_spacing=800.0, physical=(1e-3, 100))
         cal.parameterize("recharge", bounds=(0.5, 1.5))
         cal.parameterize("ghb.cond", bounds=(0.1, 10))
         cal.observe(head_targets)          # history-matching targets
@@ -583,7 +585,7 @@ class PestProject:
     model : SimulationBase
         A built ``myflopy`` model (``SimulationBase`` or compatible) exposing
         ``.sim`` (the FloPy simulation), ``.gwf``, ``.name``,
-        ``.workspace`` and, for ``pp_space=`` pilot points, any ``zones=`` and
+        ``.workspace`` and, for explicit ``pp_points=`` pilot points, any ``zones=`` and
         head or concentration targets given by cell id, ``.vor``. Its workspace
         -- the RUN directory, which must hold the simulation's files
         (``mfsim.nam``) -- is READ, never written: :meth:`build` copies the
@@ -694,7 +696,10 @@ class PestProject:
         self._forecast_specs: list = []
         self._native_parameter_specs: list[NativeParameterSpec] = []
         self._native_parameter_frames: dict[str, object] = {}
-        self._pilot_point_frames: dict[str, list] = {}
+        # One entry per pilot-point SET (call, layer file, zone), in build order
+        # (ledger 525): its manifest record, parameter frame, template
+        # and the spec that made it.
+        self._pilot_point_sets: list[dict] = []
         self._capture_field_specs: dict[str, dict] = {}
         self._prepared_observations: list[dict] = []
         # The RIV files whose forward run carries rbot with a `riv.stage` offset, in
@@ -728,8 +733,9 @@ class PestProject:
         zones=None,
         layers=None,
         package: str | Sequence[str] | None = None,
-        pp_space: int | None = None,
+        pp_spacing: float | None = None,
         pp_points=None,
+        pp_nearest: int = DEFAULT_PP_NEAREST,
         correlation: float | None = None,
         anisotropy: float = 1.0,
         bearing: float = 0.0,
@@ -745,7 +751,11 @@ class PestProject:
         ``pyemu.utils.PstFrom.add_parameters`` invocation against the external
         MODFLOW input file(s) for ``target``. Call it once per property you want
         to adjust; call it multiple times for the same target to stack styles
-        (e.g. a broad ``"constant"`` plus a fine ``"grid"``).
+        (e.g. a broad ``"constant"`` plus a fine ``"grid"``, or a ``"constant"``
+        plus ``"pilotpoints"``): every multiplier on a cell multiplies, pilot
+        points included -- they are applied after pyEMU's multipliers, onto the
+        file pyEMU wrote, so a constant x2 under pilot points at 1.0 writes 2x
+        the base (ledger 525).
 
         Parameters
         ----------
@@ -819,11 +829,13 @@ class PestProject:
             -- of more than 5,000 parameters is refused by :meth:`build`: its
             prior is drawn from a dense covariance of every pair (3.3 GB for one
             20,323-cell layer); use ``"pilotpoints"`` (ledger 522).
-            ``"pilotpoints"`` on an array target places a pilot-point net
-            (``pp_space=`` spacing or explicit ``pp_points=``) and interpolates
-            the multipliers to cells by inverse-distance weighting in the
-            forward run -- the supported sparse-field style on Voronoi/DISV
-            grids.
+            ``"pilotpoints"`` on an array target places pilot points
+            (a ``pp_spacing=`` net or explicit ``pp_points=``; one set per layer
+            file and per ``zones=`` label) and interpolates the multipliers to
+            each cell from the ``pp_nearest`` nearest points of its set by inverse
+            distance squared -- in log10 space for a log-transformed parameter --
+            with weights computed once at build (ledger 526). It is the
+            supported sparse-field style on Voronoi/DISV grids.
         bounds : tuple of (float, float) or None, optional
             ``(lower, upper)`` bounds on the adjustable value, pyEMU's
             ``lower_bound``/``upper_bound`` (each pilot point's ``parlbnd`` /
@@ -840,8 +852,11 @@ class PestProject:
         physical : tuple of (float, float) or None, optional
             ``(ult_lbound, ult_ubound)`` -- hard limits clamped onto the *final*
             model value after all multipliers are applied (pyEMU's
-            ``ult_lbound``/``ult_ubound``; the pilot-point interpolation clamps
-            to them itself). Strongly recommended
+            ``ult_lbound``/``ult_ubound``; the pilot-point step clamps each cell
+            it covers to the tightest limits of the pilot-point sets covering it,
+            after pyEMU has clamped its own product, and refuses at
+            :meth:`build` two covering sets whose limits share no value).
+            Strongly recommended
             for multipliers so calibration cannot push K (etc.) to nonphysical
             values. ``None`` (default) leaves the input unclamped.
         transform : str, optional
@@ -849,7 +864,8 @@ class PestProject:
             like K and recharge) or ``"none"``; pyEMU also accepts
             ``"fixed"``, but not together with ``correlation=`` (the variogram
             conversion asserts ``"none"`` or ``"log"``). Forced to ``"none"``
-            for additive parameters.
+            for additive parameters. Array-target pilot points interpolate in
+            log10 space when it is ``"log"`` and linearly otherwise.
         additive : bool or None, optional
             Apply the parameter as an additive offset instead of a multiplier
             (pyEMU ``par_style="a"``). ``None`` (default) follows what the scaled
@@ -868,7 +884,16 @@ class PestProject:
             ``<= 0`` unparameterized; a list target makes zone ``0`` a real
             parameter and warns. A length that is not one label per cell raises
             ``ValueError`` at build. Default ``None`` passes no zones.
-            Array-target pilot points ignore it.
+            With array-target ``"pilotpoints"`` each label ``> 0`` gets its own
+            pilot-point set on each selected layer -- its own net (or the
+            explicit points inside it), interpolated onto its own cells only, so
+            nothing blends across a zone edge, with its own prior covariance --
+            while cells labelled ``<= 0`` keep their value (ledger
+            527). An explicit point in a cell labelled ``<= 0``, a
+            label ``> 0`` no explicit point lies in, and labels that are all
+            ``<= 0`` raise ``ValueError`` at build. Different settings per zone
+            are separate calls, each with a masked ``zones=`` and its own
+            ``name=``.
         layers : int or iterable of int or None, optional
             For multi-layer *array* targets, restrict the parameter to these
             zero-based model layers (e.g. ``layers=[0, 1]`` for the unconfined
@@ -892,27 +917,43 @@ class PestProject:
             :meth:`build`. A name that is no package of the type raises
             ``ValueError`` naming the ones there are; a name given twice, or an
             empty one, raises here. The default ``name`` gains ``_<package>``.
-        pp_space : int or None, optional
-            Pilot-point spacing for ``style="pilotpoints"`` on an array target,
-            in multiples of the median cell width (the square root of the median
-            ``model.vor`` cell area): the grid is binned at that spacing and the
-            cell centre nearest each occupied bin's middle becomes a point.
-            Truncated with ``int``; ``None`` (default) or ``0`` means ``5``.
-            Ignored when ``pp_points`` is given.
+        pp_spacing : float or None, optional
+            Pilot-point net spacing for ``style="pilotpoints"`` on an array
+            target, in MODEL LENGTH UNITS (feet on a model in feet), finite and
+            above zero: the grid's cell centres are binned in squares this wide
+            from the lowest centre's ``x`` and ``y``, and the cell centre nearest
+            each occupied square's middle becomes a point -- per zone with
+            ``zones=``. :meth:`build` records each set's point count on the
+            returned spec (``pilot_point_sets``) and in :meth:`settings`.
+            Default ``None``. Array-target pilot points take exactly one of it
+            and ``pp_points`` -- neither, or both, raises ``ValueError`` here --
+            and any other style refuses it. It replaced ``pp_space`` (multiples
+            of the median cell width), which laid 4,501 points per layer on a
+            refined 20,323-cell mesh (ledger 527).
         pp_points : geopandas.GeoDataFrame or array_like or None, optional
             Explicit pilot-point locations for ``style="pilotpoints"`` on an
             array target: a GeoDataFrame of Point geometries, or ``(x, y)``
             pairs (anything reshapable to ``(n, 2)``), in the model grid's own
-            coordinates -- a GeoDataFrame's CRS is not read or reprojected.
-            Takes precedence over ``pp_space``. Default ``None``.
+            coordinates -- a GeoDataFrame's CRS is not read or reprojected. Each
+            point takes the zone of the cell it lies in; a point in no cell, or
+            given twice, raises ``ValueError`` at :meth:`build`. Default ``None``;
+            refused beside ``pp_spacing`` and on any other style.
+        pp_nearest : int, optional
+            How many of its set's nearest pilot points each cell is interpolated
+            from, by inverse distance squared (all of them when the set has
+            fewer); a whole number, 1 or more. Default ``8`` (ledger
+            526). A cell whose centre is a point takes that point's
+            value. A value other than ``8`` is refused on any style but
+            array-target ``"pilotpoints"``.
         correlation : float or None, optional
             Variogram range (model length units) of an exponential variogram
             (see :class:`~myflopy.modflow.mf6.pest.specs.ExpGeoStruct`). With
             ``style="grid"`` it becomes the parameters' pyEMU ``geostruct``, and
             :meth:`run_ies`/:meth:`prior` draw a spatially correlated prior
             ensemble from it (``ies_par_en``). With ``style="pilotpoints"`` on an
-            array target it shapes only that prior draw -- the pilot values are
-            drawn correlated, while the interpolation to cells stays
+            array target it shapes only that prior draw -- the pilot values of
+            each set (one layer, one zone) are drawn correlated with each other
+            and not with another set's, while the interpolation to cells stays
             inverse-distance. ``None`` (default) builds no variogram. Given with
             ``"constant"`` or ``"zone"`` it raises ``ValueError`` here: they have
             nothing to correlate.
@@ -951,12 +992,15 @@ class PestProject:
             removed (``"k"``, ``"ghbcond"``, ``"uzfvks"``), plus ``_<package>``
             when ``package=`` is given (``"rivcond_crisp"``,
             ``"rivcond_riv_crisp"`` for a sequence). A multi-layer array ``"grid"``
-            parameter appends ``l<layer>`` per selected layer file and pilot points
-            ``l<layer>``, both the ZERO-BASED layer (ledger 521), and a
-            captured field is named ``<name>field``. A name another
-            ``parameterize`` call of this project already holds (any case) raises
-            ``ValueError`` here: stacking calls on one target needs a distinct name
-            for each.
+            parameter appends ``l<layer>`` per selected layer file, the
+            ZERO-BASED layer (ledger 521); pilot points append ``l<layer>``
+            (zero-based) and, with ``zones=``, ``z<zone>`` -- a set
+            ``<name>l<layer>z<zone>``, its points ``...pp0000``, all lower-cased as
+            PEST reads them; and a captured field is named ``<name>field``. A name
+            another ``parameterize`` call of this project already holds (any case)
+            raises ``ValueError`` here (ledger 523): stacking calls on one target,
+            or pilot points declared layer by layer, needs a distinct name for
+            each.
         capture : bool, optional
             Also record the *resolved* model-input field (after multipliers are
             applied) as zero-weight observations named from ``<name>field``
@@ -1018,8 +1062,9 @@ class PestProject:
             zones=zones,
             layers=layers,
             package=package,
-            pp_space=pp_space,
+            pp_spacing=pp_spacing,
             pp_points=pp_points,
+            pp_nearest=pp_nearest,
             correlation=correlation,
             anisotropy=anisotropy,
             bearing=bearing,
@@ -2263,6 +2308,8 @@ class PestProject:
             self._build_pstfrom(staging)
             self._prepare_observation_specs()
             self._carried_river_files = set()
+            # Pilot-point sets are collected afresh by every build.
+            self._pilot_point_sets = []
             with self._quiet_pyemu_context():
                 for spec in self._native_parameter_specs:
                     if spec.recipe.family == "array" and spec.style == "pilotpoints":
@@ -2271,13 +2318,17 @@ class PestProject:
                         add_native_parameter(self, spec)
                     if spec.capture:
                         self._add_capture_field_observations(spec)
+                # After every parameter: one pilot-point command per array file,
+                # appended behind pyEMU's apply and multiplying what it wrote
+                # (ledger 525).
+                emit_pilot_point_commands(self)
             self.pf.mod_sys_cmds.append(self._resolve_exe())
             self._drop_unused_multiplier_apply()
             self._attach_native_observation_postprocessors()
             self._write_project_metadata(filename=target_name)
             with self._quiet_pyemu_context():
                 self.pst = self.pf.build_pst(filename=target_name)
-            if self._pilot_point_frames:
+            if self._pilot_point_sets:
                 register_pilot_point_parameters(self)
             self.pst.model_command = [
                 build_forward_run_command(self.template_workspace, sys.executable)
@@ -2331,6 +2382,9 @@ class PestProject:
                 "transform": spec.resolved_transform,
                 "additive": bool(spec.additive),
                 "name": spec.name,
+                # After a build, array-target pilot points: one row per set with its
+                # point count (ledger 527).
+                "pilot_point_sets": [dict(item) for item in spec.pilot_point_sets],
             }
             for spec in self._native_parameter_specs
         ]
@@ -2809,16 +2863,19 @@ class PestProject:
         bounds, ran each at a bound (ledger 424).
         """
 
-        frames = self._pilot_point_frames.get(spec.name)
-        if not frames:
+        sets = [item for item in self._pilot_point_sets if item["spec"] is spec]
+        if not sets:
             return None
         import pandas as pd
 
         pyemu = self.pyemu or _import_pyemu()
         geostruct = self._geostruct_for(spec)
-        # One covariance per LAYER's point set: the layers are separate parameter
-        # groups here, and correlating across them would assert a vertical
-        # structure the variogram never described. pyEMU's own geostatistical draw,
+        # One covariance per pilot-point SET -- a (layer, zone) of this call: the sets
+        # are separate parameter groups interpolated separately, and correlating
+        # across them would assert a vertical structure, or one across a unit
+        # boundary, the variogram never described (ledger 527). pyEMU skips
+        # a set of one point, which then keeps the draw from its bounds that
+        # `draw_prior` gave it. pyEMU's own geostatistical draw,
         # the one `pf.draw` makes for a correlated grid parameter: the variogram
         # (sill 1) SCALED by the variance the bounds imply at PRIOR_SIGMA_RANGE.
         # Drawn from the unscaled variogram, a pilot value's log10 standard
@@ -2827,11 +2884,11 @@ class PestProject:
         # PESTPP-IES ran it AT a bound (ledger 424).
         layers = [
             pd.DataFrame({
-                "parnme": [str(name) for name in frame["parnme"]],
-                "x": frame["x"].to_numpy(dtype=float),
-                "y": frame["y"].to_numpy(dtype=float),
+                "parnme": [str(name) for name in item["frame"]["parnme"]],
+                "x": item["frame"]["x"].to_numpy(dtype=float),
+                "y": item["frame"]["y"].to_numpy(dtype=float),
             })
-            for frame, _ in frames
+            for item in sets
         ]
         names = pd.Index([name for layer in layers for name in layer["parnme"]])
         with self._quiet_pyemu_context(), contextlib.redirect_stdout(io.StringIO()):

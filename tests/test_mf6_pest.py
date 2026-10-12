@@ -1932,9 +1932,9 @@ def test_pilot_point_k_parameterization_on_voronoi(tmp_path):
         "ppk", workspace=tmp_path / "tmpl",
         start_datetime="2024-01-01",
     )
-    # pp_space=4 on the 2,100 m testing-profile domain -> ~5x5 net (>= 10 pp);
-    # the old pp_space=8 was sized for the 5,000 m validation domain.
-    cal.parameterize("k", style="pilotpoints", pp_space=4, layers=[0, 1],
+    # pp_spacing=400 on the 2,100 m testing-profile domain -> ~5x5 net (>= 10 pp);
+    # 800 was sized for the 5,000 m validation domain.
+    cal.parameterize("k", style="pilotpoints", pp_spacing=400.0, layers=[0, 1],
                      bounds=(0.05, 20.0), physical=(0.001, 300.0), capture=True)
     cal.parameterize("recharge", style="constant", bounds=(0.3, 3.0), physical=(0.0, 1e-2))
     cal.observe(demo.head_targets)
@@ -1991,7 +1991,7 @@ def test_pilot_points_scale_their_own_target_not_the_k_field(tmp_path):
     )
 
     cal = model.pest("k33pp", start_datetime="2024-01-01")
-    cal.parameterize("k33", style="pilotpoints", pp_space=6,
+    cal.parameterize("k33", style="pilotpoints", pp_spacing=600.0,
                      bounds=(0.5, 2.0), physical=(1e-6, 1e3))
     cal.parameterize("recharge", style="constant", bounds=(0.5, 1.5),
                      physical=(0.0, 1e-2))
@@ -2027,7 +2027,8 @@ def test_pilot_points_refuse_an_array_target_with_no_declared_base_array():
     # The array targets declare one -- including the transport target the guard
     # before the recipe-resolved base array refused.
     for target in ("k", "k33", "porosity"):
-        assert np_mod.NativeParameterSpec(target=target, style="pilotpoints").style == "pilotpoints"
+        assert np_mod.NativeParameterSpec(
+            target=target, style="pilotpoints", pp_spacing=100.0).style == "pilotpoints"
 
 
 @pytest.mark.slow
@@ -2055,7 +2056,7 @@ def test_a_pilot_points_only_calibration_runs(tmp_path):
     k = np.asarray(model.gwf.npf.k.get_data(), dtype=float)
 
     cal = model.pest("pponly", start_datetime="2024-01-01")
-    cal.parameterize("k", style="pilotpoints", pp_space=6,
+    cal.parameterize("k", style="pilotpoints", pp_spacing=600.0,
                      bounds=(0.5, 2.0), physical=(1e-3, 300.0))
     cal.observe(demo.head_targets)
     pst = cal.build("pponly.pst", noptmax=0)

@@ -309,9 +309,10 @@ def test_the_template_is_the_runs_files_not_an_edit_made_in_memory_after_the_run
 
     for layer in (1, 2):
         assert np.all(np.loadtxt(template / f"m.npf_k_layer{layer}.txt") == 10.0)
-    for layer in (0, 1):
-        cells = pd.read_csv(template / f"k33l{layer}_pp.cells.csv")
-        assert np.all(cells["base_value"] == 2.0), "pilot points read the object's k33"
+    for layer in (1, 2):
+        # The base the pilot-point step multiplies (ledger 525).
+        base = np.loadtxt(template / f"m.npf_k33_layer{layer}.txt.pp_base")
+        assert np.all(base == 2.0), "pilot points read the object's k33"
     assert np.all(np.asarray(model.gwf.npf.k.get_data()) == 99.0)
     assert np.all(np.asarray(model.gwf.npf.k33.get_data()) == 7.0)
 
@@ -332,11 +333,11 @@ def test_pilot_points_and_the_spatial_reference_read_the_staged_grid(tmp_path):
     written = flopy.mf6.MFSimulation.load(
         sim_ws=str(cal.template_workspace), verbosity_level=0, load_only=["disv"],
     ).get_model("m").modelgrid
-    cells = pd.read_csv(cal.template_workspace / "k33l0_pp.cells.csv")
+    cells = np.load(cal.template_workspace / "k33l0_pp.factors.npz")
 
-    assert np.array_equal(cells["x"].to_numpy(), np.asarray(written.xcellcenters, dtype=float))
-    assert np.array_equal(cells["y"].to_numpy(), np.asarray(written.ycellcenters, dtype=float))
-    assert not np.array_equal(cells["x"].to_numpy(),
+    assert np.array_equal(cells["x"], np.asarray(written.xcellcenters, dtype=float))
+    assert np.array_equal(cells["y"], np.asarray(written.ycellcenters, dtype=float))
+    assert not np.array_equal(cells["x"],
                               np.asarray(model.gwf.modelgrid.xcellcenters, dtype=float)), (
         "the fixture's in-memory grid must differ from the written one, or this checks nothing")
     assert np.array_equal(np.asarray(cal.pf._spatial_reference.xcellcenters, dtype=float),

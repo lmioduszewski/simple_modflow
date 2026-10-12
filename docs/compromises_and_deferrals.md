@@ -33,10 +33,13 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 524 entries (529 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 527 entries (532 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 527 | `pp_spacing=` in model length units replaces `pp_space`, with no alias and no default; `zones=` is honoured... | 2026-10-12 |
+| 526 | Pilot points interpolate in log10 space from the 8 nearest points of their set, through weights stored at b... | 2026-10-12 |
+| 525 | Pilot points multiply the array file as pyEMU left it: one forward-run command per file, product stacking | 2026-10-12 |
 | 524 | The build metadata records every `parameterize` call under `parameters`; `parameter_sets` is gone | 2026-10-12 |
 | 523 | A parameter name already declared is refused at `parameterize()` | 2026-10-12 |
 | 522 | A correlated `style="grid"` block above 5,000 parameters is refused at build | 2026-10-12 |
@@ -595,8 +598,10 @@
      through.
 
 3. **Pilot-point test density sized to the small domain.**
-   - What: `pp_space=4` (was 8) in the pilot-point tests, keeping
-     `n_pp >= 10` on the 2,100 m testing() domain.
+   - What: ~~`pp_space=4` (was 8) in the pilot-point tests, keeping
+     `n_pp >= 10` on the 2,100 m testing() domain.~~ **RESTATED 2026-10-12 by ledger
+     527**: `pp_spacing=400.0` (model length units; `pp_space` is gone),
+     the same net on the ~100 m cells, keeping `n_pp >= 10`.
    - Why/Impact: geometry-appropriate; sparser nets than production use.
    - Revisit: with any pilot-point algorithm change, re-run on validation().
 
@@ -2846,10 +2851,12 @@ same day, which is the useful part of the result.
      - Measured after the fix (nearest pilot pair ~372 m on the canonical testing
        profile): range 150 m -> mean prior correlation +0.010 near / +0.006 far;
        range 3000 m -> +0.845 near / +0.495 far. A test pins both directions.
-     - **Judgment call: one covariance per LAYER**, not one across all layers.
+     - ~~**Judgment call: one covariance per LAYER**, not one across all layers.
        Each layer's points are a separate parameter group, and correlating across
        layers would assert a vertical structure the variogram never described --
-       `correlation=` is a map-plane range.
+       `correlation=` is a map-plane range.~~ **RESTATED 2026-10-12 by ledger
+       527**: one covariance per pilot-point SET -- a layer AND a `zones=`
+       label of one call -- for the same reason, across a unit edge as across layers.
      - Not done: a PESTPP-GLM runner. It is the only way regularization proper
        becomes reachable, and it would need its own results-review layer
        (`IesResults` reads IES-specific files). Recorded as Tier B in §5.8's
@@ -16851,12 +16858,14 @@ same day, which is the useful part of the result.
       and externalizes it there and writes it back; `PstFrom` copies THAT, and the staging
       directory is removed in a `finally`, a failed build included. Everything the build
       reads off a FloPy model goes through ONE helper, `native_parameters.staged_model`:
-      `flopy_model_for` (the relayering, the pilot-point base array), the pilot points'
+      `flopy_model_for` (the relayering, ~~the pilot-point base array~~ -- **the template's
+      own array file since ledger 525**), the pilot points'
       cell centres and the default `spatial_reference`; a model name the files lack is
       refused naming the ones they hold. List targets and capture files were
       already read in the template. What still reads the caller's objects, read-only: the
-      observations (the run's OUTPUT files), `model.vor` (zones, a `pp_space` net, target
-      locations) and the transport sibling's NAME.
+      observations (the run's OUTPUT files), `model.vor` (zones, ~~a `pp_space` net~~
+      explicit pilot points -- **a `pp_spacing` net reads only the staged centres since
+      ledger 527** -- target locations) and the transport sibling's NAME.
       **Judgment call: the run's FILES win over the object in memory.** The base
       observations PEST reads -- every weight-0 `obsval` -- come from the run's output
       files, which the run's input files produced; a template written from an object
@@ -20488,3 +20497,58 @@ same day, which is the useful part of the result.
       `_registered_geostructs` and `_forward_run_config` were removed. **Not
       recorded:** the zone ARRAY itself and the pilot points' coordinates, which live
       in the template's own files.
+
+525. **Pilot points multiply the array file as pyEMU left it: one forward-run command per file, product stacking (2026-10-12).**
+      A pilot-point set rebuilt its layer file from the base captured at build, in a
+      command run AFTER pyEMU's `apply_list_and_array_pars`, so a constant/zone/grid
+      multiplier or a second pilot-point set on that file never reached MF6: constant x2
+      under pilot points at 1.0 wrote 1.000000x, two sets at 2.0 and 1.5 wrote 1.5x
+      (`docs/reproducers/pilot_points_stack_and_zone.py`, real forward runs, exit 0).
+      **Chosen:** every set is listed in the template's `pilot_point_sets.json`, and ONE
+      command per array file multiplies the product of every covering set into the file.
+      **Base:** the file as pyEMU just rewrote it from `org/` when pyEMU parameterizes
+      that file too (known at build from `pf.parfile_relations`), else `<file>.pp_base`,
+      the file at build -- either way a reused worker directory writes the same file
+      every run (pinned in both branches). Rejected: a fixed pyEMU constant on every
+      pilot file (a fake parameter in the .pst) and a pilot factor registered as a pyEMU
+      mult file (myflopy rewriting pyEMU's manifest). **Clamp:** a covered cell is
+      clamped to the tightest `physical=` of its covering sets, after pyEMU clamped its own
+      product with its ult bounds -- so a value clamped in between differs from
+      clamp(org x every factor); two covering sets whose limits share no value are refused.
+      A template built before this keeps its own baked copy of the old function.
+
+526. **Pilot points interpolate in log10 space from the 8 nearest points of their set, through weights stored at build (2026-10-12).**
+      The user's answer to Q2. IDW was global 1/d^2 over every point of the layer, in
+      LINEAR space, recomputed per cell every run. Measured on Ten Trails' 18,107-cell
+      mesh (`docs/reproducers/pilot_point_interpolation.py`): a block of points at x5
+      read 3.25 (R=1000 ft) / 3.57 / 4.14 between them, now 4.43 / 4.88 / 5.00; a field of
+      lognormal points sat 1.156 / 1.236 / 1.705x their geometric mean at sd 0.25 / 0.33 /
+      0.5, now 1.010 / 0.974 / 0.966; one layer's apply took 132-234 ms, now ~1 ms.
+      `pp_nearest=8` is a parameter; a cell at a point takes that point; a parameter not
+      log-transformed interpolates linearly. The weights are `(cells, k)` index and
+      weight arrays in `<set>_pp.factors.npz` (a fixed-width sparse matrix; the forward
+      run is a gather and a row sum). **Not done:** kriging factors (Q2's later option);
+      a point placed off a cell centre to soften the value a cell AT a point takes.
+
+527. **`pp_spacing=` in model length units replaces `pp_space`, with no alias and no default; `zones=` is honoured as one set per layer and label (2026-10-12).**
+      `pp_space` counted median cell widths: 3,984 points per layer on Ten Trails'
+      18,107-cell mesh at the default 5 (4,501 on the 20,323-cell steady run's); 1,500 ft
+      lays 100. **Judgment call: no default spacing** -- a length has no unit-neutral
+      default, so array pilot points require exactly one of `pp_spacing`/`pp_points`, and
+      `pp_spacing`/`pp_points`/`pp_nearest` are refused on any other style (they could not
+      act). Each set's point count is reported on `spec.pilot_point_sets` and in
+      `cal.settings()`. A SET is (call, layer file, zone): each label `> 0` gets its own
+      net over its own cells on one lattice (the lowest centre as origin), is
+      interpolated only from its own points onto only its own cells, and draws its own
+      prior covariance block (correlation across a zone edge measured |r| < 0.15 against
+      > 0.5 within, `test_zoned_pilot_points_are_drawn_correlated_within_a_zone_and_not_across`);
+      labels `<= 0` keep their value (ledger 118's rule). Different settings per zone are
+      separate calls with masked `zones=` and distinct names (one spelling; rejected:
+      dict-valued arguments keyed by zone). Names `<name>l<layer>` /
+      `<name>l<layer>z<zone>`, lower-cased (an upper-case `name=` died with a KeyError).
+      Two calls on one layer under one name are refused; on different layers they keep
+      both sets (the second used to drop the first from the .pst while its command kept
+      applying it at 1.0). Explicit points are located with `cell_shares` and refused off
+      the grid, in a cell labelled `<= 0`, or given twice; a zone `> 0` holding no
+      explicit point is refused. **Not done:** inactive cells excluded as net candidates;
+      per-layer zone maps in one call (the shared `resolve_zone_array` refusal stands).
