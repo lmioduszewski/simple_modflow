@@ -2621,6 +2621,9 @@
       "atol:KEYWORD_ONLY=0.001",
       "rtol:KEYWORD_ONLY=0.001"
     ],
+    "NativeParameterSpec.resolve_form": [
+      "packages:POSITIONAL_OR_KEYWORD=<required>"
+    ],
     "PRTCaptureView.get": [
       "by:KEYWORD_ONLY='release_group'",
       "layer:KEYWORD_ONLY=None"
@@ -3133,7 +3136,7 @@
       "anisotropy:KEYWORD_ONLY=1.0",
       "bearing:KEYWORD_ONLY=0.0",
       "nugget:KEYWORD_ONLY=0.0",
-      "temporal:KEYWORD_ONLY=None",
+      "periods:KEYWORD_ONLY=None",
       "name:KEYWORD_ONLY=None",
       "capture:KEYWORD_ONLY=False",
       "extra:VAR_KEYWORD=<required>"
