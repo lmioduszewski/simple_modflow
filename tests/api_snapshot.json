@@ -4120,7 +4120,7 @@
       "x:KEYWORD_ONLY=None",
       "y:KEYWORD_ONLY=None",
       "color_by:KEYWORD_ONLY='layer'",
-      "cmap:KEYWORD_ONLY='tab10'",
+      "cmap:KEYWORD_ONLY=None",
       "show_grid:KEYWORD_ONLY=True",
       "legend:KEYWORD_ONLY=True",
       "title:KEYWORD_ONLY=None",

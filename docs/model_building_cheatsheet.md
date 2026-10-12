@@ -1046,7 +1046,7 @@ bed exactly.
 
 ```python
 layers.plot.section(y=1000)          # filled, layer-coloured cross-section
-layers.plot.map("clay")              # per-layer thickness
+layers.plot.map("clay")              # per-layer thickness (or by index: map(1))
 layers.plot.surface("all")           # every contact as 3-D height fields (plotly)
 layers.plot.grid(scale=12)           # the layered cell VOLUME (needs `viz3d` extra)
 ```
@@ -1058,7 +1058,8 @@ With none of them you get a West–East line through the grid centre.
 ```python
 layers.plot.section(line=LineString([(x0, y0), (x1, y1)]))
 layers.plot.section(line="sections/a_a_prime.gpkg")
-layers.plot.section(color_by="thickness")     # 'layer' (default) or 'thickness'
+layers.plot.section(color_by="thickness")     # 'layer' (default) or 'thickness', with a colorbar
+layers.plot.section(legend="outside right")   # the legend placements model.plot.section takes
 ```
 
 **To look at contacts individually, render them as VTK sheets:**

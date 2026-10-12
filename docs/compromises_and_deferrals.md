@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 462 entries (467 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 463 entries (468 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 463 | A layer stack's section and thickness map do what their arguments say | 2026-10-11 |
 | 462 | `section` is offered only by a noun with a line profile: the dependent-variable nouns | 2026-10-11 |
 | 461 | A composer's own `cells`/`agg` and its `kind="plot"` tail act or raise, by kind | 2026-10-11 |
 | 460 | A reproducer or example script removes the scratch directory it makes, and a run that leaves anything in it... | 2026-10-11 |
@@ -18622,8 +18623,9 @@ same day, which is the useful part of the result.
       `model.drn.inputs.elev.plot()` draws 1598.13 per period for drains averaging
       133.18 (ledger 297 not applied to series); ~~`mosaic(kind="section", <typo>=)`'s
       `TypeError` offers `cells`, which the composer captures~~ (fixed by ledger
-      461: `cells` reaches the section); `stack.plot.section(
-      legend="bottom")` draws at the upper right (`legend` is read for truth only);
+      461: `cells` reaches the section); ~~`stack.plot.section(
+      legend="bottom")` draws at the upper right (`legend` is read for truth only)~~
+      (fixed by ledger 463);
       `plot.grid(backend="mpl")` and `GridMesh.plot_mpl()` draw onto pyplot's CURRENT
       figure; the interpolated profile reads `<name>.hds` whatever the model's kind
       (`FileNotFoundError` on a GWT model) and labels a concentration profile `hds`.
@@ -18694,8 +18696,8 @@ same day, which is the useful part of the result.
       upper-cased boundname exactly with no refusal; an unknown travel-time `stat` raises
       a pandas `AttributeError`; `layer=1.7` is truncated to 1; and the PRT tails escape
       `test_noun_signatures`.
-      *Docs*: `stack.plot.map()`'s generated `Returns` says `Choro`; it returns a
-      `LayerThicknessMap`.
+      *Docs*: ~~`stack.plot.map()`'s generated `Returns` says `Choro`; it returns a
+      `LayerThicknessMap`~~ (fixed by ledger 463: the method states its own).
 
 437. **A bound plot verb documents only the parameters it accepts (2026-10-11).**
       `_inherit_verb_docs` spliced every entry of the free verb's reference into the bound
@@ -18722,24 +18724,25 @@ same day, which is the useful part of the result.
       `agg` or refuses it and refuses `cells`, and a section takes `cells` as its path);
       `SpatialView.plot` -- and the composers through `_series_selection` -- ignore
       `layer=`/`cells=` on a table without that column; `SliderAnimation.show` ignores
-      its `*args`/`**kwargs`; `LayerSection.draw(color_by=...)` is not checked as the
+      its `*args`/`**kwargs`; ~~`LayerSection.draw(color_by=...)` is not checked as the
       constructor checks it (any value but `'thickness'` draws the layer picture); under
       `color_by='thickness'` the section's `cmap` and `legend` change nothing (the fill is
       `viridis`); a continuous `cmap` draws every layer nearly the same colour, because
       layer `k` takes `cmap(k % 10)`, an index into a 256-step table, and an eleventh
-      layer repeats the first; the `figs` cross-section helper ignores `layer`/
+      layer repeats the first~~ (fixed by ledger 463); the `figs` cross-section helper ignores `layer`/
       `simplify_tolerance`/`sheet_name`/`read_kwargs` for the table `XSection.plot_mpl`
       and `GridSection.plot_mpl` hand it. **Verbs and defaults that cannot act or lie:**
       ~~`FieldMappable.section` raises `NotImplementedError` for every field of every
       namespace that has it (50 of 50 on the canonical model, 14 of 14 on a group of it)~~
       (fixed by ledger 462: only a dependent-variable noun offers `section`);
       a diff's LAK/SFR `results` list `'stage'` as a field whose node has no verbs, so
-      `map(field="stage")` raises `AttributeError`; `StackPlots.map(layer=0)`
+      `map(field="stage")` raises `AttributeError`; ~~`StackPlots.map(layer=0)`
       raised `ValueError: list.index(x): x not in list` while its docstring promised an
-      index (it now says name only); `XSection.plot_mpl` labels the y axis
-      `Elevation (ft)` whatever the length unit or the field; `stack.plot.map(
+      index (it now says name only)~~ (fixed by ledger 463: an index is taken);
+      `XSection.plot_mpl` labels the y axis
+      `Elevation (ft)` whatever the length unit or the field; ~~`stack.plot.map(
       bounds_padding=...)` without `extent=` raises a message saying the map "honours only
-      extent=/bounds_padding=". **Two rules for one selector:** `FieldMappable` matches
+      extent=/bounds_padding="~~ (fixed by ledger 463: it frames the grid). **Two rules for one selector:** `FieldMappable` matches
       `field=` exactly (`'Stage'` raises) and `LeafFieldSugar` lower-cases it.
       Measured by `docs/reproducers/view_plot_docstring_claims.py`.
 
@@ -19345,3 +19348,19 @@ same day, which is the useful part of the result.
       `tests/test_view_grammar_composers.py::test_only_a_dependent_variable_noun_offers_a_section`,
       `test_a_noun_without_a_line_profile_offers_no_section`,
       `tests/test_prt_maps.py::test_pathline_view_refuses_the_verbs_it_cannot_answer`.
+
+463. **A layer stack's section and thickness map do what their arguments say (2026-10-11).**
+      `stack.plot.section(legend=)` now goes through the free verb's `legend_placement`
+      (it was read for its truth only); `color_by` is checked by one helper at the call
+      AND at `draw`; under `color_by='thickness'` the cells are painted from `cmap` by
+      the same renderer as the layer picture, with a colorbar as the legend. Judgment
+      calls: the thickness COLORBAR has one place, so a placement word there RAISES
+      rather than being dropped; `cmap`'s default became `None` (`'tab10'` for layers,
+      `'viridis'` for thickness, as drawn before) -- an intended API-snapshot row; a
+      colormap of 256+ entries is sampled evenly, one colour per layer, while a
+      qualitative one (fewer) keeps index `k` -- `'tab10'` pictures are unchanged
+      (viridis' three layers were within 0.012 of one colour). `stack.plot.map(1)`
+      takes a zero-based index, as `layer=` does on every other map, and
+      `bounds_padding=` without `extent=` frames the grid; `map()`'s `Returns` is its
+      own. Revert check: `tests/test_layers.py` -- ten `section`/`map` tests and
+      `test_a_stack_maps_returns_section_names_what_it_returns`.

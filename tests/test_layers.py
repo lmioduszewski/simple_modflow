@@ -1130,6 +1130,82 @@ def test_section_color_by_is_checked_rather_than_ignored(_line_stack):
         _line_stack.plot.section(color_by="banana")
 
 
+def test_a_section_draw_checks_color_by_as_the_constructor_does(_line_stack):
+    """``plot_mpl(color_by='bogus')`` drew the layer picture (ledger 438)."""
+
+    section = _line_stack.plot.section()
+    with pytest.raises(ValueError, match="color_by must be one of"):
+        section.plot_mpl(color_by="bogus")
+
+
+@pytest.mark.parametrize(("legend", "loc"), [("bottom", 8), ("upper left", 2),
+                                             ("outside right", 6), (True, 1)])
+def test_a_stack_section_puts_its_legend_where_it_is_told(_line_stack, legend, loc):
+    """``legend=`` was read for its truth only: every placement drew upper right
+    (ledger 463). It is the free verb's ``legend_placement`` now."""
+
+    import matplotlib.pyplot as plt
+
+    axes = _line_stack.plot.section(legend=legend).axes
+    assert axes.get_legend()._loc == loc
+    plt.close("all")
+
+
+def test_a_stack_section_refuses_a_legend_that_is_not_a_placement(_line_stack):
+    with pytest.raises(ValueError, match="not a placement"):
+        _line_stack.plot.section(legend="nowhere")
+    with pytest.raises(ValueError, match="COLORBAR"):
+        _line_stack.plot.section(color_by="thickness", legend="bottom")
+
+
+@pytest.mark.parametrize("cmap", ["Reds", "Blues"])
+def test_a_thickness_section_draws_its_cmap_with_a_colorbar(_line_stack, cmap):
+    """Under ``color_by='thickness'`` the fill was always viridis, with no legend."""
+
+    import matplotlib.pyplot as plt
+
+    axes = _line_stack.plot.section(color_by="thickness", cmap=cmap).axes
+    painted = {c.get_cmap().name for c in axes.collections if c.get_array() is not None}
+    assert painted == {cmap}
+    assert len(axes.figure.axes) == 2, "the colorbar is the thickness section's legend"
+    bare = _line_stack.plot.section(color_by="thickness", legend=False).axes
+    assert len(bare.figure.axes) == 1
+    plt.close("all")
+
+
+def test_a_continuous_cmap_gives_each_layer_its_own_colour(_line_stack):
+    """Layer ``k`` took ``cmap(k % 10)``: on viridis' 256-step table every layer
+    came out within 0.012 of one colour."""
+
+    import matplotlib.pyplot as plt
+
+    handles = _line_stack.plot.section(cmap="viridis").axes.get_legend().legend_handles
+    colours = np.array([h.get_facecolor()[:3] for h in handles])
+    assert np.abs(colours - colours[0]).max() > 0.5
+    plt.close("all")
+
+
+def test_a_stack_thickness_map_takes_a_layer_index(_line_stack):
+    """``stack.plot.map(1)`` raised ``list.index(x): x not in list``."""
+
+    assert _line_stack.plot.map(1).title == _line_stack.plot.map("clay").title
+    for bad in (2, -1, "gravel"):
+        with pytest.raises(ValueError, match="sand"):
+            _line_stack.plot.map(bad)
+
+
+def test_a_stack_thickness_map_honours_bounds_padding_alone(_line_stack):
+    """It raised ``TypeError`` -- a message saying the map honours bounds_padding."""
+
+    import matplotlib.pyplot as plt
+
+    xmin, ymin, xmax, ymax = _line_stack.vor.gdf_vorPolys.total_bounds
+    axes = _line_stack.plot.map(bounds_padding=0.1).axes
+    assert axes.get_xlim() == pytest.approx((xmin - 0.1 * (xmax - xmin), xmax + 0.1 * (xmax - xmin)))
+    assert axes.get_ylim() == pytest.approx((ymin - 0.1 * (ymax - ymin), ymax + 0.1 * (ymax - ymin)))
+    plt.close("all")
+
+
 # --- the 3-D volume carries the numbers, not just a colour (2026-08-28) ----- #
 
 @pytest.fixture(scope="module")
@@ -1951,3 +2027,15 @@ def test_a_static_thickness_map_honours_extent_and_nothing_else():
     assert (*axis.get_xlim(), *axis.get_ylim()) == pytest.approx((-0.05, 1.05, -0.05, 1.05))
     with pytest.raises(TypeError, match="honours only extent"):
         result.plot.map(zmin=1.0)
+
+
+def test_a_stack_maps_returns_section_names_what_it_returns():
+    """The spliced ``Returns`` said ``Choro``; the default is a LayerThicknessMap."""
+
+    import myflopy.plot  # noqa: F401 -- the splice runs on import
+    from myflopy.layers import StackPlots
+
+    doc = StackPlots.map.__doc__
+    returns = doc[doc.index("Returns\n"):doc.index("Raises\n")]
+    assert "LayerThicknessMap" in returns.splitlines()[2]
+    assert doc.count("Returns\n") == 1

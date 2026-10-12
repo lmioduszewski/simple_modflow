@@ -82,6 +82,52 @@ _UNSET = object()
 #: silently was not the one asked for.
 _SECTION_COLOR_BY = ("layer", "thickness")
 
+
+def _checked_section_options(color_by, legend):
+    """``(color_by, (show, loc, anchor))`` for a layer section, refused if neither can act.
+
+    ONE check for the constructor and for ``draw``, which used to take any
+    ``color_by`` and draw the layer picture (ledger 438). ``legend`` goes through
+    the free verb's own :func:`~myflopy.modflow.mf6.cross_section_plotting.legend_placement`,
+    so ``'bottom'`` / ``'outside right'`` place it as they do on ``model.plot.section``
+    -- it was read for its truth only and always drawn at the upper right. Under
+    ``color_by='thickness'`` the legend IS the colorbar, which has one place, so
+    a placement word there raises rather than being dropped (ledger 463).
+    """
+
+    from myflopy.modflow.mf6.cross_section_plotting import legend_placement
+
+    if color_by not in _SECTION_COLOR_BY:
+        raise ValueError(
+            f"color_by must be one of {list(_SECTION_COLOR_BY)}, not {color_by!r}."
+        )
+    placement = legend_placement(legend)
+    if color_by == "thickness" and legend not in (True, False, None):
+        raise ValueError(
+            f"legend={legend!r} places a layer legend; under color_by='thickness' the "
+            "legend is the thickness COLORBAR, beside the plot on the right, so it "
+            "takes only True or False."
+        )
+    return color_by, placement
+
+
+def _layer_colors(cmap, nlay: int) -> list:
+    """One colour per layer from ``cmap`` (a name or a ``Colormap``).
+
+    A QUALITATIVE map -- fewer than 256 entries, ``'tab10'``, ``'Set2'`` -- gives
+    layer ``k`` its ``k``-th colour, cycling past the end. A CONTINUOUS one is
+    sampled evenly from end to end: indexing it by ``k`` (as every map was, by
+    ``k % 10``) drew ``'viridis'``'s three layers within 0.012 of one colour,
+    because its table has 256 steps (ledger 463).
+    """
+
+    import matplotlib.pyplot as plt
+
+    cm = plt.get_cmap(cmap)
+    if cm.N < 256:
+        return [cm(k % cm.N) for k in range(nlay)]
+    return [cm(k / max(nlay - 1, 1)) for k in range(nlay)]
+
 #: Per-cell scalars ``grid(backend="vtk")`` can colour by, each with the
 #: colormap that suits it. ``layer`` is discrete -- one flat colour per layer,
 #: named in the bar -- and the rest are continuous fields. ``elevation`` is the
@@ -1913,7 +1959,7 @@ class LayerBuildResult:
 
     def _draw_cross_section(
         self, line=None, *, x=None, y=None, color_by="layer", ax=None,
-        cmap="tab10", show_grid=True, legend=True, title=None,
+        cmap=None, show_grid=True, legend=True, title=None,
     ):
         """Render the layer cross-section into ``ax`` and return it.
 
@@ -1924,44 +1970,38 @@ class LayerBuildResult:
 
         Layer coloring delegates to the shared
         :func:`~myflopy.modflow.mf6.cross_section_plotting.plot_layered_cross_section`
-        renderer (the same core behind the model-aware ``plot_model_cross_section``)."""
-        import matplotlib.pyplot as plt
-
+        renderer (the same core behind the model-aware ``plot_model_cross_section``).
+        Under ``color_by='thickness'`` the same renderer paints the cells by their
+        thickness from ``cmap`` (default ``viridis``) with a colorbar for a legend;
+        it drew ``viridis`` with no colorbar whatever ``cmap``/``legend`` said."""
         from myflopy.modflow.mf6.cross_section_plotting import (
             ModelCrossSectionStyle,
             plot_layered_cross_section,
         )
 
+        color_by, (show_legend, legend_loc, legend_anchor) = _checked_section_options(
+            color_by, legend
+        )
         self._require_finite_geometry("a cross-section")
         vg = self.vertex_grid()
         line_spec = self._resolve_line(line, x, y)
-
-        if color_by == "thickness":
-            import flopy
-
-            if ax is None:
-                _, ax = mpl_axes(figsize=(9, 4))
-            xsec = flopy.plot.PlotCrossSection(modelgrid=vg, line=line_spec, ax=ax)
-            xsec.plot_array(self.thickness, cmap="viridis")
-            if show_grid:
-                xsec.plot_grid(lw=0.25, color="0.3")
-            ax.set_title(title or "Layer cross-section")
-            ax.set_xlabel(f"distance along section [{self.length_units}]")
-            ax.set_ylabel(f"elevation [{self.length_units}]")
-            return ax
-
-        cm = plt.get_cmap(cmap)
-        colors = [cm(i % 10) for i in range(self.nlay)]  # matplotlib RGBA tuples
         style = ModelCrossSectionStyle(
             figsize=(9, 4), grid_linewidth=0.25, grid_color="0.3",
             layer_alpha=0.75, title_fontsize=12, label_fontsize=10,
             legend_loc="upper right", legend_frameon=True, legend_fontsize=8,
         )
+        thickness = color_by == "thickness"
         _, ax = plot_layered_cross_section(
             vg, line_spec, ax=ax, style=style,
-            layer_colors=colors, layer_labels=self.names,
+            layer_colors=None if thickness else _layer_colors(cmap or "tab10", self.nlay),
+            layer_labels=self.names,
+            values=self.thickness if thickness else None,
+            values_cmap=cmap or "viridis",
+            values_label=f"thickness [{self.length_units}]",
+            colorbar=show_legend,
             show_grid=show_grid, show_layers=True, show_head=False,
-            show_legend=legend, title=title or "Layer cross-section",
+            show_legend=show_legend, legend_loc=legend_loc, legend_anchor=legend_anchor,
+            title=title or "Layer cross-section",
             xlabel=f"distance along section [{self.length_units}]",
             ylabel=f"elevation [{self.length_units}]",
         )
@@ -2348,11 +2388,29 @@ class LayerBuildResult:
         return plotter, [mesh]
 
     def _thickness_values(self, layer=None):
-        """Per-cell thickness (total, or a single named layer) and its label."""
+        """Per-cell thickness (total, or one layer by name or zero-based index) and its label.
+
+        An integer is the layer's zero-based index, as ``layer=`` is on every
+        other map; it raised ``list.index(x): x not in list`` (ledger 463).
+        """
 
         if layer is None:
             return self.thickness.sum(axis=0), "total thickness"
-        return self.thickness[self.names.index(layer)], f"{layer!r} thickness"
+        if isinstance(layer, (numbers.Integral, np.integer)) and not isinstance(layer, bool):
+            if not 0 <= int(layer) < self.nlay:
+                raise ValueError(
+                    f"layer={layer} is not a layer of this stack: it has {self.nlay} "
+                    f"(zero-based 0..{self.nlay - 1}), named {self.names}."
+                )
+            name = self.names[int(layer)]
+        elif isinstance(layer, str) and layer in self.names:
+            name = layer
+        else:
+            raise ValueError(
+                f"layer={layer!r} names no layer of this stack; give one of "
+                f"{self.names} or a zero-based index 0..{self.nlay - 1}."
+            )
+        return self.thickness[self.names.index(name)], f"{name!r} thickness"
 
     def _draw_thickness_map(self, *, layer=None, ax=None):
         """Render the thickness choropleth into ``ax`` (geopandas, no basemap)."""
@@ -2416,12 +2474,7 @@ class LayerSection(MplPicture):
         self._result = result
         self._line = None if line is None else _section_line_points(line)
         self._x, self._y = x, y
-        color_by = kwargs.get("color_by", "layer")
-        if color_by not in _SECTION_COLOR_BY:
-            raise ValueError(
-                f"color_by must be one of {list(_SECTION_COLOR_BY)}, not "
-                f"{color_by!r}."
-            )
+        _checked_section_options(kwargs.get("color_by", "layer"), kwargs.get("legend", True))
         self._kwargs = kwargs
         self.title = kwargs.get("title") or "Layer cross-section"
 
@@ -2442,11 +2495,8 @@ class LayerSection(MplPicture):
             this draw only: ``color_by``, ``cmap``, ``show_grid``, ``legend``,
             ``title``. Merged over the stored ones (this call wins) and handed to
             the stack's section renderer, which takes nothing else -- any other
-            keyword raises ``TypeError``. A ``color_by`` given HERE is not checked
-            as the constructor checks it: any value but ``'thickness'`` draws the
-            layer-coloured picture. Under ``color_by='thickness'`` the fill is
-            always ``viridis`` and there is no legend, so ``cmap`` and ``legend``
-            change nothing there.
+            keyword raises ``TypeError``. ``color_by`` and ``legend`` are checked
+            as the constructor checks them: an unknown one raises ``ValueError``.
 
         Returns
         -------
@@ -2467,23 +2517,27 @@ class LayerThicknessMap(MplPicture):
     grid really is where it says it is.
     """
 
-    def __init__(self, result, layer=None, *, extent=None, padding: float = 0.05):
-        """Bind a thickness map of ``result`` (total, or one named layer).
+    def __init__(self, result, layer=None, *, extent=None, padding: float | None = None):
+        """Bind a thickness map of ``result`` (total, or one layer by name or index).
 
         ``extent`` is the window it opens on (see :func:`myflopy.plot.map`),
-        resolved here so a box off the grid raises at the call.
+        resolved here so a box off the grid raises at the call. ``padding`` grows
+        it by that fraction of its own size (default 0.05); given without an
+        ``extent``, it frames the grid's own bounds.
         """
 
         self._result = result
         self._layer = layer
         _, self.title = result._thickness_values(layer)
         vor = result.vor
+        if extent is None and padding is not None:
+            extent = tuple(float(v) for v in vor.gdf_vorPolys.total_bounds)
         self._extent = resolve_extent(
             extent,
             crs=getattr(vor, "crs", None),
             bounds=vor.gdf_vorPolys.total_bounds,
         )
-        self._padding = float(padding)
+        self._padding = 0.05 if padding is None else float(padding)
 
     def draw(self, ax=None, **kwargs):
         """Render the thickness map into ``ax`` (or a new one) and return the Axes.
@@ -2497,7 +2551,8 @@ class LayerThicknessMap(MplPicture):
             The Axes to draw into. ``None`` (the default) draws into a new figure.
             Either way the Axes is returned, titled with the layer (or "total
             thickness") and the stack's length units, with an equal aspect and,
-            when the map was built with ``extent=``, limits set to that box grown
+            when the map was built with ``extent=`` or ``bounds_padding=``, limits
+            set to that box -- the grid's own with ``bounds_padding`` alone -- grown
             by its ``bounds_padding`` (a fraction of the box's own width and
             height). Drawing into your own Axes does not replace the picture's
             cached ``.axes``.
@@ -2598,10 +2653,10 @@ class StackPlots:
 
         Parameters
         ----------
-        layer : str, optional
-            One layer, by NAME (``stack.names``). With none, total thickness. An
-            integer index is not accepted: it raises ``ValueError`` (``x not in
-            list``), on both renderers.
+        layer : str or int, optional
+            One layer, by NAME (``stack.names``) or zero-based INDEX, on both
+            renderers. With none, total thickness. A name the stack does not have,
+            or an index outside it, raises ``ValueError`` naming the layers.
         basemap : bool, default False
             Route through the shared choropleth (``vor.plot.map``) so the cells
             sit on a web basemap. Requires a real CRS.
@@ -2610,9 +2665,11 @@ class StackPlots:
             :meth:`~myflopy.modflow.mf6.grid.plotting.GridPlots.map` (the entries
             below; ``values`` is the thickness itself, so passing it raises
             ``TypeError``). Without it the Matplotlib thickness map honours only
-            ``extent=`` and, beside it, ``bounds_padding=`` (default ``0.05``, a
-            fraction of the box's own size); any other keyword raises
-            ``TypeError`` -- ``bounds_padding=`` without ``extent=`` included.
+            the framing: ``extent=`` opens it on that box, and ``bounds_padding=``
+            grows the box by that fraction of its own size (default ``0.05`` with
+            an ``extent``); ``bounds_padding=`` alone frames the GRID padded so.
+            With neither, Matplotlib frames the cells itself. Any other keyword
+            raises ``TypeError``.
 
             .. generated from myflopy.plot.map -- edit there, then run scripts/derive_docstrings.py
         values : sequence of float, optional
@@ -2815,19 +2872,15 @@ class StackPlots:
             genuinely open-ended and Plotly owns their names, so they are validated
             LATE, at render time, not here.
 
+            .. end generated
+
         Returns
         -------
-        Choro or matplotlib.figure.Figure
-            With ``backend='plotly'`` (the default), a
-            :class:`~myflopy.viz.Picture`: it renders itself in Jupyter, and answers
-            ``.fig``, ``.show()``, ``.save(path)`` and ``.html(path)``. It also
-            carries ``.plot_mpl()`` for a static rendering and ``.ani`` for the
-            animation over periods.
-
-            With ``backend='mpl'``, a bare Matplotlib ``Figure`` -- not a Picture, so
-            use ``.savefig(path)`` and ``.axes[0]`` rather than the picture verbs.
-
-            .. end generated
+        LayerThicknessMap or Choro or matplotlib.figure.Figure
+            By default a :class:`LayerThicknessMap`, a Matplotlib
+            :class:`~myflopy.viz.Picture` (``.axes``, ``.show()``, ``.save(path)``;
+            no ``.fig``). With ``basemap=True``, what ``vor.plot.map`` returns: the
+            interactive ``Choro``, or a bare ``Figure`` with ``backend='mpl'``.
 
         Raises
         ------
@@ -2864,9 +2917,10 @@ class StackPlots:
             # either way -- `vor.plot.map` is what the front door calls too.
             return GridPlots(self.result.vor).map(values=list(values), **kwargs)
         # The one option the static thickness map honours -- framing, which a
-        # Matplotlib picture cannot do by zooming (ledger 309).
+        # Matplotlib picture cannot do by zooming (ledger 309). `bounds_padding`
+        # alone frames the grid, as it does on every other map (ledger 463).
         extent = kwargs.pop("extent", None)
-        padding = kwargs.pop("bounds_padding", 0.05) if extent is not None else 0.05
+        padding = kwargs.pop("bounds_padding", None)
         if kwargs:
             raise TypeError(
                 f"{', '.join(sorted(kwargs))} style the choropleth, which is "
@@ -2882,9 +2936,9 @@ class StackPlots:
         x=None,
         y=None,
         color_by: str = "layer",
-        cmap: str = "tab10",
+        cmap: str | None = None,
         show_grid: bool = True,
-        legend: bool = True,
+        legend: bool | str = True,
         title: str | None = None,
         **kwargs,
     ) -> LayerSection:
@@ -2947,29 +3001,33 @@ class StackPlots:
         x, y : float, optional
             Draw the section along a constant x or constant y.
         color_by : {'layer', 'thickness'}, default 'layer'
-            Cell scalar the fill is keyed to: discrete layer colours, or a
-            continuous viridis thickness field.
-        cmap : str or matplotlib.colors.Colormap, default 'tab10'
-            Colormap for the layer colours, under ``color_by='layer'`` only: a
-            name or a ``Colormap``, as ``plt.get_cmap`` takes. Layer
-            ``k`` takes ``cmap(k % 10)``, an integer index into the colormap's own
-            table: a ten-colour qualitative map like ``'tab10'`` gives each layer
-            its own colour, but a continuous map's table has 256 steps, so
-            ``'viridis'`` draws every layer in nearly the same colour, and an
-            eleventh layer repeats the first. Under ``color_by='thickness'`` the
-            fill is always ``viridis`` and this changes nothing.
+            Cell scalar the fill is keyed to: discrete layer colours, or each
+            cell's thickness on a continuous scale with a colorbar. Anything else
+            raises ``ValueError`` here.
+        cmap : str or matplotlib.colors.Colormap, optional
+            The colormap, a name or a ``Colormap`` as ``plt.get_cmap`` takes.
+            Under ``color_by='layer'`` (default ``'tab10'``): a qualitative map --
+            fewer than 256 entries, ``'tab10'``, ``'Set2'`` -- gives layer ``k`` its
+            ``k``-th colour, cycling past the end; a continuous one (``'viridis'``)
+            is sampled evenly from end to end, one colour per layer. Under
+            ``color_by='thickness'`` (default ``'viridis'``): the thickness scale.
         show_grid : bool, default True
             Draw cell edges over the fill.
-        legend : bool, default True
-            Include the layer legend, at the upper right inside the plot. Read for
-            its truth only: a placement word the free verb takes
-            (``'outside right'``, ``'bottom'``, ...) draws it at the upper right
-            too. ``color_by='thickness'`` draws none either way.
+        legend : bool or str, default True
+            Under ``color_by='layer'``, where the layer legend goes, as the free
+            verb takes it: ``False`` drops it, ``True`` puts it at the upper right,
+            ``'auto'`` leaves it to Matplotlib, a side or corner (``'bottom'``,
+            ``'topleft'``, Matplotlib's ``'upper right'``) places it inside, and
+            ``'outside right'``/``'outside bottom'`` (also ``left``, ``top``) beside
+            the plot; an unknown word raises ``ValueError`` here. Under
+            ``color_by='thickness'`` the legend is the thickness colorbar, on the
+            right: ``True`` draws it, ``False`` drops it, and a placement word
+            raises ``ValueError``.
         title : str, optional
             Plot title. Defaults to "Layer cross-section".
         **kwargs
             Forwarded to :class:`LayerSection`, which stores them for its renderer,
-            and that takes only the five options above. So nothing else can act:
+            and that takes only the options above. So nothing else can act:
             any other keyword -- every free-verb argument listed below included --
             raises ``TypeError``, and only when the picture is first DRAWN
             (``.axes``, ``.show()``, ``.save()``), not at this call.
@@ -3072,8 +3130,9 @@ class StackPlots:
         TypeError
             If ``line`` is not a geometry, a path, or a sequence of points.
         ValueError
-            If ``line`` resolves to fewer than two points, or ``color_by`` is
-            not one of the values above. Both are raised HERE, not later from
+            If ``line`` resolves to fewer than two points, ``color_by`` is not one
+            of the values above, or ``legend`` is not a placement (or is one under
+            ``color_by='thickness'``). All are raised HERE, not later from
             ``.axes``.
 
             .. generated from myflopy.plot.section -- edit there, then run scripts/derive_docstrings.py
