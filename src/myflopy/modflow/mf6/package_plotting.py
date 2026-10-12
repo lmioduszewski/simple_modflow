@@ -2882,6 +2882,31 @@ class LineProfileView(SpatialView):
 
         raise NotImplementedError(f"{type(self).__name__} must define _sections().")
 
+    def _panel_map_names_agg(self) -> bool:
+        """``False``: a dependent-variable panel draws one value per cell, on every tier.
+
+        A group's or a diff's ``_spatial_map`` only passes its tail on, which
+        :meth:`SpatialView._panel_map_names_agg` cannot see through, so
+        ``group.hds.mosaic(agg=...)`` reached Plotly as a trace property and raised
+        its ``ValueError`` where ``model.hds`` raised the ``TypeError`` the
+        composers document (review of ledger 461).
+        """
+
+        return False
+
+    @staticmethod
+    def _profile_axis_labels(sections) -> tuple[str, str]:
+        """``(xlabel, ylabel)`` of a profile drawn from ``sections``: the first one's.
+
+        :meth:`XSection._axis_labels <myflopy.modflow.utils.datatypes.xsections.XSection._axis_labels>`
+        -- the model's own length unit, and ``Concentration``/``Temperature`` on a
+        transport field. The composers wrote ``Distance``/``Elevation`` whatever
+        the field (review of ledger 464).
+        """
+
+        first = next(iter(sections.values()), None)
+        return first._axis_labels() if first is not None else ("Distance", "Elevation")
+
     def section(
         self,
         model=None,
@@ -3038,12 +3063,14 @@ class LineProfileView(SpatialView):
         axis = str(by or ("model" if self._spatial_models() else "period")).lower()
         base_layer = 0 if layer is None else layer
         panels = []
+        labels = ("Distance", "Elevation")
         if axis == "model":
             for name in self._resolve_models(model):
                 sections = self._sections(
                     model=name, per=self._single_period(per), layer=base_layer, **kwargs
                 )
                 panels.append((str(name), self._section_lines(sections)))
+                labels = self._profile_axis_labels(sections)
         elif axis == "period":
             sections = self._sections(model=model, layer=base_layer, **kwargs)
             for period in self._resolve_periods(per):
@@ -3052,6 +3079,7 @@ class LineProfileView(SpatialView):
                     if key is not None:
                         section.kstpkper = key
                 panels.append((f"Period {period}", self._section_lines(sections)))
+            labels = self._profile_axis_labels(sections)
         else:
             raise ValueError(f"by must be 'model' or 'period' for kind='section', got {axis!r}.")
         heading = title or f"{self._spatial_value_label()} cross sections by {axis}"
@@ -3060,16 +3088,16 @@ class LineProfileView(SpatialView):
                 panels,
                 ncols=int(ncols),
                 title=heading,
-                xaxis_title="Distance",
-                yaxis_title="Elevation",
+                xaxis_title=labels[0],
+                yaxis_title=labels[1],
                 markers=False,
             )
         return _xy_mosaic_mpl(
             panels,
             ncols=int(ncols),
             title=heading,
-            xlabel="Distance",
-            ylabel="Elevation",
+            xlabel=labels[0],
+            ylabel=labels[1],
             markers=False,
         )
 
@@ -3079,6 +3107,7 @@ class LineProfileView(SpatialView):
         axis = str(over or "period").lower()
         base_layer = 0 if layer is None else layer
         frames = []
+        labels = ("Distance", "Elevation")
         if axis == "period":
             sections = self._sections(model=model, layer=base_layer, **kwargs)
             for period in self._resolve_periods(per):
@@ -3087,12 +3116,14 @@ class LineProfileView(SpatialView):
                     if key is not None:
                         section.kstpkper = key
                 frames.append((f"Period {period}", self._section_lines(sections)))
+            labels = self._profile_axis_labels(sections)
         elif axis == "model":
             for name in self._resolve_models(model):
                 sections = self._sections(
                     model=name, per=self._single_period(per), layer=base_layer, **kwargs
                 )
                 frames.append((str(name), self._section_lines(sections)))
+                labels = self._profile_axis_labels(sections)
         else:
             raise ValueError(
                 f"over must be 'period' or 'model' for kind='section', got {axis!r}."
@@ -3102,15 +3133,15 @@ class LineProfileView(SpatialView):
             return _xy_animation_plotly(
                 frames,
                 title=heading,
-                xaxis_title="Distance",
-                yaxis_title="Elevation",
+                xaxis_title=labels[0],
+                yaxis_title=labels[1],
                 markers=False,
             )
         return _xy_animation_mpl(
             frames,
             title=heading,
-            xlabel="Distance",
-            ylabel="Elevation",
+            xlabel=labels[0],
+            ylabel=labels[1],
             markers=False,
         )
 

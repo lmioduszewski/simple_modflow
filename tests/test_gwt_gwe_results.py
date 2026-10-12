@@ -432,6 +432,28 @@ def test_an_interpolated_transport_profile_reads_the_models_own_field(gwt_run, g
 
 
 @pytest.mark.slow
+def test_a_transport_profile_verb_labels_its_own_field(gwt_run, gwe_run):
+    """``model.conc.section()`` and its ``kind='section'`` composers labelled the
+    concentration axis ``Elevation``: only ``XSection.plot_mpl`` read the field
+    (review of ledger 464)."""
+
+    import matplotlib.pyplot as plt
+
+    try:
+        for run, field, axis in ((gwt_run, "conc", "Concentration"),
+                                 (gwe_run, "temp", "Temperature")):
+            reader = getattr(run.model("trans"), field)
+            assert reader.section(cells=[0, 5, 10]).layout.yaxis.title.text == axis
+            figure = reader.section(cells=[0, 5, 10], backend="mpl")
+            assert figure.axes[0].get_ylabel() == axis
+            for verb in ("mosaic", "animate"):
+                figure = getattr(reader, verb)(kind="section", cells=[0, 5, 10])
+                assert figure.layout.yaxis.title.text == axis, verb
+    finally:
+        plt.close("all")
+
+
+@pytest.mark.slow
 def test_model_budget_terms_follow_the_model_kind(gwt_run, gwe_run):
     """``model.budget.<term>`` is discovered, so it names each kind's real terms.
 

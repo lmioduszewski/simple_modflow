@@ -538,6 +538,22 @@ def test_a_section_composer_takes_its_path_as_cells(canonical_run, verb):
 
 
 @pytest.mark.slow
+@pytest.mark.parametrize("verb", ["mosaic", "animate"])
+def test_a_dependent_variable_map_composer_refuses_agg_on_every_tier(canonical_run, verb):
+    """A group's or a diff's heads ``_spatial_map`` passes its tail on, so ``agg``
+    reached Plotly and raised its ``ValueError`` ("Invalid property ... 'agg'")
+    where ``model.hds`` raised the documented ``TypeError`` (review of ledger
+    461)."""
+
+    from myflopy.project.model_group import ModelGroup
+
+    group = ModelGroup({"a": canonical_run, "b": canonical_run}, reference="a")
+    for view in (canonical_run.hds, group.hds, canonical_run.diff(canonical_run).hds):
+        with pytest.raises(TypeError, match="map has no agg"):
+            getattr(view, verb)(kind="map", agg="sum", per=[0])
+
+
+@pytest.mark.slow
 def test_only_a_dependent_variable_noun_offers_a_section(canonical_run):
     """50 of 50 package fields (and 14 of 14 on a group) answered ``section`` by
     raising NotImplementedError. The rule of ``test_plot_vocabulary`` -- a scope

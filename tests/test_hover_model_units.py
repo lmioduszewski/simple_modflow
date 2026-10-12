@@ -147,3 +147,26 @@ def test_every_cross_section_axis_is_labelled_in_metres(metres_canonical):
         )
     finally:
         plt.close("all")
+
+
+@pytest.mark.slow
+def test_the_head_profile_verbs_are_labelled_in_metres(metres_canonical):
+    """The noun's own ``section`` and its ``kind='section'`` composers wrote a bare
+    ``Distance``/``Elevation`` -- the cross-section's label without its unit -- after
+    ledger 464 moved ``XSection.plot_mpl`` (review of ledger 464)."""
+
+    import matplotlib.pyplot as plt
+
+    model = mf.load_mf6_run(str(metres_canonical))
+    expected = ("Distance (m)", "Elevation (m)")
+    try:
+        layout = model.hds.section(cells=[0, 5, 10]).layout
+        assert (layout.xaxis.title.text, layout.yaxis.title.text) == expected
+        ax = model.hds.section(cells=[0, 5, 10], backend="mpl").axes[0]
+        assert (ax.get_xlabel(), ax.get_ylabel()) == expected
+        for verb in ("mosaic", "animate"):
+            figure = getattr(model.hds, verb)(kind="section", cells=[0, 5, 10], per=[0, 1])
+            assert figure.layout.xaxis.title.text == expected[0], verb
+            assert figure.layout.yaxis.title.text == expected[1], verb
+    finally:
+        plt.close("all")

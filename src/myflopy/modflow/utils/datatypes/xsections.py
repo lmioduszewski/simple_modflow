@@ -89,10 +89,18 @@ def render_xsections(
     diff heads surfaces: each section contributes its head-profile series
     (labeled by its ``section_name``); the model top is drawn once from the
     first section. ``backend="plotly"`` returns a ``viz.Fig``; ``backend="mpl"``
-    a matplotlib figure.
+    a matplotlib figure. The axes are the first section's own
+    (:meth:`XSection._axis_labels`): ``Distance (<unit>)`` in the model's length
+    unit, and ``Elevation (<unit>)`` -- or ``Concentration``/``Temperature`` on a
+    transport profile.
     """
 
     data = combined_section_frame(sections)
+    # The first section's own labels: the model's length unit, and the field's
+    # name on a transport profile -- this wrote "Elevation" on a concentration
+    # profile (review of ledger 464).
+    first = next(iter(sections.values()), None)
+    xlabel, ylabel = first._axis_labels() if first is not None else ("Distance", "Elevation")
 
     normalized = str(backend).lower()
     if normalized in ("mpl", "matplotlib", "static"):
@@ -104,7 +112,8 @@ def render_xsections(
             y="elevation",
             series_col="series",
             title=title or "Cross section",
-            ylabel="Elevation",
+            xlabel=xlabel,
+            ylabel=ylabel,
         )
         # figs returns (fig, ax); the grammar contract is a bare figure
         return result[0] if isinstance(result, tuple) else result
@@ -119,8 +128,8 @@ def render_xsections(
             )
         fig.update_layout(
             title=title or "Cross section",
-            xaxis_title="Distance",
-            yaxis_title="Elevation",
+            xaxis_title=xlabel,
+            yaxis_title=ylabel,
         )
         return fig
     raise ValueError(f"backend must be 'plotly' or 'mpl', got {backend!r}.")
@@ -616,7 +625,11 @@ class XSection(Picture):
         return str(getattr(getattr(self, "_model", None), "model_type", "") or "").lower()
 
     def _axis_labels(self) -> tuple[str, str]:
-        """``(xlabel, ylabel)`` for :meth:`plot_mpl`, in the model's own units.
+        """``(xlabel, ylabel)`` of this profile, in the model's own units.
+
+        The one rule for a line profile's axes: :meth:`plot_mpl`,
+        :func:`render_xsections` (the nouns' ``section``) and the
+        ``kind="section"`` composers all read it.
 
         The distance is in the DIS length unit; the y axis is an ELEVATION in it
         for a head or a layer-top profile, and the field's name for a

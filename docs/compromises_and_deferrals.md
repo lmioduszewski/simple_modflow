@@ -19333,10 +19333,13 @@ same day, which is the useful part of the result.
       it, and highlighting is `select=`; `agg` is FORWARDED to each map panel, refused
       when the panel's `map` names none (a single model's noun is judged by its own
       signature, since its tail is Plotly's) and forwarded when a group or diff
-      `_spatial_map` only passes a tail on, so that case is decided further down; it is
-      refused on a section. `kind="plot"` takes no tail. Revert check:
+      `_spatial_map` only passes a tail on, so that case is decided further down --
+      bar a dependent-variable noun, which refuses it on every tier (its group/diff
+      forms had handed it to Plotly as a trace property; review); it is refused on a
+      section. `kind="plot"` takes no tail. Revert check:
       `tests/test_view_grammar_composers.py` -- the `agg`, `cells`, series-keyword and
-      section-path tests (11 cases).
+      section-path tests (11 cases), and
+      `test_a_dependent_variable_map_composer_refuses_agg_on_every_tier` (2).
 
 462. **`section` is offered only by a noun with a line profile: the dependent-variable nouns (2026-10-11).**
       Every `SpatialView` inherited a `section` (and `mosaic`/`animate(kind="section")`)
@@ -19386,11 +19389,15 @@ same day, which is the useful part of the result.
       a convention, not something the model declares. The interpolated profile read
       `<name>.hds` whatever the kind (`FileNotFoundError` on GWT): `InterpolatedSurface`
       now opens the model's own `_field_reader`, and the stepped series are named
-      `Lyr k conc`/`temp` by kind (`hds` on GWF, unchanged). Not done: the noun
-      profile's own axes (`render_xsections`, the section composers) still read
-      `Distance`/`Elevation` with no unit -- not wrong, only bare. Revert check:
+      `Lyr k conc`/`temp` by kind (`hds` on GWF, unchanged). The noun profile's own
+      axes (`model.hds/.conc/.temp.section()` through `render_xsections`, and the
+      `kind="section"` composers) read the same `XSection._axis_labels` -- they had
+      written a bare `Distance`/`Elevation`, `Elevation` on a concentration axis
+      included (review). Revert check:
       `tests/test_hover_model_units.py::test_every_cross_section_axis_is_labelled_in_metres`,
-      `tests/test_gwt_gwe_results.py::test_an_interpolated_transport_profile_reads_the_models_own_field`.
+      `tests/test_gwt_gwe_results.py::test_an_interpolated_transport_profile_reads_the_models_own_field`,
+      `test_a_transport_profile_verb_labels_its_own_field`,
+      `tests/test_hover_model_units.py::test_the_head_profile_verbs_are_labelled_in_metres`.
 
 465. **A one-value noun refuses a per-layer field's options, and a heads option on a map with no heads raises at the call (2026-10-11).**
       A record or array noun's `**trace_kwargs` carried `LAYER_FIELD_MAP_PARAMS` to the

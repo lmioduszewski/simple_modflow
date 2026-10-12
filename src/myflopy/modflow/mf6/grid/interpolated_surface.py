@@ -81,7 +81,10 @@ class InterpolatedSurface(Picture):
         :param ys: optional, array of y coordinates. If not provided will get from vor
         :param zs: optional, array of z coordinates. If not provided will get from hds obj
         :param vor: voronoi grid object corresponding to model, will get from model if not provided
-        :param hds: Optional, HeadsPlus object corresponding to model, will get from model if not provided
+        :param hds: optional dependent-variable reader of the model -- ``HeadsPlus``,
+            ``ConcResults`` or ``TempResults`` (any ``DependentVariableFile``);
+            without one, the model's own reader (``model.hds``/``.conc``/``.temp``
+            by its kind) is used
         :param model: mf6 SimulationBase model
         :param layer: defaults to 0
         :param per: stress period, zero-based: its LAST saved step is drawn
@@ -91,7 +94,8 @@ class InterpolatedSurface(Picture):
         :param kstpkper: tuple of time step and period for surface
         :param resolution: defaults to 1000
         :param use_rbf: defaults to False
-        :param surf_type: ``'hds'`` (default) interpolates the head field at
+        :param surf_type: ``'hds'`` (default) interpolates the model's own field
+            -- heads, or concentration/temperature on a GWT/GWE model -- at
             ``kstpkper``; ``'lyr'`` the TOP of layer ``layer`` -- the model top for
             ``layer=0``, the bottom of layer ``k - 1`` for ``layer=k`` -- read from
             the model's own discretization when a model is given, else from the
