@@ -84,7 +84,9 @@ myflopy's view, **FloPy's package object is `model.fl.drn`**, and `model.package
 only the all-packages `summary()`/`mosaic()`; group and diff still read
 `group.packages.<pkg>` / `diff.packages.<pkg>`) — **every noun
 is an object, every object answers the same verbs** (`get`/`summary`/`plot`, plus
-`map`/`section`/`mosaic`/`animate` for spatial nouns). Never add a `foo()` + `plot_foo()`
+`map`/`mosaic`/`animate` for spatial nouns, and `section` -- a line profile -- only on
+the dependent-variable nouns, `LineProfileView`: a verb that can never act is not
+offered, ledger 462). Never add a `foo()` + `plot_foo()`
 method pair; add a view class exposed as a noun property.
 **Several packages of one type are found by TYPE and never picked in silence** (ledger
 352; Ten Trails carries RIV `riv` + `crisp`). FloPy's `get_package("lak")` answers a

@@ -699,8 +699,9 @@ def test_pathline_map_and_plot_render_through_matplotlib(prt_run):
 
 
 def test_pathline_view_refuses_the_verbs_it_cannot_answer(prt_run):
-    with pytest.raises(NotImplementedError, match="cross-section"):
-        prt_run.pathlines.section()
+    # A trajectory is no per-cell field, so no line profile is offered at all
+    # (ledger 462) -- the verb used to exist only to raise.
+    assert not hasattr(prt_run.pathlines, "section")
     with pytest.raises(NotImplementedError, match="no period"):
         prt_run.pathlines.animate()
     with pytest.raises(ValueError, match="not a pathline coloring"):

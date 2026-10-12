@@ -1337,27 +1337,6 @@ class PRTPathlineView(_PRTDerivedView):
         fig.tight_layout()
         return fig
 
-    def section(self, *args, **kwargs):
-        """Trajectories are not a per-cell field, so there is no section to slice.
-
-        Parameters
-        ----------
-        *args, **kwargs
-            Accepted only so that ANY call reaches the refusal below; none is read.
-
-        Raises
-        ------
-        NotImplementedError
-            Always, naming :meth:`plot` (elevation against travel time), the
-            vertical view of the same tracks.
-        """
-
-        raise NotImplementedError(
-            "Pathlines are trajectories, not a per-cell field, so they cannot be "
-            "sliced into a cross-section. plot() draws elevation against travel "
-            "time, which is the vertical view of the same tracks."
-        )
-
     def animate(self, *args, **kwargs):
         """One figure already holds the whole run, so there is no axis to animate.
 

@@ -533,8 +533,10 @@ shadow is pinned in `tests/docstring_shadows.json`; read that diff.
 ## Why this file exists
 
 The **spatial** half of the grammar was already decided and documented
-(`docs/myflopy_context.md`: *"`map/plot/section` + `mosaic/animate` on every leaf"*,
-implemented by `SpatialView` / `FieldMappable` in `package_plotting.py`).
+(`docs/myflopy_context.md`: *"`map/plot` + `mosaic/animate` on every leaf"*,
+implemented by `SpatialView` / `FieldMappable` in `package_plotting.py`; `section`
+-- a line profile -- only on the dependent-variable nouns, `LineProfileView`, since
+every other leaf's raised `NotImplementedError` on every field, ledger 462).
 
 What was never written down is the other half: what to do with a **derived
 table** — a purpose-built frame like the SFR long profile that merges several

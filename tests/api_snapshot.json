@@ -836,11 +836,6 @@
       "field:KEYWORD_ONLY=None",
       "kwargs:VAR_KEYWORD=<required>"
     ],
-    "FieldMappable.section": [
-      "args:VAR_POSITIONAL=<required>",
-      "field:KEYWORD_ONLY=None",
-      "kwargs:VAR_KEYWORD=<required>"
-    ],
     "FilledSection.plot_mpl": [
       "ax:POSITIONAL_OR_KEYWORD=None"
     ],
@@ -2213,6 +2208,25 @@
       "field:KEYWORD_ONLY=None",
       "kwargs:VAR_KEYWORD=<required>"
     ],
+    "LineProfileView.section": [
+      "model:POSITIONAL_OR_KEYWORD=None",
+      "line:KEYWORD_ONLY=None",
+      "cells:KEYWORD_ONLY=None",
+      "per:KEYWORD_ONLY=None",
+      "kstpkper:KEYWORD_ONLY=None",
+      "layer:KEYWORD_ONLY=0",
+      "interpolate:KEYWORD_ONLY=False",
+      "interpolator:KEYWORD_ONLY=None",
+      "use_rbf:KEYWORD_ONLY=True",
+      "num_points:KEYWORD_ONLY=100",
+      "clip:KEYWORD_ONLY=None",
+      "x_or_y:KEYWORD_ONLY='x'",
+      "show_model_top:KEYWORD_ONLY=True",
+      "show_model_btm:KEYWORD_ONLY=False",
+      "backend:KEYWORD_ONLY='plotly'",
+      "title:KEYWORD_ONLY=None",
+      "refused:VAR_KEYWORD=<required>"
+    ],
     "ListingOutcome": [
       "outcome:POSITIONAL_OR_KEYWORD=<required>",
       "finished_at:POSITIONAL_OR_KEYWORD=None",
@@ -2655,10 +2669,6 @@
     "PRTPathlineView.plot": [
       "backend:KEYWORD_ONLY='plotly'",
       "title:KEYWORD_ONLY=None"
-    ],
-    "PRTPathlineView.section": [
-      "args:VAR_POSITIONAL=<required>",
-      "kwargs:VAR_KEYWORD=<required>"
     ],
     "PRTPathlineView.summary": [],
     "PRTProject": [
@@ -4057,25 +4067,6 @@
       "agg:KEYWORD_ONLY=None",
       "backend:KEYWORD_ONLY='plotly'",
       "title:KEYWORD_ONLY=None"
-    ],
-    "SpatialView.section": [
-      "model:POSITIONAL_OR_KEYWORD=None",
-      "line:KEYWORD_ONLY=None",
-      "cells:KEYWORD_ONLY=None",
-      "per:KEYWORD_ONLY=None",
-      "kstpkper:KEYWORD_ONLY=None",
-      "layer:KEYWORD_ONLY=0",
-      "interpolate:KEYWORD_ONLY=False",
-      "interpolator:KEYWORD_ONLY=None",
-      "use_rbf:KEYWORD_ONLY=True",
-      "num_points:KEYWORD_ONLY=100",
-      "clip:KEYWORD_ONLY=None",
-      "x_or_y:KEYWORD_ONLY='x'",
-      "show_model_top:KEYWORD_ONLY=True",
-      "show_model_btm:KEYWORD_ONLY=False",
-      "backend:KEYWORD_ONLY='plotly'",
-      "title:KEYWORD_ONLY=None",
-      "refused:VAR_KEYWORD=<required>"
     ],
     "SpecBuildContext": [
       "project_root:POSITIONAL_OR_KEYWORD=None",

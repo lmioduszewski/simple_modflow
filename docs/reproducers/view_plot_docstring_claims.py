@@ -116,11 +116,15 @@ def canon(root: Path) -> None:
                 continue
             for field in namespace.field_names():
                 total += 1
+                node = getattr(namespace, field)
+                if not hasattr(node, "section"):
+                    continue
                 try:
-                    namespace.section(field=field, line=line)
+                    node.section(line=line)
                 except NotImplementedError:
                     raised += 1
-    print(f"5. FieldMappable.section raised NotImplementedError on {raised} of {total} fields")
+    print(f"5. FieldMappable.section raised NotImplementedError on {raised} of {total} fields "
+          f"(offered by the namespace: {hasattr(FieldMappable, 'section')})")
     group = mf.ModelGroup({"a": model, "b": model}, reference="a")
     raised, total = 0, 0
     for pkg in dir(type(group.packages)):
@@ -132,8 +136,11 @@ def canon(root: Path) -> None:
                 continue
             for field in namespace.field_names():
                 total += 1
+                node = getattr(namespace, field)
+                if not hasattr(node, "section"):
+                    continue
                 try:
-                    namespace.section(field=field, line=line)
+                    node.section(line=line)
                 except NotImplementedError:
                     raised += 1
     print(f"   ... and on {raised} of {total} fields of a group of it")

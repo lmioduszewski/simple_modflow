@@ -36,7 +36,7 @@ from myflopy.modflow.mf6.heads_observations import (
 )
 from myflopy.modflow.mf6.hydraulics import unit_labels
 from myflopy.modflow.mf6.package_plotting import (
-    SpatialView,
+    LineProfileView,
     _apply_backend,
     refuse_noun_parameters,
     resolve_noun_hover,
@@ -104,12 +104,12 @@ def _as_layer_cell_heads(data, *, nlay: int, ncpl: int):
     )
 
 
-class DependentVariableFile(SpatialView, bf.HeadFile):
+class DependentVariableFile(LineProfileView, bf.HeadFile):
     """A per-cell dependent-variable output reader (heads / concentration / temperature).
 
-    Also a full :class:`SpatialView` leaf in the unified grammar --
+    Also a full :class:`LineProfileView` leaf in the unified grammar --
     ``.get()/.summary()`` (tables), ``.map()/.plot()/.section()`` (panels),
-    ``.mosaic()/.animate()`` (composers). ``SpatialView`` is first in the MRO
+    ``.mosaic()/.animate()`` (composers). ``LineProfileView`` is first in the MRO
     deliberately so the grammar's ``plot`` shadows flopy's legacy
     ``LayerFile.plot``. Subclasses set the class attributes below.
     """

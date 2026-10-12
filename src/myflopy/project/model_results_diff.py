@@ -23,7 +23,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from myflopy.modflow.mf6.package_explorer import DiffSpatialView, FieldMappable
+from myflopy.modflow.mf6.package_explorer import (
+    DiffSpatialView,
+    FieldMappable,
+    LineProfileView,
+)
 from myflopy.modflow.mf6.package_registry import _PACKAGE_EXPLORER_SPECS
 from myflopy.modflow.utils.datatypes.xsections import XSection
 from myflopy.project.group.lak import GroupLakStageResults
@@ -65,7 +69,7 @@ class _ResultDiffBase:
         return [name for name in self.group.models if name != self.group.reference]
 
 
-class HeadsResultDiff(_ResultDiffBase, DiffSpatialView):
+class HeadsResultDiff(_ResultDiffBase, LineProfileView, DiffSpatialView):
     """Head-difference results vs the reference model (per cell / layer / time).
 
     ``map`` / ``mosaic`` / ``animate`` render Δhead (model - reference) --

@@ -514,7 +514,7 @@ def test_a_composer_refuses_map_options_on_a_kind_that_draws_no_map(verb, kind):
 # ---------------------------------------------------------------------------
 # The noun's SECTION (ledger 334, 2026-09-26)
 #
-# `SpatialView.section` renders through `render_xsections`, so `_discovered()`
+# `LineProfileView.section` renders through `render_xsections`, so `_discovered()`
 # -- which keys on a body mentioning `plot.map(`/`plot.section(`/
 # `_choropleth_factory` -- never found it: the gap ledger 258 closed for the
 # composers, one verb over. It took `**kwargs` into `XSection`, and 24 of 28
@@ -535,16 +535,16 @@ def test_the_nouns_section_names_the_measured_set_and_nothing_else():
     from myflopy.modflow.mf6.package_plotting import (
         NOUN_SECTION_PARAMS,
         NOUN_SECTION_REFUSED,
-        SpatialView,
+        LineProfileView,
     )
 
-    params = inspect.signature(SpatialView.section).parameters
+    params = inspect.signature(LineProfileView.section).parameters
     named = {n for n, p in params.items() if p.kind is p.KEYWORD_ONLY}
     assert named == set(NOUN_SECTION_PARAMS) | {"backend", "title"}, (
-        f"SpatialView.section names {sorted(named)}"
+        f"LineProfileView.section names {sorted(named)}"
     )
     offered = named & (set(NOUN_SECTION_REFUSED) | set(_NOT_ON_A_NOUNS_SECTION))
-    assert not offered, f"SpatialView.section offers what it cannot honour: {sorted(offered)}"
+    assert not offered, f"LineProfileView.section offers what it cannot honour: {sorted(offered)}"
     tails = [p.name for p in params.values() if p.kind is p.VAR_KEYWORD]
     assert tails == ["refused"], (
         "the tail exists only to refuse, and is named so an editor's popup says so"
@@ -554,13 +554,13 @@ def test_the_nouns_section_names_the_measured_set_and_nothing_else():
 def test_the_nouns_section_documents_every_parameter_it_names():
     """Checked on the SOURCE literal -- what a static reader actually gets."""
 
-    from myflopy.modflow.mf6.package_plotting import SpatialView
+    from myflopy.modflow.mf6.package_plotting import LineProfileView
 
-    source = pathlib.Path(inspect.getsourcefile(SpatialView)).read_text()
+    source = pathlib.Path(inspect.getsourcefile(LineProfileView)).read_text()
     fn = next(
         f
         for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.ClassDef) and node.name == "SpatialView"
+        if isinstance(node, ast.ClassDef) and node.name == "LineProfileView"
         for f in node.body
         if isinstance(f, ast.FunctionDef) and f.name == "section"
     )
@@ -582,7 +582,7 @@ def test_the_nouns_section_documents_every_parameter_it_names():
                     documented.add(part)
     named = [a.arg for a in (*fn.args.args[1:], *fn.args.kwonlyargs)] + [fn.args.kwarg.arg]
     missing = sorted(set(named) - documented)
-    assert not missing, f"SpatialView.section names but never documents {missing}"
+    assert not missing, f"LineProfileView.section names but never documents {missing}"
     assert "model.plot.section(" in doc, "the docstring must say where the cross-section lives"
 
 
@@ -605,9 +605,7 @@ def _section_tails() -> set[str]:
 #: Each `section` with a tail, and why it may have one. EXACT in both directions:
 #: a new noun defining its own `section(**kwargs)` is what swallowed `fill=`.
 _SECTION_TAILS = {
-    "SpatialView.section": "refuses: the tail forwards nothing (ledger 334)",
-    "FieldMappable.section": "the namespace `field=` sugar (8.8's one exemption)",
-    "PRTPathlineView.section": "raises NotImplementedError: a trajectory is no field",
+    "LineProfileView.section": "refuses: the tail forwards nothing (ledger 334)",
     "ModelPlots.section": "a VERB scope: the tail rides to the free verb",
     "StackPlots.section": "a VERB scope over a layer stack",
 }

@@ -719,6 +719,25 @@ def refuse_panel_drawing_options(kind: str, verb: str, options: dict) -> None:
     )
 
 
+def refuse_a_missing_line_profile(view, where: str) -> None:
+    """Raise unless ``view`` has a line profile (a :class:`LineProfileView`).
+
+    ``mosaic``/``animate`` are defined once, on :class:`SpatialView`, so every
+    noun has ``kind="section"``; only a dependent-variable noun can draw it
+    (ledger 462).
+    """
+
+    if isinstance(view, LineProfileView):
+        return
+    raise ValueError(
+        f"{where} draws a LINE PROFILE, which only a dependent-variable noun has -- "
+        "model.hds / .conc / .temp, group.hds, diff.hds. This noun has none; its "
+        "pictures are map, plot, mosaic(kind='map'|'plot') and animate. The model's "
+        "cross-section, cells coloured by layer or by any (nlay, ncpl) array, is "
+        "model.plot.section(line=..., fill=...)."
+    )
+
+
 #: What a ``kind="plot"`` composer reads: the series panels take nothing else,
 #: so any other keyword is refused rather than dropped (ledger 461).
 SERIES_COMPOSER_PARAMS = {
@@ -1816,167 +1835,10 @@ class SpatialView:
         fig.tight_layout()
         return fig
 
-    # -- cross-section hooks (the section verb + kind="section" composers) --
-    def _sections(self, model=None, **kwargs):
-        """Return ``{name: XSection}`` for this node (heads leaves override)."""
-
-        raise NotImplementedError(
-            "This node has no cross-section view; section/kind='section' is available on "
-            "heads leaves (model.hds, group.hds, diff heads)."
-        )
-
     def _noun_path(self) -> str:
         """How a caller reached this noun, for messages (``model.hds``, ``group.conc``)."""
 
         return type(self).__name__
-
-    def section(
-        self,
-        model=None,
-        *,
-        line=None,
-        cells=None,
-        per: int | None = None,
-        kstpkper: tuple[int, int] | None = None,
-        layer=0,
-        interpolate: bool = False,
-        interpolator: str | None = None,
-        use_rbf: bool = True,
-        num_points: int = 100,
-        clip=None,
-        x_or_y: str = "x",
-        show_model_top: bool = True,
-        show_model_btm: bool = False,
-        backend: str = "plotly",
-        title: str | None = None,
-        **refused,
-    ):
-        """This field's LINE PROFILE: its value against distance along a line.
-
-        One line per ``layer``, plus the model top. On a group ``model=None``
-        overlays every member; on a diff, the reference and each compared model.
-        This is the picture ``model.plot.section(fill=None)`` draws. The model's
-        CROSS-SECTION -- the cells the line cuts, coloured by layer or by a field --
-        is ``model.plot.section(line=..., fill=...)``; its arguments (``fill``,
-        ``layers``, ``head_layers``, ...) RAISE here and say so, rather than being
-        taken and dropped (ledger 334).
-
-        Parameters
-        ----------
-        model : str, optional
-            On a group or a diff, one member's name, to draw that member alone.
-            A single model's noun takes none.
-        line : LineString, sequence of (x, y), or dict, optional
-            The section line: a shapely ``LineString``, ``[(x, y), ...]``, or a
-            flopy ``{"line": [...]}`` dict. Give ``line`` or ``cells``.
-        cells : int or list of int, optional
-            The section path as cell numbers, in order; the line runs through
-            their centroids. One cell draws a straight line through it, east-west
-            or north-south as ``x_or_y`` says.
-        per : int, optional
-            Stress period (zero-based) to draw, at its LAST saved step -- on each
-            member's own clock on a group or a diff. With neither ``per`` nor
-            ``kstpkper``, the first saved time.
-        kstpkper : tuple of (int, int), optional
-            The exact ``(time step, period)`` to draw. Giving it with ``per``
-            raises, as does a time the output did not save.
-        layer : int or list of int, default 0
-            Whose values to draw, zero-based; a list overlays one line per layer.
-            An interpolated profile draws one, so a list of more raises there.
-        interpolate : bool, default False
-            Sample an interpolated surface along the line, rather than stepping
-            from cell centre to cell centre.
-        interpolator : str, optional
-            The interpolation method by name -- ``'griddata'``, ``'rbf'``,
-            ``'linearND'`` or ``'cloughTocher2D'``. Giving one turns
-            ``interpolate`` on.
-        use_rbf : bool, default True
-            With ``interpolate`` and no ``interpolator``: radial basis functions
-            (``True``) or ``griddata`` (``False``). ``False`` without
-            interpolation raises.
-        num_points : int, default 100
-            How many points to sample along the line when interpolating;
-            changed without interpolation, it raises.
-        clip : Path or geometry, optional
-            Clip the interpolated surface to this region; raises without
-            interpolation.
-        x_or_y : {'x', 'y'}, default 'x'
-            With a single cell in ``cells``, run the line east-west (``'x'``) or
-            north-south (``'y'``) through it.
-        show_model_top : bool, default True
-            Draw the model top.
-        show_model_btm : bool, default False
-            Draw the bottoms of the layers in ``layer``.
-        backend : {'plotly', 'mpl'}, default 'plotly'
-            ``'plotly'`` returns an interactive :class:`~myflopy.viz.Fig`;
-            ``'mpl'`` a Matplotlib ``Figure``.
-        title : str, optional
-            The figure title.
-        **refused
-            Nothing is accepted here. It exists so a keyword this noun does not
-            take raises a ``TypeError`` that says why: the cross-section's
-            arguments name ``model.plot.section(fill=...)``, and anything else is
-            named with its nearest accepted spelling.
-
-        Returns
-        -------
-        myflopy.viz.Fig or matplotlib.figure.Figure
-
-        Raises
-        ------
-        TypeError
-            For any keyword not named above -- the cross-section's pointing at
-            ``model.plot.section(fill=...)``, a typo with its nearest spelling.
-        ValueError
-            ``use_rbf``/``num_points``/``clip`` without interpolation, naming
-            ``interpolate=True``; a list of layers when interpolating; ``per``
-            with ``kstpkper``; a period or time the output did not save.
-
-        Examples
-        --------
-        >>> model.hds.section(line=line)
-        >>> model.hds.section(line=line, layer=[0, 1], per=3)
-        >>> model.hds.section(cells=[1653, 651, 1241], interpolator="griddata")
-        >>> model.hds.section(line=line, backend="mpl").savefig("heads.png")
-        """
-
-        refuse_section_arguments(
-            f"{self._noun_path()}.section()", refused, NOUN_SECTION_PARAMS
-        )
-        from myflopy.modflow.utils.datatypes.xsections import render_xsections
-
-        sections = self._sections(
-            model=model, line=line, cells=cells, per=per, kstpkper=kstpkper,
-            layer=layer, interpolate=interpolate, interpolator=interpolator,
-            use_rbf=use_rbf, num_points=num_points, clip=clip, x_or_y=x_or_y,
-            show_model_top=show_model_top, show_model_btm=show_model_btm,
-        )
-        return render_xsections(sections, backend=backend, title=title)
-
-    @staticmethod
-    def _section_lines(sections) -> list:
-        """Flatten sections to ``[(series_label, x, y)]`` at their current period."""
-
-        from myflopy.modflow.utils.datatypes.xsections import combined_section_frame
-
-        data = combined_section_frame(sections)
-        return [
-            (
-                str(name),
-                sub["distance"].to_numpy(dtype=float),
-                sub["elevation"].to_numpy(dtype=float),
-            )
-            for name, sub in data.groupby("series", sort=False)
-        ]
-
-    @staticmethod
-    def _period_end_kstpkper(model, period: int):
-        """Return the last ``(kstp, kper)`` saved in ``period`` (or None if it saved none).
-
-        The one rule, :func:`~myflopy.modflow.mf6.period_end.last_saved_steps`.
-        """
-
-        return last_saved_steps(model.kstpkper).get(int(period))
 
     # -- the composers' own selectors, by kind (ledger 461) ------------
     def _panel_map_names_agg(self) -> bool | None:
@@ -2111,7 +1973,10 @@ class SpatialView:
         Parameters
         ----------
         kind : {'map', 'plot', 'section'}, default 'map'
-            What each panel is: a choropleth, a series plot, or a cross section.
+            What each panel is: a choropleth, a series plot, or a line profile.
+            ``'section'`` exists only on a dependent-variable noun (``model.hds``,
+            ``.conc``, ``.temp``, ``group.hds``, ``diff.hds``) and raises
+            ``ValueError`` on any other.
         by : str, optional
             Facet axis. Maps: ``'layer'`` or ``'model'``; series: ``'model'``,
             ``'layer'`` or an entity (``'lake'``, ``'reach'``); sections:
@@ -2350,6 +2215,7 @@ class SpatialView:
                 title=title,
             )
         if kind_key == "section":
+            refuse_a_missing_line_profile(self, where)
             return self._xs_mosaic(
                 by=by,
                 per=per,
@@ -2425,49 +2291,6 @@ class SpatialView:
             xlabel="Stress Period",
             ylabel=value_column,
             markers=True,
-        )
-
-    def _xs_mosaic(
-        self, *, by, per, layer, model, backend, ncols, title, **kwargs
-    ):
-        """Grid of cross-section panels faceted by model or period."""
-
-        axis = str(by or ("model" if self._spatial_models() else "period")).lower()
-        base_layer = 0 if layer is None else layer
-        panels = []
-        if axis == "model":
-            for name in self._resolve_models(model):
-                sections = self._sections(
-                    model=name, per=self._single_period(per), layer=base_layer, **kwargs
-                )
-                panels.append((str(name), self._section_lines(sections)))
-        elif axis == "period":
-            sections = self._sections(model=model, layer=base_layer, **kwargs)
-            for period in self._resolve_periods(per):
-                for section in sections.values():
-                    key = self._period_end_kstpkper(section.model, period)
-                    if key is not None:
-                        section.kstpkper = key
-                panels.append((f"Period {period}", self._section_lines(sections)))
-        else:
-            raise ValueError(f"by must be 'model' or 'period' for kind='section', got {axis!r}.")
-        heading = title or f"{self._spatial_value_label()} cross sections by {axis}"
-        if self._normalize_backend(backend) == "plotly":
-            return _xy_mosaic_plotly(
-                panels,
-                ncols=int(ncols),
-                title=heading,
-                xaxis_title="Distance",
-                yaxis_title="Elevation",
-                markers=False,
-            )
-        return _xy_mosaic_mpl(
-            panels,
-            ncols=int(ncols),
-            title=heading,
-            xlabel="Distance",
-            ylabel="Elevation",
-            markers=False,
         )
 
     def _facet_panels(self, axis, *, per, layer, model, extents=None, **map_kwargs):
@@ -2668,7 +2491,10 @@ class SpatialView:
         Parameters
         ----------
         kind : {'map', 'plot', 'section'}, default 'map'
-            What each frame is: a choropleth, a series plot, or a cross section.
+            What each frame is: a choropleth, a series plot, or a line profile.
+            ``'section'`` exists only on a dependent-variable noun (``model.hds``,
+            ``.conc``, ``.temp``, ``group.hds``, ``diff.hds``) and raises
+            ``ValueError`` on any other.
         over : {'period', 'model'}, optional
             The dimension swept. ``'period'`` (maps and sections) steps stress
             periods; ``'model'`` steps a group's models. Defaults to
@@ -2886,6 +2712,7 @@ class SpatialView:
                 title=title,
             )
         if kind_key == "section":
+            refuse_a_missing_line_profile(self, where)
             return self._xs_animation(
                 over=over,
                 per=per,
@@ -2944,47 +2771,6 @@ class SpatialView:
             markers=True,
         )
 
-    def _xs_animation(self, *, over, per, layer, model, backend, title, **kwargs):
-        """Animate cross sections over stress periods or the group's models."""
-
-        axis = str(over or "period").lower()
-        base_layer = 0 if layer is None else layer
-        frames = []
-        if axis == "period":
-            sections = self._sections(model=model, layer=base_layer, **kwargs)
-            for period in self._resolve_periods(per):
-                for section in sections.values():
-                    key = self._period_end_kstpkper(section.model, period)
-                    if key is not None:
-                        section.kstpkper = key
-                frames.append((f"Period {period}", self._section_lines(sections)))
-        elif axis == "model":
-            for name in self._resolve_models(model):
-                sections = self._sections(
-                    model=name, per=self._single_period(per), layer=base_layer, **kwargs
-                )
-                frames.append((str(name), self._section_lines(sections)))
-        else:
-            raise ValueError(
-                f"over must be 'period' or 'model' for kind='section', got {axis!r}."
-            )
-        heading = title or f"{self._spatial_value_label()} cross section over {axis}"
-        if self._normalize_backend(backend) == "plotly":
-            return _xy_animation_plotly(
-                frames,
-                title=heading,
-                xaxis_title="Distance",
-                yaxis_title="Elevation",
-                markers=False,
-            )
-        return _xy_animation_mpl(
-            frames,
-            title=heading,
-            xlabel="Distance",
-            ylabel="Elevation",
-            markers=False,
-        )
-
     def _plotly_animation(self, frames, *, title):
         """Delegate to the shared combinator -- one implementation, two spellings.
 
@@ -3032,6 +2818,258 @@ class SpatialView:
 
         _draw(0)
         return FuncAnimation(fig, _draw, frames=len(frames), interval=600, blit=False)
+
+
+class LineProfileView(SpatialView):
+    """A :class:`SpatialView` that has a LINE PROFILE: the ``section`` verb.
+
+    Only a dependent-variable noun -- heads, concentration, temperature, on one
+    model (``model.hds``), a group (``group.hds``) or a diff (``diff.hds``) -- has
+    a value at every cell of every layer to profile along a line, so only these
+    answer ``section`` and ``mosaic``/``animate(kind="section")``. Every other
+    noun inherited a ``section`` that raised ``NotImplementedError`` on every
+    field (50 of 50 on the canonical model, 14 of 14 on a group of it): a verb
+    that can never act, now not offered (ledger 462). A host supplies
+    :meth:`_sections`.
+    """
+
+    # -- the hook the host provides (the section verb + kind="section" composers) --
+    def _sections(self, model=None, **kwargs):
+        """Return ``{name: XSection}`` for this node; every host overrides it."""
+
+        raise NotImplementedError(f"{type(self).__name__} must define _sections().")
+
+    def section(
+        self,
+        model=None,
+        *,
+        line=None,
+        cells=None,
+        per: int | None = None,
+        kstpkper: tuple[int, int] | None = None,
+        layer=0,
+        interpolate: bool = False,
+        interpolator: str | None = None,
+        use_rbf: bool = True,
+        num_points: int = 100,
+        clip=None,
+        x_or_y: str = "x",
+        show_model_top: bool = True,
+        show_model_btm: bool = False,
+        backend: str = "plotly",
+        title: str | None = None,
+        **refused,
+    ):
+        """This field's LINE PROFILE: its value against distance along a line.
+
+        One line per ``layer``, plus the model top. On a group ``model=None``
+        overlays every member; on a diff, the reference and each compared model.
+        This is the picture ``model.plot.section(fill=None)`` draws. The model's
+        CROSS-SECTION -- the cells the line cuts, coloured by layer or by a field --
+        is ``model.plot.section(line=..., fill=...)``; its arguments (``fill``,
+        ``layers``, ``head_layers``, ...) RAISE here and say so, rather than being
+        taken and dropped (ledger 334).
+
+        Parameters
+        ----------
+        model : str, optional
+            On a group or a diff, one member's name, to draw that member alone.
+            A single model's noun takes none.
+        line : LineString, sequence of (x, y), or dict, optional
+            The section line: a shapely ``LineString``, ``[(x, y), ...]``, or a
+            flopy ``{"line": [...]}`` dict. Give ``line`` or ``cells``.
+        cells : int or list of int, optional
+            The section path as cell numbers, in order; the line runs through
+            their centroids. One cell draws a straight line through it, east-west
+            or north-south as ``x_or_y`` says.
+        per : int, optional
+            Stress period (zero-based) to draw, at its LAST saved step -- on each
+            member's own clock on a group or a diff. With neither ``per`` nor
+            ``kstpkper``, the first saved time.
+        kstpkper : tuple of (int, int), optional
+            The exact ``(time step, period)`` to draw. Giving it with ``per``
+            raises, as does a time the output did not save.
+        layer : int or list of int, default 0
+            Whose values to draw, zero-based; a list overlays one line per layer.
+            An interpolated profile draws one, so a list of more raises there.
+        interpolate : bool, default False
+            Sample an interpolated surface along the line, rather than stepping
+            from cell centre to cell centre.
+        interpolator : str, optional
+            The interpolation method by name -- ``'griddata'``, ``'rbf'``,
+            ``'linearND'`` or ``'cloughTocher2D'``. Giving one turns
+            ``interpolate`` on.
+        use_rbf : bool, default True
+            With ``interpolate`` and no ``interpolator``: radial basis functions
+            (``True``) or ``griddata`` (``False``). ``False`` without
+            interpolation raises.
+        num_points : int, default 100
+            How many points to sample along the line when interpolating;
+            changed without interpolation, it raises.
+        clip : Path or geometry, optional
+            Clip the interpolated surface to this region; raises without
+            interpolation.
+        x_or_y : {'x', 'y'}, default 'x'
+            With a single cell in ``cells``, run the line east-west (``'x'``) or
+            north-south (``'y'``) through it.
+        show_model_top : bool, default True
+            Draw the model top.
+        show_model_btm : bool, default False
+            Draw the bottoms of the layers in ``layer``.
+        backend : {'plotly', 'mpl'}, default 'plotly'
+            ``'plotly'`` returns an interactive :class:`~myflopy.viz.Fig`;
+            ``'mpl'`` a Matplotlib ``Figure``.
+        title : str, optional
+            The figure title.
+        **refused
+            Nothing is accepted here. It exists so a keyword this noun does not
+            take raises a ``TypeError`` that says why: the cross-section's
+            arguments name ``model.plot.section(fill=...)``, and anything else is
+            named with its nearest accepted spelling.
+
+        Returns
+        -------
+        myflopy.viz.Fig or matplotlib.figure.Figure
+
+        Raises
+        ------
+        TypeError
+            For any keyword not named above -- the cross-section's pointing at
+            ``model.plot.section(fill=...)``, a typo with its nearest spelling.
+        ValueError
+            ``use_rbf``/``num_points``/``clip`` without interpolation, naming
+            ``interpolate=True``; a list of layers when interpolating; ``per``
+            with ``kstpkper``; a period or time the output did not save.
+
+        Examples
+        --------
+        >>> model.hds.section(line=line)
+        >>> model.hds.section(line=line, layer=[0, 1], per=3)
+        >>> model.hds.section(cells=[1653, 651, 1241], interpolator="griddata")
+        >>> model.hds.section(line=line, backend="mpl").savefig("heads.png")
+        """
+
+        refuse_section_arguments(
+            f"{self._noun_path()}.section()", refused, NOUN_SECTION_PARAMS
+        )
+        from myflopy.modflow.utils.datatypes.xsections import render_xsections
+
+        sections = self._sections(
+            model=model, line=line, cells=cells, per=per, kstpkper=kstpkper,
+            layer=layer, interpolate=interpolate, interpolator=interpolator,
+            use_rbf=use_rbf, num_points=num_points, clip=clip, x_or_y=x_or_y,
+            show_model_top=show_model_top, show_model_btm=show_model_btm,
+        )
+        return render_xsections(sections, backend=backend, title=title)
+
+    @staticmethod
+    def _section_lines(sections) -> list:
+        """Flatten sections to ``[(series_label, x, y)]`` at their current period."""
+
+        from myflopy.modflow.utils.datatypes.xsections import combined_section_frame
+
+        data = combined_section_frame(sections)
+        return [
+            (
+                str(name),
+                sub["distance"].to_numpy(dtype=float),
+                sub["elevation"].to_numpy(dtype=float),
+            )
+            for name, sub in data.groupby("series", sort=False)
+        ]
+
+    @staticmethod
+    def _period_end_kstpkper(model, period: int):
+        """Return the last ``(kstp, kper)`` saved in ``period`` (or None if it saved none).
+
+        The one rule, :func:`~myflopy.modflow.mf6.period_end.last_saved_steps`.
+        """
+
+        return last_saved_steps(model.kstpkper).get(int(period))
+
+    def _xs_mosaic(
+        self, *, by, per, layer, model, backend, ncols, title, **kwargs
+    ):
+        """Grid of cross-section panels faceted by model or period."""
+
+        axis = str(by or ("model" if self._spatial_models() else "period")).lower()
+        base_layer = 0 if layer is None else layer
+        panels = []
+        if axis == "model":
+            for name in self._resolve_models(model):
+                sections = self._sections(
+                    model=name, per=self._single_period(per), layer=base_layer, **kwargs
+                )
+                panels.append((str(name), self._section_lines(sections)))
+        elif axis == "period":
+            sections = self._sections(model=model, layer=base_layer, **kwargs)
+            for period in self._resolve_periods(per):
+                for section in sections.values():
+                    key = self._period_end_kstpkper(section.model, period)
+                    if key is not None:
+                        section.kstpkper = key
+                panels.append((f"Period {period}", self._section_lines(sections)))
+        else:
+            raise ValueError(f"by must be 'model' or 'period' for kind='section', got {axis!r}.")
+        heading = title or f"{self._spatial_value_label()} cross sections by {axis}"
+        if self._normalize_backend(backend) == "plotly":
+            return _xy_mosaic_plotly(
+                panels,
+                ncols=int(ncols),
+                title=heading,
+                xaxis_title="Distance",
+                yaxis_title="Elevation",
+                markers=False,
+            )
+        return _xy_mosaic_mpl(
+            panels,
+            ncols=int(ncols),
+            title=heading,
+            xlabel="Distance",
+            ylabel="Elevation",
+            markers=False,
+        )
+
+    def _xs_animation(self, *, over, per, layer, model, backend, title, **kwargs):
+        """Animate cross sections over stress periods or the group's models."""
+
+        axis = str(over or "period").lower()
+        base_layer = 0 if layer is None else layer
+        frames = []
+        if axis == "period":
+            sections = self._sections(model=model, layer=base_layer, **kwargs)
+            for period in self._resolve_periods(per):
+                for section in sections.values():
+                    key = self._period_end_kstpkper(section.model, period)
+                    if key is not None:
+                        section.kstpkper = key
+                frames.append((f"Period {period}", self._section_lines(sections)))
+        elif axis == "model":
+            for name in self._resolve_models(model):
+                sections = self._sections(
+                    model=name, per=self._single_period(per), layer=base_layer, **kwargs
+                )
+                frames.append((str(name), self._section_lines(sections)))
+        else:
+            raise ValueError(
+                f"over must be 'period' or 'model' for kind='section', got {axis!r}."
+            )
+        heading = title or f"{self._spatial_value_label()} cross section over {axis}"
+        if self._normalize_backend(backend) == "plotly":
+            return _xy_animation_plotly(
+                frames,
+                title=heading,
+                xaxis_title="Distance",
+                yaxis_title="Elevation",
+                markers=False,
+            )
+        return _xy_animation_mpl(
+            frames,
+            title=heading,
+            xlabel="Distance",
+            ylabel="Elevation",
+            markers=False,
+        )
 
 
 class LeafFieldSugar:
@@ -3346,40 +3384,6 @@ class FieldMappable:
 
         return self._field_accessor(field).plot(*args, **kwargs)
 
-    def section(self, *args, field=None, **kwargs):
-        """Cross-section of one field along a line (``field=`` selects it).
-
-        Signature varies with ``field=`` -- see :meth:`map` for why, and call
-        ``ns.<field>.section(`` when you want an editor to complete the arguments.
-
-        No package field has a line profile: every field of a single model's or
-        a group's namespace raises ``NotImplementedError`` (measured: 50 of 50
-        and 14 of 14 on the canonical model), as do a diff's, bar its LAK and SFR
-        ``stage``, which raise ``AttributeError``. The profile is on the
-        dependent-variable nouns -- ``model.hds.section`` -- and the
-        cross-section is the model's bound section verb,
-        :func:`myflopy.plot.section`.
-
-        Parameters
-        ----------
-        *args
-            Passed positionally to ``ns.<field>.section(...)``.
-        field : str, optional
-            The field, by name -- one of :meth:`field_names`, matched exactly
-            (``'Stage'`` raises where ``'stage'`` works). A name not listed raises
-            ``ValueError`` naming the choices. ``None`` (the default) is the
-            namespace's default field: ``'q'`` on a package's results,
-            ``'gwrch'`` on UZF's, ``'finf'`` on UZF's inputs, and on another
-            package's inputs its default value column (``'connection_area'`` on
-            LAK, ``'rhk'`` on SFR). On a diff's LAK and SFR results ``'stage'``
-            is listed but its node has no verbs, so it raises ``AttributeError``.
-        **kwargs
-            Passed to ``ns.<field>.section(...)``, whose parameters they must be --
-            which differ by field.
-        """
-
-        return self._field_accessor(field).section(*args, **kwargs)
-
     def mosaic(self, *args, field=None, **kwargs):
         """Shared-scale mosaic of one field over layers/models.
 
@@ -3446,6 +3450,7 @@ __all__ = [
     "build_cell_input_map_payload",
     "build_group_input_compare_map_payload",
     "SpatialView",
+    "LineProfileView",
     "DiffSpatialView",
     "FieldMappable",
     "LeafFieldSugar",

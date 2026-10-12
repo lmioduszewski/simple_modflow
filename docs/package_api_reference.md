@@ -1270,7 +1270,7 @@ Every **noun** is an object; every object answers the same **verbs**. Different 
 | `summary()` | every noun | a compact digest frame |
 | `plot()` | every noun | the noun's **one** canonical chart (`viz.Fig`) † |
 | `map()` | **spatial** nouns | choropleth on the grid |
-| `section()` | spatial nouns | cross-section |
+| `section()` | dependent-variable nouns -- `model.hds`/`.conc`/`.temp`, `group.hds`, `diff.hds` | the value's LINE PROFILE along a line; no other noun has one, so none offers it (ledger 462) -- the model's cross-section is `model.plot.section(fill=...)` |
 | `mosaic()` | spatial nouns | small-multiples panel |
 | `animate()` | spatial nouns | animation over stress periods |
 | `long()` / `wide()` / `stack()` | cell-budget fields | frame reshapes -- `wide()` is one column per period, at its last saved step (ledger 349); `long()` keeps every step |

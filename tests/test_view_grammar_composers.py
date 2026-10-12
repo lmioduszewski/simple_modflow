@@ -301,34 +301,16 @@ def test_plot_animation_requires_model_axis():
 
 
 # --- kind="section" plumbing -----------------------------------------------------------
-def test_xs_kind_raises_cleanly_off_heads_leaves():
+def test_a_noun_without_a_line_profile_offers_no_section():
+    """Every SpatialView inherited a ``section`` that raised NotImplementedError;
+    only a LineProfileView has one now (ledger 462)."""
+
     host = _FakeSeriesHost(_series_frame(), models=["a", "b"])
-    with pytest.raises(NotImplementedError):
-        host.section()
-    with pytest.raises(NotImplementedError):
-        host.mosaic(kind="section")
-    with pytest.raises(NotImplementedError):
-        host.animate(kind="section")
-
-
-def test_field_mappable_xs_dispatch():
-    sentinel = object()
-
-    class _Leaf:
-        def section(self, *args, **kwargs):
-            return sentinel
-
-    class _Namespace(FieldMappable):
-        _default_field = "q"
-
-        def _field_names(self):
-            return ["q"]
-
-        @property
-        def q(self):
-            return _Leaf()
-
-    assert _Namespace().section(line=None) is sentinel
+    assert not hasattr(host, "section")
+    assert not hasattr(FieldMappable, "section")
+    for verb in ("mosaic", "animate"):
+        with pytest.raises(ValueError, match="model.hds"):
+            getattr(host, verb)(kind="section")
 
 
 # --- real renders on the canonical model ------------------------------------------
@@ -553,3 +535,40 @@ def test_a_section_composer_takes_its_path_as_cells(canonical_run, verb):
     assert len(figure.data) > 0
     with pytest.raises(TypeError, match="no agg"):
         getattr(hds, verb)(kind="section", cells=[0, 1, 2], agg="sum")
+
+
+@pytest.mark.slow
+def test_only_a_dependent_variable_noun_offers_a_section(canonical_run):
+    """50 of 50 package fields (and 14 of 14 on a group) answered ``section`` by
+    raising NotImplementedError. The rule of ``test_plot_vocabulary`` -- a scope
+    answers only the verbs it can act on -- reaches the nouns (ledger 462)."""
+
+    from myflopy.project.model_group import ModelGroup
+
+    model = canonical_run
+    offering = []
+    swept = 0
+    for pkg in ("chd", "drn", "ghb", "riv", "wel", "rch", "evt", "lak", "sfr", "uzf",
+                "surface_water"):
+        for side in ("inputs", "results"):
+            namespace = getattr(getattr(model, pkg), side, None)
+            if not isinstance(namespace, FieldMappable):
+                continue
+            nodes = [namespace] + [getattr(namespace, f) for f in namespace.field_names()]
+            for node in nodes:
+                swept += 1
+                if hasattr(node, "section"):
+                    offering.append(f"model.{pkg}.{side} {type(node).__name__}")
+    group = ModelGroup({"a": model, "b": model}, reference="a")
+    for pkg in ("drn", "ghb", "lak", "sfr", "uzf"):
+        for side in ("inputs", "results"):
+            namespace = getattr(getattr(group.packages, pkg, None), side, None)
+            if namespace is not None:
+                swept += 1
+                if hasattr(namespace, "section"):
+                    offering.append(f"group.packages.{pkg}.{side}")
+    assert swept > 40 and not offering, offering
+    from myflopy.modflow.mf6.package_plotting import LineProfileView
+
+    for noun in (model.hds, group.hds, group.diff().hds):
+        assert isinstance(noun, LineProfileView) and callable(noun.section)

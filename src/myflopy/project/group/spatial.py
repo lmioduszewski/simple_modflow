@@ -14,6 +14,7 @@ import pandas as pd
 
 from myflopy.modflow.mf6.hydraulics import unit_labels
 from myflopy.modflow.mf6.package_explorer import (
+    LineProfileView,
     SpatialView,
     build_group_input_compare_map_payload,
     get_default_group_compare_colorscale,
@@ -74,7 +75,7 @@ class _GroupSpatialView(SpatialView):
         return name
 
 
-class _GroupFieldView(_GroupSpatialView):
+class _GroupFieldView(LineProfileView, _GroupSpatialView):
     """A grouped DEPENDENT-VARIABLE accessor, for one field kind.
 
     The group-side counterpart of :class:`~myflopy.modflow.mf6.headsplus.\

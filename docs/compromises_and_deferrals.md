@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 461 entries (466 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 462 entries (467 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 462 | `section` is offered only by a noun with a line profile: the dependent-variable nouns | 2026-10-11 |
 | 461 | A composer's own `cells`/`agg` and its `kind="plot"` tail act or raise, by kind | 2026-10-11 |
 | 460 | A reproducer or example script removes the scratch directory it makes, and a run that leaves anything in it... | 2026-10-11 |
 | 459 | The legacy `DisuGrid` reads `gdf_topbtm` by position and refuses to pick one of several bottoms | 2026-10-11 |
@@ -18729,8 +18730,9 @@ same day, which is the useful part of the result.
       layer repeats the first; the `figs` cross-section helper ignores `layer`/
       `simplify_tolerance`/`sheet_name`/`read_kwargs` for the table `XSection.plot_mpl`
       and `GridSection.plot_mpl` hand it. **Verbs and defaults that cannot act or lie:**
-      `FieldMappable.section` raises `NotImplementedError` for every field of every
-      namespace that has it (50 of 50 on the canonical model, 14 of 14 on a group of it);
+      ~~`FieldMappable.section` raises `NotImplementedError` for every field of every
+      namespace that has it (50 of 50 on the canonical model, 14 of 14 on a group of it)~~
+      (fixed by ledger 462: only a dependent-variable noun offers `section`);
       a diff's LAK/SFR `results` list `'stage'` as a field whose node has no verbs, so
       `map(field="stage")` raises `AttributeError`; `StackPlots.map(layer=0)`
       raised `ValueError: list.index(x): x not in list` while its docstring promised an
@@ -19324,3 +19326,22 @@ same day, which is the useful part of the result.
       refused on a section. `kind="plot"` takes no tail. Revert check:
       `tests/test_view_grammar_composers.py` -- the `agg`, `cells`, series-keyword and
       section-path tests (11 cases).
+
+462. **`section` is offered only by a noun with a line profile: the dependent-variable nouns (2026-10-11).**
+      Every `SpatialView` inherited a `section` (and `mosaic`/`animate(kind="section")`)
+      whose hook raised `NotImplementedError` unless the noun was heads, concentration
+      or temperature -- 50 of 50 package fields on the canonical model, 14 of 14 on a
+      group -- and `FieldMappable.section` dispatched to them. Chosen: REMOVE, not
+      implement, by `test_plot_vocabulary`'s rule (a scope answers only the verbs it can
+      act on). A package field's "section" through the free verb would be a FILLED
+      cross-section of a mostly empty array, a different picture from the line profile
+      the noun's `section` means (ledger 334), so one verb would mean two things by noun.
+      `LineProfileView(SpatialView)` carries `section` and the section composers;
+      `DependentVariableFile`, the group field view and `HeadsResultDiff` inherit it.
+      `kind="section"` on another noun raises `ValueError` naming those nouns and
+      `model.plot.section(fill=...)`. `PRTPathlineView.section`, which existed only to
+      raise, went with it. CLAUDE.md's "`map`/`section`/`mosaic`/`animate` for spatial
+      nouns" now says so. Revert check:
+      `tests/test_view_grammar_composers.py::test_only_a_dependent_variable_noun_offers_a_section`,
+      `test_a_noun_without_a_line_profile_offers_no_section`,
+      `tests/test_prt_maps.py::test_pathline_view_refuses_the_verbs_it_cannot_answer`.
