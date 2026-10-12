@@ -505,3 +505,95 @@ def test_numpy_layers_and_correlation_reach_the_metadata_as_python_numbers(runs,
     for layers in ([1.5], [-1], [True], ["0"], []):
         with pytest.raises(ValueError, match="layers="):
             np_mod.NativeParameterSpec(target="k", layers=layers)
+
+
+# -- an EMPTY period block ---------------------------------------------------------
+#: (stage, cond) of the GHB's block at each period: period 2's block is EMPTY, so MF6
+#: has no GHB in periods 0-1 from block 0's file, none in period 2, and block 3's after.
+GHB_BLOCKS = {0: [[(0, 19), 97.0, 3.0]], 2: [], 3: [[(0, 19), 96.0, 4.0]]}
+
+
+@pytest.fixture(scope="module")
+def empty_block_run(tmp_path_factory):
+    """FloPy writes ``{2: []}`` as ``BEGIN period 3`` / ``END period 3`` and externalizes
+    no file for it; ``set_all_data_external()`` leaves that block with no file name."""
+
+    workspace = tmp_path_factory.mktemp("empty_block")
+    sim = flopy.mf6.MFSimulation("s", sim_ws=str(workspace), exe_name="mf6")
+    flopy.mf6.ModflowTdis(sim, nper=4, perioddata=[(1.0, 1, 1.0)] * 4)
+    flopy.mf6.ModflowIms(sim)
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="m", save_flows=True)
+    flopy.mf6.ModflowGwfdisv(gwf, **get_disv_kwargs(1, NROW, NCOL, np.full(NCOL, 10.0),
+                                                    np.full(NROW, 10.0), 100.0, [0.0]))
+    flopy.mf6.ModflowGwfnpf(gwf, k=5.0, icelltype=0)
+    flopy.mf6.ModflowGwfic(gwf, strt=100.0)
+    flopy.mf6.ModflowGwfchd(gwf, stress_period_data=[[(0, 0), 100.0]])
+    flopy.mf6.ModflowGwfghb(gwf, pname="ghb", filename="m.ghb", stress_period_data=GHB_BLOCKS)
+    flopy.mf6.ModflowGwfoc(gwf, head_filerecord="m.hds", saverecord=[("HEAD", "ALL")])
+    sim.write_simulation(silent=True)
+    assert re.search(r"BEGIN period\s+3\s*\n\s*END period\s+3", (workspace / "m.ghb").read_text())
+    assert sim.run_simulation(silent=True)[0]
+    return workspace
+
+
+def _empty_block_cal(run, tmp_path, name="eb"):
+    cal = mf.load_mf6_run(run).pest(name, workspace=tmp_path / name,
+                                     start_datetime="2024-01-01")
+    points = gpd.GeoDataFrame({"name": ["W"], "layer": [0]},
+                              geometry=gpd.points_from_xy([25.0], [25.0]))
+    cal.observe(mf.HeadTargets(locations=points, values=pd.DataFrame(
+        {"time": [0, 1, 2, 3], "W": [99.0] * 4})))
+    return cal
+
+
+def test_an_empty_period_block_holds_no_file_and_ends_the_block_before_it(
+        empty_block_run, tmp_path):
+    """The build refused this valid model: the empty block's storage names no file, and
+    every block without one was read as data left inside the package. It holds nothing to
+    scale, so it is left out -- and it ENDS block 0, which serves periods 0-1, not 0-2."""
+
+    cal = _empty_block_cal(empty_block_run, tmp_path)
+    spec = cal.parameterize("ghb.cond", bounds=(0.1, 10.0))
+    pst = _build(cal, name="eb")
+    assert [(t.filename, t.period, t.next_block) for t in spec.resolved_targets] == [
+        ("m.ghb_stress_period_data_1.txt", 0, 2), ("m.ghb_stress_period_data_4.txt", 3, None)]
+    (group,) = spec.period_groups
+    assert group.periods == (0, 1, 3)
+    worker = _forward_run(cal, pst, tmp_path, {"ghbcond": 2.0})
+    assert np.allclose(_records(worker / "m.ghb_stress_period_data_1.txt").iloc[:, 3], 6.0)
+    assert np.allclose(_records(worker / "m.ghb_stress_period_data_4.txt").iloc[:, 3], 8.0)
+    assert re.search(r"BEGIN period\s+3\s*\n\s*END period\s+3", (worker / "m.ghb").read_text())
+
+
+def test_groups_either_side_of_an_empty_block_are_each_their_own(empty_block_run, tmp_path):
+    """Read without the empty block, block 0's file served period 2 as well, and a group
+    of periods 2-3 was refused as repeating the group of periods 0-1."""
+
+    cal = _empty_block_cal(empty_block_run, tmp_path)
+    spec = cal.parameterize("ghb.cond", periods={"early": [0, 1], "late": [2, 3]})
+    _build(cal, name="eb")
+    assert [(g.label, g.periods, [t.filename for t in g.targets]) for g in spec.period_groups] == [
+        ("early", (0, 1), ["m.ghb_stress_period_data_1.txt"]),
+        ("late", (3,), ["m.ghb_stress_period_data_4.txt"])]
+
+
+def test_a_group_under_only_an_empty_block_is_refused(empty_block_run, tmp_path):
+    cal = _empty_block_cal(empty_block_run, tmp_path)
+    cal.parameterize("ghb.cond", periods={"early": [0, 1], "gap": [2]})
+    with pytest.raises(ValueError, match=r"group 'gap'.*holds periods \[2\].*under an empty one"):
+        _build(cal, name="eb")
+
+
+def test_a_package_without_the_dataset_is_refused_naming_it_and_no_form(runs):
+    """A package with no such dataset is named; the refusal no longer says the target
+    'does not scale' an ARRAY RCH -- since ledger 547 ``recharge`` scales one, through
+    :meth:`NativeParameterSpec.resolve_form`, so the clause was false where reachable."""
+
+    sim = flopy.mf6.MFSimulation.load(sim_ws=str(runs["disv"]), verbosity_level=0)
+    gwf = sim.get_model("m")
+    rcha = np_mod.select_packages(gwf, np_mod.resolve_target("recharge"))
+    with pytest.raises(ValueError) as refused:
+        np_mod.package_target_files(gwf, np_mod.resolve_target("recharge"), rcha, runs["disv"])
+    message = str(refused.value)
+    assert "has none." in message and "stress_period_data" in message
+    assert "does not scale" not in message and "READASARRAYS" not in message

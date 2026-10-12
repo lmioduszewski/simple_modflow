@@ -298,7 +298,10 @@ cal.parameterize("sto.ss", bounds=(0.2, 5.0))
   periods. Each group is its own PEST group, `<name>_<label>` (`rchm_m03`). MF6 repeats
   a period's block until the next, so a file serving periods of two groups -- or a
   steady period's block repeated into a month -- is refused at build, naming the fix:
-  a block for every period, which `AverageYear.by_month` gives. The monthly
+  a block for every period, which `AverageYear.by_month` gives. An EMPTY block
+  (`stress_period_data={2: []}`: no boundary of the package from period 2 on) has no
+  file and nothing to scale; it ends the block before it, so a group lying only under
+  it is refused as unable to act (ledger 517). The monthly
   multipliers are independent in the prior; a temporal correlation between them is
   not built.
 - **Storage informs only transient data.** `sto.ss` and `sto.sy` are refused on a run

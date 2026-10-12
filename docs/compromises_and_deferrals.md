@@ -20452,7 +20452,13 @@ same day, which is the useful part of the result.
       ones (the pilot-point guard became structural; the per-layer-first glob became
       the records). ~~`recharge` on an ARRAY RCH is refused naming the form (item 1 adds
       the recipe).~~ `recharge` on an ARRAY RCH scales its per-period arrays (ledger
-      547). **Not done:** pyEMU's `use_rows` (records within one file) is not
+      547), and the form is chosen BEFORE the files are read, so a package lacking the
+      dataset is refused plainly. An EMPTY period block (`stress_period_data={2: []}`,
+      written `BEGIN period 3`/`END period 3`) has no file and was refused as data left
+      inside the package; it holds nothing to scale and is left out, and it ENDS the
+      block before it (`TargetFile.next_block`) -- read without it, block 0's file served
+      period 2 too and a `periods=` group past the empty block was refused as repeating
+      the one before. **Not done:** pyEMU's `use_rows` (records within one file) is not
       used -- a file belongs to one package, so it is not needed here; note for its
       first user that pyEMU falls back to ALL rows when none match.
 

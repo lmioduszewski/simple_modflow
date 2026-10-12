@@ -705,10 +705,13 @@ def file_spans(targets: list[TargetFile], nper: int) -> dict[TargetFile, range]:
 
     A file serves its own block's period and every later period of its package up
     to the package's next block (or the last period): MF6 repeats a block until the
-    next one. Files are numbered by block ORDINAL (an array RCH's
-    ``m.rcha_recharge_2.txt`` is the period-3 block's when only periods 1, 3 and 4
-    have blocks), so this reads each file's ``period`` from FloPy's records
-    (:attr:`TargetFile.period`), never from its name.
+    next one. The next block may be EMPTY (``stress_period_data={2: []}``), which has
+    no file of its own and still ends the block before it, so it comes from FloPy's
+    records (:attr:`TargetFile.next_block`) as well as from the other files. Files
+    are numbered by block ORDINAL (an array RCH's ``m.rcha_recharge_2.txt`` is the
+    period-3 block's when only periods 1, 3 and 4 have blocks), so this reads each
+    file's ``period`` from FloPy's records (:attr:`TargetFile.period`), never from
+    its name.
 
     Parameters
     ----------
@@ -730,9 +733,10 @@ def file_spans(targets: list[TargetFile], nper: int) -> dict[TargetFile, range]:
         periods.sort()
     spans = {}
     for target in targets:
-        periods = starts[target.package]
-        later = [period for period in periods if period > target.period]
-        spans[target] = range(int(target.period), later[0] if later else int(nper))
+        ends = [period for period in starts[target.package] if period > target.period][:1]
+        if target.next_block is not None:
+            ends.append(int(target.next_block))
+        spans[target] = range(int(target.period), min(ends) if ends else int(nper))
     return spans
 
 
@@ -773,8 +777,9 @@ def group_period_files(spec, targets: list[TargetFile], labels: list[str | None]
     ------
     ValueError
         When a file serves periods of two groups (or of a group and none); when a
-        group's periods lie before every block of the target's packages, so nothing
-        scales them; or when no group holds a file.
+        group's periods are served by no file of the target's packages -- before
+        their first block, or under an empty block -- so nothing scales them; or
+        when no group holds a file.
     """
 
     by_month = spec.periods == PERIODS_BY_MONTH
@@ -809,8 +814,9 @@ def group_period_files(spec, targets: list[TargetFile], labels: list[str | None]
             label = empty[0]
             raise ValueError(
                 f"periods= group {label!r} of {spec.recipe.canonical!r} (name {spec.name!r}) "
-                f"holds periods {list(spec.periods[label])}, which come before every block of "
-                f"package(s) {sorted(by_package)}: MF6 holds no value of them to scale, so its "
+                f"holds periods {list(spec.periods[label])}, which no block of package(s) "
+                f"{sorted(by_package)} holding records serves -- they come before its first "
+                "block, or under an empty one: MF6 holds no value of them to scale, so its "
                 "parameter cannot act. Drop the group, or declare blocks for its periods."
             )
     groups = [
@@ -1472,12 +1478,20 @@ class TargetFile:
     period : int or None
         The zero-based stress period of a transient dataset's block; ``None`` for
         data that is not per period (griddata, ``packagedata``).
+    next_block : int or None
+        The zero-based period of the package's NEXT block, an EMPTY one included
+        (``stress_period_data={2: []}``, which FloPy writes as ``BEGIN period 3`` /
+        ``END period 3`` with no file): MF6 repeats this block until then, so the file
+        serves ``period`` to ``next_block - 1`` (:func:`file_spans`). ``None`` for the
+        package's last block, for data that is not per period, and for a file built by
+        hand, whose span :func:`file_spans` then reads off the other files.
     """
 
     filename: str
     package: str
     layer: int | None = None
     period: int | None = None
+    next_block: int | None = None
 
 
 def select_packages(model, recipe: _Recipe, package=None) -> list:
@@ -1555,22 +1569,39 @@ def _storage_files(storage) -> list[tuple[int | None, str | None]]:
     return [(None, getattr(storage, "fname", None))]
 
 
-def _dataset_files(data) -> list[tuple[int | None, int | None, str | None]]:
-    """``(period, layer, file name)`` for every block of a FloPy dataset.
+def _block_is_empty(storage) -> bool:
+    """Whether a period block's storage holds no data: an EMPTY block, not a missing file.
+
+    FloPy keeps ``stress_period_data={2: []}`` as a block of its own (``BEGIN period
+    3`` / ``END period 3``, from which MF6 has no boundary of the package) and
+    externalizes nothing for it, so it names no file and that is right.
+    """
+
+    has_data = getattr(storage, "has_data", None)
+    return callable(has_data) and not has_data()
+
+
+def _dataset_files(data) -> list[tuple[int | None, int | None, str | None, bool]]:
+    """``(period, layer, file name, empty)`` for every block of a FloPy dataset.
 
     Read off the data's STORAGE, never ``get_record()``, which loads the data and, for
     a list of a model kept in a sub-directory, opened it at the model's path where
-    MF6 (and FloPy's writer) put it at the simulation's.
+    MF6 (and FloPy's writer) put it at the simulation's. An empty period block
+    (:func:`_block_is_empty`) is one entry with no file and ``empty`` True.
     """
 
     keys = getattr(data, "get_active_key_list", None)
     if callable(keys):
-        return [
-            (int(key), layer, filename)
-            for key, storage in keys()
-            for layer, filename in _storage_files(storage)
-        ]
-    return [(None, layer, filename) for layer, filename in _storage_files(data._get_storage_obj())]
+        found = []
+        for key, storage in keys():
+            files = _storage_files(storage)
+            if not any(filename for _layer, filename in files) and _block_is_empty(storage):
+                found.append((int(key), None, None, True))
+                continue
+            found.extend((int(key), layer, filename, False) for layer, filename in files)
+        return found
+    return [(None, layer, filename, False)
+            for layer, filename in _storage_files(data._get_storage_obj())]
 
 
 def package_target_files(model, recipe: _Recipe, packages, workspace) -> list[TargetFile]:
@@ -1583,7 +1614,10 @@ def package_target_files(model, recipe: _Recipe, packages, workspace) -> list[Ta
     external file after the package's FILE (``m.crisp_stress_period_data_1.txt``), so
     a glob on the type scaled one of two GHBs and found nothing for a GHB named
     ``edge`` (ledger 517); and a stale whole-grid file a relayering leaves
-    behind is never named.
+    behind is never named. An EMPTY period block (``stress_period_data={2: []}``)
+    holds no file and nothing to scale: it is left out, and it ends the block before
+    it (:attr:`TargetFile.next_block`), since MF6 has no boundary of the package from
+    it on.
 
     Parameters
     ----------
@@ -1599,13 +1633,17 @@ def package_target_files(model, recipe: _Recipe, packages, workspace) -> list[Ta
     Returns
     -------
     list of TargetFile
-        Package by package as given, each in period then layer order.
+        Package by package as given, each in period then layer order, every period
+        file carrying its package's next block (an empty one included) as
+        ``next_block``.
 
     Raises
     ------
     ValueError
-        When a package holds no such dataset (an array-form RCH asked for its list
-        ``stress_period_data``), or its data is not in external files.
+        When a package holds no such dataset, or a block that holds data is not in an
+        external file. (The dataset is the package's FORM's -- an array RCH's
+        ``recharge`` arrays, a list RCH's records -- since :func:`target_files` hands
+        over the recipe :meth:`NativeParameterSpec.resolve_form` chose, ledger 547.)
     FileNotFoundError
         When a file a record names is not in ``workspace``.
     """
@@ -1619,16 +1657,14 @@ def package_target_files(model, recipe: _Recipe, packages, workspace) -> list[Ta
             raise ValueError(
                 f"Target {recipe.canonical!r} scales the {recipe.package.upper()} "
                 f"package's {recipe.variable}, and package {name!r} of model "
-                f"{getattr(model, 'name', '?')!r} ({type(package).__name__}) has none"
-                + (
-                    " -- it is the ARRAY form (READASARRAYS), which this target does not "
-                    "scale"
-                    if str(getattr(package, "package_type", "")).lower() in {"rcha", "evta"}
-                    else ""
-                )
-                + "."
+                f"{getattr(model, 'name', '?')!r} ({type(package).__name__}) has none."
             )
-        for period, layer, filename in _dataset_files(data):
+        entries = _dataset_files(data)
+        blocks = sorted({period for period, _layer, _filename, _empty in entries
+                         if period is not None})
+        for period, layer, filename, empty in entries:
+            if empty:
+                continue
             if not filename:
                 raise ValueError(
                     f"Package {name!r}'s {recipe.variable} (target {recipe.canonical!r}) "
@@ -1641,7 +1677,9 @@ def package_target_files(model, recipe: _Recipe, packages, workspace) -> list[Ta
                     f"Package {name!r} reads {filename!r} for target {recipe.canonical!r}, "
                     f"and {workspace} holds no such file."
                 )
-            found.append(TargetFile(str(filename), name, layer, period))
+            later = [block for block in blocks if period is not None and block > period]
+            found.append(TargetFile(str(filename), name, layer, period,
+                                    later[0] if later else None))
     if not found:
         raise ValueError(
             f"Target {recipe.canonical!r}: package(s) "
