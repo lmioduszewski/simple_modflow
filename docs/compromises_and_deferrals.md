@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 498 entries (503 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 500 entries (505 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 500 | `compare()`/`stats()` refuse a key past the run's periods on every FILE route, as the observation route and... | 2026-10-12 |
+| 499 | A target's key that is a date, a duration or negative is refused, naming that a zero-based period number is... | 2026-10-12 |
 | 498 | `hover_fields` is refused at every noun and every group and diff surface; the verb takes it | 2026-10-11 |
 | 497 | The group and diff LAK exchange compare pairs a connection by where it sits, not by `iconn` | 2026-10-11 |
 | 496 | A read view refuses a `layer=` it does not number, on DIS, DISV and DISU, through one helper | 2026-10-11 |
@@ -20089,3 +20091,26 @@ same day, which is the useful part of the result.
       diff surfaces. `group.packages.drn.results.q.map("b", values=[...])` builds, and
       `custom_hover=` collides inside the verb with a message naming `ModelPlots.map`.
       That is recorded as found, not fixed.
+
+499. **A target's key that is a date, a duration or negative is refused, naming that a zero-based period number is required (2026-10-12).**
+      `_numeric_periods` read keys through `pd.to_numeric`, which turns a `datetime64`
+      into nanoseconds since 1970 -- finite and whole, so both of its checks passed. A
+      values table read with `parse_dates` was keyed by period 1706659200000000000:
+      `compare()` gave `NaN` for every row, `stats()` `n = 0`, `to_wide()` that number
+      as `time`, and the PEST build died on `float()` of a `Timestamp`. A `datetime64`/
+      `timedelta64` column, or an object column holding dates, times or durations, is
+      refused now, in the one function every family, route and the build read. **Not
+      done:** binning dated readings onto periods. That is the date-keyed hydrograph
+      constructor (item 8); until it lands the refusal says to bin first. A negative key
+      is refused in the same place: no period is numbered below 0.
+
+500. **`compare()`/`stats()` refuse a key past the run's periods on every FILE route, as the observation route and the build already did (2026-10-12).**
+      `_refuse_keys_off_the_periods` was called only on the observation route (ledger
+      346). The head and concentration files, the LAK and SFR stage files and the SFR
+      budget file left-merged a target keyed to a period the file did not hold, gave it
+      `NaN`, and `stats()` dropped the row. Keys `[0, 2, 7, -1]` on a three-period run
+      gave `n = 2` with no message, while the PEST build refused period 7. The periods
+      checked against are the ones the route's TABLE holds, so a period whose output
+      was never saved is refused like one past `nper`. The function takes `route=` to
+      name the file. **Not changed:** the DRN budget route, in `drn.py`, which this
+      batch does not own.

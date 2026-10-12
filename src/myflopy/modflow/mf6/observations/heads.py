@@ -21,6 +21,7 @@ from myflopy.modflow.mf6.grid.geometry import (
     model_cell_polygons,
 )
 from myflopy.modflow.mf6.observations._shared import (
+    _FIELD_FILES,
     _build_values_from_cells,
     _coerce_label_list,
     _coerce_scalar_or_list,
@@ -34,6 +35,7 @@ from myflopy.modflow.mf6.observations._shared import (
     _normalize_values_frame,
     _numeric_periods,
     _placement_note,
+    _refuse_keys_off_the_periods,
     _refuse_reserved_target_names,
     _report_missed_features,
     _simulated_field_by_period,
@@ -167,7 +169,10 @@ class HeadTargets:
         (``ValueError`` otherwise); :meth:`get` calls it ``time``.
         :meth:`compare` and the PEST build read it as a ZERO-BASED STRESS
         PERIOD, by number (``1.0`` is period 1), and both raise on a label that
-        is not a whole number, and on two values for one target in one period.
+        is not a whole number, is negative, or is a date or a duration (pandas
+        reads a datetime as nanoseconds; ledger 499), on two values for
+        one target in one period, and on a period the run did not save (ledger
+        500).
     value_column : str, optional
         Column of a LONG ``values`` table holding the target value, matched
         ignoring case. Default ``"head"`` (``"conc"`` on
@@ -873,10 +878,13 @@ class HeadTargets:
         Raises
         ------
         ValueError
-            When a target's ``time`` is not a number or not a whole number; when
-            two rows hold a value for one target in one period (PEST keeps one
-            observation per target per period); or when a period the file saved
-            lacks its final step (as :meth:`simulated_heads`).
+            When a target's ``time`` is a date or a duration, not a number, not a
+            whole number or negative; when two rows hold a value for one target in
+            one period (PEST keeps one observation per target per period); when a
+            target names a period the file did not save -- past the run's last
+            period, say (ledger 500: it read ``NaN`` and ``stats()`` left
+            it out in silence); or when a period the file saved lacks its final
+            step (as :meth:`simulated_heads`).
         """
 
         caller = f"{type(self).__name__}.compare(...)"
@@ -889,6 +897,12 @@ class HeadTargets:
             model,
             table_attribute=self._TABLE_ATTRIBUTE,
             store_column=self._STORE_COLUMN,
+        )
+        # A key past the run's periods matched no row, and stats() dropped it in
+        # silence while the PEST build refused it (ledger 500).
+        _refuse_keys_off_the_periods(
+            targets, sim["per"].unique(), model=model, caller=caller,
+            route=_FIELD_FILES[self._TABLE_ATTRIBUTE][1],
         )
         if "cell" in targets.columns and targets["cell"].notna().all():
             merged = targets.merge(sim, on=["per", "layer", "cell"], how="left")

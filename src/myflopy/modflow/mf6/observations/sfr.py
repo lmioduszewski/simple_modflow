@@ -197,9 +197,11 @@ class SfrStageTargets:
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
         ``times`` is applied. :meth:`compare` and the PEST build read it as a
-        zero-based stress period, by number (``1.0`` is period 1; a fraction
-        raises), on both routes (the observation route since ledger 346, where a
-        key naming no period is refused -- MF6's simulated time was its key).
+        zero-based stress period, by number (``1.0`` is period 1; a fraction,
+        a negative key, a date or a duration raises -- ledger 499), on
+        both routes (the observation route since ledger 346 -- MF6's simulated
+        time was its key); a key naming no period the route's table holds is
+        refused on both (ledger 500).
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed stage, matched
         ignoring case. Default ``"stage"``.
@@ -431,7 +433,9 @@ class SfrStageTargets:
         (ledger 346). On the observation route a key naming no period of the model
         is refused, naming the period each simulated-time key ends: MF6's time
         (``10, 20, 30``) was that route's key until ledger 346, and such a set
-        would otherwise read ``NaN``.
+        would otherwise read ``NaN``. The stage-file route refuses a key naming a
+        period its file does not hold too (ledger 500): it read ``NaN``, and
+        :meth:`stats` left the row out in silence.
 
         Parameters
         ----------
@@ -458,8 +462,8 @@ class SfrStageTargets:
             As :meth:`simulated_series`: a target's label declared as something
             else, a set declared in part, several SFR packages and no
             ``package``, or a file that does not line up or does not end every
-            period; on the observation route, when a target's key is no stress
-            period of the model (ledger 346); on the stage-file
+            period; on either route, when a target's key is no stress period the
+            route's table holds (ledgers 346, 500); on the stage-file
             route, when a period the stage file saved lacks its final step or a
             reach's copies in one record disagree; or when a target's ``time`` is
             not a whole number, or two rows hold a value for one target in one
@@ -484,6 +488,13 @@ class SfrStageTargets:
             if observed is not None:
                 _refuse_keys_off_the_periods(
                     targets, observed["time"], model=model, caller="SfrStageTargets.compare(...)"
+                )
+            else:
+                # Every file route refuses a key past the run's periods too
+                # (ledger 500): it read NaN, and stats() left it out.
+                _refuse_keys_off_the_periods(
+                    targets, simulated["per"].dropna().unique(), model=model,
+                    caller="SfrStageTargets.compare(...)", route=_SFR_STAGE.file_route,
                 )
             compare = targets.merge(simulated, on=["name", "reach", "per"], how="left")
         compare = _normalize_compare_time(compare)
@@ -730,9 +741,11 @@ class SfrFlowTargets:
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
         ``times`` is applied. :meth:`compare` and the PEST build read it as a
-        zero-based stress period, by number (``1.0`` is period 1; a fraction
-        raises), on both routes (the observation route since ledger 346, where a
-        key naming no period is refused -- MF6's simulated time was its key).
+        zero-based stress period, by number (``1.0`` is period 1; a fraction,
+        a negative key, a date or a duration raises -- ledger 499), on
+        both routes (the observation route since ledger 346 -- MF6's simulated
+        time was its key); a key naming no period the route's table holds is
+        refused on both (ledger 500).
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed flow, matched
         ignoring case. Default ``"flow"``.
@@ -1081,7 +1094,9 @@ class SfrFlowTargets:
         routes (ledger 346; the observation route was keyed by MF6's simulated
         time, where a target keyed by period matched no row). On the observation
         route a key naming no period of the model is refused, naming the period
-        each simulated-time key ends.
+        each simulated-time key ends; on the budget-file route a key naming a
+        period the file does not hold is refused too (ledger 500 -- it read
+        ``NaN``, and :meth:`stats` left the row out in silence).
 
         Parameters
         ----------
@@ -1111,8 +1126,8 @@ class SfrFlowTargets:
             As :meth:`simulated_series`: a target's label declared as something
             else, a set declared in part, several SFR packages and no
             ``package``, or a file that does not line up or does not end every
-            period; on the observation route, when a target's key is no stress
-            period of the model (ledger 346); on the budget-file
+            period; on either route, when a target's key is no stress period the
+            route's table holds (ledgers 346, 500); on the budget-file
             route, when a period the SFR budget file saved lacks its final step;
             or when a target's ``time`` is not a whole number, or two rows hold a value
             for one target in one period (the period rule PEST's build reads too,
@@ -1137,6 +1152,13 @@ class SfrFlowTargets:
             if observed is not None:
                 _refuse_keys_off_the_periods(
                     targets, observed["time"], model=model, caller="SfrFlowTargets.compare(...)"
+                )
+            else:
+                # Every file route refuses a key past the run's periods too
+                # (ledger 500): it read NaN, and stats() left it out.
+                _refuse_keys_off_the_periods(
+                    targets, simulated["per"].dropna().unique(), model=model,
+                    caller="SfrFlowTargets.compare(...)", route=_SFR_FLOW.file_route,
                 )
             compare = targets.merge(simulated, on=["name", "reach", "per"], how="left")
         compare = _normalize_compare_time(compare)

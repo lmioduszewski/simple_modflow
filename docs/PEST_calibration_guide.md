@@ -181,9 +181,14 @@ cal.observe(head_targets)          # history-matching targets (measured values +
 **What the control file holds is exactly your targets** (ledger 340). Each target is
 matched to the simulated row whose index equals its `time` read as a zero-based stress
 period — `1.0` is period 1 — and `build()` REFUSES, naming the target, a key with a
-fraction (`1.5`), two readings of one target in one period, a value that is not a
-number, and a target at a period (or a name) the simulated table does not hold. A blank
-value is unmeasured. Every simulated row no target measures stays in the control file
+fraction (`1.5`), a negative key, a DATE (ledger 499: pandas reads a datetime
+as nanoseconds since 1970, so a table read with `parse_dates` was keyed by period
+1706659200000000000 -- bin dated readings to stress periods first), two readings of one
+target in one period, a value that is not a number, and a target at a period (or a
+name) the simulated table does not hold. `compare()` and `stats()` refuse the same keys
+on every route, the file routes included (ledger 500: there a period past the
+run's last read `NaN`, and `stats()` left it out in silence). A blank value is
+unmeasured. Every simulated row no target measures stays in the control file
 at weight 0, holding the base run's own value: reported in every ensemble, never
 history-matched. (Until then each such row carried weight 1, pulling the calibration
 back toward the uncalibrated model at every period nobody measured.)

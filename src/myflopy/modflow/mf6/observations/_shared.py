@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -963,8 +964,9 @@ def _refuse_keys_off_the_periods(
     *,
     model,
     caller: str,
+    route: str | None = None,
 ) -> None:
-    """Refuse a target keyed by a period the observation route does not have (ledger 346).
+    """Refuse a target keyed by a period the route's table does not have (ledgers 346, 500).
 
     The observation route is one row per stress period now, keyed ``0 .. nper - 1``,
     where it was one row per time step keyed by MF6's simulated time -- the key its
@@ -975,6 +977,11 @@ def _refuse_keys_off_the_periods(
     daily periods, and ``2, 4, 6`` on twelve 2-day periods, the ENDS of periods 0,
     1, 2 -- cannot be told from one and reads that period in silence (ledger 347);
     a set is refused only when one of its keys names no period.
+
+    Every FILE route -- the head and concentration files, the LAK and SFR stage
+    files, the SFR budget file -- asks it too (ledger 500): they answered
+    ``NaN`` for a key past the run's periods, and ``stats()`` dropped it in silence,
+    while the PEST build refused the same key.
 
     Parameters
     ----------
@@ -987,6 +994,10 @@ def _refuse_keys_off_the_periods(
         The run model, whose TDIS gives the hints.
     caller : str
         What is reading, named in the error (``"DrnFlowTargets.compare(...)"``).
+    route : str or None, optional
+        The FILE the periods were read from, named in the error (``"the head
+        file"``). Default ``None``: the observation route, whose message also
+        says it was keyed by MF6's simulated time until ledger 346.
 
     Raises
     ------
@@ -1004,14 +1015,34 @@ def _refuse_keys_off_the_periods(
         for row in off.loc[:, ["name", "time"]].drop_duplicates().itertuples(index=False)
     ]
     hints = _period_key_hints(pd.unique(off["time"]), period_lengths(model))
-    span = f"0 .. {held[-1]}" if held else "none"
+    span = (
+        (f"0 .. {held[-1]}" if held == list(range(len(held))) else ", ".join(map(str, held)))
+        if held else "none"
+    )
+    if route is None:
+        head = (
+            f"{caller}: the observation route is keyed by zero-based stress period, one row "
+            f"per period at its end (ledger 346), and this model's periods are {span}; "
+        )
+        tail = (
+            "The route was keyed by MF6's simulated time until ledger 346; key each target "
+            "by its stress period, 0, 1, 2, ..."
+        )
+    else:
+        head = (
+            f"{caller}: a target is keyed by zero-based stress period and read at its end, "
+            f"and the periods {route} holds are {span}; "
+        )
+        tail = (
+            "Such a target would read nothing, and stats() would leave it out in silence "
+            "(the PEST build refuses it too); key each target by a stress period the run "
+            "saved, 0, 1, 2, ..."
+        )
     raise ValueError(
-        f"{caller}: the observation route is keyed by zero-based stress period, one row per "
-        f"period at its end (ledger 346), and this model's periods are {span}; "
-        f"{len(listing)} target row(s) name none of them: {_listing(listing)}. "
+        head
+        + f"{len(listing)} target row(s) name none of them: {_listing(listing)}. "
         + (f"{_listing(hints)}. " if hints else "")
-        + "The route was keyed by MF6's simulated time until ledger 346; key each target by "
-        "its stress period, 0, 1, 2, ..."
+        + tail
     )
 
 
@@ -1613,6 +1644,13 @@ def _numeric_periods(frame: pd.DataFrame, *, caller: str) -> pd.Series:
     ``10.9`` read period 10's value, and one at ``3.3333`` period 3's, with nothing
     said -- while the PEST build, matching by the key's spelling, dropped both.
 
+    A DATE or a duration is refused too (ledger 499): pandas reads a
+    datetime as its nanoseconds since 1970, a finite whole number, so a values
+    table read with ``parse_dates`` was keyed by period 1706659200000000000 --
+    ``compare()`` answered ``NaN`` for every row, ``stats()`` ``n = 0``, and the
+    PEST build died on ``float()`` of a ``Timestamp``. So is a negative key: a
+    stress period counts from 0.
+
     Parameters
     ----------
     frame : pandas.DataFrame
@@ -1629,8 +1667,9 @@ def _numeric_periods(frame: pd.DataFrame, *, caller: str) -> pd.Series:
     Raises
     ------
     ValueError
-        When the table has neither column; or when a key is not a finite number,
-        or has a fraction -- naming up to five such keys.
+        When the table has neither column; or when a key is a date, a time of
+        day or a duration, is not a finite number, has a fraction or is
+        negative -- naming up to five such keys.
     """
 
     if "per" in frame.columns:
@@ -1640,6 +1679,7 @@ def _numeric_periods(frame: pd.DataFrame, *, caller: str) -> pd.Series:
     else:
         raise ValueError(f"{caller} requires a 'per' or 'time' column.")
     raw = frame[column]
+    _refuse_dated_keys(raw, column=column, caller=caller)
     per = pd.to_numeric(raw, errors="coerce").astype(float)
     finite = np.isfinite(per.to_numpy())
     if not finite.all():
@@ -1657,7 +1697,52 @@ def _numeric_periods(frame: pd.DataFrame, *, caller: str) -> pd.Series:
             "has no fraction, so there is no period to read for it. Key each target "
             "by its stress period, 0, 1, 2, ... (1.0 is period 1)."
         )
+    negative = per.to_numpy() < 0
+    if negative.any():
+        labels = ", ".join(_shown(value) for value in pd.unique(raw[negative])[:5])
+        raise ValueError(
+            f"{caller} reads `{column}` as a zero-based stress period, and {labels} "
+            f"{'is' if negative.sum() == 1 else 'are'} negative: the first stress period "
+            "is 0. Key each target by its stress period, 0, 1, 2, ..."
+        )
     return per.astype(int)
+
+
+def _is_dated(value) -> bool:
+    """True for a date, a date-time, a time of day or a duration, in any of the forms pandas holds."""
+
+    return isinstance(
+        value,
+        (datetime.date, datetime.time, datetime.timedelta, np.datetime64, np.timedelta64),
+    )
+
+
+def _refuse_dated_keys(raw: pd.Series, *, column: str, caller: str) -> None:
+    """Refuse a key column holding dates or durations, which pandas reads as nanoseconds.
+
+    ``pd.to_numeric`` turns a ``datetime64`` column into its nanoseconds since 1970
+    -- finite and whole, so the period checks after it pass and the target is keyed
+    by a period no model has (ledger 499). A column of ``Timestamp`` objects
+    (a ``Series`` indexed by date, then reset) reaches the same place through
+    ``object`` dtype.
+    """
+
+    dtype = raw.dtype
+    if pd.api.types.is_datetime64_any_dtype(dtype) or pd.api.types.is_timedelta64_dtype(dtype):
+        dated = pd.Series(True, index=raw.index)
+    elif pd.api.types.is_object_dtype(dtype):
+        dated = raw.map(_is_dated).astype(bool)
+    else:
+        return
+    if not dated.any():
+        return
+    labels = ", ".join(pd.unique(raw[dated].astype(str))[:5])
+    raise ValueError(
+        f"{caller} reads `{column}` as a zero-based stress period NUMBER, and {labels} "
+        f"{'is' if int(dated.sum()) == 1 else 'are'} a date or a duration (pandas would read "
+        "it as nanoseconds since 1970, a period no model has). Bin dated readings to the "
+        "stress periods they fall in first, and key each target by its period, 0, 1, 2, ..."
+    )
 
 
 def _measured_periods(

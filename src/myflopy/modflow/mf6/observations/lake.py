@@ -211,9 +211,9 @@ class LakeStageTargets:
         Column of ``values`` holding each row's time label, matched exactly.
         Default ``"time"``; ``ValueError`` when ``values`` lacks it after
         ``times`` is applied. :meth:`compare` and the PEST build read it as a
-        zero-based stress period, by number (``1.0`` is period 1; a fraction
-        raises) -- see :meth:`compare` for what it is matched against on each
-        route.
+        zero-based stress period, by number (``1.0`` is period 1; a fraction,
+        a negative key, a date or a duration raises -- ledger 499) --
+        see :meth:`compare` for what it is matched against on each route.
     value_column : str, optional
         Column of a LONG ``values`` table holding the observed stage, matched
         ignoring case. Default ``"stage"``.
@@ -638,12 +638,14 @@ class LakeStageTargets:
         at its END. On the observation route a key naming no period of the model is
         refused, naming the period each simulated-time key ends: that route was
         keyed by MF6's time (``10, 20, 30``) until ledger 346, and such a set would
-        otherwise read ``NaN``. The stage-file route was keyed by saved-record index
-        until ledger 348: at ``nstp=3`` periods 0, 1, 2 read steps 1, 2, 3 of period
-        0 (measured), so a set keyed by record index for that route -- as this
-        docstring advised -- now matches its first ``nper`` keys to PERIODS and
-        leaves the rest ``NaN`` (a PEST build refuses them); re-key it by period. A
-        schedule that saves no period's end is refused (ledger 336).
+        otherwise read ``NaN``. The stage-file route refuses a key naming a period
+        its file does not hold too (ledger 500) -- it read ``NaN``, and
+        :meth:`stats` left the row out in silence. That route was keyed by
+        saved-record index until ledger 348: at ``nstp=3`` periods 0, 1, 2 read steps
+        1, 2, 3 of period 0 (measured), so a set keyed by record index for that route
+        -- as this docstring advised -- now matches its first ``nper`` keys to PERIODS
+        and refuses the rest; re-key it by period. A schedule that saves no period's
+        end is refused (ledger 336).
 
         Parameters
         ----------
@@ -673,8 +675,8 @@ class LakeStageTargets:
             As :meth:`simulated_series`: a target's label declared as something
             else, a set declared in part, several LAK packages and no
             ``package``, a file that does not line up or one short of a period's
-            end; on the observation route, when a target's key is no stress period
-            of the model (ledger 346); on the stage-file
+            end; on either route, when a target's key is no stress period the
+            route's table holds (ledgers 346, 500); on the stage-file
             route, when a period the stage file saved lacks its final step or a
             lake's copies in one record disagree, or a DRY lake connects
             ``EMBEDDEDH``/``EMBEDDEDV``; or when a target's ``time`` is not a
@@ -701,6 +703,13 @@ class LakeStageTargets:
             if observed is not None:
                 _refuse_keys_off_the_periods(
                     targets, observed["time"], model=model, caller="LakeStageTargets.compare(...)"
+                )
+            else:
+                # Every file route refuses a key past the run's periods too
+                # (ledger 500): it read NaN, and stats() left it out.
+                _refuse_keys_off_the_periods(
+                    targets, simulated["per"].dropna().unique(), model=model,
+                    caller="LakeStageTargets.compare(...)", route=_LAKE_STAGE.file_route,
                 )
             if "stage" in targets.columns and "stage_target" not in targets.columns:
                 targets = targets.rename(columns={"stage": "stage_target"})

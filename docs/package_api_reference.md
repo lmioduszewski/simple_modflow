@@ -827,7 +827,13 @@ and its statistics, and `residuals_by_period` out of the period's mean (ledger 3
 
 **A target's `time` is a zero-based stress period, read by NUMBER, one rule for
 `compare()`, `to_wide()` and the PEST build** (`_shared._numeric_periods`, ledger 340): `1.0` is
-period 1, and a key with a fraction (`1.5`, which was truncated to 1) is refused. Two
+period 1, and a key with a fraction (`1.5`, which was truncated to 1) is refused, as are
+a negative key and a DATE or a duration (ledger 499: pandas reads a datetime as
+nanoseconds since 1970, so a `parse_dates` table was keyed by period
+1706659200000000000). `compare()`/`stats()` refuse a key naming a period the route's
+table does not hold on EVERY route -- the head, concentration, LAK and SFR stage and SFR
+budget files as well as the observation route (ledger 500; a file route read
+`NaN` for it and `stats()` dropped the row in silence). Two
 values for one target in one period are refused in both, naming each row's value and
 `time` -- the build kept the last -- and by `to_wide()` too, which kept the FIRST
 (ledger 371). `to_wide()` is keyed by that period: its `time` is the period as `int`, so
