@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 import filecmp
+import itertools
 import pathlib
 import shutil
 import sys
@@ -96,6 +97,10 @@ def _lak_model(empty, _inflow):
             mf.chd(stress_period_data={0: [[(1, 0), 9.0], [(1, 15), 8.0]]}), lak], "lak"
 
 
+#: One numbered workspace per run, all under the one scratch root `main` removes.
+_RUNS = itertools.count()
+
+
 def run(factory, empty, inflow, root):
     packages, kind = factory(empty, inflow)
     model = mf.gwf("m", newtonoptions="NEWTON", packages=[
@@ -107,7 +112,8 @@ def run(factory, empty, inflow, root):
         mf.tdis(nper=3, perioddata=[(1.0, 2, 1.0)] * 3),
         mf.ims(complexity="COMPLEX", linear_acceleration="BICGSTAB"),
     ])
-    workspace = pathlib.Path(tempfile.mkdtemp(dir=root))
+    workspace = root / f"run_{next(_RUNS)}"
+    workspace.mkdir()
     simulation = sim.build(str(workspace)).simulation
     simulation.write_simulation(silent=True)
     ok, report = simulation.run_simulation(silent=True)

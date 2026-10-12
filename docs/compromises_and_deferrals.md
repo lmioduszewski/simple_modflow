@@ -19497,9 +19497,14 @@ same day, which is the useful part of the result.
       recipe on a DIS or DISU (it resolves against a Voronoi context grid); each names the
       direct records. `sfr`/`lakes` builders resolve on a DISV context grid by construction
       and were not changed. `grid_identity` now imports the rule from
-      `package_explorer_utils`, which takes it from import layer 0 to 1 and 28 modules
-      above it up one layer (measured by `scripts/derive_import_layers.py`); moving
-      `CellNumbering` into `grid_identity` instead moved 52, since `package_explorer_utils`
-      has more dependents, so the rule stays where ledger 419 put it. Not done: the DRN zone observation route
-      (ledger 419's "Not routed" list) is still DISV-only at both ends.
+      `package_explorer_utils` (import layer 0). On the batch's own base, where
+      `grid_identity` sat in layer 0, that took it to 1 and 28 modules above it up one
+      layer, and moving `CellNumbering` into `grid_identity` instead moved 52, since
+      `package_explorer_utils` has more dependents -- so the rule stays where ledger 419
+      put it. Landed beside ledger 456, whose `_time_units` import had already put
+      `grid_identity` in layer 1, the import moved ONE module, `surface_water_validation`
+      (0 to 1; both measured by `scripts/derive_import_layers.py`). ~~Not done: the DRN
+      zone observation route (ledger 419's "Not routed" list) is still DISV-only at both
+      ends.~~ (**routed by ledger 455**, which landed beside this entry: both ends read
+      the cellid through `CellNumbering`.)
 
