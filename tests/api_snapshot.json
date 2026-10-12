@@ -1364,6 +1364,22 @@
       "time_column:KEYWORD_ONLY='time'",
       "value_column:KEYWORD_ONLY='head'"
     ],
+    "HeadTargets.from_hydrographs": [
+      "locations:POSITIONAL_OR_KEYWORD=<required>",
+      "readings:POSITIONAL_OR_KEYWORD=<required>",
+      "model:KEYWORD_ONLY=<required>",
+      "mode:KEYWORD_ONLY='history'",
+      "rule:KEYWORD_ONLY=None",
+      "date_column:KEYWORD_ONLY='date'",
+      "value_column:KEYWORD_ONLY=None",
+      "name_column:KEYWORD_ONLY='name'",
+      "layer_column:KEYWORD_ONLY='layer'",
+      "group_column:KEYWORD_ONLY='group'",
+      "weight_column:KEYWORD_ONLY='weight'",
+      "max_offset:KEYWORD_ONLY=None",
+      "between:KEYWORD_ONLY=None",
+      "min_years:KEYWORD_ONLY=None"
+    ],
     "HeadTargets.from_records": [
       "records:POSITIONAL_OR_KEYWORD=<required>",
       "time_column:KEYWORD_ONLY='time'",
@@ -1926,6 +1942,19 @@
     ],
     "LakeStageTargets.compare": [
       "model:POSITIONAL_OR_KEYWORD=<required>"
+    ],
+    "LakeStageTargets.from_hydrographs": [
+      "locations:POSITIONAL_OR_KEYWORD=<required>",
+      "readings:POSITIONAL_OR_KEYWORD=<required>",
+      "model:KEYWORD_ONLY=<required>",
+      "package:KEYWORD_ONLY=None",
+      "mode:KEYWORD_ONLY='history'",
+      "rule:KEYWORD_ONLY=None",
+      "date_column:KEYWORD_ONLY='date'",
+      "value_column:KEYWORD_ONLY='stage'",
+      "max_offset:KEYWORD_ONLY=None",
+      "between:KEYWORD_ONLY=None",
+      "min_years:KEYWORD_ONLY=None"
     ],
     "LakeStageTargets.from_records": [
       "records:POSITIONAL_OR_KEYWORD=<required>",
