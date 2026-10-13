@@ -546,6 +546,12 @@ def archive_for_resume(directory, case: str, iteration: int) -> Path:
     """
 
     directory = Path(directory)
+    # The `.rec` archived here numbers its iterations from where the run that wrote it
+    # started: 0 for the run itself, the previous resume's iteration for a resumed run
+    # (PESTPP-IES numbers from 0 again). Kept in the record, so the lambda is read at
+    # the right iteration (review of ledger 533).
+    previous = _latest_archive(directory, case)
+    numbered_from = 0 if previous is None else int(previous[0])
     base = directory / f"{case}.resumed_from_{iteration}"
     archive, number = base, 1
     while archive.exists():
@@ -558,10 +564,64 @@ def archive_for_resume(directory, case: str, iteration: int) -> Path:
     for path in moved:
         shutil.move(str(path), str(archive / path.name))
     (archive / RESUME_RECORD).write_text(
-        json.dumps({"case": case, "from_iteration": int(iteration), "spliced": False}, indent=2),
+        json.dumps({"case": case, "from_iteration": int(iteration), "spliced": False,
+                    "record_numbered_from": numbered_from}, indent=2),
         encoding="utf-8",
     )
     return archive
+
+
+def _latest_archive(directory: Path, case: str) -> tuple[int, int] | None:
+    """``(from_iteration, number)`` of the last resume archive of ``case`` made in ``directory``.
+
+    Resumes go forward, so the last made restarts from the highest iteration, and a
+    second resume from the same iteration is numbered ``_2``, ``_3`` ..; ``None`` when
+    no resume archive (with a readable record) is there.
+    """
+
+    found = []
+    pattern = re.compile(re.escape(f"{case}.resumed_from_") + r"(\d+)(?:_(\d+))?")
+    for archive in Path(directory).glob(f"{case}.resumed_from_*"):
+        match = pattern.fullmatch(archive.name)
+        if match is None or not (archive / RESUME_RECORD).is_file():
+            continue
+        found.append((int(match.group(1)), int(match.group(2) or 1)))
+    return max(found) if found else None
+
+
+def lambda_to_carry(archive, case: str, iteration: int) -> float | None:
+    """The lambda a resume from ``iteration`` starts with: :func:`lambda_in_force` of the archived ``.rec``.
+
+    Read at the iteration the RECORD numbers it by: a resumed run's PESTPP-IES numbers
+    its iterations from 0 again, so the ``.rec`` a second resume archives counts from
+    the first resume's iteration. The archive's :data:`RESUME_RECORD` keeps that
+    (``record_numbered_from``; an archive written before it is read as numbered from 0,
+    which every first resume's is). Reading the run's numbering there found no
+    ``starting solve for iteration: <n + 1>`` and took the last lambda printed -- an
+    iteration killed part-way's.
+
+    Parameters
+    ----------
+    archive : str or pathlib.Path
+        The directory :func:`archive_for_resume` made.
+    case : str
+        The control-file stem.
+    iteration : int
+        The run's last completed iteration, in the RUN's numbering.
+
+    Returns
+    -------
+    float or None
+        The lambda, or ``None`` when the record is unreadable or names none.
+    """
+
+    archive = Path(archive)
+    try:
+        record = json.loads((archive / RESUME_RECORD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        record = {}
+    offset = int(record.get("record_numbered_from", 0) or 0) if isinstance(record, dict) else 0
+    return lambda_in_force(archive / f"{case}.rec", int(iteration) - offset)
 
 
 def _join_phi(archived: Path, resumed: Path, out: Path, iteration: int) -> None:

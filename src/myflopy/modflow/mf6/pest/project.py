@@ -76,7 +76,7 @@ from myflopy.modflow.mf6.pest.run_state import (
     RUN_LOCK,
     archive_for_resume,
     ensemble_file,
-    lambda_in_force,
+    lambda_to_carry,
     last_completed_iteration,
     pending_resume,
     recorded_iterations,
@@ -3559,7 +3559,7 @@ class PestProject:
                 run_pst.pestpp_options.pop(key, None)
             else:
                 run_pst.pestpp_options[key] = f"{archive.name}/{path.name}"
-        carried = lambda_in_force(archive / f"{case}.rec", last)
+        carried = lambda_to_carry(archive, case, last)
         if carried is not None and carried > 0:
             run_pst.pestpp_options["ies_initial_lambda"] = carried
         if overdue_giveup_fac is None:

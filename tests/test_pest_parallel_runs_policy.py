@@ -585,6 +585,47 @@ def test_resume_starts_from_the_lambda_the_run_had_reached(cal, monkeypatch):
     assert int(cal.pst.control_data.noptmax) == 4, "cal.pst is not the resumed run's"
 
 
+#: What the FIRST resume's PESTPP-IES writes in its ``.rec``: its iterations numbered
+#: from 0 again, so its iteration 1 is the run's 3 and its 2 (begun, then killed) the 4th.
+RESUMED_REC = """\
+...current lambda: 0.05625
+  ---  starting solve for iteration: 1  ---
+...current lambda:  0.05625
+  ---  updating lambda to  0.5  ---
+  ---  EnsembleMethod iteration 1 report  ---
+  ---  starting solve for iteration: 2  ---
+...current lambda:  0.5
+  ---  updating lambda to  0.1  ---
+"""
+
+
+def test_a_second_resume_starts_from_the_lambda_the_resumed_run_had_reached(cal, monkeypatch):
+    """A resumed run's ``.rec`` numbers its iterations from 0 again, and the second resume
+    read it by the RUN's numbering: the lambda before "iteration 4", which that record never
+    reaches, so the last it printed -- 0.1, from an iteration killed part-way -- where the
+    resumed iteration 1 (the run's 3) left 0.5. It reads each record by the numbering the
+    resume archive keeps (review of ledger 533)."""
+
+    launched = []
+
+    def run(command, cwd=None):
+        launched.append(pyemu.Pst(str(Path(cwd) / "cal.pst")).pestpp_options)
+        if len(launched) == 2:   # the first resume: restated 0, its 1, then killed in 2
+            _results(Path(cwd), "cal", iterations=(0, 1))
+            (Path(cwd) / "cal.rec").write_text(RESUMED_REC, encoding="utf-8")
+
+    monkeypatch.setattr(cal.pyemu.os_utils, "run", run)
+    template = cal.template_workspace
+    cal.run_ies(reals=3, iterations=5)
+    _results(template, "cal", iterations=(0, 1, 2))
+    (template / "cal.rec").write_text(REC, encoding="utf-8")
+    cal.resume_ies()
+    assert float(launched[1]["ies_initial_lambda"]) == 0.75
+    cal.resume_ies()
+    assert float(launched[2]["ies_initial_lambda"]) == 0.5
+    assert launched[2]["ies_restart_par_en"] == "cal.resumed_from_3/cal.3.par.csv"
+
+
 def _resume_stub(cal, monkeypatch):
     """PESTPP-IES stubbed: records each launch's NOPTMAX; the SECOND launch (the first
     resume) writes its restated iteration 0 and one iteration, then stops -- interrupted

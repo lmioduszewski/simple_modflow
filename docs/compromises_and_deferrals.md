@@ -20827,7 +20827,11 @@ same day, which is the useful part of the result.
       testing model killed after iteration 1 of 3, the resumed iteration 2 read phi
       1.65128 without it and 1.71477 with it, against the uninterrupted 1.71448
       (`docs/reproducers/ies_resume_interrupted_run.py`; its iteration 3 differs because
-      the REFERENCE lost a realization there). **Refused:** a prior (nothing is written
+      the REFERENCE lost a realization there). A SECOND resume reads the archived `.rec`
+      by the numbering its writer used -- a resumed PESTPP-IES counts from 0 again, kept
+      as `record_numbered_from` in the resume record (2026-10-12; it read the run's
+      numbering, found no such iteration, and carried the lambda of an iteration killed
+      part-way). **Refused:** a prior (nothing is written
       before its sweep ends), a run that completed no iteration, `iterations` not past the
       last completed one, a run whose parameter/observation names differ from `cal.pst`
       (the workers come from the template), and the four restart options passed by hand.
