@@ -1114,7 +1114,8 @@ def test_named_series_observation_postprocessor_is_wired(tmp_path):
 
     recorded: list[str] = []
     cal.pf = SimpleNamespace(
-        add_py_function=lambda path, call, is_pre_cmd: recorded.append(call)
+        py_functions=set(),  # what pyEMU has copied in (ledger 583)
+        add_py_function=lambda path, call, is_pre_cmd: recorded.append(call),
     )
     cal._prepared_observations = [
         {"prefix": "hds", "forward_run_config": {"mapping_csv": "m.csv", "output_csv": "h.csv"}},

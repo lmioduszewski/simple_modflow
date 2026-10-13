@@ -48,17 +48,21 @@ import pandas as pd
 
 from myflopy.modflow.mf6.grid.geometry import model_cell_polygons
 from myflopy.modflow.mf6.observations._shared import (
+    _attached_obs_packages,
+    _declared_features,
     _is_blank,
     _measured_periods,
+    _packages_of_type,
     _period_key_hints,
     _shown,
 )
 from myflopy.modflow.mf6.observations._zones import _CellZoneFlowTargets
 from myflopy.modflow.mf6.observations.heads import _difference_readings, _difference_weights
 from myflopy.modflow.mf6.observations.hydrographs import refuse_another_clock
-from myflopy.modflow.mf6.output_files import _declared_field_output
+from myflopy.modflow.mf6.output_files import _declared_field_output, _declared_output_path
+from myflopy.modflow.mf6.package_registry import package_name_of
 from myflopy.modflow.mf6.period_calendar import period_calendar
-from myflopy.modflow.mf6.period_end import period_lengths
+from myflopy.modflow.mf6.period_end import period_lengths, period_records
 from myflopy.modflow.mf6.pest.forward_run import (
     _write_conc_target_csv,
     _write_head_target_csv,
@@ -74,6 +78,7 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     select_packages,
     staged_model,
 )
+from myflopy.modflow.mf6.pest.run_outputs import node_to_lni
 from myflopy.modflow.mf6.pest.specs import (
     ConcDifferenceObservationSpec,
     ConcObservationSpec,
@@ -1804,3 +1809,83 @@ def finalize_observations(project, prepared: list[dict]):
                 item["target_frame"], item["values_path"], value_label=item["value_label"],
                 inequality=item.get("inequality"),
             )
+
+
+def snapshot_run_outputs(model, package_types) -> dict:
+    """What :class:`~myflopy.modflow.mf6.pest.run_outputs.RunOutputs` needs of ``model``, as a JSON-able dict.
+
+    Written by the build into the template (``named_series_outputs.json``), so a
+    realization's DRN and RIV zone sets read its output files without loading
+    the model (ledger 582). Nothing recorded is an input a parameter
+    changes.
+
+    Parameters
+    ----------
+    model : SimulationBase
+        The run model the build read (``project.model``).
+    package_types : iterable of str
+        The package types the zone sets read (``"drn"``, ``"riv"``).
+
+    Returns
+    -------
+    dict
+        ``model_name``; ``budget_file`` (the file the OC declares, relative to the
+        run directory); ``periods`` (each period's ``[perlen, nstp, tsmult]``);
+        ``ncpl`` (cells per layer, as the model numbers a budget record's node);
+        and ``packages``: per type, each package's ``name`` and its OBS packages'
+        CONTINUOUS records, ``{csv: [[obsname, obstype, [layer, cell]], ...]}`` in
+        declaration order, each cellid as the model's own grid numbers it.
+
+    Raises
+    ------
+    ValueError
+        When the model's flat node numbering is not layer after layer of cells,
+        which ``RunOutputs`` rebuilds from ``ncpl`` alone.
+    """
+
+    workspace = Path(model.workspace)
+    lookup = model.node_to_lni
+    layers = [int(layer) for layer, _cell in (lookup[node] for node in sorted(lookup))]
+    ncpl = [int(count) for count in np.bincount(layers)] if layers else []
+    if node_to_lni(ncpl) != {int(node): (int(lc[0]), int(lc[1])) for node, lc in lookup.items()}:
+        raise ValueError(
+            f"Model {model.name!r} numbers its cells other than layer after layer, so a "
+            "forward run cannot read its budget records from the cell count per layer alone."
+        )
+    packages: dict[str, list[dict]] = {}
+    for package_type in dict.fromkeys(str(kind).lower() for kind in package_types):
+        entries = []
+        for package in _packages_of_type(model, package_type):
+            observations = []
+            for obs in _attached_obs_packages(package):
+                continuous = obs.continuous.get_data() or {}
+                observations.append({
+                    str(csv): [
+                        [str(row[0]).strip(), str(row[1]).strip(),
+                         _recorded_cellid(_declared_features(package, row[2], cellid=True), row[2])]
+                        for row in records
+                    ]
+                    for csv, records in continuous.items()
+                })
+            entries.append({"name": package_name_of(package), "obs": observations})
+        packages[package_type] = entries
+    periods = period_records(model) or []
+    return {
+        "model_name": str(model.name),
+        "budget_file": _declared_output_path(workspace, model.name, "budget")
+        .relative_to(workspace).as_posix(),
+        "periods": [[float(perlen), nstp, tsmult] for perlen, nstp, tsmult in periods],
+        "ncpl": ncpl,
+        "packages": packages,
+    }
+
+
+def _recorded_cellid(features: tuple, ident) -> list:
+    """The cellid a declaration names, as the model numbers it; as written when it names none."""
+
+    if features:
+        return [int(value) for value in features[0]]
+    try:
+        return [int(value) for value in ident]
+    except (TypeError, ValueError):
+        return []

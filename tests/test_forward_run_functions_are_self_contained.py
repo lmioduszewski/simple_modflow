@@ -24,7 +24,10 @@ import pytest
 from myflopy.modflow.mf6.pest import forward_run
 
 SRC = Path(forward_run.__file__).resolve().parents[3]
-CALL = re.compile(r"add_py_function\(\s*[^,]+,\s*f?[\"'](\w+)\(", re.S)
+#: ``pf.add_py_function(<file>, "<name>(...")`` -- and the build's ``post_call("<name>(...")``,
+#: which hands it ``project._add_forward_run_call`` so each function is copied once
+#: (ledger 583).
+CALL = re.compile(r"(?:add_py_function\(\s*[^,]+,|post_call\()\s*f?[\"'](\w+)\(", re.S)
 
 
 def _wired() -> list[str]:

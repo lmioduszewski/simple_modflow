@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import pandas as pd
 
+# Read by write_named_series_targets through this module, since pyEMU copies that
+# function's source without the module's imports (ledger 582).
+from myflopy.modflow.mf6.pest.run_outputs import RUN_OUTPUT_KINDS, RunOutputs  # noqa: F401
+
 #: The columns of a build's snapshot files that hold a target's NAME, or a label or
 #: column derived from it: the target map's ``name``/``obsname``, a locations or
 #: values snapshot's ``name``, the values snapshot's ``column`` (ledger 358) -- and a
@@ -554,7 +558,7 @@ def _write_target_difference_csv(
     ).to_csv(output_csv, index=False)
 
 
-def write_named_series_targets(sets, sim_ws=".", model_name=None):
+def write_named_series_targets(sets, sim_ws=".", model_name=None, outputs=None):
     """Regenerate every lake/SFR/DRN/RIV simulated-target CSV in the native forward run.
 
     Post-model command for named-series observations (lake stage, SFR stage/flow,
@@ -564,7 +568,11 @@ def write_named_series_targets(sets, sim_ws=".", model_name=None):
     back as observations. It loaded the whole simulation once PER SET, every
     realization -- about 9 s a set on an externalized Ten Trails template beside a
     20 s MF6 run (ledger 540). Now the sets share one file-backed model,
-    which loads what the first set needs once.
+    which loads what the first set needs once -- and a DRN or RIV zone set loads
+    none: given ``outputs``, it reads the run's OUTPUT files through a
+    :class:`~myflopy.modflow.mf6.pest.run_outputs.RunOutputs` built from the
+    build's record of the inputs it needs (ledger 582), so a template
+    holding only zone sets never loads the model. A lake or SFR set still does.
 
     Self-contained: pyEMU copies only this function's source into the generated
     forward run, so it loads the model and reads the saved locations inline rather
@@ -623,6 +631,13 @@ def write_named_series_targets(sets, sim_ws=".", model_name=None):
         The CALIBRATED model's name, which the build records. ``None`` opens the
         simulation's first GWF model -- in a simulation of several, possibly
         another model's lake, reach or zone (ledger 340).
+    outputs : str or pathlib.Path or None, optional
+        The build's ``named_series_outputs.json``
+        (:func:`~myflopy.modflow.mf6.pest.run_outputs.snapshot_run_outputs`),
+        relative to the current directory: the DRN and RIV zone sets read
+        ``sim_ws``'s output files through it and load no model (ledger
+        582). Default ``None``: every set reads a loaded model, as a
+        template built before it does.
 
     Raises
     ------
@@ -643,7 +658,11 @@ def write_named_series_targets(sets, sim_ws=".", model_name=None):
     from pathlib import Path  # noqa: F811
 
     import myflopy as mf
-    from myflopy.modflow.mf6.pest.forward_run import read_target_table
+    from myflopy.modflow.mf6.pest.forward_run import (  # noqa: F811
+        RUN_OUTPUT_KINDS,
+        RunOutputs,
+        read_target_table,
+    )
 
     builders = {
         "lake_stage": mf.LakeStageTargets,
@@ -656,9 +675,11 @@ def write_named_series_targets(sets, sim_ws=".", model_name=None):
         if str(entry["kind"]).strip().lower() not in builders:
             raise ValueError(f"Unsupported named-series observation kind {entry['kind']!r}.")
 
-    # ONE file-backed model for every set: it loads the simulation when a set
-    # first needs it, and every later set reads what is already loaded.
-    model = mf.load_mf6_run(Path(sim_ws), model_name=model_name, verbosity_level=0)
+    # The zone sets read the run's OUTPUTS through the build's record of the inputs
+    # they need (ledger 582). Every other set shares ONE file-backed model,
+    # loaded only when such a set is there.
+    run_outputs = RunOutputs.from_snapshot(Path(sim_ws), outputs) if outputs is not None else None
+    loaded = None
     for entry in sets:
         kind_key = str(entry["kind"]).strip().lower()
         locations_path = Path(entry["locations_file"])
@@ -675,6 +696,12 @@ def write_named_series_targets(sets, sim_ws=".", model_name=None):
                     lambda text: [int(v) for v in str(text).split(",") if str(v).strip() != ""]
                 )
         targets = builders[kind_key](locations=locations, values=None, package=entry.get("package"))
+        if run_outputs is not None and kind_key in RUN_OUTPUT_KINDS:
+            model = run_outputs
+        else:
+            if loaded is None:
+                loaded = mf.load_mf6_run(Path(sim_ws), model_name=model_name, verbosity_level=0)
+            model = loaded
         simulated = targets.simulated_series(model)
         if kind_key == "lake_stage":
             simulated = simulated.fillna(targets._PEST_NO_STAGE)

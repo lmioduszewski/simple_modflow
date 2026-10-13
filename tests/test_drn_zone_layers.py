@@ -644,3 +644,54 @@ def test_an_obs_declaring_a_layered_zones_one_layer_labels_is_named_not_ignored(
         warnings.simplefilter("error")
         mf.DrnFlowTargets(locations={"other": ZONE}).simulated_series(toy)
         mf.DrnFlowTargets(locations=OBSERVED[:1]).simulated_series(toy)  # the declared route
+
+
+@pytest.mark.slow
+def test_the_forward_run_reads_zone_sets_from_the_runs_outputs_alone(toy, tmp_path, monkeypatch):
+    """A realization's DRN zone sets read the run's OUTPUT files through the build's
+    record of the inputs they need (ledger 582): handed a directory holding
+    the budget file and the OBS output and NO input file, the forward run writes the
+    base run's tables -- on the observation route (``deep``, declared) and on the
+    budget route (``other``). It loaded the whole model for them before."""
+
+    import json
+    import shutil
+
+    from myflopy.modflow.mf6.pest.run_outputs import OUTPUTS_SNAPSHOT
+
+    observed = mf.DrnFlowTargets(locations=OBSERVED[:1], values=pd.DataFrame(
+        {"time": range(NPER), "deep": [-5000.0] * NPER}))
+    budget = mf.DrnFlowTargets(locations=[{"name": "other", "layer": 1, "cells": ZONE}],
+                               values=pd.DataFrame({"time": range(NPER), "other": [-5000.0] * NPER}))
+    cal = toy.pest("outputs", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
+    cal.observe(observed, prefix="obsd")
+    cal.observe(budget, prefix="bud")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        cal.build("outputs.pst", noptmax=0)
+    template = Path(cal.template_workspace)
+    script = (template / "forward_run.py").read_text()
+    assert f"outputs={OUTPUTS_SNAPSHOT!r}" in script
+    recorded = json.loads((template / OUTPUTS_SNAPSHOT).read_text())
+    assert recorded["budget_file"] == "m.cbc" and recorded["ncpl"] == [36, 36]
+    assert [package["name"] for package in recorded["packages"]["drn"]] == ["drn"]
+
+    outputs_only = tmp_path / "outputs_only"
+    outputs_only.mkdir()
+    for name in ("m.cbc", "drn_flow_targets.csv"):
+        shutil.copy(Path(toy.workspace) / name, outputs_only / name)
+    sets = [{"kind": "drn_flow", "locations_file": str(template / f"{prefix}_target_locations.csv"),
+             "output_csv": str(tmp_path / f"{prefix}.csv")} for prefix in ("obsd", "bud")]
+    monkeypatch.chdir(template)
+    write_named_series_targets(sets, sim_ws=outputs_only, model_name="m", outputs=OUTPUTS_SNAPSHOT)
+    for prefix in ("obsd", "bud"):
+        pd.testing.assert_frame_equal(pd.read_csv(tmp_path / f"{prefix}.csv"),
+                                      pd.read_csv(template / f"{prefix}_simulated_drn_flow.csv"))
+    np.testing.assert_allclose(pd.read_csv(tmp_path / "bud.csv")["other"], _raw(toy, DEEP),
+                               rtol=1e-12)
+    # Without the record the same directory cannot be read: it holds no model.
+    from flopy.mf6.mfbase import MFDataException
+
+    with pytest.raises((FileNotFoundError, MFDataException)):
+        write_named_series_targets(sets[1:], sim_ws=outputs_only, model_name="m")

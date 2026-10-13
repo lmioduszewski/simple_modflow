@@ -45,9 +45,9 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.paths`
 - `myflopy.modflow.mf6.period_end`
 - `myflopy.modflow.mf6.pest`
-- `myflopy.modflow.mf6.pest.forward_run` *(deferred imports: 8)*
 - `myflopy.modflow.mf6.pest.model_lookup`
 - `myflopy.modflow.mf6.pest.naming`
+- `myflopy.modflow.mf6.pest.run_outputs`
 - `myflopy.modflow.mf6.pest.runs` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.pest.summary`
 - `myflopy.modflow.mf6.simulation`
@@ -86,6 +86,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.package_plotting` *(deferred imports: 2)*
 - `myflopy.modflow.mf6.package_tables`
 - `myflopy.modflow.mf6.parallel`
+- `myflopy.modflow.mf6.pest.forward_run` *(deferred imports: 8)*
 - `myflopy.modflow.mf6.pest.run_state`
 - `myflopy.modflow.mf6.simulation.discretization`
 - `myflopy.modflow.mf6.simulation.packages`

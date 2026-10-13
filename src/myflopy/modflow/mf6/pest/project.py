@@ -63,12 +63,14 @@ from myflopy.modflow.mf6.pest.observations import (
     prepare_riv_flow_observations,
     prepare_sfr_flow_observations,
     prepare_sfr_stage_observations,
+    snapshot_run_outputs,
 )
 from myflopy.modflow.mf6.pest.pilot_points import (
     add_pilot_point_parameter,
     emit_pilot_point_commands,
     register_pilot_point_parameters,
 )
+from myflopy.modflow.mf6.pest.run_outputs import OUTPUTS_SNAPSHOT, RUN_OUTPUT_KINDS
 from myflopy.modflow.mf6.pest.run_state import (
     RESUME_RECORD,
     RUN_LOCK,
@@ -629,6 +631,33 @@ def _pyemu_warning_class(pyemu_module):
     except AttributeError:
         return Warning
 
+
+
+def _add_forward_run_call(pf, source, call: str, *, is_pre_cmd: bool) -> None:
+    """Have ``forward_run.py`` call ``call``, the function's source copied in ONCE.
+
+    pyEMU's ``PstFrom.add_py_function`` copies the named function's source into
+    the forward run on EVERY call (warning from the second on), so two head sets
+    wrote two definitions of ``_write_head_target_csv`` (ledger 583). A
+    function already copied gains only the call.
+
+    Parameters
+    ----------
+    pf : pyemu.utils.PstFrom
+        The build's ``PstFrom``.
+    source : str or pathlib.Path
+        The file holding the function (``pest/forward_run.py``).
+    call : str
+        The call to run, ``"name(arg=...)"``; its function is the text before
+        the first ``(``.
+    is_pre_cmd : bool
+        ``True`` runs it before the model, ``False`` after.
+    """
+
+    if call[: call.index("(")] in pf.py_functions:
+        (pf.pre_py_cmds if is_pre_cmd else pf.post_py_cmds).append(call)
+    else:
+        pf.add_py_function(str(source), call, is_pre_cmd=is_pre_cmd)
 
 class PestProject:
     """Build a pyEMU/PEST++ calibration workspace from a ``myflopy`` model.
@@ -2479,6 +2508,10 @@ class PestProject:
         """
 
         helper_path = Path(__file__).with_name("forward_run.py")
+
+        def post_call(call: str) -> None:
+            _add_forward_run_call(self.pf, helper_path, call, is_pre_cmd=False)
+
         # Each period's length, so the forward run can check that the record it
         # reads ENDS its period, as the base run's build did (ledger 336). OC is
         # not a parameter, but ATS can move a STEPS save off a period's end in one
@@ -2488,8 +2521,7 @@ class PestProject:
         for item in self._prepared_observations:
             head_config = item.get("forward_run_config")
             if head_config is not None:
-                self.pf.add_py_function(
-                    str(helper_path),
+                post_call(
                     "_write_head_target_csv("
                     f"model_name='{self.model.name}', "
                     f"mapping_csv='{head_config['mapping_csv']}', "
@@ -2502,20 +2534,17 @@ class PestProject:
                     + (f", k_sources={head_config['k_sources']!r}"
                        if head_config.get("k_sources") else "")
                     + ")",
-                    is_pre_cmd=False,
                 )
                 continue
             conc_config = item.get("conc_forward_run_config")
             if conc_config is not None:
-                self.pf.add_py_function(
-                    str(helper_path),
+                post_call(
                     "_write_conc_target_csv("
                     f"model_name='{conc_config['model_name']}', "
                     f"mapping_csv='{conc_config['mapping_csv']}', "
                     f"output_csv='{conc_config['output_csv']}', "
                     f"perlen={perlen!r}, "
                     f"conc_file={conc_config.get('conc_file')!r})",
-                    is_pre_cmd=False,
                 )
                 continue
             difference_config = item.get("difference_forward_run_config")
@@ -2523,8 +2552,7 @@ class PestProject:
                 # One writer for the base run and every realization (ledger
                 # 565), on the one period-end reader.
                 file_keyword = "head_file" if difference_config["field"] == "head" else "conc_file"
-                self.pf.add_py_function(
-                    str(helper_path),
+                post_call(
                     "_write_target_difference_csv("
                     f"model_name={difference_config['model_name']!r}, "
                     f"mapping_csv={difference_config['mapping_csv']!r}, "
@@ -2537,7 +2565,6 @@ class PestProject:
                     + (f", k_sources={difference_config['k_sources']!r}"
                        if difference_config.get("k_sources") else "")
                     + ")",
-                    is_pre_cmd=False,
                 )
                 continue
             series_config = item.get("named_series_forward_run_config")
@@ -2570,14 +2597,26 @@ class PestProject:
                 "(lake stage, SFR stage/flow, DRN seepage, RIV exchange) observations."
             )
         if named_series:
+            # The zone sets read the run's OUTPUTS through a record of the few inputs
+            # they need, so no realization loads the model for them (ledger
+            # 582).
+            zone_types = [
+                RUN_OUTPUT_KINDS[entry["kind"]] for entry in named_series
+                if entry["kind"] in RUN_OUTPUT_KINDS
+            ]
+            outputs = ""
+            if zone_types:
+                (self.template_workspace / OUTPUTS_SNAPSHOT).write_text(
+                    json.dumps(snapshot_run_outputs(self.model, zone_types), indent=1),
+                    encoding="utf-8",
+                )
+                outputs = f", outputs={OUTPUTS_SNAPSHOT!r}"
             # The calibrated model by NAME: without it the forward run reloads the
             # simulation's first GWF model, another model's lake or zone in a
             # simulation of several (ledger 340).
-            self.pf.add_py_function(
-                str(helper_path),
+            post_call(
                 f"write_named_series_targets(sets={named_series!r}, "
-                f"model_name='{self.model.name}')",
-                is_pre_cmd=False,
+                f"model_name='{self.model.name}'{outputs})",
             )
 
     def _forecast_observation_names(self) -> list[str]:

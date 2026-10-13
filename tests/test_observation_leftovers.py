@@ -290,6 +290,26 @@ def test_the_heads_calibration_plot_names_a_screen_not_layer_zero(screened_ies):
                                      type="heads")
 
 
+# -- each forward-run writer is defined once in forward_run.py ----------------
+
+
+def test_two_head_sets_put_one_definition_of_the_writer_in_the_forward_run(toy, tmp_path):
+    """pyEMU's ``add_py_function`` copies the function's source on EVERY call (and warns),
+    so two head sets defined ``_write_head_target_csv`` twice."""
+
+    cal = toy.pest("twice", workspace=tmp_path / "pest", start_datetime="2024-01-01")
+    cal.parameterize("k", style="constant", bounds=(0.5, 2.0), physical=(1e-3, 100.0))
+    cal.observe(_head_targets([("W", 22)], pd.DataFrame({"time": [0], "W": [95.0]})), prefix="hda")
+    cal.observe(_head_targets([("V", 15)], pd.DataFrame({"time": [0], "V": [96.0]})), prefix="hdb")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cal.build("twice.pst", noptmax=0)
+    assert not [w for w in caught if "already in forward run python functions" in str(w.message)]
+    script = (cal.template_workspace / "forward_run.py").read_text()
+    assert script.count("def _write_head_target_csv(") == 1
+    assert script.count("_write_head_target_csv(model_name=") == 2  # both sets still written
+
+
 # -- ledger 344: from_series / from_records name the LAK package ------------------
 
 

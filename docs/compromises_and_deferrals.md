@@ -33,10 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 581 entries (586 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 583 entries (588 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 583 | Each forward-run function is copied into `forward_run.py` once | 2026-10-12 |
+| 582 | The PEST forward run reads DRN and RIV zone sets from the run's outputs alone | 2026-10-12 |
 | 581 | The head targets have one reader; the value-table route kept for test doubles is gone | 2026-10-12 |
 | 580 | A screened well is named by its screen in the PEST snapshot, the IES review and the heads calibration plot | 2026-10-12 |
 | 579 | A layered zone whose OBS still declares its one-layer labels warns; `summary()` without a model counts list... | 2026-10-12 |
@@ -20917,11 +20919,14 @@ same day, which is the useful part of the result.
       averages 5-15): a copy of Ten Trails `ss` with three sets (two RIV, one DRN) 30.2 s ->
       9.0 s per realization, beside a 17-20 s MF6 run; the canonical testing profile, four
       sets, 1.04 s -> 0.37 s. No transition alias: a template built before keeps its own
-      extracted copy of the old function, which still runs. **Not done:** loading only the
+      extracted copy of the old function, which still runs. ~~**Not done:** loading only the
       packages the sets read -- `load_only=["disv", "oc", "riv", "drn"]` measured 4.5 s
       against 8.3 s on the same template -- because `LoadedMf6Run` full-loads on any package
       access ON PURPOSE (ledger 344: a partial load lost edits on write), and a read-only
-      partial-load hook is a new public surface on `project/run_model.py`.
+      partial-load hook is a new public surface on `project/run_model.py`.~~ **Restated by
+      ledger 582:** DRN and RIV zone sets load no model at all now (they read the
+      outputs through a build-time record); a lake or SFR set still loads it once, and no
+      partial-load hook was added.
 
 541. **A raster of values fills an array slot as a recipe, and `*` multiplies recipes (2026-10-12).**
       `mf.RasterValues(path, band=, method=, mean=, nodata=, gaps=, default=)` is ledger
@@ -21763,3 +21768,34 @@ same day, which is the useful part of the result.
       model spelling. `docs/reproducers/screened_head_targets.py`, whose part 3 times the
       old route against the new, keeps its own copy of the old derivation as its
       baseline. `_STORE_COLUMN` went with it (nothing read it).
+
+582. **The PEST forward run reads DRN and RIV zone sets from the run's outputs alone (2026-10-12).**
+      Ledger 540 left one full `load_mf6_run` per realization (8.3-9.0 s on Ten Trails
+      `ss`). Nothing a zone set reads of the model is an input a parameter changes, so
+      **chosen:** the build records it once -- package names and their OBS continuous
+      records (each cellid as the model numbers it), the OC's budget file, the TDIS
+      periods, the cells per layer -- in `named_series_outputs.json`
+      (`pest.observations.snapshot_run_outputs`), and the forward run's
+      `write_named_series_targets(..., outputs=)` reads the zone sets through
+      `pest.run_outputs.RunOutputs`, which answers the five things the family's own
+      `simulated_series` asks of a model and opens only output files -- one code path for
+      the build's base table and every realization. The build refuses a model whose flat
+      node numbering is not layer after layer. Measured on a copy of Ten Trails `ss`
+      (`docs/reproducers/named_series_outputs_only.py`, three sets -- two RIV zone sets
+      and a DRN zone -- at a load average of ~13): 10.55-14.69 s per realization with the
+      load, 0.08 s without, every table identical. **Not done:** lake and SFR
+      sets still load the model once per realization -- their readers go through FloPy's
+      package output objects and, for a dry lake, the LAK connection geometry, which a
+      stand-in would have to duplicate. A template built before keeps its old call (no
+      `outputs`), which still loads. `pest/forward_run.py` imports `run_outputs` at
+      module level (its import layer moves 0 -> 1) so the copied function reaches it
+      through the existing deferred import, with no new one.
+
+583. **Each forward-run function is copied into `forward_run.py` once (2026-10-12).**
+      pyEMU's `add_py_function` copies the function's source on every call and warns, so
+      two head sets defined `_write_head_target_csv` twice. The build's post-run calls go
+      through `project._add_forward_run_call`, which adds only the call for a function
+      already copied. **Not done:** the pre-run `apply_pilotpoints_to_array` (one call per
+      group of pilot-point sets) and `carry_river_bottom` (one per RIV file -- Ten Trails'
+      `riv` and `crisp`) still call `add_py_function` directly and duplicate the same way;
+      they belong to the parameter modules.
