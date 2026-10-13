@@ -847,7 +847,7 @@ def packages_of_type(owner, package_type: str) -> list:
 
 
 def model_packages_of_type(model, package_type: str) -> list:
-    """Every FloPy package of TYPE ``package_type`` in a myflopy model; ``[]`` when none.
+    """Every FloPy package of TYPE ``package_type`` in a model; ``[]`` when none.
 
     The one rule behind ``model.fl.<pkg>``, ``model.package(<type>)``, the
     one-package views (:func:`one_package`), the tables that read every package of a
@@ -855,10 +855,14 @@ def model_packages_of_type(model, package_type: str) -> list:
 
     Parameters
     ----------
-    model : SimulationBase or duck-typed model
+    model : SimulationBase, flopy.mf6.MFModel or duck-typed model
         A myflopy model: its ``_packages_of_type`` loads a file-backed run's packages
-        first. A test double without it answers through ``model.package(type)``
-        (one package, a list, or ``AttributeError`` for none).
+        first. A plain FloPy model (``flopy.mf6.MFModel``, the ``gwf`` a FloPy script
+        or a PEST build's staged simulation holds) is asked by type through its own
+        package list, :func:`packages_of_type` -- it has no ``package`` to ask, and
+        read as one with none, every package of it went unseen. A test double with
+        neither answers through ``model.package(type)`` (one package, a list, or
+        ``AttributeError`` for none).
     package_type : str
         An MF6 package type, any case (see :func:`packages_of_type`).
 
@@ -868,9 +872,13 @@ def model_packages_of_type(model, package_type: str) -> list:
         The model's FloPy packages of that type, in model order.
     """
 
+    from flopy.mf6.mfmodel import MFModel
+
     own = getattr(model, "_packages_of_type", None)
     if callable(own):
         return list(own(package_type))
+    if isinstance(model, MFModel):
+        return packages_of_type(model, package_type)
     try:
         found = model.package(package_type)
     except AttributeError:

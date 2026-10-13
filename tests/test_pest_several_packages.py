@@ -668,3 +668,22 @@ def test_a_package_without_the_dataset_is_refused_naming_it_and_no_form(runs):
     message = str(refused.value)
     assert "has none." in message and "stress_period_data" in message
     assert "does not scale" not in message and "READASARRAYS" not in message
+
+
+def test_a_plain_flopy_model_answers_by_type(tmp_path):
+    """``model_packages_of_type`` read a FloPy ``MFModel`` -- which has no ``package`` --
+    as a model holding none: ``[]`` for the two RIV of the very model the PEST build
+    stages. It asks FloPy's own package list by type now, a FloPy ``pname`` never
+    standing in for the type (ledger 352)."""
+
+    from myflopy.modflow.mf6.package_registry import model_packages_of_type
+
+    sim = flopy.mf6.MFSimulation("s", sim_ws=str(tmp_path), exe_name="mf6")
+    flopy.mf6.ModflowTdis(sim)
+    gwf = flopy.mf6.ModflowGwf(sim, modelname="m")
+    flopy.mf6.ModflowGwfdisv(gwf, **get_disv_kwargs(
+        NLAY, NROW, NCOL, np.full(NCOL, 10.0), np.full(NROW, 10.0), 100.0, [50.0, 0.0]))
+    _flow_packages(gwf, lambda layer, cell: (layer, cell))
+    assert [p.package_name for p in model_packages_of_type(gwf, "riv")] == ["riv", "crisp"]
+    assert [p.package_name for p in model_packages_of_type(gwf, "ghb")] == ["edge"]
+    assert model_packages_of_type(gwf, "lak") == []
