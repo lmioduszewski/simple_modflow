@@ -591,12 +591,18 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**8061 passed / 4 skipped**, 2026-10-12, the second and third rounds of the Ten
-  Trails PEST preparation -- ledgers 543-563: date-keyed hydrographs, array recharge/storage/
-  monthly multipliers, zones that read every layer, the by-value polygon vote, `mf.Basin`, screened
-  head targets on one period-end reader, lake/stream feature parameters, the calibrated write-back):
-  serial (`-n0`) **20m05s** and `-n 10` **4m11s**, NOT quiet clocks (load averages ~14.7 and ~7.2 at
-  their starts; the ratio 4.8x is high for that reason). Before it, 7777 passed / 4 skipped
+- Full suite (**8268 passed / 4 skipped / 1 xfailed**, 2026-10-13, the last round of the Ten
+  Trails PEST preparation -- ledgers 564-590: difference and bound targets, the parameter/run and
+  observation/model leftovers, and the recalibration rehearsal `canonical_08`, whose
+  `test_rehearsal_posterior_covers_the_truth` is a deliberate non-strict xfail (ledger 590)): serial
+  (`-n0`) **23m45s** and `-n 10` **5m21s**, NOT quiet clocks (load averages ~10.7 and ~6.1 at their
+  starts). The rehearsal's notebook (~88 s, a real PESTPP-IES run) executes once per xdist worker
+  that draws one of its tests. Before it, 8061 passed / 4 skipped (2026-10-12, the second and third
+  rounds -- ledgers 543-563: date-keyed hydrographs, array recharge/storage/monthly multipliers,
+  zones that read every layer, the by-value polygon vote, `mf.Basin`, screened head targets on one
+  period-end reader, lake/stream feature parameters, the calibrated write-back): serial (`-n0`)
+  20m05s and `-n 10` 4m11s, NOT quiet clocks (load averages ~14.7 and ~7.2 at their starts). Before
+  that, 7777 passed / 4 skipped
   (2026-10-12, the first round -- ledgers 499-542: target hygiene, the IES review and run policy,
   parameters by package TYPE with additive elevations, pilot points that stack and interpolate in
   log space, `mf.AverageYear`, RIV flow targets, `mf.RasterValues`): serial (`-n0`) 18m18s and
