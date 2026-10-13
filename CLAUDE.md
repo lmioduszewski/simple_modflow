@@ -591,11 +591,16 @@ broad handler around a block that **validates its own arguments** will eat the
 validation — that bug was found twice, in `read_gpkg` and `contour_line_segments`.
 
 ## Test suite (fast by design)
-- Full suite (**7777 passed / 4 skipped**, 2026-10-12, the first round of the Ten Trails PEST
-  preparation -- ledgers 499-542: target hygiene, the IES review and run policy, parameters by
-  package TYPE with additive elevations, pilot points that stack and interpolate in log space,
-  `mf.AverageYear`, RIV flow targets, `mf.RasterValues`): serial (`-n0`) **18m18s** and `-n 10`
-  **4m22s**, NOT quiet clocks -- other lanes' tests and PESTPP-IES runs shared the machine (load
+- Full suite (**8061 passed / 4 skipped**, 2026-10-12, the second and third rounds of the Ten
+  Trails PEST preparation -- ledgers 543-563: date-keyed hydrographs, array recharge/storage/
+  monthly multipliers, zones that read every layer, the by-value polygon vote, `mf.Basin`, screened
+  head targets on one period-end reader, lake/stream feature parameters, the calibrated write-back):
+  serial (`-n0`) **20m05s** and `-n 10` **4m11s**, NOT quiet clocks (load averages ~14.7 and ~7.2 at
+  their starts; the ratio 4.8x is high for that reason). Before it, 7777 passed / 4 skipped
+  (2026-10-12, the first round -- ledgers 499-542: target hygiene, the IES review and run policy,
+  parameters by package TYPE with additive elevations, pilot points that stack and interpolate in
+  log space, `mf.AverageYear`, RIV flow targets, `mf.RasterValues`): serial (`-n0`) 18m18s and
+  `-n 10` 4m22s, NOT quiet clocks -- other lanes' tests and PESTPP-IES runs shared the machine (load
   averages ~14 and ~4.3 at their starts, ~20 during the parallel run). The first `-n 10` run
   failed one test, `test_sfr_stream_inputs.py`'s self-diversion case (MF6 6.8 segfaults on it
   intermittently; it retries 5 times and passed 5/5 alone three times, in the serial run and on
