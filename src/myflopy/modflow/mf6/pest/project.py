@@ -3094,9 +3094,10 @@ class PestProject:
             in ``<master_dir>.workers/`` as ``worker_0`` .. ``worker_<workers-1>``,
             so no two masters share one (ledger 532; until then every
             calibration of a model shared ``<model>.pest/worker_<n>``). Unused by a
-            serial run. A launch deletes the master and each worker it uses, then
-            copies the template into them, so each must be absent, empty, or a copy
-            of THIS calibration's template; a master holding an earlier run's
+            serial run. A launch deletes the master and each worker it uses (and
+            ``<master_dir>.workers/template_copy``, the copy the workers are made
+            from), then copies the template into them, so each must be absent, empty,
+            or a copy of THIS calibration's template; a master holding an earlier run's
             results is also refused unless ``overwrite=True``. Anything else is
             refused before anything is written (``FileExistsError``), a master or
             worker directory that is, contains or sits inside the run directory or
@@ -3883,8 +3884,9 @@ class PestProject:
         match -- share a worker directory (ledger 532). Until then every
         calibration of a model shared ``<model>.pest/worker_<n>`` (ledger 361).
 
-        A launch deletes the master and each worker it is about to use, so each must be
-        absent, empty, or a COPY of this calibration's template -- the template's
+        A launch deletes the master, each worker it is about to use and the clean
+        copy the workers are made from (``<master>.workers/template_copy``), so each
+        must be absent, empty, or a COPY of this calibration's template -- the template's
         :data:`BUILD_MARKER` names it, and a copy of a template built before ledger 360,
         which has none, counts by its metadata in the default layout only. A master that
         holds an earlier run's RESULTS is refused unless ``overwrite``
@@ -3910,7 +3912,10 @@ class PestProject:
         template = self.template_workspace.resolve()
         master = Path(master).resolve()
         root = worker_root(master)
+        # The clean copy each worker is made from (`_worker_source`), deleted and remade
+        # by the launch: guarded as a worker is (review of ledger 588).
         workers_at = [root / f"worker_{index}" for index in range(workers)]
+        workers_at.append(root / self._WORKER_SOURCE)
         default_master = self._default_master(method)
         call = f"cal.{method}(workers={workers}"
         if resume:

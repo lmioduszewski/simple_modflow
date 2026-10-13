@@ -214,7 +214,29 @@ def _describe_source(surface) -> str:
         return f"contours '{Path(surface.contours).name}'"
     if surface.is_relative:
         return "measured from the surface above, which has no value there"
+    # A split unit's slices are `toward` surfaces, and algebra (`mf.Max`, `where`) nests
+    # its sources: name the files under it, or a split unit's raster went unnamed
+    # (review of ledger 587).
+    files = _source_files(surface)
+    if files:
+        return f"a {kind!r} surface of {', '.join(files)}"
     return f"a {kind!r} surface"
+
+
+def _source_files(surface) -> list[str]:
+    """The raster and contour files a surface reads, through its operands, in order, once each."""
+
+    found: list[str] = []
+    for node in (surface, *(getattr(surface, "operands", None) or ())):
+        if node is not surface:
+            found += [name for name in _source_files(node) if name not in found]
+            continue
+        kind = getattr(node, "kind", None)
+        if kind == "raster" and getattr(node, "path", None) is not None:
+            found.append(f"raster '{Path(node.path).name}'")
+        elif kind == "contours" and getattr(node, "contours", None) is not None:
+            found.append(f"contours '{Path(node.contours).name}'")
+    return found
 
 
 def refuse_unbounded_cells(top, botm, idomain=None, *, labels, surfaces=None) -> None:

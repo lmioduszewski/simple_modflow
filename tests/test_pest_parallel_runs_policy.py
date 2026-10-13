@@ -520,6 +520,30 @@ def test_an_empty_folder_the_build_left_reaches_the_workers(cal, monkeypatch, _n
     assert not (worker_root(master) / "worker_0" / "toy.cbc").exists()
 
 
+
+@needs_true
+def test_a_folder_where_the_workers_copy_goes_is_deleted_only_when_it_is_a_copy(cal, tmp_path,
+                                                                                _no_results_reader):
+    """The clean copy the workers are made from goes in ``<master>.workers/template_copy``
+    and a launch DELETES what is there first; a folder there that is not a copy of this
+    template is refused, not deleted, as a worker directory is (ledger 361; review of
+    ledger 588)."""
+
+    master = tmp_path / "m"
+    foreign = worker_root(master) / "template_copy"
+    foreign.mkdir(parents=True)
+    (foreign / "notes.txt").write_text("mine\n", encoding="utf-8")
+    (cal.template_workspace / "toy.cbc").write_bytes(b"\0" * 64)   # something to leave out
+    with pytest.raises(FileExistsError, match=r"template_copy already holds 1 entry \(notes\.txt\)"):
+        cal.run_ies(workers=2, exe="true", master_dir=master)
+    assert (foreign / "notes.txt").read_text(encoding="utf-8") == "mine\n"
+
+    (foreign / "notes.txt").unlink()
+    shutil.copytree(cal.template_workspace, foreign, dirs_exist_ok=True)   # a copy: replaced
+    cal.run_ies(workers=2, exe="true", master_dir=master)
+    assert not foreign.exists()
+
+
 # -- resume: the splice --------------------------------------------------------------
 
 

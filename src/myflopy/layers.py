@@ -844,7 +844,11 @@ class LayerQCReport:
     nan_botm : list of int
         Per layer: cells with no bottom elevation.
     nan_active_cells : int
-        Active cells bounded by a NaN surface -- fatal.
+        Cells MF6 reads -- active or pass-through (``idomain != 0``) -- bounded by a
+        NaN surface: fatal, and what ``to_disv`` refuses
+        (:func:`~myflopy.surfaces.refuse_unbounded_cells`). A pass-through cell
+        counts since the review of ledger 587: MF6 runs one bounded by NaN to
+        normal termination with the cell below it silently disconnected.
     nonpositive_active : list of int
         Per layer: ACTIVE cells whose thickness is <= 0 -- fatal (MF6 refuses them).
     thin : list of int
@@ -894,7 +898,7 @@ class LayerQCReport:
     names: list[str]
     nan_top: int                       # cells with no top elevation (no coverage)
     nan_botm: list[int]                # per layer: cells with no bottom elevation
-    nan_active_cells: int              # active cells bounded by a NaN surface (fatal)
+    nan_active_cells: int              # idomain != 0 cells bounded by a NaN surface (fatal)
     nonpositive_active: list[int]      # per layer: active cells with thickness <= 0
     thin: list[int]                    # per layer: cells thinner than min_thickness
     pinched: list[int]                 # per layer: cells removed (idomain != 1)
@@ -910,8 +914,9 @@ class LayerQCReport:
 
     @property
     def ok(self) -> bool:
-        """True when nothing fatal was found (no NaN-bounded or isolated active cells,
-        no non-positive active thickness). Thin/pinched cells are expected, not fatal."""
+        """True when nothing fatal was found (no NaN-bounded active or pass-through cell,
+        no isolated active cell, no non-positive active thickness). Thin/pinched cells
+        are expected, not fatal."""
         return (
             self.nan_active_cells == 0
             and sum(self.nonpositive_active) == 0
@@ -927,8 +932,9 @@ class LayerQCReport:
             f"{self.n_active_components} active component(s)"
         ]
         if self.nan_active_cells:
-            lines.append(f"  ** {self.nan_active_cells} active cell(s) bounded by a NaN "
-                         "surface (no source coverage) -- fix the source or fill='propagate'")
+            lines.append(f"  ** {self.nan_active_cells} active or pass-through cell(s) "
+                         "bounded by a NaN surface (no source coverage) -- fix the source "
+                         "or fill='propagate'")
         if self.isolated_active:
             lines.append(f"  ** {len(self.isolated_active)} isolated active cell(s) with no "
                          "connection -- prune_isolated() deactivates them")
@@ -1463,7 +1469,8 @@ class LayerBuildResult:
     def qc(self) -> LayerQCReport:
         """Check the built stack for problems MODFLOW 6 would choke on.
 
-        Catches **NaN-bounded active cells** (a surface had no source coverage),
+        Catches **NaN-bounded active or pass-through cells** (a surface had no source
+        coverage; what ``to_disv`` refuses),
         **non-positive active thickness**, and **isolated active cells** (no
         connection to any neighbour) -- plus thin/pinched counts and the number
         of connected active components. ``LayerStack.qc`` adds reconcile
@@ -1512,7 +1519,9 @@ class LayerBuildResult:
             names=list(self.names),
             nan_top=int(np.isnan(self.top).sum()),
             nan_botm=[int(np.isnan(self.botm[k]).sum()) for k in range(nlay)],
-            nan_active_cells=int((nan_bounded & active).sum()),
+            # idomain != 0, not == 1: what `to_disv` refuses, pass-through included
+            # (review of ledger 587).
+            nan_active_cells=int((nan_bounded & (self.idomain != 0)).sum()),
             nonpositive_active=[int(((self.thickness[k] <= 0) & active[k]).sum())
                                 for k in range(nlay)],
             # Against the UNIT total, matching the pinch verdict: a slice of a

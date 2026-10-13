@@ -21869,7 +21869,9 @@ same day, which is the useful part of the result.
       `fill="propagate"` for a unit bottom, `mf.Max`/`mf.Min` (nan-aware) for any
       surface -- the top's only route, having no surface above. Checked where the DISV
       is MADE, not at sampling: `build()`, `.qc()` and the stack's pictures keep
-      showing the gap (`qc().nan_active_cells` is its report), and a `NaN` in a cell
+      showing the gap (`qc().nan_active_cells` is its report, counting the same
+      `idomain != 0` cells -- it counted `idomain == 1` alone, so a pass-through cell
+      refused here read ok there), and a `NaN` in a cell
       made inactive (`idomain 0`) still passes, which MF6 never reads. A result built
       by hand or through `dataclasses.replace` names labels only (the surfaces ride on
       `LayerStack.build`'s result, not as a field). Hand-written `mf.disv(top=, botm=)`
@@ -21888,7 +21890,9 @@ same day, which is the useful part of the result.
       from those files, the control file and the external tables it names, and any file
       a PEST++ option of the launch names (the master reads it); the run lock never.
       Only when the template holds anything else is a source copied (into the worker
-      root, deleted after); otherwise pyEMU gets the template itself. Excluding by the
+      root as `template_copy`, deleted after, and guarded before the launch as a worker
+      directory is -- absent, empty or a copy of this template, ledger 361); otherwise
+      pyEMU gets the template itself. Excluding by the
       build's list, not by recognising outputs: what a run writes is model- and
       PEST++-version-specific, and a list of outputs would miss the next one.
       **Consequence, stated:** a file put in the template BY HAND after `build()` reaches

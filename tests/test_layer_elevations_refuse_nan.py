@@ -118,3 +118,33 @@ def test_a_lazy_disv_is_refused_at_build(tmp_path, half):
         warnings.simplefilter("ignore")
         with pytest.raises(ValueError, match=r"the bottom of layer 'sand' \(raster 'half\.tif'\)"):
             mf.Project(tmp_path / "p", name="p").prepare_run("r", simulation)
+
+
+def test_a_split_unit_names_its_raster(vor, half):
+    """A split unit's slices are ``toward`` surfaces: the refusal names the raster under
+    them, where it said only "a 'toward' surface" (review of ledger 587)."""
+
+    stack = mf.LayerStack(vor, top=mf.Flat(100.0)).add("sand", bottom=mf.Raster(half), split=2)
+    with pytest.raises(ValueError) as refused:
+        stack.to_disv()
+    message = str(refused.value)
+    for name in ("sand_1", "sand_2"):
+        assert f"the bottom of layer {name!r} (a 'toward' surface of raster 'half.tif')" in message
+
+
+def test_qc_counts_what_to_disv_refuses_a_pass_through_cell_included(vor, half):
+    """A pass-through cell bounded by NaN is refused by ``to_disv`` (MF6 disconnects the
+    cell below it in silence), and ``qc()`` -- which the refusal points at -- counted
+    only ``idomain == 1``, so it read ok (review of ledger 587)."""
+
+    result = mf.LayerStack(vor, top=mf.Flat(100.0)).add("sand", bottom=mf.Raster(half)).add(
+        "clay", thickness=10.0).build()
+    east = _east(vor)
+    idomain = result.idomain.copy()
+    idomain[0, east] = -1   # sand: pass-through over the gap
+    idomain[1, east] = 0    # clay: inactive, so only the pass-through cells count
+    passing = dataclasses.replace(result, idomain=idomain)
+    report = passing.qc()
+    assert report.nan_active_cells == east.size and not report.ok
+    with pytest.raises(ValueError, match=r"the bottom of layer 'sand'"):
+        passing.to_disv()

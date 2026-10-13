@@ -951,7 +951,9 @@ before this fix also reads correctly.
 workers run in `<master>.workers/worker_0` .. `worker_<N-1>`. Each master has its own
 worker directory, so two calibrations of one model, or a `prior()` in one kernel and a
 `run_ies()` in another, never share one. A launch deletes the master and the workers it
-uses, then copies the template into them, so myflopy checks them first:
+uses -- and `<master>.workers/template_copy`, the clean copy the workers are made from
+when the template holds a run's outputs -- then copies the template into them, so myflopy
+checks them first:
 
 - each must be absent, empty, or a COPY of this calibration's template; a folder of
   yours, or another calibration's copy, is refused with `FileExistsError`, and one that
