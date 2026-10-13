@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import inspect
 import re
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -28,9 +29,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from myflopy._logging import get_logger
 from myflopy.modflow.mf6.hydraulics import declared_time_unit
 from myflopy.modflow.mf6.package_registry import (
     SeveralPackagesError,
+    feature_boundnames,
     get_package_explorer_spec,
     get_package_input_field_spec,
     model_packages_of_type,
@@ -46,7 +49,10 @@ from myflopy.modflow.mf6.period_calendar import (
 )
 from myflopy.modflow.mf6.period_end import period_lengths
 from myflopy.modflow.mf6.pest.model_lookup import resolve_transport_model_name
+from myflopy.modflow.mf6.pest.naming import pest_group_name
 from myflopy.modflow.mf6.pest.zones import resolve_zone_array
+
+logger = get_logger(__name__)
 
 # --- recipe registry -------------------------------------------------------
 #
@@ -102,6 +108,16 @@ class _Recipe:
     # Array family only: the dataset is per STRESS PERIOD (an array RCH's
     # ``recharge``), one file per period block, rather than griddata.
     periodic: bool = False
+    # A FEATURE target (LAK, SFR; ledger 558): the word for one feature
+    # ("lake", "reach") -- what `features=` names, by a ZERO-based number or a
+    # boundname -- else None. ``key_cols`` are the columns BEFORE the cellid that name a
+    # row uniquely in its file: LAK's (lakeno, iconn), SFR's (ifno). pyEMU keys a row by
+    # them, never by its cell, because a lake connects to one cell twice and two
+    # reaches can share a cell: a key that is unique per row is one record per row.
+    feature: str | None = None
+    key_cols: tuple[int, ...] = ()
+    # The styles the target takes; () is every style but "feature".
+    styles: tuple[str, ...] = ()
 
     def __post_init__(self):
         """Derive a ``stress_period_data`` recipe's value column from the registry."""
@@ -243,6 +259,29 @@ _RECIPES: dict[str, _Recipe] = {
     "uzf.vks": _Recipe(
         "uzf.vks", "list", "uzf", "packagedata", "vks", use_col=6, index_cols=(1, 2),
     ),
+    # Lake-bed leakance, per LAKE (ledger 558). CONNECTIONDATA rows are
+    # ``lakeno iconn <cellid> claktype bedleak belev telev connlen connwidth``, so
+    # bedleak is one column after the cellid. A row is keyed by (lakeno, iconn): a
+    # lake connects to many cells, and to one cell more than once. The default style is
+    # "feature", one multiplier per lake: a lake's bed is one sediment, and a
+    # leakance the stage data can inform lake by lake. A ``NONE`` bedleak (MF6: the
+    # conductance is the aquifer's alone) on a selected lake is refused.
+    "lak.bedleak": _Recipe(
+        "lak.bedleak", "list", "lak", "connectiondata", "bedleak", use_col=5,
+        index_cols=(2, 3), default_style="feature", feature="lake", key_cols=(0, 1),
+        styles=("feature", "constant"),
+    ),
+    # Streambed K, per REACH, from PACKAGEDATA: ``ifno <cellid> rlen rwid rgrd rtp rbth
+    # rhk man ncon ustrf ndv [aux] [boundname]``, rhk five columns after the cellid. A
+    # reach with cellid ``NONE`` is one column SHORTER, and pyEMU, which reads columns by
+    # position, multiplied that reach's Manning's n (0.03 became 0.06, measured), so such
+    # a reach is refused. "constant" by default; "grid" is one per reach, keyed
+    # (ifno, cellid) so pyEMU locates each reach at its cell; "feature" one per named
+    # stream (BOUNDNAME); "zone" one per zones= label, keyed by the cell.
+    "sfr.rhk": _Recipe(
+        "sfr.rhk", "list", "sfr", "packagedata", "rhk", use_col=8, index_cols=(1, 2),
+        feature="reach", key_cols=(0,), styles=("constant", "grid", "feature", "zone"),
+    ),
     # Storage (ledger 548). Griddata, as K is: LAYERED writes one file per
     # layer, a scalar one whole-grid file `relayer_array_target` splits. MF6 reads
     # neither in a steady-state period, and SY only in a convertible cell
@@ -283,18 +322,21 @@ _ALIASES: dict[str, str] = {
     "uzf": "uzf.vks",
     "vks": "uzf.vks",
     "uzf_vks": "uzf.vks",
+    "bedleak": "lak.bedleak",
+    "rhk": "sfr.rhk",
     "ss": "sto.ss",
     "specific_storage": "sto.ss",
     "sy": "sto.sy",
     "specific_yield": "sto.sy",
 }
 
-#: The four spatial styles :meth:`PestProject.parameterize` builds. Anything else is
-#: REFUSED at the call -- pyEMU's own pilot-point spellings (``"pp"``,
-#: ``"pilot_points"``, ...) reached pyEMU's structured-grid pilot points and died on
-#: a DISV grid with ``'VertexGrid' object has no attribute 'delr'`` (ledger
-#: 520).
-STYLES = ("constant", "zone", "grid", "pilotpoints")
+#: The styles :meth:`PestProject.parameterize` builds. Anything else is REFUSED at the
+#: call -- pyEMU's own pilot-point spellings (``"pp"``, ``"pilot_points"``, ...)
+#: reached pyEMU's structured-grid pilot points and died on a DISV grid with
+#: ``'VertexGrid' object has no attribute 'delr'`` (ledger 520). ``"feature"`` -- one
+#: parameter per lake or named stream -- acts on a FEATURE target alone (ledger
+#: 558).
+STYLES = ("constant", "zone", "grid", "pilotpoints", "feature")
 
 #: pyEMU's other spellings of pilot points, named by the refusal.
 _PYEMU_PILOT_POINT_SPELLINGS = frozenset({
@@ -514,6 +556,84 @@ def checked_layers(layers) -> tuple[int, ...]:
         checked.append(int(number))
     if not checked:
         raise ValueError(f"layers={layers!r} names no layer; pass None for every layer.")
+    return tuple(checked)
+
+
+def checked_features(features, recipe: _Recipe) -> tuple[int | str, ...] | None:
+    """``features=`` as :class:`NativeParameterSpec` holds it: a tuple of ids and boundnames.
+
+    A feature is named as :class:`~myflopy.LakeStageTargets` names a lake: by MF6's
+    number for it, ZERO-based, or by its boundname (ledger 558). Text
+    that reads as a whole number is that number; other text is a boundname, matched
+    later against the package (:func:`resolve_features`), any case.
+
+    Parameters
+    ----------
+    features : int or str or sequence of int or str or None
+        The lakes (``lak.bedleak``) or reaches/streams (``sfr.rhk``) to parameterize;
+        one may be given bare. ``None``: every feature the style covers.
+    recipe : _Recipe
+        The target's recipe; its ``feature`` word ("lake", "reach") is read, and a
+        target with none refuses any ``features``.
+
+    Returns
+    -------
+    tuple of (int or str) or None
+        Each number as ``int`` and each boundname stripped, in the order given.
+
+    Raises
+    ------
+    ValueError
+        When the target has no features, the sequence is empty, or an entry is blank,
+        a fraction, negative or a bool.
+    TypeError
+        When an entry is neither a number nor text.
+    """
+
+    if features is None:
+        return None
+    if recipe.feature is None:
+        featured = sorted(name for name, entry in _RECIPES.items() if entry.feature)
+        raise ValueError(
+            f"features={features!r} on target {recipe.canonical!r}: it names lakes or "
+            f"reaches, and {recipe.canonical!r} scales a package that has none, so it "
+            f"cannot act. Targets with features: {featured}."
+        )
+    items = [features] if isinstance(features, (str, int, float, np.integer, np.floating)) \
+        else list(features)
+    if not items:
+        raise ValueError(f"features={features!r} names no {recipe.feature}; pass None for all.")
+    checked: list[int | str] = []
+    for item in items:
+        def refuse(why: str, item=item) -> ValueError:
+            return ValueError(
+                f"features={features!r}: {item!r} {why}. A {recipe.feature} is MF6's "
+                f"{recipe.feature} number, ZERO-based, or its boundname."
+            )
+
+        if isinstance(item, (bool, np.bool_)):
+            raise refuse("is not a number or a boundname")
+        if isinstance(item, str):
+            text = item.strip()
+            if not text:
+                raise refuse("is blank")
+            try:
+                number = float(text)
+            except ValueError:
+                checked.append(text)
+                continue
+        elif isinstance(item, (int, float, np.integer, np.floating)):
+            number = float(item)
+        else:
+            raise TypeError(
+                f"features={features!r}: {item!r} is neither a {recipe.feature} number nor "
+                "a boundname."
+            )
+        if not np.isfinite(number) or number != np.floor(number):
+            raise refuse("is not a whole number")
+        if number < 0:
+            raise refuse("is negative: the first is 0")
+        checked.append(int(number))
     return tuple(checked)
 
 
@@ -848,13 +968,17 @@ class NativeParameterSpec:
         ``"riv.stage"``; an unknown one raises ``KeyError`` (:func:`resolve_target`).
     style : str or None, optional
         ``"constant"`` (one value), ``"zone"`` (one per ``zones`` label), ``"grid"``
-        (one per list entry / cell) or ``"pilotpoints"``, any case. ``None`` (default)
-        uses the recipe default, ``"constant"``. Anything else raises ``ValueError``
-        naming the four -- pyEMU's own pilot-point spellings (``"pp"``,
-        ``"pilot_points"``, ...) name ``"pilotpoints"`` -- and so does
+        (one per list entry / cell), ``"pilotpoints"`` or ``"feature"`` (one per lake
+        or named stream, a FEATURE target's alone), any case. ``None`` (default) uses
+        the recipe default: ``"feature"`` for ``lak.bedleak``, ``"constant"`` for every
+        other target. Anything else raises ``ValueError`` naming the five --
+        pyEMU's own pilot-point spellings (``"pp"``, ``"pilot_points"``, ...) name
+        ``"pilotpoints"`` -- and so does a style the target does not take:
         ``"pilotpoints"`` on a LIST target, which no engine here builds (ledger
-        520); on ``recharge``, whose form is its package's, that refusal comes from
-        :meth:`resolve_form` once the package is known.
+        520; on ``recharge``, whose form is its package's, that refusal comes from
+        :meth:`resolve_form` once the package is known), ``"feature"`` on a target
+        with no features, and ``"grid"``/``"zone"``/``"pilotpoints"`` on
+        ``lak.bedleak`` (ledger 558).
     bounds : tuple of (float, float) or None, optional
         ``(lower, upper)`` of the adjustable multiplier (factors) or additive offset
         (model units). ``None`` (default) is :data:`MULTIPLIER_BOUNDS`
@@ -895,7 +1019,19 @@ class NativeParameterSpec:
         (:func:`checked_package_argument`). ``None`` (default): the model's only
         package of the type; several raise ``SeveralPackagesError`` at
         :meth:`PestProject.parameterize` or :meth:`PestProject.build`. A tuple shares
-        one parameter set across the packages it names.
+        one parameter set across the packages it names; refused with ``features`` or
+        ``style="feature"``, which number features within ONE package.
+    features : int or str or sequence of int or str or None, optional
+        The lakes (``lak.bedleak``) or reaches and named streams (``sfr.rhk``) the
+        parameter covers, each MF6's number for it, ZERO-based, or its boundname (any
+        case), held as a tuple (:func:`checked_features`). Default ``None``: every
+        lake, every reach -- and, for ``style="feature"`` on ``sfr.rhk``, every
+        boundname. With ``"feature"`` each entry is ONE parameter; with
+        ``"constant"`` they share one; with ``"grid"`` each reach among them is one.
+        Refused on a target with no features, with ``style="zone"``, and -- at
+        :meth:`PestProject.parameterize` when the model lists its packages, else at
+        :meth:`PestProject.build` -- naming no feature of the package, or a feature
+        twice (ledger 558).
     pp_spacing : float or None, optional
         Pilot-point net spacing, in MODEL LENGTH UNITS, for array-target
         ``style="pilotpoints"`` (ledger 527); see :meth:`PestProject.parameterize`.
@@ -945,7 +1081,10 @@ class NativeParameterSpec:
         ``<name>l<layer>z<zone>``, lower-cased.
     capture : bool, optional
         Also record the resolved per-cell field as zero-weight observations, for
-        ``IesResults.plot_field`` / ``IesResults.field``. Default ``False``.
+        ``IesResults.plot_field`` / ``IesResults.field``. Default ``False``. ``True``
+        on a FEATURE target (``lak.bedleak``, ``sfr.rhk``) raises ``ValueError``: its
+        rows are lake connections and reaches, not one value per cell (deferred, ledger
+        558).
     extra : dict, optional
         Keyword arguments passed last to pyEMU's ``PstFrom.add_parameters``. Default
         empty. Not empty for array-target pilot points, which never call it, raises
@@ -978,6 +1117,11 @@ class NativeParameterSpec:
         Filled by :meth:`PestProject.build`: the parameter sets ``periods`` made,
         each with its label, the periods its files serve and the files
         (:func:`group_period_files`); one unlabelled group without ``periods``.
+    feature_sets : list of dict
+        Filled by :meth:`PestProject.build` for a FEATURE target: one record per
+        parameter set the features made -- its PEST group ``pargp``, ``label``
+        (``None`` but for ``"feature"``), ``package``, the zero-based ``features``
+        (lakes or reaches) it covers and the number of file ``rows`` it scales.
     period_group_pargps : list of list of str
         Filled by :meth:`PestProject.build`, one list per :attr:`period_groups`
         entry in its order: the PEST groups the build gave that group's parameters
@@ -996,6 +1140,7 @@ class NativeParameterSpec:
     zones: Any = None
     layers: tuple[int, ...] | None = None
     package: str | tuple[str, ...] | None = None
+    features: tuple[int | str, ...] | None = None
     pp_spacing: float | None = None
     pp_points: Any = None
     pp_nearest: int = DEFAULT_PP_NEAREST
@@ -1018,8 +1163,10 @@ class NativeParameterSpec:
         self.resolved_zone_labels: list[int] | None = None
         self.period_groups: list[PeriodGroup] = []
         self.period_group_pargps: list[list[str]] = []
+        self.feature_sets: list[dict] = []
         declared = self.declared_recipe
         self.style = _checked_style(self.style if self.style is not None else declared.default_style)
+        _refuse_a_style_the_target_does_not_take(declared, self.style)
         # A target of two forms (`recharge`) is held in the form its style can only
         # have -- pilot points exist on arrays alone -- until the package's form is
         # known (`resolve_form`), which refuses pilot points on a list package.
@@ -1029,6 +1176,9 @@ class NativeParameterSpec:
         )
         recipe = self.recipe
         self.package = checked_package_argument(self.package)
+        self.features = checked_features(self.features, declared)
+        if declared.feature is not None:
+            self._refuse_feature_arguments_that_cannot_act()
         if self.layers is not None:
             self.layers = checked_layers(self.layers)
         if self.correlation is not None:
@@ -1090,10 +1240,55 @@ class NativeParameterSpec:
             base = recipe.canonical.replace(".", "")
             self.name = f"{base}_{slug}" if slug else base
 
+    def _refuse_feature_arguments_that_cannot_act(self) -> None:
+        """Refuse an argument a FEATURE target (LAK, SFR) leaves idle (ledger 558)."""
+
+        recipe = self.declared_recipe
+        plural = "lakes" if recipe.feature == "lake" else "reaches"
+        if self.zones is not None and self.style != "zone":
+            raise ValueError(
+                f"zones= on {recipe.canonical!r} with style={self.style!r}: zones= labels "
+                f"CELLS, its rows are {plural}, and only style='zone' reads a row's cell "
+                "label -- pyEMU ignores zones= on a 'constant' or 'feature' parameter -- "
+                f"so it cannot act. Choose the {plural} with features="
+                + (", or use style='zone'." if "zone" in recipe.styles else ".")
+            )
+        if self.features is not None and self.style == "zone":
+            raise ValueError(
+                f"features= with style='zone' on {recipe.canonical!r}: a zone parameter "
+                "covers every reach in its zones= cells, so features= cannot narrow it. "
+                "Use zones= alone, or features= with style='constant'/'grid'/'feature'."
+            )
+        if isinstance(self.package, tuple) and (self.features is not None
+                                                 or self.style == "feature"):
+            raise ValueError(
+                f"package={self.package!r} with "
+                + ("features=" if self.features is not None else "style='feature'")
+                + f" on {recipe.canonical!r}: {plural} are numbered and named within ONE "
+                "package, so a set shared across packages cannot name them. Parameterize "
+                "each package with its own call: package=<name>."
+            )
+        if self.capture:
+            raise ValueError(
+                f"capture=True on {recipe.canonical!r}: a capture records one value per "
+                f"CELL, and its rows are {plural} -- a lake connects to one cell more than "
+                "once, two reaches can share a cell -- so it is deferred (ledger "
+                "558). Drop capture=; the parameter values are in the "
+                "ensembles."
+            )
+
     def _refuse_an_idle_variogram(self) -> None:
         """Refuse a variogram argument the spec's style or other arguments leave idle."""
 
         if self.correlation is not None:
+            if self.style == "feature":
+                raise ValueError(
+                    f"correlation={self.correlation!r} with style='feature': a feature "
+                    "parameter is one multiplier per lake or named stream, keyed by its "
+                    "number, not located at a cell, so a variogram has nothing to act "
+                    "on. Drop it, or use style='grid' (sfr.rhk: one per reach, at its "
+                    "cell)."
+                )
             if self.style not in _SPATIAL_STYLES:
                 raise ValueError(
                     f"correlation={self.correlation!r} with style={self.style!r}: a "
@@ -1279,8 +1474,39 @@ def _refuse_extra_keywords_pyemu_does_not_take(extra: dict) -> None:
         )
 
 
+def _refuse_a_style_the_target_does_not_take(recipe: _Recipe, style: str) -> None:
+    """Refuse a style the recipe's target cannot build (ledger 558).
+
+    ``"feature"`` needs features (lakes, reaches) to make one parameter each; a
+    lake-bed leakance is keyed by lake and connection, not by a cell, so pyEMU's
+    ``"grid"``/``"zone"`` -- which locate a record at its cell -- and pilot points do
+    not act on it.
+    """
+
+    allowed = recipe.styles or tuple(name for name in STYLES if name != "feature")
+    if style in allowed:
+        return
+    if style == "feature":
+        featured = sorted(name for name, entry in _RECIPES.items() if entry.feature)
+        raise ValueError(
+            f"style='feature' on target {recipe.canonical!r}: it makes one parameter per "
+            f"lake or named stream, and {recipe.canonical!r} scales a package that has "
+            f"none, so it cannot act. Targets with features: {featured}."
+        )
+    raise ValueError(
+        f"style={style!r} on target {recipe.canonical!r}: it takes "
+        f"{', '.join(repr(name) for name in allowed)}. A lake-bed leakance is keyed by "
+        "lake and connection, not by a cell, so a style that locates a record at its "
+        "cell cannot act on it: 'feature' is one multiplier per lake (the default), "
+        "'constant' one for every lake (ledger 558)."
+        if recipe.feature == "lake" else
+        f"style={style!r} on target {recipe.canonical!r}: it takes "
+        f"{', '.join(repr(name) for name in allowed)} (ledger 558)."
+    )
+
+
 def _checked_style(style) -> str:
-    """``style`` lower-cased, refusing anything but the four :data:`STYLES`."""
+    """``style`` lower-cased, refusing anything but the :data:`STYLES`."""
 
     value = str(style).strip().lower()
     if value in STYLES:
@@ -2322,6 +2548,409 @@ def _carry_river_bottom(project, spec: NativeParameterSpec, grid_type: str) -> N
         carried.add(target.filename)
 
 
+# --- feature targets: one parameter per lake or named stream ---------------------
+
+
+@dataclass(frozen=True)
+class FeatureSet:
+    """The features one parameter set of a FEATURE target covers (ledger 558).
+
+    Attributes
+    ----------
+    label : str or None
+        The set's name suffix -- a lake's or stream's boundname, or its number, slugged
+        by :func:`~myflopy.modflow.mf6.pest.naming.pest_group_name` -- for
+        ``style="feature"``; ``None`` for one set over the selection.
+    features : tuple of int
+        The ZERO-based lakes or reaches it covers.
+    """
+
+    label: str | None
+    features: tuple[int, ...]
+
+
+def _feature_numbers(package) -> list[int]:
+    """The ZERO-based feature numbers a LAK or SFR package's ``packagedata`` declares."""
+
+    data = package.packagedata.get_data()
+    if data is None:
+        return []
+    table = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+    return [int(value) for value in table.iloc[:, 0]]
+
+
+def resolve_features(spec: NativeParameterSpec, package) -> list[FeatureSet]:
+    """The parameter sets ``spec``'s features make on ``package``, checked against it.
+
+    Read off the package's ``packagedata`` alone -- its features' ZERO-based numbers
+    and boundnames (:func:`~myflopy.modflow.mf6.package_registry.feature_boundnames`,
+    the one boundname rule observations use too) -- so :meth:`PestProject.parameterize`
+    asks it of the caller's model and :meth:`PestProject.build` of the staged one.
+
+    Parameters
+    ----------
+    spec : NativeParameterSpec
+        A FEATURE target's spec; its ``features``, ``style`` and ``name`` are read.
+    package : flopy.mf6.ModflowGwflak or flopy.mf6.ModflowGwfsfr
+        The ONE package the spec scales.
+
+    Returns
+    -------
+    list of FeatureSet
+        For ``style="feature"``: one per entry of ``features`` -- by default one per
+        lake (LAK) or per boundname (SFR, in order of first appearance) -- labelled by
+        its boundname, else its number. Otherwise one unlabelled set over the entries
+        of ``features``, or over every feature.
+
+    Raises
+    ------
+    ValueError
+        When an entry names no feature of the package (listing those it has), two
+        entries name one feature, two labels make one PEST name, or ``style="feature"``
+        on an SFR with no boundnames is given no ``features`` (naming
+        ``style='grid'``).
+    """
+
+    recipe = spec.declared_recipe
+    word = recipe.feature
+    plural = "lakes" if word == "lake" else "reaches"
+    name = package_name_of(package)
+    held = _feature_numbers(package)
+    data = package.packagedata.get_data()
+    named = feature_boundnames(data)
+    # Each feature's boundname as the package spells it, for its label and messages;
+    # matching is `feature_boundnames`' (any case).
+    spelled: dict[int, str] = {}
+    if named:
+        table = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
+        for number, bound in zip(table.iloc[:, 0], table["boundname"], strict=True):
+            text = "" if bound is None else str(bound).strip()
+            if text and text.lower() in named:
+                spelled.setdefault(int(number), text)
+    own_name = {number: spelled[number] for number in spelled}
+    where = f"{recipe.package.upper()} package {name!r}"
+
+    def listing() -> str:
+        span = f"{plural} 0 .. {max(held)}" if held else f"no {plural}"
+        names = ", ".join(repr(spelled[numbers[0]]) for numbers in named.values()) or "none"
+        return f"it has {span} (numbered from 0); boundnames: {names}"
+
+    if spec.features is None:
+        if spec.style != "feature":
+            return [FeatureSet(None, tuple(held))]
+        if word == "lake":
+            entries = list(held)
+        elif named:
+            entries = [spelled[numbers[0]] for numbers in named.values()]
+        else:
+            raise ValueError(
+                f"style='feature' on {recipe.canonical!r} makes one parameter per NAMED "
+                f"stream, and {where} declares no BOUNDNAMES, so it names none. Use "
+                "style='grid' (one parameter per reach), or name the reaches in the "
+                "package (boundnames) or with features=."
+            )
+    else:
+        entries = list(spec.features)
+
+    resolved: list[tuple[str, tuple[int, ...]]] = []
+    wrong: list[str] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            numbers = named.get(entry.lower(), [])
+            if not numbers:
+                wrong.append(f"boundname {entry!r}")
+                continue
+            label = entry
+        else:
+            if entry not in held:
+                hint = (f" (one past the last: MF6's files number {plural} from 1)"
+                        if held and entry == max(held) + 1 else "")
+                wrong.append(f"{word} {entry}{hint}")
+                continue
+            numbers = [entry]
+            label = own_name.get(entry, str(entry)) if word == "lake" else str(entry)
+        resolved.append((label, tuple(numbers)))
+    if wrong:
+        raise ValueError(
+            f"features= on {recipe.canonical!r} names {', '.join(wrong)}, which "
+            f"{where} does not have -- {listing()}. Give each {word} its ZERO-based "
+            "number or its boundname (any case)."
+        )
+    seen: dict[int, str] = {}
+    for label, numbers in resolved:
+        for number in numbers:
+            if number in seen:
+                raise ValueError(
+                    f"features= on {recipe.canonical!r} names {word} {number} twice -- "
+                    f"through {seen[number]!r} and {label!r} -- and a row takes one "
+                    "multiplier from one call. Name it once."
+                )
+            seen[number] = label
+    if spec.style != "feature":
+        return [FeatureSet(None, tuple(number for _label, numbers in resolved
+                                       for number in numbers))]
+    slugs: dict[str, str] = {}
+    sets = []
+    for label, numbers in resolved:
+        slug = pest_group_name(label)
+        if not re.search(r"[a-z0-9]", slug):
+            raise ValueError(
+                f"style='feature' on {recipe.canonical!r}: {label!r} holds no letter or "
+                "digit, so it makes no PEST name. Name the feature by its number."
+            )
+        if slug in slugs:
+            raise ValueError(
+                f"style='feature' on {recipe.canonical!r}: {slugs[slug]!r} and {label!r} "
+                f"both make the PEST name {spec.name}_{slug!s}, so their parameters "
+                "would be one. Rename one, or name them by number in features=."
+            )
+        slugs[slug] = label
+        sets.append(FeatureSet(slug, numbers))
+    return sets
+
+
+def feature_columns(recipe: _Recipe, grid_type: str, style: str) -> tuple[list[int], int]:
+    """pyEMU's ``index_cols`` and the value column of a FEATURE target, by style.
+
+    ``"zone"`` keys a row by its CELL, which pyEMU looks its zone up at; ``"grid"`` by
+    its feature key AND its cell, so each reach is one parameter and pyEMU locates it
+    at the cell's centre (its last two index columns, or one on DISU); every other
+    style by the feature key alone (LAK ``lakeno iconn``, SFR ``ifno``), unique in the
+    file (ledger 558).
+
+    Parameters
+    ----------
+    recipe : _Recipe
+        A FEATURE target's recipe.
+    grid_type : str
+        FloPy's ``modelgrid.grid_type``, as :func:`list_columns` reads it.
+    style : str
+        The spec's style.
+
+    Returns
+    -------
+    tuple of (list of int, int)
+        The zero-based index columns and the value column, on that grid.
+    """
+
+    cellid, use_col = list_columns(recipe, grid_type)
+    if style == "zone":
+        return cellid, use_col
+    if style == "grid":
+        return list(recipe.key_cols) + cellid, use_col
+    return list(recipe.key_cols), use_col
+
+
+def _is_none(text) -> bool:
+    """Whether a list file's field is MF6's ``NONE``."""
+
+    return str(text).strip().lower() == "none"
+
+
+def _feature_rows(project, spec: NativeParameterSpec, target: TargetFile, grid_type: str,
+                  index_cols: list[int], value_col: int) -> pd.DataFrame:
+    """One row per record of a FEATURE target's file: its feature, pyEMU key and value.
+
+    Read from the file pyEMU reads (text, 1-based as written), refusing what pyEMU
+    would mis-read: an SFR reach whose cellid is ``NONE`` is one column short, and
+    pyEMU, reading by position, multiplied its Manning's n (measured).
+    """
+
+    recipe = spec.recipe
+    rows = _read_list_file(Path(project.template_workspace) / target.filename)
+    if recipe.feature == "reach":
+        first_cell = list_columns(recipe, grid_type)[0][0]
+        unplaced = [int(row[0]) - 1 for _index, row in rows.iterrows()
+                    if _is_none(row[first_cell])]
+        if unplaced:
+            raise ValueError(
+                f"{recipe.canonical!r} on SFR package {target.package!r}: reach(es) "
+                f"{unplaced[:10]} (zero-based) have cellid NONE, so their rows in "
+                f"{target.filename} are one column shorter than the rest, and pyEMU reads "
+                "columns by position -- it multiplied such a reach's Manning's n in place "
+                "of its rhk (measured). Give each reach its cell, or take the unconnected "
+                "reaches out of the package (ledger 558)."
+            )
+    cellid = list_columns(recipe, grid_type)[0]
+    keys = [tuple(int(float(value)) for value in row[index_cols]) for _index, row in rows.iterrows()]
+    return pd.DataFrame({
+        "feature": [int(float(value)) - 1 for value in rows[recipe.key_cols[0]]],
+        "connection": ([int(float(value)) - 1 for value in rows[recipe.key_cols[1]]]
+                       if len(recipe.key_cols) > 1 else None),
+        "key": keys,
+        # The cell's place in the map plane: the cellid without its layer.
+        "column": [tuple(str(value) for value in row[cellid[1:] or cellid])
+                   for _index, row in rows.iterrows()],
+        "value": rows[value_col].to_numpy(),
+    })
+
+
+def _refuse_an_uncorrelatable_reach_grid(spec: NativeParameterSpec, grid_type: str,
+                                         chosen: pd.DataFrame) -> None:
+    """Refuse ``correlation=`` on ``sfr.rhk`` ``"grid"`` where pyEMU cannot correlate reaches.
+
+    pyEMU locates each reach at its cell's centre. Two selected reaches in one model
+    COLUMN sit at one point, and pyEMU then puts EVERY reach in a covariance group of
+    its own (``covgp`` ``<name>_cov<ifno>``): the prior draw came out uncorrelated --
+    off-diagonal correlations within 0.03 of 0 -- where the same reaches without the
+    shared cell drew 0.66-0.83 (measured; ledger 558). On DISU it cannot
+    locate a reach at all: a reach's key is two columns, and pyEMU looks a node up by
+    one.
+    """
+
+    if spec.style != "grid" or spec.correlation is None:
+        return
+    if grid_type == "unstructured":
+        raise ValueError(
+            f"correlation= on {spec.recipe.canonical!r} with style='grid' on a DISU model: "
+            "pyEMU locates a DISU record by its node alone, and a reach is keyed by its "
+            "number and node, so it cannot be placed. Drop correlation=, or use "
+            "style='feature'/'zone'/'constant'."
+        )
+    shared = chosen[chosen.duplicated("column", keep=False)]
+    if shared.empty:
+        return
+    first = shared.iloc[0]["column"]
+    together = sorted(int(reach) for reach in shared.loc[shared["column"] == first, "feature"])
+    raise ValueError(
+        f"correlation= on {spec.recipe.canonical!r} with style='grid': reaches {together} "
+        f"(zero-based) lie in one model column ({len(shared)} selected reaches share a "
+        "column with another), so pyEMU places them at one point and then draws EVERY "
+        "reach's prior uncorrelated -- correlation= would not act (measured). Leave all "
+        "but one of each such set out with features=, drop correlation=, or use "
+        "style='feature' (one per named stream) or 'zone' (ledger 558)."
+    )
+
+
+def _refuse_rows_pyemu_did_not_select(project, frame: pd.DataFrame, expected: set,
+                                      spec: NativeParameterSpec) -> None:
+    """Refuse a template that scales rows other than ``expected`` (ZERO-based keys).
+
+    pyEMU sets up parameters for EVERY row when no ``use_rows`` matches (measured), so
+    a key mismatch would scale every lake in silence; the template it wrote says which
+    rows it took.
+    """
+
+    for tpl in sorted({str(name) for name in frame["tpl_filename"]}):
+        path = Path(tpl) if Path(tpl).is_absolute() else Path(project.template_workspace) / tpl
+        written = pd.read_csv(path, skiprows=1, usecols=["sidx"])["sidx"]
+        took = {tuple(int(part) for part in str(value).strip("()").split(",") if part.strip())
+                for value in written}
+        if took != expected:
+            raise RuntimeError(
+                f"pyEMU's template {path.name} for {spec.recipe.canonical!r} (name "
+                f"{spec.name!r}) scales {len(took)} row(s) where {len(expected)} were "
+                "selected; refusing a parameter that would scale other rows."
+            )
+
+
+def _add_feature_parameters(project, spec: NativeParameterSpec, targets: list[TargetFile],
+                            grid_type: str, kwargs: dict) -> pd.DataFrame:
+    """Compile a FEATURE target (``lak.bedleak``, ``sfr.rhk``) into ``add_parameters`` calls.
+
+    One call per :class:`FeatureSet` -- one per lake or named stream for
+    ``style="feature"``, one over the selection otherwise -- each with ``use_rows``
+    computed from the staged package, never left to pyEMU's all-rows fallback, and
+    the template checked to scale exactly those rows (ledger 558).
+    """
+
+    recipe = spec.recipe
+    model = flopy_model_for(project, spec.declared_recipe)
+    index_cols, value_col = feature_columns(recipe, grid_type, spec.style)
+    kwargs = dict(kwargs)
+    kwargs["index_cols"] = index_cols
+    kwargs["use_cols"] = [value_col]
+    tables: dict[str, pd.DataFrame] = {}
+    sets_by_package: dict[str, list[FeatureSet]] = {}
+    for target in targets:
+        tables[target.filename] = _feature_rows(project, spec, target, grid_type,
+                                                index_cols, value_col)
+        if target.package not in sets_by_package:
+            package = package_named(model, recipe.package, target.package,
+                                    everyone=packages_of_type(model, recipe.package))
+            sets_by_package[target.package] = resolve_features(spec, package)
+    plural = "lakes" if recipe.feature == "lake" else "reaches"
+    calls: list[tuple[str, FeatureSet, list[TargetFile]]] = []
+    for target in targets:
+        for feature_set in sets_by_package[target.package]:
+            calls.append((target.package, feature_set, [target]))
+    if spec.style != "feature" and len(targets) > 1:
+        # One set shared across the packages a tuple names: ONE call over every file.
+        calls = [(", ".join(target.package for target in targets),
+                  sets_by_package[targets[0].package][0], list(targets))]
+    if spec.style == "feature" and spec.features is None and recipe.feature == "reach":
+        for target in targets:
+            named = {number for item in sets_by_package[target.package]
+                     for number in item.features}
+            unnamed = sorted(set(tables[target.filename]["feature"]) - named)
+            if unnamed:
+                message = (
+                    f"style='feature' on {recipe.canonical!r} ({spec.name!r}): {len(unnamed)} "
+                    f"reach(es) of SFR package {target.package!r} carry no boundname -- "
+                    f"{unnamed[:10]} (zero-based) -- so no named stream covers them and "
+                    "they keep their rhk. Name them in features=, or stack a "
+                    "style='constant' parameter over every reach."
+                )
+                logger.warning(message)
+                warnings.warn(message, stacklevel=2)
+    frames = []
+    pargps = spec.period_group_pargps[0] if spec.period_group_pargps else []
+    spec.feature_sets = []
+    for package, feature_set, files in calls:
+        use_rows: set = set()
+        count = 0
+        for target in files:
+            table = tables[target.filename]
+            covered = set(feature_set.features) if len(files) == 1 else set(table["feature"])
+            chosen = table[table["feature"].isin(covered)]
+            if recipe.feature == "lake":
+                blank = chosen[[_is_none(value) for value in chosen["value"]]]
+                if not blank.empty:
+                    first = blank.iloc[0]
+                    raise ValueError(
+                        f"{recipe.canonical!r} on LAK package {target.package!r}: lake "
+                        f"{int(first['feature'])} connection {int(first['connection'])} "
+                        f"(both zero-based) has bedleak NONE -- {len(blank)} connection(s) of "
+                        "the lakes selected do -- which MF6 reads as no lakebed (the "
+                        "conductance is the aquifer's alone), so there is nothing to "
+                        "multiply. Give those connections a bedleak, or leave their lakes "
+                        "out with features= (ledger 558)."
+                    )
+            _refuse_an_uncorrelatable_reach_grid(spec, grid_type, chosen)
+            if chosen.empty:
+                raise ValueError(
+                    f"{recipe.canonical!r}: the {plural} {list(feature_set.features)[:10]} of "
+                    f"package {target.package!r} hold no rows in {target.filename}, so "
+                    "the parameter would scale nothing."
+                )
+            use_rows.update(chosen["key"])
+            count += len(chosen)
+        call_kwargs = dict(kwargs)
+        base = spec.name if feature_set.label is None else f"{spec.name}_{feature_set.label}"
+        call_kwargs["par_name_base"] = base
+        call_kwargs["pargp"] = base
+        call_kwargs["use_rows"] = sorted(use_rows)
+        call_kwargs.update(spec.extra)
+        filenames = [target.filename for target in files]
+        frame = project.pf.add_parameters(
+            filenames if len(filenames) > 1 else filenames[0], **call_kwargs)
+        # pyEMU holds a key zero-based: one less than the file's when the project's
+        # files count from one (`PestProject(zero_based=False)`, the default).
+        shift = 0 if getattr(project.pf, "zero_based", False) else 1
+        expected = {tuple(value - shift for value in key) for key in use_rows}
+        _refuse_rows_pyemu_did_not_select(project, frame, expected, spec)
+        frames.append(frame)
+        _record_pargps(pargps, frame)
+        spec.feature_sets.append({
+            "pargp": base,
+            "label": feature_set.label,
+            "package": package,
+            "features": [int(number) for number in feature_set.features],
+            "rows": int(count),
+        })
+    return pd.concat(frames, ignore_index=True)
+
+
 def _record_pargps(pargps: list[str], frame) -> None:
     """Append the PEST groups of one ``add_parameters`` frame to a period group's list."""
 
@@ -2385,6 +3014,13 @@ def add_native_parameter(project, spec: NativeParameterSpec):
         kwargs["use_cols"] = [use_col]
     if spec.correlation is not None and spec.style in _SPATIAL_STYLES:
         kwargs["geostruct"] = project._geostruct_for(spec)
+    if recipe.feature is not None:
+        # `feature` is myflopy's style: each lake or named stream is one pyEMU constant.
+        kwargs["par_type"] = "constant" if spec.style == "feature" else spec.style
+        frame = _add_feature_parameters(project, spec, targets, grid.grid_type, kwargs)
+        _refuse_a_large_correlated_grid(spec, frame)
+        project._native_parameter_frames[spec.name] = frame
+        return frame
     kwargs.update(spec.extra)
 
     # One `add_parameters` call per `periods=` group, with that group's files, named

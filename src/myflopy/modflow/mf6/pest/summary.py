@@ -64,11 +64,18 @@ class PestSettings:
                     else f" periods={periods!r}" if isinstance(periods, str)
                     else f" periods={sorted(periods)}"
                 )
+                features = par.get("features")
+                features_txt = "" if features is None else f" features={features!r}"
                 lines.append(
                     f"    - {par['target']:<10}{package_txt} style={par['style']:<11} "
                     f"bounds={tuple(par['bounds'])}{phys_txt} "
-                    f"transform={par['transform']}{periods_txt}"
+                    f"transform={par['transform']}{periods_txt}{features_txt}"
                 )
+                for item in par.get("feature_sets") or ():
+                    lines.append(
+                        f"        {item['pargp']}: {item['rows']} rows of package "
+                        f"{item['package']!r} (features {item['features']})"
+                    )
                 for item in par.get("pilot_point_sets") or ():
                     where = ("period files" if item.get("layer") is None
                              else f"layer {item['layer']}")

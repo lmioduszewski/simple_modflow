@@ -33,10 +33,11 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 557 entries (562 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 558 entries (563 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
+| 558 | `lak.bedleak` and `sfr.rhk` are calibration targets: `style="feature"` is one multiplier per lake or named... | 2026-10-12 |
 | 557 | `compare()`, `simulated_heads()` and the forward run read heads through ONE period-end reader of the OC-dec... | 2026-10-12 |
 | 556 | A well screened across layers is ONE observation of its K x saturated-open-length weighted head | 2026-10-12 |
 | 555 | A basin is not a LAYER surface on its own: its `NaN` off the lake is refused | 2026-10-12 |
@@ -17186,9 +17187,11 @@ same day, which is the useful part of the result.
       and `demo_ies` artifacts) reviewed to the same panels, markers, phi contributions and
       residual map on 592d430 and 358.
       **Not done:** `groups=` on the review takes the group NAME as the pst holds it
-      (`north_wells`), not the label as typed -- running the label through
+      (`north_wells`), not the label as typed -- ~~running the label through
       `pest_group_name` would import layer 8 (`pest.observations`) into layer 5
-      (`pest.ies`); the docstrings say so instead.
+      (`pest.ies`);~~ since ledger 558 `pest_group_name` is the layer-0
+      `pest.naming`, so that reason is gone and the review is unchanged; the docstrings
+      say so instead.
       Tests (`tests/test_pest_observation_groups.py`), each failing by name on revert:
       the stringified-missing refusal off (`test_the_label_astype_str_writes_for_a_blank_is_refused`,
       all three); the old advice and row count
@@ -20517,7 +20520,10 @@ same day, which is the useful part of the result.
 
 520. **Every `parameterize` argument that cannot act is refused, and so is any style but the four (2026-10-12).**
       The user's rule (ledgers 332-334). Refused, naming the spelling that acts: a
-      style not in `constant/zone/grid/pilotpoints` -- pyEMU's `"pp"`/`"pilot_points"`
+      style not in ~~`constant/zone/grid/pilotpoints`~~ `constant/zone/grid/pilotpoints/
+      feature`, or one the target does not take (`feature` acts on `lak.bedleak` and
+      `sfr.rhk` alone, ledger 558; the title's "the four" is now five)
+      -- pyEMU's `"pp"`/`"pilot_points"`
       reached pyEMU's structured-grid pilot points and died on DISV with `'VertexGrid'
       object has no attribute 'delr'` (finding params-12), so they name
       `"pilotpoints"` rather than being mapped to it; `"pilotpoints"` on a LIST target,
@@ -21311,3 +21317,34 @@ same day, which is the useful part of the result.
       of "the head file". **Not done:** `get_hds` still builds a new `HeadsPlus` on every
       access (its docstring, which said "Build and cache", now says so); the views still pay
       that -- caching it needs an invalidation on a rerun, which `_kstpkper` lacks too.
+
+558. **`lak.bedleak` and `sfr.rhk` are calibration targets: `style="feature"` is one multiplier per lake or named stream, `features=` picks them, every row keyed by its feature number with `use_rows` computed and checked (2026-10-12).**
+      Items 4 and 5; names per the user's Q10. `lak.bedleak` (`bedleak`) scales LAK
+      CONNECTIONDATA, default `"feature"` (one per LAKE, settled), also `"constant"`;
+      `"grid"`/`"zone"`/pilot points refused (a connection is no cell). `sfr.rhk` (`rhk`)
+      scales PACKAGEDATA, default `"constant"` (settled), also `"grid"` (one per reach,
+      keyed `ifno` + cellid so pyEMU locates it), `"feature"` (one per BOUNDNAME) and
+      `"zone"` (keyed by the cell, pyEMU's zone path; two reaches in one cell both take
+      it, measured). `features=` names a lake/reach by ZERO-based number or boundname,
+      any case, `LakeStageTargets`' rule; checked at the call when the model lists its
+      packages. **One rule each:** the slug is `pest_group_name`, moved to the layer-0
+      `pest/naming.py`; the boundname match is `package_registry.feature_boundnames`,
+      which the observation targets' two copies now call. Each `"feature"` set is its own
+      PEST group `<name>_<label>` (ledger 549's choice). **Keys:** `(lakeno, iconn)` and
+      `ifno`, unique per row. The design reported pyEMU ASSERTING at apply on a lake-only
+      key; on pyEMU 1.4.0 it applied correctly (`docs/reproducers/
+      feature_target_pyemu_keys.py`, A), so the unique key is a precaution, not a measured
+      necessity. **`use_rows` is always computed and the template pyEMU writes is read
+      back**: on a miss pyEMU parameterizes EVERY row (D). Refused, measured: a `NONE`
+      bedleak on a lake being scaled (one on another lake is written back as it was and
+      MF6 runs); ANY reach with cellid `NONE` -- one column short, pyEMU multiplied its
+      Manning's n (C); `correlation=` on an rhk `"grid"` whose selected reaches share a
+      model column -- pyEMU then gives every reach its own covariance group and the prior
+      is uncorrelated, within 0.03 of 0 against 0.62-0.82 without the shared cell (E) --
+      and on DISU, where pyEMU cannot look a two-column key up. Also refused: `zones=`
+      but with `"zone"`, `features=` with `"zone"`, a tuple `package=` with `features=`
+      or `"feature"`, two labels slugging alike, `"feature"` on an SFR with no
+      BOUNDNAMES (naming `"grid"`). **Judgment call:** under the default `"feature"` a
+      reach with no boundname keeps its rhk, said by a Python warning (ledger 288).
+      Metadata records `features` and `feature_sets`. **Not done:** `capture=True` on
+      these targets (refused: rows are not cells); a per-lake correlated prior.

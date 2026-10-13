@@ -124,7 +124,8 @@ and a layer that reaches no cell says so. A plain array still works.
 You never have to think about SHAPE. pyEMU wants a per-cell array for array targets
 (`k`, `k33`, `sto.ss`, `sto.sy`, `porosity`, and `recharge` on an array RCH) and a
 `(layer, cell)` array for list targets (`recharge` on a list RCH,
-`chd`, `ghb.*`, `drn.*`, `wel`, `uzf.vks`), and rejects the wrong one with an error
+`chd`, `ghb.*`, `drn.*`, `wel`, `uzf.vks`, and `sfr.rhk` with `style="zone"`), and
+rejects the wrong one with an error
 naming neither the target nor the shape. One `ZoneSpec` serves both.
 
 **`uzf.vks`** is UZF's saturated vertical K, and the only UZF quantity worth
@@ -309,6 +310,45 @@ cal.parameterize("sto.ss", bounds=(0.2, 5.0))
   has `ICONVERT` 0 -- the whole selection, a zone, or a layer of a `grid` or pilot-point
   set -- since MF6 reads SY only in a convertible cell (ledger 548). Under
   STO's `STORAGECOEFFICIENT` option `ss` holds a storage coefficient.
+
+### Lake-bed leakance per lake, streambed K per stream
+
+```python
+cal.parameterize("bedleak", bounds=(0.1, 10.0))              # one multiplier per LAKE
+cal.parameterize("bedleak", features=["keevie"], name="kv")  # one lake, by boundname
+cal.parameterize("rhk")                                      # every reach, one multiplier
+cal.parameterize("rhk", style="feature", name="rhks")        # one per named stream
+cal.parameterize("rhk", style="grid", features=["rock_creek"], name="rhkr")  # per reach
+```
+
+- **`lak.bedleak`** (alias `bedleak`) scales the LAK `CONNECTIONDATA` leakance, and its
+  default style is `"feature"`: one multiplier per LAKE, named after the lake's
+  boundname (`lakbedleak_keevie`), else its zero-based number. A lake's bed is one
+  sediment, and a lake-stage target informs it lake by lake -- put the per-lake
+  leakance next to the lake's `LakeStageTargets`. `"constant"` scales every lake (or
+  the `features=` given) together; `"grid"`, `"zone"` and pilot points are refused: a
+  connection is keyed by its lake and connection number, not by a cell. **Under lake
+  cells K and the bed leakance trade off** -- a leakier bed over tighter sediment
+  passes the same water -- so only data that see both, a stage AND heads under and
+  beside the lake, separate them.
+- **`sfr.rhk`** (alias `rhk`) scales each reach's streambed K in `PACKAGEDATA`.
+  `"constant"` by default; `"grid"` is one per reach (located at its cell, so
+  `correlation=` correlates neighbours); `"feature"` one per named stream (the reaches'
+  BOUNDNAMES; reaches with none keep their value and the build warns); `"zone"` one per
+  `zones=` label of the reach's cell.
+- **`features=`** names lakes or reaches as `LakeStageTargets` does: MF6's number,
+  ZERO-based, or a boundname, any case. With `"feature"` each entry is one parameter.
+  A name the package does not have, a lake or reach named twice, or two names making
+  one PEST name (`North Lake`, `north_lake`) is refused, listing what the package holds.
+- **Refused because pyEMU would get it wrong in silence** (ledger 558): a
+  `NONE` bedleak on a lake being scaled (MF6: no lakebed, nothing to multiply); ANY reach
+  whose cellid is `NONE` -- its row is one column short, and pyEMU, reading columns by
+  position, multiplied that reach's Manning's n; and `correlation=` on an rhk `"grid"`
+  whose reaches share a model column -- pyEMU then puts every reach in a covariance group
+  of its own, and the prior comes out uncorrelated. Each row is keyed by its lake and
+  connection or reach NUMBER (never its cell, which a lake meets twice and two reaches can
+  share), and the build checks the template pyEMU wrote scales exactly the rows chosen,
+  because pyEMU falls back to every row when none matches.
 
 **On Tikhonov regularization: myflopy does not offer it, deliberately.** It is a
 PESTPP-GLM concept, and the runner here is PESTPP-IES, which prints

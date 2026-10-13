@@ -104,6 +104,8 @@ DOC_TOKENS = {
     "riv.stage": "riv",
     "wel": "wel",
     "uzf.vks": "uzf.vks",
+    "lak.bedleak": "lak.bedleak",
+    "sfr.rhk": "sfr.rhk",
     "porosity": "porosity",
 }
 

@@ -43,6 +43,7 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     pyemu_spatial_reference,
     refuse_an_undeclared_array,
     relayer_array_target,
+    resolve_features,
     resolve_target,
     select_packages,
     staged_model,
@@ -738,6 +739,7 @@ class PestProject:
         zones=None,
         layers=None,
         package: str | Sequence[str] | None = None,
+        features: int | str | Sequence[int | str] | None = None,
         pp_spacing: float | None = None,
         pp_points=None,
         pp_nearest: int = DEFAULT_PP_NEAREST,
@@ -776,7 +778,9 @@ class PestProject:
             ``"drn.cond"``/``"drn.elev"`` (``"drn"``),
             ``"riv.cond"`` (``"riv"``)/``"riv.stage"``, ``"wel"`` (``"pumping"``),
             ``"uzf.vks"`` (``"vks"``) — UZF saturated vertical K, the one UZF
-            quantity heads respond to — and ``"porosity"``
+            quantity heads respond to —, ``"lak.bedleak"`` (``"bedleak"``) — the
+            lake-bed leakance of each LAK connection —, ``"sfr.rhk"`` (``"rhk"``) —
+            each reach's streambed K — and ``"porosity"``
             (``"mst.porosity"``/``"n"``), which lives on the GWT sibling of a
             coupled transport simulation and is resolved there automatically.
             ``k``, ``k33``, ``sto.ss``, ``sto.sy`` and ``porosity`` are ARRAY
@@ -823,6 +827,23 @@ class PestProject:
             ledger 519); :meth:`build` refuses a record whose stage is
             already below its bottom, which MF6 refuses at any icelltype.
 
+            ``lak.bedleak`` and ``sfr.rhk`` are FEATURE targets (ledger
+            558): their rows are lake connections and reaches, keyed
+            by the lake and connection number (LAK) or the reach number (SFR) --
+            never by the cell, which a lake connects to more than once and two
+            reaches can share -- so ``features=`` and ``style="feature"`` act on
+            them. ``lak.bedleak`` defaults to one multiplier per LAKE and takes
+            ``"feature"`` or ``"constant"``; :meth:`build` refuses a ``NONE``
+            bedleak on a lake it scales (MF6: no lakebed, nothing to multiply).
+            ``sfr.rhk`` defaults to ``"constant"`` and also takes ``"grid"`` (one
+            per reach), ``"feature"`` (one per named stream) and ``"zone"`` (one
+            per ``zones=`` label of the reach's cell); :meth:`build` refuses a
+            reach whose cellid is ``NONE``, whose row is one column short -- pyEMU,
+            reading columns by position, multiplied its Manning's n. Under lake
+            cells, K and the bed leakance trade off against each other: only
+            data that see both -- a lake stage and heads under and beside it --
+            separate them.
+
             Porosity is absent from the flow equation, so it is identifiable
             only from CONCENTRATION data — and since transport velocity is
             ``v = Ki/n``, K and porosity are near-collinear from concentration
@@ -836,10 +857,18 @@ class PestProject:
             - ``"zone"`` -- one multiplier per ``zones`` value (pass ``zones=``);
             - ``"grid"`` -- one multiplier per list entry / cell;
             - ``"pilotpoints"`` -- pilot points interpolated to the cells (ARRAY
-              targets only, ``recharge`` on an array RCH included).
+              targets only, ``recharge`` on an array RCH included);
+            - ``"feature"`` -- one multiplier per lake (``lak.bedleak``) or per
+              named stream, a reach BOUNDNAME (``sfr.rhk``), or per entry of
+              ``features=`` -- FEATURE targets only.
 
-            ``None`` uses the recipe default (``"constant"`` for every target).
-            The value is lower-cased; anything but these four raises
+            ``None`` uses the recipe default (``"feature"`` for ``lak.bedleak``,
+            ``"constant"`` for every other target). A style the target does not
+            take raises ``ValueError`` here, naming the ones it does --
+            ``"feature"`` on a target with no features, ``"grid"``/``"zone"``/
+            ``"pilotpoints"`` on ``lak.bedleak``, ``"pilotpoints"`` on ``sfr.rhk``
+            (ledger 558).
+            The value is lower-cased; anything but these five raises
             ``ValueError`` here -- pyEMU's own pilot-point spellings (``"pp"``,
             ``"pilot_points"``, ...), which reached pyEMU's structured-grid pilot
             points and died on a DISV grid, name ``"pilotpoints"`` (ledger
@@ -951,6 +980,30 @@ class PestProject:
             :meth:`build`. A name that is no package of the type raises
             ``ValueError`` naming the ones there are; a name given twice, or an
             empty one, raises here. The default ``name`` gains ``_<package>``.
+            A sequence with ``features=`` or ``style="feature"`` raises
+            ``ValueError`` here: lakes and reaches are numbered and named within
+            ONE package.
+        features : int or str or sequence of int or str or None, optional
+            The lakes (``lak.bedleak``) or reaches and named streams
+            (``sfr.rhk``) the parameter covers -- each MF6's number for it,
+            ZERO-based (``LakeStageTargets``' convention; text reading as a whole
+            number is that number), or its boundname, any case; one may be given
+            bare. With ``style="feature"`` each entry is ONE parameter, named
+            ``<name>_<label>`` -- the entry's boundname (a lake given by number
+            takes its boundname when it has one) or number, made a PEST name by
+            the observation groups' rule (lower-cased, every run of characters but
+            letters, digits, ``_``, ``.``, ``:``, ``-`` one ``_``); with
+            ``"constant"`` the entries share one; with ``"grid"`` each reach among
+            them is one. ``None`` (default): every lake / every reach, and for
+            ``"feature"`` one parameter per lake (``lak.bedleak``) or per
+            boundname (``sfr.rhk``; reaches without one are left alone, and an SFR
+            with no BOUNDNAMES is refused, naming ``style="grid"``). Raises
+            ``ValueError`` here on a target with no features, with
+            ``style="zone"``, for an entry that is blank, a fraction, negative or
+            a bool, and -- here when the model lists its packages, else at
+            :meth:`build` -- for an entry naming no lake/reach/boundname of the
+            package (listing those it has), a lake or reach named twice, or two
+            labels making one PEST name (ledger 558).
         pp_spacing : float or None, optional
             Pilot-point net spacing for ``style="pilotpoints"`` on an array
             target, in MODEL LENGTH UNITS (feet on a model in feet), finite and
@@ -991,8 +1044,13 @@ class PestProject:
             each set (one layer, one zone) are drawn correlated with each other
             and not with another set's, while the interpolation to cells stays
             inverse-distance. ``None`` (default) builds no variogram. Given with
-            ``"constant"`` or ``"zone"`` it raises ``ValueError`` here: they have
-            nothing to correlate.
+            ``"constant"``, ``"zone"`` or ``"feature"`` it raises ``ValueError``
+            here: they have nothing to correlate (a feature parameter is keyed by a
+            lake's or stream's number, not located at a cell). On ``sfr.rhk``
+            ``"grid"``, :meth:`build` refuses it where two selected reaches lie in
+            one model column -- pyEMU places them at one point and then draws
+            EVERY reach uncorrelated (measured) -- and on DISU, where pyEMU cannot
+            locate a reach (ledger 558).
         anisotropy : float, optional
             Anisotropy ratio of the variogram -- correlated this many
             times farther along the major axis than across it (``1.0`` =
@@ -1062,7 +1120,10 @@ class PestProject:
             ``pargp``). Default ``None`` uses the canonical target with dots
             removed (``"k"``, ``"ghbcond"``, ``"uzfvks"``), plus ``_<package>``
             when ``package=`` is given (``"rivcond_crisp"``,
-            ``"rivcond_riv_crisp"`` for a sequence). A multi-layer array ``"grid"``
+            ``"rivcond_riv_crisp"`` for a sequence; ``"lakbedleak"``,
+            ``"sfrrhk"``). ``style="feature"`` makes each lake's or stream's
+            parameter and PEST group ``<name>_<label>`` (``lakbedleak_keevie``).
+            A multi-layer array ``"grid"``
             parameter appends ``l<layer>`` per selected layer file, the
             ZERO-BASED layer (ledger 521); pilot points append ``l<layer>``
             (zero-based) and, with ``zones=``, ``z<zone>`` -- a set
@@ -1087,7 +1148,10 @@ class PestProject:
             template from 18 to 33 MB, and one 5-layer field at 200 realizations is
             a 352 MB observation-ensemble CSV per iteration. A capture covers the
             layers the parameter does (``layers=``); ``run_ies(ies_save_binary=True)`` writes the
-            ensembles in binary, which the review reads too.
+            ensembles in binary, which the review reads too. ``True`` on
+            ``lak.bedleak``/``sfr.rhk`` raises ``ValueError`` here: their rows are
+            lake connections and reaches, not one value per cell (deferred, ledger
+            558).
         **extra
             Advanced keyword arguments passed straight through to pyEMU's
             ``PstFrom.add_parameters`` for cases the facade does not cover.
@@ -1129,6 +1193,9 @@ class PestProject:
         >>> cal.parameterize("recharge", name="rchm", periods="month",   # x one per month
         ...                  bounds=(0.5, 2.0))
         >>> cal.parameterize("sto.sy", layers=[0], bounds=(0.5, 2.0), physical=(0.01, 0.35))
+        >>> cal.parameterize("bedleak", bounds=(0.1, 10))     # one multiplier per lake
+        >>> cal.parameterize("bedleak", features=["keevie"], name="kv")  # one lake
+        >>> cal.parameterize("rhk", style="feature", bounds=(0.2, 5))   # per named stream
         """
 
         nugget = checked_nugget(nugget)
@@ -1142,6 +1209,7 @@ class PestProject:
             zones=zones,
             layers=layers,
             package=package,
+            features=features,
             pp_spacing=pp_spacing,
             pp_points=pp_points,
             pp_nearest=pp_nearest,
@@ -1201,7 +1269,13 @@ class PestProject:
             return
         if held:
             # The package's FORM too: pilot points on a LIST RCH are refused here.
-            spec.resolve_form(select_packages(self.model, spec.declared_recipe, spec.package))
+            packages = select_packages(self.model, spec.declared_recipe, spec.package)
+            spec.resolve_form(packages)
+            if spec.declared_recipe.feature is not None and len(packages) == 1:
+                # A lake or stream features= names, checked against the package's
+                # packagedata now; the build asks the staged one again (ledger
+                # 558).
+                resolve_features(spec, packages[0])
 
     def observe(self, targets, *, prefix: str | None = None):
         """Register history-matching observations from a ``myflopy`` target set.
@@ -1965,6 +2039,11 @@ class PestProject:
             "additive": bool(spec.additive),
             "layers": list(spec.layers) if spec.layers is not None else None,
             "zones": zones,
+            # A FEATURE target's (ledger 558): the lakes/reaches named as
+            # given, and one record per parameter set they made -- its PEST group,
+            # label, package, zero-based features and how many file rows it scales.
+            "features": list(spec.features) if spec.features is not None else None,
+            "feature_sets": [dict(record) for record in getattr(spec, "feature_sets", [])],
             "correlation": float(spec.correlation) if spec.correlation is not None else None,
             "files": [
                 {"filename": target.filename, "package": target.package,
@@ -2523,7 +2602,8 @@ class PestProject:
 
         The facade hides pyEMU boilerplate but never hides *state*: this lets
         you review exactly what was declared (every parameter with its style,
-        bounds, physical limits, transform and ``periods=`` grouping; every observation and forecast)
+        bounds, physical limits, transform, ``periods=`` grouping and ``features=``;
+        every observation and forecast)
         and -- once :meth:`build` has run -- the resulting control-file counts
         (number of parameters and groups, observations, nonzero-weight
         observations, forecasts, and ``NOPTMAX``).
@@ -2554,6 +2634,10 @@ class PestProject:
                 "name": spec.name,
                 # `periods=` as declared: None, "month" or {label: periods}.
                 "periods": spec.periods,
+                # `features=` as declared, and after a build one row per parameter set
+                # the features made (ledger 558).
+                "features": list(spec.features) if spec.features is not None else None,
+                "feature_sets": [dict(item) for item in spec.feature_sets],
                 # After a build, array-target pilot points: one row per set with its
                 # point count (ledger 527).
                 "pilot_point_sets": [dict(item) for item in spec.pilot_point_sets],

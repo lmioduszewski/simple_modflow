@@ -205,7 +205,7 @@ Throughout, two example models recur so the code stays concrete:
 **17. PEST / pyEMU Integration** — *[17_pest.md](17_pest.md)*
 - 17.1 The big picture: a declarative facade that compiles to native pyEMU `PstFrom`
 - 17.2 The front door: `cal = model.pest(name, start_datetime=…)`
-- 17.3 Parameterization: `cal.parameterize(target, style=…, bounds=…)` — targets (`k`, `k33`, `sto.ss`/`sto.sy`, `recharge` -- list or array RCH, its form read from the package --, `chd`, `ghb.*`, `drn.*`, `riv.cond`/`riv.stage`, `wel`, `uzf.vks`, `porosity`; found by package type, `package=` naming one of several; elevations are additive offsets), styles (`constant` / `zone` / `grid` / `pilotpoints`) and `periods=` (`'month'` or `{label: [periods]}`: one parameter set per group of stress periods)
+- 17.3 Parameterization: `cal.parameterize(target, style=…, bounds=…)` — targets (`k`, `k33`, `sto.ss`/`sto.sy`, `recharge` -- list or array RCH, its form read from the package --, `chd`, `ghb.*`, `drn.*`, `riv.cond`/`riv.stage`, `wel`, `uzf.vks`, `lak.bedleak`, `sfr.rhk`, `porosity`; found by package type, `package=` naming one of several; elevations are additive offsets), styles (`constant` / `zone` / `grid` / `pilotpoints` / `feature` -- one per lake or named stream, `features=` picking them) and `periods=` (`'month'` or `{label: [periods]}`: one parameter set per group of stress periods)
 - 17.4 Geostatistics: `ExpGeoStruct`, anisotropy/bearing/nugget, the grid and pilot-point styles on Voronoi
 - 17.5 Observations & forecasts: `cal.observe(...)` / `cal.forecast(...)` with the target classes
 - 17.6 Building: `cal.build(pst_name, noptmax=…)`; the injected forward run

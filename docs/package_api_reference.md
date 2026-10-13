@@ -340,7 +340,7 @@ Zones for `style="zone"` come from `mf.ZoneSpec` (`from_raster` — majority vot
 
 **`cal.parameterize(target, ...)` scales the packages of the target's TYPE** -- `k`,
 `k33`, `sto.ss`/`sto.sy`, `recharge`, `chd`, `ghb.cond`/`ghb.bhead`, `drn.cond`/`drn.elev`,
-`riv.cond`/`riv.stage`, `wel`, `uzf.vks`, `porosity` -- through the files FloPy's own
+`riv.cond`/`riv.stage`, `wel`, `uzf.vks`, `lak.bedleak`, `sfr.rhk`, `porosity` -- through the files FloPy's own
 records of the run's packages name (ledger 517). Several packages of the type
 (`riv` beside `crisp`) need `package=`: a name picks one, a sequence shares one
 parameter set, and a call naming none raises `mf.SeveralPackagesError` naming each
@@ -349,10 +349,20 @@ offset in model units, `bounds=(-2, 2)` by default, a multiplier refused; any bo
 excluding the starting value (0 for an offset, 1 for a multiplier or pilot point) are
 refused; `riv.stage` moves each record's `rbot` with its stage (ledgers
 518, 519). An argument that cannot act -- `layers=` on a list
-target or on recharge, `correlation=` on constant/zone, a style but the four,
-`"pilotpoints"` on a list target, an `**extra` key pyEMU's `add_parameters` does not
-take -- raises (ledger
+target or on recharge, `correlation=` on constant/zone/feature, a style but the five
+or one the target does not take, `"pilotpoints"` on a list target, an `**extra` key
+pyEMU's `add_parameters` does not take -- raises (ledger
 520).
+
+**`lak.bedleak` (`bedleak`) and `sfr.rhk` (`rhk`) are FEATURE targets** (ledger
+558): `style="feature"` is one multiplier per lake -- bedleak's default --
+or per named stream (reach BOUNDNAME), and `features=` picks lakes, reaches or streams
+by ZERO-based number or boundname (any case), as `LakeStageTargets` names a lake. A row
+is keyed by its lake and connection, or reach, number -- never its cell -- and the
+build refuses a `NONE` bedleak on a lake it scales, any reach with cellid `NONE`, and a
+correlated rhk `grid` over reaches sharing a model column. `rhk` defaults to
+`"constant"` and also takes `"grid"` (one per reach) and `"zone"`; bedleak takes
+`"feature"` and `"constant"`.
 
 **`recharge` follows the package's form** (ledger 547): on an ARRAY RCH
 (`mf.rch.array`, READASARRAYS) it scales the per-period `recharge` arrays -- one file

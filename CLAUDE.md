@@ -1854,7 +1854,7 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   records, or an ARRAY RCH's per-period `recharge` files, whose periods come from FloPy's
   records -- files are numbered by block ORDINAL -- and never `irch`), `chd`, `ghb.cond`/
   `ghb.bhead`, `drn.cond`/`drn.elev`, `riv.cond`/`riv.stage`, `wel`, `uzf.vks` (`vks`),
-  and transport `porosity` (`mst.porosity`/
+  `lak.bedleak` (`bedleak`), `sfr.rhk` (`rhk`), and transport `porosity` (`mst.porosity`/
   `n`), whose GWT sibling is resolved via `pest/model_lookup.py` — calibrate it with
   heads in the mix, since `v = Ki/n` makes K and porosity near-collinear from
   concentration alone. **A target's files are found by package TYPE** from FloPy's own
@@ -1867,9 +1867,9 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   value (0 for an offset, 1 for a multiplier and every pilot point) are refused
   (ledger 518); `riv.stage` moves RBOT with STAGE (ledger 519).
   An argument that cannot act is refused (`layers=` on a list target or recharge,
-  `correlation=` on constant/zone, `pp_spacing`/`pp_points`/`pp_nearest` on any style
-  but array pilot points, a style other than the four, an `**extra` key pyEMU's
-  `add_parameters` does not take; ledger 520), and so is a
+  `correlation=` on constant/zone/feature, `pp_spacing`/`pp_points`/`pp_nearest` on any
+  style but array pilot points, a style other than the five or one the target does not
+  take, an `**extra` key pyEMU's `add_parameters` does not take; ledger 520), and so is a
   `name=` another call holds (523). **`periods=` groups a target's per-period files**
   (ledger 549; it replaced `temporal=`, which nothing read): `'month'` is one
   parameter set per calendar month of the TRANSIENT periods, `m01`..`m12` by each
@@ -1877,7 +1877,19 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   every cycle; a STEADY period is in no seasonal group (the user's rule, Q3 -- stack a
   plain call for it); `{label: [periods]}` gives explicit groups. A period repeating
   another group's block (MF6's rule for a period with no block) is REFUSED, naming the
-  fix: a block per period (`mf.AverageYear(...).by_month(...)`). Styles: `constant`, `zone`, `grid` (one
+  fix: a block per period (`mf.AverageYear(...).by_month(...)`). **`lak.bedleak` and
+  `sfr.rhk` are FEATURE targets** (ledger 558): a row is keyed by its lake
+  and connection / reach NUMBER, never its cell (a lake meets one cell twice, two reaches
+  share one), with `use_rows` computed from the
+  staged package and the template checked to scale exactly those rows (pyEMU falls back to
+  EVERY row on a miss). `style='feature'` is one multiplier per lake (bedleak's default)
+  or per named stream (a reach BOUNDNAME); `features=` picks lakes/reaches/streams by
+  ZERO-based number or boundname, slugged by the observation groups' ONE rule
+  (`pest/naming.py`'s `pest_group_name`); the boundname match is
+  `package_registry.feature_boundnames`, shared with the observation targets. Refused: a
+  `NONE` bedleak on a lake it scales, ANY reach with cellid `NONE` (one column short --
+  pyEMU multiplied its Manning's n), and `correlation=` on an rhk `grid` whose reaches share
+  a column (pyEMU then decorrelates every reach). Styles: `constant`, `zone`, `grid` (one
   geostat-correlated multiplier per Voronoi cell + correlated prior), and `pilotpoints`
   (a `pp_spacing=` net in MODEL LENGTH UNITS or explicit `pp_points` — `pilot_points.py`;
   pyEMU's own pilot points are unusable on unstructured grids). **Pilot points MULTIPLY
