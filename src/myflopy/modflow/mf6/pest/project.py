@@ -40,6 +40,7 @@ from myflopy.modflow.mf6.pest.native_parameters import (
     add_native_parameter,
     flopy_model_for,
     list_columns,
+    model_name_for,
     pyemu_spatial_reference,
     refuse_an_undeclared_array,
     relayer_array_target,
@@ -2033,6 +2034,13 @@ class PestProject:
             "name": spec.name,
             "target": spec.recipe.canonical,
             "family": spec.recipe.family,
+            # Where the values land, for a write-back (ledger 560): the
+            # model owning the files, the FloPy dataset scaled (the staged package's
+            # form -- an array RCH's ``recharge``, a list one's ``stress_period_data``)
+            # and, for a list target, the record fields the forward run writes.
+            "model": model_name_for(self, spec.recipe),
+            "variable": spec.recipe.variable,
+            "fields": list(spec.recipe.written_fields),
             "package_type": spec.recipe.package,
             "package": list(spec.package) if isinstance(spec.package, tuple) else spec.package,
             "packages": sorted({target.package for target in spec.resolved_targets}),
@@ -2094,7 +2102,9 @@ class PestProject:
         parameters = [self._parameter_record(spec) for spec in self._native_parameter_specs]
 
         metadata = {
-            "version": 1,
+            # 2: each parameter record names its model, dataset and written fields
+            # (ledger 560).
+            "version": 2,
             "project_name": self.name,
             "model_name": self.model.name,
             "original_workspace": str(self.original_workspace.resolve()),

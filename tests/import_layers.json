@@ -95,6 +95,7 @@
  "myflopy.modflow.mf6.period_calendar": 2,
  "myflopy.modflow.mf6.period_end": 0,
  "myflopy.modflow.mf6.pest": 0,
+ "myflopy.modflow.mf6.pest.calibrated": 12,
  "myflopy.modflow.mf6.pest.forward_run": 0,
  "myflopy.modflow.mf6.pest.geostats": 9,
  "myflopy.modflow.mf6.pest.gis": 9,

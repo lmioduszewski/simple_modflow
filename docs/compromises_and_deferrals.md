@@ -33,11 +33,12 @@
 
 <!-- generated index: python scripts/derive_ledger_index.py -->
 
-<!-- 560 entries (565 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
+<!-- 561 entries (566 rows; a resolved entry is listed twice). Search this file for `N. **` to open entry N. -->
 
 | # | Entry | Date |
 | --: | --- | --- |
 | 561 | An edit's override REPLACES a recipe that fills the same option | 2026-10-12 |
+| 560 | A calibrated realization comes back as library packages, rebuilt by replaying its own forward run | 2026-10-12 |
 | 559 | One parameter set over packages whose records differ in width is refused, not split; and `zones=` leaves no... | 2026-10-12 |
 | 558 | `lak.bedleak` and `sfr.rhk` are calibration targets: `style="feature"` is one multiplier per lake or named... | 2026-10-12 |
 | 557 | `compare()`, `simulated_heads()` and the forward run read heads through ONE period-end reader of the OC-dec... | 2026-10-12 |
@@ -21373,6 +21374,49 @@ same day, which is the useful part of the result.
       done:** `zones=` with `style="constant"` on a list target is still accepted and
       does nothing (pyEMU reads `zone_array` only for `zone`/`grid` list parameters);
       refusing it is ledger 520's rule, left for the parameter lane.
+
+560. **A calibrated realization comes back as library packages, rebuilt by replaying its own forward run (2026-10-12).**
+      Item 14 and finding ies-9; the user's answer Q7. `ies.calibrated(realization="base",
+      *, iteration=None)` -> `CalibratedInputs` (`get`/`summary`/`packages`/`to_library`).
+      **Chosen: replay, never re-apply.** The realization's values fill every template at
+      full precision (`repr`) in a temporary copy -- the simulation's inputs (ledger 383),
+      every file a replayed statement names, and the files a CSV/JSON manifest it names
+      lists -- and `forward_run.py` runs as a subprocess with `main()` cut by AST before
+      the first `pyemu.os_utils.run`, so clamps, pilot points and the rbot carry are the
+      run's own (one rule: what that realization's MF6 read). pyEMU's
+      `write_to_template` keeps 4 significant digits in a 15-character pilot-point span
+      (4.5e-4 relative)
+      (`docs/reproducers/write_back_template_precision.py`); in-process, pyEMU's pool
+      broke without a `__main__` guard (the design's measurement). `base` reads
+      `<case>.<it>.base.par` (16 digits); any other label the par ensemble, at pyEMU's 6
+      significant digits -- a stated limit. Measured on the test model
+      (`tests/test_pest_calibrated_write_back.py`): a model rebuilt from `to_library`
+      reproduces the base realization's heads in PESTPP-IES's `.base.rei` to 1e-6 ft.
+      **The base of the substitution is the RUN** -- its frozen snapshot (lazy packages
+      already resolved) and its library copies, aligned by order with its manifest's
+      labels and the replay's name file -- never the library now, which may have moved
+      and whose recipes would collide with a resolved value. **Values only:** an array
+      replaced whole by what MF6 read (every layer); a list package's written fields
+      (`riv.stage` writes `stage` and `rbot`) substituted record by record after every
+      non-float field (cellid, feature number, boundname) is checked against the run's,
+      so the pin and LAK rules are KEPT (ledger 300's trap) -- but the eager `.gpkg`
+      `move_recipe` is DROPPED, or a grid move would re-declare the package from its file
+      and lose the calibration in silence; it reads `stale`, a calibrated array
+      `unverifiable` (route: `with_grid(remap=True)`). Provenance in
+      `metadata["calibrated_from"]` (the declared `.gpkg` source kept there), the
+      parameter file as `source_path`/`source_sha` so `drift()`'s `source` column follows
+      it; digests read no metadata. **Forks, never edits**: keys `f"{label}/{pest}"`
+      (`/<realization>` appended when not `base`) and a simulation fork
+      `f"{simulation}/{pest}"` swapping them in per model (`simulation=False` opts out).
+      The build metadata goes to version 2: each parameter record names its `model`,
+      `variable` and written `fields`; a template without them is refused (rebuild with
+      `cal.build()`, no shim). **Not built:** writing back every posterior realization
+      as an ensemble of packages; a RECIPE form (a pilot-point multiplier recipe composed
+      on a K recipe, item 16's algebra) -- arrays/records only, per Q7; a TIED parameter
+      (refused); a LAK `bedleak`/SFR `rhk` write-back is generic over the record
+      (`packagedata`/`connectiondata`) but untested until those targets land. Cost:
+      `pest.ies` gains one deferred import (the method imports the layer-12 module),
+      raising its ratchet count 0 -> 1.
 
 561. **An edit's override REPLACES a recipe that fills the same option (2026-10-12).**
       `fork_package(mf.npf(k=mf.Polygons(...)), k=array)` -- and `packages.fork`/`edit`,

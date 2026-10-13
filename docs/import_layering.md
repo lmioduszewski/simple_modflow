@@ -9,7 +9,7 @@ longest-path depth in the module-level runtime import graph
 lower layer, and the graph must stay acyclic. Upward references belong in
 `TYPE_CHECKING` blocks or (sparingly) function-level deferred imports —
 the deferred-import ratchet (`tests/deferred_import_allowlist.json`,
-currently **85** function-level `myflopy` imports) counts those and
+currently **86** function-level `myflopy` imports) counts those and
 only ever goes down. To update after a legitimate change: run the script,
 review the diff, commit the regenerated files together.
 
@@ -187,7 +187,7 @@ review the diff, commit the regenerated files together.
 - `myflopy.modflow.mf6.canonical` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.observations.registry`
 - `myflopy.modflow.mf6.package_explorer`
-- `myflopy.modflow.mf6.pest.ies`
+- `myflopy.modflow.mf6.pest.ies` *(deferred imports: 1)*
 - `myflopy.modflow.mf6.voronoiplus`
 - `myflopy.package_api` *(deferred imports: 3)*
 
@@ -238,6 +238,7 @@ review the diff, commit the regenerated files together.
 
 ## Layer 12
 
+- `myflopy.modflow.mf6.pest.calibrated`
 - `myflopy.project.group`
 - `myflopy.project.model_group`
 

@@ -1036,6 +1036,33 @@ What you're checking for:
 - **% of parameters at their bounds**: many parameters pinned at bounds means the
   prior is too tight or compensating for structural error.
 
+### Take the calibrated model home
+
+```python
+cal_inputs = ies.calibrated()            # the posterior 'base' realization
+cal_inputs.summary()                     # what moved, and by how much
+cal_inputs.get("npf", "k")               # the (nlay, ncpl) K its MF6 read
+keys = cal_inputs.to_library(project)    # {'npf/base': 'npf/base/calib', 'riv': 'riv/calib', ...}
+run = project.prepare_run("calibrated", project.simulations["baseline/calib"])
+run.execute()                            # simulates the base realization's heads
+```
+
+`calibrated()` does not re-apply the multipliers: it REPLAYS the realization's own
+forward run in a temporary copy -- the templates filled at full precision, then
+`forward_run.py` up to its MF6 call -- and reads back what MF6 would have read (ledger
+560). `base` is PESTPP-IES's base realization, the one that starts at the
+prior mean and is updated with the ensemble -- not the ensemble's mean -- and it was RUN,
+so its fit is the one `obs_residuals()` shows; it is read at 16 digits from
+`<case>.<it>.base.par`. Any other label (`ies.best("min_phi")`, `"7"`) reads the parameter
+ensemble's 6 significant digits.
+
+`to_library` starts from what the RUN built -- its frozen snapshot and its own library
+copies -- not from the library as it is now, and forks to new keys: earlier runs and
+`project.runs.drift()` are untouched, and drift's `source` column follows the parameter
+file the values came from. A calibrated array is `unverifiable` on a grid move, and
+`with_grid(remap=True)` is its route (ledger 300). Written back as resolved arrays and
+records; a RECIPE form -- a pilot-point multiplier recipe on a K recipe -- is not built.
+
 ---
 
 ## 7. The most important lesson: a good fit ≠ a good forecast
@@ -1100,7 +1127,8 @@ ies.plot_field("k", stat="change"); ies.plot_field("k", stat="reduction")
 ies.plot_field_mosaic("k", stat="mean"); ies.plot_obs_residuals()
 ies.report("review.html")
 
-# 7: learn, revise, repeat
+# 7: learn, revise, repeat -- or take the calibrated model home
+keys = ies.calibrated().to_library(project)
 ```
 
 Every plot above takes `backend="matplotlib"` if you prefer static

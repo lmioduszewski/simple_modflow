@@ -2106,6 +2106,18 @@ Treat any "gap" as a hypothesis to re-verify against the code before building.
   `find_pest_runs`/`PestRunHandle`) list calibrations done on a model; `.review()` reopens
   one as `IesResults` (`ies.py`, `open_ies_run`) — phi, ensemble-vs-obs, forecasts,
   parameter-field maps. (The old `results.py` deterministic-review layer was deleted.)
+- **Write-back: `ies.calibrated(realization="base").to_library(project)`** (ledger
+  560). It REPLAYS the realization's own forward run -- templates filled at
+  full precision (pyEMU's filler keeps 4 significant digits), `forward_run.py` cut by AST
+  before `pyemu.os_utils.run`, a subprocess with the absolute `PYTHONPATH` -- and reads
+  back each dataset the build metadata's `parameters` records (version 2: `model`,
+  `variable`, `fields`). Never re-apply a multiplier in Python. `base` reads
+  `<case>.<it>.base.par` (16 digits), any other label the par ensemble (6). The base of
+  the substitution is the RUN's frozen snapshot and library copies, never the library now;
+  values-only, so a list package keeps its pin after every cell is checked and drops its
+  `.gpkg` move recipe; forks to `f"{label}/{pest}"` keys plus a forked simulation, never
+  edits. A fork/edit/`with_options` override over a recipe-filled option REPLACES the
+  recipe (ledger 561).
   **A review reads ONE run** (ledgers 507, 508): a serial launch deletes
   an earlier run's `<name>.*` outputs from the template (`runs.pestpp_ies_outputs`, the
   one list) and says so (`UserWarning`, ledger 532), a parallel master is copied

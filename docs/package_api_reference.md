@@ -1209,6 +1209,34 @@ models cannot pick one; pass `review(model=...)` there.) `report(path)` covers p
 bounds, forecasts and `plot_field` mean/change — not the reduction, mosaic or residual
 maps, which are called directly.
 
+**Taking the calibrated model home** -- `ies.calibrated(realization="base", *,
+iteration=None)` (ledger 560) rebuilds what that realization's MODFLOW 6
+READ by REPLAYING its own forward run: its values fill every template at full precision
+in a temporary copy of the run directory's inputs (`base` from `<case>.<it>.base.par`,
+16 digits; any other label from the iteration's parameter ensemble, 6), and
+`forward_run.py` runs up to -- not including -- its model command, so pilot-point
+interpolation, physical clamps and the `riv.stage` bottom carry are the run's own. It
+returns a `CalibratedInputs`:
+
+| member | what it gives |
+| --- | --- |
+| `get(package, variable, *, model=None)` | one dataset as MF6 read it: `k` an `(nlay, ncpl)` array, an array RCH's `recharge` `{period: array}`, a list package's records as a table |
+| `summary()` | one row per dataset: the parameters scaling it, layers/periods, and how far it moved from the run (`ratio`, or `offset` for an elevation) |
+| `packages()` | `{label: PackageSpec}`: the packages the RUN built (its frozen snapshot and library copies, never the library as it is now) with the values substituted -- an array replaced whole, a list package's calibrated fields only, after every record's cell is checked -- pin and lake rules kept, `metadata["calibrated_from"]` and the parameter file as `source_path` |
+| `to_library(project, *, keys=None, simulation=None, overwrite=False, note=None)` | registers them under NEW keys (`f"{label}/{pest}"`) and forks the run's simulation onto them (`f"{simulation}/{pest}"`; `simulation=False` forks none); returns `{label: key}` |
+
+Refused by name: an unknown realization (`base` naming `best(criterion="min_phi")`), an
+iteration not this run's, a template built before the parameter records (rebuild with
+`cal.build()`), a tied parameter, a replay that fails (its stderr in the message), a run
+with no frozen snapshot, a record on another cell (the template is not this run's), a
+project that does not own the run, and an existing key without `overwrite=True`. A
+calibrated array moves `unverifiable` and goes through `with_grid(remap=True)` (ledger
+300); a calibrated list package keeps its pin, drops its `.gpkg` move recipe and reads
+`stale`. A `packages.fork`/`edit`/`with_options` override over an option a RECIPE fills
+(`mf.Polygons`, `mf.RasterValues`, a product or per-layer list of them) now REPLACES the
+recipe, named in the stamp's `replaced_inputs` (ledger 561); it built
+"supplied twice".
+
 ### Engine layer (`mf.__engine__`)
 
 The builders/factories under the facade — reach for them only with a specific reason:

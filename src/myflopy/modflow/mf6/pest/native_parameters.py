@@ -139,6 +139,18 @@ class _Recipe:
             or self.array_dataset is not None
 
     @property
+    def written_fields(self) -> tuple[str, ...]:
+        """The record fields a forward run WRITES for this list target: its field, and
+        ``rbot`` beside ``riv.stage``, which the forward run carries with the stage
+        (ledger 519). Empty for an array target. What a write-back substitutes
+        (ledger 560).
+        """
+
+        if self.family != "list" or self.field is None:
+            return ()
+        return (self.field, "rbot") if self.canonical == "riv.stage" else (self.field,)
+
+    @property
     def elevation(self) -> bool:
         """Whether the scaled field is an ELEVATION (``FieldSpec.kind``, ledger 297).
 

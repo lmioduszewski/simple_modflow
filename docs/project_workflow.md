@@ -314,6 +314,23 @@ A label matching nothing raises, naming what the source actually carries — a t
 that silently swapped nothing would hand back a "variant" identical to its parent.
 The fork records `derived_from` and appends to `lineage`, one entry per swap.
 
+### A calibration back into the library
+
+A PESTPP-IES realization comes back as packages forked from what its RUN built
+(ledger 560):
+
+```python
+calibrated = ies.calibrated()                 # posterior "base"; any label works
+keys = calibrated.to_library(project)         # {"npf/base": "npf/base/calib", "ghb": "ghb/calib", ...}
+project.simulations["baseline/calib"]         # the run's simulation, those keys swapped in
+```
+
+Fork, never edit: the run and every earlier one keep what they recorded. Each package
+carries `metadata["calibrated_from"]` (calibration, realization, iteration, run, source
+label and digest, the parameters and forward-run lines replayed) and names the
+parameter file as its `source_path`, so `project.runs.drift()`'s `source` column reads
+`ok`/`edited`/`missing` for a run that used it.
+
 ## The run ledger
 
 `project.runs` is every run under the project — with a manifest, without one, or

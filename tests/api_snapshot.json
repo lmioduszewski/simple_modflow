@@ -350,6 +350,20 @@
     "BuiltSimulation.prt": [
       "name:POSITIONAL_OR_KEYWORD=<required>"
     ],
+    "CalibratedInputs.get": [
+      "package:POSITIONAL_OR_KEYWORD=<required>",
+      "variable:POSITIONAL_OR_KEYWORD=<required>",
+      "model:KEYWORD_ONLY=None"
+    ],
+    "CalibratedInputs.packages": [],
+    "CalibratedInputs.summary": [],
+    "CalibratedInputs.to_library": [
+      "project:POSITIONAL_OR_KEYWORD=<required>",
+      "keys:KEYWORD_ONLY=None",
+      "simulation:KEYWORD_ONLY=None",
+      "overwrite:KEYWORD_ONLY=False",
+      "note:KEYWORD_ONLY=None"
+    ],
     "CalibrationPlot.add_calib_scatter": [],
     "CalibrationPlot.add_heads": [],
     "CalibrationPlot.add_stats": [
@@ -1585,6 +1599,10 @@
     "IesForecast.summary": [],
     "IesResults.best": [
       "criterion:KEYWORD_ONLY='base'"
+    ],
+    "IesResults.calibrated": [
+      "realization:POSITIONAL_OR_KEYWORD='base'",
+      "iteration:KEYWORD_ONLY=None"
     ],
     "IesResults.conflict": [
       "coverage:KEYWORD_ONLY=1.0"

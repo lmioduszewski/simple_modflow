@@ -33,7 +33,8 @@ next topic.
    IES diagnostics (prior Monte Carlo, prior-data conflict, phi distribution &
    contributions, parameters at bounds, forecast uncertainty) and the spatial
    review layer — parameter-field maps, the uncertainty-reduction map, the
-   prior-vs-posterior mosaic and the observation residual map.
+   prior-vs-posterior mosaic and the observation residual map -- then takes the
+   calibrated base realization home (`ies.calibrated()`, ledger 560).
 
 ### Reference tours (not part of the numbered series)
 

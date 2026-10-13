@@ -299,6 +299,8 @@ def test_pest_notebooks_calibrate_the_canonical_model():
         "plot_field_mosaic",
         "plot_obs_residuals",
         "obs_residuals()",
+        # The write-back: what the base realization's MF6 read (ledger 560).
+        "ies.calibrated()",
     ):
         assert required in ies_source
 

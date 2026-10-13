@@ -50,7 +50,7 @@ from myflopy.grid_identity import (
     GENERATED_SOLVER,
     GRID_PIN,  # noqa: F401
     GRID_PIN_OPTIONS,  # noqa: F401
-    MOVE_RECIPE,  # noqa: F401
+    MOVE_RECIPE,
     MOVED_FROM,
     PIN_VOIDED,
     REMAPPED_FROM,
@@ -1779,6 +1779,81 @@ def replaced_sources(
         if key not in resolves and _fills_an_option(inputs[key])
     )
     return {key: value for key, value in inputs.items() if key not in replaced}, replaced
+
+
+def substitute_values(
+    package: PackageSpec,
+    values: Mapping[str, Any],
+    *,
+    provenance: Mapping[str, Any] | None = None,
+    stamp: str = "calibrated_from",
+    metadata: Mapping[str, Any] | None = None,
+) -> PackageSpec:
+    """``package`` with option ``values`` replaced, its grid pin and lake rules KEPT.
+
+    The write-back's substitution (ledger 560). :func:`fork_package`
+    voids a grid pin an override speaks for, because a caller's records are no longer
+    the ones the library resolved; here the CALLER has already checked that the
+    values name the same cells (a calibrated column substituted record by record
+    after each cellid was compared, or an array of the same mesh), so the pin is
+    still true and is kept, and so are ``mf.lak``'s ``LAKE_RULES``/``LAKE_CONNECTIONS``
+    -- voiding them made a correct value edit read as "its records were edited"
+    (ledger 300's trap). A recipe in ``inputs`` filling a replaced option is dropped
+    (:func:`replaced_sources`), and so is an eager ``.gpkg`` package's
+    ``move_recipe``: a grid move would re-declare the package from its file and lose
+    the substituted values without a word, so it reads ``stale`` instead (ledger
+    296). Built through :func:`dataclasses.replace`, so every construction check runs.
+
+    Parameters
+    ----------
+    package : PackageSpec
+        The package to copy; not modified.
+    values : mapping of str to object
+        Option name to its new value, each replacing that option's whole value. The
+        caller asserts each names the same cells as the value it replaces; nothing
+        here can check that.
+    provenance : mapping or None, optional
+        Recorded under ``metadata[stamp]``, with ``replaced_inputs`` added when a
+        recipe was dropped. ``None`` (default) records only ``replaced_inputs``, and
+        nothing when no recipe was dropped.
+    stamp : str, optional
+        The metadata key the provenance goes under. Default ``"calibrated_from"``.
+    metadata : mapping or None, optional
+        Other metadata entries to set (``source_path``, ``source_sha``), merged over
+        the package's. Metadata is not digested, so none of this moves the package's
+        digest. Default ``None``.
+
+    Returns
+    -------
+    PackageSpec
+        The copy.
+
+    Raises
+    ------
+    TypeError
+        When a value's name is not an option the builder accepts, or is one a recipe
+        the builder requires already supplies.
+    """
+
+    inputs, replaced = replaced_sources(package.builder, dict(package.inputs), values)
+    # A move recipe re-declares the package from its source on another mesh, which
+    # would rebuild the DECLARED values over the substituted ones in silence; without
+    # it the pinned package reads `stale` and is re-declared by hand (ledger 296).
+    stamped = {
+        key: value for key, value in package.metadata.items() if key != MOVE_RECIPE
+    }
+    stamped.update(dict(metadata or {}))
+    record = dict(provenance or {})
+    if replaced:
+        record["replaced_inputs"] = replaced
+    if record:
+        stamped[stamp] = record
+    return replace(
+        package,
+        options={**package.options, **dict(values)},
+        inputs=inputs,
+        metadata=stamped,
+    )
 
 
 def _preview(values: Iterable[Any], *, limit: int = 4) -> str:

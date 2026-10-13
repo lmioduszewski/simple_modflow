@@ -2581,16 +2581,35 @@ class IesResults:
 
         return self._posterior_row(realization)
 
-    def _posterior_row(self, realization) -> pd.Series:
-        """The posterior ensemble's row ``realization``, its label compared as text.
+    def _posterior_row(self, realization, *, ensemble=None, what: str = "posterior realization") -> pd.Series:
+        """Row ``realization`` of an ensemble -- the posterior's by default -- its label compared as text.
 
         The one realization lookup: ``phi_contributions``, ``obs_residuals`` and the
         residual map each fell back to the ensemble MEAN for a label not there,
-        saying nothing (ledger 480).
+        saying nothing (ledger 480), and :meth:`calibrated` reads a parameter
+        ensemble's row through it too (``ensemble=``, ledger 560).
+
+        Parameters
+        ----------
+        realization : object
+            The label, compared with the ensemble's labels as text (``1`` finds a
+            row labelled ``"1"``).
+        ensemble : pandas.DataFrame or None, optional
+            The ensemble's frame (a pyEMU ensemble's ``_df``), one row per
+            realization. ``None`` (default): the posterior observation ensemble.
+        what : str, optional
+            What a row is, for the refusal (``"posterior realization"``).
+
+        Raises
+        ------
+        KeyError
+            When no row carries the label, listing up to eight that do, and naming
+            ``best(criterion='min_phi')`` when ``'base'`` was asked of a run that has
+            none.
         """
 
-        ensemble = self.posterior._df
-        by_text = {str(label): label for label in ensemble.index}
+        frame = self.posterior._df if ensemble is None else ensemble
+        by_text = {str(label): label for label in frame.index}
         key = str(realization)
         if key not in by_text:
             shown = list(by_text)[:8]
@@ -2601,9 +2620,9 @@ class IesResults:
                 if key == "base" else ""
             )
             raise KeyError(
-                f"No posterior realization {realization!r}; it has {shown}{more}.{hint}"
+                f"No {what} {realization!r}; it has {shown}{more}.{hint}"
             )
-        return ensemble.loc[by_text[key]]
+        return frame.loc[by_text[key]]
 
     def _observation_locations(self) -> pd.DataFrame:
         """Grid locations for every observation set that recorded one.
@@ -3144,6 +3163,62 @@ class IesResults:
                 )
             return str(final.idxmin())
         raise ValueError(f"Unknown criterion {criterion!r}; use 'base' or 'min_phi'.")
+
+    def calibrated(self, realization: str = "base", *, iteration: int | None = None):
+        """What one realization's MODFLOW 6 READ, rebuilt by replaying its own forward run.
+
+        The write-back (ledger 560). The realization's parameter values
+        fill every template of the control file at full precision in a temporary copy
+        of the run directory's inputs, the build's ``forward_run.py`` runs up to (not
+        including) its model command -- pyEMU's multipliers, pilot-point
+        interpolation, physical clamps and the river-bottom carry, exactly as that
+        realization ran them -- and each dataset the build's metadata records is read
+        back through FloPy. Nothing re-applies a multiplier in Python, and the copy is
+        deleted. :class:`~myflopy.modflow.mf6.pest.calibrated.CalibratedInputs` then
+        answers :meth:`~myflopy.modflow.mf6.pest.calibrated.CalibratedInputs.get` /
+        ``summary`` / ``packages`` / ``to_library``.
+
+        Parameters
+        ----------
+        realization : str, optional
+            The realization's label, compared as text (``1`` finds ``"1"``). Default
+            ``"base"``: the realization PESTPP-IES starts at the prior mean and
+            updates with the ensemble (not the ensemble's mean; it was run, so its
+            simulated values are what ``obs_residuals(realization="base")`` shows). It
+            is read from ``<case>.<iteration>.base.par`` at 16 digits; any other
+            label from that iteration's parameter ensemble, which pyEMU writes at 6
+            significant digits (about 5e-6 relative -- a stated limit, not a bug).
+        iteration : int or None, optional
+            The iteration to read, one of :attr:`iterations` (this run's, ledger 507);
+            another raises ``ValueError`` and a non-integer ``TypeError``. Default
+            ``None``: :attr:`posterior_iteration`.
+
+        Returns
+        -------
+        myflopy.modflow.mf6.pest.calibrated.CalibratedInputs
+            The rebuilt datasets, held in memory.
+
+        Raises
+        ------
+        KeyError
+            When the iteration's parameter ensemble has no such realization (the
+            shared lookup, listing its labels; for ``"base"`` naming
+            ``best(criterion="min_phi")``).
+        FileNotFoundError
+            When the iteration's parameter ensemble or ``.base.par`` is missing, or
+            the run directory holds no ``forward_run.py``.
+        ValueError
+            When the run's metadata predates the parameter records a write-back reads
+            (rebuild with ``cal.build()`` and run again), the control file has a TIED
+            parameter, or the file lacks an adjustable one.
+        RuntimeError
+            When ``forward_run.py`` has no ``main()`` calling ``pyemu.os_utils.run``
+            to cut at, or the replay fails (its stderr is in the message).
+        """
+
+        from myflopy.modflow.mf6.pest.calibrated import calibrated_inputs
+
+        return calibrated_inputs(self, realization, iteration=iteration)
 
     @property
     def settings(self) -> IesSettings:
